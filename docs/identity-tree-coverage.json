@@ -274,6 +274,10 @@
         {
           "file": "awid/src/awid/id_certificates.py",
           "symbol": "verify_id_chain"
+        },
+        {
+          "file": "awid/src/awid/id_certificates.py",
+          "symbol": "_id_chain.evaluate"
         }
       ]
     },
@@ -369,7 +373,14 @@
         "J3"
       ],
       "proving_tests": [],
-      "acceptance": "Exact-domain authority for the tree; no inherited ancestor authority. Other DNS consumers keep their contracts."
+      "acceptance": "Exact-domain authority for the tree; no inherited ancestor authority. Other DNS consumers keep their contracts.",
+      "ed25519_profile": "legacy",
+      "sites": [
+        {
+          "file": "awid/src/awid/dns_verify.py",
+          "symbol": "_parse_awid_record"
+        }
+      ]
     },
     {
       "id": "AWID.NAMESPACE.REGISTER",
@@ -505,7 +516,14 @@
         "awid/tests/test_did_key_witness.py::test_registration_and_rotation_times_come_from_the_tree_clock"
       ],
       "acceptance": "Keep DID syntax and key proof; separate ID-tree enrollment from bare DID creation.",
-      "candidate_head": "3688bfe71eee1bfa2ed1b5702f3fa1be4ab3672b"
+      "candidate_head": "3688bfe71eee1bfa2ed1b5702f3fa1be4ab3672b",
+      "ed25519_profile": "legacy",
+      "sites": [
+        {
+          "file": "awid/src/awid_service/routes/did.py",
+          "symbol": "register_did"
+        }
+      ]
     },
     {
       "id": "AWID.DID.ROTATE",
@@ -528,7 +546,14 @@
         "awid/tests/test_id_certificate_registration.py::test_witness_times_never_precede_the_key_epochs_they_select"
       ],
       "acceptance": "Current-key CAS and monotone post-lock witnesses; no inference from pre-upgrade log timestamps.",
-      "candidate_head": "3688bfe71eee1bfa2ed1b5702f3fa1be4ab3672b"
+      "candidate_head": "3688bfe71eee1bfa2ed1b5702f3fa1be4ab3672b",
+      "sites": [
+        {
+          "file": "awid/src/awid_service/routes/did.py",
+          "symbol": "update_mapping"
+        }
+      ],
+      "ed25519_profile": "legacy"
     },
     {
       "id": "AWID.DID.LOG",
@@ -548,7 +573,26 @@
         "J10"
       ],
       "proving_tests": [],
-      "acceptance": "Verified genesis/checkpoint and hash/signature continuity remain prerequisites; no replacement of the released log signature contract."
+      "acceptance": "Verified genesis/checkpoint and hash/signature continuity remain prerequisites; no replacement of the released log signature contract.",
+      "ed25519_profile": "legacy",
+      "sites": [
+        {
+          "file": "awid/src/awid/identity_log_verify.py",
+          "symbol": "_verify_entry"
+        },
+        {
+          "file": "awid/src/awid/identity_log_verify.py",
+          "symbol": "_verify_signature"
+        },
+        {
+          "file": "awid/src/awid/identity_log_verify.py",
+          "symbol": "verify_identity_head"
+        },
+        {
+          "file": "awid/src/awid/identity_log_verify.py",
+          "symbol": "verify_identity_log"
+        }
+      ]
     },
     {
       "id": "AWID.ADDRESS.REPLACE",
@@ -571,6 +615,29 @@
       "acceptance": "Address replacement changes DID, never resets continuity or silently transfers contact trust.",
       "open_items": [
         "Lost-key journey (checkpoint 5)."
+      ],
+      "ed25519_profile": "legacy",
+      "sites": [
+        {
+          "file": "awid/src/awid_service/routes/dns_addresses.py",
+          "symbol": "_normalize_address_claim_fields"
+        },
+        {
+          "file": "awid/src/awid_service/routes/dns_addresses.py",
+          "symbol": "_resolve_caller_did_aw"
+        },
+        {
+          "file": "awid/src/awid_service/routes/dns_addresses.py",
+          "symbol": "_validate_did_aw"
+        },
+        {
+          "file": "awid/src/awid_service/routes/dns_addresses.py",
+          "symbol": "_validated_did_log_proof"
+        },
+        {
+          "file": "awid/src/awid_service/routes/dns_addresses.py",
+          "symbol": "_verify_atomic_claim_signatures"
+        }
       ]
     },
     {
@@ -746,7 +813,26 @@
         "J8"
       ],
       "proving_tests": [],
-      "acceptance": "Team controller authority, private certificate gate and membership revocation remain separate from the identity tree."
+      "acceptance": "Team controller authority, private certificate gate and membership revocation remain separate from the identity tree.",
+      "ed25519_profile": "legacy",
+      "sites": [
+        {
+          "file": "awid/src/awid/team_certificate.py",
+          "symbol": "verify_team_certificate_signature"
+        },
+        {
+          "file": "awid/src/awid_service/routes/teams.py",
+          "symbol": "_verify_certificate_blob"
+        },
+        {
+          "file": "awid/src/awid_service/routes/teams.py",
+          "symbol": "_verify_path_signature"
+        },
+        {
+          "file": "awid/src/awid_service/routes/teams.py",
+          "symbol": "publish_team_server"
+        }
+      ]
     },
     {
       "id": "AWID.MEMBER.ATTESTATIONS",
@@ -767,7 +853,38 @@
         "J8"
       ],
       "proving_tests": [],
-      "acceptance": "member_person/member_custody remain compatibility evidence; never infer an ID tree from them."
+      "acceptance": "member_person/member_custody remain compatibility evidence; never infer an ID tree from them.",
+      "ed25519_profile": "legacy",
+      "sites": [
+        {
+          "file": "awid/src/awid/attestation_records.py",
+          "symbol": "_require_did_key"
+        },
+        {
+          "file": "awid/src/awid/attestation_records.py",
+          "symbol": "_strict_object"
+        },
+        {
+          "file": "awid/src/awid/attestation_records.py",
+          "symbol": "_verify"
+        },
+        {
+          "file": "awid/src/awid/attestation_records.py",
+          "symbol": "encode_attestation_header"
+        },
+        {
+          "file": "awid/src/awid/attestation_records.py",
+          "symbol": "sign_record"
+        },
+        {
+          "file": "awid/src/awid/attestation_records.py",
+          "symbol": "signing_bytes"
+        },
+        {
+          "file": "awid/src/awid_service/routes/attestation_records.py",
+          "symbol": "verify_published_record"
+        }
+      ]
     },
     {
       "id": "CLI.KEYS.AGENT",
@@ -1246,7 +1363,18 @@
         "J8"
       ],
       "proving_tests": [],
-      "acceptance": "Same authenticated subject/key as membership; no enrolled revocation bypass by omission."
+      "acceptance": "Same authenticated subject/key as membership; no enrolled revocation bypass by omission.",
+      "ed25519_profile": "legacy",
+      "sites": [
+        {
+          "file": "server/src/aweb/team_auth_deps.py",
+          "symbol": "resolve_team_identity"
+        },
+        {
+          "file": "server/src/aweb/team_auth_deps.py",
+          "symbol": "verify_request_certificate"
+        }
+      ]
     },
     {
       "id": "SERVER.AUTH.IDENTITY",
@@ -1266,7 +1394,18 @@
         "J8"
       ],
       "proving_tests": [],
-      "acceptance": "Carrier cannot switch auth lane or supply missing membership."
+      "acceptance": "Carrier cannot switch auth lane or supply missing membership.",
+      "ed25519_profile": "legacy",
+      "sites": [
+        {
+          "file": "server/src/aweb/identity_auth_deps.py",
+          "symbol": "lookup_identity_agent_context"
+        },
+        {
+          "file": "server/src/aweb/identity_auth_deps.py",
+          "symbol": "resolve_identity_auth"
+        }
+      ]
     },
     {
       "id": "SERVER.AUTH.GRANT",
@@ -1287,7 +1426,14 @@
         "J8"
       ],
       "proving_tests": [],
-      "acceptance": "Chain belongs to grant SUBJECT, never session key; granting is not a new birth."
+      "acceptance": "Chain belongs to grant SUBJECT, never session key; granting is not a new birth.",
+      "ed25519_profile": "legacy",
+      "sites": [
+        {
+          "file": "server/src/aweb/identity_grant_auth.py",
+          "symbol": "_verify_identity_grant_row"
+        }
+      ]
     },
     {
       "id": "SERVER.AUTH.BINDING",
@@ -1306,7 +1452,14 @@
         "J8"
       ],
       "proving_tests": [],
-      "acceptance": "Enrolled omission in the existing stable-ID resolution; preserve its independent 60-second binding rule."
+      "acceptance": "Enrolled omission in the existing stable-ID resolution; preserve its independent 60-second binding rule.",
+      "ed25519_profile": "legacy",
+      "sites": [
+        {
+          "file": "server/src/aweb/identity_binding.py",
+          "symbol": "observe_identity_binding"
+        }
+      ]
     },
     {
       "id": "SERVER.CONTACT.REBIND",
@@ -1412,7 +1565,14 @@
         "J8"
       ],
       "proving_tests": [],
-      "acceptance": "Bind author, not relay; old strict wrappers remain accepted."
+      "acceptance": "Bind author, not relay; old strict wrappers remain accepted.",
+      "ed25519_profile": "legacy",
+      "sites": [
+        {
+          "file": "server/src/aweb/federation/envelope.py",
+          "symbol": "verify_federation_envelope"
+        }
+      ]
     },
     {
       "id": "SERVER.ROUTING.KIND",
@@ -1453,7 +1613,34 @@
         "J8"
       ],
       "proving_tests": [],
-      "acceptance": "Shared verifier and production cached client; keep ordinary membership and app policy separate."
+      "acceptance": "Shared verifier and production cached client; keep ordinary membership and app policy separate.",
+      "ed25519_profile": "legacy",
+      "sites": [
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/team_auth.py",
+          "symbol": "AWIDTeamCache._get_certificate_status"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/team_auth.py",
+          "symbol": "AWIDTeamCache.check_current_member"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/team_auth.py",
+          "symbol": "AWIDTeamCache.current_did_key"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/team_auth.py",
+          "symbol": "_decode_certificate"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/team_auth.py",
+          "symbol": "_verified_signed_payload"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/team_auth.py",
+          "symbol": "_verify_certificate_signature"
+        }
+      ]
     },
     {
       "id": "NAAPP.HOOKS.VERIFY",
@@ -1474,7 +1661,26 @@
         "J8"
       ],
       "proving_tests": [],
-      "acceptance": "Client producer chain binds authenticated producer; service/app signing authority stays distinct."
+      "acceptance": "Client producer chain binds authenticated producer; service/app signing authority stays distinct.",
+      "ed25519_profile": "legacy",
+      "sites": [
+        {
+          "file": "naapp-lib/src/aweb_naapp/hooks/delivery.py",
+          "symbol": "_decode_certificate"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/hooks/delivery.py",
+          "symbol": "_verify_client_certificate"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/hooks/delivery.py",
+          "symbol": "sign_delivery"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/hooks/delivery.py",
+          "symbol": "verify_delivery"
+        }
+      ]
     },
     {
       "id": "GO.HOOKS.VERIFY",
@@ -1514,7 +1720,18 @@
         "J8"
       ],
       "proving_tests": [],
-      "acceptance": "Controller-signed BYOT owner acts and B3 contacts/passkeys need no human ID."
+      "acceptance": "Controller-signed BYOT owner acts and B3 contacts/passkeys need no human ID.",
+      "ed25519_profile": "legacy",
+      "sites": [
+        {
+          "file": "naapp-lib/src/aweb_naapp/hooks/owner_act.py",
+          "symbol": "_check_fields"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/hooks/owner_act.py",
+          "symbol": "_check_owner_act"
+        }
+      ]
     },
     {
       "id": "TS.REQUESTS",
@@ -2184,6 +2401,2105 @@
       ],
       "proving_tests": [],
       "acceptance": "Full C2-D predicate with current verified human, mapping, membership/session/resource checks; no admin/API-key substitution. Cloud owner supplies the exact per-site paths and proving tests before conversion."
+    },
+    {
+      "id": "AWID.A2A_PUBLICATION",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid/a2a_publication.py"
+      ],
+      "operations": [
+        "encode",
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "awid/src/awid/a2a_publication.py",
+          "symbol": "_did_aw"
+        },
+        {
+          "file": "awid/src/awid/a2a_publication.py",
+          "symbol": "a2a_delegation_canonical"
+        },
+        {
+          "file": "awid/src/awid/a2a_publication.py",
+          "symbol": "a2a_publication_canonical"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "AWID.ATOMIC_CLAIM",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid/atomic_claim.py"
+      ],
+      "operations": [
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "awid/src/awid/atomic_claim.py",
+          "symbol": "atomic_address_claim_identity_canonical"
+        },
+        {
+          "file": "awid/src/awid/atomic_claim.py",
+          "symbol": "atomic_address_claim_namespace_canonical"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "AWID.CONTRACT",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid/contract.py"
+      ],
+      "operations": [
+        "encode"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "awid/src/awid/contract.py",
+          "symbol": "resolve_identity_contract"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "AWID.CONTROLLER_REQUEST",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid/controller_request.py"
+      ],
+      "operations": [
+        "sign",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "awid/src/awid/controller_request.py",
+          "symbol": "verify_controller_json_request"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "AWID.DID.KEY.FORMAT",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid/did.py"
+      ],
+      "operations": [
+        "create"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "awid/src/awid/did.py",
+          "symbol": "generate_keypair"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "AWID.DNS_AUTH",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid/dns_auth.py"
+      ],
+      "operations": [
+        "encode",
+        "sign",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "awid/src/awid/dns_auth.py",
+          "symbol": "validate_did_key"
+        },
+        {
+          "file": "awid/src/awid/dns_auth.py",
+          "symbol": "verify_signed_json_request"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "AWID.E2EE.KEYS",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid/e2ee_keys.py"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "awid/src/awid/e2ee_keys.py",
+          "symbol": "build_encryption_key_assertion"
+        },
+        {
+          "file": "awid/src/awid/e2ee_keys.py",
+          "symbol": "canonical_encryption_assertion"
+        },
+        {
+          "file": "awid/src/awid/e2ee_keys.py",
+          "symbol": "validate_encryption_key_assertion"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "AWID.EXTERNAL_AUTHORITY",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid/external_authority.py"
+      ],
+      "operations": [
+        "encode",
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "awid/src/awid/external_authority.py",
+          "symbol": "_parse_awid_record"
+        },
+        {
+          "file": "awid/src/awid/external_authority.py",
+          "symbol": "authority_statement"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "AWID.EXTERNAL.REGISTRY",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid/external_registry.py"
+      ],
+      "operations": [
+        "encode",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "awid/src/awid/external_registry.py",
+          "symbol": "StrictExternalRegistry._fetch_evidence"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "AWID.HTTP_DIDKEY",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid/http_didkey.py"
+      ],
+      "operations": [
+        "sign",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "awid/src/awid/http_didkey.py",
+          "symbol": "build_http_didkey_payload"
+        },
+        {
+          "file": "awid/src/awid/http_didkey.py",
+          "symbol": "verify_http_didkey_request"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "AWID.LOG",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid/log.py"
+      ],
+      "operations": [
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "awid/src/awid/log.py",
+          "symbol": "identity_state_hash"
+        },
+        {
+          "file": "awid/src/awid/log.py",
+          "symbol": "log_entry_payload"
+        },
+        {
+          "file": "awid/src/awid/log.py",
+          "symbol": "state_hash"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "AWID.PUBLIC.CLIENT",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid/registry.py"
+      ],
+      "operations": [
+        "create",
+        "encode",
+        "register",
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "awid/src/awid/registry.py",
+          "symbol": "CachedRegistryClient.register_did"
+        },
+        {
+          "file": "awid/src/awid/registry.py",
+          "symbol": "RegistryClient._signed_address_headers"
+        },
+        {
+          "file": "awid/src/awid/registry.py",
+          "symbol": "RegistryClient._signed_namespace_headers"
+        },
+        {
+          "file": "awid/src/awid/registry.py",
+          "symbol": "RegistryClient._signed_parent_namespace_headers"
+        },
+        {
+          "file": "awid/src/awid/registry.py",
+          "symbol": "RegistryClient._signed_parent_namespace_registration_headers"
+        },
+        {
+          "file": "awid/src/awid/registry.py",
+          "symbol": "RegistryClient._signed_path_headers"
+        },
+        {
+          "file": "awid/src/awid/registry.py",
+          "symbol": "RegistryClient._signed_team_headers"
+        },
+        {
+          "file": "awid/src/awid/registry.py",
+          "symbol": "RegistryClient.register_did"
+        },
+        {
+          "file": "awid/src/awid/registry.py",
+          "symbol": "RegistryClient.rotate_key"
+        },
+        {
+          "file": "awid/src/awid/registry.py",
+          "symbol": "_did_key_from_signing_key"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "AWID.SIGNING",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid/signing.py"
+      ],
+      "operations": [
+        "sign",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "awid/src/awid/signing.py",
+          "symbol": "sign_message"
+        },
+        {
+          "file": "awid/src/awid/signing.py",
+          "symbol": "verify_signature"
+        },
+        {
+          "file": "awid/src/awid/signing.py",
+          "symbol": "verify_signature_with_public_key"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "AWID.TEAM_SERVER_RECORD",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid/team_server_record.py"
+      ],
+      "operations": [
+        "sign",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "awid/src/awid/team_server_record.py",
+          "symbol": "record_signing_bytes"
+        },
+        {
+          "file": "awid/src/awid/team_server_record.py",
+          "symbol": "sign_team_server_record"
+        },
+        {
+          "file": "awid/src/awid/team_server_record.py",
+          "symbol": "verify_team_server_record"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "AWID.SERVICE.ATTESTATION_ROTATION",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid_service/attestation_rotation.py"
+      ],
+      "operations": [
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "awid/src/awid_service/attestation_rotation.py",
+          "symbol": "apply_resigned_records"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "AWID.SERVICE.ROUTES.A2A_PUBLICATIONS",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid_service/routes/a2a_publications.py"
+      ],
+      "operations": [
+        "encode",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "awid/src/awid_service/routes/a2a_publications.py",
+          "symbol": "_ensure_identity_key_history"
+        },
+        {
+          "file": "awid/src/awid_service/routes/a2a_publications.py",
+          "symbol": "_verify_signature"
+        },
+        {
+          "file": "awid/src/awid_service/routes/a2a_publications.py",
+          "symbol": "get_a2a_publication"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "AWID.DEV.IDENTITY",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid_service/testing.py"
+      ],
+      "operations": [
+        "create",
+        "register",
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "awid/src/awid_service/testing.py",
+          "symbol": "Registry.add_custody"
+        },
+        {
+          "file": "awid/src/awid_service/testing.py",
+          "symbol": "Registry.register_did"
+        },
+        {
+          "file": "awid/src/awid_service/testing.py",
+          "symbol": "_did_key"
+        },
+        {
+          "file": "awid/src/awid_service/testing.py",
+          "symbol": "signed_team_server_record"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "SERVER.AGENT_ACTIVITY",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/agent_activity.py"
+      ],
+      "operations": [
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "server/src/aweb/agent_activity.py",
+          "symbol": "verify_activity_event"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "SERVER.AGENT_STATUS",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/agent_status.py"
+      ],
+      "operations": [
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "server/src/aweb/agent_status.py",
+          "symbol": "verify_status_document"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "SERVER.APP_CREDENTIALS",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/app_credentials.py"
+      ],
+      "operations": [
+        "sign",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "server/src/aweb/app_credentials.py",
+          "symbol": "verify_app_credential"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "SERVER.ATTACHMENT_SERVICE",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/attachment_service.py"
+      ],
+      "operations": [
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "server/src/aweb/attachment_service.py",
+          "symbol": "_bind"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "SERVER.ATTACHMENTS",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/attachments.py"
+      ],
+      "operations": [
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "server/src/aweb/attachments.py",
+          "symbol": "AttachmentDescriptor.ref"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "SERVER.CONFIG",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/config.py"
+      ],
+      "operations": [
+        "create",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "server/src/aweb/config.py",
+          "symbol": "_is_ed25519_did_key"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "SERVER.E2EE.MESSAGES",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/e2ee_messages.py"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "server/src/aweb/e2ee_messages.py",
+          "symbol": "_build_key_wrap"
+        },
+        {
+          "file": "server/src/aweb/e2ee_messages.py",
+          "symbol": "_content_aad"
+        },
+        {
+          "file": "server/src/aweb/e2ee_messages.py",
+          "symbol": "_hash_canonical"
+        },
+        {
+          "file": "server/src/aweb/e2ee_messages.py",
+          "symbol": "_inner_payload_canonical"
+        },
+        {
+          "file": "server/src/aweb/e2ee_messages.py",
+          "symbol": "_open_key_wrap"
+        },
+        {
+          "file": "server/src/aweb/e2ee_messages.py",
+          "symbol": "encrypt_e2ee_message"
+        },
+        {
+          "file": "server/src/aweb/e2ee_messages.py",
+          "symbol": "encrypted_message_storage_metadata"
+        },
+        {
+          "file": "server/src/aweb/e2ee_messages.py",
+          "symbol": "validate_e2ee_message_envelope"
+        },
+        {
+          "file": "server/src/aweb/e2ee_messages.py",
+          "symbol": "verify_e2ee_message_envelope_signature"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "SERVER.FEDERATION.AUTHORITY_STATE",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/federation/authority_state.py"
+      ],
+      "operations": [
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "server/src/aweb/federation/authority_state.py",
+          "symbol": "AuthorityRepository.get_checkpoint"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "SERVER.FEDERATION.DELIVERY",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/federation/delivery.py"
+      ],
+      "operations": [
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "server/src/aweb/federation/delivery.py",
+          "symbol": "federation_envelope_hash"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "SERVER.HUMAN_CHANNELS.HTTP",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/human_channels/http.py"
+      ],
+      "operations": [
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "server/src/aweb/human_channels/http.py",
+          "symbol": "accept_native_http"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "SERVER.HUMAN_CHANNELS.MCP",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/human_channels/mcp.py"
+      ],
+      "operations": [
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "server/src/aweb/human_channels/mcp.py",
+          "symbol": "send_mcp_native"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "SERVER.HUMAN_CHANNELS.NATIVE",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/human_channels/native.py"
+      ],
+      "operations": [
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "server/src/aweb/human_channels/native.py",
+          "symbol": "NativeMessagingUnitOfWork.accept"
+        },
+        {
+          "file": "server/src/aweb/human_channels/native.py",
+          "symbol": "NativeMessagingUnitOfWork.claim_ingress"
+        },
+        {
+          "file": "server/src/aweb/human_channels/native.py",
+          "symbol": "_dto"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "SERVER.HUMAN_CHANNELS.PARTICIPANTS",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/human_channels/participants.py"
+      ],
+      "operations": [
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "server/src/aweb/human_channels/participants.py",
+          "symbol": "_session"
+        },
+        {
+          "file": "server/src/aweb/human_channels/participants.py",
+          "symbol": "derive_guest_reference"
+        },
+        {
+          "file": "server/src/aweb/human_channels/participants.py",
+          "symbol": "project_session_author"
+        },
+        {
+          "file": "server/src/aweb/human_channels/participants.py",
+          "symbol": "require_native_participant_input"
+        },
+        {
+          "file": "server/src/aweb/human_channels/participants.py",
+          "symbol": "scoped_participant_key"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "SERVER.HUMAN.PRESENCE",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/human_channels/presence.py"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "server/src/aweb/human_channels/presence.py",
+          "symbol": "_identity"
+        },
+        {
+          "file": "server/src/aweb/human_channels/presence.py",
+          "symbol": "_signature"
+        },
+        {
+          "file": "server/src/aweb/human_channels/presence.py",
+          "symbol": "_verify"
+        },
+        {
+          "file": "server/src/aweb/human_channels/presence.py",
+          "symbol": "sign_presence_record"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "SERVER.IDENTITY_METADATA",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/identity_metadata.py"
+      ],
+      "operations": [
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "server/src/aweb/identity_metadata.py",
+          "symbol": "native_participant_reference"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "SERVER.INSTALL_ADMINS",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/install_admins.py"
+      ],
+      "operations": [
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "server/src/aweb/install_admins.py",
+          "symbol": "_principal"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "SERVER.MCP.AUTH",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/mcp/auth.py"
+      ],
+      "operations": [
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "server/src/aweb/mcp/auth.py",
+          "symbol": "MCPAuthMiddleware._resolve_proxy_auth"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "SERVER.MCP.SIGNING",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/mcp/signing.py"
+      ],
+      "operations": [
+        "sign",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "server/src/aweb/mcp/signing.py",
+          "symbol": "canonical_signed_payload"
+        },
+        {
+          "file": "server/src/aweb/mcp/signing.py",
+          "symbol": "sign_hosted_message"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "SERVER.MESSAGING.ADDRESS_AUTH",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/messaging/address_auth.py"
+      ],
+      "operations": [
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "server/src/aweb/messaging/address_auth.py",
+          "symbol": "verified_signed_payload_json"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "SERVER.MESSAGING.VERIFICATION",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/messaging/verification.py"
+      ],
+      "operations": [
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "server/src/aweb/messaging/verification.py",
+          "symbol": "message_verification_status"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "SERVER.ROUTES.AGENT_STATUS",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/routes/agent_status.py"
+      ],
+      "operations": [
+        "encode"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "server/src/aweb/routes/agent_status.py",
+          "symbol": "_require_did_key"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "SERVER.MAIL.INGRESS",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/routes/messages.py"
+      ],
+      "operations": [
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "server/src/aweb/routes/messages.py",
+          "symbol": "_continuation_signature_recipient"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "SERVER.ROUTES.MESSAGING",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/routes/messaging.py"
+      ],
+      "operations": [
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "server/src/aweb/routes/messaging.py",
+          "symbol": "_record"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "SERVER.ROUTES.SERVICE_REGISTRATION",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/routes/service_registration.py"
+      ],
+      "operations": [
+        "sign",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "server/src/aweb/routes/service_registration.py",
+          "symbol": "_team_service_register_signature_payload"
+        },
+        {
+          "file": "server/src/aweb/routes/service_registration.py",
+          "symbol": "register_team_with_service"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "SERVER.SIGNED_DOCUMENT",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/signed_document.py"
+      ],
+      "operations": [
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "server/src/aweb/signed_document.py",
+          "symbol": "require_canonical"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "SERVER.TEAM_AUTH",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/team_auth.py"
+      ],
+      "operations": [
+        "encode",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "server/src/aweb/team_auth.py",
+          "symbol": "_verify_certificate_signature"
+        },
+        {
+          "file": "server/src/aweb/team_auth.py",
+          "symbol": "parse_and_verify_certificate"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "SERVER.TEAM_AUTH_ENVELOPE",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/team_auth_envelope.py"
+      ],
+      "operations": [
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "server/src/aweb/team_auth_envelope.py",
+          "symbol": "_request_auth_signature_payload"
+        },
+        {
+          "file": "server/src/aweb/team_auth_envelope.py",
+          "symbol": "compact_team_auth_payload"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "NAAPP.HOOKS.ENVELOPE",
+      "repo": "aweb",
+      "files": [
+        "naapp-lib/src/aweb_naapp/hooks/envelope.py"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "naapp-lib/src/aweb_naapp/hooks/envelope.py",
+          "symbol": "ed25519_did_key"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/hooks/envelope.py",
+          "symbol": "sign"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/hooks/envelope.py",
+          "symbol": "verify_signature"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "NAAPP.HOOKS.PRODUCER",
+      "repo": "aweb",
+      "files": [
+        "naapp-lib/src/aweb_naapp/hooks/producer.py"
+      ],
+      "operations": [
+        "create",
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "naapp-lib/src/aweb_naapp/hooks/producer.py",
+          "symbol": "HookProducer._enqueue"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/hooks/producer.py",
+          "symbol": "ServerProducer.did_key"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "NAAPP.OPS.__MAIN__",
+      "repo": "aweb",
+      "files": [
+        "naapp-lib/src/aweb_naapp/ops/__main__.py"
+      ],
+      "operations": [
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "naapp-lib/src/aweb_naapp/ops/__main__.py",
+          "symbol": "run"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "NAAPP.RUNTIME.APP_CREDENTIALS",
+      "repo": "aweb",
+      "files": [
+        "naapp-lib/src/aweb_naapp/runtime/app_credentials.py"
+      ],
+      "operations": [
+        "create",
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/app_credentials.py",
+          "symbol": "AppCredentialSigner.__init__"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/app_credentials.py",
+          "symbol": "sign_app_credential"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "NAAPP.RUNTIME.APP_KEYS",
+      "repo": "aweb",
+      "files": [
+        "naapp-lib/src/aweb_naapp/runtime/app_keys.py"
+      ],
+      "operations": [
+        "create"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/app_keys.py",
+          "symbol": "declared_did_keys"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/app_keys.py",
+          "symbol": "load_app_key"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "NAAPP.RUNTIME.APPROVALS.CHALLENGE",
+      "repo": "aweb",
+      "files": [
+        "naapp-lib/src/aweb_naapp/runtime/approvals/challenge.py"
+      ],
+      "operations": [
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/approvals/challenge.py",
+          "symbol": "challenge_preimage"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "NAAPP.RUNTIME.APPROVALS.REQUEST",
+      "repo": "aweb",
+      "files": [
+        "naapp-lib/src/aweb_naapp/runtime/approvals/request.py"
+      ],
+      "operations": [
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/approvals/request.py",
+          "symbol": "canonical_request"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "NAAPP.RUNTIME.APPROVALS.SERVICE",
+      "repo": "aweb",
+      "files": [
+        "naapp-lib/src/aweb_naapp/runtime/approvals/service.py"
+      ],
+      "operations": [
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/approvals/service.py",
+          "symbol": "Approvals._verified"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/approvals/service.py",
+          "symbol": "Approvals._verify_task_answer"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "NAAPP.RUNTIME.CAPABILITY_LINKS.__INIT__",
+      "repo": "aweb",
+      "files": [
+        "naapp-lib/src/aweb_naapp/runtime/capability_links/__init__.py"
+      ],
+      "operations": [
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/capability_links/__init__.py",
+          "symbol": "_action_request"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/capability_links/__init__.py",
+          "symbol": "_check_request"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/capability_links/__init__.py",
+          "symbol": "_snapshot_bytes"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/capability_links/__init__.py",
+          "symbol": "admit"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "NAAPP.RUNTIME.EVENT_EMIT",
+      "repo": "aweb",
+      "files": [
+        "naapp-lib/src/aweb_naapp/runtime/event_emit.py"
+      ],
+      "operations": [
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/event_emit.py",
+          "symbol": "app_event_body"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "NAAPP.RUNTIME.HOOK_RESOLVER",
+      "repo": "aweb",
+      "files": [
+        "naapp-lib/src/aweb_naapp/runtime/hook_resolver.py"
+      ],
+      "operations": [
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/hook_resolver.py",
+          "symbol": "HookResolver._get"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "NAAPP.RUNTIME.LINK_REQUESTS",
+      "repo": "aweb",
+      "files": [
+        "naapp-lib/src/aweb_naapp/runtime/link_requests.py"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/link_requests.py",
+          "symbol": "_decode_signed_payload"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/link_requests.py",
+          "symbol": "check_session_did_key"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/link_requests.py",
+          "symbol": "link_request_signing_bytes"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/link_requests.py",
+          "symbol": "sign_link_request"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/link_requests.py",
+          "symbol": "verify_link_request"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "NAAPP.RUNTIME.PASSKEYS.PROOF",
+      "repo": "aweb",
+      "files": [
+        "naapp-lib/src/aweb_naapp/runtime/passkeys/proof.py"
+      ],
+      "operations": [
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/passkeys/proof.py",
+          "symbol": "RetainedPasskeyProof.from_parts"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/passkeys/proof.py",
+          "symbol": "_checked"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "NAAPP.RUNTIME.PASSKEYS.SERVICE",
+      "repo": "aweb",
+      "files": [
+        "naapp-lib/src/aweb_naapp/runtime/passkeys/service.py"
+      ],
+      "operations": [
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/passkeys/service.py",
+          "symbol": "Passkeys._issue_challenge"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/passkeys/service.py",
+          "symbol": "Passkeys._verify_assertion"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/passkeys/service.py",
+          "symbol": "_contact_cancel_preimage"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/passkeys/service.py",
+          "symbol": "_contact_change_preimage"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/passkeys/service.py",
+          "symbol": "_enrolment_challenge"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/passkeys/service.py",
+          "symbol": "_login_preimage"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "NAAPP.RUNTIME.TASK_REQUESTS",
+      "repo": "aweb",
+      "files": [
+        "naapp-lib/src/aweb_naapp/runtime/task_requests.py"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/task_requests.py",
+          "symbol": "_check_payload"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/task_requests.py",
+          "symbol": "_check_stage_payload"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/task_requests.py",
+          "symbol": "check_prepared_intent"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/task_requests.py",
+          "symbol": "sign_stage_receipt"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/task_requests.py",
+          "symbol": "sign_task_authorization"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/task_requests.py",
+          "symbol": "stage_receipt_signing_bytes"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/task_requests.py",
+          "symbol": "task_authorization_signing_bytes"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/task_requests.py",
+          "symbol": "task_body_sha256"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/task_requests.py",
+          "symbol": "validate_task"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/task_requests.py",
+          "symbol": "verify_stage_receipt"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/task_requests.py",
+          "symbol": "verify_task_authorization"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "NAAPP.RUNTIME.TEAM_GRANTS",
+      "repo": "aweb",
+      "files": [
+        "naapp-lib/src/aweb_naapp/runtime/team_grants.py"
+      ],
+      "operations": [
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/team_grants.py",
+          "symbol": "TeamGrantSource._status_for.fetch"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "NAAPP.RUNTIME.USAGE",
+      "repo": "aweb",
+      "files": [
+        "naapp-lib/src/aweb_naapp/runtime/usage.py"
+      ],
+      "operations": [
+        "create",
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/usage.py",
+          "symbol": "app_usage_credential"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/usage.py",
+          "symbol": "report_sha256"
+        },
+        {
+          "file": "naapp-lib/src/aweb_naapp/runtime/usage.py",
+          "symbol": "validate_report"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "NAAPP.SIGNING",
+      "repo": "aweb",
+      "files": [
+        "naapp-lib/src/aweb_naapp/signing_key.py"
+      ],
+      "operations": [
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
+      "sites": [
+        {
+          "file": "naapp-lib/src/aweb_naapp/signing_key.py",
+          "symbol": "parse_signing_key_hex"
+        }
+      ],
+      "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "AWID.DID.READ",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid_service/routes/did.py"
+      ],
+      "operations": [
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "DID key, log, head and address read boundaries; owning slice supplies conversion or relationship tests.",
+      "coverage_scope": "Source inventory only; no identity-tree conversion is claimed.",
+      "sites": [
+        {
+          "file": "awid/src/awid_service/routes/did.py",
+          "symbol": "get_full"
+        },
+        {
+          "file": "awid/src/awid_service/routes/did.py",
+          "symbol": "get_head"
+        },
+        {
+          "file": "awid/src/awid_service/routes/did.py",
+          "symbol": "get_key"
+        },
+        {
+          "file": "awid/src/awid_service/routes/did.py",
+          "symbol": "get_log"
+        },
+        {
+          "file": "awid/src/awid_service/routes/did.py",
+          "symbol": "list_did_addresses"
+        }
+      ]
+    },
+    {
+      "id": "AWID.DID.ENCRYPTION",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid_service/routes/did.py"
+      ],
+      "operations": [
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Identity-signed encryption-key publication; owning slice supplies conversion or relationship tests.",
+      "coverage_scope": "Source inventory only; no identity-tree conversion is claimed.",
+      "sites": [
+        {
+          "file": "awid/src/awid_service/routes/did.py",
+          "symbol": "publish_encryption_key"
+        }
+      ]
     }
   ],
   "guard_checkpoint": {
@@ -2196,6 +4512,1693 @@
       "Require ed25519_profile=strict|legacy per verify row, established from its exact call sites. Track aweb-acmz in this same inventory; preserve released-family rulings and split mixed rows rather than guessing a profile.",
       "For non-aweb repos, pin an exact SHA and run an equivalent repository guard, or have the release gate read that repo own guarded inventory. Missing external evidence fails qualification.",
       "Keep fleet-under-Juan as a separate release step in release_requirements, proved by verified aw who chains for the fleet, not a source-inventory row."
+    ]
+  },
+  "python_guard": {
+    "v": 1,
+    "scope": "Python source roots only: awid/src, server/src, naapp-lib/src. This pins source calls, not release qualification; Go/TS, full row schema and external evidence remain pending.",
+    "sites": [
+      {
+        "row": "AWID.A2A_PUBLICATION",
+        "file": "awid/src/awid/a2a_publication.py",
+        "symbol": "_did_aw",
+        "calls": {
+          "awid.did.validate_stable_id": 1
+        }
+      },
+      {
+        "row": "AWID.A2A_PUBLICATION",
+        "file": "awid/src/awid/a2a_publication.py",
+        "symbol": "a2a_delegation_canonical",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "AWID.A2A_PUBLICATION",
+        "file": "awid/src/awid/a2a_publication.py",
+        "symbol": "a2a_publication_canonical",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "AWID.ATOMIC_CLAIM",
+        "file": "awid/src/awid/atomic_claim.py",
+        "symbol": "atomic_address_claim_identity_canonical",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "AWID.ATOMIC_CLAIM",
+        "file": "awid/src/awid/atomic_claim.py",
+        "symbol": "atomic_address_claim_namespace_canonical",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "AWID.MEMBER.ATTESTATIONS",
+        "file": "awid/src/awid/attestation_records.py",
+        "symbol": "_require_did_key",
+        "calls": {
+          "awid.did.public_key_from_did": 1
+        }
+      },
+      {
+        "row": "AWID.MEMBER.ATTESTATIONS",
+        "file": "awid/src/awid/attestation_records.py",
+        "symbol": "_strict_object",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "AWID.MEMBER.ATTESTATIONS",
+        "file": "awid/src/awid/attestation_records.py",
+        "symbol": "_verify",
+        "calls": {
+          "awid.did.public_key_from_did": 1,
+          "nacl.signing.VerifyKey": 1,
+          "nacl.signing.VerifyKey().verify": 1
+        }
+      },
+      {
+        "row": "AWID.MEMBER.ATTESTATIONS",
+        "file": "awid/src/awid/attestation_records.py",
+        "symbol": "encode_attestation_header",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1,
+          "nacl.signing.SigningKey": 1,
+          "nacl.signing.SigningKey().sign": 1
+        }
+      },
+      {
+        "row": "AWID.MEMBER.ATTESTATIONS",
+        "file": "awid/src/awid/attestation_records.py",
+        "symbol": "sign_record",
+        "calls": {
+          "nacl.signing.SigningKey": 1,
+          "nacl.signing.SigningKey().sign": 1
+        }
+      },
+      {
+        "row": "AWID.MEMBER.ATTESTATIONS",
+        "file": "awid/src/awid/attestation_records.py",
+        "symbol": "signing_bytes",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "AWID.CONTRACT",
+        "file": "awid/src/awid/contract.py",
+        "symbol": "resolve_identity_contract",
+        "calls": {
+          "awid.did.stable_id_from_did_key": 1
+        }
+      },
+      {
+        "row": "AWID.CONTROLLER_REQUEST",
+        "file": "awid/src/awid/controller_request.py",
+        "symbol": "verify_controller_json_request",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1,
+          "awid.signing.verify_did_key_signature": 1
+        }
+      },
+      {
+        "row": "AWID.DID.KEY.FORMAT",
+        "file": "awid/src/awid/did.py",
+        "symbol": "generate_keypair",
+        "calls": {
+          "nacl.signing.SigningKey.generate": 1
+        }
+      },
+      {
+        "row": "AWID.DNS_AUTH",
+        "file": "awid/src/awid/dns_auth.py",
+        "symbol": "validate_did_key",
+        "calls": {
+          "awid.did.validate_did": 1
+        }
+      },
+      {
+        "row": "AWID.DNS_AUTH",
+        "file": "awid/src/awid/dns_auth.py",
+        "symbol": "verify_signed_json_request",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1,
+          "awid.signing.verify_did_key_signature": 1
+        }
+      },
+      {
+        "row": "AWID.NAMESPACE.DNS",
+        "file": "awid/src/awid/dns_verify.py",
+        "symbol": "_parse_awid_record",
+        "calls": {
+          "awid.did.validate_did": 1
+        }
+      },
+      {
+        "row": "AWID.E2EE.KEYS",
+        "file": "awid/src/awid/e2ee_keys.py",
+        "symbol": "build_encryption_key_assertion",
+        "calls": {
+          "awid.did.did_from_public_key": 1,
+          "awid.signing.sign_message": 1,
+          "nacl.signing.SigningKey": 1
+        }
+      },
+      {
+        "row": "AWID.E2EE.KEYS",
+        "file": "awid/src/awid/e2ee_keys.py",
+        "symbol": "canonical_encryption_assertion",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "AWID.E2EE.KEYS",
+        "file": "awid/src/awid/e2ee_keys.py",
+        "symbol": "validate_encryption_key_assertion",
+        "calls": {
+          "awid.did.public_key_from_did": 1,
+          "awid.signing.verify_did_key_signature": 1
+        }
+      },
+      {
+        "row": "AWID.EXTERNAL_AUTHORITY",
+        "file": "awid/src/awid/external_authority.py",
+        "symbol": "_parse_awid_record",
+        "calls": {
+          "awid.did.validate_did": 1
+        }
+      },
+      {
+        "row": "AWID.EXTERNAL_AUTHORITY",
+        "file": "awid/src/awid/external_authority.py",
+        "symbol": "authority_statement",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "AWID.EXTERNAL.REGISTRY",
+        "file": "awid/src/awid/external_registry.py",
+        "symbol": "StrictExternalRegistry._fetch_evidence",
+        "calls": {
+          "awid.did.validate_did": 1,
+          "awid.did.validate_stable_id": 1,
+          "awid.identity_log_verify.verify_identity_head": 1,
+          "awid.identity_log_verify.verify_identity_log": 1
+        }
+      },
+      {
+        "row": "AWID.HTTP_DIDKEY",
+        "file": "awid/src/awid/http_didkey.py",
+        "symbol": "build_http_didkey_payload",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "AWID.HTTP_DIDKEY",
+        "file": "awid/src/awid/http_didkey.py",
+        "symbol": "verify_http_didkey_request",
+        "calls": {
+          "awid.signing.verify_did_key_signature": 1
+        }
+      },
+      {
+        "row": "S1.PY.ANCESTRY",
+        "file": "awid/src/awid/id_certificates.py",
+        "symbol": "_IDStatus.__init__",
+        "calls": {
+          "awid.identity_log_verify.verify_identity_log": 1,
+          "verify_id_certificate": 1
+        }
+      },
+      {
+        "row": "S1.PY.CODEC",
+        "file": "awid/src/awid/id_certificates.py",
+        "symbol": "_bundle_shape",
+        "calls": {
+          "verify_id_certificate": 1
+        }
+      },
+      {
+        "row": "S1.PY.CODEC",
+        "file": "awid/src/awid/id_certificates.py",
+        "symbol": "_id",
+        "calls": {
+          "awid.did.did_from_public_key": 1,
+          "awid.did.public_key_from_did": 1,
+          "awid.did.validate_stable_id": 1,
+          "nacl.bindings.crypto_core_ed25519_is_valid_point": 1
+        }
+      },
+      {
+        "row": "S1.PY.ANCESTRY",
+        "file": "awid/src/awid/id_certificates.py",
+        "symbol": "_id_chain",
+        "calls": {
+          "verify_id_certificate": 1
+        }
+      },
+      {
+        "row": "S1.PY.ANCESTRY",
+        "file": "awid/src/awid/id_certificates.py",
+        "symbol": "_id_chain.evaluate",
+        "calls": {
+          "verify_id_certificate": 1
+        }
+      },
+      {
+        "row": "S1.PY.CODEC",
+        "file": "awid/src/awid/id_certificates.py",
+        "symbol": "id_certificate_id",
+        "calls": {
+          "id_certificate_signing_bytes": 1
+        }
+      },
+      {
+        "row": "S1.PY.CODEC",
+        "file": "awid/src/awid/id_certificates.py",
+        "symbol": "verify_id_certificate",
+        "calls": {
+          "awid.did.public_key_from_did": 1,
+          "id_certificate_signing_bytes": 1,
+          "nacl.bindings.crypto_core_ed25519_is_valid_point": 1,
+          "nacl.signing.VerifyKey": 1,
+          "nacl.signing.VerifyKey().verify": 1
+        }
+      },
+      {
+        "row": "AWID.DID.LOG",
+        "file": "awid/src/awid/identity_log_verify.py",
+        "symbol": "_verify_entry",
+        "calls": {
+          "awid.did.public_key_from_did": 3,
+          "awid.did.stable_id_from_did_key": 1
+        }
+      },
+      {
+        "row": "AWID.DID.LOG",
+        "file": "awid/src/awid/identity_log_verify.py",
+        "symbol": "_verify_signature",
+        "calls": {
+          "awid.signing.verify_did_key_signature": 1
+        }
+      },
+      {
+        "row": "AWID.DID.LOG",
+        "file": "awid/src/awid/identity_log_verify.py",
+        "symbol": "verify_identity_head",
+        "calls": {
+          "awid.did.validate_stable_id": 1
+        }
+      },
+      {
+        "row": "AWID.DID.LOG",
+        "file": "awid/src/awid/identity_log_verify.py",
+        "symbol": "verify_identity_log",
+        "calls": {
+          "awid.did.validate_stable_id": 1
+        }
+      },
+      {
+        "row": "AWID.LOG",
+        "file": "awid/src/awid/log.py",
+        "symbol": "identity_state_hash",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "AWID.LOG",
+        "file": "awid/src/awid/log.py",
+        "symbol": "log_entry_payload",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "AWID.LOG",
+        "file": "awid/src/awid/log.py",
+        "symbol": "state_hash",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "AWID.PUBLIC.CLIENT",
+        "file": "awid/src/awid/registry.py",
+        "symbol": "CachedRegistryClient.register_did",
+        "calls": {
+          "awid.did.stable_id_from_did_key": 1,
+          "super().register_did": 1
+        }
+      },
+      {
+        "row": "AWID.PUBLIC.CLIENT",
+        "file": "awid/src/awid/registry.py",
+        "symbol": "RegistryClient._signed_address_headers",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1,
+          "awid.signing.sign_message": 1
+        }
+      },
+      {
+        "row": "AWID.PUBLIC.CLIENT",
+        "file": "awid/src/awid/registry.py",
+        "symbol": "RegistryClient._signed_namespace_headers",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1,
+          "awid.signing.sign_message": 1
+        }
+      },
+      {
+        "row": "AWID.PUBLIC.CLIENT",
+        "file": "awid/src/awid/registry.py",
+        "symbol": "RegistryClient._signed_parent_namespace_headers",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1,
+          "awid.signing.sign_message": 1
+        }
+      },
+      {
+        "row": "AWID.PUBLIC.CLIENT",
+        "file": "awid/src/awid/registry.py",
+        "symbol": "RegistryClient._signed_parent_namespace_registration_headers",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1,
+          "awid.signing.sign_message": 1
+        }
+      },
+      {
+        "row": "AWID.PUBLIC.CLIENT",
+        "file": "awid/src/awid/registry.py",
+        "symbol": "RegistryClient._signed_path_headers",
+        "calls": {
+          "awid.signing.sign_message": 1
+        }
+      },
+      {
+        "row": "AWID.PUBLIC.CLIENT",
+        "file": "awid/src/awid/registry.py",
+        "symbol": "RegistryClient._signed_team_headers",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1,
+          "awid.signing.sign_message": 1
+        }
+      },
+      {
+        "row": "AWID.PUBLIC.CLIENT",
+        "file": "awid/src/awid/registry.py",
+        "symbol": "RegistryClient.register_did",
+        "calls": {
+          "awid.did.stable_id_from_did_key": 1,
+          "awid.signing.sign_message": 1
+        }
+      },
+      {
+        "row": "AWID.PUBLIC.CLIENT",
+        "file": "awid/src/awid/registry.py",
+        "symbol": "RegistryClient.rotate_key",
+        "calls": {
+          "awid.signing.sign_message": 1
+        }
+      },
+      {
+        "row": "AWID.PUBLIC.CLIENT",
+        "file": "awid/src/awid/registry.py",
+        "symbol": "_did_key_from_signing_key",
+        "calls": {
+          "awid.did.did_from_public_key": 1,
+          "nacl.signing.SigningKey": 1
+        }
+      },
+      {
+        "row": "AWID.SIGNING",
+        "file": "awid/src/awid/signing.py",
+        "symbol": "sign_message",
+        "calls": {
+          "nacl.signing.SigningKey": 1,
+          "signing_key.sign": 1
+        }
+      },
+      {
+        "row": "AWID.SIGNING",
+        "file": "awid/src/awid/signing.py",
+        "symbol": "verify_signature",
+        "calls": {
+          "awid.did.public_key_from_did": 1
+        }
+      },
+      {
+        "row": "AWID.SIGNING",
+        "file": "awid/src/awid/signing.py",
+        "symbol": "verify_signature_with_public_key",
+        "calls": {
+          "nacl.signing.VerifyKey": 1,
+          "verify_key.verify": 1
+        }
+      },
+      {
+        "row": "AWID.TEAM.CERTIFICATES",
+        "file": "awid/src/awid/team_certificate.py",
+        "symbol": "verify_team_certificate_signature",
+        "calls": {
+          "awid.did.public_key_from_did": 1,
+          "awid.signing.canonical_json_bytes": 1,
+          "awid.signing.verify_signature_with_public_key": 1
+        }
+      },
+      {
+        "row": "AWID.TEAM_SERVER_RECORD",
+        "file": "awid/src/awid/team_server_record.py",
+        "symbol": "record_signing_bytes",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "AWID.TEAM_SERVER_RECORD",
+        "file": "awid/src/awid/team_server_record.py",
+        "symbol": "sign_team_server_record",
+        "calls": {
+          "awid.signing.sign_message": 1
+        }
+      },
+      {
+        "row": "AWID.TEAM_SERVER_RECORD",
+        "file": "awid/src/awid/team_server_record.py",
+        "symbol": "verify_team_server_record",
+        "calls": {
+          "awid.did.public_key_from_did": 1,
+          "awid.signing.verify_signature_with_public_key": 1
+        }
+      },
+      {
+        "row": "AWID.SERVICE.ATTESTATION_ROTATION",
+        "file": "awid/src/awid_service/attestation_rotation.py",
+        "symbol": "apply_resigned_records",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 2,
+          "awid.signing.canonical_json_bytes().decode": 2
+        }
+      },
+      {
+        "row": "AWID.SERVICE.ROUTES.A2A_PUBLICATIONS",
+        "file": "awid/src/awid_service/routes/a2a_publications.py",
+        "symbol": "_ensure_identity_key_history",
+        "calls": {
+          "awid.signing.verify_did_key_signature": 1
+        }
+      },
+      {
+        "row": "AWID.SERVICE.ROUTES.A2A_PUBLICATIONS",
+        "file": "awid/src/awid_service/routes/a2a_publications.py",
+        "symbol": "_verify_signature",
+        "calls": {
+          "awid.signing.verify_did_key_signature": 1
+        }
+      },
+      {
+        "row": "AWID.SERVICE.ROUTES.A2A_PUBLICATIONS",
+        "file": "awid/src/awid_service/routes/a2a_publications.py",
+        "symbol": "get_a2a_publication",
+        "calls": {
+          "awid.did.validate_stable_id": 1
+        }
+      },
+      {
+        "row": "AWID.MEMBER.ATTESTATIONS",
+        "file": "awid/src/awid_service/routes/attestation_records.py",
+        "symbol": "verify_published_record",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "AWID.DID.READ",
+        "file": "awid/src/awid_service/routes/did.py",
+        "symbol": "get_full",
+        "calls": {
+          "awid.did.validate_stable_id": 1,
+          "awid.signing.verify_did_key_signature": 1
+        }
+      },
+      {
+        "row": "AWID.DID.READ",
+        "file": "awid/src/awid_service/routes/did.py",
+        "symbol": "get_head",
+        "calls": {
+          "awid.did.validate_stable_id": 1
+        }
+      },
+      {
+        "row": "AWID.DID.READ",
+        "file": "awid/src/awid_service/routes/did.py",
+        "symbol": "get_key",
+        "calls": {
+          "awid.did.validate_stable_id": 1
+        }
+      },
+      {
+        "row": "AWID.DID.READ",
+        "file": "awid/src/awid_service/routes/did.py",
+        "symbol": "get_log",
+        "calls": {
+          "awid.did.validate_stable_id": 1
+        }
+      },
+      {
+        "row": "AWID.DID.READ",
+        "file": "awid/src/awid_service/routes/did.py",
+        "symbol": "list_did_addresses",
+        "calls": {
+          "awid.did.validate_stable_id": 1
+        }
+      },
+      {
+        "row": "AWID.DID.ENCRYPTION",
+        "file": "awid/src/awid_service/routes/did.py",
+        "symbol": "publish_encryption_key",
+        "calls": {
+          "awid.did.validate_stable_id": 1
+        }
+      },
+      {
+        "row": "AWID.DID.GENESIS",
+        "file": "awid/src/awid_service/routes/did.py",
+        "symbol": "register_did",
+        "calls": {
+          "awid.did.public_key_from_did": 1,
+          "awid.did.stable_id_from_public_key": 1,
+          "awid.did.validate_stable_id": 1,
+          "awid.signing.verify_did_key_signature": 1
+        }
+      },
+      {
+        "row": "AWID.DID.ROTATE",
+        "file": "awid/src/awid_service/routes/did.py",
+        "symbol": "update_mapping",
+        "calls": {
+          "awid.did.public_key_from_did": 1,
+          "awid.did.validate_stable_id": 1,
+          "awid.signing.verify_did_key_signature": 1
+        }
+      },
+      {
+        "row": "AWID.ADDRESS.REPLACE",
+        "file": "awid/src/awid_service/routes/dns_addresses.py",
+        "symbol": "_normalize_address_claim_fields",
+        "calls": {
+          "awid.did.validate_stable_id": 1
+        }
+      },
+      {
+        "row": "AWID.ADDRESS.REPLACE",
+        "file": "awid/src/awid_service/routes/dns_addresses.py",
+        "symbol": "_resolve_caller_did_aw",
+        "calls": {
+          "awid.did.stable_id_from_did_key": 1
+        }
+      },
+      {
+        "row": "AWID.ADDRESS.REPLACE",
+        "file": "awid/src/awid_service/routes/dns_addresses.py",
+        "symbol": "_validate_did_aw",
+        "calls": {
+          "awid.did.validate_stable_id": 1
+        }
+      },
+      {
+        "row": "AWID.ADDRESS.REPLACE",
+        "file": "awid/src/awid_service/routes/dns_addresses.py",
+        "symbol": "_validated_did_log_proof",
+        "calls": {
+          "awid.did.public_key_from_did": 1,
+          "awid.did.stable_id_from_public_key": 1,
+          "awid.did.validate_stable_id": 1,
+          "awid.signing.verify_did_key_signature": 1
+        }
+      },
+      {
+        "row": "AWID.ADDRESS.REPLACE",
+        "file": "awid/src/awid_service/routes/dns_addresses.py",
+        "symbol": "_verify_atomic_claim_signatures",
+        "calls": {
+          "awid.signing.verify_did_key_signature": 2
+        }
+      },
+      {
+        "row": "AWID.TEAM.CERTIFICATES",
+        "file": "awid/src/awid_service/routes/teams.py",
+        "symbol": "_verify_certificate_blob",
+        "calls": {
+          "awid.did.public_key_from_did": 1,
+          "awid.signing.canonical_json_bytes": 1,
+          "awid.signing.verify_signature_with_public_key": 1
+        }
+      },
+      {
+        "row": "AWID.TEAM.CERTIFICATES",
+        "file": "awid/src/awid_service/routes/teams.py",
+        "symbol": "_verify_path_signature",
+        "calls": {
+          "awid.did.public_key_from_did": 1,
+          "awid.signing.verify_signature_with_public_key": 1
+        }
+      },
+      {
+        "row": "AWID.TEAM.CERTIFICATES",
+        "file": "awid/src/awid_service/routes/teams.py",
+        "symbol": "publish_team_server",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1,
+          "awid.signing.canonical_json_bytes().decode": 1
+        }
+      },
+      {
+        "row": "AWID.DEV.IDENTITY",
+        "file": "awid/src/awid_service/testing.py",
+        "symbol": "Registry.add_custody",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1,
+          "awid.signing.canonical_json_bytes().decode": 1
+        }
+      },
+      {
+        "row": "AWID.DEV.IDENTITY",
+        "file": "awid/src/awid_service/testing.py",
+        "symbol": "Registry.register_did",
+        "calls": {
+          "self._client().register_did": 1
+        }
+      },
+      {
+        "row": "AWID.DEV.IDENTITY",
+        "file": "awid/src/awid_service/testing.py",
+        "symbol": "_did_key",
+        "calls": {
+          "awid.did.did_from_public_key": 1
+        }
+      },
+      {
+        "row": "AWID.DEV.IDENTITY",
+        "file": "awid/src/awid_service/testing.py",
+        "symbol": "signed_team_server_record",
+        "calls": {
+          "awid.signing.sign_message": 1
+        }
+      },
+      {
+        "row": "SERVER.AGENT_ACTIVITY",
+        "file": "server/src/aweb/agent_activity.py",
+        "symbol": "verify_activity_event",
+        "calls": {
+          "awid.signing.verify_signature": 1
+        }
+      },
+      {
+        "row": "SERVER.AGENT_STATUS",
+        "file": "server/src/aweb/agent_status.py",
+        "symbol": "verify_status_document",
+        "calls": {
+          "awid.signing.verify_signature": 1
+        }
+      },
+      {
+        "row": "SERVER.APP_CREDENTIALS",
+        "file": "server/src/aweb/app_credentials.py",
+        "symbol": "verify_app_credential",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1,
+          "awid.signing.verify_did_key_signature": 1
+        }
+      },
+      {
+        "row": "SERVER.ATTACHMENT_SERVICE",
+        "file": "server/src/aweb/attachment_service.py",
+        "symbol": "_bind",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "SERVER.ATTACHMENTS",
+        "file": "server/src/aweb/attachments.py",
+        "symbol": "AttachmentDescriptor.ref",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "SERVER.CONFIG",
+        "file": "server/src/aweb/config.py",
+        "symbol": "_is_ed25519_did_key",
+        "calls": {
+          "awid.did.did_from_public_key": 1,
+          "awid.did.public_key_from_did": 1
+        }
+      },
+      {
+        "row": "SERVER.E2EE.MESSAGES",
+        "file": "server/src/aweb/e2ee_messages.py",
+        "symbol": "_build_key_wrap",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "SERVER.E2EE.MESSAGES",
+        "file": "server/src/aweb/e2ee_messages.py",
+        "symbol": "_content_aad",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "SERVER.E2EE.MESSAGES",
+        "file": "server/src/aweb/e2ee_messages.py",
+        "symbol": "_hash_canonical",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "SERVER.E2EE.MESSAGES",
+        "file": "server/src/aweb/e2ee_messages.py",
+        "symbol": "_inner_payload_canonical",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "SERVER.E2EE.MESSAGES",
+        "file": "server/src/aweb/e2ee_messages.py",
+        "symbol": "_open_key_wrap",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "SERVER.E2EE.MESSAGES",
+        "file": "server/src/aweb/e2ee_messages.py",
+        "symbol": "encrypt_e2ee_message",
+        "calls": {
+          "awid.did.did_from_public_key": 1,
+          "awid.signing.canonical_json_bytes": 1,
+          "awid.signing.sign_message": 1,
+          "nacl.signing.SigningKey": 1
+        }
+      },
+      {
+        "row": "SERVER.E2EE.MESSAGES",
+        "file": "server/src/aweb/e2ee_messages.py",
+        "symbol": "encrypted_message_storage_metadata",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "SERVER.E2EE.MESSAGES",
+        "file": "server/src/aweb/e2ee_messages.py",
+        "symbol": "validate_e2ee_message_envelope",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1,
+          "awid.signing.verify_signature": 1
+        }
+      },
+      {
+        "row": "SERVER.E2EE.MESSAGES",
+        "file": "server/src/aweb/e2ee_messages.py",
+        "symbol": "verify_e2ee_message_envelope_signature",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1,
+          "awid.signing.verify_signature": 1
+        }
+      },
+      {
+        "row": "SERVER.FEDERATION.AUTHORITY_STATE",
+        "file": "server/src/aweb/federation/authority_state.py",
+        "symbol": "AuthorityRepository.get_checkpoint",
+        "calls": {
+          "awid.identity_log_verify.IdentityCheckpoint": 1
+        }
+      },
+      {
+        "row": "SERVER.FEDERATION.DELIVERY",
+        "file": "server/src/aweb/federation/delivery.py",
+        "symbol": "federation_envelope_hash",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "SERVER.FEDERATION",
+        "file": "server/src/aweb/federation/envelope.py",
+        "symbol": "verify_federation_envelope",
+        "calls": {
+          "awid.signing.verify_did_key_signature": 1
+        }
+      },
+      {
+        "row": "SERVER.HUMAN_CHANNELS.HTTP",
+        "file": "server/src/aweb/human_channels/http.py",
+        "symbol": "accept_native_http",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 2,
+          "awid.signing.canonical_json_bytes().decode": 2
+        }
+      },
+      {
+        "row": "SERVER.HUMAN_CHANNELS.MCP",
+        "file": "server/src/aweb/human_channels/mcp.py",
+        "symbol": "send_mcp_native",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 4,
+          "awid.signing.canonical_json_bytes().decode": 3
+        }
+      },
+      {
+        "row": "SERVER.HUMAN_CHANNELS.NATIVE",
+        "file": "server/src/aweb/human_channels/native.py",
+        "symbol": "NativeMessagingUnitOfWork.accept",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "SERVER.HUMAN_CHANNELS.NATIVE",
+        "file": "server/src/aweb/human_channels/native.py",
+        "symbol": "NativeMessagingUnitOfWork.claim_ingress",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1,
+          "awid.signing.canonical_json_bytes().decode": 1
+        }
+      },
+      {
+        "row": "SERVER.HUMAN_CHANNELS.NATIVE",
+        "file": "server/src/aweb/human_channels/native.py",
+        "symbol": "_dto",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "SERVER.HUMAN_CHANNELS.PARTICIPANTS",
+        "file": "server/src/aweb/human_channels/participants.py",
+        "symbol": "_session",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "SERVER.HUMAN_CHANNELS.PARTICIPANTS",
+        "file": "server/src/aweb/human_channels/participants.py",
+        "symbol": "derive_guest_reference",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 3
+        }
+      },
+      {
+        "row": "SERVER.HUMAN_CHANNELS.PARTICIPANTS",
+        "file": "server/src/aweb/human_channels/participants.py",
+        "symbol": "project_session_author",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 2
+        }
+      },
+      {
+        "row": "SERVER.HUMAN_CHANNELS.PARTICIPANTS",
+        "file": "server/src/aweb/human_channels/participants.py",
+        "symbol": "require_native_participant_input",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "SERVER.HUMAN_CHANNELS.PARTICIPANTS",
+        "file": "server/src/aweb/human_channels/participants.py",
+        "symbol": "scoped_participant_key",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "SERVER.HUMAN.PRESENCE",
+        "file": "server/src/aweb/human_channels/presence.py",
+        "symbol": "_identity",
+        "calls": {
+          "awid.did.public_key_from_did": 1,
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "SERVER.HUMAN.PRESENCE",
+        "file": "server/src/aweb/human_channels/presence.py",
+        "symbol": "_signature",
+        "calls": {
+          "awid.signing.verify_did_key_signature": 1
+        }
+      },
+      {
+        "row": "SERVER.HUMAN.PRESENCE",
+        "file": "server/src/aweb/human_channels/presence.py",
+        "symbol": "_verify",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 2
+        }
+      },
+      {
+        "row": "SERVER.HUMAN.PRESENCE",
+        "file": "server/src/aweb/human_channels/presence.py",
+        "symbol": "sign_presence_record",
+        "calls": {
+          "awid.did.did_from_public_key": 1,
+          "awid.signing.canonical_json_bytes": 1,
+          "awid.signing.sign_message": 1,
+          "nacl.signing.SigningKey": 1
+        }
+      },
+      {
+        "row": "SERVER.AUTH.IDENTITY",
+        "file": "server/src/aweb/identity_auth_deps.py",
+        "symbol": "lookup_identity_agent_context",
+        "calls": {
+          "aweb.identity_binding.verify_identity_binding": 1
+        }
+      },
+      {
+        "row": "SERVER.AUTH.IDENTITY",
+        "file": "server/src/aweb/identity_auth_deps.py",
+        "symbol": "resolve_identity_auth",
+        "calls": {
+          "aweb.identity_binding.verify_identity_binding": 2,
+          "awid.signing.verify_did_key_signature": 1
+        }
+      },
+      {
+        "row": "SERVER.AUTH.BINDING",
+        "file": "server/src/aweb/identity_binding.py",
+        "symbol": "observe_identity_binding",
+        "calls": {
+          "awid.did.stable_id_from_did_key": 1
+        }
+      },
+      {
+        "row": "SERVER.AUTH.GRANT",
+        "file": "server/src/aweb/identity_grant_auth.py",
+        "symbol": "_verify_identity_grant_row",
+        "calls": {
+          "aweb.identity_binding.verify_identity_binding": 1,
+          "awid.signing.canonical_json_bytes": 1,
+          "awid.signing.verify_did_key_signature": 1
+        }
+      },
+      {
+        "row": "SERVER.IDENTITY_METADATA",
+        "file": "server/src/aweb/identity_metadata.py",
+        "symbol": "native_participant_reference",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "SERVER.INSTALL_ADMINS",
+        "file": "server/src/aweb/install_admins.py",
+        "symbol": "_principal",
+        "calls": {
+          "awid.did.public_key_from_did": 1
+        }
+      },
+      {
+        "row": "SERVER.MCP.AUTH",
+        "file": "server/src/aweb/mcp/auth.py",
+        "symbol": "MCPAuthMiddleware._resolve_proxy_auth",
+        "calls": {
+          "aweb.identity_binding.verify_identity_binding": 1
+        }
+      },
+      {
+        "row": "SERVER.MCP.SIGNING",
+        "file": "server/src/aweb/mcp/signing.py",
+        "symbol": "canonical_signed_payload",
+        "calls": {
+          "awid.signing.canonical_payload": 1,
+          "awid.signing.canonical_payload().decode": 1
+        }
+      },
+      {
+        "row": "SERVER.MCP.SIGNING",
+        "file": "server/src/aweb/mcp/signing.py",
+        "symbol": "sign_hosted_message",
+        "calls": {
+          "awid.signing.verify_did_key_signature": 1
+        }
+      },
+      {
+        "row": "SERVER.MESSAGING.ADDRESS_AUTH",
+        "file": "server/src/aweb/messaging/address_auth.py",
+        "symbol": "verified_signed_payload_json",
+        "calls": {
+          "awid.signing.verify_did_key_signature": 1
+        }
+      },
+      {
+        "row": "SERVER.MESSAGING.VERIFICATION",
+        "file": "server/src/aweb/messaging/verification.py",
+        "symbol": "message_verification_status",
+        "calls": {
+          "awid.signing.verify_signature": 1
+        }
+      },
+      {
+        "row": "SERVER.ROUTES.AGENT_STATUS",
+        "file": "server/src/aweb/routes/agent_status.py",
+        "symbol": "_require_did_key",
+        "calls": {
+          "awid.did.validate_did": 1
+        }
+      },
+      {
+        "row": "SERVER.CONTACT.REBIND",
+        "file": "server/src/aweb/routes/contacts.py",
+        "symbol": "bind_contact_identity_route",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1,
+          "awid.signing.verify_did_key_signature": 1
+        }
+      },
+      {
+        "row": "SERVER.MAIL.INGRESS",
+        "file": "server/src/aweb/routes/messages.py",
+        "symbol": "_continuation_signature_recipient",
+        "calls": {
+          "aweb.identity_binding.verify_identity_binding": 1
+        }
+      },
+      {
+        "row": "SERVER.ROUTES.MESSAGING",
+        "file": "server/src/aweb/routes/messaging.py",
+        "symbol": "_record",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "SERVER.ROUTES.SERVICE_REGISTRATION",
+        "file": "server/src/aweb/routes/service_registration.py",
+        "symbol": "_team_service_register_signature_payload",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "SERVER.ROUTES.SERVICE_REGISTRATION",
+        "file": "server/src/aweb/routes/service_registration.py",
+        "symbol": "register_team_with_service",
+        "calls": {
+          "awid.signing.verify_did_key_signature": 1
+        }
+      },
+      {
+        "row": "SERVER.SIGNED_DOCUMENT",
+        "file": "server/src/aweb/signed_document.py",
+        "symbol": "require_canonical",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "SERVER.TEAM_AUTH",
+        "file": "server/src/aweb/team_auth.py",
+        "symbol": "_verify_certificate_signature",
+        "calls": {
+          "awid.team_certificate.verify_team_certificate_signature": 1
+        }
+      },
+      {
+        "row": "SERVER.TEAM_AUTH",
+        "file": "server/src/aweb/team_auth.py",
+        "symbol": "parse_and_verify_certificate",
+        "calls": {
+          "awid.team_certificate.decode_team_certificate": 1
+        }
+      },
+      {
+        "row": "SERVER.AUTH.TEAM",
+        "file": "server/src/aweb/team_auth_deps.py",
+        "symbol": "resolve_team_identity",
+        "calls": {
+          "aweb.identity_binding.verify_identity_binding": 2
+        }
+      },
+      {
+        "row": "SERVER.AUTH.TEAM",
+        "file": "server/src/aweb/team_auth_deps.py",
+        "symbol": "verify_request_certificate",
+        "calls": {
+          "aweb.identity_binding.verify_identity_binding": 1,
+          "awid.signing.verify_did_key_signature": 1,
+          "awid.team_certificate.decode_team_certificate": 1
+        }
+      },
+      {
+        "row": "SERVER.TEAM_AUTH_ENVELOPE",
+        "file": "server/src/aweb/team_auth_envelope.py",
+        "symbol": "_request_auth_signature_payload",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 2
+        }
+      },
+      {
+        "row": "SERVER.TEAM_AUTH_ENVELOPE",
+        "file": "server/src/aweb/team_auth_envelope.py",
+        "symbol": "compact_team_auth_payload",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "NAAPP.HOOKS.VERIFY",
+        "file": "naapp-lib/src/aweb_naapp/hooks/delivery.py",
+        "symbol": "_decode_certificate",
+        "calls": {
+          "awid.team_certificate.decode_team_certificate": 1
+        }
+      },
+      {
+        "row": "NAAPP.HOOKS.VERIFY",
+        "file": "naapp-lib/src/aweb_naapp/hooks/delivery.py",
+        "symbol": "_verify_client_certificate",
+        "calls": {
+          "awid.team_certificate.verify_team_certificate_signature": 1
+        }
+      },
+      {
+        "row": "NAAPP.HOOKS.VERIFY",
+        "file": "naapp-lib/src/aweb_naapp/hooks/delivery.py",
+        "symbol": "sign_delivery",
+        "calls": {
+          "awid.did.did_from_public_key": 1,
+          "key.sign": 1,
+          "nacl.signing.SigningKey": 1
+        }
+      },
+      {
+        "row": "NAAPP.HOOKS.VERIFY",
+        "file": "naapp-lib/src/aweb_naapp/hooks/delivery.py",
+        "symbol": "verify_delivery",
+        "calls": {
+          "aweb_naapp.hooks.envelope.verify": 1
+        }
+      },
+      {
+        "row": "NAAPP.HOOKS.ENVELOPE",
+        "file": "naapp-lib/src/aweb_naapp/hooks/envelope.py",
+        "symbol": "ed25519_did_key",
+        "calls": {
+          "awid.did.public_key_from_did": 1
+        }
+      },
+      {
+        "row": "NAAPP.HOOKS.ENVELOPE",
+        "file": "naapp-lib/src/aweb_naapp/hooks/envelope.py",
+        "symbol": "sign",
+        "calls": {
+          "awid.did.did_from_public_key": 1,
+          "key.sign": 1,
+          "nacl.signing.SigningKey": 1
+        }
+      },
+      {
+        "row": "NAAPP.HOOKS.ENVELOPE",
+        "file": "naapp-lib/src/aweb_naapp/hooks/envelope.py",
+        "symbol": "verify_signature",
+        "calls": {
+          "awid.did.public_key_from_did": 1,
+          "nacl.signing.VerifyKey": 1,
+          "nacl.signing.VerifyKey().verify": 1
+        }
+      },
+      {
+        "row": "NAAPP.OWNER.B3",
+        "file": "naapp-lib/src/aweb_naapp/hooks/owner_act.py",
+        "symbol": "_check_fields",
+        "calls": {
+          "awid.did.public_key_from_did": 1
+        }
+      },
+      {
+        "row": "NAAPP.OWNER.B3",
+        "file": "naapp-lib/src/aweb_naapp/hooks/owner_act.py",
+        "symbol": "_check_owner_act",
+        "calls": {
+          "awid.did.public_key_from_did": 1,
+          "nacl.signing.VerifyKey": 1,
+          "nacl.signing.VerifyKey().verify": 1
+        }
+      },
+      {
+        "row": "NAAPP.HOOKS.PRODUCER",
+        "file": "naapp-lib/src/aweb_naapp/hooks/producer.py",
+        "symbol": "HookProducer._enqueue",
+        "calls": {
+          "aweb_naapp.hooks.envelope.sign": 1
+        }
+      },
+      {
+        "row": "NAAPP.HOOKS.PRODUCER",
+        "file": "naapp-lib/src/aweb_naapp/hooks/producer.py",
+        "symbol": "ServerProducer.did_key",
+        "calls": {
+          "awid.did.did_from_public_key": 1,
+          "nacl.signing.SigningKey": 1
+        }
+      },
+      {
+        "row": "NAAPP.OPS.__MAIN__",
+        "file": "naapp-lib/src/aweb_naapp/ops/__main__.py",
+        "symbol": "run",
+        "calls": {
+          "aweb_naapp.ops.render.verify": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.APP_CREDENTIALS",
+        "file": "naapp-lib/src/aweb_naapp/runtime/app_credentials.py",
+        "symbol": "AppCredentialSigner.__init__",
+        "calls": {
+          "awid.did.did_from_public_key": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.APP_CREDENTIALS",
+        "file": "naapp-lib/src/aweb_naapp/runtime/app_credentials.py",
+        "symbol": "sign_app_credential",
+        "calls": {
+          "awid.did.did_from_public_key": 1,
+          "awid.signing.canonical_json_bytes": 1,
+          "awid.signing.sign_message": 1,
+          "nacl.signing.SigningKey": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.APP_KEYS",
+        "file": "naapp-lib/src/aweb_naapp/runtime/app_keys.py",
+        "symbol": "declared_did_keys",
+        "calls": {
+          "awid.did.did_from_public_key": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.APP_KEYS",
+        "file": "naapp-lib/src/aweb_naapp/runtime/app_keys.py",
+        "symbol": "load_app_key",
+        "calls": {
+          "awid.did.did_from_public_key": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.APPROVALS.CHALLENGE",
+        "file": "naapp-lib/src/aweb_naapp/runtime/approvals/challenge.py",
+        "symbol": "challenge_preimage",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.APPROVALS.REQUEST",
+        "file": "naapp-lib/src/aweb_naapp/runtime/approvals/request.py",
+        "symbol": "canonical_request",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.APPROVALS.SERVICE",
+        "file": "naapp-lib/src/aweb_naapp/runtime/approvals/service.py",
+        "symbol": "Approvals._verified",
+        "calls": {
+          "authenticator.verify": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.APPROVALS.SERVICE",
+        "file": "naapp-lib/src/aweb_naapp/runtime/approvals/service.py",
+        "symbol": "Approvals._verify_task_answer",
+        "calls": {
+          "self._task_answers.verify": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.CAPABILITY_LINKS.__INIT__",
+        "file": "naapp-lib/src/aweb_naapp/runtime/capability_links/__init__.py",
+        "symbol": "_action_request",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.CAPABILITY_LINKS.__INIT__",
+        "file": "naapp-lib/src/aweb_naapp/runtime/capability_links/__init__.py",
+        "symbol": "_check_request",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.CAPABILITY_LINKS.__INIT__",
+        "file": "naapp-lib/src/aweb_naapp/runtime/capability_links/__init__.py",
+        "symbol": "_snapshot_bytes",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.CAPABILITY_LINKS.__INIT__",
+        "file": "naapp-lib/src/aweb_naapp/runtime/capability_links/__init__.py",
+        "symbol": "admit",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 3
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.EVENT_EMIT",
+        "file": "naapp-lib/src/aweb_naapp/runtime/event_emit.py",
+        "symbol": "app_event_body",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.HOOK_RESOLVER",
+        "file": "naapp-lib/src/aweb_naapp/runtime/hook_resolver.py",
+        "symbol": "HookResolver._get",
+        "calls": {
+          "self._signer.sign": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.LINK_REQUESTS",
+        "file": "naapp-lib/src/aweb_naapp/runtime/link_requests.py",
+        "symbol": "_decode_signed_payload",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.LINK_REQUESTS",
+        "file": "naapp-lib/src/aweb_naapp/runtime/link_requests.py",
+        "symbol": "check_session_did_key",
+        "calls": {
+          "awid.did.did_from_public_key": 1,
+          "awid.did.public_key_from_did": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.LINK_REQUESTS",
+        "file": "naapp-lib/src/aweb_naapp/runtime/link_requests.py",
+        "symbol": "link_request_signing_bytes",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.LINK_REQUESTS",
+        "file": "naapp-lib/src/aweb_naapp/runtime/link_requests.py",
+        "symbol": "sign_link_request",
+        "calls": {
+          "signing_key.sign": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.LINK_REQUESTS",
+        "file": "naapp-lib/src/aweb_naapp/runtime/link_requests.py",
+        "symbol": "verify_link_request",
+        "calls": {
+          "awid.did.did_from_public_key": 1,
+          "awid.did.public_key_from_did": 2,
+          "nacl.signing.VerifyKey": 1,
+          "nacl.signing.VerifyKey().verify": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.PASSKEYS.PROOF",
+        "file": "naapp-lib/src/aweb_naapp/runtime/passkeys/proof.py",
+        "symbol": "RetainedPasskeyProof.from_parts",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 2
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.PASSKEYS.PROOF",
+        "file": "naapp-lib/src/aweb_naapp/runtime/passkeys/proof.py",
+        "symbol": "_checked",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 4
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.PASSKEYS.SERVICE",
+        "file": "naapp-lib/src/aweb_naapp/runtime/passkeys/service.py",
+        "symbol": "Passkeys._issue_challenge",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.PASSKEYS.SERVICE",
+        "file": "naapp-lib/src/aweb_naapp/runtime/passkeys/service.py",
+        "symbol": "Passkeys._verify_assertion",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.PASSKEYS.SERVICE",
+        "file": "naapp-lib/src/aweb_naapp/runtime/passkeys/service.py",
+        "symbol": "_contact_cancel_preimage",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.PASSKEYS.SERVICE",
+        "file": "naapp-lib/src/aweb_naapp/runtime/passkeys/service.py",
+        "symbol": "_contact_change_preimage",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.PASSKEYS.SERVICE",
+        "file": "naapp-lib/src/aweb_naapp/runtime/passkeys/service.py",
+        "symbol": "_enrolment_challenge",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.PASSKEYS.SERVICE",
+        "file": "naapp-lib/src/aweb_naapp/runtime/passkeys/service.py",
+        "symbol": "_login_preimage",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.TASK_REQUESTS",
+        "file": "naapp-lib/src/aweb_naapp/runtime/task_requests.py",
+        "symbol": "_check_payload",
+        "calls": {
+          "awid.did.did_from_public_key": 1,
+          "awid.did.public_key_from_did": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.TASK_REQUESTS",
+        "file": "naapp-lib/src/aweb_naapp/runtime/task_requests.py",
+        "symbol": "_check_stage_payload",
+        "calls": {
+          "awid.did.did_from_public_key": 1,
+          "awid.did.public_key_from_did": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.TASK_REQUESTS",
+        "file": "naapp-lib/src/aweb_naapp/runtime/task_requests.py",
+        "symbol": "check_prepared_intent",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.TASK_REQUESTS",
+        "file": "naapp-lib/src/aweb_naapp/runtime/task_requests.py",
+        "symbol": "sign_stage_receipt",
+        "calls": {
+          "signing_key.sign": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.TASK_REQUESTS",
+        "file": "naapp-lib/src/aweb_naapp/runtime/task_requests.py",
+        "symbol": "sign_task_authorization",
+        "calls": {
+          "signing_key.sign": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.TASK_REQUESTS",
+        "file": "naapp-lib/src/aweb_naapp/runtime/task_requests.py",
+        "symbol": "stage_receipt_signing_bytes",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.TASK_REQUESTS",
+        "file": "naapp-lib/src/aweb_naapp/runtime/task_requests.py",
+        "symbol": "task_authorization_signing_bytes",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.TASK_REQUESTS",
+        "file": "naapp-lib/src/aweb_naapp/runtime/task_requests.py",
+        "symbol": "task_body_sha256",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.TASK_REQUESTS",
+        "file": "naapp-lib/src/aweb_naapp/runtime/task_requests.py",
+        "symbol": "validate_task",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.TASK_REQUESTS",
+        "file": "naapp-lib/src/aweb_naapp/runtime/task_requests.py",
+        "symbol": "verify_stage_receipt",
+        "calls": {
+          "awid.did.public_key_from_did": 1,
+          "nacl.signing.VerifyKey": 1,
+          "nacl.signing.VerifyKey().verify": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.TASK_REQUESTS",
+        "file": "naapp-lib/src/aweb_naapp/runtime/task_requests.py",
+        "symbol": "verify_task_authorization",
+        "calls": {
+          "awid.did.public_key_from_did": 1,
+          "key.verify": 1,
+          "nacl.signing.VerifyKey": 1
+        }
+      },
+      {
+        "row": "NAAPP.AUTH.TEAM",
+        "file": "naapp-lib/src/aweb_naapp/runtime/team_auth.py",
+        "symbol": "AWIDTeamCache._get_certificate_status",
+        "calls": {
+          "awid.did.public_key_from_did": 1
+        }
+      },
+      {
+        "row": "NAAPP.AUTH.TEAM",
+        "file": "naapp-lib/src/aweb_naapp/runtime/team_auth.py",
+        "symbol": "AWIDTeamCache.check_current_member",
+        "calls": {
+          "awid.did.public_key_from_did": 2
+        }
+      },
+      {
+        "row": "NAAPP.AUTH.TEAM",
+        "file": "naapp-lib/src/aweb_naapp/runtime/team_auth.py",
+        "symbol": "AWIDTeamCache.current_did_key",
+        "calls": {
+          "awid.did.public_key_from_did": 1,
+          "awid.did.validate_stable_id": 1
+        }
+      },
+      {
+        "row": "NAAPP.AUTH.TEAM",
+        "file": "naapp-lib/src/aweb_naapp/runtime/team_auth.py",
+        "symbol": "_decode_certificate",
+        "calls": {
+          "awid.team_certificate.decode_team_certificate": 1
+        }
+      },
+      {
+        "row": "NAAPP.AUTH.TEAM",
+        "file": "naapp-lib/src/aweb_naapp/runtime/team_auth.py",
+        "symbol": "_verified_signed_payload",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1,
+          "awid.signing.verify_did_key_signature": 1
+        }
+      },
+      {
+        "row": "NAAPP.AUTH.TEAM",
+        "file": "naapp-lib/src/aweb_naapp/runtime/team_auth.py",
+        "symbol": "_verify_certificate_signature",
+        "calls": {
+          "awid.team_certificate.verify_team_certificate_signature": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.TEAM_GRANTS",
+        "file": "naapp-lib/src/aweb_naapp/runtime/team_grants.py",
+        "symbol": "TeamGrantSource._status_for.fetch",
+        "calls": {
+          "self._signer.sign": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.USAGE",
+        "file": "naapp-lib/src/aweb_naapp/runtime/usage.py",
+        "symbol": "app_usage_credential",
+        "calls": {
+          "awid.did.did_from_public_key": 1,
+          "awid.signing.canonical_json_bytes": 1,
+          "awid.signing.sign_message": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.USAGE",
+        "file": "naapp-lib/src/aweb_naapp/runtime/usage.py",
+        "symbol": "report_sha256",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "NAAPP.RUNTIME.USAGE",
+        "file": "naapp-lib/src/aweb_naapp/runtime/usage.py",
+        "symbol": "validate_report",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "NAAPP.SIGNING",
+        "file": "naapp-lib/src/aweb_naapp/signing_key.py",
+        "symbol": "parse_signing_key_hex",
+        "calls": {
+          "nacl.signing.SigningKey": 1
+        }
+      }
     ]
   }
 }
