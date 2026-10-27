@@ -855,6 +855,50 @@
       "signing_bytes_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a6b65793a7a364d6b676541596a676658446f61784d6f7534544b4e4574474a386359484152504153423132656851386231336965222c226973737565645f6174223a22323032362d31302d32365430303a30343a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6d4e5a475443635653514732647031634259737351576b4e457746484276734e6d427a4a7336694759396541222c226b696e64223a226167656e74222c22706172656e74223a7b226964223a226469643a6b65793a7a364d6b6d4e5a475443635653514732647031634259737351576b4e457746484276734e6d427a4a7336694759396541222c226b696e64223a226964656e74697479227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
       "certificate_id": "sha256:5e40c65f925c6e30d8bc3c38b7723f7c878ca423654a8cf6e3e904234416ea85",
       "signer": "depth7"
+    },
+    "namespace-parent-domain-human": {
+      "signed": {
+        "certificate": {
+          "v": 1,
+          "type": "aweb.id-certificate",
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "domain": "example.com",
+          "parent": {
+            "kind": "namespace",
+            "id": "attacker.example"
+          },
+          "kind": "human",
+          "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+          "issued_at": "2026-10-26T00:00:00Z"
+        },
+        "signature": "jcHOeqLlUyTETaPMc58vRS9KuqabMVLhqrlie1QLXJNiibd6bQv16lwIXMhiAiJ00OAihbbRxdSZpFr7RYjOCA"
+      },
+      "canonical_utf8": "{\"domain\":\"example.com\",\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"issued_at\":\"2026-10-26T00:00:00Z\",\"issuer_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\",\"kind\":\"human\",\"parent\":{\"id\":\"attacker.example\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1}",
+      "signing_bytes_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a61773a335944414d355a4c524b6737654848315a733673534d776b67613877222c226973737565645f6174223a22323032362d31302d32365430303a30303a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f6e334e656364364e6b6b79666f476f48786964327a6e476335394c55334b376d756261526346624c664c58222c226b696e64223a2268756d616e222c22706172656e74223a7b226964223a2261747461636b65722e6578616d706c65222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+      "certificate_id": "sha256:022ddc2228d7565703a7e217d19aae46d730cb4be6c7ef601ea9a6b1045d6063",
+      "signer": "root"
+    },
+    "namespace-parent-domain-agent": {
+      "signed": {
+        "certificate": {
+          "v": 1,
+          "type": "aweb.id-certificate",
+          "id": "did:key:z6Mkj1MDZKcfx9AX5CeXHdysiGkRLzBbALyFuShD6wNeY1E3",
+          "domain": "example.com",
+          "parent": {
+            "kind": "namespace",
+            "id": "attacker.example"
+          },
+          "kind": "agent",
+          "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+          "issued_at": "2026-10-26T00:04:00Z"
+        },
+        "signature": "4lBgjtBVBEjhZOULD2e98gwZ2FMfvkEYcAtBNH9OgCDUduaDrEnNB5safT0U3uFXvPQ9ICHHX52dqp9iqtDIBg"
+      },
+      "canonical_utf8": "{\"domain\":\"example.com\",\"id\":\"did:key:z6Mkj1MDZKcfx9AX5CeXHdysiGkRLzBbALyFuShD6wNeY1E3\",\"issued_at\":\"2026-10-26T00:04:00Z\",\"issuer_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\",\"kind\":\"agent\",\"parent\":{\"id\":\"attacker.example\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1}",
+      "signing_bytes_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a6b65793a7a364d6b6a314d445a4b636678394158354365584864797369476b524c7a4262414c79467553684436774e6559314533222c226973737565645f6174223a22323032362d31302d32365430303a30343a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f6e334e656364364e6b6b79666f476f48786964327a6e476335394c55334b376d756261526346624c664c58222c226b696e64223a226167656e74222c22706172656e74223a7b226964223a2261747461636b65722e6578616d706c65222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+      "certificate_id": "sha256:b3c53ad565ac7438beb35feaa10f5427646574ab39e41b608c07dbe96246a896",
+      "signer": "root"
     }
   },
   "status_fixtures": {
@@ -7017,6 +7061,89 @@
         "ordinary": "refuse",
         "human_required": "refuse"
       }
+    },
+    {
+      "name": "namespace-current-key-conflict-unavailable",
+      "chain": [
+        "alice",
+        "coordinator"
+      ],
+      "status": "normal",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "evidence_unavailable"
+      },
+      "namespace_authority": {
+        "domain": "example.com",
+        "dns_name": "_awid.example.com",
+        "inherited": false,
+        "controller_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "namespace-parent-domain-human",
+      "chain": [
+        "namespace-parent-domain-human",
+        "coordinator"
+      ],
+      "status": "normal",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unknown",
+        "human_id": null,
+        "identity_valid": false,
+        "kind": null,
+        "reason": "domain_mismatch"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "namespace-parent-domain-agent",
+      "chain": [
+        "namespace-parent-domain-agent"
+      ],
+      "status": "normal",
+      "subject": {
+        "id": "did:key:z6Mkj1MDZKcfx9AX5CeXHdysiGkRLzBbALyFuShD6wNeY1E3",
+        "did_key": "did:key:z6Mkj1MDZKcfx9AX5CeXHdysiGkRLzBbALyFuShD6wNeY1E3",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkj1MDZKcfx9AX5CeXHdysiGkRLzBbALyFuShD6wNeY1E3"
+      },
+      "expected": {
+        "outcome": "unknown",
+        "human_id": null,
+        "identity_valid": false,
+        "kind": null,
+        "reason": "domain_mismatch"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
     }
   ],
   "operation_cases": [
@@ -7791,6 +7918,39 @@
         "reason": "weak_backup_kdf",
         "writes": 0
       }
+    },
+    {
+      "name": "namespace-delete-live-id-refuses",
+      "action": "delete_namespace",
+      "input": {
+        "domain": "example.com",
+        "status": "normal",
+        "existing_non_identity_preconditions_pass": true
+      },
+      "expected": {
+        "accepted": false,
+        "reason": "namespace_has_live_ids",
+        "writes": 0
+      }
+    },
+    {
+      "name": "namespace-delete-after-all-ids-revoked",
+      "action": "delete_namespace",
+      "input": {
+        "domain": "example.com",
+        "registered_ids": [
+          "alice",
+          "bob",
+          "global_agent",
+          "other_human"
+        ],
+        "all_registered_ids_revoked": true,
+        "existing_non_identity_preconditions_pass": true
+      },
+      "expected": {
+        "accepted": true,
+        "namespace_deleted": true
+      }
     }
   ],
   "raw_wire_refusals": [
@@ -7869,6 +8029,126 @@
       "name": "wrong-signature-purpose",
       "raw_utf8": "{\"certificates\":[{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"issued_at\":\"2026-10-26T00:00:00Z\",\"issuer_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\",\"kind\":\"human\",\"parent\":{\"id\":\"example.com\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"fPpb9pycTdwM6a7_ONbRJwK8LpHclKy080Y-RLHYSS91IIKA1dSuMMjIzFgq8_qxRqt_wa3tZ8xprW_OtFKQAg\"},{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x\",\"issued_at\":\"2026-10-26T00:04:00Z\",\"issuer_key\":\"did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2\",\"kind\":\"agent\",\"parent\":{\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"kind\":\"identity\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"DannjvTjueGeZ7kPwfoli8A8jcxXiiAKCrRmvqkTVWXZ5TkOYidQh5Xo4Pzc-vSdTmr5TC-lTkSuEQtPxiGdAA\"},{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z\",\"issued_at\":\"2026-10-26T00:05:00Z\",\"issuer_key\":\"did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x\",\"kind\":\"agent\",\"parent\":{\"id\":\"did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x\",\"kind\":\"identity\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"jMmgRe2R2Ine8mH_TEywduyDbu0Vq6pUK5rzkXoIx2oW5LiCgaJlAE4td-8hq6d1et8SIdchdZA5QHkFOsFNAA\"},{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:key:z6Mkfmm57fsb6VL7zVusP8zeA9SYkCKdvUhby2G7Yh8vvQ1P\",\"issued_at\":\"2026-10-26T00:06:00Z\",\"issuer_key\":\"did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z\",\"kind\":\"agent\",\"parent\":{\"id\":\"did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z\",\"kind\":\"identity\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"_3KbatxU8qtsHA0McQ9HnwgxSysp0MbXbaACkKzokoy_sXTPQBdHg6v--MfiUd6PS8dM879ISdmVQbGBq8z2Cw\"}],\"type\":\"aweb.id-chain\",\"v\":1}",
       "expected_reason": "invalid_signature"
+    },
+    {
+      "name": "ed25519-small-order-issuer-0",
+      "raw_utf8": "{\"certificates\":[{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"issued_at\":\"2026-10-26T00:00:00Z\",\"issuer_key\":\"did:key:z6MkeXATEjyXENzBXBxgC5EHk2JE5aqd7qMGGtDpLUH1e2Sj\",\"kind\":\"human\",\"parent\":{\"id\":\"example.com\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}],\"type\":\"aweb.id-chain\",\"v\":1}",
+      "expected_reason": "invalid_shape"
+    },
+    {
+      "name": "ed25519-small-order-issuer-1",
+      "raw_utf8": "{\"certificates\":[{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"issued_at\":\"2026-10-26T00:00:00Z\",\"issuer_key\":\"did:key:z6Mkh59EgPEuBMugWwYWVMbZFQmHm8V1tcgLejJJTx6d8KB2\",\"kind\":\"human\",\"parent\":{\"id\":\"example.com\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}],\"type\":\"aweb.id-chain\",\"v\":1}",
+      "expected_reason": "invalid_shape"
+    },
+    {
+      "name": "ed25519-small-order-issuer-2",
+      "raw_utf8": "{\"certificates\":[{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"issued_at\":\"2026-10-26T00:00:00Z\",\"issuer_key\":\"did:key:z6MkeTG3bFFSLYVU7VqhgZxqr6YzpaGrQtFMh1uvqGy1vDnP\",\"kind\":\"human\",\"parent\":{\"id\":\"example.com\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}],\"type\":\"aweb.id-chain\",\"v\":1}",
+      "expected_reason": "invalid_shape"
+    },
+    {
+      "name": "ed25519-small-order-issuer-3",
+      "raw_utf8": "{\"certificates\":[{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"issued_at\":\"2026-10-26T00:00:00Z\",\"issuer_key\":\"did:key:z6MksrRtMyx4CiuAvgkmwsiPXKj7ULY8yG49hjvu11gGFbhb\",\"kind\":\"human\",\"parent\":{\"id\":\"example.com\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}],\"type\":\"aweb.id-chain\",\"v\":1}",
+      "expected_reason": "invalid_shape"
+    },
+    {
+      "name": "ed25519-small-order-issuer-4",
+      "raw_utf8": "{\"certificates\":[{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"issued_at\":\"2026-10-26T00:00:00Z\",\"issuer_key\":\"did:key:z6MkvQQfodDS9hpfvSLcFA5f2iCB9tBXk3PE5b1P8VVsjtRt\",\"kind\":\"human\",\"parent\":{\"id\":\"example.com\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}],\"type\":\"aweb.id-chain\",\"v\":1}",
+      "expected_reason": "invalid_shape"
+    },
+    {
+      "name": "ed25519-small-order-issuer-5",
+      "raw_utf8": "{\"certificates\":[{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"issued_at\":\"2026-10-26T00:00:00Z\",\"issuer_key\":\"did:key:z6MksrRtMyx4CiuAvgkmwsiPXKj7ULY8yG49hjvu11gGFbjo\",\"kind\":\"human\",\"parent\":{\"id\":\"example.com\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}],\"type\":\"aweb.id-chain\",\"v\":1}",
+      "expected_reason": "invalid_shape"
+    },
+    {
+      "name": "ed25519-small-order-issuer-6",
+      "raw_utf8": "{\"certificates\":[{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"issued_at\":\"2026-10-26T00:00:00Z\",\"issuer_key\":\"did:key:z6MkeTG3bFFSLYVU7VqhgZxqr6YzpaGrQtFMh1uvqGy1vDpb\",\"kind\":\"human\",\"parent\":{\"id\":\"example.com\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}],\"type\":\"aweb.id-chain\",\"v\":1}",
+      "expected_reason": "invalid_shape"
+    },
+    {
+      "name": "ed25519-small-order-issuer-7",
+      "raw_utf8": "{\"certificates\":[{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"issued_at\":\"2026-10-26T00:00:00Z\",\"issuer_key\":\"did:key:z6Mkh59EgPEuBMugWwYWVMbZFQmHm8V1tcgLejJJTx6d8KDE\",\"kind\":\"human\",\"parent\":{\"id\":\"example.com\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}],\"type\":\"aweb.id-chain\",\"v\":1}",
+      "expected_reason": "invalid_shape"
+    },
+    {
+      "name": "ed25519-noncanonical-issuer",
+      "raw_utf8": "{\"certificates\":[{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"issued_at\":\"2026-10-26T00:00:00Z\",\"issuer_key\":\"did:key:z6MkvYDV6cfbwNp6jpaZGAcYpZgdfuK59wb3FKdA8t7sBVka\",\"kind\":\"human\",\"parent\":{\"id\":\"example.com\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}],\"type\":\"aweb.id-chain\",\"v\":1}",
+      "expected_reason": "invalid_shape"
+    },
+    {
+      "name": "ed25519-noncanonical-issuer-x0",
+      "raw_utf8": "{\"certificates\":[{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"issued_at\":\"2026-10-26T00:00:00Z\",\"issuer_key\":\"did:key:z6MkeXATEjyXENzBXBxgC5EHk2JE5aqd7qMGGtDpLUH1e2Uw\",\"kind\":\"human\",\"parent\":{\"id\":\"example.com\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"}],\"type\":\"aweb.id-chain\",\"v\":1}",
+      "expected_reason": "invalid_shape"
+    },
+    {
+      "name": "ed25519-mixed-order-issuer",
+      "raw_utf8": "{\"certificates\":[{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"issued_at\":\"2026-10-26T00:00:00Z\",\"issuer_key\":\"did:key:z6MkiUjogJARiE4P3xBZMSrbNayBEocfXDx9ix8kQeBatvgP\",\"kind\":\"human\",\"parent\":{\"id\":\"example.com\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"uGJAn7XExBI98qv3RiuI8EGtNt1oZM6HL9VHK-NjxbHm2SYEnj9OgEyU1DoMx2LUe2rdPg-fa9j4Ah2a1p4ZBA\"}],\"type\":\"aweb.id-chain\",\"v\":1}",
+      "expected_reason": "invalid_shape"
+    },
+    {
+      "name": "ed25519-mixed-order-id",
+      "raw_utf8": "{\"certificates\":[{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:key:z6MkiUjogJARiE4P3xBZMSrbNayBEocfXDx9ix8kQeBatvgP\",\"issued_at\":\"2026-10-26T00:04:00Z\",\"issuer_key\":\"did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2\",\"kind\":\"agent\",\"parent\":{\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"kind\":\"identity\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"vtCy5iZB-wQ6_FbjX_jRkIakKEBaFh6gTt079srlNTRVDjXepjMe2zBX4W9timzIeQffF3oKsisZX2GQk8tnAA\"}],\"type\":\"aweb.id-chain\",\"v\":1}",
+      "expected_reason": "invalid_shape"
+    },
+    {
+      "name": "ed25519-mixed-order-parent",
+      "raw_utf8": "{\"certificates\":[{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x\",\"issued_at\":\"2026-10-26T00:04:00Z\",\"issuer_key\":\"did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2\",\"kind\":\"agent\",\"parent\":{\"id\":\"did:key:z6MkiUjogJARiE4P3xBZMSrbNayBEocfXDx9ix8kQeBatvgP\",\"kind\":\"identity\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"K7EoQ2wzcFJ9o9gN50ZNTUlDgRDzkhCMd0YWc0hK4sBJvwJWtcQgYP4Ocb9hgzfKr62wN1M7DQSRqAse8hMyDw\"}],\"type\":\"aweb.id-chain\",\"v\":1}",
+      "expected_reason": "invalid_shape"
+    },
+    {
+      "name": "ed25519-small-order-R-identity",
+      "raw_utf8": "{\"certificates\":[{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"issued_at\":\"2026-10-26T00:00:00Z\",\"issuer_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\",\"kind\":\"human\",\"parent\":{\"id\":\"example.com\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABS-7KsZGJBoUBS3YE6X6USeElEaBXcSlvUPxmR0GnwBw\"}],\"type\":\"aweb.id-chain\",\"v\":1}",
+      "expected_reason": "invalid_signature"
+    },
+    {
+      "name": "ed25519-noncanonical-R-identity",
+      "raw_utf8": "{\"certificates\":[{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"issued_at\":\"2026-10-26T00:00:00Z\",\"issuer_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\",\"kind\":\"human\",\"parent\":{\"id\":\"example.com\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"7v_______________________________________3_i010SDYcpwVmCzuFR3E-wJxYE2g5ej4WhmavPZdUxBQ\"}],\"type\":\"aweb.id-chain\",\"v\":1}",
+      "expected_reason": "invalid_signature"
+    },
+    {
+      "name": "ed25519-noncanonical-R-x0-sign-bit",
+      "raw_utf8": "{\"certificates\":[{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"issued_at\":\"2026-10-26T00:00:00Z\",\"issuer_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\",\"kind\":\"human\",\"parent\":{\"id\":\"example.com\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAGtG8hpMeVq78oCd_xuasJNSRF-_CD6ypzNA3wqRpBAg\"}],\"type\":\"aweb.id-chain\",\"v\":1}",
+      "expected_reason": "invalid_signature"
+    },
+    {
+      "name": "ed25519-mixed-order-R-honest-A",
+      "raw_utf8": "{\"certificates\":[{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"issued_at\":\"2026-10-26T00:00:00Z\",\"issuer_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\",\"kind\":\"human\",\"parent\":{\"id\":\"example.com\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"2pnii6Upzd41ol-6kFnnjsruI5-ZdVubGqT2XfAIA-J4805GhjwjK-2LJs50sIm0ap2wTnmRTZNwh3IQH56xBg\"}],\"type\":\"aweb.id-chain\",\"v\":1}",
+      "expected_reason": "invalid_signature"
+    },
+    {
+      "name": "ed25519-S-equals-L",
+      "raw_utf8": "{\"certificates\":[{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"issued_at\":\"2026-10-26T00:00:00Z\",\"issuer_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\",\"kind\":\"human\",\"parent\":{\"id\":\"example.com\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"UsTQXXWmQYmDLZNsqHs6ebs9763IcHsYI3zbPFYJ9ljt0_VcGmMSWNac96Le-d4UAAAAAAAAAAAAAAAAAAAAEA\"}],\"type\":\"aweb.id-chain\",\"v\":1}",
+      "expected_reason": "invalid_signature"
+    },
+    {
+      "name": "ed25519-S-plus-L",
+      "raw_utf8": "{\"certificates\":[{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"issued_at\":\"2026-10-26T00:00:00Z\",\"issuer_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\",\"kind\":\"human\",\"parent\":{\"id\":\"example.com\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"UsTQXXWmQYmDLZNsqHs6ebs9763IcHsYI3zbPFYJ9lgKZXluRDyTzkf7pGHAhjPObxrCU_7XcQYNYQhoAjdlFA\"}],\"type\":\"aweb.id-chain\",\"v\":1}",
+      "expected_reason": "invalid_signature"
+    },
+    {
+      "name": "namespace-parent-domain-human",
+      "raw_utf8": "{\"certificates\":[{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"issued_at\":\"2026-10-26T00:00:00Z\",\"issuer_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\",\"kind\":\"human\",\"parent\":{\"id\":\"attacker.example\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"jcHOeqLlUyTETaPMc58vRS9KuqabMVLhqrlie1QLXJNiibd6bQv16lwIXMhiAiJ00OAihbbRxdSZpFr7RYjOCA\"}],\"type\":\"aweb.id-chain\",\"v\":1}",
+      "expected_reason": "domain_mismatch"
+    },
+    {
+      "name": "namespace-parent-domain-agent",
+      "raw_utf8": "{\"certificates\":[{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:key:z6Mkj1MDZKcfx9AX5CeXHdysiGkRLzBbALyFuShD6wNeY1E3\",\"issued_at\":\"2026-10-26T00:04:00Z\",\"issuer_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\",\"kind\":\"agent\",\"parent\":{\"id\":\"attacker.example\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"4lBgjtBVBEjhZOULD2e98gwZ2FMfvkEYcAtBNH9OgCDUduaDrEnNB5safT0U3uFXvPQ9ICHHX52dqp9iqtDIBg\"}],\"type\":\"aweb.id-chain\",\"v\":1}",
+      "expected_reason": "domain_mismatch"
+    },
+    {
+      "name": "integer-over-python-limit",
+      "raw_utf8": "{\"certificates\":[{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"issued_at\":\"2026-10-26T00:00:00Z\",\"issuer_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\",\"kind\":\"human\",\"parent\":{\"id\":\"example.com\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111},\"signature\":\"UsTQXXWmQYmDLZNsqHs6ebs9763IcHsYI3zbPFYJ9lgdkYMRKtmAdnFerb7hjFS5bxrCU_7XcQYNYQhoAjdlBA\"}],\"type\":\"aweb.id-chain\",\"v\":1}",
+      "expected_reason": "invalid_shape"
+    },
+    {
+      "name": "deep-json-refusal-class",
+      "raw_utf8": "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]",
+      "expected_reason": "invalid_shape",
+      "expected_refusal_class": "shape_or_encoding",
+      "allowed_reasons": [
+        "invalid_json",
+        "invalid_shape"
+      ]
     }
   ],
   "keychain_backup": {
@@ -7932,5 +8212,202 @@
       "certificate_id": "sha256:c7601ac7ae45a13626785274489fbe6bc6807d2963067b1f94c8bc2827247971",
       "registered_at": "2026-10-26T00:03:00.000000Z"
     }
+  },
+  "ed25519_verification": {
+    "mode": "canonical-nonidentity-prime-subgroup-cofactorless",
+    "group_order_decimal": "7237005577332262213973186563042994240857116359379907606001950938285454250989",
+    "scope": "New ID-certificate keys and signatures only; existing released signature families are unchanged. All cases are mandatory in Python/Go/TypeScript CI.",
+    "cases": [
+      {
+        "name": "control-root-signs-alice",
+        "public_key_hex": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+        "message_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a61773a335944414d355a4c524b6737654848315a733673534d776b67613877222c226973737565645f6174223a22323032362d31302d32365430303a30303a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f6e334e656364364e6b6b79666f476f48786964327a6e476335394c55334b376d756261526346624c664c58222c226b696e64223a2268756d616e222c22706172656e74223a7b226964223a226578616d706c652e636f6d222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+        "signature_hex": "52c4d05d75a64189832d936ca87b3a79bb3defadc8707b18237cdb3c5609f6581d9183112ad98076715eadbee18c54b96f1ac253fed771060d61086802376504",
+        "expected": {
+          "accepted": true,
+          "reason": null
+        }
+      },
+      {
+        "name": "small-order-A-0",
+        "public_key_hex": "0100000000000000000000000000000000000000000000000000000000000000",
+        "message_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a61773a335944414d355a4c524b6737654848315a733673534d776b67613877222c226973737565645f6174223a22323032362d31302d32365430303a30303a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f6e334e656364364e6b6b79666f476f48786964327a6e476335394c55334b376d756261526346624c664c58222c226b696e64223a2268756d616e222c22706172656e74223a7b226964223a226578616d706c652e636f6d222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+        "signature_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "expected": {
+          "accepted": false,
+          "reason": "invalid_shape"
+        }
+      },
+      {
+        "name": "small-order-A-1",
+        "public_key_hex": "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+        "message_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a61773a335944414d355a4c524b6737654848315a733673534d776b67613877222c226973737565645f6174223a22323032362d31302d32365430303a30303a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f6e334e656364364e6b6b79666f476f48786964327a6e476335394c55334b376d756261526346624c664c58222c226b696e64223a2268756d616e222c22706172656e74223a7b226964223a226578616d706c652e636f6d222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+        "signature_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "expected": {
+          "accepted": false,
+          "reason": "invalid_shape"
+        }
+      },
+      {
+        "name": "small-order-A-2",
+        "public_key_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+        "message_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a61773a335944414d355a4c524b6737654848315a733673534d776b67613877222c226973737565645f6174223a22323032362d31302d32365430303a30303a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f6e334e656364364e6b6b79666f476f48786964327a6e476335394c55334b376d756261526346624c664c58222c226b696e64223a2268756d616e222c22706172656e74223a7b226964223a226578616d706c652e636f6d222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+        "signature_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "expected": {
+          "accepted": false,
+          "reason": "invalid_shape"
+        }
+      },
+      {
+        "name": "small-order-A-3",
+        "public_key_hex": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+        "message_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a61773a335944414d355a4c524b6737654848315a733673534d776b67613877222c226973737565645f6174223a22323032362d31302d32365430303a30303a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f6e334e656364364e6b6b79666f476f48786964327a6e476335394c55334b376d756261526346624c664c58222c226b696e64223a2268756d616e222c22706172656e74223a7b226964223a226578616d706c652e636f6d222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+        "signature_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "expected": {
+          "accepted": false,
+          "reason": "invalid_shape"
+        }
+      },
+      {
+        "name": "small-order-A-4",
+        "public_key_hex": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "message_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a61773a335944414d355a4c524b6737654848315a733673534d776b67613877222c226973737565645f6174223a22323032362d31302d32365430303a30303a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f6e334e656364364e6b6b79666f476f48786964327a6e476335394c55334b376d756261526346624c664c58222c226b696e64223a2268756d616e222c22706172656e74223a7b226964223a226578616d706c652e636f6d222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+        "signature_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "expected": {
+          "accepted": false,
+          "reason": "invalid_shape"
+        }
+      },
+      {
+        "name": "small-order-A-5",
+        "public_key_hex": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+        "message_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a61773a335944414d355a4c524b6737654848315a733673534d776b67613877222c226973737565645f6174223a22323032362d31302d32365430303a30303a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f6e334e656364364e6b6b79666f476f48786964327a6e476335394c55334b376d756261526346624c664c58222c226b696e64223a2268756d616e222c22706172656e74223a7b226964223a226578616d706c652e636f6d222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+        "signature_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "expected": {
+          "accepted": false,
+          "reason": "invalid_shape"
+        }
+      },
+      {
+        "name": "small-order-A-6",
+        "public_key_hex": "0000000000000000000000000000000000000000000000000000000000000080",
+        "message_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a61773a335944414d355a4c524b6737654848315a733673534d776b67613877222c226973737565645f6174223a22323032362d31302d32365430303a30303a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f6e334e656364364e6b6b79666f476f48786964327a6e476335394c55334b376d756261526346624c664c58222c226b696e64223a2268756d616e222c22706172656e74223a7b226964223a226578616d706c652e636f6d222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+        "signature_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "expected": {
+          "accepted": false,
+          "reason": "invalid_shape"
+        }
+      },
+      {
+        "name": "small-order-A-7",
+        "public_key_hex": "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+        "message_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a61773a335944414d355a4c524b6737654848315a733673534d776b67613877222c226973737565645f6174223a22323032362d31302d32365430303a30303a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f6e334e656364364e6b6b79666f476f48786964327a6e476335394c55334b376d756261526346624c664c58222c226b696e64223a2268756d616e222c22706172656e74223a7b226964223a226578616d706c652e636f6d222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+        "signature_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "expected": {
+          "accepted": false,
+          "reason": "invalid_shape"
+        }
+      },
+      {
+        "name": "noncanonical-A-identity",
+        "public_key_hex": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "message_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a61773a335944414d355a4c524b6737654848315a733673534d776b67613877222c226973737565645f6174223a22323032362d31302d32365430303a30303a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f6e334e656364364e6b6b79666f476f48786964327a6e476335394c55334b376d756261526346624c664c58222c226b696e64223a2268756d616e222c22706172656e74223a7b226964223a226578616d706c652e636f6d222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+        "signature_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "expected": {
+          "accepted": false,
+          "reason": "invalid_shape"
+        }
+      },
+      {
+        "name": "noncanonical-A-x0-sign-bit",
+        "public_key_hex": "0100000000000000000000000000000000000000000000000000000000000080",
+        "message_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a61773a335944414d355a4c524b6737654848315a733673534d776b67613877222c226973737565645f6174223a22323032362d31302d32365430303a30303a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f6e334e656364364e6b6b79666f476f48786964327a6e476335394c55334b376d756261526346624c664c58222c226b696e64223a2268756d616e222c22706172656e74223a7b226964223a226578616d706c652e636f6d222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+        "signature_hex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "expected": {
+          "accepted": false,
+          "reason": "invalid_shape"
+        }
+      },
+      {
+        "name": "mixed-order-A-k-div-8",
+        "public_key_hex": "3bcfb78c4ad06f9b8d7e8c50e37e33dd40042a7805f5df945fbf33620745bc68",
+        "message_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a61773a335944414d355a4c524b6737654848315a733673534d776b67613877222c226973737565645f6174223a22323032362d31302d32365430303a30303a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f6e334e656364364e6b6b79666f476f48786964327a6e476335394c55334b376d756261526346624c664c58222c226b696e64223a2268756d616e222c22706172656e74223a7b226964223a226578616d706c652e636f6d222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+        "signature_hex": "58666666666666666666666666666666666666666666666666666666666666663362df9b8483f18e593d51e6f705fd7d30623b00db3f5b77228e0091737d7d09",
+        "expected": {
+          "accepted": false,
+          "reason": "invalid_shape"
+        }
+      },
+      {
+        "name": "mixed-order-A-k-not-div-8",
+        "public_key_hex": "3bcfb78c4ad06f9b8d7e8c50e37e33dd40042a7805f5df945fbf33620745bc68",
+        "message_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a61773a335944414d355a4c524b6737654848315a733673534d776b67613877222c226973737565645f6174223a22323032362d31302d32365430303a30303a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f6e334e656364364e6b6b79666f476f48786964327a6e476335394c55334b376d756261526346624c664c58222c226b696e64223a2268756d616e222c22706172656e74223a7b226964223a226578616d706c652e636f6d222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+        "signature_hex": "c9a3f86aae465f0e56513864510f3997561fa2c9e85ea21dc2292309f3cd6022c61c2fb5dced80e8ee8b30f16366b575025682faef8cf1fb70cef7fa1b02c70b",
+        "expected": {
+          "accepted": false,
+          "reason": "invalid_shape"
+        }
+      },
+      {
+        "name": "small-order-R-identity",
+        "public_key_hex": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+        "message_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a61773a335944414d355a4c524b6737654848315a733673534d776b67613877222c226973737565645f6174223a22323032362d31302d32365430303a30303a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f6e334e656364364e6b6b79666f476f48786964327a6e476335394c55334b376d756261526346624c664c58222c226b696e64223a2268756d616e222c22706172656e74223a7b226964223a226578616d706c652e636f6d222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+        "signature_hex": "010000000000000000000000000000000000000000000000000000000000000052fbb2ac646241a14052dd813a5fa5127849446815dc4a5bd43f1991d069f007",
+        "expected": {
+          "accepted": false,
+          "reason": "invalid_signature"
+        }
+      },
+      {
+        "name": "noncanonical-R-identity",
+        "public_key_hex": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+        "message_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a61773a335944414d355a4c524b6737654848315a733673534d776b67613877222c226973737565645f6174223a22323032362d31302d32365430303a30303a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f6e334e656364364e6b6b79666f476f48786964327a6e476335394c55334b376d756261526346624c664c58222c226b696e64223a2268756d616e222c22706172656e74223a7b226964223a226578616d706c652e636f6d222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+        "signature_hex": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7fe2d35d120d8729c15982cee151dc4fb0271604da0e5e8f85a199abcf65d53105",
+        "expected": {
+          "accepted": false,
+          "reason": "invalid_signature"
+        }
+      },
+      {
+        "name": "noncanonical-R-x0-sign-bit",
+        "public_key_hex": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+        "message_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a61773a335944414d355a4c524b6737654848315a733673534d776b67613877222c226973737565645f6174223a22323032362d31302d32365430303a30303a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f6e334e656364364e6b6b79666f476f48786964327a6e476335394c55334b376d756261526346624c664c58222c226b696e64223a2268756d616e222c22706172656e74223a7b226964223a226578616d706c652e636f6d222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+        "signature_hex": "010000000000000000000000000000000000000000000000000000000000008006b46f21a4c795abbf2809dff1b9ab09352445fbf083eb2a73340df0a91a4102",
+        "expected": {
+          "accepted": false,
+          "reason": "invalid_signature"
+        }
+      },
+      {
+        "name": "mixed-order-R-honest-A",
+        "public_key_hex": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+        "message_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a61773a335944414d355a4c524b6737654848315a733673534d776b67613877222c226973737565645f6174223a22323032362d31302d32365430303a30303a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f6e334e656364364e6b6b79666f476f48786964327a6e476335394c55334b376d756261526346624c664c58222c226b696e64223a2268756d616e222c22706172656e74223a7b226964223a226578616d706c652e636f6d222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+        "signature_hex": "da99e28ba529cdde35a25fba9059e78ecaee239f99755b9b1aa4f65df00803e278f34e46863c232bed8b26ce74b089b46a9db04e79914d93708772101f9eb106",
+        "expected": {
+          "accepted": false,
+          "reason": "invalid_signature"
+        }
+      },
+      {
+        "name": "S-equals-L",
+        "public_key_hex": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+        "message_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a61773a335944414d355a4c524b6737654848315a733673534d776b67613877222c226973737565645f6174223a22323032362d31302d32365430303a30303a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f6e334e656364364e6b6b79666f476f48786964327a6e476335394c55334b376d756261526346624c664c58222c226b696e64223a2268756d616e222c22706172656e74223a7b226964223a226578616d706c652e636f6d222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+        "signature_hex": "52c4d05d75a64189832d936ca87b3a79bb3defadc8707b18237cdb3c5609f658edd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010",
+        "expected": {
+          "accepted": false,
+          "reason": "invalid_signature"
+        }
+      },
+      {
+        "name": "S-plus-L",
+        "public_key_hex": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+        "message_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a61773a335944414d355a4c524b6737654848315a733673534d776b67613877222c226973737565645f6174223a22323032362d31302d32365430303a30303a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f6e334e656364364e6b6b79666f476f48786964327a6e476335394c55334b376d756261526346624c664c58222c226b696e64223a2268756d616e222c22706172656e74223a7b226964223a226578616d706c652e636f6d222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+        "signature_hex": "52c4d05d75a64189832d936ca87b3a79bb3defadc8707b18237cdb3c5609f6580a65796e443c93ce47fba461c08633ce6f1ac253fed771060d61086802376514",
+        "expected": {
+          "accepted": false,
+          "reason": "invalid_signature"
+        }
+      }
+    ]
   }
 }

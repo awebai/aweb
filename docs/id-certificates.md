@@ -69,8 +69,11 @@ Unicode, wrong types and defaulted/omitted fields refuse. An ID certificate is:
   `kind="identity"` names a canonical parent ID in the same domain. The former
   is resolved from EXACTLY `_awid.<domain>` and that domain's own registry
   authority/epochs, never an inherited ancestor TXT/controller/registry or
-  an ancestor's epoch history. Missing exact-domain authority is unavailable;
-  a conflicting root key is invalid. Hosted `*.aweb.ai` identities require
+  an ancestor's epoch history. Missing exact-domain authority, or disagreement
+  between its independently selected current controller key and the status
+  snapshot's current namespace epoch, is unavailable/evidence_unavailable:
+  the latter is a contradictory authority snapshot, not an agent proof failure.
+  Hosted `*.aweb.ai` identities require
   the hosted namespace's own key and exact TXT authority (aweb-acic.6), not
   `aweb.ai`'s parent key. Existing ancestor lookup behaviour for other
   contracts is unchanged. An identity parent resolves from its certificate and
@@ -93,6 +96,56 @@ Signatures decode to exactly 64 bytes and must re-encode identically; padding,
 alternate alphabet or nonzero unused bits refuse. The `signed` wrapper has
 exactly those two fields. Its digest identifies the immutable certificate
 revision; signatures, team certs and message payloads are never folded into it.
+
+### Ed25519 acceptance rule
+
+For this NEW certificate family, the acceptance rule is **canonical,
+nonidentity prime-subgroup points and the cofactorless verification equation**.
+It does not narrow any released certificate, request or DID-log signature
+format. No library's “strict” flag or default alone defines this rule.
+
+At shape validation, BEFORE signature verification, decode every Ed25519
+`did:key` used as an ID, identity parent or issuer. Its compressed point A
+must decode on the curve, round-trip byte-identically to its canonical encoding,
+be nonidentity, and satisfy `[L]A = O`, where
+`L = 2^252 + 27742317777372353535851937790883648493`. Refuse otherwise as
+invalid_shape. This rejects all eight low-order points AND mixed-order points;
+base58 round-tripping alone is insufficient.
+
+For each 64-byte signature `R || S`, R must likewise be canonical, nonidentity
+and in the prime-order subgroup. Interpret S little-endian and require
+`0 <= S < L`. With `k = LE(SHA-512(R || A || signing_bytes)) mod L`, require
+exactly `[S]B = R + [k]A`; do not merely clear a cofactor on unchecked points.
+Any failure here is invalid_signature. After the subgroup checks, cofactored
+and cofactorless equations are equivalent, so a library may use its equation
+only with those explicit checks. Identity/small-order R is refused even if a
+library accepts it. Signers publish only signatures that meet this rule.
+
+Implementations enforce the same point rule: Python can use PyNaCl/libsodium
+`crypto_core_ed25519_is_valid_point` on A and R before signature verification;
+bare `cryptography`/OpenSSL verification is insufficient. Go uses
+`filippo.io/edwards25519` for explicit canonical/subgroup point checks before
+`crypto/ed25519` signature verification. TypeScript's
+`@noble/ed25519` 2.3.0 `zip215:false` still uses a cofactored equation: check
+canonical round-trip, nonidentity and `isTorsionFree()` on A and R first.
+These checks also apply when an ID-certificate signature is verified inside
+trusted status; evidence does not exempt it. Existing DID-log proofs keep
+their existing signature contract, while keys selected from them for this
+new family must pass the point rule.
+An invalid independently selected key or status certificate makes that evidence
+contradictory (evidence_unavailable); it cannot establish a human. A malformed
+presented certificate remains an invalid_shape/invalid_signature refusal.
+
+The frozen `ed25519_verification.cases` are mandatory in every Python/Go/TS
+CI, alongside their raw-wire counterparts. They include all eight low-order
+A points, noncanonical A/R encodings (including the x=0 sign-bit alias),
+mixed-order A whose challenge is and is not divisible by eight, mixed-order R,
+and S equal to or greater than L. The divisible-by-eight case passes even a
+cofactorless equation without subgroup validation: it specifically tests the
+shape rule rather than an accidentally invalid signature.
+Library references: [libsodium point validation](https://doc.libsodium.org/advanced/point-arithmetic),
+[Go point operations](https://pkg.go.dev/filippo.io/edwards25519), and
+[noble 2.3.0 verification](https://github.com/paulmillr/noble-ed25519/blob/2.3.0/index.ts).
 
 Every verifier applies these rules on **every link**, independent of AWID's
 admission verdict:
@@ -122,6 +175,13 @@ Human and global IDs are valid in this tree only after AWID registration.
 Local agent certificates are carried by their holder; they need no AWID insert
 or witnessed issuance time. A root→agent chain is valid and means **no human**;
 a missing certificate means **unknown**, not no human.
+
+Namespace deletion refuses while ANY non-revoked registered ID exists in that
+exact domain, under the same registration/revocation serialization. Merely
+retiring the namespace epoch would leave previously registered children valid
+under historical epoch verification. The operator revokes those IDs first;
+only the root can backdate a compromise cutoff. This adds to, rather than
+replaces, existing namespace-deletion preconditions such as team certificates.
 
 ### Atomic registration and re-parenting
 
@@ -607,6 +667,10 @@ the intended refusal is shape/binding, rather than accidental bad crypto.
 Wire-negative cases test raw decoding before the semantic cases. The
 validly signed did:key-human negative is mandatory in every Python/Go/TS CI,
 alongside R1–R3 negatives. Apply its kind/ID shape refusal before crypto.
+The validly signed namespace-parent-domain negatives are also mandatory:
+a namespace parent naming another domain refuses as domain_mismatch at shape
+time. The oversized-integer wire case refuses as invalid_shape, including a
+JSON parser's integer-conversion limit; never leak an uncoded parser exception.
 After shape/R1–R3 checks, check required registered-ID presence before issuer
 key-version selection: unregistered_identity takes precedence over a resulting
 stale_issuer_key (unregistered-human-refuses). An expected reason is exact for
@@ -615,6 +679,8 @@ carry expected_refusal_class (shape_or_encoding or invalid_proof); any listed
 reason in allowed_reasons satisfies that class, with the same refusal/outcome
 and no human authority. Do not make cross-language JSON re-encoding or check
 ordering a security requirement.
+Deep JSON may refuse as invalid_json at the parser limit or invalid_shape at
+the object-shape check; the frozen shape_or_encoding class allows both.
 Ordered operation cases test effects and atomicity; S2 tests consume the frozen
 cases by NAME, so a dropped/renamed scenario fails CI. They are not substitutes
 for real Postgres/concurrency and released-client journeys in later slices.
