@@ -6,11 +6,14 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/awebai/aw/awconfig"
 	awid "github.com/awebai/aw/awid"
 )
 
@@ -474,4 +477,45 @@ func signRequest(t *testing.T, v idResignVectors, key string, request map[string
 		t.Fatal(err)
 	}
 	return raw
+}
+
+// The frozen accepted exchange on the durable file store, including a retry
+// after the new entry's write was lost.
+func TestIDChildResignExchangeOnTheFileStore(t *testing.T) {
+	x := loadIDChildExchange(t)
+	c := x.cases["csr-local-resign-contact-no-human-login"]
+	a := x.approval(t, c)
+	dir := filepath.Join(t.TempDir(), "id-issuance")
+	store := awconfig.IDIssuanceFileStore{Dir: dir}
+	oldID := x.v.Certificates["coordinator"].CertificateID
+	if err := store.Put(&awid.IDIssuanceEntry{CertificateID: oldID, Signed: x.v.Certificates["coordinator"].Signed}); err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := awid.ParseIDCertificateRequest([]byte(a.request))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestID := parsed["request"].(map[string]any)["request_id"].(string)
+	if _, err := awid.ReceiveIDResignRequest(store, []byte(a.request)); err != nil {
+		t.Fatal(err)
+	}
+	approve := func() ([]byte, error) {
+		return awid.ApproveIDResignRequest(store, requestID, a.parentID, x.parentChain(t, "alice-rotated", a.parentID), x.evidence(a.status), "example.com", vectorSigner(t, x.v, a.signer, &a.calls), a.now)
+	}
+	response, err := approve()
+	if err != nil || string(response) != x.responses["local-resigned"].CanonicalUTF8 {
+		t.Fatalf("approve: %v", err)
+	}
+	newID := x.v.Certificates["coordinator-resigned"].CertificateID
+	newPath := filepath.Join(dir, strings.TrimPrefix(newID, "sha256:")+".json")
+	if err := os.Remove(newPath); err != nil {
+		t.Fatal(err)
+	}
+	again, err := approve()
+	if err != nil || !bytes.Equal(again, response) || a.calls != 1 {
+		t.Fatalf("retry: err=%v calls=%d", err, a.calls)
+	}
+	if entry, err := store.Entry(newID); err != nil || entry == nil {
+		t.Fatalf("the lost entry was not recreated: %v", err)
+	}
 }
