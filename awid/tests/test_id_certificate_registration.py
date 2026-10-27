@@ -8,6 +8,7 @@ another slice, so a renamed or dropped case fails this module.
 from __future__ import annotations
 
 import asyncio
+import base64
 import copy
 import json
 from datetime import timedelta
@@ -421,6 +422,43 @@ async def test_accepted_human_invite_retry_after_inviter_revoke(case, tree, awid
     assert await _revisions(awid_db_infra) == before
 
 
+async def _enroll_normal_tree(tree):
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+    await tree.enroll("other-human", when=at("2026-10-26T00:01:30Z"))
+    await tree.enroll("alice", "bob", when=at("2026-10-26T00:02:00Z"))
+    await tree.enroll("alice", "global-agent", when=at("2026-10-26T00:04:00Z"))
+
+
+async def _delete_namespace(tree, domain):
+    headers = build_signed_headers(seed("root"), did_key("root"), domain=domain, operation="delete_namespace")
+    return await tree.client.request("DELETE", f"/v1/namespaces/{domain}", headers=headers)
+
+
+@consumes("namespace-delete-live-id-refuses")
+async def test_namespace_delete_live_id_refuses(case, tree, awid_db_infra):
+    await _enroll_normal_tree(tree)
+    before = await _revisions(awid_db_infra)
+
+    resp = await _delete_namespace(tree, case["input"]["domain"])
+
+    assert (resp.status_code, _code(resp)) == (409, case["expected"]["reason"]), resp.text
+    assert (await tree.client.get(f"/v1/namespaces/{case['input']['domain']}")).status_code == 200
+    assert await _revisions(awid_db_infra) == before
+
+
+@consumes("namespace-delete-after-all-ids-revoked")
+async def test_namespace_delete_after_all_ids_revoked(case, tree, awid_db_infra):
+    await _enroll_normal_tree(tree)
+    for key_name in case["input"]["registered_ids"]:
+        await _revoked_directly(awid_db_infra, key_name, revoked_at=at("2026-10-26T00:20:00Z"))
+    tree.clock.now = at("2026-10-26T00:30:00Z")
+
+    resp = await _delete_namespace(tree, case["input"]["domain"])
+
+    assert resp.status_code == 200, resp.text
+    assert (await tree.client.get(f"/v1/namespaces/{case['input']['domain']}")).status_code == 404
+
+
 @pytest.mark.asyncio
 async def test_a_since_revoked_subjects_exact_retry_returns_its_receipt_and_writes_nothing(tree, awid_db_infra):
     chain = [certificate("alice"), certificate("bob")]
@@ -749,3 +787,29 @@ async def test_only_the_configured_service_token_exempts_registration_from_its_b
     ]
 
     assert statuses == ([400, 400, 400] if credential == "configured" else [400, 400, 429])
+
+
+# ---------------------------------------------------------------------------
+# Ed25519 point rule at registration
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "name", ["ed25519-mixed-order-issuer", "ed25519-small-order-issuer-0", "ed25519-mixed-order-R-honest-A"],
+)
+@pytest.mark.asyncio
+async def test_registration_applies_the_ed25519_point_rule(name, tree, awid_db_infra):
+    [case] = [case for case in VECTORS["raw_wire_refusals"] if case["name"] == name]
+    bundle = json.loads(case["raw_utf8"])
+    leaf = bundle["certificates"][-1]
+    assert leaf["certificate"]["id"] == did_aw("alice")
+    body = json.dumps({"certificate": leaf, "expected_head": None, "invitation_id": None}).encode()
+    headers = covering_headers(
+        "alice", method="POST", path=REGISTER_PATH, body=body, domain=DOMAIN, operation="register_id_certificate",
+    )
+    headers["X-AWID-ID-Chain"] = base64.urlsafe_b64encode(case["raw_utf8"].encode()).rstrip(b"=").decode()
+
+    resp = await tree.client.post(REGISTER_PATH, content=body, headers=headers)
+
+    assert (resp.status_code, _code(resp)) == (400, case["expected_reason"]), resp.text
+    assert await _revisions(awid_db_infra) == []
