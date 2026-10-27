@@ -36,9 +36,38 @@ func (s IDIssuanceFileStore) path(certificateID string) (string, error) {
 	return filepath.Join(s.Dir, m[1]+".json"), nil
 }
 
+// directory checks the store's directory: a real directory of mode 0700,
+// never a symlink. With create, a missing directory is made and the identity
+// home synced so the new name survives a crash.
+func (s IDIssuanceFileStore) directory(create bool) (bool, error) {
+	info, err := os.Lstat(s.Dir)
+	if errors.Is(err, os.ErrNotExist) {
+		if !create {
+			return false, nil
+		}
+		if err := os.Mkdir(s.Dir, 0o700); err != nil {
+			return false, err
+		}
+		return true, syncDirectory(filepath.Dir(s.Dir))
+	}
+	if err != nil {
+		return false, err
+	}
+	if !info.IsDir() {
+		return false, fmt.Errorf("issuance directory %s is not a directory", s.Dir)
+	}
+	if info.Mode().Perm() != 0o700 {
+		return false, fmt.Errorf("issuance directory %s must have mode 0700, has %v", s.Dir, info.Mode().Perm())
+	}
+	return true, nil
+}
+
 func (s IDIssuanceFileStore) Entry(certificateID string) (*awid.IDIssuanceEntry, error) {
 	path, err := s.path(certificateID)
 	if err != nil {
+		return nil, err
+	}
+	if exists, err := s.directory(false); err != nil || !exists {
 		return nil, err
 	}
 	data, err := os.ReadFile(path)
@@ -59,10 +88,10 @@ func (s IDIssuanceFileStore) Entry(certificateID string) (*awid.IDIssuanceEntry,
 }
 
 func (s IDIssuanceFileStore) EntryForRequest(requestID string) (*awid.IDIssuanceEntry, error) {
-	names, err := os.ReadDir(s.Dir)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+	if exists, err := s.directory(false); err != nil || !exists {
+		return nil, err
 	}
+	names, err := os.ReadDir(s.Dir)
 	if err != nil {
 		return nil, err
 	}
@@ -89,6 +118,9 @@ func (s IDIssuanceFileStore) Put(entry *awid.IDIssuanceEntry) error {
 	if err != nil {
 		return err
 	}
+	if _, err := s.directory(true); err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(entry, "", "  ")
 	if err != nil {
 		return err
@@ -112,7 +144,11 @@ func durableWriteFile(path string, data []byte) error {
 	if err := atomicWriteFileMode(path, data, 0o600); err != nil {
 		return err
 	}
-	dir, err := os.Open(filepath.Dir(path))
+	return syncDirectory(filepath.Dir(path))
+}
+
+func syncDirectory(path string) error {
+	dir, err := os.Open(path)
 	if err != nil {
 		return err
 	}
