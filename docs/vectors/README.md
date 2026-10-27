@@ -82,6 +82,17 @@ They are S3 acceptance inputs, not evidence of an implemented transport.
 `unit_utf8` `repeat` times; request/response caps are measured in bytes before
 JSON parsing, with exact-limit and oversized cases.
 
+`key_response_id_tree` cases freeze parsing the additive field of an otherwise
+valid key-resolution response. `key_response` and `cached_key_response` are
+projections onto that field; `{}` means the field is absent. `expected_parse`
+distinguishes enrolled, not_enrolled, unknown and malformed. For omission,
+`expected_tree_lookup` and `expected_request` apply after ordinary auth passes;
+enrolled cases supply the independent status fixture and authenticated subject
+in `omission_context`. Enrollment alone never grants authority. An old cached
+projection requires the fresh response before deciding, as `expected_key_refetch`
+pins. Malformed response handling may raise the client's typed response error;
+it must not return not_enrolled.
+
 ### `member-attribution-v1.json` — superseded, historical only
 
 The [old member attribution proposal](../member-attribution.md) is superseded
