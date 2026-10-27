@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import fnmatch
 import hashlib
+import inspect
 import ipaddress
 import json
 import logging
@@ -21,9 +23,16 @@ from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from awid.contract import normalize_identity_scope
+from awid.controller_request import CONTROLLER_REQUEST_TYPE
 from awid.did import did_from_public_key, stable_id_from_did_key
 from awid.dns_verify import DomainVerifier
-from awid.id_certificates import IDCertificateError, IDChainEvidence, status_request
+from awid.id_certificates import (
+    IDCertificateError,
+    IDChainEvidence,
+    encode_id_chain_header,
+    status_request,
+    verify_ed25519,
+)
 from awid.log import (
     canonical_server_origin,
     identity_state_hash,
@@ -34,6 +43,10 @@ from awid.signing import canonical_json_bytes, sign_message
 
 
 DomainRegistryResolver = Callable[[str], Awaitable[str]]
+# Signs exactly the bytes it is given and answers with its did:key and the raw
+# 64-byte signature, directly or awaitably, so a custodial host can finish its
+# own checks before answering. No key material crosses this boundary.
+PayloadSigner = Callable[[bytes], "tuple[str, bytes] | Awaitable[tuple[str, bytes]]"]
 
 logger = logging.getLogger(__name__)
 
@@ -244,10 +257,14 @@ class TeamCertificate:
 
 
 class RegistryError(Exception):
-    def __init__(self, message: str, *, status_code: int, detail: str | None = None) -> None:
+    def __init__(
+        self, message: str, *, status_code: int, detail: str | None = None, code: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.detail = detail or message
+        # The refusal's machine-readable code, when the registry sent one.
+        self.code = code
 
 
 class AlreadyRegisteredError(RegistryError):
@@ -358,6 +375,7 @@ class RegistryClient:
         *,
         headers: dict[str, str] | None = None,
         json: dict[str, Any] | None = None,
+        content: bytes | None = None,
         registry_url: str | None = None,
     ) -> dict[str, Any]:
         request_headers = {
@@ -378,6 +396,7 @@ class RegistryClient:
                 f"{self._resolved_base_url(registry_url=registry_url)}{path}",
                 headers=request_headers,
                 json=json,
+                content=content,
             ) as response:
                 succeeded = 200 <= response.status_code < 300
                 max_bytes = MAX_REGISTRY_RESPONSE_BYTES if succeeded else MAX_REGISTRY_ERROR_BYTES
@@ -393,12 +412,15 @@ class RegistryClient:
                     ) from exc
         if not 200 <= response.status_code < 300:
             detail = None
+            code = None
             try:
                 parsed_error = json_loads(content)
                 if isinstance(parsed_error, dict):
                     raw_detail = parsed_error.get("detail")
                     if raw_detail is not None:
                         detail = _safe_error_text(str(raw_detail).encode("utf-8"))
+                    if isinstance(raw_detail, dict) and isinstance(raw_detail.get("code"), str):
+                        code = _safe_error_text(raw_detail["code"].encode("utf-8"))
             except Exception:
                 detail = None
             response_text = _safe_error_text(content)
@@ -413,6 +435,7 @@ class RegistryClient:
                 detail or response_text,
                 status_code=response.status_code,
                 detail=detail or response_text,
+                code=code,
             )
         if not content:
             return {}
@@ -445,6 +468,121 @@ class RegistryClient:
             if exc.status_code == 404:
                 return None
             raise
+
+    async def register_id_certificate(
+        self,
+        bundle: dict[str, Any],
+        *,
+        signer: PayloadSigner,
+        expected_head: str | None,
+        invitation_id: str | None,
+    ) -> dict[str, Any]:
+        """Register ``bundle``'s last certificate, with the bundle as its supporting chain.
+
+        ``signer`` holds the subject's current key; AWID's gate enforces that
+        binding. Returns the registration receipt, the original one for an
+        exact retry.
+        """
+        leaf = bundle["certificates"][-1]
+        chain_header = encode_id_chain_header(bundle)
+        return await self._covering_request(
+            "/v1/id-certificates/register",
+            domain=leaf["certificate"]["domain"],
+            operation="register_id_certificate",
+            body={"certificate": leaf, "expected_head": expected_head, "invitation_id": invitation_id},
+            signers=[("Authorization", signer, None)],
+            extra_headers={"X-AWID-ID-Chain": chain_header},
+        )
+
+    async def revoke_id_certificate(
+        self,
+        domain: str,
+        id: str,
+        *,
+        signer: PayloadSigner,
+        expected_head: str | None,
+        effective_from: str | None = None,
+    ) -> dict[str, Any]:
+        """Revoke the registered ``id``; AWID decides whether the signer acts as root, self or parent."""
+        return await self._covering_request(
+            "/v1/id-certificates/revoke",
+            domain=domain,
+            operation="revoke_id_certificate",
+            body={"domain": domain, "id": id, "expected_head": expected_head, "effective_from": effective_from},
+            signers=[("Authorization", signer, None)],
+        )
+
+    async def rotate_namespace_with_previous_key(
+        self,
+        domain: str,
+        *,
+        from_seq: int,
+        previous_did_key: str,
+        new_did_key: str,
+        previous_signer: PayloadSigner,
+        new_signer: PayloadSigner,
+    ) -> Namespace:
+        """Rotate the namespace controller with the previous key's consent, keeping its ID tree.
+
+        Both keys sign the same request, and each signer must answer with the
+        key named for its role. ``from_seq`` is the open epoch being rotated.
+        """
+        claims = {"from_seq": from_seq, "previous_did_key": previous_did_key, "new_did_key": new_did_key}
+        return _namespace_from_json(
+            await self._covering_request(
+                f"/v1/namespaces/{domain}/rotate",
+                domain=domain,
+                operation="rotate_namespace_controller",
+                body={"domain": domain, "operation": "rotate_namespace_controller", **claims},
+                claims=claims,
+                signers=[
+                    ("Authorization", previous_signer, previous_did_key),
+                    ("X-AWEB-New-Key-Authorization", new_signer, new_did_key),
+                ],
+            )
+        )
+
+    async def _covering_request(
+        self,
+        path: str,
+        *,
+        domain: str,
+        operation: str,
+        body: dict[str, Any],
+        signers: list[tuple[str, PayloadSigner, str | None]],
+        claims: dict[str, Any] | None = None,
+        extra_headers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """POST ``body`` under a covering-v2 envelope that every signer signs.
+
+        Each signer's answer is checked against the exact payload before
+        anything is sent; a signer that raises or answers wrongly sends nothing.
+        """
+        registry_url = await self._registry_url_for_domain(domain)
+        raw_body = canonical_json_bytes(body)
+        timestamp = _utc_timestamp()
+        payload = canonical_json_bytes({
+            **(claims or {}),
+            "v": 2,
+            "type": CONTROLLER_REQUEST_TYPE,
+            "aud": canonical_server_origin(registry_url),
+            "method": "POST",
+            "path": path,
+            "body_sha256": hashlib.sha256(raw_body).hexdigest(),
+            "timestamp": timestamp,
+            "domain": domain,
+            "operation": operation,
+        })
+        headers = {
+            "Content-Type": "application/json",
+            "X-AWEB-Timestamp": timestamp,
+            "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(payload).rstrip(b"=").decode("ascii"),
+            **(extra_headers or {}),
+        }
+        for header, signer, expected_key in signers:
+            did_key, signature = await _payload_signature(signer, payload, expected_key)
+            headers[header] = f"DIDKey {did_key} {base64.b64encode(signature).rstrip(b'=').decode('ascii')}"
+        return await self._request_json("POST", path, headers=headers, content=raw_body, registry_url=registry_url)
 
     async def fetch_id_certificate_status(self, domain: str, request: dict[str, Any]) -> dict[str, Any]:
         """POST a status request to the registry ``domain`` routes to.
@@ -2021,6 +2159,28 @@ class CachedRegistryClient(RegistryClient):
         await self._invalidate_namespace_cache(domain)
         return namespace
 
+    async def rotate_namespace_with_previous_key(
+        self,
+        domain: str,
+        *,
+        from_seq: int,
+        previous_did_key: str,
+        new_did_key: str,
+        previous_signer: PayloadSigner,
+        new_signer: PayloadSigner,
+    ) -> Namespace:
+        await self._invalidate_namespace_cache(domain)
+        namespace = await super().rotate_namespace_with_previous_key(
+            domain,
+            from_seq=from_seq,
+            previous_did_key=previous_did_key,
+            new_did_key=new_did_key,
+            previous_signer=previous_signer,
+            new_signer=new_signer,
+        )
+        await self._invalidate_namespace_cache(domain)
+        return namespace
+
     async def register_address(
         self,
         domain: str,
@@ -2439,6 +2599,23 @@ class _IDStatusRefresh:
     entry: dict[str, Any] | None
     failed: bool
     age: int | None
+
+
+async def _payload_signature(signer: PayloadSigner, payload: bytes, expected_key: str | None) -> tuple[str, bytes]:
+    """The signer's (did:key, signature) for ``payload``, verified with the strict ID profile."""
+    answer = signer(payload)
+    if inspect.isawaitable(answer):
+        answer = await answer
+    if type(answer) is not tuple or len(answer) != 2:
+        raise ValueError("signer must answer (did_key, signature)")
+    did_key, signature = answer
+    if expected_key is not None and did_key != expected_key:
+        raise ValueError("signer answered with a key other than the one named for its role")
+    try:
+        verify_ed25519(did_key, payload, signature)
+    except IDCertificateError as exc:
+        raise ValueError(f"signer answer refused: {exc.code}") from exc
+    return did_key, signature
 
 
 def _id_status_evidence(entry: dict[str, Any], *, age: int, refresh_failed: bool) -> IDChainEvidence:

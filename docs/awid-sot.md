@@ -1222,6 +1222,37 @@ which raises.
   grace. A successful answer ends it. Each domain's entries and cooldown are
   independent of every other domain's.
 
+### Public identity-tree write client
+
+`RegistryClient` (`awid/src/awid/registry.py`) makes the three identity-tree
+writes:
+
+- `register_id_certificate(bundle, *, signer, expected_head, invitation_id)`
+  sends the bundle's last certificate, with the bundle itself as
+  `X-AWID-ID-Chain`, and returns the receipt. An exact retry returns the
+  original receipt.
+- `revoke_id_certificate(domain, id, *, signer, expected_head,
+  effective_from=None)` returns `{revoked_at, effective_from}`. AWID decides
+  whether the signer acts as root, self or parent.
+- `rotate_namespace_with_previous_key(domain, *, from_seq, previous_did_key,
+  new_did_key, previous_signer, new_signer)` returns the namespace. Both keys
+  are named because they are inside the signed payload; each signer must
+  answer with the key named for its role. `CachedRegistryClient` refreshes its
+  namespace entry around it. This is distinct from
+  `rotate_namespace_controller`, the new-key-only `PUT` recovery that opens a
+  `replaced` epoch.
+
+A signer signs exactly the bytes it is given and answers `(did_key, raw
+64-byte signature)`, directly or as an awaitable, so a custodial host can
+finish its own checks first. No key material crosses this boundary. The client
+owns everything else: the canonical body bytes, the covering-v2 payload and
+its headers. Before anything is sent it checks each answer with the shared
+strict profile (`awid.id_certificates.verify_ed25519`). A signer that raises,
+or answers with a malformed result, a key outside the profile, a signature
+that does not verify or the wrong role's key, sends nothing. A refusal raises
+`RegistryError` with `status_code`, `detail`, and `code` when the registry
+sent a coded refusal.
+
 ---
 
 ## awid database schema
