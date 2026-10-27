@@ -44,11 +44,12 @@ function evidenceOf(c: any): IdStatusEvidence | null {
 
 describe("id chain verification cases", () => {
   test("the fixture has the cases this suite was written against", () => {
-    expect(cases).toHaveLength(98);
-    expect(new Set(cases.map(c => c.name)).size).toBe(98);
+    expect(cases).toHaveLength(122);
+    expect(new Set(cases.map(c => c.name)).size).toBe(122);
   });
 
-  // R1-R3 and the did:key-human shape negative are required in every CI.
+  // R1-R3, the namespace replacement cutoff and the did:key-human shape
+  // negative are required in every CI.
   test.each([
     "did-key-human-shape-refuses",
     "agent-cannot-issue-human",
@@ -57,6 +58,9 @@ describe("id chain verification cases", () => {
     "domain-disagreement-refuses",
     "namespace-parent-domain-human",
     "namespace-parent-domain-agent",
+    "root-replacement-old-human-refuses",
+    "replacement-then-rotation-does-not-restore-old-tree",
+    "namespace-first-epoch-rotated-unavailable",
   ])("mandatory negative %s is present and refuses", name => {
     const c = cases.find(entry => entry.name === name);
     expect(c).toBeDefined();
