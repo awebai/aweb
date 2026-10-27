@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Security:** build the Go CLI and gateway with Go 1.26.10 and
+  `golang.org/x/net` 0.60.0 to fix reachable standard-library and HTTP advisories.
+
 - Release preparation: server 1.27.35. Update the server test fixtures for
   the shared naapp runtime's integer nanosecond freshness deadlines.
 
