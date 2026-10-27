@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from nacl.bindings import crypto_core_ed25519_is_valid_point
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from awid.dns_verify import DomainVerifier
@@ -17,11 +18,15 @@ from awid.dns_verify import DnsVerificationError
 from awid.pagination import encode_cursor, validate_pagination_params
 from awid_service.delivery_origin import validate_delivery_origin
 from awid.ratelimit import rate_limit_dep
-from awid.dns_auth import validate_did_key as _validate_did_key
+from awid.dns_auth import enforce_timestamp_skew, require_timestamp, validate_did_key as _validate_did_key
+from awid.did import did_from_public_key, public_key_from_did
+from awid.id_certificates import IDCertificateError
+from awid_service.id_tree_gate import strict_json_object
 from awid.controller_request import ControllerAuthRoute, verify_controller_json_request
 from awid_service.id_tree_clock import app_clock
 from awid_service.namespace_epochs import (
     REPLACED,
+    ROTATED,
     has_epoch_history,
     is_exact,
     open_epoch,
@@ -39,6 +44,8 @@ logger = logging.getLogger(__name__)
 _MAX_DOMAIN_LENGTH = 256
 _PARENT_AUTH_HEADER = "X-AWEB-Parent-Authorization"
 _PARENT_TIMESTAMP_HEADER = "X-AWEB-Parent-Timestamp"
+_NEW_KEY_AUTH_HEADER = "X-AWEB-New-Key-Authorization"
+_ROTATION_FIELDS = frozenset({"domain", "operation", "from_seq", "previous_did_key", "new_did_key"})
 
 
 async def _verify_controller_signature(
@@ -154,6 +161,57 @@ async def _open_first_epoch_for_existing_namespace(tx, *, domain: str, caller_di
     if await has_epoch_history(tx, domain):
         return
     await open_epoch(tx, domain=domain, did_key=caller_did, continuity=REPLACED, clock=clock)
+
+
+def _coded(code: str, status: int) -> HTTPException:
+    return HTTPException(status_code=status, detail={"code": code, "message": code.replace("_", " ")})
+
+
+def _strict_did_key(value) -> bool:
+    """A canonical did:key whose Ed25519 point is in the prime-order subgroup."""
+    if not isinstance(value, str):
+        return False
+    try:
+        public = public_key_from_did(value)
+        return did_from_public_key(public) == value and bool(crypto_core_ed25519_is_valid_point(public))
+    except (TypeError, ValueError):
+        return False
+
+
+def _rotation_body(raw: bytes, domain: str) -> dict:
+    try:
+        body = strict_json_object(raw)
+    except IDCertificateError as exc:
+        raise _coded("invalid_shape", 400) from exc
+    if (
+        set(body) != _ROTATION_FIELDS
+        or body["domain"] != domain
+        or body["operation"] != "rotate_namespace_controller"
+        or type(body["from_seq"]) is not int
+        or body["from_seq"] < 1
+        or not _strict_did_key(body["previous_did_key"])
+        or not _strict_did_key(body["new_did_key"])
+        or body["previous_did_key"] == body["new_did_key"]
+    ):
+        raise _coded("invalid_shape", 400)
+    return body
+
+
+async def _verify_rotation_proofs(request: Request, body: dict) -> None:
+    """Both keys sign the same covering-v2 request; there is no legacy form."""
+    if request.headers.get("X-AWEB-Signed-Payload") is None:
+        raise _coded("invalid_signature", 401)
+    try:
+        previous = await verify_controller_json_request(request, payload_dict=body)
+        new = await verify_controller_json_request(
+            request, payload_dict=body, authorization_header=_NEW_KEY_AUTH_HEADER,
+        )
+    except HTTPException as exc:
+        if exc.status_code != 401:
+            raise
+        raise _coded("invalid_signature", 401) from exc
+    if previous != body["previous_did_key"] or new != body["new_did_key"]:
+        raise _coded("invalid_signature", 401)
 
 
 # ---------------------------------------------------------------------------
@@ -569,6 +627,79 @@ async def rotate_namespace_controller(
             existing["controller_did"],
             new_controller_did,
         )
+    return _namespace_response(row)
+
+
+@router.post(
+    "/{domain}/rotate",
+    response_model=NamespaceResponse,
+    dependencies=[Depends(rate_limit_dep("namespace_rotate"))],
+)
+async def rotate_namespace_with_previous_key(
+    request: Request,
+    domain: str,
+    db_infra=Depends(get_db),
+    verify_domain: DomainVerifier = Depends(get_domain_verifier),
+) -> NamespaceResponse:
+    """Rotate the controller with the previous key's consent, keeping the tree.
+
+    The previous and new keys both sign the request and exact DNS proves the
+    new key. Under the namespace lock the open epoch must still be the one
+    the request names, so a replayed or stale request refuses head_conflict;
+    the open epoch is retired and its `rotated` successor opened at one
+    witness time, which keeps registrations under the previous key valid.
+    """
+    db = db_infra.get_manager("aweb")
+    domain = _validate_domain(domain)
+    body = _rotation_body(await request.body(), domain)
+    await _verify_rotation_proofs(request, body)
+    try:
+        authority = await verify_domain(domain)
+    except DnsVerificationError:
+        authority = None
+    if not is_exact(authority) or authority.controller_did != body["new_did_key"]:
+        raise _coded("evidence_unavailable", 503)
+
+    async with db.transaction() as tx:
+        existing = await tx.fetch_one(
+            """
+            SELECT namespace_id
+            FROM {{tables.dns_namespaces}}
+            WHERE domain = $1 AND deleted_at IS NULL
+            FOR UPDATE
+            """,
+            domain,
+        )
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Namespace not found")
+        try:
+            enforce_timestamp_skew(require_timestamp(request))
+        except HTTPException as exc:
+            raise _coded("invalid_signature", 401) from exc
+        epoch = await open_epoch_of(tx, domain, for_update=True)
+        if epoch is None or (epoch["seq"], epoch["did_key"]) != (body["from_seq"], body["previous_did_key"]):
+            raise _coded("head_conflict", 409)
+        row = await tx.fetch_one(
+            """
+            UPDATE {{tables.dns_namespaces}}
+            SET controller_did = $2,
+                verification_status = 'verified',
+                last_verified_at = $3
+            WHERE domain = $1 AND deleted_at IS NULL
+            RETURNING namespace_id, domain, controller_did, verification_status,
+                      default_delivery_origin, last_verified_at, created_at
+            """,
+            domain,
+            body["new_did_key"],
+            datetime.now(timezone.utc),
+        )
+        await open_epoch(
+            tx, domain=domain, did_key=body["new_did_key"], continuity=ROTATED, clock=app_clock(request.app),
+        )
+    logger.warning(
+        "Namespace controller rotated with previous-key consent: domain=%s from_seq=%s new_controller_did=%s",
+        domain, body["from_seq"], body["new_did_key"],
+    )
     return _namespace_response(row)
 
 

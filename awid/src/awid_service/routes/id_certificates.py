@@ -19,7 +19,7 @@ from awid_service.deps import get_db, get_domain_verifier
 from awid_service.id_chains import check_chain_structure
 from awid_service.id_registration import register_certificate
 from awid_service.id_revocation import revoke_identity
-from awid_service.id_tree_gate import IdentityTreeRefusal
+from awid_service.id_tree_gate import IdentityTreeRefusal, strict_json_object
 from awid_service.id_tree_clock import app_clock
 from awid_service.namespace_epochs import is_exact
 
@@ -27,7 +27,6 @@ router = APIRouter(prefix="/v1/id-certificates", tags=["id-certificates"])
 
 ID_CHAIN_HEADER = "X-AWID-ID-Chain"
 SIGNED_PAYLOAD_HEADER = "X-AWEB-Signed-Payload"
-_MAX_BODY_BYTES = 16384
 _REGISTER_FIELDS = frozenset({"certificate", "expected_head", "invitation_id"})
 _REVOKE_FIELDS = frozenset({"domain", "id", "expected_head", "effective_from"})
 _CERTIFICATE_ID = re.compile(r"sha256:[0-9a-f]{64}")
@@ -38,32 +37,6 @@ def _refusal(code: str, status: int) -> HTTPException:
     return HTTPException(status_code=status, detail={"code": code, "message": code.replace("_", " ")})
 
 
-def _strict_json_object(raw: bytes) -> dict[str, Any]:
-    if len(raw) > _MAX_BODY_BYTES:
-        raise IDCertificateError("invalid_shape")
-
-    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
-        result: dict[str, Any] = {}
-        for key, value in items:
-            if key in result:
-                raise IDCertificateError("invalid_json")
-            result[key] = value
-        return result
-
-    def reject(_: str) -> Any:
-        raise IDCertificateError("invalid_shape")
-
-    try:
-        value = json.loads(raw.decode("utf-8"), object_pairs_hook=pairs, parse_float=reject, parse_constant=reject)
-    except (UnicodeError, ValueError, RecursionError) as exc:
-        if isinstance(exc, IDCertificateError):
-            raise
-        raise IDCertificateError("invalid_json") from exc
-    if type(value) is not dict:
-        raise IDCertificateError("invalid_shape")
-    return value
-
-
 def _expected_head(value: Any) -> str | None:
     if value is not None and (type(value) is not str or not _CERTIFICATE_ID.fullmatch(value)):
         raise IDCertificateError("invalid_shape")
@@ -71,7 +44,7 @@ def _expected_head(value: Any) -> str | None:
 
 
 def _register_body(raw: bytes) -> tuple[dict, str | None, str | None]:
-    body = _strict_json_object(raw)
+    body = strict_json_object(raw)
     if set(body) != _REGISTER_FIELDS:
         raise IDCertificateError("invalid_shape")
     expected_head = _expected_head(body["expected_head"])
@@ -95,7 +68,7 @@ def _register_body(raw: bytes) -> tuple[dict, str | None, str | None]:
 
 
 def _revoke_body(raw: bytes) -> tuple[str, str, str | None, datetime | None]:
-    body = _strict_json_object(raw)
+    body = strict_json_object(raw)
     if set(body) != _REVOKE_FIELDS:
         raise IDCertificateError("invalid_shape")
     domain, id_ = body["domain"], body["id"]

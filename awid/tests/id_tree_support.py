@@ -95,20 +95,29 @@ def sign(fields: dict, signer: str) -> dict:
     return {"certificate": fields, "signature": base64.urlsafe_b64encode(signature).rstrip(b"=").decode()}
 
 
-def covering_headers(signer: str, *, method: str, path: str, body: bytes, domain: str, operation: str) -> dict:
+def covering_headers(
+    signer: str, *, method: str, path: str, body: bytes, domain: str, operation: str,
+    new_key_signer: str | None = None, **claims,
+) -> dict:
+    """A covering-v2 request signed by ``signer``, and by ``new_key_signer`` in the new-key header."""
     timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     payload = {
         "v": 2, "type": REQUEST_TYPE, "aud": ORIGIN, "method": method, "path": path,
         "body_sha256": hashlib.sha256(body).hexdigest(), "timestamp": timestamp,
-        "domain": domain, "operation": operation,
+        "domain": domain, "operation": operation, **claims,
     }
     raw = canonical_json_bytes(payload)
-    return {
+    headers = {
         "Authorization": f"DIDKey {did_key(signer)} {sign_message(seed(signer), raw)}",
         "X-AWEB-Timestamp": timestamp,
         "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(raw).rstrip(b"=").decode(),
         "Content-Type": "application/json",
     }
+    if new_key_signer is not None:
+        headers["X-AWEB-New-Key-Authorization"] = (
+            f"DIDKey {did_key(new_key_signer)} {sign_message(seed(new_key_signer), raw)}"
+        )
+    return headers
 
 
 def chain_header(chain: list[dict]) -> str:

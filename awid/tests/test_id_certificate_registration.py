@@ -24,6 +24,7 @@ from awid.ratelimit import MemoryFixedWindowRateLimiter
 from conftest import build_signed_headers
 
 import test_id_namespace_epochs  # noqa: F401  (consumes namespace cases by name)
+import test_id_namespace_rotation  # noqa: F401  (consumes rotation cases by name)
 from id_tree_support import (
     CONSUMED,
     DOMAIN,
@@ -64,13 +65,7 @@ S2_LATER = {
     # Namespace continuity checkpoint, later commits: the root_replaced
     # cutoff, the signed rotation and the remaining refusals.
     "register-local-subject-refuses",
-    "namespace-signed-rotation-preserves-tree",
     "non-root-explicit-now-cutoff-refuses",
-    "namespace-rotation-wrong-from-seq",
-    "namespace-rotation-stale-old-key",
-    "namespace-rotation-replay",
-    "namespace-rotation-new-key-only-refuses",
-    "namespace-rotation-swapped-roles-refuses",
 }
 
 # Cases whose effects belong to another slice's component.

@@ -18,6 +18,8 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
+from awid.id_certificates import IDCertificateError
+
 
 
 class IdentityTreeRefusal(Exception):
@@ -35,6 +37,33 @@ def wire_time(moment: datetime) -> str:
 
 def canonical_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def strict_json_object(raw: bytes, *, max_bytes: int = 16384) -> dict[str, Any]:
+    """Parse a request body as one JSON object: no duplicate keys, floats or constants."""
+    if len(raw) > max_bytes:
+        raise IDCertificateError("invalid_shape")
+
+    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in items:
+            if key in result:
+                raise IDCertificateError("invalid_json")
+            result[key] = value
+        return result
+
+    def reject(_: str) -> Any:
+        raise IDCertificateError("invalid_shape")
+
+    try:
+        value = json.loads(raw.decode("utf-8"), object_pairs_hook=pairs, parse_float=reject, parse_constant=reject)
+    except (UnicodeError, ValueError, RecursionError) as exc:
+        if isinstance(exc, IDCertificateError):
+            raise
+        raise IDCertificateError("invalid_json") from exc
+    if type(value) is not dict:
+        raise IDCertificateError("invalid_shape")
+    return value
 
 
 async def lock_domain(tx, domain: str):

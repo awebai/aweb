@@ -246,6 +246,23 @@ or skipped DNS, parent authorization and reverify never open, replace or
 retire an epoch; reverify still updates the stored controller from exact DNS.
 Deletion retires the open epoch, and sequences never reset.
 
+`POST /v1/namespaces/{domain}/rotate` takes exactly `{domain, operation,
+from_seq, previous_did_key, new_did_key}` (`operation` is
+`rotate_namespace_controller`, `domain` the canonical path domain,
+`from_seq` a positive integer, two different strict did:keys). The previous
+key signs the covering-v2 request in `Authorization` and the new key signs
+the same payload in `X-AWEB-New-Key-Authorization`; there is no legacy form.
+Exact DNS for `new_did_key` is looked up before the transaction. Under the
+namespace row lock AWID rechecks the request timestamp and requires the
+open epoch to be `from_seq` with key `previous_did_key`. It then stores the
+new controller, retires that epoch and opens its `rotated` successor at the
+same witness time, so registrations under the previous key stay valid.
+Refusals use `detail.code`: 400 `invalid_shape`; 401 `invalid_signature` for
+a missing, wrong-role or legacy proof or a stale timestamp; 409
+`head_conflict` when the open epoch is not the named one (a replay or a stale
+key); 503 `evidence_unavailable` when exact DNS does not prove the new key.
+It shares the `namespace_rotate` rate-limit bucket with the PUT.
+
 ## Addresses
 
 Identity handles within namespaces. `acme.com/alice`.
