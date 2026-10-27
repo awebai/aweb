@@ -7,19 +7,25 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
+from uuid import uuid4
 
 import aweb_naapp.runtime
 import httpx
 import pytest
 from aweb_naapp.console import CONSOLE_HEADERS, apply_console_migrations
+from aweb_naapp.egress import InternalDestinations
+from aweb_naapp.hooks.strictjson import encode_base64url
 from aweb_naapp.roles import assign, principal_key, unassign
 from aweb_naapp.runtime.origins import split_origins
 from aweb_naapp.runtime.team_auth import Principal, record_observed_principal
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
+from awid.did import did_from_public_key
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from fastapi import FastAPI
+from nacl.signing import SigningKey
 from pgdbm import AsyncMigrationManager
 
-from aweb_secrets import records
+from aweb_secrets import jobs, records, runners
 from aweb_secrets.admission import AdmissionRefused, UseRequest, admit_use
 from aweb_secrets.console import OwnerConsole, owner_console_router
 from aweb_secrets.console_access import ConsoleAccess, console_access_router
@@ -29,6 +35,8 @@ from aweb_secrets.grant import GrantRecord
 from aweb_secrets.operation import OperationTemplate
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
 from aweb_secrets.policy import Policy
+from aweb_secrets.run_plan import RunPlanRefused
+from aweb_secrets.run_planner import RunPlanner
 from aweb_secrets.secret import SecretRecord
 from tests.test_admission import POLICY_BODY, STATUS, _member
 from tests.test_change_set_records import grant_after, item
@@ -47,6 +55,7 @@ from tests.test_change_sets import SECRET as DRAFT_SECRET
 from tests.test_console import API
 from tests.test_console_changes import sign_in
 from tests.test_containment_service import service
+from tests.test_jobs import after as job_after
 from tests.test_use_approvals import Uses
 from tests.test_use_approvals import uses as _uses
 from tests.test_use_approvals import world as _world
@@ -228,6 +237,88 @@ def uses_of(page: Page) -> dict[tuple[str, str, str], dict[str, str]]:
         (u["data-principal-did"], u["data-grant-id"], u.get("data-operation-id", "")): u
         for u in page.all("access-use")
     }
+
+
+def runs_of(page: Page) -> dict[tuple[str, str, str], dict[str, str]]:
+    return {
+        (r["data-principal-did"], r["data-grant-id"], r["data-job-id"]): r
+        for r in page.all("access-run")
+    }
+
+
+async def job_using(w: World, refs: list[str]) -> jobs.JobDefinition:
+    """A confirmed job whose credential slots name these secret refs, with its registered runner."""
+    await jobs.apply_job_migrations(w.db)
+    await runners.apply_runner_migrations(w.db)
+    body = job_after()
+    body["credentials"] = [{"secret_ref": ref, "delivery": "durable", "mint": None} for ref in refs]
+    body["env"] = {
+        f"CRED_{i}": {"$credential": ref, "field": "value"} for i, ref in enumerate(refs)
+    }
+    job = jobs.JobDefinition.from_after(body)
+    runner = runners.RunnerRecord.from_after(
+        {
+            "v": 1,
+            "runner_id": body["runner_ids"][0],
+            "label": "Runner",
+            "allowed_jobs": [job.job_id],
+        }
+    )
+    async with w.db.transaction() as tx:
+        await jobs.create_job(tx, INSTALLATION_ID, TEAM, job)
+        code = await runners.create_runner(tx, INSTALLATION_ID, TEAM, runner, now=datetime.now(UTC))
+        await runners.register_runner(
+            tx,
+            code=code,
+            signing_key=did_from_public_key(bytes(SigningKey.generate().verify_key)),
+            encryption_key=encode_base64url(
+                X25519PrivateKey.generate().public_key().public_bytes_raw()
+            ),
+            clock=lambda: datetime.now(UTC),
+        )
+    return job
+
+
+def run_grant(grant_id: str, secret: SecretRecord, member: Principal, job: jobs.JobDefinition):
+    return GrantRecord.from_after(
+        {
+            "v": 1,
+            "grant_id": grant_id,
+            "secret_id": secret.secret_id,
+            "subject": {"principal": member.did_aw},
+            "capability": "run",
+            "operations": [],
+            "open_request": False,
+            "jobs": [{"job_id": job.job_id, "digest": job.digest}],
+            "policy_digest": OPEN_POLICY.digest,
+        }
+    )
+
+
+async def planned(context: Uses, member: Principal, job: jobs.JobDefinition, n: int):
+    """Real run preparation at fixed inputs: None when the run is planned, else its refusal."""
+    planner = RunPlanner(
+        context.world.fence,
+        clock=lambda: datetime.now(UTC),
+        derived_max_ttl_s=3600,
+        internal_destinations=InternalDestinations.DISABLED,
+    )
+    try:
+        async with context.world.db.transaction() as tx:
+            await planner.prepare(
+                tx,
+                grant=Installations().grant,
+                principal=member,
+                run_id=f"run_access{n:05d}",
+                intent_id=f"int_access{n:05d}",
+                dispatch_id=uuid4(),
+                candidate_job=job,
+                runner_id=job.after["runner_ids"][0],
+                params={"database": "orders"},
+            )
+    except RunPlanRefused as refused:
+        return refused.code
+    return None
 
 
 async def admission(context: Uses, member: Principal, secret: SecretRecord, operation: str, n: int):
@@ -467,3 +558,39 @@ async def test_removing_one_member_from_a_role_ends_only_its_access_and_admissio
     assert (DB_AGENT.did_aw, READING.grant_id) in grants(after)
     assert await admission(access, READER, ORDERS_DB, READ.operation_id, 2) == "grant_missing"
     assert await admission(access, DB_AGENT, ORDERS_DB, READ.operation_id, 3) is None
+
+
+async def test_a_job_pin_covers_one_credential_and_never_claims_the_whole_run(access):
+    w = access.world
+    job = await job_using(w, [ORDERS_DB.ref, PAYMENTS.ref])
+    orders = run_grant("grt_runorder", ORDERS_DB, DB_AGENT, job)
+    async with w.db.transaction() as tx:
+        await records.create_grant(tx, INSTALLATION_ID, TEAM, orders)
+    async with clients(access) as (human, _):
+        await sign_in(w, human, owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did))
+        page = await owner_page(human, access)
+    run = runs_of(page)[(DB_AGENT.did_aw, orders.grant_id, job.job_id)]
+    # The grant covers its own credential slot; the job uses two, so no run is claimed.
+    assert run["data-covered"] == "true"
+    assert run["data-job-credentials"] == "2"
+    assert "data-source-refusal" not in run
+    assert await planned(access, DB_AGENT, job, 1) is not None
+    # With the other slot granted too, the same job is planned.
+    async with w.db.transaction() as tx:
+        await records.create_grant(
+            tx, INSTALLATION_ID, TEAM, run_grant("grt_runpaymt", PAYMENTS, DB_AGENT, job)
+        )
+    assert await planned(access, DB_AGENT, job, 2) is None
+
+
+async def test_a_job_with_a_missing_credential_shows_the_planner_refusal(access):
+    w = access.world
+    job = await job_using(w, [ORDERS_DB.ref, "retired-key"])
+    orders = run_grant("grt_runorder", ORDERS_DB, DB_AGENT, job)
+    async with w.db.transaction() as tx:
+        await records.create_grant(tx, INSTALLATION_ID, TEAM, orders)
+    async with clients(access) as (human, _):
+        await sign_in(w, human, owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did))
+        page = await owner_page(human, access)
+    run = runs_of(page)[(DB_AGENT.did_aw, orders.grant_id, job.job_id)]
+    assert run["data-source-refusal"] == await planned(access, DB_AGENT, job, 1)
