@@ -9680,6 +9680,37 @@
         "ordinary": "continue",
         "human_required": "refuse"
       }
+    },
+    {
+      "name": "cached-status-age-61-without-failed-refresh",
+      "chain": [
+        "alice",
+        "coordinator"
+      ],
+      "status": "normal",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "evidence_unavailable"
+      },
+      "cache": {
+        "age_seconds": 61,
+        "refresh": "not_needed"
+      },
+      "expected_cache_mode": "unavailable",
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      }
     }
   ],
   "operation_cases": [
