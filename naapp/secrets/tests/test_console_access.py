@@ -256,11 +256,14 @@ def runs_of(page: Page) -> dict[tuple[str, str, str], dict[str, str]]:
     }
 
 
-async def job_using(w: World, refs: list[str]) -> jobs.JobDefinition:
+async def job_using(
+    w: World, refs: list[str], job_id: str = "nightly-backup"
+) -> jobs.JobDefinition:
     """A confirmed job whose credential slots name these secret refs, with its registered runner."""
     await jobs.apply_job_migrations(w.db)
     await runners.apply_runner_migrations(w.db)
     body = job_after()
+    body["job_id"] = job_id
     body["credentials"] = [{"secret_ref": ref, "delivery": "durable", "mint": None} for ref in refs]
     body["env"] = {
         f"CRED_{i}": {"$credential": ref, "field": "value"} for i, ref in enumerate(refs)
@@ -289,7 +292,13 @@ async def job_using(w: World, refs: list[str]) -> jobs.JobDefinition:
     return job
 
 
-def run_grant(grant_id: str, secret: SecretRecord, member: Principal, job: jobs.JobDefinition):
+def run_grant(
+    grant_id: str,
+    secret: SecretRecord,
+    member: Principal,
+    job: jobs.JobDefinition,
+    policy: Policy = OPEN_POLICY,
+):
     return GrantRecord.from_after(
         {
             "v": 1,
@@ -300,7 +309,7 @@ def run_grant(grant_id: str, secret: SecretRecord, member: Principal, job: jobs.
             "operations": [],
             "open_request": False,
             "jobs": [{"job_id": job.job_id, "digest": job.digest}],
-            "policy_digest": OPEN_POLICY.digest,
+            "policy_digest": policy.digest,
         }
     )
 
