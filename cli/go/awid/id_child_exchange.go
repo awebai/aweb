@@ -205,7 +205,10 @@ func ImportIDCertificateResponse(request map[string]any, raw []byte, evidence *I
 		return nil, err
 	}
 	mismatch := idCertificateRefusal("request_binding_mismatch")
-	r := request["request"].(map[string]any)
+	r, ok := request["request"].(map[string]any)
+	if !ok {
+		return nil, idCertificateRefusal("invalid_shape")
+	}
 	if response["request_id"] != r["request_id"] {
 		return nil, mismatch
 	}
