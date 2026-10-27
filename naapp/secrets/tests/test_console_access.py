@@ -373,8 +373,8 @@ async def test_the_agent_with_db_write_is_flagged_with_its_direct_grant(access):
     assert set(listed) == {DB_AGENT.did_aw, READER.did_aw, OPEN_AGENT.did_aw}
     assert set(listed[DB_AGENT.did_aw]["data-flags"].split()) == {"sensitive", "write"}
     assert set(listed[READER.did_aw]["data-flags"].split()) == {"sensitive"}
-    # An open request declares no effect, so it may write: it is flagged like a write.
-    assert listed[OPEN_AGENT.did_aw]["data-flags"].split() == ["write"]
+    # An open request declares no effect, so it may write; only a declared write is a write.
+    assert listed[OPEN_AGENT.did_aw]["data-flags"].split() == ["may-write"]
     direct = grants(page)[(DB_AGENT.did_aw, DB_WRITE.grant_id)]
     assert direct["data-secret-id"] == ORDERS_DB.secret_id and "data-via-role" not in direct
     write = uses_of(page)[(DB_AGENT.did_aw, DB_WRITE.grant_id, INSERT.operation_id)]
