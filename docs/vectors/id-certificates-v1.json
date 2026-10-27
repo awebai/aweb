@@ -12645,6 +12645,48 @@
         "request": "local-resign",
         "leaf_certificate": "coordinator-resigned"
       }
-    }
+    },
+    "file_refusals": [
+      {
+        "name": "csr-request-file-over-limit",
+        "kind": "request",
+        "unit_utf8": "é",
+        "repeat": 4097,
+        "file_bytes": 8194,
+        "expected": {
+          "reason": "bundle_too_large"
+        }
+      },
+      {
+        "name": "csr-request-file-at-limit-invalid-json",
+        "kind": "request",
+        "unit_utf8": "x",
+        "repeat": 8192,
+        "file_bytes": 8192,
+        "expected": {
+          "reason": "invalid_json"
+        }
+      },
+      {
+        "name": "csr-response-file-over-limit",
+        "kind": "response",
+        "unit_utf8": "é",
+        "repeat": 4097,
+        "file_bytes": 8194,
+        "expected": {
+          "reason": "bundle_too_large"
+        }
+      },
+      {
+        "name": "csr-response-file-at-limit-invalid-json",
+        "kind": "response",
+        "unit_utf8": "x",
+        "repeat": 8192,
+        "file_bytes": 8192,
+        "expected": {
+          "reason": "invalid_json"
+        }
+      }
+    ]
   }
 }
