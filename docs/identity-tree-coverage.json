@@ -60,7 +60,7 @@
         "awid/tests/test_id_certificate_vectors.py::test_public_raw_verifier_requires_exact_message_bytes"
       ],
       "acceptance": "Frozen certificate bytes, raw refusals and strict Ed25519 probes; this is not ancestry verification.",
-      "candidate_head": "9fc3c5855c434904ab36a113baa654c2488fe6d3",
+      "candidate_head": "015d08b00a71968d288ebaefb2569e403a2e599b",
       "ed25519_profile": "strict",
       "sites": [
         {
