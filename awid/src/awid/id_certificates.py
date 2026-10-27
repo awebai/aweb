@@ -12,6 +12,7 @@ import json
 import re
 from typing import Any
 
+from nacl.bindings import crypto_core_ed25519_is_valid_point
 from nacl.exceptions import BadSignatureError
 from nacl.signing import VerifyKey
 
@@ -26,6 +27,7 @@ _FIELDS = frozenset({"v", "type", "id", "domain", "parent", "kind", "issuer_key"
 _LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 _B64URL = re.compile(r"[A-Za-z0-9_-]+")
 _BASE58 = re.compile(r"[1-9A-HJ-NP-Za-km-z]+")
+_ED25519_ORDER = 2**252 + 27742317777372353535851937790883648493
 
 
 class IDCertificateError(ValueError):
@@ -80,8 +82,9 @@ def _id(value: Any, *, key_only: bool = False) -> None:
         if not isinstance(value, str):
             raise ValueError("not text")
         if value.startswith("did:key:"):
-            if did_from_public_key(public_key_from_did(value)) != value:
-                raise ValueError("noncanonical key")
+            public = public_key_from_did(value)
+            if did_from_public_key(public) != value or not crypto_core_ed25519_is_valid_point(public):
+                raise ValueError("noncanonical or non-prime-subgroup key")
         elif not key_only and value.startswith("did:aw:"):
             if not _BASE58.fullmatch(value[7:]) or validate_stable_id(value) != value:
                 raise ValueError("noncanonical stable id")
@@ -112,6 +115,8 @@ def _shape(signed: Any) -> dict[str, Any]:
         _id(parent["id"])
     elif parent["kind"] == "namespace":
         _domain(parent["id"])
+        if parent["id"] != c["domain"]:
+            raise IDCertificateError("domain_mismatch")
     else:
         raise IDCertificateError("invalid_shape")
     _id(c["issuer_key"], key_only=True)
@@ -141,6 +146,13 @@ def verify_id_certificate(signed: dict[str, Any], *, issuer_key: str) -> None:
     if len(signature) != 64:
         raise IDCertificateError("invalid_encoding")
     if c["issuer_key"] != issuer_key:
+        raise IDCertificateError("invalid_signature")
+    # This profile requires canonical, nonidentity prime-subgroup R and S<L.
+    # Library verification alone can accept a mixed-order A for some messages.
+    if (
+        not crypto_core_ed25519_is_valid_point(signature[:32])
+        or int.from_bytes(signature[32:], "little") >= _ED25519_ORDER
+    ):
         raise IDCertificateError("invalid_signature")
     try:
         VerifyKey(public_key_from_did(issuer_key)).verify(id_certificate_signing_bytes(c), signature)
@@ -192,6 +204,11 @@ def decode_id_chain_header(value: str) -> dict[str, Any]:
         bundle = json.loads(raw.decode("utf-8"), object_pairs_hook=pairs, parse_float=reject_number, parse_constant=reject_number)
     except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
         raise IDCertificateError("invalid_json") from exc
+    except IDCertificateError:
+        raise
+    except ValueError as exc:
+        # json's integer digit limit is a shape refusal, not an uncoded error.
+        raise IDCertificateError("invalid_shape") from exc
     if _canonical(bundle) != raw:
         raise IDCertificateError("noncanonical_json")
     _bundle_shape(bundle)

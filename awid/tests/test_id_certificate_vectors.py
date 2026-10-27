@@ -83,3 +83,57 @@ def test_canonical_utf8_preserves_literal_escape_text():
         + "\u2028".encode()
         + b'"}'
     )
+
+
+@pytest.mark.parametrize("case", VECTORS["ed25519_verification"]["cases"], ids=lambda case: case["name"])
+def test_ed25519_profile_probes_through_certificate_verification(case):
+    from awid.did import did_from_public_key
+
+    signed = copy.deepcopy(VECTORS["certificates"]["alice"]["signed"])
+    assert id_certificate_signing_bytes(signed["certificate"]).hex() == case["message_hex"]
+    signed["certificate"]["issuer_key"] = did_from_public_key(bytes.fromhex(case["public_key_hex"]))
+    signed["signature"] = base64.urlsafe_b64encode(bytes.fromhex(case["signature_hex"])).rstrip(b"=").decode()
+    if case["expected"]["accepted"]:
+        verify_id_certificate(signed, issuer_key=signed["certificate"]["issuer_key"])
+    else:
+        with pytest.raises(IDCertificateError) as caught:
+            verify_id_certificate(signed, issuer_key=signed["certificate"]["issuer_key"])
+        assert caught.value.code == case["expected"]["reason"]
+
+
+@pytest.mark.parametrize("name", ["maximum-depth-eight", "depth-nine-refuses"])
+def test_codec_depth_limit_on_genuinely_signed_chains(name):
+    case = next(case for case in VECTORS["verification_cases"] if case["name"] == name)
+    bundle = {"v": 1, "type": "aweb.id-chain", "certificates": [VECTORS["certificates"][n]["signed"] for n in case["chain"]]}
+    raw = json.dumps(bundle, sort_keys=True, separators=(",", ":")).encode()
+    assert len(raw) < 6144  # Exercises the depth limit, not the byte limit.
+    header = base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+    if name == "maximum-depth-eight":
+        assert decode_id_chain_header(header) == bundle
+        assert encode_id_chain_header(bundle) == header
+    else:
+        for operation in [lambda: decode_id_chain_header(header), lambda: encode_id_chain_header(bundle)]:
+            with pytest.raises(IDCertificateError) as caught:
+                operation()
+            assert caught.value.code == "depth_exceeded"
+
+
+def test_claimed_issuer_cannot_differ_from_the_independently_selected_signer():
+    from nacl.signing import SigningKey
+
+    signed = copy.deepcopy(VECTORS["certificates"]["alice"]["signed"])
+    # The signature is valid under the supplied Bob key, but the certificate
+    # still selects root. Crypto alone must not silently ignore that selector.
+    signer = SigningKey(bytes.fromhex(VECTORS["keys"]["bob"]["seed_hex"]))
+    signed["signature"] = base64.urlsafe_b64encode(signer.sign(id_certificate_signing_bytes(signed["certificate"])).signature).rstrip(b"=").decode()
+    with pytest.raises(IDCertificateError) as caught:
+        verify_id_certificate(signed, issuer_key=VECTORS["keys"]["bob"]["did_key"])
+    assert caught.value.code == "invalid_signature"
+
+
+def test_year_zero_is_not_a_calendar_instant():
+    signed = copy.deepcopy(VECTORS["certificates"]["alice"]["signed"])
+    signed["certificate"]["issued_at"] = "0000-01-01T00:00:00Z"
+    with pytest.raises(IDCertificateError) as caught:
+        verify_id_certificate(signed, issuer_key=signed["certificate"]["issuer_key"])
+    assert caught.value.code == "invalid_shape"
