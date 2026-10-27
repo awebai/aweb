@@ -56,6 +56,43 @@ export function handleClaudeStreamState(
   log(formatEventStreamState(state));
 }
 
+export interface ChannelStreamStateSink {
+  onStreamState: (state: EventStreamState) => void;
+  flush: () => Promise<void>;
+}
+
+/** Keep operator diagnostics durable without waiting for disk in the stream loop. */
+export function createChannelStreamStateSink(
+  workdir: string,
+  log: (message: string) => void = console.error,
+): ChannelStreamStateSink {
+  const path = join(workdir, ".aw", "channel-stream.jsonl");
+  let pending = Promise.resolve();
+  let reportedFailure = false;
+  return {
+    onStreamState(state) {
+      handleClaudeStreamState(state, log);
+      if (state.state === "connected") return;
+      const line = `${JSON.stringify({
+        ts: new Date().toISOString(),
+        state: state.state,
+        cause: state.cause ?? null,
+        retry_in_ms: state.retryInMs ?? null,
+      })}\n`;
+      pending = pending.then(async () => {
+        await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+        await appendFile(path, line, { encoding: "utf-8", mode: 0o600 });
+      }).catch((error) => {
+        if (reportedFailure) return;
+        reportedFailure = true;
+        const detail = error instanceof Error ? error.message : String(error);
+        console.error(`aweb: channel stream file unavailable: ${detail}`);
+      });
+    },
+    flush: () => pending,
+  };
+}
+
 /**
  * The single line this plugin prints at startup when AWEB_DELIVERY=session.
  * Delivery belongs to something else on the host, so the plugin registers no
@@ -219,6 +256,7 @@ Control events (type="control") are operational signals. On "pause", stop curren
     process.env.AWEB_CHANNEL_DEBUG_FILE
       || join(workdir, ".aw", `channel-trace-${process.pid}.jsonl`),
   );
+  const streamStateSink = createChannelStreamStateSink(workdir);
   const receipt = new ReceiveStreamReceipt({
     identityHome: config.identityHome!, kind: "claude-channel", did: config.did, stableID: config.stableID,
     onError: console.error,
@@ -250,13 +288,14 @@ Control events (type="control") are operational signals. On "pause", stop curren
       // replay burst on reconnect (default-aajy).
       mailAcknowledgment: "delivery",
       onTrace: traceSink?.onTrace,
-      onStreamState: (state) => handleClaudeStreamState(state),
+      onStreamState: streamStateSink.onStreamState,
       streamObserver: receipt,
       log: (message) => console.error(message),
     });
   } finally {
     await stopActivity();
     await receipt.onClose();
+    await streamStateSink.flush();
     await traceSink?.flush();
   }
 }

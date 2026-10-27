@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Always record event-stream disconnects and recoveries in the working
+  directory's `.aw/channel-stream.jsonl` (mode 0600), alongside stderr
+  diagnostics. File-write failures are reported once and do not interrupt
+  delivery. Stream status stays out of the agent's context.
+
 ## 1.8.0
 
 - Publish live agent activity for the session when the host owner opts in
