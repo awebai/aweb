@@ -80,7 +80,12 @@ func ApproveIDResignRequest(store IDIssuanceStore, requestID, parentID string, p
 		return nil, fmt.Errorf("the parent's own chain is required")
 	}
 	last, ok := parentChain[len(parentChain)-1].(map[string]any)
-	if !ok || last["certificate"].(map[string]any)["id"] != parentID {
+	if ok {
+		var certificate map[string]any
+		certificate, ok = last["certificate"].(map[string]any)
+		ok = ok && certificate["id"] == parentID
+	}
+	if !ok {
 		return nil, fmt.Errorf("the parent chain does not end in %s", parentID)
 	}
 	req := IDResignRequest{
