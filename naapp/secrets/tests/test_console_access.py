@@ -2,11 +2,13 @@
 
 import asyncio
 import hashlib
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import aweb_naapp.runtime
@@ -24,6 +26,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from fastapi import FastAPI
 from nacl.signing import SigningKey
 from pgdbm import AsyncMigrationManager
+from pgdbm.core import TransactionManager
 
 from aweb_secrets import jobs, records, runners
 from aweb_secrets.admission import AdmissionRefused, UseRequest, admit_use
@@ -232,6 +235,56 @@ class Page(HTMLParser):
 
     def all(self, name: str) -> list[dict[str, str]]:
         return [attributes for found, attributes in self.found if found == name]
+
+
+class Links(HTMLParser):
+    """Each link's (href, text), in document order."""
+
+    def __init__(self, html: str) -> None:
+        super().__init__()
+        self.found: list[tuple[str, str]] = []
+        self._open = False
+        self.feed(html)
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "a":
+            self._open = True
+            self.found.append((dict(attrs).get("href") or "", ""))
+
+    def handle_endtag(self, tag):
+        if tag == "a":
+            self._open = False
+
+    def handle_data(self, data):
+        if self._open:
+            href, text = self.found[-1]
+            self.found[-1] = (href, text + data)
+
+
+async def owner_role_held_by(db, holder: Callable[[TransactionManager], Awaitable[Any]]):
+    """Run holder in a transaction and keep it open until release is set."""
+    holding, release = asyncio.Event(), asyncio.Event()
+
+    async def hold():
+        async with db.transaction() as tx:
+            await holder(tx)
+            holding.set()
+            await release.wait()
+
+    task = asyncio.create_task(hold())
+    await holding.wait()
+    return task, release
+
+
+async def view_waits_on_owner_role(db) -> bool:
+    for _ in range(500):
+        if await db.fetch_value(
+            "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database()"
+            " AND wait_event_type='Lock' AND query LIKE '%role_assignments%FOR SHARE%')"
+        ):
+            return True
+        await asyncio.sleep(0.01)
+    return False
 
 
 def agents(page: Page) -> dict[str, dict[str, str]]:
@@ -648,3 +701,72 @@ async def test_a_declared_writer_is_listed_before_a_possible_writer_and_never_do
     listed = agents(page)
     assert set(listed[DB_AGENT.did_aw]["data-flags"].split()) == {"sensitive", "write"}
     assert set(listed[possible.did_aw]["data-flags"].split()) == {"sensitive", "may-write"}
+
+
+async def test_an_unknown_secret_is_a_page_that_leads_back_to_all_access(access):
+    async with clients(access) as (human, _):
+        await sign_in(access.world, human, owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did))
+        response = await human.get("/access/secrets/no-such-secret")
+    assert response.status_code == 404
+    assert response.headers["content-type"].startswith("text/html")
+    for name, value in CONSOLE_HEADERS.items():
+        assert response.headers[name] == value
+    assert "Secret not found." in response.text
+    assert ("/access", "All access") in Links(response.text).found
+
+
+async def test_access_changed_while_loading_is_a_page_offering_a_fresh_load(access):
+    db = access.world.db
+    async with clients(access) as (human, _):
+        await sign_in(access.world, human, owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did))
+        withdrawal, release = await owner_role_held_by(
+            db, lambda tx: unassign(tx, ALICE, OWNER_ROLE)
+        )
+        view = asyncio.create_task(human.get("/access"))
+        waiting = await view_waits_on_owner_role(db)
+        release.set()
+        await withdrawal
+        response = await asyncio.wait_for(view, 5)
+    assert waiting, "the view did not reach the owner role hold"
+    assert response.status_code == 409 and response.headers["retry-after"] == "0"
+    assert response.headers["content-type"].startswith("text/html")
+    for name, value in CONSOLE_HEADERS.items():
+        assert response.headers[name] == value
+    assert "Access changed while this page was loading." in response.text
+    assert ("/access", "Reload access") in Links(response.text).found
+    # Authority is unknown, so no access facts are shown.
+    assert DB_AGENT.did_aw not in response.text and ORDERS_DB.ref not in response.text
+
+
+async def test_a_session_ending_during_the_read_goes_to_sign_in_with_its_cookie_cleared(access):
+    db = access.world.db
+    async with clients(access) as (human, _):
+        await sign_in(access.world, human, owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did))
+        await db.execute(
+            "UPDATE {{tables.console_sessions}} SET expires_at = NOW() + interval '2 seconds'"
+            " WHERE closed_at IS NULL"
+        )
+        # Lock the owner's role row without changing it: the view waits, then reads it intact.
+        lock, release = await owner_role_held_by(
+            db,
+            lambda tx: tx.execute(
+                "SELECT 1 FROM {{tables.role_assignments}}"
+                " WHERE team_id=$1 AND principal_did=$2 AND role=$3 FOR UPDATE",
+                TEAM,
+                ALICE.principal_did,
+                OWNER_ROLE,
+            ),
+        )
+        view = asyncio.create_task(human.get("/access"))
+        waiting = await view_waits_on_owner_role(db)
+        await asyncio.sleep(2.5)
+        release.set()
+        await lock
+        response = await asyncio.wait_for(view, 5)
+        again = await human.get("/access")
+    assert waiting, "the view did not reach the owner role hold"
+    assert response.status_code == 303 and response.headers["location"] == "/login"
+    assert "set-cookie" in response.headers
+    for name, value in CONSOLE_HEADERS.items():
+        assert response.headers[name] == value
+    assert again.status_code == 303 and again.headers["location"] == "/login"

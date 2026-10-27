@@ -199,14 +199,16 @@ async def test_a_failed_revoke_far_down_the_page_is_reported_where_the_owner_is(
         await control.scroll_into_view_if_needed()
         page.once("dialog", lambda dialog: asyncio.ensure_future(dialog.accept()))
         await control.click()
-        notice = page.locator("#notice")
-        await expect(notice).not_to_be_empty()
         await expect(control).to_be_enabled()
         focused = await page.evaluate("() => document.activeElement.outerHTML.slice(0, 160)")
         (tmp_path / "failed-revoke-focus.json").write_text(json.dumps({"focused": focused}))
         await page.screenshot(path=tmp_path / "failed-revoke-375.png")
         assert await admission(uses, OPEN_AGENT, PAYMENTS, "", 1) is None
-        await expect(notice).to_be_in_viewport()
+        # The owner learns what happened where they acted, and keeps their place.
+        failure = page.locator(f'.access-grant[data-grant-id="{OPEN.grant_id}"] [role="alert"]')
+        await expect(failure).not_to_be_empty()
+        await expect(failure).to_be_in_viewport()
+        await expect(control).to_be_focused()
 
 
 async def test_keyboard_only_list_secret_return_and_cancelled_narrowing(
