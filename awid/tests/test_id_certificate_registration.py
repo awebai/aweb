@@ -816,8 +816,7 @@ async def test_root_children_require_an_exact_dns_epoch(clocked_client, manual_c
 
     resp = await tree.register([certificate("alice")], when=at("2026-10-26T00:01:00Z"))
 
-    assert resp.status_code == 422, resp.text
-    assert _code(resp) == "evidence_unavailable"
+    assert (resp.status_code, _code(resp)) == (503, "evidence_unavailable"), resp.text
 
 
 @pytest.mark.asyncio

@@ -147,7 +147,7 @@ async def _namespace_issuer(tx, cert: dict, namespace) -> tuple[int, datetime]:
     """The open exact epoch of this domain, which must hold the issuer key."""
     epoch = await open_exact_epoch(tx, cert["domain"], namespace)
     if epoch is None:
-        raise IdentityTreeRefusal("evidence_unavailable")
+        raise IdentityTreeRefusal("evidence_unavailable", 503)
     if epoch["did_key"] != cert["issuer_key"]:
         raise IdentityTreeRefusal("issuer_key_not_current")
     return epoch["seq"], epoch["registered_at"]

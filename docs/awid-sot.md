@@ -1046,7 +1046,8 @@ A success returns exactly `{certificate_id, registered_at}`. Refusals use
 the tree's refusals (`domain_mismatch`, `human_issuer_is_agent`, `cycle`,
 `duplicate_id`, `missing_parent`, `identity_kind_immutable`, `subject_revoked`,
 `unregistered_parent`, `parent_revoked`, `issuer_key_not_current`,
-`superseded_certificate`, `evidence_unavailable`).
+`superseded_certificate`), and 503 `evidence_unavailable` when the domain has
+no open `dns_exact` epoch to issue under.
 
 Registration is rate limited in the `id_certificate_register` bucket: 300
 requests per hour per client IP. Every request does signature and database
