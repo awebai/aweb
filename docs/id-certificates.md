@@ -743,13 +743,16 @@ recipient, domain, parent and kind at issue, privately; after the child key
 exists that human's signer signs the exact certificate. No portable signed
 delegation. A custodial server can perform bounded deferred signing for that
 exact pending invitation, rechecking session/invitation authorization and the
-parent after lock waits. Deferred kind=human signing additionally requires
+parent after lock waits. For host-managed invitations, deferred kind=human
+signing additionally requires
 the accepting authenticated account's VERIFIED email to equal the fixed
 recipient. Token possession alone may complete ordinary membership, but leaves
 id_registration=pending and emits NO parent signature or registration request.
-Do not switch recipient/parent or mint a new key on retry. A self-custodial
-parent receives a CSR-style pending
-request; its aw signs on next contact. Immediate init/spawn signs directly.
+Do not switch recipient/parent or mint a new key on retry. Record the invitation's
+mode privately at issue: `host_managed` or `self_custodial`. An acceptor cannot
+switch modes. A self-custodial human parent receives the pending request defined
+below; its aw presents it for the inviting human's explicit approval. Nothing
+is signed until that approval. Immediate init/spawn signs directly.
 Agents can issue agent spawns, never human invites. An untyped new invite from
 an attributed agent is a spawn/inherits or refuses, not an unattributed escape.
 Do not guess a parent from pre-upgrade bearer tokens or local instance names.
@@ -770,6 +773,134 @@ Pending human registration cannot authorize child signing. A constructor may
 retain its exact authenticated intended-parent operation and resume issuance
 after registration with current checks and no extra login; it must not guess
 or retroactively attach unrelated legacy agents.
+
+### Self-custodial child requests and re-sign transport
+
+J1's cross-machine admission and J10's local-child re-sign use one explicit
+request/response file exchange. This extends the CLI's existing local invitation
+records and the durable issuance log required in §3. It introduces no OSS aweb
+server invitation endpoint, remote pending queue, polling loop or daemon. A
+host-managed invitation continues to use its host's existing invitation record
+and verified-account checks; presenting it on this file path refuses
+`invitation_mode_mismatch`. AWID is the registration/time witness, not the
+pending-request mailbox. Membership remains a separate operation.
+
+The child exports canonical UTF-8 JSON with exactly this wrapper:
+
+```json
+{"request":{"v":1,"type":"aweb.id-certificate-request","request_id":"<uuid>","operation":"issue","id":"did:aw:...","domain":"example.com","parent":{"kind":"identity","id":"did:aw:..."},"kind":"human","subject_key":"did:key:...","invitation_id":"<uuid>","old_certificate":null},"signature":"<base64url>"}
+```
+
+All fields are required, with no unknown fields. IDs/domain/parent/kind use §2's
+shape rules; UUIDs use lowercase canonical hyphenated spelling. `subject_key`
+is the child's current Ed25519 did:key. For a did:key child it equals `id`;
+for did:aw the receiver independently resolves and checks the current key and
+continuity. The request proves key possession, never identity admission.
+Apply §2's strict JSON, canonical encoding, signature encoding and Ed25519
+profile. Signing bytes are
+`UTF8("aweb.id-certificate-request/1\n") || canonical_json(request)`;
+the child signs those exact bytes with `subject_key`. The whole file is capped
+at 8192 bytes before parsing. The request carries no invite bearer secret,
+recipient email, private key, registry URL or callback URL. An invitation ID
+selects the parent's private record; it is not authority to sign.
+
+- `operation=issue` requires an invitation ID and null old_certificate. The
+  parent must already have that exact self-custodial invitation with privately
+  fixed recipient, domain, parent and kind. A first valid request binds its
+  exact child ID/key; no caller-supplied recipient label is used.
+- `operation=resign` requires null invitation_id, kind=agent, a did:key child
+  and the exact old signed certificate in old_certificate. All requested
+  id/domain/parent/kind fields must equal that certificate. The parent checks
+  the old signature with its verified history AND its prior issuance-log entry,
+  and checks the child's key proof. A submitted certificate never seeds the
+  issuance log. This operation cannot adopt, re-parent, rotate a child key,
+  create a human or re-sign a registered revision.
+
+The child's CLI retains its exact outstanding request before export, using the
+same key and request_id on retry. Public request state lives with the selected
+identity's metadata, with human state outside agent homes. The parent's
+`receive` verifies shape/key proof and imports the request into the existing
+invitation record (issue) or old certificate's issuance-log entry (resign).
+There is no third pending store. `pending` lists those local records; `show`
+fetches one by request_id and displays its exact fields. Another identity's
+invitation/issuance entry is never sufficient, including a team controller's
+invite when the ID parent is someone else. Private invitation fields and keys
+are not included in list/export output.
+
+The parent serializes receive/approve/refuse against that invitation or issuance
+entry and its signing-key changes. Request lifecycle is pending → issued or
+failed: pending has a stored exact request and no response; issued has the
+durably stored exact response and issuance provenance; failed has a refusal
+and no newly issued response. Byte-identical receive/approve retries return
+that same record/response without another signature. A different request with
+the same request_id refuses `request_conflict`. A second CSR for an issue
+invitation also refuses; if it proves a DIFFERENT key, void the invitation,
+mark it failed (`invitation_conflict`) and require a new invitation. An already
+released certificate cannot be unsent: voiding blocks further signing, and
+the existing registered identity is revoked separately if appropriate. Do not
+erase issued bytes or replace the first child's key on a conflicting retry.
+
+Human issue requires explicit approval for EACH exact request, independent of
+whether key custody prompts. Only the inviting human's selected human signer
+can approve. The CLI shows the privately fixed recipient, exact child did:aw,
+parent/domain/kind, invitation ID and the child's key fingerprint. The recipient
+CLI shows the same fingerprint when exporting its request:
+`lowercase_hex(SHA256(raw_32_byte_subject_public_key)[0:16])`, displayed as four
+groups of eight hex digits separated by hyphens. The inviter ENTERS the
+recipient-supplied fingerprint and the CLI compares it with the CSR's key;
+a yes/no confirmation of the displayed value is insufficient. Obtain that
+fingerprint from the recipient through a DIFFERENT trusted
+channel from the invitation/CSR delivery (in person, a call, or an already
+trusted contact). Approval is the inviter's attestation that this exact key
+belongs to that intended person. A mismatched confirmed fingerprint refuses
+`recipient_key_mismatch`, voids the invitation and fails the request: a new
+invitation is required. A name, a token or the displayed fingerprint alone is
+insufficient. Approval covers exactly invitation ID, child ID/key, parent,
+kind=human and domain, and is consumed by the single issuance. There is no
+--yes, batch, config/env auto-approval, agent approval or non-TTY approval;
+non-interactive or agent-run approval refuses `human_approval_required`, with
+no signature or registration request. A host-managed invitation can never use
+this approval as a substitute for its verified-email check.
+
+Agent issue/re-sign needs the ordinary exact invitation or recorded issuance
+and child proof, with no new human login or fingerprint ceremony. Re-sign may
+be automated on explicit receive/approve contact; 'on next contact' means this
+exchange, not every ordinary authenticated request. Immediately before signing,
+after the last wait, recheck request/record binding, unconsumed approval for a
+new human, invitation validity, current parent chain/status, R1–R3, current
+issuer key and issuance provenance. A revoked/replaced parent or missing
+current evidence refuses as in §3; no network occurs under local record locks.
+If a status refresh is needed, fetch outside locks and recheck the locked local
+facts before signing. AWID rechecks registered issuance under its own gate.
+
+The parent chooses current issuer_key and issued_at, signs one §2 certificate,
+and durably records its certificate_id and exact response BEFORE output. The
+canonical response is exactly `{v:1,request_id,chain}`, where chain is the
+ordinary §2 bundle ending in this child certificate. The whole response is
+capped at 8192 bytes and its bundle retains §2's independent limits. Its
+certificate signatures authenticate the result; request_id is correlation,
+not a separate authority artifact. The child accepts only an outstanding
+request with this ID and exactly matching id/domain/parent/kind and subject
+key, independently verifies the current parent chain and issuer signature,
+then atomically installs. A mismatch leaves its old identity/certificate and
+pending request unchanged (`request_binding_mismatch`). A local re-sign needs
+no registry write. For a did:aw child, import retains the signed result as
+pending; the child then calls §3 register with its own current-key proof and
+the same invitation ID, and verifies current status before claiming authority.
+A response or receipt alone never establishes a registered human.
+
+The CLI surfaces are `aw id parent request` (issue or --resign),
+`aw id parent import <response>`, and `aw id child receive <request>`, `pending`,
+`show <request-id>`, `approve <request-id>` and `refuse <request-id>`. Files and
+`-` for stdin/stdout are the transport; callers convey the public files over
+their chosen channel. `aw id request` retains its existing signed-HTTP meaning,
+and `aw id cert` retains its team-membership meaning. No automatic request
+fetch on ordinary mail/chat/connect is implied. Refuse/cancel/expiry creates
+no signature; a retryable transport failure retains the exact pending response.
+For registered invitations the independent registration lifecycle stays
+pending → registered | failed; an AWID-success/local-failure retry resubmits the
+SAME certificate and retains its original registered_at. Completion of this
+exchange never grants team membership, moves an address or rebinds a contact.
 
 Adoption is explicit and prospective. Retain existing global ID, key, address,
 mailbox and ordinary member certificates when their bindings do not change.

@@ -72,6 +72,12 @@ first enrollment uses the existing authenticated namespace POST once, and
 same-key reverify/temporary DNS failure preserves its epoch. History negatives
 isolate first-epoch continuity, an unretired predecessor and a contiguous-seq
 rotation time gap.
+`child_requests` freezes the child-key-signed canonical CSR bytes, recipient key
+fingerprints and matching response bundles for the explicit file exchange.
+Its operation cases pin parent-local invitation/issuance-log ownership,
+interactive human key approval over a separate trusted channel, competing-key
+invalidation, host-mode isolation, re-sign provenance and exact retry/import.
+They are S3 acceptance inputs, not evidence of an implemented transport.
 
 ### `member-attribution-v1.json` — superseded, historical only
 
