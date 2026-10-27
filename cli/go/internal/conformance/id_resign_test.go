@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -57,24 +58,99 @@ func loadIDResignVectors(t *testing.T) idResignVectors {
 	return v
 }
 
-// issuanceLog is an in-memory durable log: what the parent's signer issued.
-type issuanceLog struct {
-	ids    map[string]bool
-	writes int
+// issuedStore is an in-memory issuance store. Entries round-trip through JSON,
+// as on disk, and a write can be made to fail to stand in for a crash.
+type issuedStore struct {
+	entries   map[string][]byte
+	writes    int
+	failWrite int
 }
 
-func newIssuanceLog(ids ...string) *issuanceLog {
-	l := &issuanceLog{ids: map[string]bool{}}
+func newIssuedStore(t *testing.T, v idResignVectors, ids ...string) *issuedStore {
+	t.Helper()
+	s := &issuedStore{entries: map[string][]byte{}}
 	for _, id := range ids {
-		l.ids[id] = true
+		var found map[string]any
+		for _, c := range v.Certificates {
+			if c.CertificateID == id {
+				found = c.Signed
+			}
+		}
+		if found == nil {
+			t.Fatalf("no frozen certificate %s", id)
+		}
+		s.seed(t, id, found)
 	}
-	return l
+	return s
 }
-func (l *issuanceLog) Recorded(id string) (bool, error) { return l.ids[id], nil }
-func (l *issuanceLog) Record(id string) error {
-	l.ids[id] = true
-	l.writes++
+
+func (s *issuedStore) seed(t *testing.T, id string, signed map[string]any) {
+	t.Helper()
+	raw, err := json.Marshal(&awid.IDIssuanceEntry{CertificateID: id, Signed: signed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.entries[id] = raw
+}
+
+func (s *issuedStore) decode(raw []byte) (*awid.IDIssuanceEntry, error) {
+	var e awid.IDIssuanceEntry
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.UseNumber()
+	if err := d.Decode(&e); err != nil {
+		return nil, err
+	}
+	return &e, nil
+}
+
+func (s *issuedStore) Entry(id string) (*awid.IDIssuanceEntry, error) {
+	raw, ok := s.entries[id]
+	if !ok {
+		return nil, nil
+	}
+	return s.decode(raw)
+}
+
+func (s *issuedStore) EntryForRequest(requestID string) (*awid.IDIssuanceEntry, error) {
+	for _, raw := range s.entries {
+		e, err := s.decode(raw)
+		if err != nil {
+			return nil, err
+		}
+		if e.Resign != nil && e.Resign.RequestID == requestID {
+			return e, nil
+		}
+	}
+	return nil, nil
+}
+
+func (s *issuedStore) Put(e *awid.IDIssuanceEntry) error {
+	if s.failWrite > 0 && s.writes+1 == s.failWrite {
+		s.failWrite = 0
+		return errors.New("simulated crash before the write")
+	}
+	raw, err := json.Marshal(e)
+	if err != nil {
+		return err
+	}
+	s.entries[e.CertificateID] = raw
+	s.writes++
 	return nil
+}
+
+func (s *issuedStore) has(id string) bool { _, ok := s.entries[id]; return ok }
+
+func signWith(t *testing.T, v idResignVectors, key string, certificate map[string]any) map[string]any {
+	t.Helper()
+	seed, err := hex.DecodeString(v.Keys[key].SeedHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := awid.IDCertificateSigningBytes(certificate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return map[string]any{"certificate": certificate, "signature": base64.RawURLEncoding.EncodeToString(ed25519.Sign(ed25519.NewKeyFromSeed(seed), payload))}
 }
 
 func vectorSigner(t *testing.T, v idResignVectors, key string, calls *int) awid.IDCertificateSigner {
@@ -95,7 +171,7 @@ type resignFixture struct {
 	request awid.IDResignRequest
 	parent  string
 	status  map[string]any
-	log     *issuanceLog
+	log     *issuedStore
 	signer  string
 	now     time.Time
 }
@@ -108,7 +184,7 @@ func (f resignFixture) evidence(age float64) *awid.IDChainEvidence {
 	return &awid.IDChainEvidence{Status: f.status, NamespaceAuthority: authority, AgeSeconds: &age}
 }
 
-func (f resignFixture) run(t *testing.T) (map[string]any, *issuanceLog, int, error) {
+func (f resignFixture) run(t *testing.T) (map[string]any, *issuedStore, int, error) {
 	t.Helper()
 	calls := 0
 	signed, err := awid.ResignIDCertificate(f.request, f.parent, f.evidence(0), f.status["domain"].(string), f.log, vectorSigner(t, f.v, f.signer, &calls), f.now)
@@ -153,7 +229,7 @@ func caseFixture(t *testing.T, v idResignVectors, c idResignCase) resignFixture 
 		request: awid.IDResignRequest{Signed: old, Requested: requested, SubjectKey: subjectKey},
 		parent:  v.Keys["alice"].DIDAW,
 		status:  v.Statuses[statusName],
-		log:     newIssuanceLog(c.Input.IssuedCertificateIDs...),
+		log:     newIssuedStore(t, v, c.Input.IssuedCertificateIDs...),
 		signer:  signer,
 		now:     now,
 	}
@@ -178,13 +254,13 @@ func TestIDResignFrozenCases(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.Name, func(t *testing.T) {
 			f := caseFixture(t, v, c)
-			before := len(f.log.ids)
+			before := len(f.log.entries)
 			signed, log, _, err := f.run(t)
 			if !c.Expected.Accepted {
 				if got := awid.IDCertificateErrorCode(err); got != c.Expected.Reason {
 					t.Fatalf("reason=%q (%v) want %q", got, err, c.Expected.Reason)
 				}
-				if signed != nil || log.writes != 0 || len(log.ids) != before {
+				if signed != nil || log.writes != 0 || len(log.entries) != before {
 					t.Fatal("a refused re-sign wrote or released a certificate")
 				}
 				return
@@ -195,7 +271,7 @@ func TestIDResignFrozenCases(t *testing.T) {
 			if !reflect.DeepEqual(signed, v.Certificates[c.Expected.NewCertificate].Signed) {
 				t.Fatalf("got %v want %v", signed, v.Certificates[c.Expected.NewCertificate].Signed)
 			}
-			if !log.ids[v.Certificates[c.Expected.NewCertificate].CertificateID] || log.writes != 1 {
+			if !log.has(v.Certificates[c.Expected.NewCertificate].CertificateID) || log.writes != 1 {
 				t.Fatal("the re-signed certificate was not recorded in the issuance log")
 			}
 		})
@@ -315,7 +391,8 @@ func TestIDResignProbes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		f.log = newIssuanceLog(id)
+		f.log = newIssuedStore(t, v)
+		f.log.seed(t, id, f.request.Signed)
 		refuses(t, f, "invalid_signature")
 	})
 	t.Run("tampered old signature", func(t *testing.T) {
@@ -331,9 +408,9 @@ func TestIDResignProbes(t *testing.T) {
 	})
 	t.Run("issuance log is never seeded from the submission", func(t *testing.T) {
 		f := caseFixture(t, v, accepted)
-		f.log = newIssuanceLog()
+		f.log = newIssuedStore(t, v)
 		refuses(t, f, "issuance_not_recorded")
-		if len(f.log.ids) != 0 {
+		if len(f.log.entries) != 0 {
 			t.Fatal("the submitted certificate was recorded")
 		}
 	})
@@ -348,7 +425,8 @@ func TestIDResignProbes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		f.log = newIssuanceLog(id)
+		f.log = newIssuedStore(t, v)
+		f.log.seed(t, id, signWith(t, v, "alice", other))
 		refuses(t, f, "issuance_not_recorded")
 	})
 	agentParent := func(t *testing.T, status string) (resignFixture, *int) {
@@ -359,7 +437,7 @@ func TestIDResignProbes(t *testing.T) {
 			request: awid.IDResignRequest{Signed: old.Signed, Requested: vectorCertificateFields(old.Signed), SubjectKey: old.Signed["certificate"].(map[string]any)["id"].(string)},
 			parent:  v.Keys["global_agent"].DIDAW,
 			status:  v.Statuses[status],
-			log:     newIssuanceLog(old.CertificateID),
+			log:     newIssuedStore(t, v, old.CertificateID),
 			signer:  "global_agent",
 			now:     time.Date(2026, 10, 26, 0, 30, 0, 0, time.UTC),
 		}
@@ -379,6 +457,21 @@ func TestIDResignProbes(t *testing.T) {
 			t.Fatalf("reason=%q (%v) calls=%d writes=%d", got, err, *calls, f.log.writes)
 		}
 	})
+	t.Run("an entry under the old id holding another certificate is not provenance", func(t *testing.T) {
+		f := caseFixture(t, v, accepted)
+		oldID := v.Certificates[accepted.Input.OldCertificate].CertificateID
+		f.log = newIssuedStore(t, v)
+		f.log.seed(t, oldID, v.Certificates["coordinator-resigned"].Signed)
+		refuses(t, f, "issuance_not_recorded")
+	})
+	t.Run("a recorded copy whose signature does not verify is not provenance", func(t *testing.T) {
+		f := caseFixture(t, v, accepted)
+		oldID := v.Certificates[accepted.Input.OldCertificate].CertificateID
+		stored := v.Certificates[accepted.Input.OldCertificate].Signed
+		f.log = newIssuedStore(t, v)
+		f.log.seed(t, oldID, map[string]any{"certificate": stored["certificate"], "signature": v.Certificates["coordinator-resigned"].Signed["signature"]})
+		refuses(t, f, "issuance_not_recorded")
+	})
 	t.Run("stale parent evidence is unavailable", func(t *testing.T) {
 		f := caseFixture(t, v, accepted)
 		calls := 0
@@ -387,9 +480,18 @@ func TestIDResignProbes(t *testing.T) {
 			t.Fatalf("reason=%q calls=%d writes=%d", got, calls, f.log.writes)
 		}
 	})
+	t.Run("stale evidence decides nothing, not even a revocation", func(t *testing.T) {
+		f := caseFixture(t, v, accepted)
+		f.status = v.Statuses["alice-revoked-now"]
+		calls := 0
+		_, err := awid.ResignIDCertificate(f.request, f.parent, f.evidence(61), "example.com", f.log, vectorSigner(t, v, f.signer, &calls), f.now)
+		if got := awid.IDCertificateErrorCode(err); got != "evidence_unavailable" || calls != 0 {
+			t.Fatalf("reason=%q calls=%d", got, calls)
+		}
+	})
 	t.Run("refusals happen before signing", func(t *testing.T) {
 		f := caseFixture(t, v, accepted)
-		f.log = newIssuanceLog()
+		f.log = newIssuedStore(t, v)
 		_, _, calls, _ := f.run(t)
 		if calls != 0 {
 			t.Fatal("the signer ran for a refused re-sign")
