@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from awid.controller_request import verify_controller_json_request
 from awid.dns_verify import DnsVerificationError, DomainVerifier
-from awid.id_certificates import IDCertificateError, decode_id_chain_header, verify_id_certificate
+from awid.id_certificates import IDCertificateError, decode_id_chain_header, strict_did_key, verify_id_certificate
 from awid.did import validate_stable_id
 from awid.ratelimit import enforce_rate_limit, ip_bucket_key, rate_limit_dep
 from awid_service.deps import get_db, get_domain_verifier
@@ -23,7 +23,7 @@ from awid_service.id_revocation import revoke_identity
 from awid_service.id_status import status_snapshot
 from awid_service.id_tree_gate import IdentityTreeRefusal, strict_json_object
 from awid_service.id_tree_clock import app_clock
-from awid_service.namespace_epochs import is_exact, strict_did_key
+from awid_service.namespace_epochs import is_exact
 
 router = APIRouter(prefix="/v1/id-certificates", tags=["id-certificates"])
 

@@ -11,10 +11,8 @@ Callers hold the namespace row lock (or create the row) before writing.
 
 from __future__ import annotations
 
-from nacl.bindings import crypto_core_ed25519_is_valid_point
-
-from awid.did import did_from_public_key, public_key_from_did
 from awid.dns_verify import DomainAuthority
+from awid.id_certificates import strict_did_key
 
 from awid_service.id_tree_clock import Clock, serialization_time
 
@@ -25,17 +23,6 @@ REPLACED = "replaced"
 def is_exact(authority: DomainAuthority | None) -> bool:
     """Whether DNS proved the domain itself rather than an ancestor."""
     return authority is not None and not authority.inherited
-
-
-def strict_did_key(value) -> bool:
-    """A canonical did:key whose Ed25519 point is in the prime-order subgroup."""
-    if not isinstance(value, str):
-        return False
-    try:
-        public = public_key_from_did(value)
-        return did_from_public_key(public) == value and bool(crypto_core_ed25519_is_valid_point(public))
-    except (TypeError, ValueError):
-        return False
 
 
 def proves_root(authority: DomainAuthority | None, did_key: str) -> bool:

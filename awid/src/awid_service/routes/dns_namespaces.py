@@ -18,7 +18,7 @@ from awid.pagination import encode_cursor, validate_pagination_params
 from awid_service.delivery_origin import validate_delivery_origin
 from awid.ratelimit import rate_limit_dep
 from awid.dns_auth import enforce_timestamp_skew, require_timestamp, validate_did_key as _validate_did_key
-from awid.id_certificates import IDCertificateError
+from awid.id_certificates import IDCertificateError, strict_did_key
 from awid_service.id_tree_gate import strict_json_object
 from awid.controller_request import ControllerAuthRoute, verify_controller_json_request
 from awid_service.id_tree_clock import app_clock
@@ -26,7 +26,6 @@ from awid_service.namespace_epochs import (
     REPLACED,
     ROTATED,
     proves_root,
-    strict_did_key,
     has_epoch_history,
     is_exact,
     open_epoch,
