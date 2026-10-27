@@ -594,7 +594,7 @@ async def test_an_owner_withdrawal_committed_under_the_snapshot_refuses_without_
         release.set()
         await withdrawal
         refused = await asyncio.wait_for(view, 5)
-    assert refused.status_code == 409 and refused.json()["detail"] == "access_changed"
+    assert refused.status_code == 409 and refused.headers["retry-after"] == "0"
     assert DB_AGENT.did_aw not in refused.text
 
 
