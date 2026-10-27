@@ -230,6 +230,25 @@ func TestIDResignProbes(t *testing.T) {
 		f.signer = "alice"
 		refuses(t, f, "issuer_key_not_current")
 	})
+	t.Run("TestZZSecreviewMislabelledSignerRefuses", func(t *testing.T) {
+		// A mis-wired signer labels its output with the current key but signs with the retired one.
+		f := caseFixture(t, v, accepted)
+		seed, err := hex.DecodeString(v.Keys["alice"].SeedHex)
+		if err != nil {
+			t.Fatal(err)
+		}
+		retired := ed25519.NewKeyFromSeed(seed)
+		label := v.Keys["alice_rotated"].DIDKey
+		signed, err := awid.ResignIDCertificate(f.request, f.parent, f.evidence(0), "example.com", f.log, func(payload []byte) (string, []byte, error) {
+			return label, ed25519.Sign(retired, payload), nil
+		}, f.now)
+		if got := awid.IDCertificateErrorCode(err); got != "invalid_signature" {
+			t.Fatalf("reason=%q (%v) want invalid_signature", got, err)
+		}
+		if signed != nil || f.log.writes != 0 {
+			t.Fatal("a mislabelled signature was released or recorded")
+		}
+	})
 	t.Run("subject key not proved", func(t *testing.T) {
 		f := caseFixture(t, v, accepted)
 		f.request.SubjectKey = ""
