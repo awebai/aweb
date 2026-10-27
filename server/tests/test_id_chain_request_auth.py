@@ -5,14 +5,18 @@ AWID and aweb services, PostgreSQL, Redis and public registration clients.
 """
 from __future__ import annotations
 
+import base64
 import json
+import time
 from pathlib import Path
+from uuid import uuid4
 
 import httpx
 import pytest
 from fastapi import FastAPI, HTTPException, Request
 
 from awid.dns_verify import DomainAuthority
+from awid.id_certificates import id_certificate_signing_bytes
 from awid.registry import CachedRegistryClient, IDTreeEnrollment
 from awid_service.deps import get_domain_verifier
 from aweb.api import _build_awid_registry_client
@@ -40,7 +44,7 @@ def request(app, headers=None):
     ({'id_tree': {'enrolled': False}}, IDTreeEnrollment(False, None)),
     ({}, None),
 ], ids=['enrolled', 'not-enrolled', 'unknown'])
-async def test_binding_preserves_enrollment_and_the_sixty_second_boundary(monkeypatch, wire, expected):
+async def test_binding_uses_fresh_resolution_and_preserves_the_sixty_second_boundary(monkeypatch, wire, expected):
     calls = []
 
     async def answer(req):
@@ -50,6 +54,10 @@ async def test_binding_preserves_enrollment_and_the_sixty_second_boundary(monkey
     client = CachedRegistryClient('https://registry.example', _FakeRedis(), transport=httpx.MockTransport(answer))
     app = FastAPI()
     app.state.awid_registry_client = client
+    async def forbidden_plain_resolve(self, did_aw):
+        pytest.fail('binding used plain resolve_key')
+
+    monkeypatch.setattr(CachedRegistryClient, 'resolve_key', forbidden_plain_resolve)
     now = [100.0]
     monkeypatch.setattr('aweb.identity_binding.monotonic', lambda: now[0])
 
@@ -77,6 +85,7 @@ async def test_factory_without_cached_evidence_never_fetches_a_tree(monkeypatch,
     from aweb.id_chain_auth import authenticate_id_chain
 
     monkeypatch.setenv('AWID_REGISTRY_URL', 'https://registry.example')
+    monkeypatch.setenv('AWEB_DATABASE_URL', 'postgresql://unused/test')
     app = FastAPI()
     client = _build_awid_registry_client(app, redis=_FakeRedis() if redis_present else None,
                                        transport=httpx.MockTransport(lambda req: pytest.fail('chainless local did network work')))
@@ -95,29 +104,67 @@ async def test_factory_without_cached_evidence_never_fetches_a_tree(monkeypatch,
 
 
 @pytest.mark.asyncio
-async def test_cached_not_enrolled_then_enroll_revoke_and_omit_refuses(privacy_app, monkeypatch):
+@pytest.mark.parametrize('enrollment, reason', [
+    (None, 'evidence_unavailable'),
+    (IDTreeEnrollment(True, 'other.example'), 'domain_mismatch'),
+], ids=['unknown-is-not-legacy', 'presented-domain-must-match-enrollment'])
+async def test_enrollment_controls_domain_before_any_tree_fetch(enrollment, reason):
+    from awid.id_certificates import encode_id_chain_header
+    from aweb.id_chain_auth import authenticate_id_chain
+
+    class NoTreeRead:
+        async def id_chain_evidence(self, *args, **kwargs):
+            pytest.fail('unselected or conflicting domain caused a tree read')
+
+    app = FastAPI()
+    app.state.awid_registry_client = NoTreeRead()
+    bundle = {'v': 1, 'type': 'aweb.id-chain', 'certificates': [VECTORS['certificates']['alice']['signed']]}
+    req = request(app, {'X-AWID-ID-Chain': encode_id_chain_header(bundle)})
+    with pytest.raises(HTTPException) as refused:
+        await authenticate_id_chain(req, IdentityBinding(
+            did_aw=ALICE['did_aw'], did_key=ALICE['did_key'], id_tree=enrollment))
+    assert refused.value.detail == reason
+    assert refused.value.status_code == (503 if enrollment is None else 403)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('revoked', [False, True], ids=['live-neighbor', 'enroll-then-revoke'])
+async def test_stale_not_enrolled_does_not_hide_enrollment_or_revocation(privacy_app, monkeypatch, revoked):
     env = privacy_app
+    # A distinct domain prevents another case's valid 60s tree cache from
+    # legitimately masking this case's newly witnessed revocation.
+    domain = f'awtest-s4-{uuid4().hex}.test'
     actor = env.actors['bob']
     actor.sk, actor.did = bytes.fromhex(ALICE['seed_hex']), ALICE['did_key']
     await env.db.execute('UPDATE {{tables.agents}} SET did_key=$1 WHERE agent_id=$2', actor.did, actor.id)
     async with registry_listener(env) as (writer, origin):
+        env.registry_app.state.awid_public_origins = (origin,)
+        selected_domain = domain
+
         async def exact_dns(domain):
-            assert domain == DOMAIN
-            return DomainAuthority(ROOT['did_key'], origin, '_awid.' + DOMAIN)
+            assert domain == selected_domain
+            return DomainAuthority(ROOT['did_key'], origin, '_awid.' + selected_domain)
 
         env.registry_app.dependency_overrides[get_domain_verifier] = lambda: exact_dns
         # Use the production factory and its actual Redis cache. Only DNS is
         # fixture evidence; all key, enrollment, status and revoke reads/writes
         # run through real HTTP services.
         monkeypatch.setenv('AWID_REGISTRY_URL', origin)
+        monkeypatch.setenv('AWEB_DATABASE_URL', 'postgresql://unused/test')
         cached = _build_awid_registry_client(env.app, redis=env.redis)
         object.__setattr__(cached, '_domain_verifier', exact_dns)
         env.app.state.awid_registry_client = cached
         try:
             stable = (await writer.register_did(actor.did, actor.sk)).did_aw
-            await writer.register_namespace(DOMAIN, ROOT['did_key'], bytes.fromhex(ROOT['seed_hex']))
+            await writer.register_namespace(domain, ROOT['did_key'], bytes.fromhex(ROOT['seed_hex']))
             assert (await cached.resolve_key(stable)).id_tree == IDTreeEnrollment(False, None)
-            bundle = {'v': 1, 'type': 'aweb.id-chain', 'certificates': [VECTORS['certificates']['alice']['signed']]}
+            warmed_at = time.monotonic()
+            from nacl.signing import SigningKey
+            fields = VECTORS['certificates']['alice']['signed']['certificate'] | {
+                'domain': domain, 'parent': {'kind': 'namespace', 'id': domain}}
+            signature = SigningKey(bytes.fromhex(ROOT['seed_hex'])).sign(id_certificate_signing_bytes(fields)).signature
+            signed = {'certificate': fields, 'signature': base64.urlsafe_b64encode(signature).rstrip(b'=').decode()}
+            bundle = {'v': 1, 'type': 'aweb.id-chain', 'certificates': [signed]}
 
             def signer(seed, did):
                 from nacl.signing import SigningKey
@@ -125,9 +172,10 @@ async def test_cached_not_enrolled_then_enroll_revoke_and_omit_refuses(privacy_a
 
             receipt = await writer.register_id_certificate(bundle, signer=signer(actor.sk, actor.did),
                                                            expected_head=None, invitation_id=None)
-            await writer.revoke_id_certificate(DOMAIN, stable,
-                signer=signer(bytes.fromhex(ROOT['seed_hex']), ROOT['did_key']),
-                expected_head=receipt['certificate_id'])
+            if revoked:
+                await writer.revoke_id_certificate(domain, stable,
+                    signer=signer(bytes.fromhex(ROOT['seed_hex']), ROOT['did_key']),
+                    expected_head=receipt['certificate_id'])
             # The ordinary SDK cache still says legacy inside its five-minute
             # TTL. Original authentication MUST resolve fresh instead.
             assert (await cached.resolve_key(stable)).id_tree == IDTreeEnrollment(False, None)
@@ -141,9 +189,11 @@ async def test_cached_not_enrolled_then_enroll_revoke_and_omit_refuses(privacy_a
             before = await env.db.fetch_val('SELECT count(*) FROM {{tables.messages}}')
             response = await env.client.post('/v1/messages', content=body, headers={
                 **_signed_identity_headers(actor.sk, actor.did, stable, body), 'Content-Type': 'application/json'})
-            assert response.status_code == 403, response.text
-            assert response.json()['detail'] == 'revoked'
-            assert await env.db.fetch_val('SELECT count(*) FROM {{tables.messages}}') == before
+            assert time.monotonic() - warmed_at < 300
+            assert response.status_code == (403 if revoked else 200), response.text
+            if revoked:
+                assert response.json()['detail'] == 'revoked'
+            assert await env.db.fetch_val('SELECT count(*) FROM {{tables.messages}}') == before + (0 if revoked else 1)
         finally:
             env.app.state.awid_registry_client = writer
             await cached.aclose()
