@@ -64,6 +64,15 @@ func ResignIDCertificate(req IDResignRequest, parentID string, evidence *IDChain
 	if parent.Revocation != nil {
 		return nil, idCertificateRefusal("parent_revoked")
 	}
+	current, err := status.currentKey(parentID)
+	if err != nil {
+		return nil, err
+	}
+	// The parent's whole current chain must be valid, as at AWID registration.
+	verdict := VerifyIDChain(nil, IDChainSubject{ID: parentID, DIDKey: current}, evidence, domain)
+	if verdict.IdentityValid == nil || !*verdict.IdentityValid {
+		return nil, idCertificateRefusal(verdict.Reason)
+	}
 	if req.SubjectKey == "" || req.SubjectKey != old["id"] {
 		return nil, idCertificateRefusal("subject_mismatch")
 	}
@@ -83,10 +92,6 @@ func ResignIDCertificate(req IDResignRequest, parentID string, evidence *IDChain
 	}
 	if !recorded {
 		return nil, idCertificateRefusal("issuance_not_recorded")
-	}
-	current, err := status.currentKey(parentID)
-	if err != nil {
-		return nil, err
 	}
 
 	certificate := map[string]any{}
