@@ -165,17 +165,58 @@ function certificateShapeRefusal(certificate: unknown): IdDecodeRefusal | undefi
 function signatureRefusal(signed: SignedIdCertificate): IdDecodeRefusal | undefined {
   const signature = decodeBase64URL(signed.signature);
   if (!signature || signature.length !== 64) return "invalid_encoding";
+  // Shape validation has already admitted issuer_key under the point rule.
+  const publicKey = extractPublicKey(signed.certificate.issuer_key);
+  const result = idEd25519Verify(publicKey, idCertificateSigningBytes(signed.certificate), signature);
+  return result.accepted ? undefined : "invalid_signature";
+}
+
+const GROUP_ORDER = ed.CURVE.n;
+
+export interface IdEd25519Result {
+  accepted: boolean;
+  reason: "invalid_shape" | "invalid_signature" | null;
+}
+
+/**
+ * The ID-certificate Ed25519 acceptance rule: A and R canonical, nonidentity
+ * and in the prime-order subgroup, 0 <= S < L, and exactly [S]B = R + [k]A.
+ * A bad public key is a shape refusal; anything else is a bad signature.
+ * noble's own verify clears the cofactor, so it is not used here.
+ */
+export function idEd25519Verify(publicKey: Uint8Array, message: Uint8Array, signature: Uint8Array): IdEd25519Result {
+  const A = primeSubgroupPoint(publicKey);
+  if (!A) return { accepted: false, reason: "invalid_shape" };
+  if (signature.length !== 64) return { accepted: false, reason: "invalid_signature" };
+  const encodedR = signature.subarray(0, 32);
+  const R = primeSubgroupPoint(encodedR);
+  const S = littleEndian(signature.subarray(32));
+  if (!R || S >= GROUP_ORDER) return { accepted: false, reason: "invalid_signature" };
+  const k = littleEndian(sha512(ed.etc.concatBytes(encodedR, publicKey, message))) % GROUP_ORDER;
+  const SB = S === 0n ? ed.ExtendedPoint.ZERO : ed.ExtendedPoint.BASE.multiply(S);
+  const kA = k === 0n ? ed.ExtendedPoint.ZERO : A.multiply(k);
+  return SB.equals(R.add(kA)) ? { accepted: true, reason: null } : { accepted: false, reason: "invalid_signature" };
+}
+
+/** A canonical, nonidentity point of the prime-order subgroup, or undefined. */
+function primeSubgroupPoint(encoded: Uint8Array): InstanceType<typeof ed.ExtendedPoint> | undefined {
+  if (encoded.length !== 32) return undefined;
+  let point: InstanceType<typeof ed.ExtendedPoint>;
   try {
-    const valid = ed.verify(
-      signature,
-      idCertificateSigningBytes(signed.certificate),
-      extractPublicKey(signed.certificate.issuer_key),
-      { zip215: false },
-    );
-    return valid ? undefined : "invalid_signature";
+    point = ed.ExtendedPoint.fromHex(encoded, false);
   } catch {
-    return "invalid_signature";
+    return undefined;
   }
+  if (point.is0() || !point.isTorsionFree()) return undefined;
+  // Re-encoding catches y >= p and the x = 0 sign-bit alias.
+  if (Buffer.compare(Buffer.from(point.toRawBytes()), Buffer.from(encoded)) !== 0) return undefined;
+  return point;
+}
+
+function littleEndian(bytes: Uint8Array): bigint {
+  let value = 0n;
+  for (let i = bytes.length - 1; i >= 0; i -= 1) value = (value << 8n) | BigInt(bytes[i]);
+  return value;
 }
 
 const BASE64URL = /^[A-Za-z0-9_-]*$/;
@@ -194,9 +235,11 @@ export function isCanonicalDomain(domain: string): boolean {
   return domain.length > 0 && domain.length <= 253 && domain.split(".").every(label => DOMAIN_LABEL.test(label));
 }
 
+/** An Ed25519 did:key that round-trips and whose point meets the ID-certificate point rule. */
 export function isCanonicalDidKey(value: string): boolean {
   try {
-    return computeDIDKey(extractPublicKey(value)) === value;
+    const publicKey = extractPublicKey(value);
+    return computeDIDKey(publicKey) === value && primeSubgroupPoint(publicKey) !== undefined;
   } catch {
     return false;
   }

@@ -283,8 +283,8 @@ function trustedSnapshot(evidence: IdStatusEvidence | null, domain: string | und
   }
   const snapshot = parseSnapshot(evidence.status, domain);
   if (!snapshot) throw new Refusal("evidence_unavailable");
-  // DNS and the registry's current epoch must name the same root key.
-  // Pending contract confirmation of the code (thread 434353fe, Q1).
+  // DNS and the registry's current epoch must name the same root key; a
+  // disagreement is a contradictory authority snapshot, not a bad proof.
   if (snapshot.epochs[snapshot.epochs.length - 1].didKey !== authority.controller_key) {
     throw new Refusal("evidence_unavailable");
   }

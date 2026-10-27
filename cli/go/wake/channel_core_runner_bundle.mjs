@@ -10442,6 +10442,7 @@ function createTerminalAwakeningHandler(options) {
 
 // channel-core/src/identity/id_certificates.ts
 etc.sha512Sync = (...m) => sha512(etc.concatBytes(...m));
+var GROUP_ORDER = ed25519_CURVE.n;
 
 // cli/go/wake/channel_core_runner_entry.ts
 var EventQueue = class {
