@@ -462,6 +462,14 @@ func TestIDChildImportProbes(t *testing.T) {
 			t.Fatalf("binding: %v", err)
 		}
 	})
+	t.Run("a malformed outstanding request is an error, not a panic", func(t *testing.T) {
+		for _, outstanding := range []map[string]any{{}, {"request": "not an object"}} {
+			imported, err := awid.ImportIDCertificateResponse(outstanding, []byte(good), x.evidence("alice-rotated"), "example.com")
+			if awid.IDCertificateErrorCode(err) != "invalid_shape" || imported != nil {
+				t.Fatalf("outstanding %v: %v", outstanding, err)
+			}
+		}
+	})
 	t.Run("parent revoked", func(t *testing.T) {
 		refuses(t, good, "alice-revoked-now", "revoked")
 	})
