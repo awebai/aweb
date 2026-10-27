@@ -104,11 +104,27 @@ class EncryptionKeyAssertion(BaseModel):
         return {key: value for key, value in handler(self).items() if value is not None}
 
 
+class IdTreeEnrollment(BaseModel):
+    """Whether the did:aw is registered in an identity tree, and the domain fixed at its first enrollment.
+
+    A revoked or root-replaced ID is still enrolled; its standing comes from
+    the tree's status.
+    """
+
+    enrolled: bool
+    domain: str | None = None
+
+    @model_serializer(mode="wrap")
+    def serialize_without_null_domain(self, handler):
+        return {key: value for key, value in handler(self).items() if value is not None}
+
+
 class DidKeyResponse(BaseModel):
     did_aw: str
     current_did_key: str
     log_head: DidKeyEvidence | None = None
     encryption_key: EncryptionKeyAssertion | None = None
+    id_tree: IdTreeEnrollment
 
 
 class DidHeadResponse(BaseModel):
@@ -339,40 +355,43 @@ async def get_key(request: Request, did_aw: str) -> DidKeyResponse:
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    db = _db(request)
-    row = await db.fetch_one(
-        """
-        SELECT did_aw, current_did_key
-        FROM {{tables.did_aw_mappings}}
-        WHERE did_aw = $1
-        """,
-        did_aw,
-    )
-    if row is None:
-        raise HTTPException(status_code=404, detail="not found")
+    # The key and its identity-tree enrollment come from one snapshot.
+    async with _db(request).transaction() as tx:
+        await tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        row = await tx.fetch_one(
+            """
+            SELECT did_aw, current_did_key
+            FROM {{tables.did_aw_mappings}}
+            WHERE did_aw = $1
+            """,
+            did_aw,
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail="not found")
 
-    head = await db.fetch_one(
-        """
-        SELECT seq, operation, previous_did_key, new_did_key,
-               prev_entry_hash, entry_hash, state_hash, authorized_by, signature,
-               timestamp
-        FROM {{tables.did_aw_log}}
-        WHERE did_aw = $1
-        ORDER BY seq DESC
-        LIMIT 1
-        """,
-        did_aw,
-    )
-    if head is None:
-        raise HTTPException(status_code=500, detail="log missing for did_aw")
-    if head["new_did_key"] != row["current_did_key"]:
-        raise HTTPException(status_code=500, detail="mapping/log inconsistency")
-    encryption_row = await _fetch_current_encryption_assertion(
-        db,
-        did_aw=did_aw,
-        current_did_key=row["current_did_key"],
-        now=_now(),
-    )
+        head = await tx.fetch_one(
+            """
+            SELECT seq, operation, previous_did_key, new_did_key,
+                   prev_entry_hash, entry_hash, state_hash, authorized_by, signature,
+                   timestamp
+            FROM {{tables.did_aw_log}}
+            WHERE did_aw = $1
+            ORDER BY seq DESC
+            LIMIT 1
+            """,
+            did_aw,
+        )
+        if head is None:
+            raise HTTPException(status_code=500, detail="log missing for did_aw")
+        if head["new_did_key"] != row["current_did_key"]:
+            raise HTTPException(status_code=500, detail="mapping/log inconsistency")
+        encryption_row = await _fetch_current_encryption_assertion(
+            tx,
+            did_aw=did_aw,
+            current_did_key=row["current_did_key"],
+            now=_now(),
+        )
+        enrollment = await tx.fetch_one("SELECT domain FROM {{tables.id_identities}} WHERE id = $1", did_aw)
 
     return DidKeyResponse(
         did_aw=row["did_aw"],
@@ -390,6 +409,9 @@ async def get_key(request: Request, did_aw: str) -> DidKeyResponse:
             timestamp=head["timestamp"],
         ),
         encryption_key=_assertion_from_row(encryption_row),
+        id_tree=IdTreeEnrollment(enrolled=False) if enrollment is None else IdTreeEnrollment(
+            enrolled=True, domain=enrollment["domain"],
+        ),
     )
 
 

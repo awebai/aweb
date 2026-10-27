@@ -501,7 +501,19 @@ enforcement of Principle 5.
 
 - `GET /v1/did/{did_aw}/key` — current `did_key`. Public. Used by aweb
   and other services for message-signature verification. It is not a
-  delivery route lookup.
+  delivery route lookup. Its `id_tree` field states the identity's
+  identity-tree enrollment ([identity certificates](id-certificates.md)
+  §5): `{"enrolled": true, "domain": "<domain fixed at first enrollment>"}`
+  for every registered identity, revoked or root-replaced ones included, or
+  `{"enrolled": false}`. It only locates status; it is not a verified
+  identity or current authority. The key, log head, encryption key and
+  enrollment are read in one read-only `REPEATABLE READ` snapshot.
+  `KeyResolution.id_tree` in the client is the same fact: an
+  `IDTreeEnrollment`, or `None` (unknown) when the registry did not state it.
+  A malformed stated value rejects the resolution. `CachedRegistryClient`
+  keeps it in the same cache entry under the same TTL; entries written before
+  enrollment was carried live under an older key version and are never
+  read.
 - `GET /v1/did/{did_aw}/full` — full identity record. Identity auth (the
   DID holder).
 - `GET /v1/did/{did_aw}/log` — append-only audit log of `register_did`

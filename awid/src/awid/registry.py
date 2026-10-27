@@ -186,11 +186,25 @@ class DIDMapping:
 
 
 @dataclass(frozen=True)
+class IDTreeEnrollment:
+    """A did:aw's identity-tree enrollment as its registry states it.
+
+    enrolled carries the domain fixed at first enrollment; a revoked ID is
+    still enrolled. Not enrolled is proven only by a registry that says so.
+    """
+
+    enrolled: bool
+    domain: str | None
+
+
+@dataclass(frozen=True)
 class KeyResolution:
     did_aw: str
     current_did_key: str
     log_head: DIDKeyEvidence | None = None
     encryption_key: dict[str, Any] | None = None
+    # None is unknown: a registry, or a cache entry, that did not state it.
+    id_tree: IDTreeEnrollment | None = None
 
 
 @dataclass(frozen=True)
@@ -1637,6 +1651,8 @@ class CachedRegistryClient(RegistryClient):
             fetcher=lambda: super(CachedRegistryClient, self).resolve_key(did_aw),
             encode=lambda value: _key_resolution_to_json(value),
             decode=lambda payload: _key_resolution_from_json(payload),
+            # A resolution that does not state enrollment is never served from the cache.
+            reusable=lambda value: value.id_tree is not None,
         )
 
     async def resolve_key_fresh(self, did_aw: str) -> KeyResolution:
@@ -2257,12 +2273,17 @@ class CachedRegistryClient(RegistryClient):
         encode: Callable[[Any], Any],
         decode: Callable[[Any], Any],
         on_refresh_failure: Callable[[BaseException, int], None] | None = None,
+        reusable: Callable[[Any], bool] | None = None,
     ) -> Any:
         # on_refresh_failure is opt-in: a tier that passes nothing keeps the
         # silent debug line _refresh_cache_entry falls back to. When given, it
         # is called with the exception and the age of the data still being
         # served, measured from the entry's stored fetch timestamp.
+        # reusable, when given, decides whether a cached value may be served at
+        # all; one it rejects is fetched fresh as though nothing were cached.
         cached_payload = await self._read_cache_entry(cache_key, decode=decode)
+        if cached_payload is not None and reusable is not None and not reusable(cached_payload["value"]):
+            cached_payload = None
         if cached_payload is not None:
             if cached_payload["fresh"]:
                 return cached_payload["value"]
@@ -2690,7 +2711,24 @@ def _key_resolution_from_json(data: dict[str, Any]) -> KeyResolution:
         current_did_key=data["current_did_key"],
         log_head=_did_key_evidence_from_json(data.get("log_head")),
         encryption_key=data.get("encryption_key"),
+        id_tree=_id_tree_enrollment_from_json(data["id_tree"]) if "id_tree" in data else None,
     )
+
+
+def _id_tree_enrollment_from_json(value: Any) -> IDTreeEnrollment:
+    """A stated enrollment, exactly; anything else stated rejects the resolution."""
+    if isinstance(value, dict) and set(value) == {"enrolled"} and value["enrolled"] is False:
+        return IDTreeEnrollment(enrolled=False, domain=None)
+    if (
+        isinstance(value, dict) and set(value) == {"enrolled", "domain"} and value["enrolled"] is True
+        and isinstance(value["domain"], str) and value["domain"]
+    ):
+        return IDTreeEnrollment(enrolled=True, domain=value["domain"])
+    raise ValueError("malformed identity-tree enrollment in key resolution")
+
+
+def _id_tree_enrollment_to_json(value: IDTreeEnrollment) -> dict[str, Any]:
+    return {"enrolled": True, "domain": value.domain} if value.enrolled else {"enrolled": False}
 
 
 def _namespace_from_json(data: dict[str, Any]) -> Namespace:
@@ -2745,6 +2783,8 @@ def _key_resolution_to_json(value: KeyResolution) -> dict[str, Any]:
         "did_aw": value.did_aw,
         "current_did_key": value.current_did_key,
         "log_head": None if value.log_head is None else asdict(value.log_head),
+        # Unknown enrollment is stored as absent, exactly as a registry that did not state it.
+        **({} if value.id_tree is None else {"id_tree": _id_tree_enrollment_to_json(value.id_tree)}),
     }
 
 
