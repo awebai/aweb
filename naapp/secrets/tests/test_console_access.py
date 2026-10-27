@@ -606,4 +606,4 @@ async def test_a_job_with_a_missing_credential_is_shown_unavailable(access):
     run = runs_of(page)[(DB_AGENT.did_aw, orders.grant_id, job.job_id)]
     assert "can run" not in run["_text"]
     assert "not usable" in run["_text"]
-    assert run["data-source-refusal"] == "job_not_allowed"
+    assert run["data-source-refusal"] == "grant_missing"
