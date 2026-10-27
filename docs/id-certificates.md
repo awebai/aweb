@@ -514,6 +514,12 @@ evidence for a root→local-agent chain. The response is a coherent snapshot:
 }
 ```
 
+`observed_at` is the registry's evaluation time for this coherent snapshot,
+no earlier than its included witness times, not a completeness watermark: a
+transaction uncommitted when the snapshot was acquired may be absent even if
+its witness time is at or before `observed_at`. Cache age still uses the
+client's trusted local fetch time under R-1.
+
 This pseudocode fixes field names, not a second encoding: bodies use strict
 JSON. All fields are required; `retired_at`/`superseded_at` may be null.
 Identity rows contain registered IDs only, with nonnull registration/head
@@ -563,10 +569,11 @@ over-depth or over-limit evidence means unavailable, never a partial success.
 details, secrets and a human directory are not exposed by this endpoint.
 
 Use the existing per-caller rate limiter under the operation
-`id_certificate_status`: default 60 requests per minute for a verified caller
-key, or source IP for anonymous callers. A submitted ID is not caller identity;
-limit before expensive history/proof work and return 429 without partial
-evidence. The normal deployment rate-limit configuration may size this bucket
+`id_certificate_status`: every request charges its source-IP bucket, and an
+authenticated request additionally charges its verified caller-key bucket,
+with a default of 60 requests per minute per bucket. A submitted ID is not
+caller identity; limit before expensive history/proof work and return 429 without partial
+evidence. The normal deployment rate-limit configuration may size these buckets
 for its callers; no unlimited anonymous/trusted-service bypass is added.
 There is no list, prefix, search or pagination operation for a domain's humans.
 Only exact requested IDs and proof-necessary ancestor/key history are returned,
