@@ -1190,13 +1190,17 @@ which raises.
 - One Redis entry per exact status request holds the status response together
   with the namespace authority (`domain`, `dns_name`, `inherited`,
   `controller_key`) from the client's `DomainVerifier`, both fetched in one
-  attempt. The entry's age is measured on this client's clock from when that
-  attempt began, never from the body's `observed_at`, and it survives
-  restarts. An entry whose fetch time is ahead of this client's clock (written
-  by a process with a faster clock, or before a clock step back) has no known
-  age here: it is neither fresh nor last-known-good, and is refreshed. Ages
-  are never clamped; a negative one is unavailable evidence to the verifier.
-  An entry that is not exactly this shape is dropped and refreshed.
+  attempt. Every process sharing the entry ages it on one clock, the Redis
+  server's: the entry is stamped with Redis `TIME` when the attempt begins,
+  and each read takes Redis `TIME` with the entry in one pipelined round
+  trip. The body's `observed_at` is never used, and the age survives
+  restarts. An entry stamped ahead of the Redis clock (the clock stepped
+  back) has no known age: it is neither fresh nor last-known-good, and is
+  refreshed. After a failed attempt the last-known-good age includes the
+  time spent waiting for it. Ages are never clamped; a negative one is
+  unavailable evidence to the verifier. An entry that is not exactly this
+  shape is dropped and refreshed. Without Redis nothing is stored, so each
+  read fetches.
 - Evidence aged 60 seconds or less is served with no DNS, routing or HTTP
   work. Older evidence waits for one refresh shared by every concurrent caller
   of that request; a cancelled caller does not cancel it. DNS, routing and HTTP

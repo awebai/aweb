@@ -12,10 +12,14 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import os
+import time
+import uuid
 
 import httpx
 import pytest
 import pytest_asyncio
+from redis.asyncio import Redis
 
 import awid.registry as registry_module
 from awid.dns_verify import DnsVerificationError, DomainAuthority
@@ -111,12 +115,52 @@ class Registry:
         return REGISTRY
 
 
+class ClockedRedis(FakeRedis):
+    """A Redis whose server clock a test sets, answering pipelined commands in order."""
+
+    def __init__(self, clock: list[int]) -> None:
+        super().__init__()
+        self.clock = clock
+
+    async def time(self) -> tuple[int, int]:
+        return self.clock[0], 0
+
+    def pipeline(self, transaction: bool = True) -> "ClockedPipeline":
+        return ClockedPipeline(self)
+
+
+class ClockedPipeline:
+    def __init__(self, redis: ClockedRedis) -> None:
+        self.redis = redis
+        self.commands = []
+
+    async def __aenter__(self) -> "ClockedPipeline":
+        return self
+
+    async def __aexit__(self, *exc) -> None:
+        return None
+
+    def time(self) -> "ClockedPipeline":
+        self.commands.append(self.redis.time())
+        return self
+
+    def get(self, key: str) -> "ClockedPipeline":
+        self.commands.append(self.redis.get(key))
+        return self
+
+    async def execute(self) -> list:
+        return [await command for command in self.commands]
+
+
 @pytest_asyncio.fixture
 async def env(monkeypatch):
+    # clock is the Redis server's; each process's own clock is offset from it.
     clock = [1_000_000]
-    monkeypatch.setattr(registry_module, "_cache_now", lambda: clock[0])
+    offset = [0]
+    monkeypatch.setattr(registry_module, "_cache_now", lambda: clock[0] + offset[0])
     registry = Registry(clock)
-    redis = FakeRedis()
+    registry.offset = offset
+    redis = ClockedRedis(clock)
     clients = []
 
     def client(*, timeout_seconds: float = 5.0) -> CachedRegistryClient:
@@ -236,6 +280,16 @@ async def test_a_failed_refresh_reuses_last_known_good_evidence_through_900_seco
     assert evidence == IDChainEvidence(first.status, first.namespace_authority, age, True)
     assert _verdict(evidence)["reason"] == reason
     assert env.redis.values == stored  # a failed attempt never restarts the grace
+
+
+@pytest.mark.asyncio
+async def test_last_known_good_is_aged_through_the_failed_attempt(env):
+    await _evidence(env)
+    env.clock[0] += 61
+    env.http_status = 503
+    env.advance_during_fetch = 5
+    evidence = await _evidence(env)
+    assert (evidence.age_seconds, evidence.refresh_failed) == (66, True)
 
 
 @pytest.mark.asyncio
@@ -413,10 +467,41 @@ async def test_the_observation_time_is_when_the_refresh_began(env):
 
 
 @pytest.mark.asyncio
-async def test_an_entry_fetched_ahead_of_this_clock_is_never_served_as_fresh(env):
+@pytest.mark.parametrize("writer_skew", [600, -600])
+async def test_a_shared_entry_is_aged_on_the_redis_clock_whatever_the_process_clocks(env, writer_skew):
+    writer, reader = env.make_client(), env.make_client()
+    env.offset[0] = writer_skew
+    await _evidence(env, client=writer)
+    env.status[DOMAIN] = _fixture("alice-revoked-now")
+    env.clock[0] += 620  # the reader's first read, long after its clock passed the writer's stamp
+    env.offset[0] = 0
+    env.http_status = 503
+    stale = await _evidence(env, client=reader)
+    assert (stale.status, stale.age_seconds, stale.refresh_failed) == (_fixture("normal"), 620, True)
+
+    env.clock[0] += 61  # past the reader's cooldown
+    env.http_status = 200
+    refreshed = await _evidence(env, client=reader)
+    assert (refreshed.status, refreshed.age_seconds, refreshed.refresh_failed) == (
+        _fixture("alice-revoked-now"), 0, False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_process_clock_far_from_the_redis_clock_still_reuses_fresh_evidence(env):
+    await _evidence(env)
+    env.clock[0] += 30
+    env.offset[0] = 3600
+    evidence = await _evidence(env, client=env.make_client())
+    assert (evidence.age_seconds, evidence.refresh_failed) == (30, False)
+    assert len(env.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_entry_stamped_ahead_of_the_redis_clock_is_refreshed(env):
     await _evidence(env)
     env.status[DOMAIN] = _fixture("alice-revoked-now")
-    env.clock[0] -= 600  # this reader's clock is ten minutes behind the writer's
+    env.clock[0] -= 1  # the Redis clock stepped back
     evidence = await _evidence(env)
     assert evidence.status == _fixture("alice-revoked-now")
     assert (evidence.age_seconds, evidence.refresh_failed) == (0, False)
@@ -424,13 +509,43 @@ async def test_an_entry_fetched_ahead_of_this_clock_is_never_served_as_fresh(env
 
 
 @pytest.mark.asyncio
-async def test_an_entry_fetched_ahead_of_this_clock_gives_no_grace(env):
+async def test_an_entry_stamped_ahead_of_the_redis_clock_gives_no_grace(env):
     await _evidence(env)
     env.clock[0] -= 1
     env.http_status = 503
     evidence = await _evidence(env)
     assert (evidence.age_seconds, evidence.refresh_failed) == (None, True)
     assert _verdict(evidence)["reason"] == "evidence_unavailable"
+
+
+class UnavailableRedis(FakeRedis):
+    async def get(self, key: str):
+        raise OSError("Redis unavailable")
+
+    async def set(self, key: str, value: str, ex: int | None = None) -> None:
+        raise OSError("Redis unavailable")
+
+    async def time(self):
+        raise OSError("Redis unavailable")
+
+    def pipeline(self, transaction: bool = True):
+        raise OSError("Redis unavailable")
+
+
+@pytest.mark.asyncio
+async def test_without_redis_each_read_is_fetched_and_none_is_reused(env):
+    client = CachedRegistryClient(
+        REGISTRY, UnavailableRedis(), transport=httpx.MockTransport(env.handler),
+        domain_registry_resolver=env.route, domain_verifier=env.verify_domain,
+    )
+    try:
+        first = await _evidence(env, client=client)
+        env.clock[0] += 1
+        second = await _evidence(env, client=client)
+    finally:
+        await client.aclose()
+    assert (first.age_seconds, first.refresh_failed, second.age_seconds) == (0, False, 0)
+    assert len(env.requests) == 2
 
 
 @pytest.mark.asyncio
@@ -445,7 +560,7 @@ async def test_a_clock_stepping_back_during_a_refresh_leaves_its_evidence_unavai
 async def test_a_cooldown_recorded_ahead_of_this_clock_does_not_suppress_attempts(env):
     env.http_status = 503
     await _evidence(env)
-    env.clock[0] -= 1
+    env.offset[0] -= 1  # this process's clock stepped back
     env.http_status = 200
     evidence = await _evidence(env)
     assert (evidence.age_seconds, evidence.refresh_failed) == (0, False)
@@ -575,19 +690,55 @@ async def test_the_cached_client_reads_the_real_status_endpoint(clocked_client, 
     async def service_dns(domain: str) -> DomainAuthority:
         return await clocked_client.app.dependency_overrides[get_domain_verifier]()(domain)
 
+    redis = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
     client = CachedRegistryClient(
-        "http://testserver", FakeRedis(), transport=httpx.ASGITransport(app=clocked_client.app),
+        "http://testserver", redis, transport=httpx.ASGITransport(app=clocked_client.app),
         domain_verifier=service_dns,
     )
+    subject = {"id": did_aw("global_agent"), "did_key": did_key("global_agent")}
+    bundle = _bundle(["alice", "global-agent"])
+    key = client._id_status_cache_key({"v": 1, "domain": DOMAIN, "ids": [did_aw("alice"), did_aw("global_agent")]})
     try:
-        subject = {"id": did_aw("global_agent"), "did_key": did_key("global_agent")}
-        bundle = _bundle(["alice", "global-agent"])
+        await redis.delete(key)
         evidence = await client.id_chain_evidence(bundle, subject, domain=DOMAIN)
     finally:
+        await redis.delete(key)
         await client.aclose()
+        await redis.aclose()
     assert (evidence.age_seconds, evidence.refresh_failed) == (0, False)
     verdict = verify_id_chain(bundle, subject=subject, evidence=evidence, domain=DOMAIN)
     assert verdict == {
         "outcome": "nearest_human", "human_id": did_aw("alice"), "identity_valid": True,
         "kind": "agent", "reason": "verified",
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("skew", [600, -600])
+async def test_real_redis_ages_shared_evidence_on_its_own_clock(env, monkeypatch, skew):
+    """Two processes whose clocks disagree share one entry through a real Redis."""
+    domain = f"{uuid.uuid4().hex}.example"
+    env.status[domain] = _fixture("normal") | {"domain": domain}
+    env.controller[domain] = env.controller[DOMAIN]
+    redis = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+    clients = [
+        CachedRegistryClient(
+            REGISTRY, redis, transport=httpx.MockTransport(env.handler),
+            domain_registry_resolver=env.route, domain_verifier=env.verify_domain,
+        )
+        for _ in range(2)
+    ]
+    key = clients[0]._id_status_cache_key({"v": 1, "domain": domain, "ids": [did_aw("global_agent")]})
+    try:
+        monkeypatch.setattr(registry_module, "_cache_now", lambda: int(time.time()) + skew)
+        written = await _evidence(env, client=clients[0], bundle=None, subject=GLOBAL_SUBJECT, domain=domain)
+        monkeypatch.setattr(registry_module, "_cache_now", lambda: int(time.time()) - skew)
+        read = await _evidence(env, client=clients[1], bundle=None, subject=GLOBAL_SUBJECT, domain=domain)
+    finally:
+        await redis.delete(key)
+        for client in clients:
+            await client.aclose()
+        await redis.aclose()
+    assert (written.age_seconds, written.refresh_failed) == (0, False)
+    assert read.refresh_failed is False and 0 <= read.age_seconds <= 2
+    assert len(env.requests) == 1

@@ -1364,11 +1364,13 @@ class CachedRegistryClient(RegistryClient):
     ) -> IDChainEvidence:
         """Trusted identity-tree evidence for verifying ``subject``'s chain in ``domain``.
 
-        Evidence aged 60 seconds or less is served with no DNS or HTTP work.
-        Older evidence waits for one refresh shared by every caller of the
-        same request; when that attempt fails, the last-known-good evidence is
-        returned with its age and refresh_failed set, and with none it is
-        returned without an age. Fetch failures never raise.
+        A stored entry is aged on the Redis server's clock, the one clock
+        every process sharing it reads. Evidence aged 60 seconds or less is
+        served with no DNS or HTTP work. Older evidence waits for one refresh
+        shared by every caller of the same request; when that attempt fails,
+        the last-known-good evidence is returned with its age and
+        refresh_failed set, and with none it is returned without an age.
+        Fetch failures never raise.
         """
         try:
             request = status_request(bundle, subject, domain=domain)
@@ -1378,18 +1380,21 @@ class CachedRegistryClient(RegistryClient):
             # The verifier refuses this request before it reads any evidence.
             return IDChainEvidence(status={}, namespace_authority={}, age_seconds=None)
         cache_key = self._id_status_cache_key(request)
-        cached = await self._read_id_status_entry(cache_key)
-        if cached is not None and _cache_now() < cached["fetched_at"]:
-            # Fetched by a writer whose clock is ahead of this one: its age is
-            # unknown here, so it is neither fresh nor last-known-good.
+        read_at = _cache_now()
+        redis_now, cached = await self._read_id_status_entry(cache_key)
+        if cached is not None and redis_now < cached["fetched_at"]:
+            # Stamped ahead of the Redis clock (it stepped back): its age is
+            # unknown, so it is neither fresh nor last-known-good.
             cached = None
-        if cached is not None and _id_status_age(cached) <= _ID_STATUS_FRESH_SECONDS:
-            return _id_status_evidence(cached, refresh_failed=False)
+        if cached is not None and redis_now - cached["fetched_at"] <= _ID_STATUS_FRESH_SECONDS:
+            return _id_status_evidence(cached, age=redis_now - cached["fetched_at"], refresh_failed=False)
         refresh = await self._coalesced_id_status_refresh(cache_key, request)
         if refresh.entry is not None:
-            return _id_status_evidence(refresh.entry, refresh_failed=False)
+            return _id_status_evidence(refresh.entry, age=refresh.age, refresh_failed=False)
         if refresh.failed and cached is not None:
-            return _id_status_evidence(cached, refresh_failed=True)
+            # Aged through the wait for the failed attempt, on this process's clock.
+            age = redis_now - cached["fetched_at"] + (_cache_now() - read_at)
+            return _id_status_evidence(cached, age=age, refresh_failed=True)
         return IDChainEvidence(status={}, namespace_authority={}, age_seconds=None, refresh_failed=refresh.failed)
 
     async def _coalesced_id_status_refresh(self, cache_key: str, request: dict[str, Any]) -> _IDStatusRefresh:
@@ -1397,7 +1402,7 @@ class CachedRegistryClient(RegistryClient):
         if task is None:
             failed_at = self._id_status_failed_at.get(request["domain"])
             if failed_at is not None and 0 <= _cache_now() - failed_at <= _ID_STATUS_FAILURE_COOLDOWN_SECONDS:
-                return _IDStatusRefresh(entry=None, failed=True)
+                return _IDStatusRefresh(entry=None, failed=True, age=None)
             task = asyncio.create_task(self._refresh_id_status(cache_key, request))
             self._id_status_refreshes[cache_key] = task
             task.add_done_callback(lambda _task, key=cache_key: self._id_status_refreshes.pop(key, None))
@@ -1408,28 +1413,30 @@ class CachedRegistryClient(RegistryClient):
         """One attempt, with DNS authority, routing and HTTP under one timeout.
 
         The status and the authority it is checked against are stored as one
-        entry, aged from when the attempt began on this client's clock. A
-        malformed successful answer is not an outage: it removes the entry, so
-        no older tree outlives it.
+        entry, stamped with the Redis clock when the attempt began; the
+        evidence returned now is aged by this process from that same moment.
+        A malformed successful answer is not an outage: it removes the entry,
+        so no older tree outlives it.
         """
         domain = request["domain"]
-        fetched_at = _cache_now()
+        started = _cache_now()
         verify_domain = self._domain_verifier
         if verify_domain is None:
             from awid.dns_verify import verify_domain
         try:
             async with asyncio.timeout(self.timeout_seconds):
+                fetched_at = await self._redis_time()
                 authority = await verify_domain(domain)
                 status = await self.fetch_id_certificate_status(domain, request)
         except MalformedIDStatusError:
             logger.warning("AWID identity-tree status for %s is malformed; no evidence is served", domain)
             self._id_status_failed_at.pop(domain, None)
             await self._invalidate_keys(cache_key)
-            return _IDStatusRefresh(entry=None, failed=False)
+            return _IDStatusRefresh(entry=None, failed=False, age=None)
         except Exception as exc:
             logger.warning("AWID identity-tree status refresh failed for %s: %r", domain, exc)
             self._id_status_failed_at[domain] = _cache_now()
-            return _IDStatusRefresh(entry=None, failed=True)
+            return _IDStatusRefresh(entry=None, failed=True, age=None)
         self._id_status_failed_at.pop(domain, None)
         entry = {
             "fetched_at": fetched_at,
@@ -1441,15 +1448,36 @@ class CachedRegistryClient(RegistryClient):
                 "controller_key": authority.controller_did,
             },
         }
-        await self._redis_set(
-            cache_key, json.dumps(entry, separators=(",", ":"), sort_keys=True), ex=_ID_STATUS_RETENTION_SECONDS,
-        )
-        return _IDStatusRefresh(entry=entry, failed=False)
+        if fetched_at is not None:
+            await self._redis_set(
+                cache_key, json.dumps(entry, separators=(",", ":"), sort_keys=True), ex=_ID_STATUS_RETENTION_SECONDS,
+            )
+        return _IDStatusRefresh(entry=entry, failed=False, age=_cache_now() - started)
 
-    async def _read_id_status_entry(self, cache_key: str) -> dict[str, Any] | None:
-        raw = await self._redis_get(cache_key)
-        if raw is None:
+    async def _redis_time(self) -> int | None:
+        """The Redis server clock in whole seconds, or None when Redis is unavailable."""
+        try:
+            seconds, _microseconds = await self.redis_client.time()
+        except (RedisError, OSError):
+            logger.debug("AWID cache clock read skipped because Redis is unavailable", exc_info=True)
             return None
+        return int(seconds)
+
+    async def _read_id_status_entry(self, cache_key: str) -> tuple[int, dict[str, Any] | None]:
+        """The Redis clock and the stored entry, read in one round trip."""
+        try:
+            async with self.redis_client.pipeline(transaction=False) as pipe:
+                pipe.time()
+                pipe.get(cache_key)
+                (seconds, _microseconds), raw = await pipe.execute()
+        except (RedisError, OSError):
+            logger.debug("AWID cache read skipped because Redis is unavailable", exc_info=True)
+            return 0, None
+        redis_now = int(seconds)
+        if raw is None:
+            return redis_now, None
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
         try:
             entry = json.loads(raw)
             if (
@@ -1461,8 +1489,8 @@ class CachedRegistryClient(RegistryClient):
         except Exception:
             logger.warning("Invalid AWID cache payload for %s; dropping entry", cache_key)
             await self._invalidate_keys(cache_key)
-            return None
-        return entry
+            return redis_now, None
+        return redis_now, entry
 
     async def resolve_key(self, did_aw: str) -> KeyResolution:
         return await self._cached_read(
@@ -2406,22 +2434,19 @@ def _cache_now() -> int:
 
 @dataclass(frozen=True)
 class _IDStatusRefresh:
-    """One status refresh: the stored entry, or why there is none."""
+    """One status refresh: the entry and its age now, or why there is none."""
 
     entry: dict[str, Any] | None
     failed: bool
+    age: int | None
 
 
-def _id_status_age(entry: dict[str, Any]) -> int:
-    # Never clamped: a negative age is unavailable evidence to the verifier.
-    return _cache_now() - entry["fetched_at"]
-
-
-def _id_status_evidence(entry: dict[str, Any], *, refresh_failed: bool) -> IDChainEvidence:
+def _id_status_evidence(entry: dict[str, Any], *, age: int, refresh_failed: bool) -> IDChainEvidence:
+    # The age is never clamped: a negative one is unavailable evidence to the verifier.
     return IDChainEvidence(
         status=entry["status"],
         namespace_authority=entry["namespace_authority"],
-        age_seconds=_id_status_age(entry),
+        age_seconds=age,
         refresh_failed=refresh_failed,
     )
 
