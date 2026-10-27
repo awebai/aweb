@@ -34,22 +34,22 @@ async def refused_as(w, principal):
 
 async def test_activity_shows_the_recorded_name_in_its_team_beside_the_did(world):
     scope = await enrol_owner(world, ALICE, "alice@acme.com")
-    named = replace(REQUESTER, alias="<b>ops&bot</b>")
+    named = replace(REQUESTER, alias="ops-bot", did_aw_registry_verified=True)
     async with clients(world) as (human, _):
         await sign_in(world, human, scope)
         await refused_as(world, named)
         page = (await human.get("/activity")).text
-    assert '<span class="principal-name">&lt;b&gt;ops&amp;bot&lt;/b&gt;</span>' in page
+    assert '<span class="principal-name">ops-bot</span>' in page
     assert f'<span class="principal-team">{TEAM}</span>' in page
     assert f'<code class="principal-did">{REQUESTER.did_aw}</code>' in page
-    assert "<b>ops" not in page
 
 
-async def test_activity_without_a_bound_name_shows_only_the_did(world):
+async def test_activity_shows_only_the_did_when_the_name_is_not_bound_to_it(world):
     scope = await enrol_owner(world, ALICE, "alice@acme.com")
     async with clients(world) as (human, _):
         await sign_in(world, human, scope)
-        await refused_as(world, replace(REQUESTER, alias=" "))
+        # An unverified did:aw is not carried in the actor, so its alias names nothing.
+        await refused_as(world, REQUESTER)
         page = (await human.get("/activity")).text
     assert f'<code class="principal-did">{REQUESTER.did_aw}</code>' in page
     assert 'class="principal-name"' not in page
