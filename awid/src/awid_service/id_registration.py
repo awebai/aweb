@@ -1,51 +1,31 @@
 """The atomic identity-tree registration gate (docs/id-certificates.md §3).
 
 One transaction serializes registration with namespace and parent rotation,
-revocation and re-parenting, checks the current state after its last lock
-wait, and records the witnessed registration with the exact issuer key
-version. Shape, signature and R1-R3 checks on the presented chain run before
-the transaction (awid_service.id_chains).
-
-Lock order, shared by every identity-tree writer of a domain:
-  1. pg_advisory_xact_lock on the exact canonical domain;
-  2. the domain's dns_namespaces row (rotation, reverify and delete hold it
-     FOR UPDATE, so the open epoch read after it is current);
-  3. the subject's and parent's did_aw_mappings rows, sorted by did_aw
-     (did:aw rotation holds its row FOR UPDATE);
-  4. the subject's id_identities row.
+revocation and re-parenting (lock order in awid_service.id_tree_gate), checks
+the current state after its last lock wait, and records the witnessed
+registration with the exact issuer key version. Shape, signature and R1-R3
+checks on the presented chain run before the transaction
+(awid_service.id_chains).
 """
 
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
-from typing import Any
+from datetime import datetime
 
 from awid.id_certificates import id_certificate_id
 
 from awid_service.id_tree_clock import Clock, serialization_time
-from awid_service.namespace_epochs import DNS_EXACT, latest_domain_event
-
-
-class RegistrationRefused(Exception):
-    """A contract refusal; ``code`` is the stable reason, ``status`` its HTTP status."""
-
-    def __init__(self, code: str, status: int = 422):
-        super().__init__(code)
-        self.code = code
-        self.status = status
-
-
-def wire_time(moment: datetime) -> str:
-    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-
-
-def canonical_json(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-
-
-async def lock_domain(tx, domain: str) -> None:
-    await tx.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", f"aweb.id-tree/{domain}")
+from awid_service.id_tree_gate import (
+    IdentityTreeRefusal,
+    canonical_json,
+    identity_parent_did,
+    lock_domain,
+    lock_keys_and_subject,
+    open_exact_epoch,
+    wire_time,
+)
+from awid_service.namespace_epochs import latest_domain_event
 
 
 async def register_certificate(
@@ -58,44 +38,16 @@ async def register_certificate(
     digest = id_certificate_id(cert)
     domain = cert["domain"]
     parent = cert["parent"]
-    parent_did = parent["id"] if parent["kind"] == "identity" and parent["id"].startswith("did:aw:") else None
+    parent_did = identity_parent_did(parent["kind"], parent["id"])
 
     async with db.transaction() as tx:
-        await lock_domain(tx, domain)
-        namespace = await tx.fetch_one(
-            """
-            SELECT namespace_id
-            FROM {{tables.dns_namespaces}}
-            WHERE domain = $1 AND deleted_at IS NULL
-            FOR SHARE
-            """,
-            domain,
-        )
-        mapped = await tx.fetch_all(
-            """
-            SELECT did_aw, current_did_key
-            FROM {{tables.did_aw_mappings}}
-            WHERE did_aw = ANY($1::text[])
-            ORDER BY did_aw
-            FOR SHARE
-            """,
-            sorted({cert["id"], parent_did} - {None}),
-        )
-        keys = {row["did_aw"]: row["current_did_key"] for row in mapped}
-        subject = await tx.fetch_one(
-            """
-            SELECT id, domain, kind, revoked_at
-            FROM {{tables.id_identities}}
-            WHERE id = $1
-            FOR UPDATE
-            """,
-            cert["id"],
-        )
+        namespace = await lock_domain(tx, domain)
+        keys, subject = await lock_keys_and_subject(tx, dids={cert["id"], parent_did}, subject_id=cert["id"])
         # The last lock wait is behind us: everything below reads the state
         # those locks hold still, and the witness time is sampled from here.
 
         if keys.get(cert["id"]) != signer:
-            raise RegistrationRefused("subject_mismatch", 403)
+            raise IdentityTreeRefusal("subject_mismatch", 403)
 
         receipt = await tx.fetch_one(
             """
@@ -107,7 +59,7 @@ async def register_certificate(
         )
         if receipt is not None:
             if _invitation(receipt["invitation_id"]) != invitation_id:
-                raise RegistrationRefused("invitation_conflict", 409)
+                raise IdentityTreeRefusal("invitation_conflict", 409)
             return {"certificate_id": digest, "registered_at": wire_time(receipt["registered_at"])}
 
         if invitation_id is not None:
@@ -115,16 +67,16 @@ async def register_certificate(
                 "SELECT 1 FROM {{tables.id_certificates}} WHERE invitation_id = $1::uuid", invitation_id,
             )
             if used is not None:
-                raise RegistrationRefused("invitation_conflict", 409)
+                raise IdentityTreeRefusal("invitation_conflict", 409)
 
         head = None
         if subject is not None:
             if subject["kind"] != cert["kind"]:
-                raise RegistrationRefused("identity_kind_immutable")
+                raise IdentityTreeRefusal("identity_kind_immutable")
             if subject["domain"] != domain:
-                raise RegistrationRefused("domain_mismatch")
+                raise IdentityTreeRefusal("domain_mismatch")
             if subject["revoked_at"] is not None:
-                raise RegistrationRefused("subject_revoked")
+                raise IdentityTreeRefusal("subject_revoked")
             head = await tx.fetch_value(
                 """
                 SELECT certificate_id
@@ -134,7 +86,7 @@ async def register_certificate(
                 cert["id"],
             )
         if expected_head != head:
-            raise RegistrationRefused("head_conflict", 409)
+            raise IdentityTreeRefusal("head_conflict", 409)
 
         if parent["kind"] == "namespace":
             issuer_key_seq, issuer_epoch_at = await _namespace_issuer(tx, cert, namespace)
@@ -161,7 +113,7 @@ async def register_certificate(
                 cert["id"], domain, cert["kind"], registered_at,
             )
             if inserted is None:
-                raise RegistrationRefused("head_conflict", 409)
+                raise IdentityTreeRefusal("head_conflict", 409)
         else:
             await tx.execute(
                 """
@@ -193,20 +145,11 @@ def _invitation(value) -> str | None:
 
 async def _namespace_issuer(tx, cert: dict, namespace) -> tuple[int, datetime]:
     """The open exact epoch of this domain, which must hold the issuer key."""
-    epoch = None
-    if namespace is not None:
-        epoch = await tx.fetch_one(
-            """
-            SELECT seq, did_key, established_by, registered_at
-            FROM {{tables.id_namespace_epochs}}
-            WHERE domain = $1 AND retired_at IS NULL
-            """,
-            cert["domain"],
-        )
-    if epoch is None or epoch["established_by"] != DNS_EXACT:
-        raise RegistrationRefused("evidence_unavailable")
+    epoch = await open_exact_epoch(tx, cert["domain"], namespace)
+    if epoch is None:
+        raise IdentityTreeRefusal("evidence_unavailable")
     if epoch["did_key"] != cert["issuer_key"]:
-        raise RegistrationRefused("issuer_key_not_current")
+        raise IdentityTreeRefusal("issuer_key_not_current")
     return epoch["seq"], epoch["registered_at"]
 
 
@@ -223,15 +166,15 @@ async def _identity_issuer(tx, cert: dict, keys: dict[str, str]) -> tuple[int, d
         parent_id,
     )
     if parent is None or parent_id not in keys:
-        raise RegistrationRefused("unregistered_parent")
+        raise IdentityTreeRefusal("unregistered_parent")
     if parent["domain"] != cert["domain"]:
-        raise RegistrationRefused("domain_mismatch")
+        raise IdentityTreeRefusal("domain_mismatch")
     if cert["kind"] == "human" and parent["kind"] != "human":
-        raise RegistrationRefused("human_issuer_is_agent")
+        raise IdentityTreeRefusal("human_issuer_is_agent")
     if parent["revoked_at"] is not None:
-        raise RegistrationRefused("parent_revoked")
+        raise IdentityTreeRefusal("parent_revoked")
     if keys[parent_id] != cert["issuer_key"]:
-        raise RegistrationRefused("issuer_key_not_current")
+        raise IdentityTreeRefusal("issuer_key_not_current")
     epoch = await tx.fetch_one(
         """
         SELECT seq, created_at
@@ -261,6 +204,6 @@ async def _require_registered_ancestry(tx, chain: list[dict]) -> None:
             link["certificate"]["id"],
         )
         if current is None:
-            raise RegistrationRefused("unregistered_parent")
+            raise IdentityTreeRefusal("unregistered_parent")
         if json.loads(current) != link:
-            raise RegistrationRefused("superseded_certificate")
+            raise IdentityTreeRefusal("superseded_certificate")

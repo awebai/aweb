@@ -10,7 +10,7 @@ registration gate under its locks.
 
 from __future__ import annotations
 
-from awid_service.id_registration import RegistrationRefused
+from awid_service.id_tree_gate import IdentityTreeRefusal
 
 
 def check_chain_structure(chain: list[dict]) -> None:
@@ -22,18 +22,18 @@ def check_chain_structure(chain: list[dict]) -> None:
         cert = link["certificate"]
         parent = cert["parent"]
         if cert["domain"] != domain:
-            raise RegistrationRefused("domain_mismatch")
+            raise IdentityTreeRefusal("domain_mismatch")
         if cert["id"] in seen:
-            raise RegistrationRefused("cycle" if cert["id"] == leaf["id"] else "duplicate_id")
+            raise IdentityTreeRefusal("cycle" if cert["id"] == leaf["id"] else "duplicate_id")
         if previous is None:
             if parent["kind"] != "namespace":
-                raise RegistrationRefused("missing_parent")
+                raise IdentityTreeRefusal("missing_parent")
             if parent["id"] != domain:
-                raise RegistrationRefused("domain_mismatch")
+                raise IdentityTreeRefusal("domain_mismatch")
         else:
             if parent != {"kind": "identity", "id": previous["id"]}:
-                raise RegistrationRefused("missing_parent")
+                raise IdentityTreeRefusal("missing_parent")
             if cert["kind"] == "human" and previous["kind"] != "human":
-                raise RegistrationRefused("human_issuer_is_agent")
+                raise IdentityTreeRefusal("human_issuer_is_agent")
         seen.add(cert["id"])
         previous = cert

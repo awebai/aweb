@@ -1004,10 +1004,11 @@ current-key data.
 
 ---
 
-## Identity-tree registration
+## Identity-tree registration and revocation
 
 The identity tree's wire contract is [identity certificates](id-certificates.md);
-this section states how AWID implements its registration endpoint.
+this section states how AWID implements its registration and revocation
+endpoints.
 
 ```
 POST /v1/id-certificates/register   Register a parent-signed ID certificate
@@ -1057,6 +1058,50 @@ hosted service registering on behalf of its users). A missing or wrong token,
 or any token while none is configured, counts against the caller's bucket.
 The exemption is rate-limit only: it never replaces the subject's key proof
 or the parent's signature.
+
+```
+POST /v1/id-certificates/revoke     Revoke a registered ID
+```
+
+The body is exactly `{domain, id, expected_head, effective_from}`: `id` is a
+registered did:aw, `expected_head` its current certificate digest, and
+`effective_from` either null or a fixed-microsecond UTC time
+(`YYYY-MM-DDTHH:MM:SS.ffffffZ`). The covering controller envelope
+(`operation="revoke_id_certificate"`, `domain` = the request's domain) is
+signed by one of the allowed revokers; there is no legacy-envelope fallback.
+The transaction takes registration's locks in the same order, reading the
+subject's current head under the domain lock to find its parent, so it
+serializes with registration, re-parenting and rotation in the domain.
+
+After the last lock wait it resolves the signer:
+
+- the ID itself, by its did:aw's current key;
+- its current parent, by the parent did:aw's current key. A revoked parent
+  is refused. A parent's authority needs its whole current chain verified,
+  and until the shared chain verifier runs inside this transaction a parent
+  revocation refuses `evidence_unavailable` rather than succeed on the
+  parent's own row alone;
+- the namespace root, by the key of the domain's open `dns_exact` epoch.
+  Without such an epoch AWID cannot tell whether the signer is the root, so
+  it refuses `evidence_unavailable`; any other signer is
+  `revocation_forbidden`.
+
+A null `effective_from` means the post-lock serialization time, which also
+becomes `revoked_at`: strictly after the domain's latest identity-tree event
+and the self-revoker's key epoch. Only the root names a cutoff, and never a
+future one. A repeat writes nothing and returns the stored times, after the
+same head and actor checks. The root may move an existing cutoff earlier,
+which changes only `effective_from`; `revoked_at` keeps the original
+witness time. A later cutoff is refused.
+
+A success returns exactly `{revoked_at, effective_from}`. Refusals use
+`detail.code`: 400 `invalid_shape` and `invalid_json`, 401 for the envelope,
+403 `revocation_forbidden` and `backdate_forbidden`, 404 `unknown_id` (no
+registered ID by that id), 409 `head_conflict`, 422 `domain_mismatch` and
+`invalid_cutoff`, and 503 `evidence_unavailable`. Revocation is rate limited
+in the `id_certificate_revoke` bucket, 300 requests per hour per client IP,
+with the same `AWID_SERVICE_TOKEN`-only exemption and rationale as
+registration.
 
 ---
 

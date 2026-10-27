@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -14,7 +15,9 @@ from awid.id_certificates import IDCertificateError, decode_id_chain_header, ver
 from awid.ratelimit import rate_limit_dep
 from awid_service.deps import get_db
 from awid_service.id_chains import check_chain_structure
-from awid_service.id_registration import RegistrationRefused, register_certificate
+from awid_service.id_registration import register_certificate
+from awid_service.id_revocation import revoke_identity
+from awid_service.id_tree_gate import IdentityTreeRefusal
 from awid_service.id_tree_clock import app_clock
 
 router = APIRouter(prefix="/v1/id-certificates", tags=["id-certificates"])
@@ -23,7 +26,9 @@ ID_CHAIN_HEADER = "X-AWID-ID-Chain"
 SIGNED_PAYLOAD_HEADER = "X-AWEB-Signed-Payload"
 _MAX_BODY_BYTES = 16384
 _REGISTER_FIELDS = frozenset({"certificate", "expected_head", "invitation_id"})
+_REVOKE_FIELDS = frozenset({"domain", "id", "expected_head", "effective_from"})
 _CERTIFICATE_ID = re.compile(r"sha256:[0-9a-f]{64}")
+_WIRE_TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z")
 
 
 def _refusal(code: str, status: int) -> HTTPException:
@@ -56,13 +61,17 @@ def _strict_json_object(raw: bytes) -> dict[str, Any]:
     return value
 
 
+def _expected_head(value: Any) -> str | None:
+    if value is not None and (type(value) is not str or not _CERTIFICATE_ID.fullmatch(value)):
+        raise IDCertificateError("invalid_shape")
+    return value
+
+
 def _register_body(raw: bytes) -> tuple[dict, str | None, str | None]:
     body = _strict_json_object(raw)
     if set(body) != _REGISTER_FIELDS:
         raise IDCertificateError("invalid_shape")
-    expected_head = body["expected_head"]
-    if expected_head is not None and (type(expected_head) is not str or not _CERTIFICATE_ID.fullmatch(expected_head)):
-        raise IDCertificateError("invalid_shape")
+    expected_head = _expected_head(body["expected_head"])
     invitation_id = body["invitation_id"]
     if invitation_id is not None:
         try:
@@ -82,6 +91,30 @@ def _register_body(raw: bytes) -> tuple[dict, str | None, str | None]:
     return signed, expected_head, invitation_id
 
 
+def _revoke_body(raw: bytes) -> tuple[str, str, str | None, datetime | None]:
+    body = _strict_json_object(raw)
+    if set(body) != _REVOKE_FIELDS:
+        raise IDCertificateError("invalid_shape")
+    domain, id_ = body["domain"], body["id"]
+    if type(domain) is not str or not domain or type(id_) is not str or not id_.startswith("did:aw:"):
+        raise IDCertificateError("invalid_shape")
+    effective_from = body["effective_from"]
+    if effective_from is not None:
+        if type(effective_from) is not str or not _WIRE_TIME.fullmatch(effective_from):
+            raise IDCertificateError("invalid_shape")
+        try:
+            effective_from = datetime.strptime(effective_from, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+        except ValueError as exc:
+            raise IDCertificateError("invalid_shape") from exc
+    return domain, id_, _expected_head(body["expected_head"]), effective_from
+
+
+async def _covering_signer(request: Request, *, domain: str, operation: str) -> str:
+    if request.headers.get(SIGNED_PAYLOAD_HEADER) is None:
+        raise HTTPException(status_code=401, detail="Covering AWID request envelope required")
+    return await verify_controller_json_request(request, payload_dict={"domain": domain, "operation": operation})
+
+
 @router.post(
     "/register",
     dependencies=[Depends(rate_limit_dep("id_certificate_register", allow_trusted_service=True))],
@@ -99,11 +132,7 @@ async def register_id_certificate(request: Request, db_infra=Depends(get_db)) ->
         raise _refusal(exc.code, 400) from exc
     cert = signed["certificate"]
 
-    if request.headers.get(SIGNED_PAYLOAD_HEADER) is None:
-        raise HTTPException(status_code=401, detail="Covering AWID request envelope required")
-    signer = await verify_controller_json_request(
-        request, payload_dict={"domain": cert["domain"], "operation": "register_id_certificate"},
-    )
+    signer = await _covering_signer(request, domain=cert["domain"], operation="register_id_certificate")
 
     header = request.headers.get(ID_CHAIN_HEADER)
     if header is None:
@@ -122,5 +151,27 @@ async def register_id_certificate(request: Request, db_infra=Depends(get_db)) ->
             db, chain=chain, expected_head=expected_head, invitation_id=invitation_id,
             signer=signer, clock=app_clock(request.app),
         )
-    except RegistrationRefused as refused:
+    except IdentityTreeRefusal as refused:
+        raise _refusal(refused.code, refused.status) from refused
+
+
+@router.post(
+    "/revoke",
+    dependencies=[Depends(rate_limit_dep("id_certificate_revoke", allow_trusted_service=True))],
+)
+async def revoke_id_certificate(request: Request, db_infra=Depends(get_db)) -> dict:
+    """Revoke a registered ID, proved by the ID itself, its valid parent or the namespace root."""
+    try:
+        domain, id_, expected_head, effective_from = _revoke_body(await request.body())
+    except IDCertificateError as exc:
+        raise _refusal(exc.code, 400) from exc
+    signer = await _covering_signer(request, domain=domain, operation="revoke_id_certificate")
+
+    db = db_infra.get_manager("aweb")
+    try:
+        return await revoke_identity(
+            db, domain=domain, subject_id=id_, expected_head=expected_head, effective_from=effective_from,
+            signer=signer, clock=app_clock(request.app),
+        )
+    except IdentityTreeRefusal as refused:
         raise _refusal(refused.code, refused.status) from refused

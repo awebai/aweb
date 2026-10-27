@@ -30,6 +30,7 @@ VECTORS = json.loads(
 DOMAIN = "example.com"
 ORIGIN = "https://registry.example.com"
 REGISTER_PATH = "/v1/id-certificates/register"
+REVOKE_PATH = "/v1/id-certificates/revoke"
 REQUEST_TYPE = "aweb.awid-controller-request"
 KEYS = VECTORS["keys"]
 
@@ -160,6 +161,22 @@ class Tree:
         )
         headers["X-AWID-ID-Chain"] = chain_header(header_chain if header_chain is not None else chain)
         return await self.client.post(REGISTER_PATH, content=body, headers=headers)
+
+    async def revoke(
+        self, actor: str, subject: str, *, expected_head: str | None, effective_from: str | None = None,
+        when: datetime | None = None,
+    ):
+        """POST a revocation of ``subject`` signed by ``actor``'s current key."""
+        if when is not None:
+            self.clock.now = when
+        body = json.dumps(
+            {"domain": DOMAIN, "id": did_aw(subject), "expected_head": expected_head, "effective_from": effective_from},
+            separators=(",", ":"),
+        ).encode()
+        headers = covering_headers(
+            actor, method="POST", path=REVOKE_PATH, body=body, domain=DOMAIN, operation="revoke_id_certificate",
+        )
+        return await self.client.post(REVOKE_PATH, content=body, headers=headers)
 
     async def enroll(self, *names: str, when: datetime | None = None) -> None:
         """Register vector certificates in order, each under the chain before it."""
