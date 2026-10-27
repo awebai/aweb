@@ -51,8 +51,13 @@ class UseAccess:
 
     @property
     def writes(self) -> bool:
-        """Usable and not declared read-only: an open request declares no effect, so it may write."""
-        return self.refusal is None and self.side_effect != "none"
+        """Usable with a declared reversible or irreversible effect."""
+        return self.refusal is None and self.side_effect not in (None, "none")
+
+    @property
+    def may_write(self) -> bool:
+        """Usable with no declared effect: an open request may write."""
+        return self.refusal is None and self.side_effect is None
 
 
 @dataclass(frozen=True)
@@ -94,6 +99,10 @@ class GrantAccess:
     def writes(self) -> bool:
         return any(u.writes for u in self.uses)
 
+    @property
+    def may_write(self) -> bool:
+        return any(u.may_write for u in self.uses)
+
 
 @dataclass(frozen=True)
 class AgentAccess:
@@ -105,7 +114,13 @@ class AgentAccess:
     def flags(self) -> tuple[str, ...]:
         sensitive = any(g.sensitive and g.usable for g in self.grants)
         writes = any(g.writes for g in self.grants)
-        return tuple(f for f, on in (("sensitive", sensitive), ("write", writes)) if on)
+        # A declared write decides the summary; an undeclared effect only may write.
+        may_write = not writes and any(g.may_write for g in self.grants)
+        return tuple(
+            f
+            for f, on in (("sensitive", sensitive), ("write", writes), ("may-write", may_write))
+            if on
+        )
 
 
 @dataclass(frozen=True)
@@ -267,11 +282,24 @@ class ConsoleAccess:
             )
             grants = tuple(_grant_access(candidate) for candidate in confirmed.candidates)
             agents.append(AgentAccess(principal_did, alias, grants))
-        # Flagged agents first, so the riskiest access is the first thing seen.
-        return tuple(sorted(agents, key=lambda a: (-len(a.flags), a.principal_did)))
+        # Declared writers first, then possible writers, then sensitive access, so the
+        # riskiest access is the first thing seen.
+        return tuple(
+            sorted(
+                agents,
+                key=lambda a: (
+                    "write" not in a.flags,
+                    "may-write" not in a.flags,
+                    "sensitive" not in a.flags,
+                    a.principal_did,
+                ),
+            )
+        )
 
 
-_FLAGS = {"write": "Can write", "sensitive": "Sensitive secret"}
+_FLAGS = {"write": "Can write", "may-write": "May write", "sensitive": "Sensitive secret"}
+# A possible write carries the same warning style as a declared one.
+_FLAG_STYLES = {"write": "flag-write", "may-write": "flag-write", "sensitive": "flag-sensitive"}
 _REFUSALS = {
     "operation_not_allowed": "not usable: this operation's current definition is not granted",
     "open_request_not_allowed": "not usable: open requests are not allowed here",
@@ -283,8 +311,7 @@ _REFUSALS = {
 
 def _flags(flags: Sequence[str]) -> str:
     return "".join(
-        f'<span class="flag flag-{escape(flag, quote=True)}">{escape(_FLAGS[flag])}</span>'
-        for flag in flags
+        f'<span class="flag {_FLAG_STYLES[flag]}">{escape(_FLAGS[flag])}</span>' for flag in flags
     )
 
 
