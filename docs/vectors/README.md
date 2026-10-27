@@ -54,6 +54,9 @@ transaction scenarios are not runtime proof. This is docs-only: shared
 Python/Go/TypeScript consumers follow review. Existing certificate/message
 fixtures are byte-identical.
 `expected_request` is the request decision; case names describe proof outcomes.
+`ed25519_verification.cases` pins the new ID-certificate family's canonical,
+nonidentity prime-subgroup key/R checks and cofactorless equation; every
+Python/Go/TypeScript CI consumes these probes and the raw-wire negatives.
 
 ### `member-attribution-v1.json` — superseded, historical only
 
