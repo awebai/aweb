@@ -45,8 +45,14 @@ for await (const event of released.parseSSEResponse(response, signal)) {
     observed.add('mail');
   }
   if (event.type === 'chat_message' && event.session_id === chat.cid) {
-    assert.equal(event.message_id, chat.mid);
-    await check((await released.fetchHistory(client, event.session_id, false, 50, event.message_id))[0], 'chat');
+    // Actionable snapshots identify the session; exact-message events may also
+    // provide message_id. Follow precisely the released channel's optional hop.
+    if (event.message_id !== undefined) assert.equal(event.message_id, chat.mid);
+    const fetched = await released.fetchHistory(client, event.session_id, true, 50, event.message_id);
+    const message = fetched.find(message => message.message_id === chat.mid);
+    assert(message, 'event discovery did not reach the expected retained message');
+    assert.equal(message.conversation_id, event.session_id);
+    await check(message, 'chat');
     observed.add('chat');
   }
 }
