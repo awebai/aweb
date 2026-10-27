@@ -653,6 +653,41 @@ async def test_only_the_root_corrects_a_cutoff_and_only_earlier(tree, awid_db_in
 
 
 @pytest.mark.asyncio
+async def test_the_open_exact_epoch_key_revokes_as_the_root(tree, awid_db_infra):
+    await _enroll_normal_tree(tree)
+    tree.clock.now = at("2026-10-26T00:10:00Z")
+    await tree.rotate_did("alice", "root")
+
+    resp = await tree.revoke(
+        "root", "alice", expected_head=certificate_id("alice"), effective_from="2026-10-26T00:02:00.000000Z",
+        when=REVOKED_AT_NOW,
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["effective_from"] == "2026-10-26T00:02:00.000000Z"
+
+
+@pytest.mark.asyncio
+async def test_a_registered_id_without_a_current_head_is_unavailable(tree, awid_db_infra):
+    await _enroll_normal_tree(tree)
+    db = awid_db_infra.get_manager("aweb")
+    await db.execute(
+        """
+        UPDATE {{tables.id_certificates}}
+        SET superseded_at = registered_at + interval '1 second'
+        WHERE id = $1
+        """,
+        did_aw("alice"),
+    )
+
+    resp = await tree.revoke("alice", "alice", expected_head=certificate_id("alice"), when=REVOKED_AT_NOW)
+
+    assert resp.status_code == 503, resp.text
+    assert _code(resp) == "evidence_unavailable"
+    assert await _revocations(awid_db_infra) == []
+
+
+@pytest.mark.asyncio
 async def test_an_unregistered_id_is_unknown(tree, awid_db_infra):
     resp = await tree.revoke("alice", "alice", expected_head=certificate_id("alice"), when=REVOKED_AT_NOW)
 
@@ -1012,6 +1047,27 @@ async def test_witness_times_never_precede_the_key_epochs_they_select(tree, awid
 # ---------------------------------------------------------------------------
 # Serialization with did:aw rotation
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_registration_waits_for_its_parents_revocation(tree, awid_db_infra):
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+    db = awid_db_infra.get_manager("aweb")
+    tree.clock.now = at("2026-10-26T00:05:00Z")
+    async with db.transaction() as holder:
+        # The revocation reads the revoker's key epoch after taking all its
+        # locks, so holding that table pauses it while it holds them.
+        await holder.execute("LOCK TABLE {{tables.did_aw_log}} IN ACCESS EXCLUSIVE MODE")
+        revocation = asyncio.create_task(tree.revoke("alice", "alice", expected_head=certificate_id("alice")))
+        await wait_until_blocked_on_lock(db, revocation)
+        registration = asyncio.create_task(tree.register([certificate("alice"), certificate("bob")]))
+        await wait_until_blocked_on_lock(db, registration, waiters=2)
+    revoked, registered = await revocation, await registration
+
+    assert revoked.status_code == 200, revoked.text
+    assert registered.status_code == 422, registered.text
+    assert _code(registered) == "parent_revoked"
+    assert await _revisions(awid_db_infra, did_aw("bob")) == []
 
 
 @pytest.mark.parametrize("held", ["alice", "bob"], ids=["parent-mapping", "subject-mapping"])

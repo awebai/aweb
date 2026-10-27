@@ -8,7 +8,8 @@ and did:aw rotation:
      FOR UPDATE, so the open epoch read after it is current);
   3. the subject's and parent's did_aw_mappings rows, sorted by did_aw
      (did:aw rotation holds its row FOR UPDATE);
-  4. the subject's id_identities row.
+  4. the subject's id_identities row FOR UPDATE and its parent's FOR SHARE,
+     in id order.
 """
 
 from __future__ import annotations
@@ -51,8 +52,15 @@ async def lock_domain(tx, domain: str):
     )
 
 
-async def lock_keys_and_subject(tx, *, dids: set[str | None], subject_id: str) -> tuple[dict[str, str], Any]:
-    """Take locks 3 and 4; return the current key of each mapped did:aw and the subject row."""
+async def lock_keys_and_subject(
+    tx, *, dids: set[str | None], subject_id: str, parent_id: str | None = None,
+) -> tuple[dict[str, str], Any]:
+    """Take locks 3 and 4; return the current key of each mapped did:aw and the subject row.
+
+    The parent's id_identities row is held FOR SHARE beside the subject's, so
+    a registration and a revocation of its parent serialize on the row itself
+    as well as on the domain lock. Rows are taken in id order.
+    """
     mapped = await tx.fetch_all(
         """
         SELECT did_aw, current_did_key
@@ -63,15 +71,19 @@ async def lock_keys_and_subject(tx, *, dids: set[str | None], subject_id: str) -
         """,
         sorted(did for did in dids if did is not None),
     )
-    subject = await tx.fetch_one(
-        """
-        SELECT id, domain, kind, revoked_at, effective_from
-        FROM {{tables.id_identities}}
-        WHERE id = $1
-        FOR UPDATE
-        """,
-        subject_id,
-    )
+    subject = None
+    for id_ in sorted({subject_id, parent_id} - {None}):
+        row = await tx.fetch_one(
+            f"""
+            SELECT id, domain, kind, revoked_at, effective_from
+            FROM {{{{tables.id_identities}}}}
+            WHERE id = $1
+            FOR {"UPDATE" if id_ == subject_id else "SHARE"}
+            """,
+            id_,
+        )
+        if id_ == subject_id:
+            subject = row
     return {row["did_aw"]: row["current_did_key"] for row in mapped}, subject
 
 

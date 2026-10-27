@@ -1026,7 +1026,9 @@ the envelope, and the chain's structure (links, R1, R3, cycles). The
 transaction then takes, in order: an advisory lock on the exact domain, the
 domain's `dns_namespaces` row FOR SHARE, the subject's and parent's
 `did_aw_mappings` rows FOR SHARE sorted by did:aw, and the subject's
-`id_identities` row FOR UPDATE. Namespace rotation, reverify and delete hold
+`id_identities` row FOR UPDATE with its identity parent's FOR SHARE, in id
+order. A registration and a revocation of its parent therefore serialize on
+the parent's row as well as on the domain lock. Namespace rotation, reverify and delete hold
 the namespace row FOR UPDATE, and did:aw rotation holds its mapping row FOR
 UPDATE, so each serializes with registration. After the last lock wait it
 resolves an exact existing receipt (same digest and invitation) before any
@@ -1074,18 +1076,20 @@ The transaction takes registration's locks in the same order, reading the
 subject's current head under the domain lock to find its parent, so it
 serializes with registration, re-parenting and rotation in the domain.
 
-After the last lock wait it resolves the signer:
+After the last lock wait, a registered ID with no current head refuses
+`evidence_unavailable`. It then resolves the signer, the root first:
 
+- the namespace root, by the key of the domain's open `dns_exact` epoch,
+  even when that key is also the subject's or the parent's current key;
 - the ID itself, by its did:aw's current key;
 - its current parent, by the parent did:aw's current key. A revoked parent
   is refused. A parent's authority needs its whole current chain verified,
   and until the shared chain verifier runs inside this transaction a parent
   revocation refuses `evidence_unavailable` rather than succeed on the
   parent's own row alone;
-- the namespace root, by the key of the domain's open `dns_exact` epoch.
-  Without such an epoch AWID cannot tell whether the signer is the root, so
-  it refuses `evidence_unavailable`; any other signer is
-  `revocation_forbidden`.
+- any other signer is `revocation_forbidden`, unless the domain has no open
+  `dns_exact` epoch: then AWID cannot tell whether the signer is the root,
+  and it refuses `evidence_unavailable`.
 
 A null `effective_from` means the post-lock serialization time, which also
 becomes `revoked_at`: strictly after the domain's latest identity-tree event

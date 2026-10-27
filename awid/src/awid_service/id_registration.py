@@ -42,7 +42,9 @@ async def register_certificate(
 
     async with db.transaction() as tx:
         namespace = await lock_domain(tx, domain)
-        keys, subject = await lock_keys_and_subject(tx, dids={cert["id"], parent_did}, subject_id=cert["id"])
+        keys, subject = await lock_keys_and_subject(
+            tx, dids={cert["id"], parent_did}, subject_id=cert["id"], parent_id=parent_did,
+        )
         # The last lock wait is behind us: everything below reads the state
         # those locks hold still, and the witness time is sampled from here.
 

@@ -45,7 +45,9 @@ async def revoke_identity(
             subject_id, domain,
         )
         parent_did = None if head is None else identity_parent_did(head["parent_kind"], head["parent_id"])
-        keys, subject = await lock_keys_and_subject(tx, dids={subject_id, parent_did}, subject_id=subject_id)
+        keys, subject = await lock_keys_and_subject(
+            tx, dids={subject_id, parent_did}, subject_id=subject_id, parent_id=parent_did,
+        )
         # The last lock wait is behind us: everything below reads the state
         # those locks hold still, and the witness time is sampled from here.
 
@@ -53,6 +55,10 @@ async def revoke_identity(
             raise IdentityTreeRefusal("unknown_id", 404)
         if subject["domain"] != domain:
             raise IdentityTreeRefusal("domain_mismatch")
+        if head is None:
+            # A registered ID always has a current head; without one the
+            # registry cannot say what is being revoked.
+            raise IdentityTreeRefusal("evidence_unavailable", 503)
         if expected_head != head["certificate_id"]:
             raise IdentityTreeRefusal("head_conflict", 409)
 
@@ -99,7 +105,15 @@ async def revoke_identity(
 
 
 async def _actor(tx, domain, namespace, subject_id, parent_did, keys, signer) -> str:
-    """Which allowed revoker ``signer`` is; refuse any other signer."""
+    """Which allowed revoker ``signer`` is; refuse any other signer.
+
+    The open exact epoch's key is the root even when it is also the
+    subject's or the parent's current key, so it keeps the root's authority
+    to name a cutoff.
+    """
+    epoch = await open_exact_epoch(tx, domain, namespace)
+    if epoch is not None and epoch["did_key"] == signer:
+        return ROOT
     if keys.get(subject_id) == signer:
         return SELF
     if parent_did is not None and keys.get(parent_did) == signer:
@@ -109,12 +123,9 @@ async def _actor(tx, domain, namespace, subject_id, parent_did, keys, signer) ->
         if parent_revoked is not None:
             raise IdentityTreeRefusal("revocation_forbidden", 403)
         return PARENT
-    epoch = await open_exact_epoch(tx, domain, namespace)
     if epoch is None:
         raise IdentityTreeRefusal("evidence_unavailable", 503)
-    if epoch["did_key"] != signer:
-        raise IdentityTreeRefusal("revocation_forbidden", 403)
-    return ROOT
+    raise IdentityTreeRefusal("revocation_forbidden", 403)
 
 
 def _revocation(revoked_at: datetime, effective_from: datetime) -> dict:
