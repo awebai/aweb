@@ -128,7 +128,7 @@
         "awid/tests/test_id_chain_vectors.py"
       ],
       "acceptance": "Whole chain with independent issuer/subject keys, R1-R3, witnessed sequence, replacement cutoff, cascade and request disposition.",
-      "candidate_head": "4132141f0baf98d13ea5a8612c1671c418041414",
+      "candidate_head": "64d7988fe22dc3f422b28e747cb94c82d4d6bb67",
       "ed25519_profile": "strict"
     },
     {
@@ -154,7 +154,7 @@
         "cli/go/internal/conformance/id_chain_test.go"
       ],
       "acceptance": "Whole chain with independent issuer/subject keys, R1-R3, witnessed sequence, replacement cutoff, cascade and request disposition.",
-      "candidate_head": "4132141f0baf98d13ea5a8612c1671c418041414",
+      "candidate_head": "64d7988fe22dc3f422b28e747cb94c82d4d6bb67",
       "ed25519_profile": "strict"
     },
     {
