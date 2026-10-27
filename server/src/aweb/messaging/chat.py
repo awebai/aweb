@@ -689,6 +689,8 @@ async def get_message_history(
     unread_only: bool = False,
     limit: int = 200,
     message_id: str | None = None,
+    before: tuple[datetime, UUID] | None = None,
+    descending: bool = False,
 ) -> list[dict[str, Any]]:
     aweb_db = db.get_manager("aweb")
     is_participant = await aweb_db.fetch_one(
@@ -723,14 +725,20 @@ async def get_message_history(
             message_uuid,
         )
     else:
+        params: list[Any] = [session_id, bool(unread_only), participant_did, int(limit)]
+        boundary_sql = ""
+        if before is not None:
+            params.extend(before)
+            boundary_sql = "AND (created_at, message_id) < ($5, $6)"
+        ordering = "created_at DESC, message_id DESC" if descending else "created_at DESC"
         rows = await aweb_db.fetch_all(
-            """
+            f"""
             SELECT message_id, from_alias, from_address,
                    CASE WHEN content_mode = 'encrypted_v2' THEN '' ELSE body END AS body,
                    created_at, sender_leaving, from_agent_id, reply_to, from_did,
                    signature, signed_payload, content_mode, message_version,
                    encrypted_envelope
-            FROM {{tables.chat_messages}}
+            FROM {{{{tables.chat_messages}}}}
             WHERE session_id = $1
               AND (
                 $2::bool IS FALSE
@@ -738,22 +746,21 @@ async def get_message_history(
                     from_did <> $3
                     AND NOT EXISTS (
                         SELECT 1
-                        FROM {{tables.chat_message_reads}} mr
-                        WHERE mr.session_id = {{tables.chat_messages}}.session_id
+                        FROM {{{{tables.chat_message_reads}}}} mr
+                        WHERE mr.session_id = {{{{tables.chat_messages}}}}.session_id
                           AND mr.did = $3
-                          AND mr.message_id = {{tables.chat_messages}}.message_id
+                          AND mr.message_id = {{{{tables.chat_messages}}}}.message_id
                     )
                 )
               )
-            ORDER BY created_at DESC
+            {boundary_sql}
+            ORDER BY {ordering}
             LIMIT $4
             """,
-            session_id,
-            bool(unread_only),
-            participant_did,
-            int(limit),
+            *params,
         )
-    rows = list(reversed(rows))
+    if not descending:
+        rows = list(reversed(rows))
 
     return [
         {

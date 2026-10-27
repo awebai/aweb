@@ -25,6 +25,7 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import RedisError
 
 from awid.federation_errors import FederationAuthorityError
+from awid.pagination import decode_cursor, encode_cursor
 from aweb.awid_error_handling import (
     AWID_DEPENDENCY_ERRORS,
     awid_dependency_http_exception,
@@ -1904,15 +1905,42 @@ async def pending(
 
 class HistoryResponse(BaseModel):
     messages: list[dict[str, Any]]
+    has_more: bool = False
+    next_cursor: str | None = None
 
 
-@router.get("/sessions/{session_id}/messages", response_model=HistoryResponse)
+def _chat_history_boundary(
+    cursor: str | None, session_id: UUID, unread_only: bool,
+) -> tuple[datetime, UUID] | None:
+    if cursor is None:
+        return None
+    try:
+        data = decode_cursor(cursor)
+        if (not data or data.get("kind") != "chat_history"
+                or data.get("session_id") != str(session_id)
+                or data.get("order") != "desc"
+                or type(data.get("unread_only")) is not bool
+                or data["unread_only"] != unread_only):
+            raise ValueError("Cursor scope or filter mismatch")
+        created_at = datetime.fromisoformat(data["created_at"])
+        message_id = UUID(data["message_id"])
+        if created_at.tzinfo is None:
+            raise ValueError("Cursor timestamp must be timezone-aware")
+        return created_at.astimezone(timezone.utc), message_id
+    except (KeyError, TypeError, ValueError, AttributeError, OverflowError) as exc:
+        raise HTTPException(status_code=422, detail="Invalid chat history cursor") from exc
+
+
+@router.get("/sessions/{session_id}/messages", response_model=HistoryResponse,
+            response_model_exclude_unset=True)
 async def history(
     request: Request,
     session_id: str = Path(..., min_length=1),
     unread_only: bool = Query(False),
     limit: int = Query(200, ge=1, le=2000),
     message_id: str | None = Query(default=None),
+    order: str | None = Query(default=None),
+    cursor: str | None = Query(default=None),
     db=Depends(get_db),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> HistoryResponse:
@@ -1935,6 +1963,17 @@ async def history(
     if not actor_did:
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
+    # Cursor position never replaces participant authorization, including when
+    # its scope or selectors are malformed. Legacy callers retain their tail.
+    paginated = order == "desc"
+    if order is not None and not paginated:
+        raise HTTPException(status_code=422, detail="Chat history order must be desc")
+    if cursor is not None and not paginated:
+        raise HTTPException(status_code=422, detail="cursor requires order=desc")
+    if paginated and (limit > 200 or message_id is not None):
+        raise HTTPException(status_code=422, detail="Paged history requires limit<=200 and no message_id")
+    boundary = _chat_history_boundary(cursor, session_uuid, unread_only) if paginated else None
+
     participant_rows = await aweb_db.fetch_all(
         """
         SELECT p.did, p.alias, p.address
@@ -1950,9 +1989,20 @@ async def history(
         session_id=session_uuid,
         participant_did=actor_did,
         unread_only=unread_only,
-        limit=limit,
+        limit=limit + 1 if paginated else limit,
         message_id=message_id,
+        before=boundary,
+        descending=paginated,
     )
+    has_more = paginated and len(messages) > limit
+    messages = messages[:limit]
+    next_cursor = None
+    if has_more:
+        last = messages[-1]
+        next_cursor = encode_cursor(dict(
+            kind="chat_history", session_id=str(session_uuid), order="desc", unread_only=unread_only,
+            created_at=last["created_at"].isoformat(), message_id=last["message_id"],
+        ))
     contact_addrs = await get_contact_addresses(db, owner_dids=owner_dids)
     identity_map = await lookup_identity_metadata_by_did(
         db,
@@ -1993,6 +2043,8 @@ async def history(
             }
         )
 
+    if paginated:
+        return HistoryResponse(messages=history_items, has_more=has_more, next_cursor=next_cursor)
     return HistoryResponse(messages=history_items)
 
 

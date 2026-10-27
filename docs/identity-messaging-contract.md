@@ -418,3 +418,35 @@ native mail/chat identity, current-key, recipient, first-contact and receiver-wi
 replay rules above remain binding. A valid bridge signer never authenticates an
 external subject as a native author; typed participation requires the explicitly
 negotiated session profile. Owner/controller authority is not native key custody.
+
+## Public chat history pages
+
+`GET /v1/chat/sessions/{session_id}/messages?order=desc` opts into descending
+pages. `limit` is 1–200 (default 200); an opaque `cursor` continues the page.
+The response contains `messages`, `has_more` and `next_cursor`; the cursor is
+null at the end. Every request requires an existing session participant,
+including cursor requests. A nonparticipant receives 404. A cursor conveys a
+position, never authorization.
+
+Messages have the existing history projection, including original signatures,
+retained `signed_payload`, sender membership and verified signed recipient-display
+fields. Paging does not mark messages read. `unread_only` filters before the
+limit. Encrypted bodies remain ciphertext for clients to decrypt.
+
+The total order is `(created_at, message_id)` descending. `created_at` is the
+database insertion timestamp, with its full precision retained in the cursor;
+the existing public display timestamp format is unchanged. Continuations are
+strictly before the last returned tuple. The opaque base64url cursor is scoped
+to the session, descending order and exact unread filter. Malformed, oversized,
+mismatched-scope, non-UUID or timezone-naive cursor positions return 422;
+aware timestamps normalize to UTC. A cursor requires explicit `order=desc`.
+
+These timestamps do not establish commit order. Newer concurrent inserts do
+not shift older page positions. A transaction can commit after a traversal has
+passed its timestamp position, so reconciliation must reset to the newest page
+and repeat the traversal to recover late-visible messages. An exhausted cursor
+does not prove that no older-timestamp transaction can become visible later.
+
+Without `order`, the existing ascending tail and its 1–2000 limit remain
+unchanged, without pagination fields. Exact `message_id` history remains
+supported in that mode. Combining `message_id` with page controls returns 422.

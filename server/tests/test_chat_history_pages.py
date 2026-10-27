@@ -7,7 +7,9 @@ import pytest
 from pgdbm.migrations import AsyncMigrationManager
 
 from awid.pagination import decode_cursor, encode_cursor
+from awid.e2ee_keys import build_encryption_key_assertion
 from awid.signing import canonical_json_bytes, sign_message, verify_signature, VerifyResult
+from aweb.e2ee_messages import encrypt_e2ee_chat, generate_x25519_keypair
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
 
 
@@ -77,9 +79,11 @@ async def test_chat_pages_total_order_and_original_projection(privacy_app):
     env = privacy_app
     session = await _session(env)
     base = datetime.now(timezone.utc) - timedelta(hours=1)
-    originals = [await _message(env, session, base + timedelta(seconds=offset))
+    originals = [await _message(env, session, base + timedelta(microseconds=offset))
                  for offset in (0, 1, 1, 2, 2, 2, 3)]
     expected = sorted(originals, key=lambda m: (m["created_at"], UUID(m["message_id"])), reverse=True)
+    first = await _page(env, session)
+    assert datetime.fromisoformat(decode_cursor(first["next_cursor"])["created_at"]) == expected[1]["created_at"]
     read = await _cycle(env, session)
     assert [m["message_id"] for m in read] == [m["message_id"] for m in expected]
     for message, original in zip(read, expected):
@@ -88,7 +92,9 @@ async def test_chat_pages_total_order_and_original_projection(privacy_app):
         assert message["conversation_id"] == str(session)
         assert message["to_did"] == env.actors["bob"].did
         assert message["to_stable_id"] == "did:aw:display-only"
-        assert datetime.fromisoformat(message["timestamp"]) == original["created_at"]
+        # Preserve the established seconds-precision display timestamp; cursor
+        # positions above retain full database precision independently.
+        assert datetime.fromisoformat(message["timestamp"]) == original["created_at"].replace(microsecond=0)
         assert verify_signature(env.actors["alice"].did, original["signed_payload"].encode(),
                                 original["signature"]) == VerifyResult.VERIFIED
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_message_reads}}") == 0
@@ -174,6 +180,43 @@ async def test_chat_pages_filter_unread_before_limit(privacy_app):
     last = response.json()
     assert [m["message_id"] for m in last["messages"]] == [incoming[0]["message_id"]]
     assert not last["has_more"] and last["next_cursor"] is None
+
+
+@pytest.mark.asyncio
+async def test_chat_pages_preserve_encrypted_history_projection(privacy_app):
+    env = privacy_app
+    refs = {}
+    for alias in ("alice", "bob"):
+        actor = env.actors[alias]
+        _, public = generate_x25519_keypair()
+        refs[alias] = dict(did=actor.did, team_id=TEAM, encryption_key=build_encryption_key_assertion(
+            signing_key=actor.sk, identity_did=actor.did, identity_stable_id="",
+            encryption_public_key=public, custody="self", now=datetime.now(timezone.utc)))
+    sender = dict(refs["alice"], signing_key=env.actors["alice"].sk)
+    session, originals = uuid4(), {}
+    for i in range(2):
+        mid = str(uuid4())
+        envelope = encrypt_e2ee_chat(sender=sender, recipients=[refs["bob"]], body="private page body",
+                                     message_id=mid, conversation_id=str(session))
+        wire = dict(content_mode="encrypted_v2", message_version=2, encrypted_envelope=envelope,
+                    message_id=mid, timestamp=envelope["created_at"], from_did=sender["did"])
+        if i == 0:
+            path = "/v1/chat/sessions"
+            wire.update(session_id=str(session), to_dids=[refs["bob"]["did"]], message="")
+        else:
+            path = f"/v1/chat/sessions/{session}/messages"
+            wire["body"] = ""
+        response = await _request(env, "alice", "POST", path, wire)
+        assert response.status_code == 200, response.text
+        originals[mid] = envelope
+    legacy = await _get(env, session)
+    assert legacy.status_code == 200, legacy.text
+    descending = await _cycle(env, session, limit=1)
+    assert descending == list(reversed(legacy.json()["messages"]))
+    for message in descending:
+        assert message["body"] == ""
+        assert message["content_mode"] == "encrypted_v2" and message["message_version"] == 2
+        assert message["encrypted_envelope"] == originals[message["message_id"]]
 
 
 @pytest.mark.asyncio
