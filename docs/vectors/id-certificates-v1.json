@@ -10624,6 +10624,176 @@
         "tree_authority": "unavailable",
         "history_inferred": false
       }
+    },
+    {
+      "name": "pre-upgrade-post-dns-caller-differs-from-stored-controller",
+      "action": "register_namespace",
+      "input": {
+        "method": "POST",
+        "path": "/v1/namespaces",
+        "namespace_exists": true,
+        "epochs": [],
+        "stored_controller": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "authenticated_controller": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "exact_dns_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+      },
+      "expected": {
+        "accepted": true,
+        "epoch_writes": 0,
+        "namespace_address_team_data_unchanged": true,
+        "history_inferred": false
+      }
+    },
+    {
+      "name": "pre-upgrade-parent-authorized-post-no-epoch",
+      "action": "register_namespace",
+      "input": {
+        "method": "POST",
+        "path": "/v1/namespaces",
+        "namespace_exists": true,
+        "epochs": [],
+        "stored_controller": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "authenticated_controller": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "proof_lane": "parent_authorization",
+        "exact_dns_key": null
+      },
+      "expected": {
+        "accepted": true,
+        "epoch_writes": 0,
+        "namespace_address_team_data_unchanged": true,
+        "history_inferred": false
+      }
+    },
+    {
+      "name": "pre-upgrade-concurrent-authenticated-posts-open-once",
+      "action": "register_namespace_concurrently",
+      "input": {
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/namespaces",
+            "namespace_exists": true,
+            "epochs": [],
+            "stored_controller": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "authenticated_controller": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "exact_dns_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/namespaces",
+            "namespace_exists": true,
+            "epochs": [],
+            "stored_controller": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "authenticated_controller": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "exact_dns_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+          }
+        ],
+        "last_lock_wait_ends": [
+          "2026-10-26T00:10:00.000000Z",
+          "2026-10-26T00:11:00.000000Z"
+        ]
+      },
+      "expected": {
+        "both_accepted": true,
+        "total_epoch_writes": 1,
+        "epoch_seq": 1,
+        "continuity": "replaced",
+        "registered_at": "2026-10-26T00:10:00.000000Z",
+        "namespace_address_team_data_unchanged": true
+      }
+    },
+    {
+      "name": "namespace-rotation-swapped-roles-refuses",
+      "action": "rotate_namespace",
+      "input": {
+        "request": "swapped-roles",
+        "open_epoch": {
+          "seq": 1,
+          "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+        },
+        "exact_dns_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "now": "2026-10-26T00:10:01Z"
+      },
+      "expected": {
+        "accepted": false,
+        "reason": "invalid_signature",
+        "writes": 0
+      }
+    },
+    {
+      "name": "namespace-put-parent-authorization-no-epoch",
+      "action": "replace_namespace",
+      "input": {
+        "method": "PUT",
+        "path": "/v1/namespaces/example.com",
+        "operation": "rotate_controller",
+        "proof_lane": "parent_authorization",
+        "new_key_proof": true,
+        "new_controller": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "exact_dns_key": null,
+        "open_epoch": {
+          "seq": 1,
+          "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+        }
+      },
+      "expected": {
+        "accepted": true,
+        "stored_controller": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "epoch_writes": 0,
+        "open_epoch_seq": 1,
+        "current_authority": "unavailable",
+        "old_tree_cut_off": false
+      }
+    },
+    {
+      "name": "namespace-put-skip-dns-no-epoch",
+      "action": "replace_namespace",
+      "input": {
+        "method": "PUT",
+        "path": "/v1/namespaces/example.com",
+        "operation": "rotate_controller",
+        "proof_lane": "skip_dns",
+        "new_key_proof": true,
+        "new_controller": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "exact_dns_key": null,
+        "open_epoch": {
+          "seq": 1,
+          "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+        }
+      },
+      "expected": {
+        "accepted": true,
+        "stored_controller": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "epoch_writes": 0,
+        "open_epoch_seq": 1,
+        "current_authority": "unavailable",
+        "old_tree_cut_off": false
+      }
+    },
+    {
+      "name": "namespace-reverify-row-change-then-exact-put-opens-replaced",
+      "action": "replace_namespace",
+      "input": {
+        "method": "PUT",
+        "path": "/v1/namespaces/example.com",
+        "operation": "rotate_controller",
+        "stored_controller_after_reverify": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "new_controller": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "new_key_proof": true,
+        "exact_dns_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "open_epoch": {
+          "seq": 1,
+          "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+        }
+      },
+      "expected": {
+        "accepted": true,
+        "stored_controller": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "epoch_writes": 1,
+        "epoch_seq": 2,
+        "continuity": "replaced",
+        "old_registered_ids_reason": "root_replaced"
+      }
     }
   ],
   "raw_wire_refusals": [
@@ -11206,6 +11376,37 @@
         "X-AWEB-New-Key-Authorization": "DIDKey did:key:z6MkmNL6xksdEJENGk9Z1qqGsY5njKQdjU1UhnUEUvWyQUVX vU2c29XmfHuM20BIdfZgaAc7rHzdQueGu9NYV9P7MQcQB9BVBHhMwUEkrdcI0fUuZTMODYjxCsrAmpxKR3WyDA",
         "X-AWEB-Timestamp": "2026-10-26T00:10:00Z",
         "X-AWEB-Signed-Payload": "eyJhdWQiOiJodHRwczovL3JlZ2lzdHJ5LmV4YW1wbGUuY29tIiwiYm9keV9zaGEyNTYiOiJmZjM3MDdjYTE0Mjc5OTYyNmE2NWJhYzY1N2NhYmExODM4NTYwYmFmZWIxNWUwYjNlZTZkZmE3NmQ1Y2YyNDBiIiwiZG9tYWluIjoiZXhhbXBsZS5jb20iLCJmcm9tX3NlcSI6MiwibWV0aG9kIjoiUE9TVCIsIm5ld19kaWRfa2V5IjoiZGlkOmtleTp6Nk1rbU5MNnhrc2RFSkVOR2s5WjFxcUdzWTVuaktRZGpVMVVoblVFVXZXeVFVVlgiLCJvcGVyYXRpb24iOiJyb3RhdGVfbmFtZXNwYWNlX2NvbnRyb2xsZXIiLCJwYXRoIjoiL3YxL25hbWVzcGFjZXMvZXhhbXBsZS5jb20vcm90YXRlIiwicHJldmlvdXNfZGlkX2tleSI6ImRpZDprZXk6ejZNa29uM05lY2Q2TmtreWZvR29IeGlkMnpuR2M1OUxVM0s3bXViYVJjRmJMZkxYIiwidGltZXN0YW1wIjoiMjAyNi0xMC0yNlQwMDoxMDowMFoiLCJ0eXBlIjoiYXdlYi5hd2lkLWNvbnRyb2xsZXItcmVxdWVzdCIsInYiOjJ9"
+      }
+    },
+    "swapped-roles": {
+      "body": {
+        "domain": "example.com",
+        "operation": "rotate_namespace_controller",
+        "from_seq": 1,
+        "previous_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "new_did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+      },
+      "body_utf8": "{\"domain\":\"example.com\",\"from_seq\":1,\"new_did_key\":\"did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH\",\"operation\":\"rotate_namespace_controller\",\"previous_did_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\"}",
+      "payload": {
+        "v": 2,
+        "type": "aweb.awid-controller-request",
+        "aud": "https://registry.example.com",
+        "method": "POST",
+        "path": "/v1/namespaces/example.com/rotate",
+        "body_sha256": "dc2d34e0b2b16548409099eb977cd6b84f6b7cec96f98dc2ffd0bb4b3c7fcdf1",
+        "timestamp": "2026-10-26T00:10:00Z",
+        "domain": "example.com",
+        "operation": "rotate_namespace_controller",
+        "from_seq": 1,
+        "previous_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "new_did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+      },
+      "canonical_payload_utf8": "{\"aud\":\"https://registry.example.com\",\"body_sha256\":\"dc2d34e0b2b16548409099eb977cd6b84f6b7cec96f98dc2ffd0bb4b3c7fcdf1\",\"domain\":\"example.com\",\"from_seq\":1,\"method\":\"POST\",\"new_did_key\":\"did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH\",\"operation\":\"rotate_namespace_controller\",\"path\":\"/v1/namespaces/example.com/rotate\",\"previous_did_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\",\"timestamp\":\"2026-10-26T00:10:00Z\",\"type\":\"aweb.awid-controller-request\",\"v\":2}",
+      "headers": {
+        "Authorization": "DIDKey did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH NTxZ71m17/mt/l+RKyLTv/z3I47msdFrngE7f34dOLNxGvezv6esGfz787ReZkq53NpQS5xum79iEd7LG5azBw",
+        "X-AWEB-New-Key-Authorization": "DIDKey did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX DPJwZkcM5wsZrZqGcBqtkctDL5FUNBCipaQPVZAe5ZvBMZQucwCtBBnTwRvrYzohTQ6+5nWA/P1899K60buYAg",
+        "X-AWEB-Timestamp": "2026-10-26T00:10:00Z",
+        "X-AWEB-Signed-Payload": "eyJhdWQiOiJodHRwczovL3JlZ2lzdHJ5LmV4YW1wbGUuY29tIiwiYm9keV9zaGEyNTYiOiJkYzJkMzRlMGIyYjE2NTQ4NDA5MDk5ZWI5NzdjZDZiODRmNmI3Y2VjOTZmOThkYzJmZmQwYmI0YjNjN2ZjZGYxIiwiZG9tYWluIjoiZXhhbXBsZS5jb20iLCJmcm9tX3NlcSI6MSwibWV0aG9kIjoiUE9TVCIsIm5ld19kaWRfa2V5IjoiZGlkOmtleTp6Nk1rbzloVGdnTXdqU1RFYUphUFVmRTZ0cWN5Mnh2VTZCbk5xM2UzbzhxVkJpeUgiLCJvcGVyYXRpb24iOiJyb3RhdGVfbmFtZXNwYWNlX2NvbnRyb2xsZXIiLCJwYXRoIjoiL3YxL25hbWVzcGFjZXMvZXhhbXBsZS5jb20vcm90YXRlIiwicHJldmlvdXNfZGlkX2tleSI6ImRpZDprZXk6ejZNa29uM05lY2Q2TmtreWZvR29IeGlkMnpuR2M1OUxVM0s3bXViYVJjRmJMZkxYIiwidGltZXN0YW1wIjoiMjAyNi0xMC0yNlQwMDoxMDowMFoiLCJ0eXBlIjoiYXdlYi5hd2lkLWNvbnRyb2xsZXItcmVxdWVzdCIsInYiOjJ9"
       }
     }
   }

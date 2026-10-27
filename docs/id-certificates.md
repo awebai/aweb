@@ -189,19 +189,32 @@ An epoch opens ONLY on explicit first namespace registration, re-registration
 after deletion, or an explicit exact-controller-key change. Same-key observations
 never open, replace or retire an epoch: reverify, address-read verification,
 inherited answers, failed DNS and unverified DNS change only current authority
-availability. Reverify cannot install a different key either: a disagreement
-with the epoch makes authority unavailable under §2, not replaced. When the
-same exact key returns after an unavailable interval, its epoch continues.
+availability. Reverify cannot install a different ID-tree epoch key: a disagreement
+with the epoch makes authority unavailable under §2, not replaced. The released
+reverify behavior continues to update dns_namespaces.controller_did from exact
+DNS; inherited answers retain the row's key. Address and namespace-level team
+operations keep using that stored row key, while existing team certificates
+still use their own team key. ID-tree status and ID-certificate registration
+require the stored row key, open epoch key and independent exact DNS key to
+agree; otherwise they
+are unavailable/evidence_unavailable. No new current status is issued during
+that disagreement; existing caches retain their normal freshness bounds. When
+the same exact key returns after an unavailable interval, its epoch continues.
 Publishing another party's public key without holding it grants no authority.
 Delete then re-register is different because deletion is an explicit act.
 
-For a pre-upgrade namespace with no epoch, the operator repeats the EXISTING
-authenticated `POST /v1/namespaces`, proving the stored current controller key
-and its exact-domain DNS authority. Under the namespace lock this opens epoch 1,
-`replaced`, at the new post-lock witness time, keeping all existing namespace,
-address and team data. With an epoch already present, the same authenticated
-POST is an epoch no-op. Unauthenticated reverify opens nothing, even when its
-exact DNS answer is correct. No new enrollment endpoint or inferred history.
+Pre-upgrade enrollment is a NEW branch of the existing authenticated
+`POST /v1/namespaces` handler, not a check that the released handler already
+makes. When the row exists and has NO epoch, open epoch 1, replaced, ONLY if
+this request's signer equals the row's stored controller_did AND this request
+proved exact DNS for that SAME key. Parent-authorization, skip-DNS and reserved
+local lanes count as no exact proof. Otherwise retain the existing response
+with zero epoch writes; a new owner uses PUT recovery. Check these conditions
+and absence of an epoch under the namespace lock after the last wait, so two
+concurrent valid POSTs open exactly one epoch at its new witness time. Keep all
+namespace, address and team data. With an epoch already present, the same POST
+is an epoch no-op. Unauthenticated reverify opens nothing. There is no new
+enrollment endpoint and no inferred history.
 
 #### Continuity-preserving namespace rotation (new operation)
 
@@ -240,10 +253,15 @@ This preserves earlier registrations while changing the current root key.
 
 The released `PUT /v1/namespaces/{domain}` is still the new-key-only recovery
 path (`operation="rotate_controller"`, body `{new_controller_did}`). It never
-establishes rotated continuity: an actual key change opens replaced. A same-key
-PUT does not open an epoch. Existing legacy envelopes and other namespace
-contracts remain accepted; their inherited/skip-DNS authority is not exact-domain
-ID-tree evidence. No existing request is silently reinterpreted as old-key proof.
+establishes rotated continuity. With exact DNS proof on this request, compare
+the requested key against the open EPOCH key, even if reverify has already
+updated the stored row: a different key opens replaced, the same epoch key is
+an epoch no-op, and no epoch yet opens epoch 1, replaced. A PUT authorized only
+by parent-authorization, skip-DNS or local bypass may still update the stored
+controller under its released contract, but writes NO epoch (including no
+retirement); ID-tree authority is unavailable until row, epoch and exact DNS
+agree. Existing legacy envelopes and other namespace contracts remain accepted.
+No existing request is silently reinterpreted as old-key proof.
 
 Brief DNS control can cause a permanent tree cutoff: an attacker who installs
 and proves a new key through the recovery path opens replaced. That is the
