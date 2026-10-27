@@ -183,3 +183,61 @@ describe("historical human-link probes", () => {
     expect(verifyIdChain(chainOf(signedOf("alice"), bobHead, carol), subject, evidence(status))).toEqual(refused("human_issuer_is_agent"));
   });
 });
+
+describe("namespace epoch probes", () => {
+  const coordinator = signedOf("coordinator").certificate.id;
+  const local: IdSubject = { id: coordinator, did_key: coordinator, team_member_did_aw: null, team_member_did_key: null };
+  const chain = chainOf(signedOf("alice"), signedOf("coordinator"));
+
+  // Alice is registered at 00:01 under epoch 1; the root then rotates.
+  function rotatedAt(retiredAt: string) {
+    const status = normal();
+    status.namespace.epochs = [
+      { ...status.namespace.epochs[0], retired_at: retiredAt },
+      { seq: 2, did_key: keys.root_rotated.did_key, registered_at: retiredAt, retired_at: null, continuity: "rotated" },
+    ];
+    return evidence(status, { controller_key: keys.root_rotated.did_key });
+  }
+
+  test("control: a revision registered before its epoch retires verifies after a signed rotation", () => {
+    expect(verifyIdChain(chain, local, rotatedAt("2026-10-26T00:02:00.000000Z"))).toEqual(verified(keys.alice.did_aw, "agent"));
+  });
+
+  test("a revision registered at its epoch's retirement is unavailable", () => {
+    expect(verifyIdChain(chain, local, rotatedAt("2026-10-26T00:01:00.000000Z"))).toEqual(unavailable);
+  });
+
+  test("a revision registered after its epoch's retirement is unavailable", () => {
+    expect(verifyIdChain(chain, local, rotatedAt("2026-10-26T00:00:30.000000Z"))).toEqual(unavailable);
+  });
+});
+
+describe("namespace replacement probes", () => {
+  // A human registered under Alice after the namespace was replaced: its own
+  // registration is new, but Alice's revision in force then predates it.
+  const child = signedOf("post-replacement-child-of-old-owner");
+  const subject: IdSubject = {
+    id: keys.replacement_human.did_aw,
+    did_key: keys.replacement_human.did_key,
+    team_member_did_aw: null,
+    team_member_did_key: null,
+  };
+
+  function withChild(fixture: string) {
+    const status = structuredClone(vector.status_fixtures[fixture]);
+    const row = structuredClone(identity(vector.status_fixtures["lost-human-replaced"], keys.replacement_human.did_aw));
+    row.certificates = [{ signed: child, registered_at: "2026-10-26T00:11:00.000000Z", superseded_at: null, issuer_key_seq: 1 }];
+    row.current_certificate_id = idCertificateId(child.certificate);
+    status.identities.push(row);
+    return status;
+  }
+
+  test("control: without a replacement the human verifies", () => {
+    expect(verifyIdChain(chainOf(signedOf("alice"), child), subject, evidence(withChild("normal")))).toEqual(verified(keys.replacement_human.did_aw, "human"));
+  });
+
+  test("a historical human-parent revision admitted before the replacement refuses", () => {
+    const status = withChild("root-replaced");
+    expect(verifyIdChain(chainOf(signedOf("alice"), child), subject, evidence(status, { controller_key: keys.root_rotated.did_key }))).toEqual(refused("root_replaced"));
+  });
+});
