@@ -27,7 +27,7 @@ from aweb.messaging.contacts import (
     resolve_handle_contact_agent,
 )
 from aweb.messaging.conversations import find_active_one_to_one_conversation_between
-from aweb.messaging.verification import verified_signed_recipient_fields
+from aweb.messaging.verification import verified_signed_recipient_fields, verified_signed_via
 from aweb.service_errors import ServiceError, ValidationError
 
 
@@ -557,6 +557,7 @@ async def _read_chat_messages_from_target(db_infra, *, target: dict, limit: int)
             "signature": row.get("signature"),
             "signed_payload": row.get("signed_payload"),
             **verified_signed_recipient_fields({**row, "conversation_id": str(row["session_id"])}),
+            **verified_signed_via({**row, "conversation_id": str(row["session_id"])}),
             "from_alias": row["from_alias"],
             "from_address": row["from_address"],
             "body": row["body"],

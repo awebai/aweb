@@ -224,6 +224,7 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 	}
 	if v, ok := data["signed_payload"].(string); ok {
 		signedPayload = v
+		ev.SignedPayload = v
 	}
 	if v, ok := data["is_contact"].(bool); ok {
 		ev.IsContact = &v
@@ -265,6 +266,12 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 		}
 	}
 
+	// A separate plaintext artifact says nothing about authenticated v2 content.
+	// Only decryptChatEvent may populate its provenance or verified status.
+	if ev.ContentMode == awid.ContentModeEncryptedV2 || ev.MessageVersion == awid.E2EEMessageVersion || ev.Encrypted != nil {
+		ev.VerificationStatus = awid.Unverified
+		return ev
+	}
 	if meta, ok := parseSignedEnvelopeMetadata(signedPayload); ok {
 		// The chat stream row may carry a stable DID in from_did/to_did when the
 		// session participant was stored under did:aw. The signed payload is the
@@ -313,6 +320,14 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 	// Error is encoded in VerificationStatus; discard it.
 	if signedPayload != "" {
 		ev.VerificationStatus, _ = awid.VerifySignedPayload(signedPayload, ev.Signature, ev.FromDID, ev.SigningKeyID)
+		if ev.VerificationStatus == awid.Verified {
+			via, err := awid.SignedPayloadVia(signedPayload)
+			if err != nil {
+				ev.VerificationStatus = awid.Failed
+			} else {
+				ev.Via = via
+			}
+		}
 	} else {
 		ev.VerificationStatus, _ = awid.VerifyMessage(env)
 	}
@@ -343,6 +358,7 @@ func decryptChatEvent(client *awid.Client, ev *Event) error {
 		ev.ToDID, ev.ToStableID = plain.Recipients[0].DID, plain.Recipients[0].StableID
 	}
 	ev.Body = plain.Body
+	ev.Via = plain.Via
 	ev.Attachments, ev.AttachmentsAvailable = awid.DecodeAttachmentContent(plain.Attachments)
 	// Verified means the encrypted-envelope signature is valid, not that the
 	// signer owns the claimed address. The inbound caller must immediately pass
@@ -971,11 +987,21 @@ func buildMessages(messages []awid.ChatMessage) []Event {
 			FromStableID:            m.FromStableID,
 			ToStableID:              m.ToStableID,
 			Signature:               m.Signature,
+			SignedPayload:           m.SignedPayload,
+			Via:                     m.Via,
 			SigningKeyID:            m.SigningKeyID,
 			RotationAnnouncement:    m.RotationAnnouncement,
 			ReplacementAnnouncement: m.ReplacementAnnouncement,
 			VerificationStatus:      m.VerificationStatus,
 			IsContact:               m.IsContact,
+		}
+		if m.ContentMode != awid.ContentModeEncryptedV2 && m.MessageVersion != awid.E2EEMessageVersion && m.Encrypted == nil && m.SignedPayload != "" && (m.VerificationStatus == awid.Verified || m.VerificationStatus == awid.VerifiedLegacy || m.VerificationStatus == awid.VerifiedCustodial) {
+			via, err := awid.SignedPayloadVia(m.SignedPayload)
+			if err != nil {
+				events[i].VerificationStatus = awid.Failed
+			} else {
+				events[i].Via = via
+			}
 		}
 	}
 	return events

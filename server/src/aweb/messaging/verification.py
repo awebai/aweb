@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any, Literal
 
-from awid.signing import VerifyResult, verify_signature
+from awid.signing import VerifyResult, verify_signature, validate_message_via
 
 from aweb.e2ee_messages import verify_e2ee_message_envelope_signature
 from aweb.service_errors import ForbiddenError
@@ -71,6 +71,25 @@ def verified_signed_recipient_fields(row: dict[str, Any]) -> dict[str, str]:
         for name in ("to_did", "to_stable_id")
         if isinstance(payload.get(name), str)
     }
+
+
+def verified_signed_via(row: dict[str, Any]) -> dict[str, str]:
+    """Display only an authenticated author's plaintext assertion.
+
+    Custody and confidentiality come from their own authority facts, never via.
+    The server cannot project provenance protected inside encrypted v2 content.
+    """
+    if str(row.get("content_mode") or "") == "encrypted_v2":
+        return {}
+    if message_verification_status(row) not in ("verified", "verified_legacy"):
+        return {}
+    payload = json.loads(row["signed_payload"])
+    if "via" not in payload:
+        return {}
+    try:
+        return {"via": validate_message_via(payload["via"])}
+    except ValueError:
+        return {}
 
 
 def _encrypted_message_verification_status(row: dict[str, Any]) -> VerificationStatus:

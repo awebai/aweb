@@ -17,7 +17,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from awid.log import canonical_server_origin
-from awid.signing import verify_did_key_signature
+from awid.signing import verify_did_key_signature, validate_message_via
 from aweb.e2ee_messages import E2EEEnvelopeError, validate_e2ee_message_envelope
 from aweb.messaging.signatures import (
     MessageSignatureShapeError,
@@ -238,6 +238,11 @@ def _expect_signed_value_in(payload: Mapping[str, Any], field: str, allowed: tup
 
 def _enforce_signed_payload_binding(model: FederationEnvelope) -> str | None:
     payload = _signed_payload_json(model)
+    if "via" in payload:
+        try:
+            validate_message_via(payload["via"])
+        except ValueError as exc:
+            raise FederationEnvelopeError(str(exc)) from exc
     _expect_signed_value(payload, "type", model.type)
     _expect_signed_value(payload, "body", model.body)
     _expect_signed_value(payload, "from_did", model.sender_current_did_key)

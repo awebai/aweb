@@ -1,0 +1,1023 @@
+{
+  "description": "Public test-only keys and frozen Python/Go encrypted-v2 P1 vectors. Never use these keys outside tests.",
+  "identities": {
+    "alice": {
+      "address": "example.test/alice",
+      "did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+      "stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+      "team_id": "protocol:example.test",
+      "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "x25519_private": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8",
+      "encryption_key": {
+        "operation": "publish_encryption_key",
+        "version": "aweb-e2ee-key-v1",
+        "identity_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "identity_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "custody": "self",
+        "encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+        "encryption_public_key": "eaYx7t4b+cmPEgMs3q3Q56B5OY/HhriMyEbsia+FpRo",
+        "algorithm": "x25519",
+        "created_at": "2026-05-27T12:00:00Z",
+        "not_before": "2026-05-27T12:00:00Z",
+        "expires_at": "2026-08-25T12:00:00Z",
+        "signature": "+lt2LLWzAOmnY8lcQVqUVVSzUJS5ixtRlZqWtZZpbFTsq9vJh1qxvR9CSPWLHHF3RPLCqyXFgkcHnO+JiAqLBA"
+      }
+    },
+    "bob": {
+      "address": "example.test/bob",
+      "did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+      "stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7",
+      "team_id": "protocol:example.test",
+      "seed_hex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+      "x25519_private": "YGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn8",
+      "encryption_key": {
+        "operation": "publish_encryption_key",
+        "version": "aweb-e2ee-key-v1",
+        "identity_did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+        "identity_stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7",
+        "custody": "self",
+        "encryption_key_id": "sha256:ajWMVPkVaAXtX+9JVAwJkbRjEf6fmv53hwxlYs/zW0o",
+        "encryption_public_key": "Z13VdO13iTELPS52gfN5C0ZsdzsVIf7PNld5WDcepS8",
+        "algorithm": "x25519",
+        "created_at": "2026-05-27T12:00:00Z",
+        "not_before": "2026-05-27T12:00:00Z",
+        "expires_at": "2026-08-25T12:00:00Z",
+        "signature": "wANZGxS8ATENu7Dcq7ND28hsBf5vOCOxKT8TOpVlbCt82Lm000IRWVKqmnEhtfVjSHfWGPJfEovPSOFQrBg/CA"
+      }
+    }
+  },
+  "cases": [
+    {
+      "producer": "python",
+      "kind": "mail",
+      "via": "",
+      "envelope": {
+        "message_version": 2,
+        "envelope_type": "aweb.e2ee.message",
+        "kind": "mail",
+        "message_id": "a9c5ff16-c22b-57b9-a3b8-b82c649f15c4",
+        "conversation_id": "40e4ead1-ae01-5924-aa2d-2607007d0e64",
+        "created_at": "2026-05-27T12:00:00Z",
+        "expires_at": "2026-05-27T12:05:00Z",
+        "from": {
+          "address": "example.test/alice",
+          "did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+          "stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+          "team_id": "protocol:example.test",
+          "encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc"
+        },
+        "recipients": [
+          {
+            "address": "example.test/bob",
+            "did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+            "stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7",
+            "team_id": "protocol:example.test",
+            "encryption_key_id": "sha256:ajWMVPkVaAXtX+9JVAwJkbRjEf6fmv53hwxlYs/zW0o",
+            "wrap_id": "sha256:+/RPOWALmu/LvguDHrW+xPcbpl5+4ZSHlxe3dVKN0Ho"
+          }
+        ],
+        "routing": {
+          "to": "example.test/bob",
+          "to_did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+          "to_stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7"
+        },
+        "policy": {
+          "requires_e2ee": true,
+          "legacy_plaintext_allowed": false
+        },
+        "crypto": {
+          "suite": "aweb-e2ee-v2.x25519-hkdf-sha256-aes256gcm-ed25519",
+          "content_nonce": "kBD8asb+f9TGIjZT",
+          "ciphertext_hash": "sha256:Pqp43AqMAc/i9Dp37r6Dp2YjnlqU4WyEruROzXZjgUM",
+          "ciphertext_size": 629,
+          "inner_header_hash": "sha256:ZguJ5cajq7zRkHGYvyXWOYmbibwscxlCZ8dsEwQ/Swg",
+          "key_wraps_hash": "sha256:qxs3zeDc49hR49B3nrhAeNnSrev8YiujgVyMpiORJuY"
+        },
+        "key_wraps": [
+          {
+            "wrap_id": "sha256:+/RPOWALmu/LvguDHrW+xPcbpl5+4ZSHlxe3dVKN0Ho",
+            "recipient_stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7",
+            "recipient_did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+            "recipient_address": "example.test/bob",
+            "recipient_encryption_key_id": "sha256:ajWMVPkVaAXtX+9JVAwJkbRjEf6fmv53hwxlYs/zW0o",
+            "sender_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "sender_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "wrap_purpose": "delivery",
+            "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
+            "encapsulated_key": "5/B+xrxhveclOcDo5LUizaVlYapBX3ozjBLCFXEMPTc",
+            "wrapped_cek": "5yqHVYZ/NIWv1rT0S3+fXryIQUb8RiXScBv2sb7TASFsnT3q7E7id7qfm7hRvcse"
+          },
+          {
+            "wrap_id": "sha256:D/Xjq3bCLdeV2v+RnB+EK/lbjwl76AuDTRHwm7YtSU0",
+            "recipient_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "recipient_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "recipient_address": "example.test/alice",
+            "recipient_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "sender_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "wrap_purpose": "sender_copy",
+            "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
+            "encapsulated_key": "BvRZPLw5beMncO0PuJOKLYtcZd2tC3UmWiAUs9M5Yy0",
+            "wrapped_cek": "JXoFtE3PgNm3s3ZLO83kcyzhpmCZv/Luiz8p7xdb3VEL1IoGG4ED1Wkr8DYAy9Oq"
+          }
+        ],
+        "ciphertext": "dFLj2v9xAnJX0MWho4iKRhZa4+R2WwEtDzzSbViS0a3WIFdrZDDUwdu/CgfZvUO8XsNS0t7SzU7XVf8TQy16aq3lEx8KcyP/VflrKMqcRdXUrbh3UgSP3HWVO1/kGFeJQXQUyyuXbYcx5T4/pN4RH0b//S7HHsnQuUC33YvBIxjqhAE2DKcaOStNkNAmh8TpPS8y+LOK13AMtJQccC40cSTcT0ObX3IzwW+QVZPJ0MNVOJvSribbdc9sxdEOtrh/qQmcARIdtjP2JjBQP3qV5JpKKoI7KaojeWt2YsV0tsecUoirGihDuCGV5/MITZwnNXTL++Qo991Rdj+EVmc5IWi4vlzd/tolT1H3JhPkmVY6PUwKYD0xJJWjmgnjb8Dagqfgj39c3AYCofeD7GCKLywR3Of80NMLU48lMausJRtJK15xCADFr9J5DrpQHGmluDnS9AcZV4N+5HgNQhaIe8Bpe8AOhKeYT7FFeIDkuPqamri3tUo7c+Ciqv/W15X7KgotVl7yXgdqljpLQxmFHH7ocAnTWgOAZ1sQ74maW85eRqvuUWzsHDcDdAHRVoBFHZjvQ02p/LuGiZTxIijcJ63hDdO+2+WBqZxhos2O8Cv4h8yH0J+xFKEPFuiYEj0v06ShSalYDtBOasC+tCHucHyS1GOHNeGCYmqdu1JsEJs1NeewSR6gM28TWwpVlyP0qf1v6Kn2ea57a5kU9iGrPrKFNbqzEy1MZ7kTrObWXlKkda9Np1SLMvwlpANm/lG635zsqNEAOFUp5r8A+5pjv3+1Hcj9W6/+UQmiKBDNfSr43l5OYRgIT8ZnfLzYMJZnAwgLu04",
+        "signature": "bJkZOlBv5EkS27o9tM2iP38IzUxE0P71MAf07+Pu2J3kzPLXkck2FdCpV/n5t1EFGXkvChybtXHadTY/c8ViDg",
+        "signing_key_id": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd"
+      }
+    },
+    {
+      "producer": "python",
+      "kind": "mail",
+      "via": "telegram",
+      "envelope": {
+        "message_version": 2,
+        "envelope_type": "aweb.e2ee.message",
+        "kind": "mail",
+        "message_id": "0b49cd6e-bc74-5e37-a536-4567065e42b1",
+        "conversation_id": "a426b898-1a0b-5ea1-af42-fa885d2cf924",
+        "created_at": "2026-05-27T12:00:00Z",
+        "expires_at": "2026-05-27T12:05:00Z",
+        "from": {
+          "address": "example.test/alice",
+          "did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+          "stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+          "team_id": "protocol:example.test",
+          "encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc"
+        },
+        "recipients": [
+          {
+            "address": "example.test/bob",
+            "did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+            "stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7",
+            "team_id": "protocol:example.test",
+            "encryption_key_id": "sha256:ajWMVPkVaAXtX+9JVAwJkbRjEf6fmv53hwxlYs/zW0o",
+            "wrap_id": "sha256:hnc6/pb/1NJSAn10Rq4Cv7sTKu/pURW/1Azy4sG+zxs"
+          }
+        ],
+        "routing": {
+          "to": "example.test/bob",
+          "to_did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+          "to_stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7"
+        },
+        "policy": {
+          "requires_e2ee": true,
+          "legacy_plaintext_allowed": false
+        },
+        "crypto": {
+          "suite": "aweb-e2ee-v2.x25519-hkdf-sha256-aes256gcm-ed25519",
+          "content_nonce": "EG6tfK5lNjJlYx3B",
+          "ciphertext_hash": "sha256:5dgav5wTBjTn7EBW33ZYhehZxx22rvRS+QFis1rYSIo",
+          "ciphertext_size": 646,
+          "inner_header_hash": "sha256:6rBBCJf2c1p9NtpAk/xfsEQe+ExwTkPCZ5PNg3Ysyxc",
+          "key_wraps_hash": "sha256:+VZAvFpQLaTm0CXoi/SPxEtq+Ge506qqNQQLVBxY6cs"
+        },
+        "key_wraps": [
+          {
+            "wrap_id": "sha256:hnc6/pb/1NJSAn10Rq4Cv7sTKu/pURW/1Azy4sG+zxs",
+            "recipient_stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7",
+            "recipient_did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+            "recipient_address": "example.test/bob",
+            "recipient_encryption_key_id": "sha256:ajWMVPkVaAXtX+9JVAwJkbRjEf6fmv53hwxlYs/zW0o",
+            "sender_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "sender_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "wrap_purpose": "delivery",
+            "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
+            "encapsulated_key": "0K7yDJcODBI6kHPT7bJPP0m1q/CStitdfXeVgkjW7hU",
+            "wrapped_cek": "bx2D8Z/OLgrDHvzwIXN9dvNo16RHWrLqZs/JRC81Yfr4AcBLYWq16GrSvybDglWc"
+          },
+          {
+            "wrap_id": "sha256:BUwWufLAYrHgZxK5UsVYWt1RemvYoqyT2Gghmt7I1jQ",
+            "recipient_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "recipient_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "recipient_address": "example.test/alice",
+            "recipient_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "sender_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "wrap_purpose": "sender_copy",
+            "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
+            "encapsulated_key": "fjZp5ymYSZ79xlFbqFPwuDizIP2V+u56nzmZGRcS4i4",
+            "wrapped_cek": "OgNSC6UwXLZiSE7gV8W2yF3HU0K1bT8DeLdqZxiVVS80GXHEh+i5mDd8s+oZ0so0"
+          }
+        ],
+        "ciphertext": "bsQic0mHPrhumUbPbvn47H65vHG9dt0QLZKpl6iocbFiI9NyN2ctAUdT3zlQ/rMmxcxOAnL0zeMwvUoODBP/GUFX+/bqwvTlgIq+IrK8qk2pYQI36rv99dSDo3RO69Nx6zhEORGs5nXGsJe64FGnDxvW6ajEY+Nz4rhVLJSyrjAx4r+lIxzSUze8u1e8FtkJoiQfJUAjO5g6iOr823j2xYk0RlckqQTR8aSAIoGUr84dJllVuqb42/0DY47hVgPwrnYy+wRPLk9ay8wZbuhFvB/mzYfm2TTpB1+CedFWmV3x+pVPKIaTDEQ6FuYlrGZiHDk3pz9xQuVVQpfQmI1qsq37nV9u+gBl9znn+8ADMzBvF/gRvFCbVySElWqW6/rw3JwNA46J0y9NWOCjLTu2GxdiJLniQp54dZae1egAq7544O4e5MrczQfH0MdtZhe7onVBvRAFEs2Ob9BPxiEbPm+jPPgCEhErCgLH30eOusKB3eq0jc65CKd61l3QZQB5+9v5X9FiEOBNDAbP0BSojklQF+YKbbiKBYLxe7d4qjn+jt38jJZHNoZHVnaBLIZWu5z0YcmkSTJyQj/zMjU3fbepUyFXqYn7mJ4s3F9xM5+dFn3WTf+/K2Uf84ibL5N65lPm+BkXqPe4KCdTBYFFCNzwGaQX1K8TPsgRum/1ye/ej9c9D+DEY5NLWaMYflJaxoT2kaG3XDEl9g6lJYgNKc1KjzVhQt5LYBDhV5VPZYHVwREDj+un4prc8kAVz30e9N0UvtAEye9MMaHFx8S3L9USAG4EaUD83TCxo8dD52ZJX96zP0gCuOwsANeLTFfiYWl0vKrzaxW0YXnaqzipOwbtboV7YQ",
+        "signature": "NuEJc1zbRzMZqax/NSE1G66LXyr4bvtGc5b11RfZKfILcfu6IKaOlrK9WZP/2RNjm5+QALAyRosktoKbFiGjAQ",
+        "signing_key_id": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd"
+      }
+    },
+    {
+      "producer": "python",
+      "kind": "mail",
+      "via": "msteams",
+      "envelope": {
+        "message_version": 2,
+        "envelope_type": "aweb.e2ee.message",
+        "kind": "mail",
+        "message_id": "88c91736-6b98-5b92-98a0-fa7847630917",
+        "conversation_id": "35de9e12-de0b-5816-9fb1-edb43606de34",
+        "created_at": "2026-05-27T12:00:00Z",
+        "expires_at": "2026-05-27T12:05:00Z",
+        "from": {
+          "address": "example.test/alice",
+          "did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+          "stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+          "team_id": "protocol:example.test",
+          "encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc"
+        },
+        "recipients": [
+          {
+            "address": "example.test/bob",
+            "did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+            "stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7",
+            "team_id": "protocol:example.test",
+            "encryption_key_id": "sha256:ajWMVPkVaAXtX+9JVAwJkbRjEf6fmv53hwxlYs/zW0o",
+            "wrap_id": "sha256:/4xiwQIng+APRjkEZtpeZd8MAcSxq3BJy1X1u33Ccf8"
+          }
+        ],
+        "routing": {
+          "to": "example.test/bob",
+          "to_did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+          "to_stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7"
+        },
+        "policy": {
+          "requires_e2ee": true,
+          "legacy_plaintext_allowed": false
+        },
+        "crypto": {
+          "suite": "aweb-e2ee-v2.x25519-hkdf-sha256-aes256gcm-ed25519",
+          "content_nonce": "LW3d8trxCgvZqgZ/",
+          "ciphertext_hash": "sha256:yZPw3/BctQyxWa4vuitAwpaLBhzy11GkSAfC1Y4xgQc",
+          "ciphertext_size": 645,
+          "inner_header_hash": "sha256:OLpp77MuWb+QHbNVVLDWgyayTwG4cwxrUHvcnt4kilI",
+          "key_wraps_hash": "sha256:4wYBtQcPbKNN06ObU0kIIhEAHSr1wjUBwurQewYFnH0"
+        },
+        "key_wraps": [
+          {
+            "wrap_id": "sha256:/4xiwQIng+APRjkEZtpeZd8MAcSxq3BJy1X1u33Ccf8",
+            "recipient_stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7",
+            "recipient_did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+            "recipient_address": "example.test/bob",
+            "recipient_encryption_key_id": "sha256:ajWMVPkVaAXtX+9JVAwJkbRjEf6fmv53hwxlYs/zW0o",
+            "sender_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "sender_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "wrap_purpose": "delivery",
+            "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
+            "encapsulated_key": "qmVQX8H1wLgjLUUz8ZV0Z0lf6zC3R+pHPPhFHR3591I",
+            "wrapped_cek": "1YFzTEV2qelbwyv6BrahLZ7mo0uCF99VkqwwmuO+Cfr2p8bDxR+P/KnsY8ad8TO6"
+          },
+          {
+            "wrap_id": "sha256:2pHi65k4vw0yNixTy7uhmJ+0itkb6p6rhn7MGwAtgl0",
+            "recipient_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "recipient_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "recipient_address": "example.test/alice",
+            "recipient_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "sender_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "wrap_purpose": "sender_copy",
+            "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
+            "encapsulated_key": "JfT8GzzNgW2NrSBQwO6DISQVrFaK0RE3L7MZq7+lcmU",
+            "wrapped_cek": "8zFSSUYc5IJSU3dUYV63sRJN5RLBQjxB8bf8WTgIbUMC7qBKzn0BhO75pinRqRnu"
+          }
+        ],
+        "ciphertext": "0bF6ZabEvCP4t3QlrG9Z2RQlveTRZthyORVW4g86Ok/C0z8G7iqm+xJ5+XXaVVvoz5/iWAF1sRQ6HuuWrXkwBsYYNynSahASdneYEL2UxYfLCzMZ1bwj55kY5hDhcU4ZsnfF625oR8nIa3nTnlsRcxqMtVmW2I39OtyT1r7VZ4kRUMmFmRse98CLGDjU2lsuUlUmaDcjPbsNeWhGXR3D0sy4vUIBrV9G48JiXxvBCRy1Y/DNIARrhPBavSnNNp90uz8RYlVvTGQULTkJinjEi8xhDKH0jBwDRxFH0BSbEi9qkYAfNWFrw+18aLyAFjtikTCeYMmojDzjMItO1+lOpebYRNocg4Ty+HBu+38vgMQ09OOGXewDGzrhQoNzn8k1ZlKPY/OD0a8/RB3m+odvniucxZcvIwXtZXoBf0ofFiZKUNtopA7lAyu8smEz4eWn29HhpjzYVnHv1Fs1RkzJn/ViUXJ4Z6s7vqCgvXUUuecsCbCzAN09gfgrPYI9xmAqJkrQNDqqPEWYt6VPsI3cRsWoPfaAkf290hBpJvCR4zDdB+xEaZqDJJsq+Rxc8sdQfqkcq2xIe/8jE3oqTlLHSWBNgregMccxhlbize8upNvmbtXYGk6fN79reB6b1YEvgUkQVLj/TRCLXP5jtzAIhGcceaBmJkWbWZyj2c1PMQ+MkQzDZ6fn+Shin2MBvq0xObyFlj/gfTbfrNAV1rZoKvKga2596rlY9IbR40BbVs6o2w2/PxFM4qDuyMxYt+2Bd8hR986HfqaULUG28ZQNl/GSFYVmZ0gta2syC2ZFT4iQk+j8vlIB3hhn/ec1z3BASZtw0KoxHTMix5KlbIMh1xs9mFis",
+        "signature": "4a3aaaSH0MDucqOT/BtKsjn0SONUIbSNP6ahnB45jzyRHtwKUXe9jfwJGv26R/n/ZFHjimosdv6boSTElvwyCQ",
+        "signing_key_id": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd"
+      }
+    },
+    {
+      "producer": "python",
+      "kind": "chat",
+      "via": "",
+      "envelope": {
+        "message_version": 2,
+        "envelope_type": "aweb.e2ee.message",
+        "kind": "chat",
+        "message_id": "eba78be9-ec6b-5f28-a885-3b1d0ae7b0f8",
+        "conversation_id": "f5a5e083-be4a-525e-9053-36ebad42e7d8",
+        "created_at": "2026-05-27T12:00:00Z",
+        "expires_at": "2026-05-27T12:05:00Z",
+        "from": {
+          "address": "example.test/alice",
+          "did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+          "stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+          "team_id": "protocol:example.test",
+          "encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc"
+        },
+        "recipients": [
+          {
+            "address": "example.test/bob",
+            "did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+            "stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7",
+            "team_id": "protocol:example.test",
+            "encryption_key_id": "sha256:ajWMVPkVaAXtX+9JVAwJkbRjEf6fmv53hwxlYs/zW0o",
+            "wrap_id": "sha256:AWbBaPVln8Z6pwIf2PodlDfZ++KCwPqhv19Xi3L9dZU"
+          }
+        ],
+        "routing": {
+          "to": "example.test/bob",
+          "to_did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+          "to_stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7"
+        },
+        "policy": {
+          "requires_e2ee": true,
+          "legacy_plaintext_allowed": false
+        },
+        "crypto": {
+          "suite": "aweb-e2ee-v2.x25519-hkdf-sha256-aes256gcm-ed25519",
+          "content_nonce": "UHASyD/Y6YXLqNIf",
+          "ciphertext_hash": "sha256:a5ASqgIHhRCzmWRW2qkf0DIt57Of7HASQFq6OArkgho",
+          "ciphertext_size": 606,
+          "inner_header_hash": "sha256:thBasBvM2gCkaSTdNrbgjxdMu4Stsyyf69sVeU4nyRA",
+          "key_wraps_hash": "sha256:Y5VApaj3+PaKFSg3w0raqZ6LUDx2D29T11IpuMPHVuI"
+        },
+        "key_wraps": [
+          {
+            "wrap_id": "sha256:AWbBaPVln8Z6pwIf2PodlDfZ++KCwPqhv19Xi3L9dZU",
+            "recipient_stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7",
+            "recipient_did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+            "recipient_address": "example.test/bob",
+            "recipient_encryption_key_id": "sha256:ajWMVPkVaAXtX+9JVAwJkbRjEf6fmv53hwxlYs/zW0o",
+            "sender_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "sender_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "wrap_purpose": "delivery",
+            "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
+            "encapsulated_key": "3FgiqkRe78oQmjASSSfIh16xO7B/yKhN6My7OJ32+0A",
+            "wrapped_cek": "aPk2dWVuFoDjcPrSTkh9xatoZWNF2xfmzWAgHgC8ClqKb9SeVLMW2La6ORINZ3su"
+          },
+          {
+            "wrap_id": "sha256:zZpW5mBYNWFkmajBfPYoHH5IFjsjpp/FcOZVn76EVDw",
+            "recipient_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "recipient_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "recipient_address": "example.test/alice",
+            "recipient_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "sender_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "wrap_purpose": "sender_copy",
+            "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
+            "encapsulated_key": "lXarOr1pMwFsFGuD8Sql39oP8sgEIbCTRvHrJQZ0im8",
+            "wrapped_cek": "8ABtpYxszM6CYHzMbXApxCK8ummFXL7LqU98QX2QvUsNKIY5tWGDEU9jn0ZHh828"
+          }
+        ],
+        "ciphertext": "ZX9e4GhrjKsk+vX4PzdHYqM4uyxgbAzVax7D3kZNtMQMNp0fGa6ZD0Oxgbt4aclcB5E2pHlh3DZXMR/ocYbpcEBd/OJY8TvXfrjPhhxB1L6Op0pKauScZrYcDyiUAL6Jo1SkQcmpON1enx+9yr8pV9D5l0jwzQ/a4pvDhhiGwumXr784H0PCqjEB5EUPN6LtKC0QgVtnDZrCGijpFkNdQsSaJNDst6Mbv3N+yci5+pBte6JYAVZzyMSIZasl9K3OyxZjfXdbFn3Oc/2igxHk4EYNyKIkyX7U+IZeRLe07Yf6CtaXmJKoiqHZUDH3Uw9UsKVosORQnsMT93QL/FaD/fA7oUhpMWFKTO7VuxUXdanzMyiFO3FTBROKvkiYObsf3l7NTYjphtAAFUSz3ptjawuruxCUluwtht80HwGzNhpKMoTPsmL4nhJ87Vfkltv9fz8TUO1hZ3Em7t5+vYdp6YvhC4sKz/LznZ1Bz532gRMW1svDGFvjESlkNBga5/nxAIk7C6a5rk7DTFK9f3sazBhwlwc6gyM3ubdKRoc1f3RrASDjwJKDaRtkeSFjPUFCANMzSZx09zbWElPWm3W5KOYi+whrZIFi+DaEnduJQv60CEDunASK06FOe22NdzUjiz4WujphSBIXRsDHxvOFY3mVFUPkx8ReQOm76CYMUNRqI/kyIkAYgqd6jy5UDVfu2bGrwrm0uompeKXxYHCgQNzLoqV6kR7Fy0+FBJhYwyj9iUQbdW9q3vAI/4lsk6NN5lB40vNKD0mlR+pdKuvWzS8hJG2Aa36WQt7BIltt",
+        "signature": "iRAbd8WVZ1POP43Q0CxR5dEQO4xBFiBBrXtEtxb94rBMVr6FruA0leECbhz3D1ylYSr1zPPx3vJW9FQfOz0vCw",
+        "signing_key_id": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd"
+      }
+    },
+    {
+      "producer": "python",
+      "kind": "chat",
+      "via": "telegram",
+      "envelope": {
+        "message_version": 2,
+        "envelope_type": "aweb.e2ee.message",
+        "kind": "chat",
+        "message_id": "b5d19265-ada2-5865-978e-0ab67cbdb5ba",
+        "conversation_id": "7eeee698-34fe-5029-941a-178e03f89eac",
+        "created_at": "2026-05-27T12:00:00Z",
+        "expires_at": "2026-05-27T12:05:00Z",
+        "from": {
+          "address": "example.test/alice",
+          "did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+          "stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+          "team_id": "protocol:example.test",
+          "encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc"
+        },
+        "recipients": [
+          {
+            "address": "example.test/bob",
+            "did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+            "stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7",
+            "team_id": "protocol:example.test",
+            "encryption_key_id": "sha256:ajWMVPkVaAXtX+9JVAwJkbRjEf6fmv53hwxlYs/zW0o",
+            "wrap_id": "sha256:c9wdn8JbHsBhW2OsU2wO6G7d31tkfjVn2AzayHQhHTQ"
+          }
+        ],
+        "routing": {
+          "to": "example.test/bob",
+          "to_did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+          "to_stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7"
+        },
+        "policy": {
+          "requires_e2ee": true,
+          "legacy_plaintext_allowed": false
+        },
+        "crypto": {
+          "suite": "aweb-e2ee-v2.x25519-hkdf-sha256-aes256gcm-ed25519",
+          "content_nonce": "ncJpam8XtcnDv3qU",
+          "ciphertext_hash": "sha256:Hctn2nky76Um+ZIbZ53y8DL/+ivQL4fXy7frIjB9uLI",
+          "ciphertext_size": 623,
+          "inner_header_hash": "sha256:P3PdLAsfJ3wDFGLwZypjtnTRvqverPjFIxlakIuIvcY",
+          "key_wraps_hash": "sha256:EkrSckTOA621hf9Cqv1FGAaBF4n23J3+5c2AvjSLpgg"
+        },
+        "key_wraps": [
+          {
+            "wrap_id": "sha256:c9wdn8JbHsBhW2OsU2wO6G7d31tkfjVn2AzayHQhHTQ",
+            "recipient_stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7",
+            "recipient_did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+            "recipient_address": "example.test/bob",
+            "recipient_encryption_key_id": "sha256:ajWMVPkVaAXtX+9JVAwJkbRjEf6fmv53hwxlYs/zW0o",
+            "sender_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "sender_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "wrap_purpose": "delivery",
+            "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
+            "encapsulated_key": "RDaNqoxVXzeIuRsaSIjU2yovQweucwGNDrPZ1YmcnR4",
+            "wrapped_cek": "FvkVsuh5rdlivsjl5SlU4kLE8cNGrK/2dkMIiCDKtgEqnL9KSzJ1zHaYz0n/KWFx"
+          },
+          {
+            "wrap_id": "sha256:yQ0u8ww5z3mn4Bt8SCma4IKTGXXwJ6/ZkoFRK8UrWcc",
+            "recipient_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "recipient_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "recipient_address": "example.test/alice",
+            "recipient_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "sender_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "wrap_purpose": "sender_copy",
+            "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
+            "encapsulated_key": "0d4CHKqiJUG4cUyAbtLCpdpiCAmGiSjREKNOryPaYCg",
+            "wrapped_cek": "ittlUkOeHySYXDfGWGXeCNiSB+SFv0zdegbp/6XoJ1Pt6OiHiWx3tCIjIDlah/39"
+          }
+        ],
+        "ciphertext": "1lwkQORqCdoT03wfsCg5bGyntjyCGYHjN7ZHNVayM5ZffLDAVnThb3XeHpPXgK7b6aO9YYG/YW70Mwg8vt3i+jKspVnysDbZj0rIT87ohDg6L+gC7Veuuwxzb6Yw0dpPK6985NSuoQJvyl9uXG9X+mYiJcgHAMzTb2bvBylHsKL+m1c6+VCGVtQkkXc0Wd+4q34qN56PUQUF3X2jXtCfAz0/4PpnjUK9S1dThh/4Blz6wzuJtNknsob38eBCjdTQ0QEWjdd+Sd3YVu/f89n42jZnoHVm5mdgOfmCMwYoEqb5ouz9RxMJUqBLlCg/+IgIyO4sZ65K5jU1NltTFbTWfHDBtCWORIaqgICKmuSMoCLbQQe/ijOJcUM6frb43+YjINgTCm9SZ7+Zsw3L6dwKWjU2OadtMX4tSRL/5zkKptDsKqRdgn+Ckdw7in+sW3JObiWxe0UKApT0JmS8BXnN2jU43uOy7raB0O4bVsDBjeC4nDI2gqxyCfGIo+8bHx620j6PHKf+EDgB+OZao0Hu6gULv5dq0/VEGA8UD2D9XyhqjqrroEtvCQGwAIOZD/1l5pHfp/2ZloQRsOnAEL/qSOzJucZsPERJQ9iLwgfVHN1m0csHAlT7rsqYMVLUiaPwvhG6dJo9siCQGF6zYP/5SqPuGbDRc3NZUqJnhzMOfls4iOLkyx+A9DsvZ+ER4kRoNdBpbkjbmrM/D7z61ZpKOJHvNYVC7LersC/WomM98UfMbbREkbwTHN1vfwKBMnpYLimsv+YE5ZRCFY4ltk+PM3PjpiY64/6q4zrLrWPPpSTWOAzcYVXoBrlD1f9cwMo",
+        "signature": "BHDwgG992G/RcCJDUWoj3GBYkzD0tTRY7VJBuQBNNflG3rv+icC7lkw1eupT/cNWXE4TGbi7gdSjk872WvTLCg",
+        "signing_key_id": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd"
+      }
+    },
+    {
+      "producer": "python",
+      "kind": "chat",
+      "via": "msteams",
+      "envelope": {
+        "message_version": 2,
+        "envelope_type": "aweb.e2ee.message",
+        "kind": "chat",
+        "message_id": "30a149e8-f863-5fad-beeb-57d6a9dd2254",
+        "conversation_id": "741bfa64-d1b9-5226-a62c-585f231ab0a0",
+        "created_at": "2026-05-27T12:00:00Z",
+        "expires_at": "2026-05-27T12:05:00Z",
+        "from": {
+          "address": "example.test/alice",
+          "did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+          "stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+          "team_id": "protocol:example.test",
+          "encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc"
+        },
+        "recipients": [
+          {
+            "address": "example.test/bob",
+            "did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+            "stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7",
+            "team_id": "protocol:example.test",
+            "encryption_key_id": "sha256:ajWMVPkVaAXtX+9JVAwJkbRjEf6fmv53hwxlYs/zW0o",
+            "wrap_id": "sha256:8oEmHqzPlHdmcmbuZ34kt0QPtSv8OVMDC8sg2oBh11Y"
+          }
+        ],
+        "routing": {
+          "to": "example.test/bob",
+          "to_did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+          "to_stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7"
+        },
+        "policy": {
+          "requires_e2ee": true,
+          "legacy_plaintext_allowed": false
+        },
+        "crypto": {
+          "suite": "aweb-e2ee-v2.x25519-hkdf-sha256-aes256gcm-ed25519",
+          "content_nonce": "WLh20cylHZ7RT7+d",
+          "ciphertext_hash": "sha256:k6ujXNXiJ9uY92FFltYN7wA09ZxWjGLpMVRRiQQtZUY",
+          "ciphertext_size": 622,
+          "inner_header_hash": "sha256:3DfLMryruv4Et8LxN/WFkXpssDyR5tPMcHXVgjNUjTg",
+          "key_wraps_hash": "sha256:R5jv+eS98XwVVLEfxYd9YAl8KNACdEn8KNiLS3btUjA"
+        },
+        "key_wraps": [
+          {
+            "wrap_id": "sha256:8oEmHqzPlHdmcmbuZ34kt0QPtSv8OVMDC8sg2oBh11Y",
+            "recipient_stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7",
+            "recipient_did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+            "recipient_address": "example.test/bob",
+            "recipient_encryption_key_id": "sha256:ajWMVPkVaAXtX+9JVAwJkbRjEf6fmv53hwxlYs/zW0o",
+            "sender_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "sender_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "wrap_purpose": "delivery",
+            "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
+            "encapsulated_key": "6uJO5Yzu4/Nsjf9kJE4eRKiXe1qeKH2jH8Aqomzbxh8",
+            "wrapped_cek": "d7AT+OpPzCSIT3355xnCd+7f7jZruk7jqT/g0ySWVIw+XFx0ocTHhyxd2QDVDHRM"
+          },
+          {
+            "wrap_id": "sha256:fvyPfo6u9fqxgY6nbMveCIdZxV61FyN06O/fYw5fNnM",
+            "recipient_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "recipient_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "recipient_address": "example.test/alice",
+            "recipient_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "sender_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "wrap_purpose": "sender_copy",
+            "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
+            "encapsulated_key": "C4oUBAHSChlxSDNOrtuu43lMB5bCAPMKZGrKDR+pE0c",
+            "wrapped_cek": "XETLR/qhMZKbRoz0/fmNny6FvJXOVwVv56RQOlPttDVEAfag7yXPYolKQ3K51edK"
+          }
+        ],
+        "ciphertext": "j47A7y1f9jcmw+BW9Oh9XVNPSg1KlRa9AIxl81zCTLiyvKJyh+5t/TfDwcACNtxVpZBOvgnDXxNB8RgQL/AORg3DpRJs6Lx5O52EUckAZ/wuaNrbVHP0aaUs+Q0ayR/yMkP3iW7NpiREcp/bc60O1b29TXlGmN6wXdByVdBWJ/kN3c4sn414hBYrRGV4G3ZHKDveWIk2y6cyXS2AteVp48Xg6rr4L/FGkkxQzmCOSYH8Xqledg1G18+5o+5PwyQtg/YxrTIFjSJqOSAVjUm+v0uO31rO9jmQxlYVxJjJQClHu+0xj1sELofF5ENzqRXJS5IzaYJi/dolHGs5bKi+KKQIFHknVwFz/IH1Sit0GG1VeVxMxHgnwobbKfFFjhrHumRSo4p7d/8zAxHOfcHwUHvFr8F1qfByiIZqQfZc0WfZlw++cya/cFshDDP7ufpqlfwNKt/bRGT1I/k3RUPjhKy3aURxTOy2TxY04q9Lb+T9mCgXsbXeT+SDf4Y57Z9jKBD/HHtyUa3/jsHiTcUsb4E7S7MAxX+W6N5e1DVXXS3n94d8rgaicxqDAwtJbf26IrPFX3gQKCFw9+fIZN4Z1r7mLjf8JQFdBZyHUHO6UEFddSY/lJFVg/oCgamiu6Mr3h/vBSmuEfecT5Oi3jPcKnnM1//M9fSqkiD7D+3wp1vJybNfC7fSzdgqMC+dLWfsINQyyM7yQ9AI3cXShmHJcCCjmfcE3jXyk/3z/Z4w+7y1f+N4OOhlWnnmwRAhEuKwlSTBthb6lKJqgDZrRjeQrUHecKyOJqFOsbvlrhaqzjrGhc5Ir8YkNxkH6aoLUg",
+        "signature": "DjsdY1ZrAj/Flu0ikPHZJUExIJ1x6BdjvY3ZMf/no2tUvOAmZltCoplY37Vog5qyDxP5Pdg6AyzgvCDdlYoMAA",
+        "signing_key_id": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd"
+      }
+    },
+    {
+      "producer": "go",
+      "kind": "mail",
+      "via": "",
+      "envelope": {
+        "message_version": 2,
+        "envelope_type": "aweb.e2ee.message",
+        "kind": "mail",
+        "message_id": "11111111-1111-4111-8111-111111111111",
+        "conversation_id": "22222222-2222-4222-8222-222222222222",
+        "created_at": "2026-05-27T12:00:00Z",
+        "expires_at": "2026-05-27T12:05:00Z",
+        "from": {
+          "address": "example.test/alice",
+          "did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+          "stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+          "team_id": "protocol:example.test",
+          "encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc"
+        },
+        "recipients": [
+          {
+            "address": "example.test/bob",
+            "did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+            "stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7",
+            "team_id": "protocol:example.test",
+            "encryption_key_id": "sha256:ajWMVPkVaAXtX+9JVAwJkbRjEf6fmv53hwxlYs/zW0o",
+            "wrap_id": "sha256:AbVa9gb+8mw950dM2WmFkcMaISiHPTtE12GoBaeEqOA"
+          }
+        ],
+        "routing": {
+          "to": "example.test/bob",
+          "to_did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+          "to_stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7"
+        },
+        "policy": {
+          "requires_e2ee": true,
+          "legacy_plaintext_allowed": false
+        },
+        "crypto": {
+          "suite": "aweb-e2ee-v2.x25519-hkdf-sha256-aes256gcm-ed25519",
+          "content_nonce": "nZLRZ53peovYzE4J",
+          "ciphertext_hash": "sha256:V9J9BwfpwgaLnYAxbBiqtrreFzn458qj7De12NPafA8",
+          "ciphertext_size": 629,
+          "inner_header_hash": "sha256:UHqKEhYqD0xeI+jydbKkhjDyK829ij9bQo/+nXHs3LY",
+          "key_wraps_hash": "sha256:eZy5Ep+EUiNlnJVcoWJsRZ27ne6Q7Uj5kPQ52JyNN0o"
+        },
+        "key_wraps": [
+          {
+            "wrap_id": "sha256:AbVa9gb+8mw950dM2WmFkcMaISiHPTtE12GoBaeEqOA",
+            "recipient_stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7",
+            "recipient_did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+            "recipient_address": "example.test/bob",
+            "recipient_encryption_key_id": "sha256:ajWMVPkVaAXtX+9JVAwJkbRjEf6fmv53hwxlYs/zW0o",
+            "sender_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "sender_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "wrap_purpose": "delivery",
+            "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
+            "encapsulated_key": "2c0W4k3TA1DZom8ZRCQvTkr/kwmHcsvYG8SFFLKo3ww",
+            "wrapped_cek": "DCMlC5PqfxD7b5CKde6GLlsztiKTxJUqxA/4YcnBaXwlCp13zlyz7RDR7EJLvA1t"
+          },
+          {
+            "wrap_id": "sha256:PlcAhSpLKduHnyxvCAezNx/zwJWEcIitZWajHJGm2aY",
+            "recipient_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "recipient_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "recipient_address": "example.test/alice",
+            "recipient_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "sender_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "wrap_purpose": "sender_copy",
+            "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
+            "encapsulated_key": "OPgAhEUDa9UA0a42wo/PQyvlDRWZQVEWdbaWBcNONgg",
+            "wrapped_cek": "oBdiiUFe3lCYx/zUHUitCk+UTj5RTiKF96OX3Zkgr/y6wezZDxZFwQV1m5baMLRK"
+          }
+        ],
+        "ciphertext": "x21UOTMZFaU1HP4fmsHBO1iYUGVrUT8PNOx0a379oakY6UT2kUsj7Wo4U+5TxI0GbkUr9CH+ItVY4Iq/a48zHQONS12BcGQeDE2IcU/+E9cMiQPKrUCBZ0+sSenma/8gqzTzztxMi908WpYi4DShN5U/tICO1O7woSZi8r6h8KLMNHUs0MPy4DsOV7xsjsEHNYCADQvVXD6m6PJl+C32sDgzj8Y9ktyP6wV98RWWNRg+Uj2zTxb+HpbICuWs5SslFofMGttbH0mE3p82UXWR9L58FP+AhOikmam0fNZ9BKfCoT/l3OFUFHa+DVtVXX934MdpndWMZFjRKOADGTFzjmOZJSpz/L7ioBXm0m4NJFzsdBbruVMwcaicnskWp3kTfJ+/AVqBhVsgO+GgZqcUojRX0Dv096P+/2+XhipeVoOkBRfpJMZn9x/kSmslG14HcaxWKoq6Ax6WT936+cf3qSgPYVNPJyOqwACwb+Z9TS5oDJnptchxdqhDHQz+lJAvcpu9qXd3p7ijk2heR573ICPMpo1wUVe8KBPJlUVetUBIyqBozjWAF4o3TgOZ1R8bCoy5oBb9a2AKF+m3XlMa61uDiGrcFEVuh2VXjxlRTePLGp2MPiIvefw+1ImwGTnqfgO97tsxUc6HipmA28JwmSA8Lc/yvfmPiDCTSoC1TXABIf3Uhmrc7TK8/0NUfiM8v/jQYc1udd7FNivdIRNVnmADGQCh+4ITU6vv71XZgANVctR/27GiyppbXhZItiizffsk+emzcAIZ3DzP0XlWCqjAzFAxU1OsUG3vIlYe71TUFDEO1x1JYjiKDMKocb2tamgGHHU",
+        "signature": "ikPlMskoDV1fZr9Avzdqawy4ZAUX0IdFID9svc8DO+clV457FfqKc2J1vY/RPSY6hcb1lFo1yw5CXVLUQOPfDw",
+        "signing_key_id": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd"
+      }
+    },
+    {
+      "producer": "go",
+      "kind": "mail",
+      "via": "telegram",
+      "envelope": {
+        "message_version": 2,
+        "envelope_type": "aweb.e2ee.message",
+        "kind": "mail",
+        "message_id": "11111111-1111-4111-8111-111111111111",
+        "conversation_id": "22222222-2222-4222-8222-222222222222",
+        "created_at": "2026-05-27T12:00:00Z",
+        "expires_at": "2026-05-27T12:05:00Z",
+        "from": {
+          "address": "example.test/alice",
+          "did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+          "stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+          "team_id": "protocol:example.test",
+          "encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc"
+        },
+        "recipients": [
+          {
+            "address": "example.test/bob",
+            "did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+            "stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7",
+            "team_id": "protocol:example.test",
+            "encryption_key_id": "sha256:ajWMVPkVaAXtX+9JVAwJkbRjEf6fmv53hwxlYs/zW0o",
+            "wrap_id": "sha256:AbVa9gb+8mw950dM2WmFkcMaISiHPTtE12GoBaeEqOA"
+          }
+        ],
+        "routing": {
+          "to": "example.test/bob",
+          "to_did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+          "to_stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7"
+        },
+        "policy": {
+          "requires_e2ee": true,
+          "legacy_plaintext_allowed": false
+        },
+        "crypto": {
+          "suite": "aweb-e2ee-v2.x25519-hkdf-sha256-aes256gcm-ed25519",
+          "content_nonce": "RXW5mfxbngyogYcE",
+          "ciphertext_hash": "sha256:0Lf4alrfC578bEXvHMu5KBcw6ax65rQnDk/9dVzboUQ",
+          "ciphertext_size": 646,
+          "inner_header_hash": "sha256:UHqKEhYqD0xeI+jydbKkhjDyK829ij9bQo/+nXHs3LY",
+          "key_wraps_hash": "sha256:KFNHO/7w9TRi5O7SSDe+H2AbYqhPw64gAlDGG0SRenk"
+        },
+        "key_wraps": [
+          {
+            "wrap_id": "sha256:AbVa9gb+8mw950dM2WmFkcMaISiHPTtE12GoBaeEqOA",
+            "recipient_stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7",
+            "recipient_did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+            "recipient_address": "example.test/bob",
+            "recipient_encryption_key_id": "sha256:ajWMVPkVaAXtX+9JVAwJkbRjEf6fmv53hwxlYs/zW0o",
+            "sender_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "sender_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "wrap_purpose": "delivery",
+            "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
+            "encapsulated_key": "6pqCrvMTXMQiIjhyDXjr4k837hmjlx0UTsVb80OeRmk",
+            "wrapped_cek": "CYxyLTPxC3PDGl/RGoez4BOejdza6fc+AMQJI1RN7F4pjBNuazrx3FTAmEfWe2PU"
+          },
+          {
+            "wrap_id": "sha256:PlcAhSpLKduHnyxvCAezNx/zwJWEcIitZWajHJGm2aY",
+            "recipient_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "recipient_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "recipient_address": "example.test/alice",
+            "recipient_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "sender_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "wrap_purpose": "sender_copy",
+            "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
+            "encapsulated_key": "4R3f1n/26yccue25w7N6JnEs6Y4oBJvNTxuCKvLxsC0",
+            "wrapped_cek": "sSRdDEaLqgIf3GD5arohUNE7llgfyCf+RpEIh2fJlnw13rZYt0dxPaSDG7Dlyg3F"
+          }
+        ],
+        "ciphertext": "iKH4kgIInbsNSl7b+zsB+mDdDA0eUbNfslXlFCzhgE9gL+sNWD0SBJZMCl8DIw4ip1Dh073wJmdAw7m8Isxy/qpa8Cu6skbz3a393sxHNmzJjRFHxPDQhvQ+cijX+1KKneIhRAs/+q5ji92iadodv8HnoakW6fG5JwEKo2Gmpl5rOMx4Po0GTy24DwYUMNG+elkuNjWiMQJb1tbECrQwuVxYj6C7JugFy2bmbMfEnBBLXgmkYVkJAyU1+4S4NH/irN4QM+Z/IXZmgbqOu0sHBKWuBPQh4q+QQva0hxNEI+dEa9gJGpqbZm029iNitjwWZrYFrRqYLZIb+fmL5ns2OwUd1zsZFZdtgi8LHouaNNNG81/y1rWo4gkskV+WNKJTKAIwyvf0RGOwylHB2H7uguc8laeaeXersVoWn+OVfCFQMgxGGEskfpht7lFQ5RXoaTyOqvf0asIu05tzsLX+ruo6PcpB+hzSylvIude5GjG6WTdR/9hDU9Clqbva1xM8QQ/+jCZJWrlXaeyph1lqw6mBwyWtD95LHoEYvPX9AKqMfdqModYLmq5XJSlzl2teHpAA5lbAuXQLWvIKJURwQVl048uJoCtsnsLDqCWRDiWVI+sCqjG1ubsU2UNWJE4DHZHZ+OdxPdNztDWYzuGG0Wpq2LJc97AbmChDQcF7Db2IkXo8+C9mAhSzLCzU8H8jeMCvBO5Xr1UxMrK47UIPgvsLmUv/iAfzKhWg9xH3UfQfGzH6ltuRvFH5g92UQ9qi7T/s2ftbpoWyXyYf7/Xm6mujCNSwVD8eaq4Ad84VFQ6ottTwoPT2HoAZGjiunAkHjq1pGYmPYtlfDYGcS0NGDV9/BqRaAg",
+        "signature": "stxAc+DJZhwUkE82pk9YfjaRkJ6Z4ZP1fxge5ff2FYVkq98kVYm7a8RaeVqpIG51uN4zlyev6x4NNYq24XjMDw",
+        "signing_key_id": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd"
+      }
+    },
+    {
+      "producer": "go",
+      "kind": "mail",
+      "via": "msteams",
+      "envelope": {
+        "message_version": 2,
+        "envelope_type": "aweb.e2ee.message",
+        "kind": "mail",
+        "message_id": "11111111-1111-4111-8111-111111111111",
+        "conversation_id": "22222222-2222-4222-8222-222222222222",
+        "created_at": "2026-05-27T12:00:00Z",
+        "expires_at": "2026-05-27T12:05:00Z",
+        "from": {
+          "address": "example.test/alice",
+          "did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+          "stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+          "team_id": "protocol:example.test",
+          "encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc"
+        },
+        "recipients": [
+          {
+            "address": "example.test/bob",
+            "did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+            "stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7",
+            "team_id": "protocol:example.test",
+            "encryption_key_id": "sha256:ajWMVPkVaAXtX+9JVAwJkbRjEf6fmv53hwxlYs/zW0o",
+            "wrap_id": "sha256:AbVa9gb+8mw950dM2WmFkcMaISiHPTtE12GoBaeEqOA"
+          }
+        ],
+        "routing": {
+          "to": "example.test/bob",
+          "to_did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+          "to_stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7"
+        },
+        "policy": {
+          "requires_e2ee": true,
+          "legacy_plaintext_allowed": false
+        },
+        "crypto": {
+          "suite": "aweb-e2ee-v2.x25519-hkdf-sha256-aes256gcm-ed25519",
+          "content_nonce": "jzlxspoktVXZPhnW",
+          "ciphertext_hash": "sha256:VQXEG9yHrXWIc00pw8SxYX17aHgUilxn3XWvoTSBL3w",
+          "ciphertext_size": 645,
+          "inner_header_hash": "sha256:UHqKEhYqD0xeI+jydbKkhjDyK829ij9bQo/+nXHs3LY",
+          "key_wraps_hash": "sha256:A8DyhNemEFgAcohjh4YRcJqjoJPCDS7bbtwBC155qIg"
+        },
+        "key_wraps": [
+          {
+            "wrap_id": "sha256:AbVa9gb+8mw950dM2WmFkcMaISiHPTtE12GoBaeEqOA",
+            "recipient_stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7",
+            "recipient_did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+            "recipient_address": "example.test/bob",
+            "recipient_encryption_key_id": "sha256:ajWMVPkVaAXtX+9JVAwJkbRjEf6fmv53hwxlYs/zW0o",
+            "sender_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "sender_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "wrap_purpose": "delivery",
+            "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
+            "encapsulated_key": "6X9+uUrZ+C4K1N8psugrThPnaSOXsFX5sZyvKEpp8zk",
+            "wrapped_cek": "mmPVAwzm54ZeHtTTswHPaCP1KWXoExyPh5A9d2DDwUJOJPcaDGG4g/sVhV2m+sZp"
+          },
+          {
+            "wrap_id": "sha256:PlcAhSpLKduHnyxvCAezNx/zwJWEcIitZWajHJGm2aY",
+            "recipient_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "recipient_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "recipient_address": "example.test/alice",
+            "recipient_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "sender_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "wrap_purpose": "sender_copy",
+            "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
+            "encapsulated_key": "OSipZD0in6Rzbbi+NoXgj97hFb9q2R5F5W/mQnYB9Xs",
+            "wrapped_cek": "6hI3/7nxgNNn8jWtTFPMGC7/c2NyOo4otN/O2bFn2ANW6oRtAX96vlsF7ZuFNaA4"
+          }
+        ],
+        "ciphertext": "ImBQqxuHx/GO99C99E1ZJm1JgVhmdLEg/xTNRCxJYhYEHkQ6P1W9LSZ2/hMZHkRY/PxCcx2+YjDlmqjTKtvme5wEz47pwiSspaIuL9+2AhLyfZTyTEX+QCBlqWXVU29QMmWp3r7ZrDd5Am5f0L839Ju7ZVLKBBOvLgK3uFXm1DRELSEtCIp3xHZnpEbFnvvBGTNhyABCnriOxg3K0bXW6Y+U8cNKKBz7pT0hgQTsj8p62GgFEJXYyrPqyKizgvgRpWYyGZ1cxMppVq7SANzq9wbm7LlRl+ZHznMLzKXB3xH39aMq0FDdxEUZvaHUcBjuinKoh+1vk/1R7WEKWpWpHVrUeBoTsBPnXNWQ7kLBTeg1aZgdTFqDGoo/CI1go2qnOBLyj5emTHav/I4sZ2eJkBTpuRJyiWHCJWIvxdnIAs3RV9DgTgKhCnTRGbn84+0/3W55Una3TakkiCk/jHf5xnBS7ru9taHKPk/jGpHBuEh4CYC9k9Oc3LZpTnV51U+MEf0FJCERgyYPoi85cI+NSchq8t4gesSstnboId+58o0ZfUN9rXitIOaKAXfnhDqqcbAxGxh8O79rQPYYgvUlAliX0t2Yq9JfEUpG9N02Wrtf5ZYhfXd052v6gQm8vpJLIkXhriCFYjavgSdRqzQT2o2GpMV04ELea0JGRp6bTye/9f63oNhCGK9PWlBCF2eCURhiRFFoLfB3Hi140OgmRi+11sznyKe5DSdtib0p1eapPWooNCU3RyJ7o67KPqNcMNMo0uVEUr+0XbXeUhq2sIx4vQnYSEb227/J+u+rsR/1DBnDL2HbOObZ1EWyw7eszMWLYA+ArhBs/Ok5wAKBMF5eNMxn",
+        "signature": "0RM8JBThGnWHuvkzpxd1pG+izYYQDwOH0jQh5iBiOzuzhJ1D0CorpGMnApxRa0Qwf8jC63E9CdrGFDOsQS9DDQ",
+        "signing_key_id": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd"
+      }
+    },
+    {
+      "producer": "go",
+      "kind": "chat",
+      "via": "",
+      "envelope": {
+        "message_version": 2,
+        "envelope_type": "aweb.e2ee.message",
+        "kind": "chat",
+        "message_id": "11111111-1111-4111-8111-111111111111",
+        "conversation_id": "22222222-2222-4222-8222-222222222222",
+        "created_at": "2026-05-27T12:00:00Z",
+        "expires_at": "2026-05-27T12:05:00Z",
+        "from": {
+          "address": "example.test/alice",
+          "did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+          "stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+          "team_id": "protocol:example.test",
+          "encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc"
+        },
+        "recipients": [
+          {
+            "address": "example.test/bob",
+            "did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+            "stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7",
+            "team_id": "protocol:example.test",
+            "encryption_key_id": "sha256:ajWMVPkVaAXtX+9JVAwJkbRjEf6fmv53hwxlYs/zW0o",
+            "wrap_id": "sha256:AbVa9gb+8mw950dM2WmFkcMaISiHPTtE12GoBaeEqOA"
+          }
+        ],
+        "routing": {
+          "to": "example.test/bob",
+          "to_did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+          "to_stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7"
+        },
+        "policy": {
+          "requires_e2ee": true,
+          "legacy_plaintext_allowed": false
+        },
+        "crypto": {
+          "suite": "aweb-e2ee-v2.x25519-hkdf-sha256-aes256gcm-ed25519",
+          "content_nonce": "aWU7kP9IYvICnQtI",
+          "ciphertext_hash": "sha256:erlGjN+eSKcM0hTOZupS2FzmxX8j95GBjA3dTBMrpCk",
+          "ciphertext_size": 606,
+          "inner_header_hash": "sha256:S9VU0l2pmhgKtD9IZdsRmR7a96oHcOnLVvMRlQd9yPs",
+          "key_wraps_hash": "sha256:T415nDv7qYeodqSDIXyZAiK5nyp5drBbmr7yo/hmprs"
+        },
+        "key_wraps": [
+          {
+            "wrap_id": "sha256:AbVa9gb+8mw950dM2WmFkcMaISiHPTtE12GoBaeEqOA",
+            "recipient_stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7",
+            "recipient_did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+            "recipient_address": "example.test/bob",
+            "recipient_encryption_key_id": "sha256:ajWMVPkVaAXtX+9JVAwJkbRjEf6fmv53hwxlYs/zW0o",
+            "sender_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "sender_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "wrap_purpose": "delivery",
+            "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
+            "encapsulated_key": "6Q7lHTFEjt1QLxML7hvb9S6xJ9w+jrgNAq/VjSJukCE",
+            "wrapped_cek": "QYaaBiEoTp/xkLn0gMxsqklzzMDCfs9koqcH4wGSP0tykIOOfmDL5yiwlzPYeCzL"
+          },
+          {
+            "wrap_id": "sha256:PlcAhSpLKduHnyxvCAezNx/zwJWEcIitZWajHJGm2aY",
+            "recipient_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "recipient_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "recipient_address": "example.test/alice",
+            "recipient_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "sender_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "wrap_purpose": "sender_copy",
+            "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
+            "encapsulated_key": "dQuAsJeL7XOg/bf9t/92yOYn/cuMotfqNbB6aM3Q7QQ",
+            "wrapped_cek": "xWDMs3tjU6gKO75wd+M9mKPdkOQdt1bG+zol4XI5zGLB0p+xfdrtgZnlc5IRyjVr"
+          }
+        ],
+        "ciphertext": "BPse1xWXJ1RM77kiIPQrzaRYQs4tlqgEqrxRQNjJ5sfsHsMmlHWzIhTUKbkhpF+5m+zfjeWywjcvM7LO8YHe17biVdFtlS8rJJxizxufAb8GFQWhNFrEZnqYKrVUIsVIH904UDo4feTQ7dHfQ26tgMnHvunYl5kf+zvBZl0MMP2Wu7iVfqzQdGaupVcgHbalGbcy/rmlIkk2gBvndiiHodoTJXv7k8EMhp68TI1GHngL3mG4GkhxaFnDVMYrlJ+X+QopNYxl82cyZ8FoZVspFWUUb2WUFNmzAVO6W7/0B3aiLEG6qB7PtIus/00+HJlp1M73I7G7UhNRZNek50TMx7Kl7F5goEfrgIcwYMvgOUCL99ipKD/5AiC/5Jsx2EKVhBGN7JhwzfLXju6FLOx5L4WtgTmLFkWBLDMjqdhkB4cn/Iu/1/AsBEUkXWkzzWxk2V1Hwxl36BK2MibvjIWPeskdPsnMZmZcRIh7xWYkfrwxdIfELvnse4spssn3jyeUPzCVyVYkWWXbZA2PkmIKc8J8N8Q57S8j4HqYTw0gSWg9o3Y1zd83wIWAMtbBD4jpUntWCOTPouviq9TOhJP7uF9mhdAoswL8dEVXAo9z6FOYZqoOn17lpYRuWzxz3PR26XJmmzcWj9oxiG93E3782tiIZGpgH6OJ/shF7r8cgr/e9LRFY9bMZYrpBuV9rWo7XUss6o1GEVmnK9aREj2NV+ymWkU5I1RCki2QVyhYIIquyI+s4p28zmyV+AUq+91Gyggrnpc2rrSEHs3fP+4uOfJdLmmwTwkfdMULyLUP",
+        "signature": "irCwTs7SS6eCwyeZZTqbD1aUEJfFRtQ4oq5W9MnIbwYPDeW4aYEPG0dqyIJutuAlC5P4FQnyHkyEK4yGquBlCQ",
+        "signing_key_id": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd"
+      }
+    },
+    {
+      "producer": "go",
+      "kind": "chat",
+      "via": "telegram",
+      "envelope": {
+        "message_version": 2,
+        "envelope_type": "aweb.e2ee.message",
+        "kind": "chat",
+        "message_id": "11111111-1111-4111-8111-111111111111",
+        "conversation_id": "22222222-2222-4222-8222-222222222222",
+        "created_at": "2026-05-27T12:00:00Z",
+        "expires_at": "2026-05-27T12:05:00Z",
+        "from": {
+          "address": "example.test/alice",
+          "did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+          "stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+          "team_id": "protocol:example.test",
+          "encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc"
+        },
+        "recipients": [
+          {
+            "address": "example.test/bob",
+            "did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+            "stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7",
+            "team_id": "protocol:example.test",
+            "encryption_key_id": "sha256:ajWMVPkVaAXtX+9JVAwJkbRjEf6fmv53hwxlYs/zW0o",
+            "wrap_id": "sha256:AbVa9gb+8mw950dM2WmFkcMaISiHPTtE12GoBaeEqOA"
+          }
+        ],
+        "routing": {
+          "to": "example.test/bob",
+          "to_did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+          "to_stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7"
+        },
+        "policy": {
+          "requires_e2ee": true,
+          "legacy_plaintext_allowed": false
+        },
+        "crypto": {
+          "suite": "aweb-e2ee-v2.x25519-hkdf-sha256-aes256gcm-ed25519",
+          "content_nonce": "vuxgFksQtAdJK0zr",
+          "ciphertext_hash": "sha256:YGsPaU2Z1QzxCMlFMXK0I9fkYGokOkq6OhVPO9CdJ+U",
+          "ciphertext_size": 623,
+          "inner_header_hash": "sha256:S9VU0l2pmhgKtD9IZdsRmR7a96oHcOnLVvMRlQd9yPs",
+          "key_wraps_hash": "sha256:vXgaoB16/QSp2uldiCHaJN4P6ZTen/nDeN5A+Pam0HQ"
+        },
+        "key_wraps": [
+          {
+            "wrap_id": "sha256:AbVa9gb+8mw950dM2WmFkcMaISiHPTtE12GoBaeEqOA",
+            "recipient_stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7",
+            "recipient_did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+            "recipient_address": "example.test/bob",
+            "recipient_encryption_key_id": "sha256:ajWMVPkVaAXtX+9JVAwJkbRjEf6fmv53hwxlYs/zW0o",
+            "sender_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "sender_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "wrap_purpose": "delivery",
+            "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
+            "encapsulated_key": "MZkgprTvsMUD7QtQMSwElhxPzBxY+QkI2xL4xjv/7yo",
+            "wrapped_cek": "S7nIQrLZ/M2Y4u9GWh3+EFu2rp+MC0UG2MP45ZthNRBI29mWR5XsNahNobRlrmTA"
+          },
+          {
+            "wrap_id": "sha256:PlcAhSpLKduHnyxvCAezNx/zwJWEcIitZWajHJGm2aY",
+            "recipient_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "recipient_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "recipient_address": "example.test/alice",
+            "recipient_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "sender_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "wrap_purpose": "sender_copy",
+            "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
+            "encapsulated_key": "7077zOCGataSO4UCW3xKO2wTUCFtd/wlsc/nNNEFBDs",
+            "wrapped_cek": "lgzA+TLCCBVTXMhTzHaJwfXx2Rrj4oHSZhYYCV/R/XPbdisWH4Ss6e2xjTIVbs4v"
+          }
+        ],
+        "ciphertext": "JVpFbp1aXqrZSHIBR3WwNn1bTu8fQv9xePYJlo2E1txF9fE0nvqR50ust16L91I9GDpHby7y/hkUEXNtRFiWwpmm3m1hO/lbR+HK7AghVa651OGsjpx4ZwgZ1ZnoktQVZu2i+33wnTO6Z8Z6tGbZLOED0adgp/GlA8yeCiMw+MG3BMtvzDK5mBjuZvmFDpvtQDI/Oq4wU72dN02eB5aYpvVDJOemZcJ3mBLFTxFdimGkHyhM32aQNdTbiFFrBSZUpOPnj0Pmqm9wa7G4T521ypluR6hnmyy4MamXdMqZIQ6IRtnf9pZ5FmP36MIXKF596EjXCHG0Y6hNnxYMNhh5vES0a3KYLN8Hv4SX7mAsTR3NbG+GYFEw/0GDmNGc+8RPXFk6nSd/OJa0Lujkciwrrk4gipJX7nL8Mv59aKtJL5u98WhmYOR0o16zR5FaMgvK0GJmLB+qvDUXIUx/fKSzKsz+V2upeDfsEQu5Gqhmt/9g3t77SDWBBT4l1VtUO0DCFbdTL9eu7Q5KgIOvZ+FfR/hsVZvIvQqcwkyLVOVwBpmvu/afhwjgOte8oKfI6q6AzFJH0fHF2KmICGpukSI+6yEEDgQigoWzQtLT6FO/J6YuQdgPG/zL759TbZkwdCUiOtWNBENs/YTwJ5zaXlvnkZ0X66tfRH7jvLffTfp6yrwoIinMi2HdnYPsIQez3N74u+QFn1qYmtAt1KA8TVkGjexwsRj8xDlu1yFVrDL6O0a2q8ouBZzDc4tR55/7RRTWwKAy58v3oqq/X7SdHUchHiHRurPFBg18diWus3+LHb2pEyAkdWEcrzPe6fpCkbU",
+        "signature": "ESahYRz38CN4IWb5RLzNjfkg/Y6UiTJwMQZx8g8lnN1/FnY0CjL911oLRaB3Lu7YXiWJBEKzBJqJKhFHXvsBBw",
+        "signing_key_id": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd"
+      }
+    },
+    {
+      "producer": "go",
+      "kind": "chat",
+      "via": "msteams",
+      "envelope": {
+        "message_version": 2,
+        "envelope_type": "aweb.e2ee.message",
+        "kind": "chat",
+        "message_id": "11111111-1111-4111-8111-111111111111",
+        "conversation_id": "22222222-2222-4222-8222-222222222222",
+        "created_at": "2026-05-27T12:00:00Z",
+        "expires_at": "2026-05-27T12:05:00Z",
+        "from": {
+          "address": "example.test/alice",
+          "did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+          "stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+          "team_id": "protocol:example.test",
+          "encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc"
+        },
+        "recipients": [
+          {
+            "address": "example.test/bob",
+            "did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+            "stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7",
+            "team_id": "protocol:example.test",
+            "encryption_key_id": "sha256:ajWMVPkVaAXtX+9JVAwJkbRjEf6fmv53hwxlYs/zW0o",
+            "wrap_id": "sha256:AbVa9gb+8mw950dM2WmFkcMaISiHPTtE12GoBaeEqOA"
+          }
+        ],
+        "routing": {
+          "to": "example.test/bob",
+          "to_did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+          "to_stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7"
+        },
+        "policy": {
+          "requires_e2ee": true,
+          "legacy_plaintext_allowed": false
+        },
+        "crypto": {
+          "suite": "aweb-e2ee-v2.x25519-hkdf-sha256-aes256gcm-ed25519",
+          "content_nonce": "uoAsFnVKWgZK2MoK",
+          "ciphertext_hash": "sha256:TpRAZhe2mv3sn/bRX32MAM/O7Z3vTgRjbfvpydy5t48",
+          "ciphertext_size": 622,
+          "inner_header_hash": "sha256:S9VU0l2pmhgKtD9IZdsRmR7a96oHcOnLVvMRlQd9yPs",
+          "key_wraps_hash": "sha256:qcmAJiPXmIq+vK1IFVISjL9AGYmd4GgeFElk3FkJ4sk"
+        },
+        "key_wraps": [
+          {
+            "wrap_id": "sha256:AbVa9gb+8mw950dM2WmFkcMaISiHPTtE12GoBaeEqOA",
+            "recipient_stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7",
+            "recipient_did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+            "recipient_address": "example.test/bob",
+            "recipient_encryption_key_id": "sha256:ajWMVPkVaAXtX+9JVAwJkbRjEf6fmv53hwxlYs/zW0o",
+            "sender_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "sender_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "wrap_purpose": "delivery",
+            "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
+            "encapsulated_key": "ncESneKHznDmeEVFTnEwtNLopyElCRdel/tgSl+50TE",
+            "wrapped_cek": "gINZpKCxACk92rPMk+tbQj11akn1pkRMDG87S0PsHhd5QmFcxpmGm/EytWSHO9Yl"
+          },
+          {
+            "wrap_id": "sha256:PlcAhSpLKduHnyxvCAezNx/zwJWEcIitZWajHJGm2aY",
+            "recipient_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "recipient_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "recipient_address": "example.test/alice",
+            "recipient_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_encryption_key_id": "sha256:MjWSGnQM6t4I1ZyXrmhEBKfFR8kSZi0zgMffd8zwDhc",
+            "sender_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+            "sender_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "wrap_purpose": "sender_copy",
+            "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
+            "encapsulated_key": "UKxy8LFyinvfQFE0rMvMNBeyM31YkEij2pIr1TOSAF8",
+            "wrapped_cek": "Hmvv7kNMYjsDutixwpkiWMo5QAkYf9+SJkvuGwI4TYPp57if4n+DGsX+tai1XuLg"
+          }
+        ],
+        "ciphertext": "At8IqlcBsBgyCeWlxwy4sbTcxbUZEVvT1zqVp+mqhEqcgbaY20MZCFwKYCBsyovOjfXWoNPikx4RSFl4HmWWogKUIw92IX9LmGuk1HLM9fFT6TG3sTHXFAJGaGWXB/OqXrq/2oHLKkkiJn3re24y4j61zO/BC2CTzZJmHmFA/pL66rJ6Z0EgZd8B3q6dh1hS5Z2YAio10Pnu1+HZzidFwAAOJWozMiStb4eRvazw1i7YxNh7cfLujUNTcxZI6vGeM1H1twNIatcjYG+3ju4m98psfwwddSdJxWuIyUGnZhCp2gK6eNj73okqZafXl1tq+2U7FTgTgvkSHNQ0eJsVKI0oDQtmCQRNkt1Vbf+GJlVHPoJg2d+VG+pUcwKEzqzo6LG+WTQFPwdXOs6yXr8HooXPxeRipLRK0z7UrB4fKFkTMJvuQCJ1WIAKnL+Ydw0x5/ypjcevyVOthLFLM5TLeOKYqdKOBI/81bFQSoFm9r34zY9Z0JShGEY9UcL1cd/rNjfoe9jds9f7+b8sKWqJDyDgqp2J7sXms6ZNHI4j/FzyWj/MsNBdKK/5Zp1iAZjN/cPPKXE22gZ6cy3OQn6GqFkT+x8J7pRw7uR7ocLfhbf0GyRo6htHZJWTi+3k/7ZSGfow3qfd8zrCTYRIXQOVniOnxM1lVVlSWNBzxFM5PaMVhEvpOFakyCikFpiEeILZpWcdVNYCJ78vUHuxJxzQ/irupuA1X88Of9G+BnJsfbxPhIfefqx5Av+AzUrBG5Yvxx/E/7AURl3J/PKKkETj1K37SgY6BLGiEpc7P7qbn16b82lRKGDFlTNFup4eHA",
+        "signature": "Zw1iTKhoTioxoCMq02vVTjI08S6Lgus+7TrMhZUfeLQsTCyhA6yarlHJ7toyQObvZq6yte2KzDdzPS+AzB11AA",
+        "signing_key_id": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd"
+      }
+    }
+  ]
+}

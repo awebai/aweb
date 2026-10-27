@@ -57,6 +57,7 @@ from aweb.messaging.conversations import (
 )
 from aweb.messaging.verification import (
     message_verification_status,
+    verified_signed_via,
 )
 from aweb.messaging.mail_routing import (
     mail_continuation_context,
@@ -136,6 +137,7 @@ def mcp_mail_message_from_row(
     if not encrypted and row.get("signed_payload"):
         msg["signed_payload"] = row["signed_payload"]
     msg["verification_status"] = message_verification_status(dict(row))
+    msg.update(verified_signed_via(dict(row)))
     return msg
 
 

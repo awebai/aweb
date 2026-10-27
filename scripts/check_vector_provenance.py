@@ -25,6 +25,9 @@ APP_EMIT_COPIES = (
     PurePosixPath("naapp/library/tests/vectors/app-emit-credential-v1.json"),
 )
 MANAGED_PUBLIC_COPIES = {
+    PurePosixPath("server/src/aweb/human_channels/human-channels-signed-via-v1.json"): (
+        PUBLIC_ROOT / "human-channels-signed-via-v1.json"
+    ),
     PurePosixPath("cli/go/internal/conformance/vectors/team-auth-envelope-v2.json"): (
         PUBLIC_ROOT / "team-auth-envelope-v2.json"
     ),
@@ -49,6 +52,22 @@ def _consumer(names: str | Iterable[str], *root_markers: str) -> ConsumerSpec:
 SERVER_CONSUMER = PurePosixPath("server/tests/test_identity_conformance_vectors.py")
 GO_CONSUMER = PurePosixPath("cli/go/internal/conformance/conformance_test.go")
 ROOT_CONSUMERS = {
+    PurePosixPath("server/tests/test_signed_via.py"): _consumer(
+        {"human-channels-v1.json", "human-channels-signed-via-crypto-v1.json", "human-channels-signed-via-v1.json"},
+        'ROOT / "docs/vectors/human-channels-v1.json"',
+        'ROOT / "docs/vectors/human-channels-signed-via-crypto-v1.json"',
+        'ROOT / "docs/vectors/human-channels-signed-via-v1.json"',
+    ),
+    PurePosixPath("cli/go/awid/signed_via_test.go"): _consumer(
+        {"human-channels-v1.json", "human-channels-signed-via-crypto-v1.json", "human-channels-signed-via-v1.json"},
+        '"../../../docs/vectors/human-channels-v1.json"',
+        '"../../../docs/vectors/human-channels-signed-via-crypto-v1.json"',
+        '"../../../docs/vectors/human-channels-signed-via-v1.json"',
+    ),
+    PurePosixPath("server/tests/test_signed_via_package.py"): _consumer(
+        "human-channels-signed-via-v1.json",
+        'ROOT / "docs/vectors/human-channels-signed-via-v1.json"',
+    ),
     PurePosixPath("server/tests/test_c2_vectors.py"): _consumer(
         ("app-task-authorization-v1.json", "app-request-credential-v1.json", "task-answer-v1.json"),
         'Path(__file__).resolve().parents[2] / "docs" / "vectors"',
@@ -573,6 +592,9 @@ PACKAGE_GUARDS = {
     ),
 }
 NON_CONSUMING_CODE_REFERENCES = {
+    PurePosixPath("scripts/generate_signed_via_crypto_vectors.py"): (
+        "docs/vectors/human-channels-signed-via-crypto-v1.json",
+    ),
     PurePosixPath("scripts/freeze_human_channels_presence.py"): (
         "docs/vectors/human-channels-presence-v1.json",
     ),

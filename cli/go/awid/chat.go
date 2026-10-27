@@ -697,6 +697,7 @@ type ChatHistoryResponse struct {
 }
 
 type ChatMessage struct {
+	Via                     string                   `json:"via,omitempty"`
 	Attachments             []AttachmentDescriptor   `json:"attachments,omitempty"`
 	AttachmentsAvailable    bool                     `json:"attachments_available"`
 	SenderMembership        *SenderMembership        `json:"sender_membership,omitempty"`
@@ -752,6 +753,7 @@ func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHis
 	}
 	for i := range out.Messages {
 		m := &out.Messages[i]
+		m.Via = ""
 		m.Attachments = nil
 		m.AttachmentsAvailable = true
 		binding := ReceivedSenderBinding{ProjectedDID: m.FromDID}
@@ -854,6 +856,12 @@ func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHis
 			}
 		}
 		m.VerificationStatus, m.IsContact = c.NormalizeReceivedSenderTrust(ctx, m.VerificationStatus, m.FromAddress, m.FromAgent, m.FromDID, m.FromStableID, m.SenderMembership, m.RotationAnnouncement, m.ReplacementAnnouncement, m.IsContact, binding)
+		if m.ContentMode != ContentModeEncryptedV2 && m.MessageVersion != E2EEMessageVersion && m.Encrypted == nil {
+			m.Via, m.VerificationStatus = verifiedPayloadVia(m.SignedPayload, m.VerificationStatus)
+		}
+		if !hasVerifiedProvenance(m.VerificationStatus) {
+			m.Via = ""
+		}
 	}
 	return &out, nil
 }
@@ -862,6 +870,7 @@ func applyE2EEPlaintextChatMetadata(m *ChatMessage, plain *E2EEInnerPayload) {
 	if m == nil || plain == nil {
 		return
 	}
+	m.Via = plain.Via
 	if strings.TrimSpace(plain.From.DID) != "" {
 		m.FromDID = strings.TrimSpace(plain.From.DID)
 	}

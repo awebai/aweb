@@ -36,6 +36,8 @@ type Event struct {
 	FromStableID            string                        `json:"from_stable_id,omitempty"`
 	ToStableID              string                        `json:"to_stable_id,omitempty"`
 	Signature               string                        `json:"signature,omitempty"`
+	SignedPayload           string                        `json:"signed_payload,omitempty"`
+	Via                     string                        `json:"via,omitempty"`
 	SigningKeyID            string                        `json:"signing_key_id,omitempty"`
 	Encrypted               *awid.E2EEMessageEnvelope     `json:"encrypted_envelope,omitempty"`
 	RotationAnnouncement    *awid.RotationAnnouncement    `json:"rotation_announcement,omitempty"`

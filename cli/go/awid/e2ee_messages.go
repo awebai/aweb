@@ -104,6 +104,7 @@ type E2EEMessageEnvelope struct {
 }
 
 type E2EEInnerPayload struct {
+	Via              string            `json:"via,omitempty"`
 	Attachments      json.RawMessage   `json:"attachments,omitempty"`
 	InnerVersion     int               `json:"inner_version"`
 	Kind             string            `json:"kind"`
@@ -137,6 +138,7 @@ type E2EESenderKey struct {
 }
 
 type E2EEEncryptMessageParams struct {
+	Via                 string
 	Attachments         []AttachmentDescriptor
 	Kind                string
 	Sender              E2EESenderKey
@@ -225,6 +227,11 @@ func EncryptE2EEChat(params E2EEEncryptMessageParams) (*E2EEMessageEnvelope, err
 }
 
 func EncryptE2EEMessage(params E2EEEncryptMessageParams) (*E2EEMessageEnvelope, error) {
+	if params.Via != "" {
+		if err := validateMessageVia(params.Via); err != nil {
+			return nil, err
+		}
+	}
 	kind := strings.TrimSpace(params.Kind)
 	if kind == "" {
 		kind = "mail"
@@ -297,6 +304,7 @@ func EncryptE2EEMessage(params E2EEEncryptMessageParams) (*E2EEMessageEnvelope, 
 		})
 	}
 	inner := E2EEInnerPayload{
+		Via:              params.Via,
 		InnerVersion:     E2EEMessageVersion,
 		Kind:             kind,
 		MessageID:        strings.TrimSpace(params.MessageID),
@@ -697,6 +705,11 @@ func e2eeInnerHeaderHash(inner E2EEInnerPayload) (string, error) {
 }
 
 func e2eeInnerPayloadCanonical(inner E2EEInnerPayload) ([]byte, error) {
+	if inner.Via != "" {
+		if err := validateMessageVia(inner.Via); err != nil {
+			return nil, err
+		}
+	}
 	return canonicalJSONBytes(e2eeInnerPayloadMap(inner, true))
 }
 
@@ -712,6 +725,9 @@ func e2eeInnerPayloadMap(inner E2EEInnerPayload, includeContent bool) map[string
 	}
 	addNonEmpty(out, "reply_to_message_id", inner.ReplyToMessageID)
 	if includeContent {
+		if inner.Via != "" {
+			out["via"] = inner.Via
+		}
 		if inner.Kind == "mail" {
 			out["subject"] = inner.Subject
 		}

@@ -106,6 +106,7 @@ type MessageEnvelope struct {
 	ReplyTo        string `json:"reply_to,omitempty"`
 	SenderLeaving  bool   `json:"sender_leaving,omitempty"`
 	HangOn         bool   `json:"hang_on,omitempty"`
+	Via            string `json:"via,omitempty"`
 
 	RequireRecipientBinding       bool `json:"-"`
 	AllowStoredRouteGlobalBinding bool `json:"-"`
@@ -117,6 +118,11 @@ type MessageEnvelope struct {
 // SignMessage signs the canonical JSON payload of an envelope.
 // Returns the signature as base64 (RFC 4648, no padding).
 func SignMessage(key ed25519.PrivateKey, env *MessageEnvelope) (string, error) {
+	if env.Via != "" {
+		if err := validateMessageVia(env.Via); err != nil {
+			return "", err
+		}
+	}
 	payload := CanonicalJSON(env)
 	sig := ed25519.Sign(key, []byte(payload))
 	return base64.RawStdEncoding.EncodeToString(sig), nil
@@ -494,6 +500,9 @@ func CanonicalJSON(env *MessageEnvelope) string {
 	}
 	if env.WaitSeconds != nil {
 		fields = append(fields, field{"wait_seconds", strconv.Itoa(*env.WaitSeconds)})
+	}
+	if env.Via != "" {
+		fields = append(fields, field{"via", jsonStringValue(env.Via)})
 	}
 
 	sort.Slice(fields, func(i, j int) bool { return fields[i].key < fields[j].key })

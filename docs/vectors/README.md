@@ -15,7 +15,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 `docs/vectors/*.json` is the only public protocol-vector authority for the
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
-references consume these root bytes directly or through the two classified
+references consume these root bytes directly or through the classified
 package copies below. An unclassified hand-maintained copy is forbidden even when
 its bytes happen to match; `make test-vector-provenance` rejects a returning
 mirror or unclassified consumer-local link.
@@ -26,15 +26,17 @@ The other tracked vector directories have disjoint, explicit purposes:
 |---|---|
 | `cli/go/internal/conformance/vectors/` | Consumer-local Go fixtures plus the byte-enforced `team-auth-envelope-v2.json` package copy linked by the currently pinned naapp reference generator. |
 | `naapp-lib/src/aweb_naapp/hooks/catalog-v1.json` | The byte-enforced package copy of `hook-catalog-v1.json`, shipped in the naapp-lib wheel so an installed app loads the catalog (`aweb_naapp.hooks.catalog.packaged_catalog`) with no repository checkout. |
+| `server/src/aweb/human_channels/human-channels-signed-via-v1.json` | Byte-enforced copy of P1's canonical signing agreement, loadable from the installed aweb package by hosted composers. |
 | `naapp-lib/tests/vectors/` | External cryptographic known-answer fixtures: `hpke-rfc9180-base-x25519.json` pins RFC 9180 upstream test-vector data for `test_crypto_hpke.py`; it is not an aweb public protocol vector. |
 | `naapp/folio/tests/vectors/` | App test snapshots; `app-emit-credential-v1.json` is byte-checked against its Go consumer authority. |
 | `naapp/library/tests/vectors/` | App snapshots plus Library blueprint input/output goldens; the app-emit snapshot is byte-checked. |
 | `naapp/secrets/vectors/` | secrets' app-internal contracts: the `aweb.secrets.use-approval/1` request object under B2's prefix, and the transition-to-hook-action table checked against `hook-catalog-v1.json`. Each file is consumed by a test in `naapp/secrets/tests/`. |
 | `test-vectors/` | Repository-level policy, blueprint, app-manifest, and packaging fixtures governed by their own indexes. |
 
-There is deliberately no server-local public-vector package copy. Server wheels
-do not need public test vectors at runtime, while server source tests load the
-repository-root authority. `test-vectors/app-manifests/` contains
+The server ships one byte-enforced public-vector copy:
+`aweb.human_channels/human-channels-signed-via-v1.json`. It lets a hosted composer
+check P1 signing agreement against an installed aweb package. Server source tests
+still load the repository-root authority. `test-vectors/app-manifests/` contains
 digest-pinned experimental app-manifest snapshots documented by
 [`app-manifest.md`](../app-manifest.md); they are not silently promoted into the
 identity/trust vector family.
@@ -776,3 +778,20 @@ derivation; they are never message/provenance fields. Author projections test
 exact session/subject/signer binding and external/untrusted guest assurance.
 They assume independently verified signer facts and do not authorize membership
 or activate managed chat. See [P3 readiness](../human-channels-participants.md).
+
+## Human-channel signed provenance crypto
+
+`human-channels-signed-via-v1.json` fixes payload-to-signed-byte agreement for
+mail/chat with absent, telegram, msteams and unfamiliar valid provenance. Python
+`awid.signing`, Go and `canonical_record(NativePlaintext)` assert the same bytes.
+Installed consumers load the exact managed package copy with
+`importlib.resources.files("aweb.human_channels").joinpath("human-channels-signed-via-v1.json")`.
+Wheel tests exercise that loader outside the repository checkout.
+
+`human-channels-signed-via-crypto-v1.json` adds P1's actual Python- and
+Go-produced encrypted-v2 mail/chat vectors, each with absent, telegram and
+msteams provenance. Both languages decrypt the same recipient and sender-copy
+bytes. Its keys are public test material. The initial-creation generator
+`scripts/generate_signed_via_crypto_vectors.py` refuses to overwrite an existing
+fixture; no P0 fixture is re-frozen. See the
+[signed-via proof](../human-channels-signed-via.md).

@@ -20,6 +20,7 @@ import asyncpg.exceptions
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
+from awid.signing import validate_message_via
 from redis.asyncio.client import PubSub
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import RedisError
@@ -91,7 +92,7 @@ from aweb.messaging.signatures import (
     MessageSignatureShapeError,
     validate_ed25519_message_signature,
 )
-from aweb.messaging.verification import require_conversation_not_legacy_bound, verified_signed_recipient_fields
+from aweb.messaging.verification import require_conversation_not_legacy_bound, verified_signed_recipient_fields, verified_signed_via
 from aweb.messaging.waiting import (
     get_waiting_agents,
     get_waiting_agents_by_session,
@@ -176,6 +177,11 @@ def _validate_signed_chat_payload(
         raise HTTPException(status_code=422, detail="signed_payload must be valid JSON")
     if not isinstance(payload, dict):
         raise HTTPException(status_code=422, detail="signed_payload must be a JSON object")
+    if "via" in payload:
+        try:
+            validate_message_via(payload["via"])
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     if payload.get("type") != "chat":
         raise HTTPException(status_code=422, detail="signed_payload type must be chat")
     allowed_from_values = {
@@ -2039,6 +2045,7 @@ async def history(
                 "signature": msg.get("signature"),
                 "signed_payload": msg.get("signed_payload"),
                 **verified_signed_recipient_fields({**msg, "conversation_id": str(session_uuid)}),
+                **verified_signed_via({**msg, "conversation_id": str(session_uuid)}),
                 "is_contact": is_address_in_contacts(from_address, contact_addrs),
             }
         )
@@ -2336,6 +2343,7 @@ async def _sse_events(
                     "signature": row.get("signature"),
                     "signed_payload": row.get("signed_payload"),
                     **verified_signed_recipient_fields({**row, "conversation_id": session_id_str}),
+                    **verified_signed_via({**row, "conversation_id": session_id_str}),
                     "is_contact": is_address_in_contacts(from_address, contact_addrs),
                 }
                 yield f"event: message\ndata: {json.dumps(payload)}\n\n"
@@ -2471,6 +2479,7 @@ async def _sse_events(
                         "signature": row.get("signature"),
                         "signed_payload": row.get("signed_payload"),
                         **verified_signed_recipient_fields({**row, "conversation_id": session_id_str}),
+                        **verified_signed_via({**row, "conversation_id": session_id_str}),
                         "is_contact": is_address_in_contacts(from_address, contact_addrs),
                     }
                     yield f"event: message\ndata: {json.dumps(payload)}\n\n"
