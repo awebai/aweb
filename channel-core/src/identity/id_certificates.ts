@@ -281,6 +281,27 @@ function isCanonicalSecondTimestamp(value: string): boolean {
   );
 }
 
+export interface IdTreeEnrollment {
+  state: "enrolled" | "not_enrolled" | "unknown" | "malformed";
+  domain: string | null;
+}
+
+/**
+ * Parses the id_tree projection of a key response. It performs no I/O and
+ * grants nothing: absent evidence is unknown and malformed evidence is never
+ * proven not enrolled.
+ */
+export function keyResponseIdTree(response: Record<string, unknown>): IdTreeEnrollment {
+  if (!Object.prototype.hasOwnProperty.call(response, "id_tree")) return { state: "unknown", domain: null };
+  const malformed: IdTreeEnrollment = { state: "malformed", domain: null };
+  const tree = response.id_tree;
+  if (!isRecord(tree) || typeof tree.enrolled !== "boolean") return malformed;
+  if (!tree.enrolled) return hasExactKeys(tree, ["enrolled"]) ? { state: "not_enrolled", domain: null } : malformed;
+  const domain = tree.domain;
+  if (!hasExactKeys(tree, ["domain", "enrolled"]) || typeof domain !== "string" || !isCanonicalDomain(domain)) return malformed;
+  return { state: "enrolled", domain };
+}
+
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
