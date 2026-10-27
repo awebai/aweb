@@ -692,8 +692,9 @@ func TestStatusClientContradictoryAuthorityIsKeptAsCurrentAndNeverVerifies(t *te
 }
 
 func TestStatusClientAMalformedSuccessfulAnswerIsUnavailableAndEndsTheOldTree(t *testing.T) {
-	for _, body := range []string{"[]", "not json", `"text"`} {
-		t.Run(body, func(t *testing.T) {
+	oversized := `{"x":"` + strings.Repeat("a", MaxResponseSize) + `"}`
+	for name, body := range map[string]string{"array": "[]", "not json": "not json", "string": `"text"`, "oversized": oversized} {
+		t.Run(name, func(t *testing.T) {
 			env := newStatusEnv(t)
 			env.evidence(nil)
 			env.clock.Add(61)
