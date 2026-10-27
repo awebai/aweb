@@ -9865,7 +9865,7 @@ async function dispatchMailEvent(options, dispatched, event, log) {
       await deliverAwakening(options, {
         kind: "mail",
         content: "",
-        meta: encryptedDeliveryFailureMeta("mail", from, msg.message_id, conversationID, decrypt.error),
+        meta: encryptedDeliveryFailureMeta("mail", from, msg.message_id, conversationID, decrypt.error, void 0, msg.ingress),
         deliveryIntent: "wake"
       });
       continue;
@@ -9889,7 +9889,8 @@ async function dispatchMailEvent(options, dispatched, event, log) {
       from,
       message_id: msg.message_id,
       trust_status: msg.verification_status || "unknown",
-      verified: String(isTrustedVerificationStatus(msg.verification_status))
+      verified: String(isTrustedVerificationStatus(msg.verification_status)),
+      ...ingressMeta(msg.ingress)
     };
     if (conversationID) meta.conversation_id = conversationID;
     if (msg.subject) meta.subject = msg.subject;
@@ -9936,7 +9937,7 @@ async function dispatchChatEvent(options, dispatched, event) {
       await deliverAwakening(options, {
         kind: "chat",
         content: "",
-        meta: encryptedDeliveryFailureMeta("chat", from, msg.message_id, conversationID, decrypt.error, event.session_id),
+        meta: encryptedDeliveryFailureMeta("chat", from, msg.message_id, conversationID, decrypt.error, event.session_id, msg.ingress),
         deliveryIntent: event.sender_waiting ? "steer" : "wake"
       });
       continue;
@@ -9961,7 +9962,8 @@ async function dispatchChatEvent(options, dispatched, event) {
       session_id: event.session_id,
       message_id: msg.message_id,
       trust_status: msg.verification_status || "unknown",
-      verified: String(isTrustedVerificationStatus(msg.verification_status))
+      verified: String(isTrustedVerificationStatus(msg.verification_status)),
+      ...ingressMeta(msg.ingress)
     };
     if (conversationID) meta.conversation_id = conversationID;
     if (event.sender_waiting) meta.sender_waiting = "true";
@@ -10129,14 +10131,18 @@ async function resolveChatForDelivery(options, sessionID, msg) {
 function isEncryptedMessage(msg) {
   return msg.content_mode === "encrypted_v2" || msg.message_version === 2 || msg.encrypted_envelope != null;
 }
-function encryptedDeliveryFailureMeta(type2, from, messageID, conversationID, error, sessionID) {
+function ingressMeta(ingress) {
+  return ingress ? { ingress: JSON.stringify(ingress) } : {};
+}
+function encryptedDeliveryFailureMeta(type2, from, messageID, conversationID, error, sessionID, ingress) {
   const meta = {
     type: type2,
     from,
     message_id: messageID,
     encrypted: "true",
     decrypted: "false",
-    decrypt_error: error
+    decrypt_error: error,
+    ...ingressMeta(ingress)
   };
   if (conversationID) meta.conversation_id = conversationID;
   if (sessionID) meta.session_id = sessionID;

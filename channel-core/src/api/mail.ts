@@ -1,3 +1,4 @@
+import type { ChannelIngress } from "./ingress.js";
 import type { APIClient } from "./client.js";
 import type { MessageEnvelope, VerificationStatus } from "../identity/signing.js";
 import type { ReplacementAnnouncement, RotationAnnouncement, SenderMembership } from "../identity/trust.js";
@@ -8,6 +9,7 @@ import {
 } from "../identity/signing.js";
 
 export interface InboxMessage {
+  ingress?: ChannelIngress;
   message_id: string;
   conversation_id?: string;
   from_agent_id: string;

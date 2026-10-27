@@ -292,3 +292,19 @@ test("dispatcher awaits async sendMessage rejection without relying on global un
   assert.equal(logs.some((entry) => entry.fields?.message === "async pi rejection"), true);
   assert.equal(logs.some((entry) => entry.event === "wake_delivered"), false);
 });
+
+
+test("Pi preserves server ingress in both details and agent text", async () => {
+  const calls: Array<Parameters<ExtensionAPI["sendMessage"]>> = [];
+  const dispatcher = createWakeDispatcher(fakePi((message, options) => { calls.push([message, options]); }), () => {});
+  const ingress = JSON.stringify({ platform: "future_platform", presence_kind: "native",
+    input_origin: "external_human", confidentiality: "hosted_readable" });
+  const meta = { type: "chat", message_id: "m-ingress", session_id: "s-ingress", ingress,
+    verified: "false", trust_status: "failed" };
+  await createPiAwakeningHandler(dispatcher)(awakening({ meta }));
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0][0].details, meta);
+  assert.match(String(calls[0][0].content), /- ingress: /);
+  const line = String(calls[0][0].content).split("\n").find(line => line.startsWith("- ingress: "));
+  assert.deepEqual(JSON.parse(line!.slice("- ingress: ".length)), JSON.parse(ingress));
+});

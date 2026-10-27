@@ -132,3 +132,28 @@ describe("resolveRegistryFallbackURL", () => {
     expect(resolveRegistryFallbackURL("")).toBeUndefined();
   });
 });
+
+
+test("message ingress survives the public Claude notification transport", async () => {
+  const { Server } = await import("@modelcontextprotocol/sdk/server/index.js");
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
+  const server = new Server({ name: "ingress-server", version: "1" }, { capabilities: {} });
+  const client = new Client({ name: "ingress-client", version: "1" });
+  const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+  let accept!: (value: unknown) => void;
+  const received = new Promise<unknown>(resolve => { accept = resolve; });
+  client.fallbackNotificationHandler = async notification => { accept(notification); };
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  const ingress = JSON.stringify({ platform: "future_platform", presence_kind: "native",
+    input_origin: "external_human", confidentiality: "hosted_readable" });
+  const meta = { type: "chat", message_id: "m-ingress", ingress, verified: "false", trust_status: "failed" };
+  try {
+    await notifyClaudeAwakening(server, { kind: "chat", content: "hello", deliveryIntent: "wake", meta });
+    expect(await received).toMatchObject({ method: "notifications/claude/channel", params: { content: "hello", meta } });
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});

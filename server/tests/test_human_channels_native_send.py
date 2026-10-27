@@ -677,6 +677,8 @@ async def test_uow_host_lock_lasts_through_caller_result_commit(native_send):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind,options,expected_error", [
     ("mail", {}, None), ("chat", {}, None),
+    ("mail", {"ingress": {"platform": "msteams", "presence_kind": "shared", "input_origin": "external_human", "confidentiality": "hosted_readable"}}, None),
+    ("chat", {"ingress": {"platform": "msteams", "presence_kind": "shared", "input_origin": "external_human", "confidentiality": "hosted_readable"}}, None),
     ("mail", {"plaintext": False}, None),
     ("chat", {"plaintext": False}, None),
     ("mail", {"plaintext": False, "priority": "urgent"}, "unsupported"),
@@ -846,6 +848,7 @@ async def test_real_mcp_native_ingress_commits_before_reply_and_replays(
     finally:
         await mcp.shutdown()
     table = "messages" if kind == "mail" else "chat_messages"
+    assert (await env["db"].fetch_one("SELECT ingress FROM {{tables." + table + "}}"))["ingress"] is None
     assert (
         await env["db"].fetch_one("SELECT count(*) n FROM {{tables." + table + "}}")
     )["n"] == 1

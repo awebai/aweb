@@ -509,3 +509,10 @@ SSE, MCP and durable message events carry the stored snapshot, independently
 of current presence or cryptographic verification success. Session/conversation
 discovery and acknowledgement/control hints carry no session-wide assertion;
 the full-message fetch supplies each message's own metadata.
+
+Go message/event readers expose this object as optional `Ingress`. Channel-core
+carries the original HTTP object's value through both ordinary and encrypted
+failure awakenings. Since awakening metadata is a string map, `meta.ingress`
+is the JSON encoding of the object; agent text, Claude notifications and Pi
+message details preserve it. Author-signed or decrypted `ingress` fields cannot
+replace it, and omitting the field from local decrypt output cannot erase it.

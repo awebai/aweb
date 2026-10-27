@@ -4,6 +4,7 @@ import { appendFile, mkdir, open, readFile, rename, rm } from "node:fs/promises"
 import { lock } from "proper-lockfile";
 
 import { APIClient } from "./api/client.js";
+import type { ChannelIngress } from "./api/ingress.js";
 import { streamAgentEvents, formatEventStreamState, type AgentEvent, type EventStreamState, type EventStreamObserver } from "./api/events.js";
 import { ackMessage, fetchInbox, type InboxMessage } from "./api/mail.js";
 import { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";
@@ -731,7 +732,7 @@ async function dispatchMailEvent(
       await deliverAwakening(options, {
         kind: "mail",
         content: "",
-        meta: encryptedDeliveryFailureMeta("mail", from, msg.message_id, conversationID, decrypt.error),
+        meta: encryptedDeliveryFailureMeta("mail", from, msg.message_id, conversationID, decrypt.error, undefined, msg.ingress),
         deliveryIntent: "wake",
       });
       continue;
@@ -757,6 +758,7 @@ async function dispatchMailEvent(
       message_id: msg.message_id,
       trust_status: msg.verification_status || "unknown",
       verified: String(isTrustedVerificationStatus(msg.verification_status)),
+      ...ingressMeta(msg.ingress),
     };
     if (conversationID) meta.conversation_id = conversationID;
     if (msg.subject) meta.subject = msg.subject;
@@ -810,7 +812,7 @@ async function dispatchChatEvent(
       await deliverAwakening(options, {
         kind: "chat",
         content: "",
-        meta: encryptedDeliveryFailureMeta("chat", from, msg.message_id, conversationID, decrypt.error, event.session_id),
+        meta: encryptedDeliveryFailureMeta("chat", from, msg.message_id, conversationID, decrypt.error, event.session_id, msg.ingress),
         deliveryIntent: event.sender_waiting ? "steer" : "wake",
       });
       continue;
@@ -837,6 +839,7 @@ async function dispatchChatEvent(
       message_id: msg.message_id,
       trust_status: msg.verification_status || "unknown",
       verified: String(isTrustedVerificationStatus(msg.verification_status)),
+      ...ingressMeta(msg.ingress),
     };
     if (conversationID) meta.conversation_id = conversationID;
     if (event.sender_waiting) meta.sender_waiting = "true";
@@ -1049,6 +1052,10 @@ function isEncryptedMessage(msg: Pick<InboxMessage | ChatMessage, "content_mode"
   return msg.content_mode === "encrypted_v2" || msg.message_version === 2 || msg.encrypted_envelope != null;
 }
 
+function ingressMeta(ingress: ChannelIngress | undefined): Record<string, string> {
+  return ingress ? { ingress: JSON.stringify(ingress) } : {};
+}
+
 function encryptedDeliveryFailureMeta(
   type: "mail" | "chat",
   from: string,
@@ -1056,6 +1063,7 @@ function encryptedDeliveryFailureMeta(
   conversationID: string | undefined,
   error: string,
   sessionID?: string,
+  ingress?: ChannelIngress,
 ): Record<string, string> {
   const meta: Record<string, string> = {
     type,
@@ -1064,6 +1072,7 @@ function encryptedDeliveryFailureMeta(
     encrypted: "true",
     decrypted: "false",
     decrypt_error: error,
+    ...ingressMeta(ingress),
   };
   if (conversationID) meta.conversation_id = conversationID;
   if (sessionID) meta.session_id = sessionID;

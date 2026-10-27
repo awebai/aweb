@@ -293,3 +293,159 @@ async def test_channel_ingress_released_plugin_reader(ingress_app, tmp_path):
     stdout, stderr = await asyncio.wait_for(process.communicate(json.dumps(arguments).encode()), 30)
     assert process.returncode == 0, stderr.decode()
     assert json.loads(stdout)["verified"] == ["mail", "chat"]
+
+
+async def _encrypted_channel_messages(app, tmp_path, *, inner_ingress=False):
+    from test_signed_via_paths import cli_context
+    from aweb.e2ee_messages import encrypt_e2ee_message
+    identities, contexts = {}, {}
+    env, native = app.env, app.native
+    for alias in ("alice", "bob"):
+        home, child = cli_context(env, tmp_path, alias)
+        contexts[alias] = home, child
+        actor = env.actors[alias]
+        assertion = json.loads((home / "assertion.json").read_text())
+        identities[alias] = dict(did=actor.did, team_id=TEAM, signing_key=actor.sk, encryption_key=assertion)
+        await env.db.execute("UPDATE public.host_authority SET encryption_assertion=$1::jsonb WHERE actor_id=$2",
+                             json.dumps(assertion), actor.id)
+    for kind in ("mail", "chat"):
+        mid, cid = str(uuid4()), app.messages[kind]["conversation_id"]
+        envelope = encrypt_e2ee_message(kind=kind, sender=identities["alice"], recipients=[identities["bob"]],
+            message_id=mid, conversation_id=cid, created_at=datetime.now(timezone.utc),
+            subject="protected channel subject", body="protected channel input", via="telegram")
+        if inner_ingress:
+            import base64
+            from aweb import e2ee_messages as crypto
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+            bob = dict(identities["bob"], private_key=base64.b64decode("".join(
+                (contexts["bob"][0] / "encryption.key").read_text().splitlines()[1:-1])))
+            inner = crypto.decrypt_e2ee_message(envelope, bob)
+            inner["ingress"] = dict(CONTEXT, confidentiality="end_to_end")
+            cek = crypto._open_key_wrap(wrap=crypto._select_key_wrap(envelope, bob), envelope=envelope, identity=bob)
+            content = canonical_json_bytes(inner)
+            envelope["crypto"]["ciphertext_size"] = len(content) + 16
+            nonce = crypto._b64_raw_decode(envelope["crypto"]["content_nonce"], field="content_nonce")
+            ciphertext = AESGCM(cek).encrypt(nonce, content, crypto._content_aad(envelope))
+            envelope["ciphertext"] = crypto._b64_raw_encode(ciphertext)
+            envelope["crypto"]["ciphertext_hash"] = crypto._hash_bytes(ciphertext)
+            envelope["signature"] = sign_message(identities["alice"]["signing_key"], canonical_json_bytes(
+                crypto._envelope_map(envelope, include_signature=False, include_ciphertext=True, include_ciphertext_hash=True)))
+            assert crypto.decrypt_e2ee_message(envelope, bob)["ingress"]["confidentiality"] == "end_to_end"
+        target = await native["service"].resolve(native["auth"], dto("ResolveRequest", dict(
+            version="aweb-human-resolve-v1", team_id=TEAM, selector="bob")))
+        prepared = await native["service"].prepare(native["auth"], dto("PrepareRequest", dict(
+            version="aweb-human-prepare-v1", kind=kind, message_id=mid, conversation_id=cid,
+            author=dict(kind="native", did=native["auth"].did_key), format="native_encrypted_v2",
+            envelope=canonical_json_bytes(envelope).decode(), target=target.value)))
+        native["key"] = dto("IngressKey", dict(issuer=native["auth"].did_key, namespace="verified-events",
+            key=kind+"-encrypted", input_hash="sha256:" + "33" * 32))
+        await _bind(native, prepared)
+        await complete(native, prepared)
+        app.messages[kind] = prepared.value
+    return contexts["bob"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["plaintext", "omitted", "forged", "failure", "inner", "unknown", "failed_trust"])
+async def test_channel_ingress_current_channel_runtime(ingress_app, tmp_path, aw_cli_binary, mode):
+    import os
+    from pathlib import Path
+    from test_signed_via_paths import cli_context
+    from test_addressless_sender_cli import _registry_http
+    module = os.environ.get("AW_TEST_CHANNEL_CORE")
+    if not module:
+        pytest.skip("set AW_TEST_CHANNEL_CORE to the built current channel-core dist/index.js")
+    app, env = ingress_app, ingress_app.env
+    expected_ingress = CONTEXT
+    if mode == "unknown":
+        expected_ingress = dict(CONTEXT, platform="future_platform")
+        for kind in ("mail", "chat"):
+            native = app.native
+            prepared = await _prepare(native, kind, conversation_id=app.messages[kind]["conversation_id"])
+            native["key"] = dto("IngressKey", dict(issuer=native["auth"].did_key, namespace="verified-events",
+                key=kind+"-unknown", input_hash="sha256:" + "44" * 32))
+            await _bind(native, prepared, context=expected_ingress)
+            await complete(native, prepared)
+            app.messages[kind] = prepared.value
+    home, child = (cli_context(env, tmp_path, "bob") if mode in {"plaintext", "unknown", "failed_trust"} else
+                   await _encrypted_channel_messages(app, tmp_path, inner_ingress=mode == "inner"))
+    if mode == "failed_trust":
+        for kind in ("mail", "chat"):
+            table = "messages" if kind == "mail" else "chat_messages"
+            await env.db.execute("UPDATE {{tables." + table + "}} SET signature='invalid' WHERE message_id=$1",
+                                 UUID(app.messages[kind]["message_id"]))
+    bob = env.actors["bob"]
+    arguments = dict(url=str(env.client.base_url), messages=app.messages, ingress=expected_ingress,
+        mode="plaintext" if mode in {"unknown", "failed_trust"} else mode, failed_trust=mode == "failed_trust",
+        workdir=str(home.parent), identityHome=str(home), aw=str(aw_cli_binary),
+        auth=dict(did=bob.did, stableID="", teamID=TEAM, teamCertificateHeader=bob.certificate, signingKey=bob.sk.hex()))
+    async with _registry_http(env.registry_app) as (registry_url, _):
+        child["AWID_REGISTRY_URL"] = registry_url
+        process = await asyncio.create_subprocess_exec("node", str(Path(__file__).with_name("current_channel_ingress_probe.mjs")),
+            module, env=child, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdout, stderr = await asyncio.wait_for(process.communicate(json.dumps(arguments).encode()), 30)
+    assert process.returncode == 0, stderr.decode()
+    assert len(json.loads(stdout)) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("location", ["wrapper", "envelope"])
+async def test_federation_cannot_supply_local_channel_ingress(ingress_app, location):
+    from aweb.federation.envelope import FederatedDeliveryRequest, verify_federation_envelope
+    from test_federation_envelope import _envelope, _sign
+    env = ingress_app.env
+    alice = env.actors["alice"]
+    envelope = _envelope(alice.did)
+    original = dict(envelope=envelope, signature=_sign(envelope, alice.sk))
+    # The same signed artifact and closed transport grammar accept the neighbour.
+    checked = FederatedDeliveryRequest.model_validate(original)
+    verify_federation_envelope(checked.envelope, checked.signature)
+    payload = dict(original)
+    if location == "wrapper":
+        payload["ingress"] = CONTEXT
+    else:
+        payload["envelope"] = dict(envelope, ingress=CONTEXT)
+    response = await env.client.post("/v1/federation/messages", json=payload)
+    assert response.status_code == 422, response.text
+    assert response.json()["reason"] == "federation_envelope_invalid"
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError) as refused:
+        FederatedDeliveryRequest.model_validate(payload)
+    assert any(error["loc"][-1] == "ingress" for error in refused.value.errors())
+    assert await env.db.fetch_one("SELECT message_id FROM {{tables.messages}} WHERE message_id=$1", UUID(envelope["message_id"])) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+async def test_native_prepare_client_context_is_refused(ingress_app, kind):
+    app, env = ingress_app, ingress_app.env
+    env.app.state.human_channels_service = app.native["service"]
+    prepared = await _prepare(app.native, kind, conversation_id=app.messages[kind]["conversation_id"])
+    retained = app.native["service"]._preparations[prepared.value["prepared_id"]]
+    request = json.loads(retained.request_bytes)
+    response = await _request(env, "alice", "POST", "/v1/messaging/prepare", dict(request, ingress=CONTEXT))
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["effects"] == "none"
+    table = "messages" if kind == "mail" else "chat_messages"
+    assert await env.db.fetch_one("SELECT message_id FROM {{tables." + table + "}} WHERE message_id=$1", UUID(prepared.value["message_id"])) is None
+
+
+@pytest.mark.asyncio
+async def test_channel_ingress_current_aw_carrier(ingress_app, tmp_path, aw_cli_binary):
+    import os
+    from test_signed_via_paths import _cli, cli_context
+    from test_addressless_sender_cli import _registry_http
+    if os.environ.get("AW_TEST_CLI_BINARY"):
+        pytest.skip("current Go carrier requires the default source-built CLI fixture")
+    app, env = ingress_app, ingress_app.env
+    home, child = cli_context(env, tmp_path, "bob")
+    async with _registry_http(env.registry_app) as (registry_url, _):
+        child["AWID_REGISTRY_URL"] = registry_url
+        for kind in ("mail", "chat"):
+            expected = app.messages[kind]
+            args = ("mail", "show", "--message-id", expected["message_id"], "--json") if kind == "mail" else (
+                "chat", "history", "--session-id", expected["conversation_id"], "--json")
+            shown = await _cli(aw_cli_binary, home.parent, child, *args)
+            message = next(row for row in shown["messages"] if row["message_id"] == expected["message_id"])
+            assert_ingress(message)
+            assert message["verification_status"] == "verified"

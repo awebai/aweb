@@ -1,3 +1,4 @@
+import type { ChannelIngress } from "./ingress.js";
 import type { APIClient } from "./client.js";
 
 export type AgentEventType =
@@ -25,6 +26,7 @@ export interface EventStreamObserver {
 }
 
 export interface AgentEvent {
+  ingress?: ChannelIngress;
   type: AgentEventType;
   agent_id?: string;
   team_id?: string;
