@@ -800,7 +800,8 @@ Apply §2's strict JSON, canonical encoding, signature encoding and Ed25519
 profile. Signing bytes are
 `UTF8("aweb.id-certificate-request/1\n") || canonical_json(request)`;
 the child signs those exact bytes with `subject_key`. The whole file is capped
-at 8192 bytes before parsing. The request carries no invite bearer secret,
+at 8192 bytes before parsing; a larger file refuses `bundle_too_large`, before
+any JSON/shape/signature check. The request carries no invite bearer secret,
 recipient email, private key, registry URL or callback URL. An invitation ID
 selects the parent's private record; it is not authority to sign.
 
@@ -877,7 +878,8 @@ The parent chooses current issuer_key and issued_at, signs one §2 certificate,
 and durably records its certificate_id and exact response BEFORE output. The
 canonical response is exactly `{v:1,request_id,chain}`, where chain is the
 ordinary §2 bundle ending in this child certificate. The whole response is
-capped at 8192 bytes and its bundle retains §2's independent limits. Its
+capped at 8192 bytes before parsing, with the same `bundle_too_large` refusal;
+its bundle retains §2's independent limits. Its
 certificate signatures authenticate the result; request_id is correlation,
 not a separate authority artifact. The child accepts only an outstanding
 request with this ID and exactly matching id/domain/parent/kind and subject
