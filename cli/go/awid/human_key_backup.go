@@ -51,6 +51,10 @@ func HumanKeyBackupErrorCode(err error) string {
 // fresh random salt and IV. The library's defaults are below the floor and
 // are never used.
 func ExportHumanKeyBackup(key ed25519.PrivateKey, passphrase []byte) ([]byte, error) {
+	// Without a passphrase the library writes the key unencrypted.
+	if len(passphrase) == 0 {
+		return nil, humanKeyBackupRefusal("passphrase_required")
+	}
 	der, err := pkcs8.MarshalPrivateKey(key, passphrase, &pkcs8.Opts{
 		Cipher: pkcs8.AES256CBC,
 		KDFOpts: pkcs8.PBKDF2Opts{
@@ -62,6 +66,10 @@ func ExportHumanKeyBackup(key ed25519.PrivateKey, passphrase []byte) ([]byte, er
 	if err != nil {
 		return nil, err
 	}
+	// Never release a backup this package would not import.
+	if err := checkHumanKeyBackupParameters(der); err != nil {
+		return nil, err
+	}
 	return pem.EncodeToMemory(&pem.Block{Type: humanKeyBackupPEMType, Bytes: der}), nil
 }
 
@@ -69,8 +77,11 @@ func ExportHumanKeyBackup(key ed25519.PrivateKey, passphrase []byte) ([]byte, er
 // work factor are checked before any key derivation, so a weak backup
 // refuses even when the passphrase would decrypt it.
 func ImportHumanKeyBackup(backup, passphrase []byte) (ed25519.PrivateKey, error) {
+	if len(passphrase) == 0 {
+		return nil, humanKeyBackupRefusal("passphrase_required")
+	}
 	block, _ := pem.Decode(backup)
-	if block == nil {
+	if block == nil || block.Type != humanKeyBackupPEMType {
 		return nil, humanKeyBackupRefusal("unsupported_backup")
 	}
 	if err := checkHumanKeyBackupParameters(block.Bytes); err != nil {
