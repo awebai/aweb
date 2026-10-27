@@ -176,6 +176,9 @@ func TestIDChildRequestRefusals(t *testing.T) {
 		return []byte(raw)
 	}
 
+	t.Run("N47 one byte over the cap", func(t *testing.T) {
+		refuses(t, bytes.Repeat([]byte("x"), awid.IDCertificateRequestMaxBytes+1), "bundle_too_large")
+	})
 	t.Run("noncanonical whitespace", func(t *testing.T) {
 		refuses(t, []byte(strings.Replace(base.CanonicalUTF8, ",", ", ", 1)), "noncanonical_json")
 	})
@@ -224,6 +227,19 @@ func TestIDChildRequestRefusals(t *testing.T) {
 	t.Run("resign without an old certificate", func(t *testing.T) {
 		refuses(t, mutate(t, resign.Signed, "old_certificate", nil), "invalid_shape")
 	})
+	t.Run("N48 resign for a did:aw agent", func(t *testing.T) {
+		refuses(t, mutate(t, resign.Signed, "id", base.Signed["request"].(map[string]any)["id"]), "invalid_shape")
+	})
+	t.Run("N48 resign with a shape-invalid old certificate", func(t *testing.T) {
+		old := map[string]any{}
+		for k, x := range resign.Signed["request"].(map[string]any)["old_certificate"].(map[string]any)["certificate"].(map[string]any) {
+			if k != "issued_at" {
+				old[k] = x
+			}
+		}
+		signedOld := map[string]any{"certificate": old, "signature": resign.Signed["request"].(map[string]any)["old_certificate"].(map[string]any)["signature"]}
+		refuses(t, mutate(t, resign.Signed, "old_certificate", signedOld), "invalid_shape")
+	})
 	t.Run("resign of a human", func(t *testing.T) {
 		refuses(t, mutate(t, resign.Signed, "kind", "human"), "invalid_shape")
 	})
@@ -251,6 +267,27 @@ func TestIDChildResponseRefusals(t *testing.T) {
 			t.Fatalf("reason=%q (%v) want %q", got, err, reason)
 		}
 	}
+	t.Run("N47 one byte over the cap", func(t *testing.T) {
+		refuses(t, strings.Repeat("x", awid.IDCertificateRequestMaxBytes+1), "bundle_too_large")
+	})
+	t.Run("N49 request id is not a UUID", func(t *testing.T) {
+		raw, err := awid.CanonicalJSONValue(map[string]any{"v": 1, "request_id": "not-a-uuid", "chain": base.Response["chain"]})
+		if err != nil {
+			t.Fatal(err)
+		}
+		refuses(t, raw, "invalid_shape")
+	})
+	t.Run("N49 chain over its own cap inside the file cap", func(t *testing.T) {
+		chain := map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": []any{strings.Repeat("x", 6200)}}
+		raw, err := awid.CanonicalJSONValue(map[string]any{"v": 1, "request_id": base.Response["request_id"], "chain": chain})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(raw) > awid.IDCertificateRequestMaxBytes {
+			t.Fatalf("probe file is %d bytes, over the file cap", len(raw))
+		}
+		refuses(t, raw, "bundle_too_large")
+	})
 	t.Run("noncanonical", func(t *testing.T) {
 		refuses(t, strings.Replace(base.CanonicalUTF8, ",", ", ", 1), "noncanonical_json")
 	})
