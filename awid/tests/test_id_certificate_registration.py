@@ -55,7 +55,6 @@ S2_LATER = {
     "reparent-register-race",
     "loss-replacement-is-a-new-human-id",
     "address-replacement-does-not-transfer-contact-trust",
-    "public-chain-not-private-team-read-authority",
     # A parent's revocation authority needs its whole current chain verified
     # (checkpoint 4); until then the parent path refuses evidence_unavailable.
     "live-parent-revokes-now",

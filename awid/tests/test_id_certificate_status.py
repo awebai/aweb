@@ -10,11 +10,13 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+from datetime import datetime, timezone
 
 import pytest
 import pytest_asyncio
 
 from awid.did import did_from_public_key, generate_keypair
+from awid.signing import sign_message
 from awid.id_certificates import id_certificate_id
 from awid.ratelimit import NoOpRateLimiter
 
@@ -29,6 +31,7 @@ from id_tree_support import (
     at,
     certificate,
     certificate_id,
+    chain_header,
     consumes,
     covering_headers,
     did_aw,
@@ -187,6 +190,35 @@ async def test_a_revoked_identity_is_reported_as_in_its_fixture(tree):
 
     assert resp.status_code == 200, resp.text
     assert resp.json() == VECTORS["status_fixtures"]["alice-revoked-now"]
+
+
+@consumes("public-chain-not-private-team-read-authority")
+async def test_public_chain_not_private_team_read_authority(case, tree):
+    assert case["input"]["membership_in_private_team"] is False
+    team_key, team_public = generate_keypair()
+    created = await tree.client.post(
+        f"/v1/namespaces/{DOMAIN}/teams",
+        json={"name": "ops", "team_did_key": did_from_public_key(team_public), "visibility": "private"},
+        headers=build_signed_headers(seed("root"), did_key("root"), domain=DOMAIN, operation="create_team", name="ops"),
+    )
+    assert created.status_code == 200, created.text
+    chain = [certificate(name) for name in case["input"]["chain"]]
+    reader = case["input"]["chain"][-1]
+
+    for path in (
+        f"/v1/namespaces/{DOMAIN}/teams/ops",
+        f"/v1/namespaces/{DOMAIN}/teams/ops/certificates",
+        f"/v1/namespaces/{DOMAIN}/teams/ops/revocations",
+    ):
+        timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        signature = sign_message(seed(reader), f"{timestamp}\nGET\n{path}".encode())
+        resp = await tree.client.get(path, headers={
+            "Authorization": f"DIDKey {did_key(reader)} {signature}",
+            "X-AWEB-Timestamp": timestamp,
+            "X-AWID-ID-Chain": chain_header(chain),
+        })
+
+        assert (resp.status_code, _code(resp)) == (case["expected"]["http_status"], case["expected"]["reason"]), resp.text
 
 
 # ---------------------------------------------------------------------------
