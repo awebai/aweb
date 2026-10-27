@@ -12686,6 +12686,16 @@
         "expected": {
           "reason": "invalid_json"
         }
+      },
+      {
+        "name": "csr-request-file-ascii-over-limit",
+        "kind": "request",
+        "unit_utf8": "x",
+        "repeat": 8193,
+        "file_bytes": 8193,
+        "expected": {
+          "reason": "bundle_too_large"
+        }
       }
     ]
   }

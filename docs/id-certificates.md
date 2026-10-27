@@ -718,6 +718,19 @@ assumed legacy: refuse, rather than allowing a revoked enrolled ID to omit its
 chain and evade revocation. Thus an outage can also refuse a legacy GLOBAL ID
 whose enrollment state cannot be established; it never manufactures no_human
 or nearest_human. This lookup is part of existing cached identity resolution.
+The existing `GET /v1/did/{did_aw}/key` response carries this fact in an
+additive `id_tree` field. An upgraded server returns exactly
+`{"enrolled":true,"domain":"<canonical domain fixed at first enrollment>"}`
+for every registered identity, including revoked or root-replaced identities,
+or `{"enrolled":false}` when no enrollment exists. A missing field from an old
+server/cache entry means **unknown**, never proven not enrolled; malformed
+present fields are rejected, never coerced to not enrolled. Key and enrollment
+facts come from one coherent snapshot and travel in the same cached resolution.
+For an enrolled global subject, use this authoritative domain to resolve its
+current chain even on omission, and require any presented chain's domain to
+agree. Enrollment only locates status; it is not a verified identity or current
+authority result.
+
 The existing did:aw key-binding check keeps its current independent 60-second
 positive-cache/fresh-resolution rule; the new 900-second tree-status grace
 MUST NOT loosen it. `expected_request` assumes ordinary authentication has
