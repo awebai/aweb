@@ -59,18 +59,23 @@ async def _channel_service(env):
 async def _prepare(env, kind="mail", via=None):
     mid, cid = str(uuid4()), str(uuid4())
     auth = env["auth"]
+    recipient_alias = env.get("recipient_alias", "human")
     payload = dict(type=kind, from_did=auth.did_key, to_did=env["recipient_did"],
-        from_stable_id=auth.did_aw, to_stable_id="did:aw:human", subject="test", body="channel input",
+        subject="test", body="channel input",
         timestamp=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"), message_id=mid,
-        conversation_id=cid, **{"from": "agent", "to": "human"})
+        conversation_id=cid, **{"from": auth.alias, "to": recipient_alias})
+    if auth.did_aw:
+        payload["from_stable_id"] = auth.did_aw
+    if env.get("recipient_stable_id", "did:aw:human"):
+        payload["to_stable_id"] = env.get("recipient_stable_id", "did:aw:human")
     if via is not None:
         payload["via"] = via
     raw = canonical_json_bytes(payload).decode()
     target = await env["service"].resolve(auth, dto("ResolveRequest", dict(
-        version="aweb-human-resolve-v1", team_id=auth.team_id, selector="human")))
+        version="aweb-human-resolve-v1", team_id=auth.team_id, selector=recipient_alias)))
     return await env["service"].prepare(auth, dto("PrepareRequest", dict(
         version="aweb-human-prepare-v1", kind=kind, message_id=mid,
-        author=dict(kind="native", did=auth.did_aw), format="native_plaintext",
+        author=dict(kind="native", did=auth.did_aw or auth.did_key), format="native_plaintext",
         envelope=canonical_json_bytes(dict(signed_payload=raw,
             signature=sign_message(env["signing_key"], raw.encode()))).decode(),
         target=target.value, conversation_id=cid)))
@@ -81,7 +86,7 @@ async def _bind(env, prepared, context=None, key=None):
     context = CONTEXT if context is None else context
     await env["db"].execute("""INSERT INTO public.host_channel_input
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,true,$10)""",
-        env["auth"].did_aw, key.value["namespace"], key.value["key"], key.value["input_hash"],
+        env["auth"].did_aw or env["auth"].did_key, key.value["namespace"], key.value["key"], key.value["input_hash"],
         canonical_record(env["provider"].service).decode(), UUID(prepared.value["message_id"]),
         prepared.value["envelope_hash"], UUID(prepared.value["prepared_id"]), json.dumps(context), _caller(env["auth"]))
 
