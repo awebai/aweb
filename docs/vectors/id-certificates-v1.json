@@ -12696,7 +12696,437 @@
         "expected": {
           "reason": "bundle_too_large"
         }
+      },
+      {
+        "name": "csr-response-file-ascii-over-limit",
+        "kind": "response",
+        "unit_utf8": "x",
+        "repeat": 8193,
+        "file_bytes": 8193,
+        "expected": {
+          "reason": "bundle_too_large"
+        }
       }
     ]
-  }
+  },
+  "key_response_id_tree": [
+    {
+      "name": "key-response-id-tree-enrolled",
+      "key_response": {
+        "id_tree": {
+          "enrolled": true,
+          "domain": "example.com"
+        }
+      },
+      "expected_parse": {
+        "state": "enrolled",
+        "domain": "example.com"
+      },
+      "expected_tree_lookup": true,
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
+      },
+      "omission_context": {
+        "original_auth": "passed",
+        "subject": {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+          "team_member_did_aw": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "team_member_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2"
+        },
+        "status": "normal",
+        "cache_age_seconds": 0,
+        "refresh_failed": false
+      }
+    },
+    {
+      "name": "key-response-id-tree-not-enrolled",
+      "key_response": {
+        "id_tree": {
+          "enrolled": false
+        }
+      },
+      "expected_parse": {
+        "state": "not_enrolled",
+        "domain": null
+      },
+      "expected_tree_lookup": false,
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      },
+      "omission_context": {
+        "original_auth": "passed"
+      }
+    },
+    {
+      "name": "key-response-id-tree-enrolled-without-domain",
+      "key_response": {
+        "id_tree": {
+          "enrolled": true
+        }
+      },
+      "expected_parse": {
+        "state": "malformed",
+        "domain": null
+      },
+      "expected_tree_lookup": false,
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      },
+      "omission_context": {
+        "original_auth": "passed"
+      }
+    },
+    {
+      "name": "key-response-id-tree-not-enrolled-with-domain",
+      "key_response": {
+        "id_tree": {
+          "enrolled": false,
+          "domain": "example.com"
+        }
+      },
+      "expected_parse": {
+        "state": "malformed",
+        "domain": null
+      },
+      "expected_tree_lookup": false,
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      },
+      "omission_context": {
+        "original_auth": "passed"
+      }
+    },
+    {
+      "name": "key-response-id-tree-extra-field",
+      "key_response": {
+        "id_tree": {
+          "enrolled": true,
+          "domain": "example.com",
+          "extra": true
+        }
+      },
+      "expected_parse": {
+        "state": "malformed",
+        "domain": null
+      },
+      "expected_tree_lookup": false,
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      },
+      "omission_context": {
+        "original_auth": "passed"
+      }
+    },
+    {
+      "name": "key-response-id-tree-string-true",
+      "key_response": {
+        "id_tree": {
+          "enrolled": "true",
+          "domain": "example.com"
+        }
+      },
+      "expected_parse": {
+        "state": "malformed",
+        "domain": null
+      },
+      "expected_tree_lookup": false,
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      },
+      "omission_context": {
+        "original_auth": "passed"
+      }
+    },
+    {
+      "name": "key-response-id-tree-string-false",
+      "key_response": {
+        "id_tree": {
+          "enrolled": "false"
+        }
+      },
+      "expected_parse": {
+        "state": "malformed",
+        "domain": null
+      },
+      "expected_tree_lookup": false,
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      },
+      "omission_context": {
+        "original_auth": "passed"
+      }
+    },
+    {
+      "name": "key-response-id-tree-integer",
+      "key_response": {
+        "id_tree": {
+          "enrolled": 1,
+          "domain": "example.com"
+        }
+      },
+      "expected_parse": {
+        "state": "malformed",
+        "domain": null
+      },
+      "expected_tree_lookup": false,
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      },
+      "omission_context": {
+        "original_auth": "passed"
+      }
+    },
+    {
+      "name": "key-response-id-tree-null-enrolled",
+      "key_response": {
+        "id_tree": {
+          "enrolled": null
+        }
+      },
+      "expected_parse": {
+        "state": "malformed",
+        "domain": null
+      },
+      "expected_tree_lookup": false,
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      },
+      "omission_context": {
+        "original_auth": "passed"
+      }
+    },
+    {
+      "name": "key-response-id-tree-uppercase-domain",
+      "key_response": {
+        "id_tree": {
+          "enrolled": true,
+          "domain": "Example.com"
+        }
+      },
+      "expected_parse": {
+        "state": "malformed",
+        "domain": null
+      },
+      "expected_tree_lookup": false,
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      },
+      "omission_context": {
+        "original_auth": "passed"
+      }
+    },
+    {
+      "name": "key-response-id-tree-trailing-dot-domain",
+      "key_response": {
+        "id_tree": {
+          "enrolled": true,
+          "domain": "example.com."
+        }
+      },
+      "expected_parse": {
+        "state": "malformed",
+        "domain": null
+      },
+      "expected_tree_lookup": false,
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      },
+      "omission_context": {
+        "original_auth": "passed"
+      }
+    },
+    {
+      "name": "key-response-id-tree-not-object-string",
+      "key_response": {
+        "id_tree": "unknown"
+      },
+      "expected_parse": {
+        "state": "malformed",
+        "domain": null
+      },
+      "expected_tree_lookup": false,
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      },
+      "omission_context": {
+        "original_auth": "passed"
+      }
+    },
+    {
+      "name": "key-response-id-tree-not-object-null",
+      "key_response": {
+        "id_tree": null
+      },
+      "expected_parse": {
+        "state": "malformed",
+        "domain": null
+      },
+      "expected_tree_lookup": false,
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      },
+      "omission_context": {
+        "original_auth": "passed"
+      }
+    },
+    {
+      "name": "key-response-id-tree-not-object-array",
+      "key_response": {
+        "id_tree": []
+      },
+      "expected_parse": {
+        "state": "malformed",
+        "domain": null
+      },
+      "expected_tree_lookup": false,
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      },
+      "omission_context": {
+        "original_auth": "passed"
+      }
+    },
+    {
+      "name": "key-response-id-tree-absent-no-prior",
+      "key_response": {},
+      "expected_parse": {
+        "state": "unknown",
+        "domain": null
+      },
+      "expected_tree_lookup": false,
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      },
+      "omission_context": {
+        "original_auth": "passed",
+        "prior_evidence_age_seconds": null
+      }
+    },
+    {
+      "name": "key-response-id-tree-absent-past-grace",
+      "key_response": {},
+      "expected_parse": {
+        "state": "unknown",
+        "domain": null
+      },
+      "expected_tree_lookup": false,
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      },
+      "omission_context": {
+        "original_auth": "passed",
+        "prior_evidence_age_seconds": 901,
+        "refresh_failed": true
+      }
+    },
+    {
+      "name": "key-response-id-tree-revoked-still-enrolled",
+      "key_response": {
+        "id_tree": {
+          "enrolled": true,
+          "domain": "example.com"
+        }
+      },
+      "expected_parse": {
+        "state": "enrolled",
+        "domain": "example.com"
+      },
+      "expected_tree_lookup": true,
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      },
+      "omission_context": {
+        "original_auth": "passed",
+        "subject": {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+          "team_member_did_aw": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "team_member_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2"
+        },
+        "status": "alice-revoked-now",
+        "cache_age_seconds": 0,
+        "refresh_failed": false
+      }
+    },
+    {
+      "name": "key-response-id-tree-root-replaced-still-enrolled",
+      "key_response": {
+        "id_tree": {
+          "enrolled": true,
+          "domain": "example.com"
+        }
+      },
+      "expected_parse": {
+        "state": "enrolled",
+        "domain": "example.com"
+      },
+      "expected_tree_lookup": true,
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      },
+      "omission_context": {
+        "original_auth": "passed",
+        "subject": {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+          "team_member_did_aw": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "team_member_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2"
+        },
+        "status": "root-replaced",
+        "cache_age_seconds": 0,
+        "refresh_failed": false
+      }
+    },
+    {
+      "name": "key-response-id-tree-old-cache-refetched",
+      "key_response": {
+        "id_tree": {
+          "enrolled": true,
+          "domain": "example.com"
+        }
+      },
+      "expected_parse": {
+        "state": "enrolled",
+        "domain": "example.com"
+      },
+      "expected_tree_lookup": true,
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
+      },
+      "omission_context": {
+        "original_auth": "passed",
+        "subject": {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+          "team_member_did_aw": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "team_member_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2"
+        },
+        "status": "normal",
+        "cache_age_seconds": 0,
+        "refresh_failed": false
+      },
+      "cached_key_response": {},
+      "expected_key_refetch": true
+    }
+  ]
 }

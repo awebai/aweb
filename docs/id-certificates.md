@@ -729,7 +729,11 @@ facts come from one coherent snapshot and travel in the same cached resolution.
 For an enrolled global subject, use this authoritative domain to resolve its
 current chain even on omission, and require any presented chain's domain to
 agree. Enrollment only locates status; it is not a verified identity or current
-authority result.
+authority result. The field ships on AWID **before** clients enforce this
+omission rule. A cached key resolution without `id_tree` is refetched fresh
+rather than served until its TTL; if the fresh response still lacks the field,
+enrollment remains unknown and follows the refusal rule above. The rollout
+never converts absent evidence to legacy success.
 
 The existing did:aw key-binding check keeps its current independent 60-second
 positive-cache/fresh-resolution rule; the new 900-second tree-status grace
