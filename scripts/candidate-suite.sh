@@ -39,6 +39,7 @@ checks() {
   run _candidate-channel-version
   run check-a2a-copy-guardrails
   run test-go-vulnerability-audit
+  run check-go-vulnerability-audit
   run test-release-cli-version
 }
 unit() {
