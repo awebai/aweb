@@ -27,6 +27,7 @@ from aweb.messaging.contacts import (
     resolve_handle_contact_agent,
 )
 from aweb.messaging.conversations import find_active_one_to_one_conversation_between
+from aweb.messaging.verification import verified_signed_recipient_fields
 from aweb.service_errors import ServiceError, ValidationError
 
 
@@ -534,7 +535,8 @@ async def _read_chat_messages_from_target(db_infra, *, target: dict, limit: int)
               AND ca.did <> cb.did
         )
         SELECT m.message_id, m.session_id, m.from_did, m.from_alias, m.from_address,
-               m.body, m.sender_leaving, m.hang_on, m.created_at
+               m.body, m.sender_leaving, m.hang_on, m.created_at,
+               m.signature, m.signed_payload, m.content_mode
         FROM {{tables.chat_messages}} m
         WHERE m.session_id IN (SELECT session_id FROM matching_sessions)
         ORDER BY m.created_at DESC, m.message_id DESC
@@ -552,6 +554,9 @@ async def _read_chat_messages_from_target(db_infra, *, target: dict, limit: int)
             "session_id": str(row["session_id"]),
             "conversation_id": str(row["session_id"]),
             "from_did": row["from_did"],
+            "signature": row.get("signature"),
+            "signed_payload": row.get("signed_payload"),
+            **verified_signed_recipient_fields({**row, "conversation_id": str(row["session_id"])}),
             "from_alias": row["from_alias"],
             "from_address": row["from_address"],
             "body": row["body"],
