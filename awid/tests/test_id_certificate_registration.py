@@ -87,6 +87,41 @@ OWNED_ELSEWHERE = {
     "token-holder-not-recipient": "S6 invitations",
     "fixed-recipient-deferred-human-signing": "S6 invitations",
     "key-import-below-kdf-floor-refuses": "S3 keychain",
+    "csr-receive-stores-only-parent-local-invitation": "S3 child request exchange",
+    "csr-parent-local-list-and-show": "S3 child request exchange",
+    "csr-host-managed-mode-cannot-downgrade": "S3 child request exchange",
+    "csr-bad-subject-proof-refuses": "S3 child request exchange",
+    "csr-wrong-issuer-record-refuses": "S3 child request exchange",
+    "csr-token-only-substituted-key-does-not-sign": "S3 child request exchange",
+    "csr-noninteractive-approval-refuses": "S3 child request approval",
+    "csr-agent-run-approval-refuses": "S3 child request approval",
+    "csr-yes-flag-cannot-approve-human": "S3 child request approval",
+    "csr-mismatched-confirmed-fingerprint-refuses": "S3 child request approval",
+    "csr-approval-must-use-separate-trusted-channel": "S3 child request approval",
+    "csr-human-exact-interactive-approval": "S3 child request approval",
+    "csr-byte-identical-retry-returns-exact-response": "S3 child request exchange",
+    "csr-second-request-same-key-refuses": "S3 child request exchange",
+    "csr-competing-keys-void-pending-invite": "S3 child request exchange",
+    "csr-competing-key-after-approval-voids-invite": "S3 child request exchange",
+    "csr-conflicting-request-id-refuses": "S3 child request exchange",
+    "csr-refusal-issues-nothing": "S3 child request exchange",
+    "csr-expired-invite-approval-refuses": "S3 child request approval",
+    "csr-parent-revoked-after-wait-refuses": "S3 child request approval",
+    "csr-local-resign-contact-no-human-login": "S3 local re-sign exchange",
+    "csr-local-resign-without-provenance-refuses": "S3 local re-sign exchange",
+    "csr-local-resign-substituted-parent-refuses": "S3 local re-sign exchange",
+    "csr-local-resign-parent-revoked-after-wait": "S3 local re-sign exchange",
+    "csr-import-mismatch-preserves-old-certificate": "S3 child response import",
+    "csr-local-import-matching-response": "S3 child response import",
+    "csr-human-import-remains-pending": "S3 child response import",
+}
+
+# Consumed cases another slice also tests, for its own component's half.
+SHARED_WITH = {
+    "csr-awid-success-local-failure-exact-retry": (
+        "S2 consumes the AWID half (same certificate and invitation ID keep the original registered_at, "
+        "no new revision); S3 owns the child's local retry"
+    ),
 }
 
 
@@ -96,6 +131,7 @@ def test_every_frozen_operation_case_is_accounted_for_by_name():
     groups = [CONSUMED, S2_LATER, set(OWNED_ELSEWHERE)]
     assert sum(len(group) for group in groups) == len(set().union(*groups))
     assert set(names) == set().union(*groups)
+    assert set(SHARED_WITH) <= CONSUMED
 
 
 @pytest_asyncio.fixture
@@ -142,6 +178,27 @@ async def test_first_exact_invitation_registration(case, tree, awid_db_infra):
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"certificate_id": certificate_id("bob"), "registered_at": case["expected"]["registered_at"]}
     assert len(await _revisions(awid_db_infra, did_aw("bob"))) == case["expected"]["writes"]
+
+
+@consumes("csr-awid-success-local-failure-exact-retry")
+async def test_a_child_retrying_its_registered_response_keeps_the_original_registration(case, tree, awid_db_infra):
+    request = VECTORS["child_requests"]["requests"][case["input"]["request"]]["signed"]["request"]
+    chain = VECTORS["child_requests"]["responses"][case["input"]["response"]]["response"]["chain"]["certificates"]
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+    first = await tree.register(chain, invitation_id=request["invitation_id"], when=at("2026-10-26T00:03:00Z"))
+    assert first.status_code == 200, first.text
+    before = await _revisions(awid_db_infra)
+
+    # The child's local commit failed; it resubmits the same response unchanged.
+    retry = await tree.register(chain, invitation_id=request["invitation_id"], when=at("2026-10-26T00:30:00Z"))
+
+    assert retry.status_code == 200, retry.text
+    assert retry.json() == first.json()
+    assert retry.json()["registered_at"] == "2026-10-26T00:03:00.000000Z"
+    assert await _revisions(awid_db_infra) == before
+    assert [(row["certificate_id"], str(row["invitation_id"])) for row in before if row["id"] == request["id"]] == [
+        (certificate_id("bob"), request["invitation_id"]),
+    ]
 
 
 @consumes("exact-invitation-retry-keeps-time")
