@@ -1048,8 +1048,18 @@ A success returns exactly `{certificate_id, registered_at}`. Refusals use
 the tree's refusals (`domain_mismatch`, `human_issuer_is_agent`, `cycle`,
 `duplicate_id`, `missing_parent`, `identity_kind_immutable`, `subject_revoked`,
 `unregistered_parent`, `parent_revoked`, `issuer_key_not_current`,
-`superseded_certificate`, `evidence_unavailable`). The rate-limit bucket is
-`id_certificate_register` (300 per hour per client IP; trusted-service exempt).
+`superseded_certificate`, `evidence_unavailable`).
+
+Registration is rate limited in the `id_certificate_register` bucket: 300
+requests per hour per client IP. Every request does signature and database
+work before it can be refused, so an anonymous caller must not be able to
+drive it unbounded; a human or global-agent enrollment is rare, so the bucket
+does not limit ordinary use. The only exemption is the deployment's
+configured `AWID_SERVICE_TOKEN` presented in `X-AWID-Service-Token` (the
+hosted service registering on behalf of its users). A missing or wrong token,
+or any token while none is configured, counts against the caller's bucket.
+The exemption is rate-limit only: it never replaces the subject's key proof
+or the parent's signature.
 
 ---
 

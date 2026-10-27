@@ -16,6 +16,8 @@ import pytest
 import pytest_asyncio
 
 from awid import dns_auth
+from awid import ratelimit as ratelimit_module
+from awid.ratelimit import MemoryFixedWindowRateLimiter
 
 from conftest import build_signed_headers
 
@@ -621,3 +623,27 @@ async def test_a_parent_rotation_committed_during_the_wait_is_seen(tree, awid_db
 
     assert (resp.status_code, _code(resp)) == (422, "issuer_key_not_current"), resp.text
     assert await _revisions(awid_db_infra, did_aw("bob")) == []
+
+
+# ---------------------------------------------------------------------------
+# Rate limit
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("credential", ["configured", "missing", "wrong", "unconfigured"])
+@pytest.mark.asyncio
+async def test_only_the_configured_service_token_exempts_registration_from_its_bucket(
+    credential, clocked_client, monkeypatch,
+):
+    token = "s" * 40
+    app = clocked_client.app
+    monkeypatch.setattr(app.state, "awid_service_token", None if credential == "unconfigured" else token)
+    monkeypatch.setattr(app.state, "rate_limiter", MemoryFixedWindowRateLimiter())
+    monkeypatch.setitem(ratelimit_module._BUCKET_DEFAULTS, "id_certificate_register", (2, 3600))
+    headers = {} if credential == "missing" else {"X-AWID-Service-Token": "w" * 40 if credential == "wrong" else token}
+
+    statuses = [
+        (await clocked_client.post(REGISTER_PATH, content=b"{}", headers=headers)).status_code for _ in range(3)
+    ]
+
+    assert statuses == ([400, 400, 400] if credential == "configured" else [400, 400, 429])
