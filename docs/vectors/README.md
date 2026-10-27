@@ -75,6 +75,9 @@ Its operation cases pin parent-local invitation/issuance-log ownership,
 interactive human key approval over a separate trusted channel, competing-key
 invalidation, host-mode isolation, re-sign provenance and exact retry/import.
 They are S3 acceptance inputs, not evidence of an implemented transport.
+`child_requests.file_refusals` constructs raw file bytes by repeating the UTF-8
+`unit_utf8` `repeat` times; request/response caps are measured in bytes before
+JSON parsing, with exact-limit and oversized cases.
 
 ### `member-attribution-v1.json` — superseded, historical only
 
