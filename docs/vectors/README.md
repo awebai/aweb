@@ -689,7 +689,7 @@ reference duplication are mutation-tested failures.
 | `e2ee-v2-cross-language.json` | Python aweb `test_e2ee_crypto_helpers.py` and pre-activation federation harness; Go AWID `e2ee_cross_language_test.go`; TypeScript channel-core `encrypted_dispatch.test.ts` |
 | `egress-address-v1.json` | naapp-lib `test_addresses.py` |
 | `egress-url-v2.json` | naapp-lib `test_url_vectors.py` |
-| `id-certificates-v1.json` | Python AWID `test_id_certificate_vectors.py`; Go shared `id_certificates_test.go` (codec/byte/header checkpoint) |
+| `id-certificates-v1.json` | Python AWID `test_id_certificate_vectors.py`; Go shared `id_certificates_test.go` (codec/byte/header checkpoint); Python AWID `id_tree_support.py`, read by the registry's operation-case and route tests |
 | `identity-log-negative-v1.json` | Python AWID `test_identity_log_verify.py`; Go shared `identity_log_negative_test.go`; TypeScript channel-core `registry.test.ts` |
 | `identity-log-raw-wire-v1.json` | Python AWID `test_identity_log_verify.py`; Go shared `identity_log_raw_wire_test.go`; TypeScript channel-core `registry.test.ts` |
 | `identity-log-v1.json` | Python AWID `test_conformance_vectors.py`, `test_did.py`, `test_external_registry.py`, and `test_identity_log_verify.py`; Python aweb `test_identity_conformance_vectors.py` and pre-activation federation harness; Go AWID `registry_register_test.go`, `federation_authority_test.go`, and `federation_external_registry_test.go`; Go shared `conformance_test.go`; TypeScript channel-core `registry.test.ts`, `log_rollback.test.ts`, and `received_sender_trust.test.ts` |

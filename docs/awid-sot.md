@@ -1007,6 +1007,52 @@ current-key data.
 
 ---
 
+## Identity-tree registration
+
+The identity tree's wire contract is [identity certificates](id-certificates.md);
+this section states how AWID implements its registration endpoint.
+
+```
+POST /v1/id-certificates/register   Register a parent-signed ID certificate
+```
+
+The body is exactly `{certificate, expected_head, invitation_id}`. The request
+carries the covering controller envelope (`operation="register_id_certificate"`,
+`domain` = the certificate's domain) signed by the subject did:aw's current
+key; there is no legacy-envelope fallback. `X-AWID-ID-Chain` carries the full
+chain, leaf byte-identical to the body certificate. Only did:aw subjects
+register; a local agent's did:key certificate is carried, never registered.
+
+Before its transaction, AWID checks the body, certificate shape and signature,
+the envelope, and the chain's structure (links, R1, R3, cycles). The
+transaction then takes, in order: an advisory lock on the exact domain, the
+domain's `dns_namespaces` row FOR SHARE, the subject's and parent's
+`did_aw_mappings` rows FOR SHARE sorted by did:aw, and the subject's
+`id_identities` row FOR UPDATE. Namespace rotation, reverify and delete hold
+the namespace row FOR UPDATE, and did:aw rotation holds its mapping row FOR
+UPDATE, so each serializes with registration. After the last lock wait it
+resolves an exact existing receipt (same digest and invitation) before any
+fresh-issuance check, then checks invitation reuse, the subject's fixed kind
+and domain, revocation and head CAS, the parent (the open `dns_exact` epoch's
+key for a namespace parent; a registered, unrevoked, same-domain parent's
+current key for an identity parent) and that the presented ancestors are the
+registered current heads. It records `registered_at` from the post-lock clock,
+strictly after the latest identity-tree event in the domain and the selected
+key epochs, with the exact `issuer_key_seq`.
+
+A success returns exactly `{certificate_id, registered_at}`. Refusals use
+`detail.code`: 400 for shape and encoding (`invalid_shape`, `invalid_json`,
+`invalid_encoding`, `invalid_signature`, `bundle_too_large`,
+`noncanonical_json`, `depth_exceeded`), 401 for the envelope, 403
+`subject_mismatch`, 409 `head_conflict` and `invitation_conflict`, and 422 for
+the tree's refusals (`domain_mismatch`, `human_issuer_is_agent`, `cycle`,
+`duplicate_id`, `missing_parent`, `identity_kind_immutable`, `subject_revoked`,
+`unregistered_parent`, `parent_revoked`, `issuer_key_not_current`,
+`superseded_certificate`, `evidence_unavailable`). The rate-limit bucket is
+`id_certificate_register` (300 per hour per client IP; trusted-service exempt).
+
+---
+
 ## awid database schema
 
 AWID applies the files in `awid/src/awid_service/migrations/` in filename order

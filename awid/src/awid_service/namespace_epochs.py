@@ -39,7 +39,7 @@ async def record_namespace_controller(
         and current["established_by"] == established_by
     ):
         return
-    at = serialization_time(clock, await _latest_domain_event(tx, domain))
+    at = serialization_time(clock, await latest_domain_event(tx, domain))
     if current is not None:
         await _retire(tx, domain, current["seq"], at)
     await tx.execute(
@@ -61,7 +61,7 @@ async def retire_namespace_controller(tx, *, domain: str, clock: Clock) -> None:
     current = await _lock_open_epoch(tx, domain)
     if current is None:
         return
-    at = serialization_time(clock, await _latest_domain_event(tx, domain))
+    at = serialization_time(clock, await latest_domain_event(tx, domain))
     await _retire(tx, domain, current["seq"], at)
 
 
@@ -90,7 +90,7 @@ async def _retire(tx, domain: str, seq: int, at) -> None:
     )
 
 
-async def _latest_domain_event(tx, domain: str):
+async def latest_domain_event(tx, domain: str):
     """The latest identity-tree witness time in ``domain``.
 
     A root key change conflicts with every registration and revocation the
