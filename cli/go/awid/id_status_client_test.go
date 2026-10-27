@@ -69,6 +69,7 @@ type statusEnv struct {
 
 	httpStatus         int
 	rawBody            []byte
+	brokenBody         bool
 	dnsFailure         bool
 	dnsDelay           time.Duration
 	httpDelay          time.Duration
@@ -137,7 +138,7 @@ func (env *statusEnv) RoundTrip(r *http.Request) (*http.Response, error) {
 	env.mu.Lock()
 	env.requests = append(env.requests, request.Domain)
 	gate := env.gate[request.Domain]
-	delay, status, raw, advance := env.httpDelay, env.httpStatus, env.rawBody, env.advanceDuringFetch
+	delay, status, raw, advance, broken := env.httpDelay, env.httpStatus, env.rawBody, env.advanceDuringFetch, env.brokenBody
 	answer := env.status[request.Domain]
 	env.mu.Unlock()
 	if gate != nil {
@@ -161,12 +162,21 @@ func (env *statusEnv) RoundTrip(r *http.Request) (*http.Response, error) {
 	if status != 200 {
 		return respond(status, []byte(`{"detail":"registry unavailable"}`)), nil
 	}
+	if broken {
+		r := respond(200, nil)
+		r.Body = io.NopCloser(io.MultiReader(strings.NewReader(`{"v":1,`), errReader{}))
+		return r, nil
+	}
 	if raw != nil {
 		return respond(200, raw), nil
 	}
 	encoded, _ := json.Marshal(answer)
 	return respond(200, encoded), nil
 }
+
+type errReader struct{}
+
+func (errReader) Read([]byte) (int, error) { return 0, errors.New("connection reset mid-body") }
 
 func (env *statusEnv) verifyDomain(ctx context.Context, domain string) (DomainAuthority, error) {
 	env.mu.Lock()
@@ -693,17 +703,20 @@ func TestStatusClientContradictoryAuthorityIsKeptAsCurrentAndNeverVerifies(t *te
 
 func TestStatusClientAMalformedSuccessfulAnswerIsUnavailableAndEndsTheOldTree(t *testing.T) {
 	oversized := `{"x":"` + strings.Repeat("a", MaxResponseSize) + `"}`
-	for name, body := range map[string]string{"array": "[]", "not json": "not json", "string": `"text"`, "oversized": oversized} {
+	for name, body := range map[string]string{"array": "[]", "not json": "not json", "string": `"text"`, "null": "null", "trailing value": `{"v":1} []`, "oversized": oversized, "read error": ""} {
 		t.Run(name, func(t *testing.T) {
 			env := newStatusEnv(t)
 			env.evidence(nil)
 			env.clock.Add(61)
-			env.set(func() { env.rawBody = []byte(body) })
+			env.set(func() {
+				env.rawBody = []byte(body)
+				env.brokenBody = name == "read error"
+			})
 			e := env.evidence(nil)
 			if e.AgeSeconds != nil || e.RefreshFailed {
 				t.Fatalf("age=%v failed=%v", ageOf(e), e.RefreshFailed)
 			}
-			env.set(func() { env.rawBody = nil; env.httpStatus = 503 })
+			env.set(func() { env.rawBody = nil; env.brokenBody = false; env.httpStatus = 503 })
 			env.clock.Add(1)
 			if e := env.evidence(nil); e.AgeSeconds != nil {
 				t.Fatalf("the old tree outlived a malformed answer: age=%v", ageOf(e))
