@@ -21,6 +21,8 @@ from awid.did import did_from_public_key, generate_keypair
 from awid.signing import canonical_json_bytes, sign_message
 from awid.id_certificates import id_certificate_id
 from awid.ratelimit import NoOpRateLimiter
+from awid_service import id_status
+from awid_service.deps import get_domain_verifier
 
 from conftest import build_signed_headers
 from identity_support import request_rotation
@@ -170,6 +172,25 @@ async def test_fresh_caller_keys_from_one_ip_share_its_budget(tree, monkeypatch)
     statuses = [(await _signed_by_fresh_key(tree, _request("alice"), headers)).status_code for _ in range(61)]
 
     assert statuses == [200] * 60 + [429]
+
+
+@pytest.mark.asyncio
+async def test_a_rate_limited_request_does_no_dns_lookup(tree):
+    for _ in range(60):
+        assert (await _status(tree, _request("alice"))).status_code == 200
+    answer = tree.client.app.dependency_overrides[get_domain_verifier]()
+    lookups = []
+
+    async def counted(domain: str):
+        lookups.append(domain)
+        return await answer(domain)
+
+    tree.client.app.dependency_overrides[get_domain_verifier] = lambda: counted
+
+    resp = await _status(tree, _request("alice"))
+
+    assert resp.status_code == 429
+    assert lookups == []
 
 
 @pytest.mark.asyncio
@@ -354,6 +375,7 @@ async def test_an_id_registered_in_another_domain_is_missing_here(tree):
 
     assert resp.status_code == 200, resp.text
     assert (resp.json()["identities"], resp.json()["missing"]) == ([], [did_aw("depth1")])
+    assert resp.json()["namespace"] == VECTORS["status_fixtures"]["normal"]["namespace"]
 
 
 @pytest.mark.asyncio
@@ -461,6 +483,21 @@ async def test_evidence_over_the_byte_limit_is_unavailable_not_partial(tree):
     resp = await _status(tree, _request("alice"))
 
     assert (resp.status_code, _code(resp)) == (503, "evidence_unavailable"), resp.text
+
+
+@pytest.mark.asyncio
+async def test_the_snapshot_transaction_cannot_write(tree, awid_db_infra, monkeypatch):
+    """Defence in depth: a write slipped into the snapshot is refused by the database."""
+    real_identity = id_status._identity
+
+    async def identity_that_writes(tx, id_):
+        await tx.execute("UPDATE {{tables.id_identities}} SET revoked_at = NULL WHERE id = $1", id_)
+        return await real_identity(tx, id_)
+
+    monkeypatch.setattr(id_status, "_identity", identity_that_writes)
+
+    with pytest.raises(Exception, match="read-only transaction"):
+        await _status(tree, _request("alice"))
 
 
 @pytest.mark.asyncio
