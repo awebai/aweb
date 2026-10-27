@@ -29,6 +29,16 @@ type idChildRequestVectors struct {
 				Reason   *string `json:"reason"`
 			} `json:"expected"`
 		} `json:"requests"`
+		FileRefusals []struct {
+			Name      string `json:"name"`
+			Kind      string `json:"kind"`
+			UnitUTF8  string `json:"unit_utf8"`
+			Repeat    int    `json:"repeat"`
+			FileBytes int    `json:"file_bytes"`
+			Expected  struct {
+				Reason string `json:"reason"`
+			} `json:"expected"`
+		} `json:"file_refusals"`
 		Responses map[string]struct {
 			Response        map[string]any `json:"response"`
 			CanonicalUTF8   string         `json:"canonical_utf8"`
@@ -166,12 +176,6 @@ func TestIDChildRequestRefusals(t *testing.T) {
 		return []byte(raw)
 	}
 
-	t.Run("file over the cap refuses before parsing", func(t *testing.T) {
-		refuses(t, bytes.Repeat([]byte("x"), awid.IDCertificateRequestMaxBytes+1), "bundle_too_large")
-	})
-	t.Run("file at the cap is parsed", func(t *testing.T) {
-		refuses(t, bytes.Repeat([]byte("x"), awid.IDCertificateRequestMaxBytes), "invalid_json")
-	})
 	t.Run("noncanonical whitespace", func(t *testing.T) {
 		refuses(t, []byte(strings.Replace(base.CanonicalUTF8, ",", ", ", 1)), "noncanonical_json")
 	})
@@ -247,12 +251,6 @@ func TestIDChildResponseRefusals(t *testing.T) {
 			t.Fatalf("reason=%q (%v) want %q", got, err, reason)
 		}
 	}
-	t.Run("file over the cap refuses before parsing", func(t *testing.T) {
-		refuses(t, strings.Repeat("x", awid.IDCertificateRequestMaxBytes+1), "bundle_too_large")
-	})
-	t.Run("file at the cap is parsed", func(t *testing.T) {
-		refuses(t, strings.Repeat("x", awid.IDCertificateRequestMaxBytes), "invalid_json")
-	})
 	t.Run("noncanonical", func(t *testing.T) {
 		refuses(t, strings.Replace(base.CanonicalUTF8, ",", ", ", 1), "noncanonical_json")
 	})
@@ -262,4 +260,37 @@ func TestIDChildResponseRefusals(t *testing.T) {
 	t.Run("tampered chain signature", func(t *testing.T) {
 		refuses(t, strings.Replace(base.CanonicalUTF8, `"issued_at":"2026-10-26T00:11:00Z"`, `"issued_at":"2026-10-26T00:12:00Z"`, 1), "invalid_signature")
 	})
+}
+
+func TestIDChildFileRefusals(t *testing.T) {
+	v := loadIDChildRequestVectors(t)
+	var names []string
+	for _, c := range v.ChildRequests.FileRefusals {
+		names = append(names, c.Name)
+	}
+	want := []string{"csr-request-file-over-limit", "csr-request-file-at-limit-invalid-json", "csr-response-file-over-limit", "csr-response-file-at-limit-invalid-json"}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("file refusals=%v want %v", names, want)
+	}
+	for _, c := range v.ChildRequests.FileRefusals {
+		t.Run(c.Name, func(t *testing.T) {
+			raw := bytes.Repeat([]byte(c.UnitUTF8), c.Repeat)
+			if len(raw) != c.FileBytes {
+				t.Fatalf("recipe builds %d bytes want %d", len(raw), c.FileBytes)
+			}
+			var parsed map[string]any
+			var err error
+			switch c.Kind {
+			case "request":
+				parsed, err = awid.ParseIDCertificateRequest(raw)
+			case "response":
+				parsed, err = awid.ParseIDCertificateResponse(raw)
+			default:
+				t.Fatalf("unknown recipe kind %q", c.Kind)
+			}
+			if got := awid.IDCertificateErrorCode(err); got != c.Expected.Reason || parsed != nil {
+				t.Fatalf("reason=%q (%v) want %q", got, err, c.Expected.Reason)
+			}
+		})
+	}
 }
