@@ -26,7 +26,7 @@ from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -36,8 +36,13 @@ from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pydantic import BaseModel
 
 from aweb_naapp import ratelimit
+from aweb_naapp.hooks.strictjson import Refused
 from aweb_naapp.runtime.approvals import AuthenticationFailed
-from aweb_naapp.runtime.passkeys import Passkeys
+from aweb_naapp.runtime.credential_audit import GovernanceUnavailable
+from aweb_naapp.runtime.passkeys import ContactChangeRefused, EnrolmentRefused, Passkeys
+
+if TYPE_CHECKING:
+    from aweb_naapp.runtime.credential_audit import CredentialAudit
 
 logger = logging.getLogger(__name__)
 
@@ -448,5 +453,95 @@ def console_login_router(
         await sessions.close(session)
         sessions.clear_cookie(response)
         return {"closed": True}
+
+    return router
+
+
+async def require_json(request: Request) -> None:
+    """Refuse a state-changing request whose body is not declared JSON (415)."""
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        media_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        if media_type != "application/json":
+            raise HTTPException(status_code=415, detail="json_required")
+
+
+async def exact_body(request: Request, fields: set[str]) -> dict[str, Any]:
+    """The request's JSON object, which must have exactly ``fields``; anything
+    else is refused with 400 and never echoed."""
+    try:
+        body = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="request_invalid") from None
+    if not isinstance(body, dict) or set(body) != fields:
+        raise HTTPException(status_code=400, detail="request_invalid")
+    return body
+
+
+def text_field(body: dict[str, Any], field: str) -> str:
+    """``body[field]`` as a non-empty string, or 400."""
+    value = body.get(field)
+    if not isinstance(value, str) or not value:
+        raise HTTPException(status_code=400, detail="request_invalid")
+    return value
+
+
+def credential_router(
+    *, passkeys: Passkeys, recorder: "CredentialAudit", prefix: str = ""
+) -> APIRouter:
+    """B3's credential ceremonies a designated holder reaches through its links:
+    ``POST /enrolment/options``, ``POST /enrolment`` and ``POST /contact-proof``,
+    under ``prefix``.
+
+    The endpoints are anonymous: the single-use token in the body is the only
+    authority, and no session is read or opened. Each takes exactly its JSON
+    fields. A token B3 refuses gets a fixed 403 that never echoes it; a change
+    the recorder cannot record is refused with 503 and its code, and takes no
+    effect.
+    """
+    router = APIRouter(prefix=prefix, route_class=ConsoleRoute)
+
+    @router.post("/enrolment/options", dependencies=[Depends(require_json)])
+    async def enrolment_options(request: Request) -> dict[str, Any]:
+        body = await exact_body(request, {"link_token"})
+        try:
+            return dict(await passkeys.enrolment_options(text_field(body, "link_token")))
+        except EnrolmentRefused:
+            raise HTTPException(status_code=403, detail="enrolment_refused") from None
+
+    @router.post("/enrolment", dependencies=[Depends(require_json)])
+    async def enrolment(request: Request) -> dict[str, str]:
+        body = await exact_body(request, {"link_token", "credential"})
+        if not isinstance(body["credential"], dict):
+            raise HTTPException(status_code=400, detail="request_invalid")
+        try:
+            token = text_field(body, "link_token")
+            prepared = await recorder.prepare_enrolment(token)
+            with recorder.prepared(prepared):
+                approver = await passkeys.complete_enrolment(
+                    token, body["credential"], fence=prepared
+                )
+        except EnrolmentRefused:
+            raise HTTPException(status_code=403, detail="enrolment_refused") from None
+        except GovernanceUnavailable as refused:
+            raise HTTPException(503, refused.code) from None
+        except Refused as refused:
+            raise HTTPException(503, refused.code) from None
+        return {"scope": approver.scope}
+
+    @router.post("/contact-proof", dependencies=[Depends(require_json)])
+    async def contact_proof(request: Request) -> dict[str, str]:
+        body = await exact_body(request, {"proof_token"})
+        try:
+            token = text_field(body, "proof_token")
+            prepared = await recorder.prepare_contact_proof(token)
+            with recorder.prepared(prepared):
+                effective_at = await passkeys.prove_contact(token, fence=prepared)
+        except ContactChangeRefused:
+            raise HTTPException(status_code=403, detail="contact_proof_refused") from None
+        except GovernanceUnavailable as refused:
+            raise HTTPException(503, refused.code) from None
+        except Refused as refused:
+            raise HTTPException(503, refused.code) from None
+        return {"effective_at": effective_at.isoformat()}
 
     return router
