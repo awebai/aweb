@@ -463,7 +463,7 @@ async def test_mcp_auth_fails_when_proxy_trust_enabled_without_secret(aweb_cloud
     "OPS:ACME.COM",
     "ops:acme..com",
     "ops:acme.com.",
-    str(uuid4()),
+    pytest.param(str(uuid4()), id="uuid-without-namespace"),
     "",
     "nocolon",
 ])
