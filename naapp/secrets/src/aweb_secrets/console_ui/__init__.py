@@ -49,6 +49,27 @@ def console_page(*, title: str, body_html: str, session: ConsoleSession) -> HTML
     )
 
 
+def recovery_page(
+    error: HTTPException, *, message: str, action_href: str, action_label: str
+) -> HTMLResponse:
+    """A browser GET refusal as a page: its own status and headers, one sentence, one way on.
+
+    message, action_href and action_label are fixed by the caller, never request values.
+    The page sits outside console_page's per-tab guard, so it shows without a CSRF token,
+    and it shows nothing the refused read would have shown. Serve through ConsoleRoute.
+    A 401 goes to _login_redirect instead.
+    """
+    response = _page(
+        message,
+        f'<section id="console-recovery"><h1>{escape(message)}</h1>'
+        f'<p><a id="console-recovery-action" href="{escape(action_href, quote=True)}">'
+        f"{escape(action_label)}</a></p></section>",
+    )
+    response.status_code = error.status_code
+    response.headers.update(error.headers or {})
+    return response
+
+
 def _login_redirect(error: HTTPException) -> RedirectResponse:
     if error.status_code != 401:
         raise error

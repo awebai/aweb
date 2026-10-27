@@ -1,7 +1,21 @@
 "use strict";
 
 (() => {
-  const notice = document.querySelector("#notice");
+  // A failure is reported beside the control that failed, which keeps the focus.
+  const failed = (button, message) => {
+    const actions = button.closest(".access-actions");
+    let alert = actions.previousElementSibling;
+    if (!alert || !alert.classList.contains("access-failure")) {
+      alert = document.createElement("p");
+      alert.className = "access-failure";
+      alert.setAttribute("role", "alert");
+      actions.before(alert);
+    }
+    alert.textContent = message;
+    button.disabled = false;
+    alert.scrollIntoView({block: "nearest"});
+    button.focus();
+  };
   // Revoking narrows authority, so it needs the S4 session and CSRF only, never a passkey.
   for (const button of document.querySelectorAll(".access-revoke")) {
     button.addEventListener("click", async () => {
@@ -14,8 +28,7 @@
         );
         window.location.reload();
       } catch {
-        if (notice) notice.textContent = "The grant could not be revoked. Try again.";
-        button.disabled = false;
+        failed(button, "The grant could not be revoked. Try again.");
       }
     });
   }
@@ -34,8 +47,7 @@
         );
         window.location.reload();
       } catch {
-        if (notice) notice.textContent = "The agent could not be removed from the role. Try again.";
-        button.disabled = false;
+        failed(button, "The agent could not be removed from the role. Try again.");
       }
     });
   }

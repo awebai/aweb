@@ -30,7 +30,7 @@ from aweb_secrets import access_reads, records
 from aweb_secrets.admission import use_coverage_refusal
 from aweb_secrets.console import OwnerConsole
 from aweb_secrets.console_changes import _errors
-from aweb_secrets.console_ui import _login_redirect, console_page
+from aweb_secrets.console_ui import _login_redirect, console_page, recovery_page
 from aweb_secrets.grant import is_secrets_role
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
 from aweb_secrets.principal_display import observed_principal_alias, principal_html
@@ -462,7 +462,6 @@ def _render(view: AccessView) -> str:
         '<p class="access-note">This is the confirmed configuration'
         f" (revision {view.revision}). Every request is still checked when it is made,"
         " including approvals, rate limits and allowed times.</p>",
-        '<p id="notice" role="status"></p>',
     ]
     if not view.agents:
         parts.append('<p id="access-empty">No agent can use these secrets.</p>')
@@ -494,6 +493,22 @@ def _render(view: AccessView) -> str:
     return "".join(parts)
 
 
+# The refusals an owner can meet by following a link or loading during a change.
+_RECOVERIES = {
+    "secret_not_found": ("Secret not found.", "/access", "All access"),
+    "access_changed": ("Access changed while this page was loading.", "/access", "Reload access"),
+}
+
+
+def _recovery(refused: HTTPException) -> Response:
+    if refused.status_code == 401:
+        return _login_redirect(refused)
+    if refused.detail not in _RECOVERIES:
+        raise refused
+    message, href, label = _RECOVERIES[refused.detail]
+    return recovery_page(refused, message=message, action_href=href, action_label=label)
+
+
 def console_access_router(*, services: ConsoleAccess) -> APIRouter:
     """Human app only; inject the same OwnerConsole the other owner pages use."""
     router = APIRouter(route_class=ConsoleRoute)
@@ -503,8 +518,11 @@ def console_access_router(*, services: ConsoleAccess) -> APIRouter:
             current = await services.console.sessions.current(request)
         except HTTPException as refused:
             return _login_redirect(refused)
-        async with _errors(services.console, current):
-            view = await services.view(current, secret_ref=secret_ref)
+        try:
+            async with _errors(services.console, current):
+                view = await services.view(current, secret_ref=secret_ref)
+        except HTTPException as refused:
+            return _recovery(refused)
         title = "Access" if secret_ref is None else f"Access to {secret_ref}"
         return console_page(title=title, body_html=_render(view), session=current)
 
