@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
 from html.parser import HTMLParser
+from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -14,7 +15,7 @@ from uuid import uuid4
 import aweb_naapp.runtime
 import httpx
 import pytest
-from aweb_naapp.console import CONSOLE_HEADERS, apply_console_migrations
+from aweb_naapp.console import CONSOLE_HEADERS, COOKIE_NAME, apply_console_migrations
 from aweb_naapp.egress import InternalDestinations
 from aweb_naapp.hooks.strictjson import encode_base64url
 from aweb_naapp.roles import assign, principal_key, unassign
@@ -715,11 +716,12 @@ async def test_access_changed_while_loading_is_a_page_offering_a_fresh_load(acce
             db, lambda tx: unassign(tx, ALICE, OWNER_ROLE)
         )
         view = asyncio.create_task(human.get("/access"))
-        waiting = await view_waits_on_owner_role(db)
-        release.set()
-        await withdrawal
-        response = await asyncio.wait_for(view, 5)
-    assert waiting, "the view did not reach the owner role hold"
+        try:
+            assert await view_waits_on_owner_role(db), "the view did not reach the owner role hold"
+        finally:
+            release.set()
+            await asyncio.gather(withdrawal, view, return_exceptions=True)
+        response = view.result()
     assert response.status_code == 409 and response.headers["retry-after"] == "0"
     assert response.headers["content-type"].startswith("text/html")
     for name, value in CONSOLE_HEADERS.items():
@@ -734,9 +736,11 @@ async def test_a_session_ending_during_the_read_goes_to_sign_in_with_its_cookie_
     db = access.world.db
     async with clients(access) as (human, _):
         await sign_in(access.world, human, owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did))
-        await db.execute(
-            "UPDATE {{tables.console_sessions}} SET expires_at = NOW() + interval '2 seconds'"
-            " WHERE closed_at IS NULL"
+        old = human.cookies.get(COOKIE_NAME)
+        assert old
+        deadline = await db.fetch_value(
+            "UPDATE {{tables.console_sessions}} SET expires_at = NOW() + interval '5 seconds'"
+            " WHERE closed_at IS NULL RETURNING expires_at"
         )
         # Lock the owner's role row without changing it: the view waits, then reads it intact.
         lock, release = await owner_role_held_by(
@@ -750,15 +754,28 @@ async def test_a_session_ending_during_the_read_goes_to_sign_in_with_its_cookie_
             ),
         )
         view = asyncio.create_task(human.get("/access"))
-        waiting = await view_waits_on_owner_role(db)
-        await asyncio.sleep(2.5)
-        release.set()
-        await lock
-        response = await asyncio.wait_for(view, 5)
-        again = await human.get("/access")
-    assert waiting, "the view did not reach the owner role hold"
+        try:
+            assert await view_waits_on_owner_role(db), "the view did not reach the owner role hold"
+            for _ in range(400):
+                if datetime.now(UTC) > deadline:
+                    break
+                await asyncio.sleep(0.05)
+            else:
+                pytest.fail("the session did not reach its expiry")
+        finally:
+            release.set()
+            await asyncio.gather(lock, view, return_exceptions=True)
+        response = view.result()
+        kept = COOKIE_NAME in human.cookies
+        replayed = await human.get("/access", headers={"cookie": f"{COOKIE_NAME}={old}"})
     assert response.status_code == 303 and response.headers["location"] == "/login"
-    assert "set-cookie" in response.headers
     for name, value in CONSOLE_HEADERS.items():
         assert response.headers[name] == value
-    assert again.status_code == 303 and again.headers["location"] == "/login"
+    # The session cookie itself is deleted, in the response and in the browser's jar.
+    cleared = SimpleCookie()
+    for header in response.headers.get_list("set-cookie"):
+        cleared.load(header)
+    assert cleared[COOKIE_NAME].value == "" and cleared[COOKIE_NAME]["max-age"] == "0"
+    assert not kept
+    # The old cookie, replayed on its own, no longer reaches the page.
+    assert replayed.status_code == 303 and replayed.headers["location"] == "/login"
