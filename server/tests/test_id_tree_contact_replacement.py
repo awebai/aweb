@@ -121,6 +121,30 @@ async def test_address_replacement_does_not_transfer_contact_trust(privacy_app, 
             assert await trusted(old['did_aw'])
             assert not await trusted(replacement['did_aw'])
 
+            other_seed = bytes.fromhex(old['seed_hex'])
+            other_announcement = canonical_json_bytes(
+                json.loads(announcement) | {'controller_did': old['did_key']}
+            )
+            invalid_announcements = {
+                'non-controller-signature': payload | {
+                    'accept_reassignment': True,
+                    'signature': sign_message(other_seed, announcement),
+                },
+                # This signature is valid for the claimed controller, which
+                # differs from the namespace controller resolved from AWID.
+                'resolved-controller-mismatch': payload | {
+                    'accept_reassignment': True,
+                    'controller_did': old['did_key'],
+                    'signature': sign_message(other_seed, other_announcement),
+                },
+            }
+            for invalid_name, invalid_payload in invalid_announcements.items():
+                rejected = await _request(env, 'bob', 'POST', path, invalid_payload)
+                assert rejected.is_error, (invalid_name, rejected.text)
+                assert rejected.json()['reason'] == 'contact_identity_binding_required'
+                assert await trusted(old['did_aw'])
+                assert not await trusted(replacement['did_aw'])
+
             accepted = await _request(env, 'bob', 'POST', path, payload | {'accept_reassignment': True})
             assert accepted.status_code == 200, accepted.text
             assert accepted.json()['contact_id'] == contact['contact_id']
