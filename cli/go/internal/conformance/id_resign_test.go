@@ -351,6 +351,34 @@ func TestIDResignProbes(t *testing.T) {
 		f.log = newIssuanceLog(id)
 		refuses(t, f, "issuance_not_recorded")
 	})
+	agentParent := func(t *testing.T, status string) (resignFixture, *int) {
+		t.Helper()
+		old := v.Certificates["child-of-global"]
+		f := resignFixture{
+			v:       v,
+			request: awid.IDResignRequest{Signed: old.Signed, Requested: vectorCertificateFields(old.Signed), SubjectKey: old.Signed["certificate"].(map[string]any)["id"].(string)},
+			parent:  v.Keys["global_agent"].DIDAW,
+			status:  v.Statuses[status],
+			log:     newIssuanceLog(old.CertificateID),
+			signer:  "global_agent",
+			now:     time.Date(2026, 10, 26, 0, 30, 0, 0, time.UTC),
+		}
+		calls := 0
+		return f, &calls
+	}
+	t.Run("agent parent with a valid chain re-signs", func(t *testing.T) {
+		f, calls := agentParent(t, "normal")
+		if _, err := awid.ResignIDCertificate(f.request, f.parent, f.evidence(0), "example.com", f.log, vectorSigner(t, v, f.signer, calls), f.now); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("agent parent whose own parent is revoked refuses before signing", func(t *testing.T) {
+		f, calls := agentParent(t, "alice-revoked-now")
+		signed, err := awid.ResignIDCertificate(f.request, f.parent, f.evidence(0), "example.com", f.log, vectorSigner(t, v, f.signer, calls), f.now)
+		if got := awid.IDCertificateErrorCode(err); got != "revoked" || signed != nil || *calls != 0 || f.log.writes != 0 {
+			t.Fatalf("reason=%q (%v) calls=%d writes=%d", got, err, *calls, f.log.writes)
+		}
+	})
 	t.Run("stale parent evidence is unavailable", func(t *testing.T) {
 		f := caseFixture(t, v, accepted)
 		calls := 0
