@@ -176,12 +176,126 @@ Local agent certificates are carried by their holder; they need no AWID insert
 or witnessed issuance time. A root→agent chain is valid and means **no human**;
 a missing certificate means **unknown**, not no human.
 
-Namespace deletion refuses while ANY non-revoked registered ID exists in that
-exact domain, under the same registration/revocation serialization. Merely
-retiring the namespace epoch would leave previously registered children valid
-under historical epoch verification. The operator revokes those IDs first;
-only the root can backdate a compromise cutoff. This adds to, rather than
-replaces, existing namespace-deletion preconditions such as team certificates.
+### Namespace continuity and replacement
+
+Each namespace epoch records `continuity`: `rotated` only through the new
+previous-key-authorized rotation below; `replaced` for DNS-only establishment
+or replacement. The first witnessed epoch is `replaced`. Domain transfer,
+loss of the root key, and delete then re-register take the `replaced` path,
+even when re-registration uses the same key. This is a witnessed field in the
+epoch history, not a new ID certificate, delegation or confirmation operation.
+
+An epoch opens ONLY on explicit first namespace registration, re-registration
+after deletion, or an explicit exact-controller-key change. Same-key observations
+never open, replace or retire an epoch: reverify, address-read verification,
+inherited answers, failed DNS and unverified DNS change only current authority
+availability. Reverify cannot install a different ID-tree epoch key: a disagreement
+with the epoch makes authority unavailable under §2, not replaced. The released
+reverify behavior continues to update dns_namespaces.controller_did from exact
+DNS; inherited answers retain the row's key. Address and namespace-level team
+operations keep using that stored row key, while existing team certificates
+still use their own team key. ID-tree status and ID-certificate registration
+require the stored row key, open epoch key and independent exact DNS key to
+agree; otherwise they
+are unavailable/evidence_unavailable. No new current status is issued during
+that disagreement; existing caches retain their normal freshness bounds. When
+the same exact key returns after an unavailable interval, its epoch continues.
+Publishing another party's public key without holding it grants no authority.
+Delete then re-register is different because deletion is an explicit act.
+
+Pre-upgrade enrollment is a NEW branch of the existing authenticated
+`POST /v1/namespaces` handler, not a check that the released handler already
+makes. When the row exists and has NO epoch, open epoch 1, replaced, ONLY if
+this request's signer equals the row's stored controller_did AND this request
+proved exact DNS for that SAME key. Parent-authorization, skip-DNS and reserved
+local lanes count as no exact proof. Otherwise retain the existing response
+with zero epoch writes; a new owner uses PUT recovery. Check these conditions
+and absence of an epoch under the namespace lock after the last wait, so two
+concurrent valid POSTs open exactly one epoch at its new witness time. Keep all
+namespace, address and team data. With an epoch already present, the same POST
+is an epoch no-op. Unauthenticated reverify opens nothing. There is no new
+enrollment endpoint and no inferred history.
+
+#### Continuity-preserving namespace rotation (new operation)
+
+`POST /v1/namespaces/{domain}/rotate` is NEW. Its body is exactly:
+
+```json
+{"domain":"example.com","operation":"rotate_namespace_controller","from_seq":1,"previous_did_key":"did:key:...","new_did_key":"did:key:..."}
+```
+
+The canonical domain equals the path domain; from_seq is a positive integer;
+both keys satisfy §2's strict point profile and must differ. Invalid shape
+refuses invalid_shape. The previous controller and new controller BOTH sign the
+SAME existing [covering-v2 DIDKey request](awid-controller-requests.md). Its
+payload has the seven existing common fields (`v`, `type`, `aud`, `method`,
+`path`, `body_sha256`, `timestamp`) PLUS exactly the five body fields above.
+It uses configured audience, exact POST/path/body hash, and the existing
+300-second timestamp bound; there is no new signing prefix or canonical format.
+
+- `Authorization: DIDKey <previous_did_key> <signature>` proves the old key.
+- `X-AWEB-New-Key-Authorization: DIDKey <new_did_key> <signature>` proves the
+  new key, using the SAME `X-AWEB-Timestamp` and `X-AWEB-Signed-Payload`.
+- Both signatures are raw standard base64 without padding, as in the existing
+  envelope. The covering payload header is canonical JSON in unpadded base64url.
+  This NEW route requires covering-v2 and has no legacy fallback.
+
+Before changing any epoch, verify both proofs, including their signer roles;
+a missing/incorrect old or new proof refuses invalid_signature. Under the
+namespace gate locks, after the last wait, recheck the timestamp, the exact
+DNS evidence for new_did_key and the open epoch: from_seq and previous_did_key
+must equal its seq and key, otherwise head_conflict. A captured valid request
+replayed after success therefore refuses head_conflict, even within timestamp
+freshness. Non-exact or contradictory DNS evidence is evidence_unavailable.
+No network call occurs under those locks. Retire that epoch and open its
+immediate successor at the SAME post-lock witness time with continuity=rotated.
+This preserves earlier registrations while changing the current root key.
+
+The released `PUT /v1/namespaces/{domain}` is still the new-key-only recovery
+path (`operation="rotate_controller"`, body `{new_controller_did}`). It never
+establishes rotated continuity. With exact DNS proof on this request, compare
+the requested key against the open EPOCH key, even if reverify has already
+updated the stored row: a different key opens replaced, the same epoch key is
+an epoch no-op, and no epoch yet opens epoch 1, replaced. A PUT authorized only
+by parent-authorization, skip-DNS or local bypass may still update the stored
+controller under its released contract, but writes NO epoch (including no
+retirement); ID-tree authority is unavailable until row, epoch and exact DNS
+agree. Existing legacy envelopes and other namespace contracts remain accepted.
+No existing request is silently reinterpreted as old-key proof.
+
+Brief DNS control can cause a permanent tree cutoff: an attacker who installs
+and proves a new key through the recovery path opens replaced. That is the
+accepted DNS trust root; with the observation rule above, unauthenticated
+reverify alone cannot cause it. V1 adds no DNSSEC requirement or hold-down.
+S7 operator UX and Cloud alert the previous controller's operator and org owners
+when replaced opens, using their existing private contact channels. Notifications
+are not an authority gate and require no public contact directory.
+
+Retain epoch history and registered revisions across deletion; epoch sequences
+never reset. Namespace deletion has NO live-ID refusal precondition. Existing
+unrelated preconditions, including team-certificate checks, stay intact.
+Deletion retires the open epoch; re-registration opens a `replaced` epoch.
+
+For current authority, a registered revision admitted before the latest
+`replaced` epoch's `registered_at` is cut off: `root_replaced`,
+identity_valid=false. This applies to EVERY registered revision needed by the
+proof, including a historical human-parent revision: human-to-human survival
+of an ordinary revocation does not cross a namespace replacement. The cutoff
+is equivalent to comparing the revision's namespace registration epoch with
+that latest replaced epoch; no extra per-ID field is needed. Registered
+and local descendants depending on that ancestor lose authority under the
+cascade. Refuse like revoked; a local leaf's refusal is advisory under §5.
+Unregistered namespace children still use the current root key; they have no
+witnessed registration time.
+
+The registration gate applies this same rule to its parent chain under the
+namespace/parent locks. An old owner cannot issue a new child after replacement
+by supplying an old signature or backdated issued_at. The new root explicitly
+re-admits a kept identity using existing registered re-parenting with expected
+head and subject proof, or first registration. Even an unchanged parent/key
+needs a new signed revision and witnessed registration in the new epoch.
+There is no re-confirm operation, automatic backfill or domain-human listing.
+Old revisions remain historical evidence; replacement never rewrites them.
 
 ### Atomic registration and re-parenting
 
@@ -189,6 +303,9 @@ replaces, existing namespace-deletion preconditions such as team certificates.
 exactly `{certificate,expected_head,invitation_id}`: `certificate` is the signed
 wrapper, `expected_head` is null for first enrollment or the current digest,
 and `invitation_id` is null or the canonical UUID of the pending invitation.
+The subject MUST be a canonical did:aw; a did:key subject refuses invalid_shape
+before the transaction. A local key can enroll under a did:aw as described in
+§2, but a carried local certificate is not itself a registered head.
 The caller proves possession of the subject's current key with the existing
 request-bound DIDKey envelope over this exact method/path/body. The parent
 signature authorizes issuance. A bare team key, org role, email, label or
@@ -336,10 +453,14 @@ itself, its current parent while that parent is valid, or the namespace root.
 A team admin or unrelated human cannot revoke it. `effective_from=null` means
 AWID's post-lock serialization time. Only the namespace root may supply an
 earlier cutoff;
-a parent or the subject cannot backdate, and future cutoffs refuse. A Cloud
+a parent or the subject must use null: ANY non-null cutoff from a non-root
+refuses backdate_forbidden. Root future cutoffs refuse invalid_cutoff. A Cloud
 owner exercises root backdating only through the actual authorized namespace
 signer; an owner role alone is not a portable revocation proof. Repeated revoke
 is idempotent; only the root can move an existing cutoff earlier, never later.
+Recheck the allowed actor and current expected_head even on a repeat. Preserve
+the original revoked_at when correcting effective_from; an equal cutoff is a
+no-write repeat, and a later cutoff refuses invalid_cutoff.
 
 Revocation is serialized with registration and has `revoked_at` plus
 `effective_from`. An agent edge needs a currently valid parent, so revoking a
@@ -348,7 +469,8 @@ checks issuer validity at the child's registration: an earlier human invitee
 survives ordinary inviter departure. A root's earlier compromise cutoff can
 invalidate humans registered at/after it and their dependent agents. Equality
 is refused: registration at the cutoff is not before it. The root→human edge
-uses namespace authority valid at registration, not the latest root key.
+uses namespace authority valid at registration, subject to the namespace
+replacement cutoff above; ordinary signed root rotation preserves it.
 
 Preview retained branches and re-parent them before offboarding/revoking their
 human. Existing unregistered local members have no portable per-ID revocation:
@@ -380,7 +502,7 @@ evidence for a root→local-agent chain. The response is a coherent snapshot:
 ```text
 {
   v: 1, domain, observed_at,
-  namespace: {epochs: [{seq, did_key, registered_at, retired_at}]},
+  namespace: {epochs: [{seq, did_key, registered_at, retired_at, continuity}]},
   identities: [{
     id, current_certificate_id, current_key_seq,
     key_history: [{entry, registered_at}],
@@ -404,19 +526,35 @@ prev_entry_hash, entry_hash, state_hash, authorized_by, signature, timestamp).
 Verify that log from its genesis ID/key or an independently verified checkpoint;
 never pin a key merely because a server returned it. A broken log signature or
 prev_entry_hash makes the required status evidence unavailable
-(reason=evidence_unavailable); it never establishes a human. Its registered_at
-is the
-registry's witness of the epoch, not the log's caller-signed timestamp.
+(reason=evidence_unavailable); it never establishes a human. Key-history
+registered_at is registry log metadata, not the caller-signed timestamp;
+pre-upgrade rows are verified continuity only. The gate's recorded
+issuer_key_seq witnesses which issuer key was current for a child.
 Namespace epochs have positive increasing sequence numbers and verified EXACT
 domain DNS authority at their witnessed time; an ancestor fallback is never
-evidence for this domain. Namespace history/time witnesses come from
+evidence for this domain. `continuity` is required and is exactly `rotated` or
+`replaced`, assigned by the serialized gate's previous-key proof check above.
+Missing, unknown or contradictory continuity evidence is evidence_unavailable.
+Return the complete witnessed namespace epoch history through the current
+epoch, including replacements. Every successor requires a retired predecessor;
+its registered_at cannot precede that retirement. A rotated epoch immediately
+follows its predecessor's retirement time; a gap can reopen only as replaced. This prevents
+omitting an intermediate replacement or treating a later rotation as repair.
+Namespace history/time witnesses come from
 the registry independently selected through DNS, not an agent-supplied URL.
 
 Each certificate entry's digest is recomputed from `signed`. Heads and history
 must be unique, ordered, nonoverlapping and consistent with current_certificate_id;
 key versions must exist and agree with issuer_key. Human admission uses the
-recorded issuer_key_seq, not a key chosen by signed issued_at. For historical
-human-parent evaluation the response includes the required historic ancestor
+recorded issuer_key_seq, not a key chosen by signed issued_at. For a registered
+namespace-issued revision, the selected epoch must cover the witnessed time:
+`epoch.registered_at <= revision.registered_at`, and `retired_at` is null or
+`revision.registered_at < epoch.retired_at`. A violation is a contradictory
+snapshot, evidence_unavailable, not root_replaced. This namespace window does
+NOT apply to DID key-history timestamps: the witnessed issuer_key_seq is
+authoritative there; pre-upgrade log times are continuity only, never admission
+witnesses. For historical human-parent evaluation the response includes the
+required historic ancestor
 certificates/status as well; identities therefore includes the bounded proof
 closure, not only the requested list. No extra round trip per link. Limit the
 entire uncompressed response to 131072 bytes; incomplete, contradictory,
@@ -496,6 +634,9 @@ require the child's AWID registration, select its parent's certificate valid
 at that registered_at, and evaluate that historical parent state against the
 latest known effective_from cutoffs. Repeat this rule through historical human links;
 do not treat a currently revoked inviter as a revoked earlier human invitee.
+Apply the latest namespace replacement cutoff to every required registered
+revision even during that historical evaluation; a later rotated epoch does
+not clear it.
 Every evaluated path is same-domain, acyclic and at most eight certificates.
 Any missing support evidence refuses authority. Resolve the closest human only
 after the whole required proof passes, including the DNS root.
@@ -514,11 +655,11 @@ The result has exactly `outcome`, `human_id`, `identity_valid`, `kind` and
 `reason`. `identity_valid` is true, false, or JSON null (unknown); `kind` is
 human/agent only for an established valid chain and otherwise null. `reason`
 is the stable code from the vectors. Revoked, stale or malformed proof has
-identity_valid=false; missing proof has unknown;
-unavailable evidence has unknown. No outcome silently grants a role. A policy
+identity_valid=false; root_replaced also has identity_valid=false. Missing proof
+has unknown; unavailable evidence has unknown. No outcome silently grants a role. A policy
 needing a valid/current human refuses unknown/unavailable/no_human. `aw who`
 fetches through the cached client and shows nearest human/no human/unknown,
-with a distinct revoked or stale reason and the verified chain. It never
+with a distinct revoked, root_replaced or stale reason and the verified chain. It never
 prints a supplied label as a verified human.
 
 An enrolled global ID cannot evade status/revocation by omitting the header:
@@ -543,7 +684,7 @@ is nearest_human. Identity validity and application roles remain separate.
 | no_human / verified | continue | continue | continue | continue | continue |
 | unknown / legacy_no_chain, or authoritative unregistered_identity | continue | continue | continue | continue | continue |
 | Local leaf: unknown / stale_issuer_key, or unavailable / status_expired or evidence_unavailable | continue | continue | continue | continue | continue |
-| unknown / revoked, including enrolled omission (local refusal is advisory; see below) | refuse | refuse | refuse | refuse | refuse |
+| unknown / revoked or root_replaced, including enrolled omission (local refusal is advisory; see below) | refuse | refuse | refuse | refuse | refuse |
 | Enrolled ID: unknown / stale_issuer_key or superseded_certificate | refuse | refuse | refuse | refuse | refuse |
 | Any leaf: malformed/invalid presented proof or subject_mismatch | refuse | refuse | refuse | refuse | refuse |
 | unavailable / status_expired or evidence_unavailable for enrolled ID/chain, or stable-ID enrollment not established | refuse | refuse | refuse | refuse | refuse |
@@ -558,7 +699,7 @@ outage does not penalize presenting the chain. Malformed/invalid proof and
 subject_mismatch still refuse for every leaf.
 
 A chainless local did:key retains ordinary legacy auth without an ID-tree
-lookup, including during AWID outage. Local revoked refusal is ADVISORY: an
+lookup, including during AWID outage. Local revoked/root_replaced refusal is ADVISORY: an
 honest client stops, but an omitting client keeps ordinary membership-only
 actions because there is no portable enrollment witness to discover. Ordinary
 membership revocation is the real offboarding control for local agents. A

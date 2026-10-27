@@ -899,6 +899,116 @@
       "signing_bytes_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a6b65793a7a364d6b6a314d445a4b636678394158354365584864797369476b524c7a4262414c79467553684436774e6559314533222c226973737565645f6174223a22323032362d31302d32365430303a30343a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f6e334e656364364e6b6b79666f476f48786964327a6e476335394c55334b376d756261526346624c664c58222c226b696e64223a226167656e74222c22706172656e74223a7b226964223a2261747461636b65722e6578616d706c65222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
       "certificate_id": "sha256:b3c53ad565ac7438beb35feaa10f5427646574ab39e41b608c07dbe96246a896",
       "signer": "root"
+    },
+    "alice-readmitted": {
+      "signed": {
+        "certificate": {
+          "v": 1,
+          "type": "aweb.id-certificate",
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "domain": "example.com",
+          "parent": {
+            "kind": "namespace",
+            "id": "example.com"
+          },
+          "kind": "human",
+          "issuer_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+          "issued_at": "2026-10-26T00:14:00Z"
+        },
+        "signature": "mPGaq0TGYudBSoaiD4oZ10cSG5FSxv-nPYdGkzWDc1nKDexJ203FjIL9NOyBbCY3nQvqkWagwqYUAeDt169eDA"
+      },
+      "canonical_utf8": "{\"domain\":\"example.com\",\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"issued_at\":\"2026-10-26T00:14:00Z\",\"issuer_key\":\"did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH\",\"kind\":\"human\",\"parent\":{\"id\":\"example.com\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1}",
+      "signing_bytes_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a61773a335944414d355a4c524b6737654848315a733673534d776b67613877222c226973737565645f6174223a22323032362d31302d32365430303a31343a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f39685467674d776a535445614a615055664536747163793278765536426e4e713365336f38715642697948222c226b696e64223a2268756d616e222c22706172656e74223a7b226964223a226578616d706c652e636f6d222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+      "certificate_id": "sha256:5e8c7d4ab9a975b994228218c5eb8beb5f68193b63aa8bedf512168f2a2e0f57",
+      "signer": "root_rotated"
+    },
+    "new-root-first-human": {
+      "signed": {
+        "certificate": {
+          "v": 1,
+          "type": "aweb.id-certificate",
+          "id": "did:aw:KDkVb6GuUG6HuGM9iPthCWEkJeW",
+          "domain": "example.com",
+          "parent": {
+            "kind": "namespace",
+            "id": "example.com"
+          },
+          "kind": "human",
+          "issuer_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+          "issued_at": "2026-10-26T00:14:00Z"
+        },
+        "signature": "UTAC8-m4_eW2mYl5WNABcsZl2VlsOp3sDEgJbDKEv3pvkTzfUmdQKpJ6QsNu3oDdZ3dPnROYGDNDeaqGHnC5Dw"
+      },
+      "canonical_utf8": "{\"domain\":\"example.com\",\"id\":\"did:aw:KDkVb6GuUG6HuGM9iPthCWEkJeW\",\"issued_at\":\"2026-10-26T00:14:00Z\",\"issuer_key\":\"did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH\",\"kind\":\"human\",\"parent\":{\"id\":\"example.com\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1}",
+      "signing_bytes_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a61773a4b446b56623647755547364875474d39695074684357456b4a6557222c226973737565645f6174223a22323032362d31302d32365430303a31343a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f39685467674d776a535445614a615055664536747163793278765536426e4e713365336f38715642697948222c226b696e64223a2268756d616e222c22706172656e74223a7b226964223a226578616d706c652e636f6d222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+      "certificate_id": "sha256:4b36ec1b3054b99c8fea1eae8fe27094ccb12d993ab3acb4a77d32f2d2860ba4",
+      "signer": "root_rotated"
+    },
+    "alice-readmitted-same-root": {
+      "signed": {
+        "certificate": {
+          "v": 1,
+          "type": "aweb.id-certificate",
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "domain": "example.com",
+          "parent": {
+            "kind": "namespace",
+            "id": "example.com"
+          },
+          "kind": "human",
+          "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+          "issued_at": "2026-10-26T00:14:00Z"
+        },
+        "signature": "XmRKLVKq477gEMzThbKAtVMeT9jRA_xp7KY9q1BAuQYSyDbswfPF6QOMWxwUSeRFLAb8qS3kQRdS6BzCdR-eCA"
+      },
+      "canonical_utf8": "{\"domain\":\"example.com\",\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"issued_at\":\"2026-10-26T00:14:00Z\",\"issuer_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\",\"kind\":\"human\",\"parent\":{\"id\":\"example.com\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1}",
+      "signing_bytes_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a61773a335944414d355a4c524b6737654848315a733673534d776b67613877222c226973737565645f6174223a22323032362d31302d32365430303a31343a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f6e334e656364364e6b6b79666f476f48786964327a6e476335394c55334b376d756261526346624c664c58222c226b696e64223a2268756d616e222c22706172656e74223a7b226964223a226578616d706c652e636f6d222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+      "certificate_id": "sha256:3d472bb151391090fab43bb4206eab5743910838ecda1f0807a4495bc6682869",
+      "signer": "root"
+    },
+    "post-replacement-child-of-old-owner": {
+      "signed": {
+        "certificate": {
+          "v": 1,
+          "type": "aweb.id-certificate",
+          "id": "did:aw:KDkVb6GuUG6HuGM9iPthCWEkJeW",
+          "domain": "example.com",
+          "parent": {
+            "kind": "identity",
+            "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"
+          },
+          "kind": "human",
+          "issuer_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+          "issued_at": "2026-10-26T00:11:00Z"
+        },
+        "signature": "pgV1IONaLldKKfhPfxQWKwbYmK_nZ4zjZwmL66mv7rDkQGp1PfM42UEhYUf3WjXlVuYBKLvZ-Nrkg4njF4feDA"
+      },
+      "canonical_utf8": "{\"domain\":\"example.com\",\"id\":\"did:aw:KDkVb6GuUG6HuGM9iPthCWEkJeW\",\"issued_at\":\"2026-10-26T00:11:00Z\",\"issuer_key\":\"did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2\",\"kind\":\"human\",\"parent\":{\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"kind\":\"identity\"},\"type\":\"aweb.id-certificate\",\"v\":1}",
+      "signing_bytes_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a61773a4b446b56623647755547364875474d39695074684357456b4a6557222c226973737565645f6174223a22323032362d31302d32365430303a31313a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b7652584e596345374d4d6475796e575467654b624461543169696a44534338705a71585a6338724850726632222c226b696e64223a2268756d616e222c22706172656e74223a7b226964223a226469643a61773a335944414d355a4c524b6737654848315a733673534d776b67613877222c226b696e64223a226964656e74697479227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+      "certificate_id": "sha256:972f0fbfc84002f5eb127a099e6ec887ae1c172badaf0ee9ef06ec41e0bba9a7",
+      "signer": "alice"
+    },
+    "registered-root-agent": {
+      "signed": {
+        "certificate": {
+          "v": 1,
+          "type": "aweb.id-certificate",
+          "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+          "domain": "example.com",
+          "parent": {
+            "kind": "namespace",
+            "id": "example.com"
+          },
+          "kind": "agent",
+          "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+          "issued_at": "2026-10-26T00:03:00Z"
+        },
+        "signature": "i_58ceWkRHB8_TaJXt51V8WE0wi0GLK6sUCpZV6qaDiWzp0u6aPJNiOOgXW4J6mUpL_0cN8Z76vJxO4nvScSDw"
+      },
+      "canonical_utf8": "{\"domain\":\"example.com\",\"id\":\"did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp\",\"issued_at\":\"2026-10-26T00:03:00Z\",\"issuer_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\",\"kind\":\"agent\",\"parent\":{\"id\":\"example.com\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1}",
+      "signing_bytes_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a61773a3434614b4e5179766f31786838727636546664667a6a546e366e5270222c226973737565645f6174223a22323032362d31302d32365430303a30333a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f6e334e656364364e6b6b79666f476f48786964327a6e476335394c55334b376d756261526346624c664c58222c226b696e64223a226167656e74222c22706172656e74223a7b226964223a226578616d706c652e636f6d222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+      "certificate_id": "sha256:7c102262376782933531f80202cfd4f73675a5ca21f872845571156342f5a563",
+      "signer": "root"
     }
   },
   "status_fixtures": {
@@ -912,7 +1022,8 @@
             "seq": 1,
             "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
             "registered_at": "2026-10-26T00:00:00.000000Z",
-            "retired_at": null
+            "retired_at": null,
+            "continuity": "replaced"
           }
         ]
       },
@@ -1114,7 +1225,8 @@
             "seq": 1,
             "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
             "registered_at": "2026-10-26T00:00:00.000000Z",
-            "retired_at": null
+            "retired_at": null,
+            "continuity": "replaced"
           }
         ]
       },
@@ -1331,13 +1443,15 @@
             "seq": 1,
             "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
             "registered_at": "2026-10-26T00:00:00.000000Z",
-            "retired_at": "2026-10-26T00:10:00.000000Z"
+            "retired_at": "2026-10-26T00:10:00.000000Z",
+            "continuity": "replaced"
           },
           {
             "seq": 2,
             "did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
             "registered_at": "2026-10-26T00:10:00.000000Z",
-            "retired_at": null
+            "retired_at": null,
+            "continuity": "rotated"
           }
         ]
       },
@@ -1539,7 +1653,8 @@
             "seq": 1,
             "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
             "registered_at": "2026-10-26T00:00:00.000000Z",
-            "retired_at": null
+            "retired_at": null,
+            "continuity": "replaced"
           }
         ]
       },
@@ -1744,7 +1859,8 @@
             "seq": 1,
             "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
             "registered_at": "2026-10-26T00:00:00.000000Z",
-            "retired_at": null
+            "retired_at": null,
+            "continuity": "replaced"
           }
         ]
       },
@@ -1949,7 +2065,8 @@
             "seq": 1,
             "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
             "registered_at": "2026-10-26T00:00:00.000000Z",
-            "retired_at": null
+            "retired_at": null,
+            "continuity": "replaced"
           }
         ]
       },
@@ -2154,7 +2271,8 @@
             "seq": 1,
             "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
             "registered_at": "2026-10-26T00:00:00.000000Z",
-            "retired_at": null
+            "retired_at": null,
+            "continuity": "replaced"
           }
         ]
       },
@@ -2359,7 +2477,8 @@
             "seq": 1,
             "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
             "registered_at": "2026-10-26T00:00:00.000000Z",
-            "retired_at": null
+            "retired_at": null,
+            "continuity": "replaced"
           }
         ]
       },
@@ -2517,7 +2636,8 @@
             "seq": 1,
             "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
             "registered_at": "2026-10-26T00:00:00.000000Z",
-            "retired_at": null
+            "retired_at": null,
+            "continuity": "replaced"
           }
         ]
       },
@@ -2675,7 +2795,8 @@
             "seq": 1,
             "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
             "registered_at": "2026-10-26T00:00:00.000000Z",
-            "retired_at": null
+            "retired_at": null,
+            "continuity": "replaced"
           }
         ]
       },
@@ -2898,7 +3019,8 @@
             "seq": 1,
             "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
             "registered_at": "2026-10-26T00:00:00.000000Z",
-            "retired_at": null
+            "retired_at": null,
+            "continuity": "replaced"
           }
         ]
       },
@@ -3100,7 +3222,8 @@
             "seq": 1,
             "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
             "registered_at": "2026-10-26T00:00:00.000000Z",
-            "retired_at": null
+            "retired_at": null,
+            "continuity": "replaced"
           }
         ]
       },
@@ -3348,7 +3471,8 @@
             "seq": 1,
             "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
             "registered_at": "2026-10-26T00:00:00.000000Z",
-            "retired_at": null
+            "retired_at": null,
+            "continuity": "replaced"
           }
         ]
       },
@@ -3620,7 +3744,8 @@
             "seq": 1,
             "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
             "registered_at": "2026-10-26T00:00:00.000000Z",
-            "retired_at": null
+            "retired_at": null,
+            "continuity": "replaced"
           }
         ]
       },
@@ -3825,7 +3950,8 @@
             "seq": 1,
             "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
             "registered_at": "2026-10-26T00:00:00.000000Z",
-            "retired_at": null
+            "retired_at": null,
+            "continuity": "replaced"
           }
         ]
       },
@@ -4027,7 +4153,8 @@
             "seq": 1,
             "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
             "registered_at": "2026-10-26T00:00:00.000000Z",
-            "retired_at": null
+            "retired_at": null,
+            "continuity": "replaced"
           }
         ]
       },
@@ -4225,6 +4352,1521 @@
                 "signature": "Oluz1HZhQvyjCvWAZBe0bVXOCHPqS3sSb3FjCbVvzMB2-oL1SJ1b0d3nhxZ5Z0V-rbRQpFOWax9YKwfP0zwOBQ"
               },
               "registered_at": "2026-10-26T00:02:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        }
+      ],
+      "missing": []
+    },
+    "root-replaced": {
+      "v": 1,
+      "domain": "example.com",
+      "observed_at": "2026-10-26T00:30:00.000000Z",
+      "namespace": {
+        "epochs": [
+          {
+            "seq": 1,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:00:00.000000Z",
+            "retired_at": "2026-10-26T00:10:00.000000Z",
+            "continuity": "replaced"
+          },
+          {
+            "seq": 2,
+            "did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+            "registered_at": "2026-10-26T00:10:00.000000Z",
+            "retired_at": null,
+            "continuity": "replaced"
+          }
+        ]
+      },
+      "identities": [
+        {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "current_certificate_id": "sha256:301e3b3926861a4c057c810b042d5fbb7d539dcaa824b1acee77054d877cb1c9",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "new_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "f101717425d7c37244133f3c85015836ed22cd5eb43d666f4a9d533edf8d82d4",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "2cf9b9ca49d6d52198137ecd65b4f22115e43686868be41d029e80c7cd60fcf9",
+                "signature": "0mxM7sA/FFflCx7MKD2/WIlu9ik329eWDeNl2x01wH5pO7Ot8ThAzFnNbn64y+hYxsqGqSJZgXTeArk15cHWAw"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "example.com"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:00:00Z"
+                },
+                "signature": "UsTQXXWmQYmDLZNsqHs6ebs9763IcHsYI3zbPFYJ9lgdkYMRKtmAdnFerb7hjFS5bxrCU_7XcQYNYQhoAjdlBA"
+              },
+              "registered_at": "2026-10-26T00:01:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        },
+        {
+          "id": "did:aw:2e2SPDJNyxg5Dt6EFJX3Tcn8Tauj",
+          "current_certificate_id": "sha256:c7601ac7ae45a13626785274489fbe6bc6807d2963067b1f94c8bc2827247971",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkmtWtY63GQVBrpMyRJWEzsnxfsGkemu6CtMDwGTv4RYj2",
+                "new_did_key": "did:key:z6MkmtWtY63GQVBrpMyRJWEzsnxfsGkemu6CtMDwGTv4RYj2",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "3f55928a5f305ce731303197a1b9ae3a3743f19fdb907fe400b8903e87a6a6ce",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "22b20203490a77c8213833a1451862235268e5cd4ed5ce7e5df0ca966c52c3be",
+                "signature": "BlYAgnzsonrr28GZvngPUQ2LplGi6XKpubByO7FcMd01sD2H+MKVY+jDL9HcaHdARH9pX69SxI/jPpl+rk+MAg"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:2e2SPDJNyxg5Dt6EFJX3Tcn8Tauj",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "identity",
+                    "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                  "issued_at": "2026-10-26T00:02:00Z"
+                },
+                "signature": "MOL86pnAcZCRTvNyZMWLguKYeIfts0EjbzJmmQXZ7nOgeMLzqv8BU9GY9dXuqA5prGC9m5q1nmF746QijrpOAA"
+              },
+              "registered_at": "2026-10-26T00:03:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        },
+        {
+          "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+          "current_certificate_id": "sha256:e9dfa77e5eda11fe82215d62ac5878734a6cde3a56d7e15f037c2ac0d4532282",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+                "new_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "8850abacd19a6f27f56d30697f74b95366e709fabbbe10e0cb8313811cda3c5f",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "131c7c9321862318e212c7a28f1a9b8d0063419e56af047939d56b17fe83fc08",
+                "signature": "nY622ouwJ5/Gyd5bbaic5yEOgqNQTBIyEvv57brQLRpVzWRLRX95CHxEwwezq+y/E4uAUTYD6RbbUMjE2X5RBA"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "identity",
+                    "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"
+                  },
+                  "kind": "agent",
+                  "issuer_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                  "issued_at": "2026-10-26T00:03:00Z"
+                },
+                "signature": "z2oS4uSNgiaSaT7QX9AWmqRTkFFy-8TRjIrEP0PyuU_w0ptPTEbv8OjWqhbxP7oLivvi2AEFg0Anq5bkoGTECw"
+              },
+              "registered_at": "2026-10-26T00:04:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        }
+      ],
+      "missing": []
+    },
+    "root-replaced-then-rotated": {
+      "v": 1,
+      "domain": "example.com",
+      "observed_at": "2026-10-26T00:30:00.000000Z",
+      "namespace": {
+        "epochs": [
+          {
+            "seq": 1,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:00:00.000000Z",
+            "retired_at": "2026-10-26T00:10:00.000000Z",
+            "continuity": "replaced"
+          },
+          {
+            "seq": 2,
+            "did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+            "registered_at": "2026-10-26T00:10:00.000000Z",
+            "retired_at": "2026-10-26T00:20:00.000000Z",
+            "continuity": "replaced"
+          },
+          {
+            "seq": 3,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:20:00.000000Z",
+            "retired_at": null,
+            "continuity": "rotated"
+          }
+        ]
+      },
+      "identities": [
+        {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "current_certificate_id": "sha256:301e3b3926861a4c057c810b042d5fbb7d539dcaa824b1acee77054d877cb1c9",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "new_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "f101717425d7c37244133f3c85015836ed22cd5eb43d666f4a9d533edf8d82d4",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "2cf9b9ca49d6d52198137ecd65b4f22115e43686868be41d029e80c7cd60fcf9",
+                "signature": "0mxM7sA/FFflCx7MKD2/WIlu9ik329eWDeNl2x01wH5pO7Ot8ThAzFnNbn64y+hYxsqGqSJZgXTeArk15cHWAw"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "example.com"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:00:00Z"
+                },
+                "signature": "UsTQXXWmQYmDLZNsqHs6ebs9763IcHsYI3zbPFYJ9lgdkYMRKtmAdnFerb7hjFS5bxrCU_7XcQYNYQhoAjdlBA"
+              },
+              "registered_at": "2026-10-26T00:01:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        }
+      ],
+      "missing": []
+    },
+    "namespace-continuity-gap": {
+      "v": 1,
+      "domain": "example.com",
+      "observed_at": "2026-10-26T00:30:00.000000Z",
+      "namespace": {
+        "epochs": [
+          {
+            "seq": 1,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:00:00.000000Z",
+            "retired_at": "2026-10-26T00:10:00.000000Z",
+            "continuity": "replaced"
+          },
+          {
+            "seq": 3,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:20:00.000000Z",
+            "retired_at": null,
+            "continuity": "rotated"
+          }
+        ]
+      },
+      "identities": [
+        {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "current_certificate_id": "sha256:301e3b3926861a4c057c810b042d5fbb7d539dcaa824b1acee77054d877cb1c9",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "new_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "f101717425d7c37244133f3c85015836ed22cd5eb43d666f4a9d533edf8d82d4",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "2cf9b9ca49d6d52198137ecd65b4f22115e43686868be41d029e80c7cd60fcf9",
+                "signature": "0mxM7sA/FFflCx7MKD2/WIlu9ik329eWDeNl2x01wH5pO7Ot8ThAzFnNbn64y+hYxsqGqSJZgXTeArk15cHWAw"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "example.com"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:00:00Z"
+                },
+                "signature": "UsTQXXWmQYmDLZNsqHs6ebs9763IcHsYI3zbPFYJ9lgdkYMRKtmAdnFerb7hjFS5bxrCU_7XcQYNYQhoAjdlBA"
+              },
+              "registered_at": "2026-10-26T00:01:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        }
+      ],
+      "missing": []
+    },
+    "root-readmitted": {
+      "v": 1,
+      "domain": "example.com",
+      "observed_at": "2026-10-26T00:30:00.000000Z",
+      "namespace": {
+        "epochs": [
+          {
+            "seq": 1,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:00:00.000000Z",
+            "retired_at": "2026-10-26T00:10:00.000000Z",
+            "continuity": "replaced"
+          },
+          {
+            "seq": 2,
+            "did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+            "registered_at": "2026-10-26T00:10:00.000000Z",
+            "retired_at": null,
+            "continuity": "replaced"
+          }
+        ]
+      },
+      "identities": [
+        {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "current_certificate_id": "sha256:5e8c7d4ab9a975b994228218c5eb8beb5f68193b63aa8bedf512168f2a2e0f57",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "new_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "f101717425d7c37244133f3c85015836ed22cd5eb43d666f4a9d533edf8d82d4",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "2cf9b9ca49d6d52198137ecd65b4f22115e43686868be41d029e80c7cd60fcf9",
+                "signature": "0mxM7sA/FFflCx7MKD2/WIlu9ik329eWDeNl2x01wH5pO7Ot8ThAzFnNbn64y+hYxsqGqSJZgXTeArk15cHWAw"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "example.com"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:00:00Z"
+                },
+                "signature": "UsTQXXWmQYmDLZNsqHs6ebs9763IcHsYI3zbPFYJ9lgdkYMRKtmAdnFerb7hjFS5bxrCU_7XcQYNYQhoAjdlBA"
+              },
+              "registered_at": "2026-10-26T00:01:00.000000Z",
+              "superseded_at": "2026-10-26T00:14:00.000000Z",
+              "issuer_key_seq": 1
+            },
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "example.com"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+                  "issued_at": "2026-10-26T00:14:00Z"
+                },
+                "signature": "mPGaq0TGYudBSoaiD4oZ10cSG5FSxv-nPYdGkzWDc1nKDexJ203FjIL9NOyBbCY3nQvqkWagwqYUAeDt169eDA"
+              },
+              "registered_at": "2026-10-26T00:14:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 2
+            }
+          ],
+          "revocation": null
+        },
+        {
+          "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+          "current_certificate_id": "sha256:e9dfa77e5eda11fe82215d62ac5878734a6cde3a56d7e15f037c2ac0d4532282",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+                "new_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "8850abacd19a6f27f56d30697f74b95366e709fabbbe10e0cb8313811cda3c5f",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "131c7c9321862318e212c7a28f1a9b8d0063419e56af047939d56b17fe83fc08",
+                "signature": "nY622ouwJ5/Gyd5bbaic5yEOgqNQTBIyEvv57brQLRpVzWRLRX95CHxEwwezq+y/E4uAUTYD6RbbUMjE2X5RBA"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "identity",
+                    "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"
+                  },
+                  "kind": "agent",
+                  "issuer_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                  "issued_at": "2026-10-26T00:03:00Z"
+                },
+                "signature": "z2oS4uSNgiaSaT7QX9AWmqRTkFFy-8TRjIrEP0PyuU_w0ptPTEbv8OjWqhbxP7oLivvi2AEFg0Anq5bkoGTECw"
+              },
+              "registered_at": "2026-10-26T00:04:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        }
+      ],
+      "missing": []
+    },
+    "root-deleted-reregistered": {
+      "v": 1,
+      "domain": "example.com",
+      "observed_at": "2026-10-26T00:30:00.000000Z",
+      "namespace": {
+        "epochs": [
+          {
+            "seq": 1,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:00:00.000000Z",
+            "retired_at": "2026-10-26T00:09:00.000000Z",
+            "continuity": "replaced"
+          },
+          {
+            "seq": 2,
+            "did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+            "registered_at": "2026-10-26T00:10:00.000000Z",
+            "retired_at": null,
+            "continuity": "replaced"
+          }
+        ]
+      },
+      "identities": [
+        {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "current_certificate_id": "sha256:301e3b3926861a4c057c810b042d5fbb7d539dcaa824b1acee77054d877cb1c9",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "new_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "f101717425d7c37244133f3c85015836ed22cd5eb43d666f4a9d533edf8d82d4",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "2cf9b9ca49d6d52198137ecd65b4f22115e43686868be41d029e80c7cd60fcf9",
+                "signature": "0mxM7sA/FFflCx7MKD2/WIlu9ik329eWDeNl2x01wH5pO7Ot8ThAzFnNbn64y+hYxsqGqSJZgXTeArk15cHWAw"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "example.com"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:00:00Z"
+                },
+                "signature": "UsTQXXWmQYmDLZNsqHs6ebs9763IcHsYI3zbPFYJ9lgdkYMRKtmAdnFerb7hjFS5bxrCU_7XcQYNYQhoAjdlBA"
+              },
+              "registered_at": "2026-10-26T00:01:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        }
+      ],
+      "missing": []
+    },
+    "root-deleted-reregistered-same-key": {
+      "v": 1,
+      "domain": "example.com",
+      "observed_at": "2026-10-26T00:30:00.000000Z",
+      "namespace": {
+        "epochs": [
+          {
+            "seq": 1,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:00:00.000000Z",
+            "retired_at": "2026-10-26T00:09:00.000000Z",
+            "continuity": "replaced"
+          },
+          {
+            "seq": 2,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:10:00.000000Z",
+            "retired_at": null,
+            "continuity": "replaced"
+          }
+        ]
+      },
+      "identities": [
+        {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "current_certificate_id": "sha256:301e3b3926861a4c057c810b042d5fbb7d539dcaa824b1acee77054d877cb1c9",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "new_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "f101717425d7c37244133f3c85015836ed22cd5eb43d666f4a9d533edf8d82d4",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "2cf9b9ca49d6d52198137ecd65b4f22115e43686868be41d029e80c7cd60fcf9",
+                "signature": "0mxM7sA/FFflCx7MKD2/WIlu9ik329eWDeNl2x01wH5pO7Ot8ThAzFnNbn64y+hYxsqGqSJZgXTeArk15cHWAw"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "example.com"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:00:00Z"
+                },
+                "signature": "UsTQXXWmQYmDLZNsqHs6ebs9763IcHsYI3zbPFYJ9lgdkYMRKtmAdnFerb7hjFS5bxrCU_7XcQYNYQhoAjdlBA"
+              },
+              "registered_at": "2026-10-26T00:01:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        }
+      ],
+      "missing": []
+    },
+    "root-same-key-readmitted": {
+      "v": 1,
+      "domain": "example.com",
+      "observed_at": "2026-10-26T00:30:00.000000Z",
+      "namespace": {
+        "epochs": [
+          {
+            "seq": 1,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:00:00.000000Z",
+            "retired_at": "2026-10-26T00:09:00.000000Z",
+            "continuity": "replaced"
+          },
+          {
+            "seq": 2,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:10:00.000000Z",
+            "retired_at": null,
+            "continuity": "replaced"
+          }
+        ]
+      },
+      "identities": [
+        {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "current_certificate_id": "sha256:3d472bb151391090fab43bb4206eab5743910838ecda1f0807a4495bc6682869",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "new_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "f101717425d7c37244133f3c85015836ed22cd5eb43d666f4a9d533edf8d82d4",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "2cf9b9ca49d6d52198137ecd65b4f22115e43686868be41d029e80c7cd60fcf9",
+                "signature": "0mxM7sA/FFflCx7MKD2/WIlu9ik329eWDeNl2x01wH5pO7Ot8ThAzFnNbn64y+hYxsqGqSJZgXTeArk15cHWAw"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "example.com"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:00:00Z"
+                },
+                "signature": "UsTQXXWmQYmDLZNsqHs6ebs9763IcHsYI3zbPFYJ9lgdkYMRKtmAdnFerb7hjFS5bxrCU_7XcQYNYQhoAjdlBA"
+              },
+              "registered_at": "2026-10-26T00:01:00.000000Z",
+              "superseded_at": "2026-10-26T00:14:00.000000Z",
+              "issuer_key_seq": 1
+            },
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "example.com"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:14:00Z"
+                },
+                "signature": "XmRKLVKq477gEMzThbKAtVMeT9jRA_xp7KY9q1BAuQYSyDbswfPF6QOMWxwUSeRFLAb8qS3kQRdS6BzCdR-eCA"
+              },
+              "registered_at": "2026-10-26T00:14:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 2
+            }
+          ],
+          "revocation": null
+        }
+      ],
+      "missing": []
+    },
+    "registered-root-agent-rotated": {
+      "v": 1,
+      "domain": "example.com",
+      "observed_at": "2026-10-26T00:30:00.000000Z",
+      "namespace": {
+        "epochs": [
+          {
+            "seq": 1,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:00:00.000000Z",
+            "retired_at": "2026-10-26T00:10:00.000000Z",
+            "continuity": "replaced"
+          },
+          {
+            "seq": 2,
+            "did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+            "registered_at": "2026-10-26T00:10:00.000000Z",
+            "retired_at": null,
+            "continuity": "rotated"
+          }
+        ]
+      },
+      "identities": [
+        {
+          "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+          "current_certificate_id": "sha256:7c102262376782933531f80202cfd4f73675a5ca21f872845571156342f5a563",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+                "new_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "8850abacd19a6f27f56d30697f74b95366e709fabbbe10e0cb8313811cda3c5f",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "131c7c9321862318e212c7a28f1a9b8d0063419e56af047939d56b17fe83fc08",
+                "signature": "nY622ouwJ5/Gyd5bbaic5yEOgqNQTBIyEvv57brQLRpVzWRLRX95CHxEwwezq+y/E4uAUTYD6RbbUMjE2X5RBA"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "example.com"
+                  },
+                  "kind": "agent",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:03:00Z"
+                },
+                "signature": "i_58ceWkRHB8_TaJXt51V8WE0wi0GLK6sUCpZV6qaDiWzp0u6aPJNiOOgXW4J6mUpL_0cN8Z76vJxO4nvScSDw"
+              },
+              "registered_at": "2026-10-26T00:04:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        }
+      ],
+      "missing": []
+    },
+    "registered-root-agent-replaced": {
+      "v": 1,
+      "domain": "example.com",
+      "observed_at": "2026-10-26T00:30:00.000000Z",
+      "namespace": {
+        "epochs": [
+          {
+            "seq": 1,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:00:00.000000Z",
+            "retired_at": "2026-10-26T00:10:00.000000Z",
+            "continuity": "replaced"
+          },
+          {
+            "seq": 2,
+            "did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+            "registered_at": "2026-10-26T00:10:00.000000Z",
+            "retired_at": null,
+            "continuity": "replaced"
+          }
+        ]
+      },
+      "identities": [
+        {
+          "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+          "current_certificate_id": "sha256:7c102262376782933531f80202cfd4f73675a5ca21f872845571156342f5a563",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+                "new_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "8850abacd19a6f27f56d30697f74b95366e709fabbbe10e0cb8313811cda3c5f",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "131c7c9321862318e212c7a28f1a9b8d0063419e56af047939d56b17fe83fc08",
+                "signature": "nY622ouwJ5/Gyd5bbaic5yEOgqNQTBIyEvv57brQLRpVzWRLRX95CHxEwwezq+y/E4uAUTYD6RbbUMjE2X5RBA"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "example.com"
+                  },
+                  "kind": "agent",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:03:00Z"
+                },
+                "signature": "i_58ceWkRHB8_TaJXt51V8WE0wi0GLK6sUCpZV6qaDiWzp0u6aPJNiOOgXW4J6mUpL_0cN8Z76vJxO4nvScSDw"
+              },
+              "registered_at": "2026-10-26T00:04:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        }
+      ],
+      "missing": []
+    },
+    "namespace-epoch-before-start": {
+      "v": 1,
+      "domain": "example.com",
+      "observed_at": "2026-10-26T00:30:00.000000Z",
+      "namespace": {
+        "epochs": [
+          {
+            "seq": 1,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:02:00.000000Z",
+            "retired_at": "2026-10-26T00:10:00.000000Z",
+            "continuity": "replaced"
+          },
+          {
+            "seq": 2,
+            "did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+            "registered_at": "2026-10-26T00:10:00.000000Z",
+            "retired_at": null,
+            "continuity": "rotated"
+          }
+        ]
+      },
+      "identities": [
+        {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "current_certificate_id": "sha256:301e3b3926861a4c057c810b042d5fbb7d539dcaa824b1acee77054d877cb1c9",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "new_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "f101717425d7c37244133f3c85015836ed22cd5eb43d666f4a9d533edf8d82d4",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "2cf9b9ca49d6d52198137ecd65b4f22115e43686868be41d029e80c7cd60fcf9",
+                "signature": "0mxM7sA/FFflCx7MKD2/WIlu9ik329eWDeNl2x01wH5pO7Ot8ThAzFnNbn64y+hYxsqGqSJZgXTeArk15cHWAw"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "example.com"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:00:00Z"
+                },
+                "signature": "UsTQXXWmQYmDLZNsqHs6ebs9763IcHsYI3zbPFYJ9lgdkYMRKtmAdnFerb7hjFS5bxrCU_7XcQYNYQhoAjdlBA"
+              },
+              "registered_at": "2026-10-26T00:01:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        }
+      ],
+      "missing": []
+    },
+    "namespace-epoch-at-retirement": {
+      "v": 1,
+      "domain": "example.com",
+      "observed_at": "2026-10-26T00:30:00.000000Z",
+      "namespace": {
+        "epochs": [
+          {
+            "seq": 1,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:00:00.000000Z",
+            "retired_at": "2026-10-26T00:01:00.000000Z",
+            "continuity": "replaced"
+          },
+          {
+            "seq": 2,
+            "did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+            "registered_at": "2026-10-26T00:10:00.000000Z",
+            "retired_at": null,
+            "continuity": "rotated"
+          }
+        ]
+      },
+      "identities": [
+        {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "current_certificate_id": "sha256:301e3b3926861a4c057c810b042d5fbb7d539dcaa824b1acee77054d877cb1c9",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "new_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "f101717425d7c37244133f3c85015836ed22cd5eb43d666f4a9d533edf8d82d4",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "2cf9b9ca49d6d52198137ecd65b4f22115e43686868be41d029e80c7cd60fcf9",
+                "signature": "0mxM7sA/FFflCx7MKD2/WIlu9ik329eWDeNl2x01wH5pO7Ot8ThAzFnNbn64y+hYxsqGqSJZgXTeArk15cHWAw"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "example.com"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:00:00Z"
+                },
+                "signature": "UsTQXXWmQYmDLZNsqHs6ebs9763IcHsYI3zbPFYJ9lgdkYMRKtmAdnFerb7hjFS5bxrCU_7XcQYNYQhoAjdlBA"
+              },
+              "registered_at": "2026-10-26T00:01:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        }
+      ],
+      "missing": []
+    },
+    "namespace-epoch-at-start": {
+      "v": 1,
+      "domain": "example.com",
+      "observed_at": "2026-10-26T00:30:00.000000Z",
+      "namespace": {
+        "epochs": [
+          {
+            "seq": 1,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:01:00.000000Z",
+            "retired_at": "2026-10-26T00:10:00.000000Z",
+            "continuity": "replaced"
+          },
+          {
+            "seq": 2,
+            "did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+            "registered_at": "2026-10-26T00:10:00.000000Z",
+            "retired_at": null,
+            "continuity": "rotated"
+          }
+        ]
+      },
+      "identities": [
+        {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "current_certificate_id": "sha256:301e3b3926861a4c057c810b042d5fbb7d539dcaa824b1acee77054d877cb1c9",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "new_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "f101717425d7c37244133f3c85015836ed22cd5eb43d666f4a9d533edf8d82d4",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "2cf9b9ca49d6d52198137ecd65b4f22115e43686868be41d029e80c7cd60fcf9",
+                "signature": "0mxM7sA/FFflCx7MKD2/WIlu9ik329eWDeNl2x01wH5pO7Ot8ThAzFnNbn64y+hYxsqGqSJZgXTeArk15cHWAw"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "example.com"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:00:00Z"
+                },
+                "signature": "UsTQXXWmQYmDLZNsqHs6ebs9763IcHsYI3zbPFYJ9lgdkYMRKtmAdnFerb7hjFS5bxrCU_7XcQYNYQhoAjdlBA"
+              },
+              "registered_at": "2026-10-26T00:01:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        }
+      ],
+      "missing": []
+    },
+    "namespace-continuity-missing": {
+      "v": 1,
+      "domain": "example.com",
+      "observed_at": "2026-10-26T00:30:00.000000Z",
+      "namespace": {
+        "epochs": [
+          {
+            "seq": 1,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:00:00.000000Z",
+            "retired_at": null
+          }
+        ]
+      },
+      "identities": [
+        {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "current_certificate_id": "sha256:301e3b3926861a4c057c810b042d5fbb7d539dcaa824b1acee77054d877cb1c9",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "new_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "f101717425d7c37244133f3c85015836ed22cd5eb43d666f4a9d533edf8d82d4",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "2cf9b9ca49d6d52198137ecd65b4f22115e43686868be41d029e80c7cd60fcf9",
+                "signature": "0mxM7sA/FFflCx7MKD2/WIlu9ik329eWDeNl2x01wH5pO7Ot8ThAzFnNbn64y+hYxsqGqSJZgXTeArk15cHWAw"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "example.com"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:00:00Z"
+                },
+                "signature": "UsTQXXWmQYmDLZNsqHs6ebs9763IcHsYI3zbPFYJ9lgdkYMRKtmAdnFerb7hjFS5bxrCU_7XcQYNYQhoAjdlBA"
+              },
+              "registered_at": "2026-10-26T00:01:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        }
+      ],
+      "missing": []
+    },
+    "namespace-continuity-unknown": {
+      "v": 1,
+      "domain": "example.com",
+      "observed_at": "2026-10-26T00:30:00.000000Z",
+      "namespace": {
+        "epochs": [
+          {
+            "seq": 1,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:00:00.000000Z",
+            "retired_at": null,
+            "continuity": "confirmed"
+          }
+        ]
+      },
+      "identities": [
+        {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "current_certificate_id": "sha256:301e3b3926861a4c057c810b042d5fbb7d539dcaa824b1acee77054d877cb1c9",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "new_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "f101717425d7c37244133f3c85015836ed22cd5eb43d666f4a9d533edf8d82d4",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "2cf9b9ca49d6d52198137ecd65b4f22115e43686868be41d029e80c7cd60fcf9",
+                "signature": "0mxM7sA/FFflCx7MKD2/WIlu9ik329eWDeNl2x01wH5pO7Ot8ThAzFnNbn64y+hYxsqGqSJZgXTeArk15cHWAw"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "example.com"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:00:00Z"
+                },
+                "signature": "UsTQXXWmQYmDLZNsqHs6ebs9763IcHsYI3zbPFYJ9lgdkYMRKtmAdnFerb7hjFS5bxrCU_7XcQYNYQhoAjdlBA"
+              },
+              "registered_at": "2026-10-26T00:01:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        }
+      ],
+      "missing": []
+    },
+    "pre-upgrade-key-history-time": {
+      "v": 1,
+      "domain": "example.com",
+      "observed_at": "2026-10-26T00:30:00.000000Z",
+      "namespace": {
+        "epochs": [
+          {
+            "seq": 1,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:00:00.000000Z",
+            "retired_at": null,
+            "continuity": "replaced"
+          }
+        ]
+      },
+      "identities": [
+        {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "current_certificate_id": "sha256:301e3b3926861a4c057c810b042d5fbb7d539dcaa824b1acee77054d877cb1c9",
+          "current_key_seq": 2,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "new_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "f101717425d7c37244133f3c85015836ed22cd5eb43d666f4a9d533edf8d82d4",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "2cf9b9ca49d6d52198137ecd65b4f22115e43686868be41d029e80c7cd60fcf9",
+                "signature": "0mxM7sA/FFflCx7MKD2/WIlu9ik329eWDeNl2x01wH5pO7Ot8ThAzFnNbn64y+hYxsqGqSJZgXTeArk15cHWAw"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            },
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "new_did_key": "did:key:z6Mkt6316e2PN3mZdB6N9CrzomJYUd1s5yBZi1XYHmwT9TUP",
+                "operation": "rotate_key",
+                "prev_entry_hash": "2cf9b9ca49d6d52198137ecd65b4f22115e43686868be41d029e80c7cd60fcf9",
+                "previous_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "seq": 2,
+                "state_hash": "61023505fd38615398528f06df54f61f7666ad112c6b724113e01e30ea3477a9",
+                "timestamp": "2026-10-26T00:10:00Z",
+                "entry_hash": "28a0c877bb93aed8cbf50886df9685d87939aac5f8ffac43a55b7f4660e7d033",
+                "signature": "np/68OE3iNthRKsrTLSpUF0xMWXaOo/tjH/xObH9X/JTPx2Xc4iKy+FFk/TItO0wZ78q20CllF7RjWdRMjAEDQ"
+              },
+              "registered_at": "2026-10-26T00:03:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "example.com"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:00:00Z"
+                },
+                "signature": "UsTQXXWmQYmDLZNsqHs6ebs9763IcHsYI3zbPFYJ9lgdkYMRKtmAdnFerb7hjFS5bxrCU_7XcQYNYQhoAjdlBA"
+              },
+              "registered_at": "2026-10-26T00:01:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        },
+        {
+          "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+          "current_certificate_id": "sha256:e9dfa77e5eda11fe82215d62ac5878734a6cde3a56d7e15f037c2ac0d4532282",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+                "new_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "8850abacd19a6f27f56d30697f74b95366e709fabbbe10e0cb8313811cda3c5f",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "131c7c9321862318e212c7a28f1a9b8d0063419e56af047939d56b17fe83fc08",
+                "signature": "nY622ouwJ5/Gyd5bbaic5yEOgqNQTBIyEvv57brQLRpVzWRLRX95CHxEwwezq+y/E4uAUTYD6RbbUMjE2X5RBA"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "identity",
+                    "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"
+                  },
+                  "kind": "agent",
+                  "issuer_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                  "issued_at": "2026-10-26T00:03:00Z"
+                },
+                "signature": "z2oS4uSNgiaSaT7QX9AWmqRTkFFy-8TRjIrEP0PyuU_w0ptPTEbv8OjWqhbxP7oLivvi2AEFg0Anq5bkoGTECw"
+              },
+              "registered_at": "2026-10-26T00:04:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        }
+      ],
+      "missing": []
+    },
+    "namespace-first-epoch-rotated": {
+      "v": 1,
+      "domain": "example.com",
+      "observed_at": "2026-10-26T00:30:00.000000Z",
+      "namespace": {
+        "epochs": [
+          {
+            "seq": 1,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:00:00.000000Z",
+            "retired_at": null,
+            "continuity": "rotated"
+          }
+        ]
+      },
+      "identities": [
+        {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "current_certificate_id": "sha256:301e3b3926861a4c057c810b042d5fbb7d539dcaa824b1acee77054d877cb1c9",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "new_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "f101717425d7c37244133f3c85015836ed22cd5eb43d666f4a9d533edf8d82d4",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "2cf9b9ca49d6d52198137ecd65b4f22115e43686868be41d029e80c7cd60fcf9",
+                "signature": "0mxM7sA/FFflCx7MKD2/WIlu9ik329eWDeNl2x01wH5pO7Ot8ThAzFnNbn64y+hYxsqGqSJZgXTeArk15cHWAw"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "example.com"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:00:00Z"
+                },
+                "signature": "UsTQXXWmQYmDLZNsqHs6ebs9763IcHsYI3zbPFYJ9lgdkYMRKtmAdnFerb7hjFS5bxrCU_7XcQYNYQhoAjdlBA"
+              },
+              "registered_at": "2026-10-26T00:01:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        }
+      ],
+      "missing": []
+    },
+    "namespace-unretired-predecessor": {
+      "v": 1,
+      "domain": "example.com",
+      "observed_at": "2026-10-26T00:30:00.000000Z",
+      "namespace": {
+        "epochs": [
+          {
+            "seq": 1,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:00:00.000000Z",
+            "retired_at": null,
+            "continuity": "replaced"
+          },
+          {
+            "seq": 2,
+            "did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+            "registered_at": "2026-10-26T00:10:00.000000Z",
+            "retired_at": null,
+            "continuity": "replaced"
+          }
+        ]
+      },
+      "identities": [
+        {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "current_certificate_id": "sha256:301e3b3926861a4c057c810b042d5fbb7d539dcaa824b1acee77054d877cb1c9",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "new_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "f101717425d7c37244133f3c85015836ed22cd5eb43d666f4a9d533edf8d82d4",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "2cf9b9ca49d6d52198137ecd65b4f22115e43686868be41d029e80c7cd60fcf9",
+                "signature": "0mxM7sA/FFflCx7MKD2/WIlu9ik329eWDeNl2x01wH5pO7Ot8ThAzFnNbn64y+hYxsqGqSJZgXTeArk15cHWAw"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "example.com"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:00:00Z"
+                },
+                "signature": "UsTQXXWmQYmDLZNsqHs6ebs9763IcHsYI3zbPFYJ9lgdkYMRKtmAdnFerb7hjFS5bxrCU_7XcQYNYQhoAjdlBA"
+              },
+              "registered_at": "2026-10-26T00:01:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        }
+      ],
+      "missing": []
+    },
+    "namespace-contiguous-seq-time-gap": {
+      "v": 1,
+      "domain": "example.com",
+      "observed_at": "2026-10-26T00:30:00.000000Z",
+      "namespace": {
+        "epochs": [
+          {
+            "seq": 1,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:00:00.000000Z",
+            "retired_at": "2026-10-26T00:09:00.000000Z",
+            "continuity": "replaced"
+          },
+          {
+            "seq": 2,
+            "did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+            "registered_at": "2026-10-26T00:10:00.000000Z",
+            "retired_at": null,
+            "continuity": "rotated"
+          }
+        ]
+      },
+      "identities": [
+        {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "current_certificate_id": "sha256:301e3b3926861a4c057c810b042d5fbb7d539dcaa824b1acee77054d877cb1c9",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "new_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "f101717425d7c37244133f3c85015836ed22cd5eb43d666f4a9d533edf8d82d4",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "2cf9b9ca49d6d52198137ecd65b4f22115e43686868be41d029e80c7cd60fcf9",
+                "signature": "0mxM7sA/FFflCx7MKD2/WIlu9ik329eWDeNl2x01wH5pO7Ot8ThAzFnNbn64y+hYxsqGqSJZgXTeArk15cHWAw"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "example.com"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:00:00Z"
+                },
+                "signature": "UsTQXXWmQYmDLZNsqHs6ebs9763IcHsYI3zbPFYJ9lgdkYMRKtmAdnFerb7hjFS5bxrCU_7XcQYNYQhoAjdlBA"
+              },
+              "registered_at": "2026-10-26T00:01:00.000000Z",
               "superseded_at": null,
               "issuer_key_seq": 1
             }
@@ -7144,6 +8786,631 @@
         "ordinary": "refuse",
         "human_required": "refuse"
       }
+    },
+    {
+      "name": "replacement-then-rotation-does-not-restore-old-tree",
+      "chain": [
+        "alice",
+        "coordinator"
+      ],
+      "status": "root-replaced-then-rotated",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unknown",
+        "human_id": null,
+        "identity_valid": false,
+        "kind": null,
+        "reason": "root_replaced"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "namespace-continuity-gap-unavailable",
+      "chain": [
+        "alice",
+        "coordinator"
+      ],
+      "status": "namespace-continuity-gap",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "evidence_unavailable"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "root-replacement-old-human-refuses",
+      "chain": [
+        "alice"
+      ],
+      "status": "root-replaced",
+      "subject": {
+        "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+        "did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+        "team_member_did_aw": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+        "team_member_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2"
+      },
+      "expected": {
+        "outcome": "unknown",
+        "human_id": null,
+        "identity_valid": false,
+        "kind": null,
+        "reason": "root_replaced"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "root-replacement-local-subtree-advisory-refusal",
+      "chain": [
+        "alice",
+        "coordinator",
+        "seat",
+        "subseat"
+      ],
+      "status": "root-replaced",
+      "subject": {
+        "id": "did:key:z6Mkfmm57fsb6VL7zVusP8zeA9SYkCKdvUhby2G7Yh8vvQ1P",
+        "did_key": "did:key:z6Mkfmm57fsb6VL7zVusP8zeA9SYkCKdvUhby2G7Yh8vvQ1P",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkfmm57fsb6VL7zVusP8zeA9SYkCKdvUhby2G7Yh8vvQ1P"
+      },
+      "expected": {
+        "outcome": "unknown",
+        "human_id": null,
+        "identity_valid": false,
+        "kind": null,
+        "reason": "root_replaced"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "root-replacement-earlier-invited-human-refuses",
+      "chain": [
+        "alice",
+        "bob",
+        "bob-agent"
+      ],
+      "status": "root-replaced",
+      "subject": {
+        "id": "did:key:z6MkfDSNRs2i9S6LZ5vd4RbpZ6754H7R3btDqRTeHhamqvuJ",
+        "did_key": "did:key:z6MkfDSNRs2i9S6LZ5vd4RbpZ6754H7R3btDqRTeHhamqvuJ",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6MkfDSNRs2i9S6LZ5vd4RbpZ6754H7R3btDqRTeHhamqvuJ"
+      },
+      "expected": {
+        "outcome": "unknown",
+        "human_id": null,
+        "identity_valid": false,
+        "kind": null,
+        "reason": "root_replaced"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "root-replacement-registered-agent-refuses",
+      "chain": [
+        "alice",
+        "global-agent"
+      ],
+      "status": "root-replaced",
+      "subject": {
+        "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "team_member_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3"
+      },
+      "expected": {
+        "outcome": "unknown",
+        "human_id": null,
+        "identity_valid": false,
+        "kind": null,
+        "reason": "root_replaced"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "root-replacement-omitted-enrolled-human-refuses",
+      "chain": [
+        "alice"
+      ],
+      "status": "root-replaced",
+      "subject": {
+        "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+        "did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+        "team_member_did_aw": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+        "team_member_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2"
+      },
+      "expected": {
+        "outcome": "unknown",
+        "human_id": null,
+        "identity_valid": false,
+        "kind": null,
+        "reason": "root_replaced"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      },
+      "presented_chain": false,
+      "resolve_current_head": true
+    },
+    {
+      "name": "signed-root-rotation-preserves-registered-child",
+      "chain": [
+        "alice",
+        "global-agent"
+      ],
+      "status": "root-rotated",
+      "subject": {
+        "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "team_member_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3"
+      },
+      "expected": {
+        "outcome": "nearest_human",
+        "human_id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+        "identity_valid": true,
+        "kind": "agent",
+        "reason": "verified"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
+      }
+    },
+    {
+      "name": "new-root-readmission-keeps-id-key-local-children",
+      "chain": [
+        "alice-readmitted",
+        "coordinator"
+      ],
+      "status": "root-readmitted",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "nearest_human",
+        "human_id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+        "identity_valid": true,
+        "kind": "agent",
+        "reason": "verified"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
+      }
+    },
+    {
+      "name": "readmitted-parent-does-not-readmit-registered-child",
+      "chain": [
+        "alice-readmitted",
+        "global-agent"
+      ],
+      "status": "root-readmitted",
+      "subject": {
+        "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "team_member_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3"
+      },
+      "expected": {
+        "outcome": "unknown",
+        "human_id": null,
+        "identity_valid": false,
+        "kind": null,
+        "reason": "root_replaced"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "delete-reregister-old-human-refuses",
+      "chain": [
+        "alice",
+        "coordinator"
+      ],
+      "status": "root-deleted-reregistered",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unknown",
+        "human_id": null,
+        "identity_valid": false,
+        "kind": null,
+        "reason": "root_replaced"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "delete-reregister-same-key-old-human-refuses",
+      "chain": [
+        "alice",
+        "coordinator"
+      ],
+      "status": "root-deleted-reregistered-same-key",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unknown",
+        "human_id": null,
+        "identity_valid": false,
+        "kind": null,
+        "reason": "root_replaced"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "same-key-root-readmission-needs-new-revision",
+      "chain": [
+        "alice-readmitted-same-root",
+        "coordinator"
+      ],
+      "status": "root-same-key-readmitted",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "nearest_human",
+        "human_id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+        "identity_valid": true,
+        "kind": "agent",
+        "reason": "verified"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
+      }
+    },
+    {
+      "name": "registered-root-agent-survives-signed-rotation",
+      "chain": [
+        "registered-root-agent"
+      ],
+      "status": "registered-root-agent-rotated",
+      "subject": {
+        "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "team_member_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3"
+      },
+      "expected": {
+        "outcome": "no_human",
+        "human_id": null,
+        "identity_valid": true,
+        "kind": "agent",
+        "reason": "verified"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "registered-root-agent-refuses-replacement",
+      "chain": [
+        "registered-root-agent"
+      ],
+      "status": "registered-root-agent-replaced",
+      "subject": {
+        "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "team_member_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3"
+      },
+      "expected": {
+        "outcome": "unknown",
+        "human_id": null,
+        "identity_valid": false,
+        "kind": null,
+        "reason": "root_replaced"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "namespace-epoch-before-start-unavailable",
+      "chain": [
+        "alice",
+        "coordinator"
+      ],
+      "status": "namespace-epoch-before-start",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "evidence_unavailable"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "namespace-epoch-at-retirement-unavailable",
+      "chain": [
+        "alice",
+        "coordinator"
+      ],
+      "status": "namespace-epoch-at-retirement",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "evidence_unavailable"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "namespace-epoch-start-equality-valid",
+      "chain": [
+        "alice",
+        "coordinator"
+      ],
+      "status": "namespace-epoch-at-start",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "nearest_human",
+        "human_id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+        "identity_valid": true,
+        "kind": "agent",
+        "reason": "verified"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
+      }
+    },
+    {
+      "name": "namespace-continuity-missing-unavailable",
+      "chain": [
+        "alice",
+        "coordinator"
+      ],
+      "status": "namespace-continuity-missing",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "evidence_unavailable"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "namespace-continuity-unknown-unavailable",
+      "chain": [
+        "alice",
+        "coordinator"
+      ],
+      "status": "namespace-continuity-unknown",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "evidence_unavailable"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "did-key-history-time-is-not-admission-window",
+      "chain": [
+        "alice",
+        "global-agent"
+      ],
+      "status": "pre-upgrade-key-history-time",
+      "subject": {
+        "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "team_member_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3"
+      },
+      "expected": {
+        "outcome": "nearest_human",
+        "human_id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+        "identity_valid": true,
+        "kind": "agent",
+        "reason": "verified"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
+      }
+    },
+    {
+      "name": "namespace-first-epoch-rotated-unavailable",
+      "chain": [
+        "alice",
+        "coordinator"
+      ],
+      "status": "namespace-first-epoch-rotated",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "evidence_unavailable"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "namespace-unretired-predecessor-unavailable",
+      "chain": [
+        "alice",
+        "coordinator"
+      ],
+      "status": "namespace-unretired-predecessor",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "evidence_unavailable"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "namespace-contiguous-seq-rotation-time-gap-unavailable",
+      "chain": [
+        "alice",
+        "coordinator"
+      ],
+      "status": "namespace-contiguous-seq-time-gap",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "evidence_unavailable"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      }
     }
   ],
   "operation_cases": [
@@ -7920,7 +10187,84 @@
       }
     },
     {
-      "name": "namespace-delete-live-id-refuses",
+      "name": "register-local-subject-refuses",
+      "action": "register",
+      "input": {
+        "certificate": "coordinator",
+        "subject_key_proved": true
+      },
+      "expected": {
+        "accepted": false,
+        "reason": "invalid_shape",
+        "writes": 0
+      }
+    },
+    {
+      "name": "replacement-old-owner-child-registration-refuses",
+      "action": "register",
+      "input": {
+        "certificate": "post-replacement-child-of-old-owner",
+        "status": "root-replaced",
+        "registered_at": "2026-10-26T00:12:00.000000Z",
+        "subject_key_proved": true
+      },
+      "expected": {
+        "accepted": false,
+        "reason": "root_replaced",
+        "writes": 0
+      }
+    },
+    {
+      "name": "replacement-races-parent-registration",
+      "action": "register_after_wait",
+      "input": {
+        "certificate": "post-replacement-child-of-old-owner",
+        "status_before_wait": "normal",
+        "status_after_wait": "root-replaced",
+        "registered_at": "2026-10-26T00:12:00.000000Z",
+        "subject_key_proved": true
+      },
+      "expected": {
+        "accepted": false,
+        "reason": "root_replaced",
+        "writes": 0
+      }
+    },
+    {
+      "name": "replacement-root-readmits-existing-id",
+      "action": "reparent",
+      "input": {
+        "certificate": "alice-readmitted",
+        "status": "root-replaced",
+        "expected_head": "sha256:301e3b3926861a4c057c810b042d5fbb7d539dcaa824b1acee77054d877cb1c9",
+        "subject_key_proved": true,
+        "registered_at": "2026-10-26T00:14:00.000000Z"
+      },
+      "expected": {
+        "accepted": true,
+        "id_unchanged": true,
+        "key_unchanged": true,
+        "team_certificates_unchanged": true
+      }
+    },
+    {
+      "name": "replacement-new-root-first-registration",
+      "action": "register",
+      "input": {
+        "certificate": "new-root-first-human",
+        "namespace_status": "root-replaced",
+        "subject_already_registered": false,
+        "expected_head": null,
+        "subject_key_proved": true,
+        "registered_at": "2026-10-26T00:14:00.000000Z"
+      },
+      "expected": {
+        "accepted": true,
+        "registered_at": "2026-10-26T00:14:00.000000Z"
+      }
+    },
+    {
+      "name": "namespace-delete-with-live-ids-preserves-history",
       "action": "delete_namespace",
       "input": {
         "domain": "example.com",
@@ -7928,28 +10272,527 @@
         "existing_non_identity_preconditions_pass": true
       },
       "expected": {
+        "accepted": true,
+        "epoch_retired_at": "2026-10-26T00:09:00.000000Z",
+        "epoch_history_preserved": true,
+        "registered_revisions_preserved": true
+      }
+    },
+    {
+      "name": "namespace-delete-reregister-cuts-old-tree",
+      "action": "register_namespace",
+      "input": {
+        "domain": "example.com",
+        "deleted_at": "2026-10-26T00:09:00.000000Z",
+        "registered_at": "2026-10-26T00:10:00.000000Z",
+        "previous_key_signature": false,
+        "reuse_same_key": false
+      },
+      "expected": {
+        "accepted": true,
+        "continuity": "replaced",
+        "sequence_not_reset": true,
+        "old_registered_ids_reason": "root_replaced"
+      }
+    },
+    {
+      "name": "namespace-delete-reregister-same-key-cuts-old-tree",
+      "action": "register_namespace",
+      "input": {
+        "domain": "example.com",
+        "deleted_at": "2026-10-26T00:09:00.000000Z",
+        "registered_at": "2026-10-26T00:10:00.000000Z",
+        "previous_key_signature": false,
+        "reuse_same_key": true
+      },
+      "expected": {
+        "accepted": true,
+        "continuity": "replaced",
+        "sequence_not_reset": true,
+        "old_registered_ids_reason": "root_replaced"
+      }
+    },
+    {
+      "name": "namespace-signed-rotation-preserves-tree",
+      "action": "rotate_namespace",
+      "input": {
+        "domain": "example.com",
+        "request": "valid",
+        "open_epoch": {
+          "seq": 1,
+          "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+        },
+        "exact_dns_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "registered_at": "2026-10-26T00:10:00.000000Z"
+      },
+      "expected": {
+        "accepted": true,
+        "continuity": "rotated",
+        "old_registered_ids_still_valid": true
+      }
+    },
+    {
+      "name": "namespace-dns-replacement-cuts-tree",
+      "action": "replace_namespace",
+      "input": {
+        "domain": "example.com",
+        "previous_key_signature": false,
+        "registered_at": "2026-10-26T00:10:00.000000Z",
+        "method": "PUT",
+        "path": "/v1/namespaces/example.com",
+        "operation": "rotate_controller",
+        "new_key_proof": true,
+        "exact_dns_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+      },
+      "expected": {
+        "accepted": true,
+        "continuity": "replaced",
+        "old_registered_ids_reason": "root_replaced"
+      }
+    },
+    {
+      "name": "lost-root-key-dns-replacement",
+      "action": "replace_namespace",
+      "input": {
+        "domain": "example.com",
+        "previous_key_available": false,
+        "previous_key_signature": false,
+        "registered_at": "2026-10-26T00:10:00.000000Z",
+        "method": "PUT",
+        "path": "/v1/namespaces/example.com",
+        "operation": "rotate_controller",
+        "new_key_proof": true,
+        "exact_dns_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+      },
+      "expected": {
+        "accepted": true,
+        "continuity": "replaced",
+        "old_registered_ids_reason": "root_replaced"
+      }
+    },
+    {
+      "name": "non-root-explicit-now-cutoff-refuses",
+      "action": "revoke",
+      "input": {
+        "actor": "alice",
+        "subject": "bob",
+        "effective_from": "2026-10-26T00:20:00.000000Z",
+        "now": "2026-10-26T00:20:00.000000Z"
+      },
+      "expected": {
         "accepted": false,
-        "reason": "namespace_has_live_ids",
+        "reason": "backdate_forbidden",
         "writes": 0
       }
     },
     {
-      "name": "namespace-delete-after-all-ids-revoked",
-      "action": "delete_namespace",
+      "name": "namespace-rotation-wrong-from-seq",
+      "action": "rotate_namespace",
       "input": {
-        "domain": "example.com",
-        "registered_ids": [
-          "alice",
-          "bob",
-          "global_agent",
-          "other_human"
-        ],
-        "all_registered_ids_revoked": true,
-        "existing_non_identity_preconditions_pass": true
+        "request": "wrong-from-seq",
+        "open_epoch": {
+          "seq": 1,
+          "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+        },
+        "exact_dns_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "now": "2026-10-26T00:10:01Z"
+      },
+      "expected": {
+        "accepted": false,
+        "reason": "head_conflict",
+        "writes": 0
+      }
+    },
+    {
+      "name": "namespace-rotation-stale-old-key",
+      "action": "rotate_namespace",
+      "input": {
+        "request": "stale-old-key",
+        "open_epoch": {
+          "seq": 2,
+          "did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+        },
+        "exact_dns_key": "did:key:z6MkmNL6xksdEJENGk9Z1qqGsY5njKQdjU1UhnUEUvWyQUVX",
+        "now": "2026-10-26T00:10:01Z"
+      },
+      "expected": {
+        "accepted": false,
+        "reason": "head_conflict",
+        "writes": 0
+      }
+    },
+    {
+      "name": "namespace-rotation-replay",
+      "action": "rotate_namespace",
+      "input": {
+        "request": "valid",
+        "open_epoch": {
+          "seq": 2,
+          "did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+        },
+        "exact_dns_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "now": "2026-10-26T00:10:01Z"
+      },
+      "expected": {
+        "accepted": false,
+        "reason": "head_conflict",
+        "writes": 0
+      }
+    },
+    {
+      "name": "namespace-rotation-new-key-only-refuses",
+      "action": "rotate_namespace",
+      "input": {
+        "request": "new-key-only",
+        "open_epoch": {
+          "seq": 1,
+          "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+        },
+        "exact_dns_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "now": "2026-10-26T00:10:01Z"
+      },
+      "expected": {
+        "accepted": false,
+        "reason": "invalid_signature",
+        "writes": 0
+      }
+    },
+    {
+      "name": "namespace-same-key-reverify-no-epoch",
+      "action": "reverify_namespace",
+      "input": {
+        "open_epoch": {
+          "seq": 1,
+          "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+        },
+        "observed_dns": "exact",
+        "observed_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "authenticated": false
       },
       "expected": {
         "accepted": true,
-        "namespace_deleted": true
+        "epoch_writes": 0,
+        "open_epoch_seq": 1,
+        "tree_valid": true
+      }
+    },
+    {
+      "name": "namespace-exact-inherited-exact-same-key",
+      "action": "reverify_namespace_sequence",
+      "input": {
+        "open_epoch": {
+          "seq": 1,
+          "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+        },
+        "observations": [
+          {
+            "authority": "exact",
+            "key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+          },
+          {
+            "authority": "inherited",
+            "key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+          },
+          {
+            "authority": "exact",
+            "key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+          }
+        ]
+      },
+      "expected": {
+        "epoch_writes": 0,
+        "authority_outcomes": [
+          "available",
+          "unavailable",
+          "available"
+        ],
+        "open_epoch_seq": 1,
+        "tree_valid_after_exact_returns": true
+      }
+    },
+    {
+      "name": "namespace-unauthenticated-reverify-cannot-replace",
+      "action": "reverify_namespace",
+      "input": {
+        "open_epoch": {
+          "seq": 1,
+          "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+        },
+        "observed_dns": "exact",
+        "observed_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "authenticated": false
+      },
+      "expected": {
+        "accepted": true,
+        "epoch_writes": 0,
+        "open_epoch_seq": 1,
+        "current_authority": "unavailable",
+        "old_tree_cut_off": false
+      }
+    },
+    {
+      "name": "namespace-failed-dns-observation-no-epoch",
+      "action": "reverify_namespace",
+      "input": {
+        "open_epoch": {
+          "seq": 1,
+          "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+        },
+        "observed_dns": "failed",
+        "authenticated": false
+      },
+      "expected": {
+        "epoch_writes": 0,
+        "open_epoch_seq": 1,
+        "current_authority": "unavailable",
+        "old_tree_cut_off": false
+      }
+    },
+    {
+      "name": "namespace-unverified-dns-observation-no-epoch",
+      "action": "reverify_namespace",
+      "input": {
+        "open_epoch": {
+          "seq": 1,
+          "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+        },
+        "observed_dns": "unverified",
+        "authenticated": false
+      },
+      "expected": {
+        "epoch_writes": 0,
+        "open_epoch_seq": 1,
+        "current_authority": "unavailable",
+        "old_tree_cut_off": false
+      }
+    },
+    {
+      "name": "pre-upgrade-namespace-authenticated-post-opens-first-epoch",
+      "action": "register_namespace",
+      "input": {
+        "method": "POST",
+        "path": "/v1/namespaces",
+        "namespace_exists": true,
+        "epochs": [],
+        "authenticated_controller": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "stored_controller": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "exact_dns_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "registered_at": "2026-10-26T00:10:00.000000Z"
+      },
+      "expected": {
+        "accepted": true,
+        "epoch_writes": 1,
+        "epoch_seq": 1,
+        "continuity": "replaced",
+        "registered_at": "2026-10-26T00:10:00.000000Z",
+        "namespace_address_team_data_unchanged": true,
+        "history_inferred": false
+      }
+    },
+    {
+      "name": "namespace-repeat-authenticated-post-is-epoch-noop",
+      "action": "register_namespace",
+      "input": {
+        "method": "POST",
+        "path": "/v1/namespaces",
+        "namespace_exists": true,
+        "open_epoch": {
+          "seq": 1,
+          "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+        },
+        "authenticated_controller": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "exact_dns_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+      },
+      "expected": {
+        "accepted": true,
+        "epoch_writes": 0,
+        "namespace_address_team_data_unchanged": true
+      }
+    },
+    {
+      "name": "pre-upgrade-namespace-unauthenticated-reverify-no-epoch",
+      "action": "reverify_namespace",
+      "input": {
+        "namespace_exists": true,
+        "epochs": [],
+        "observed_dns": "exact",
+        "observed_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "authenticated": false
+      },
+      "expected": {
+        "epoch_writes": 0,
+        "tree_authority": "unavailable",
+        "history_inferred": false
+      }
+    },
+    {
+      "name": "pre-upgrade-post-dns-caller-differs-from-stored-controller",
+      "action": "register_namespace",
+      "input": {
+        "method": "POST",
+        "path": "/v1/namespaces",
+        "namespace_exists": true,
+        "epochs": [],
+        "stored_controller": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "authenticated_controller": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "exact_dns_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+      },
+      "expected": {
+        "accepted": true,
+        "epoch_writes": 0,
+        "namespace_address_team_data_unchanged": true,
+        "history_inferred": false
+      }
+    },
+    {
+      "name": "pre-upgrade-parent-authorized-post-no-epoch",
+      "action": "register_namespace",
+      "input": {
+        "method": "POST",
+        "path": "/v1/namespaces",
+        "namespace_exists": true,
+        "epochs": [],
+        "stored_controller": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "authenticated_controller": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "proof_lane": "parent_authorization",
+        "exact_dns_key": null
+      },
+      "expected": {
+        "accepted": true,
+        "epoch_writes": 0,
+        "namespace_address_team_data_unchanged": true,
+        "history_inferred": false
+      }
+    },
+    {
+      "name": "pre-upgrade-concurrent-authenticated-posts-open-once",
+      "action": "register_namespace_concurrently",
+      "input": {
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/namespaces",
+            "namespace_exists": true,
+            "epochs": [],
+            "stored_controller": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "authenticated_controller": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "exact_dns_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+          },
+          {
+            "method": "POST",
+            "path": "/v1/namespaces",
+            "namespace_exists": true,
+            "epochs": [],
+            "stored_controller": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "authenticated_controller": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "exact_dns_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+          }
+        ],
+        "last_lock_wait_ends": [
+          "2026-10-26T00:10:00.000000Z",
+          "2026-10-26T00:11:00.000000Z"
+        ]
+      },
+      "expected": {
+        "both_accepted": true,
+        "total_epoch_writes": 1,
+        "epoch_seq": 1,
+        "continuity": "replaced",
+        "registered_at": "2026-10-26T00:10:00.000000Z",
+        "namespace_address_team_data_unchanged": true
+      }
+    },
+    {
+      "name": "namespace-rotation-swapped-roles-refuses",
+      "action": "rotate_namespace",
+      "input": {
+        "request": "swapped-roles",
+        "open_epoch": {
+          "seq": 1,
+          "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+        },
+        "exact_dns_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "now": "2026-10-26T00:10:01Z"
+      },
+      "expected": {
+        "accepted": false,
+        "reason": "invalid_signature",
+        "writes": 0
+      }
+    },
+    {
+      "name": "namespace-put-parent-authorization-no-epoch",
+      "action": "replace_namespace",
+      "input": {
+        "method": "PUT",
+        "path": "/v1/namespaces/example.com",
+        "operation": "rotate_controller",
+        "proof_lane": "parent_authorization",
+        "new_key_proof": true,
+        "new_controller": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "exact_dns_key": null,
+        "open_epoch": {
+          "seq": 1,
+          "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+        }
+      },
+      "expected": {
+        "accepted": true,
+        "stored_controller": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "epoch_writes": 0,
+        "open_epoch_seq": 1,
+        "current_authority": "unavailable",
+        "old_tree_cut_off": false
+      }
+    },
+    {
+      "name": "namespace-put-skip-dns-no-epoch",
+      "action": "replace_namespace",
+      "input": {
+        "method": "PUT",
+        "path": "/v1/namespaces/example.com",
+        "operation": "rotate_controller",
+        "proof_lane": "skip_dns",
+        "new_key_proof": true,
+        "new_controller": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "exact_dns_key": null,
+        "open_epoch": {
+          "seq": 1,
+          "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+        }
+      },
+      "expected": {
+        "accepted": true,
+        "stored_controller": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "epoch_writes": 0,
+        "open_epoch_seq": 1,
+        "current_authority": "unavailable",
+        "old_tree_cut_off": false
+      }
+    },
+    {
+      "name": "namespace-reverify-row-change-then-exact-put-opens-replaced",
+      "action": "replace_namespace",
+      "input": {
+        "method": "PUT",
+        "path": "/v1/namespaces/example.com",
+        "operation": "rotate_controller",
+        "stored_controller_after_reverify": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "new_controller": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "new_key_proof": true,
+        "exact_dns_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "open_epoch": {
+          "seq": 1,
+          "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+        }
+      },
+      "expected": {
+        "accepted": true,
+        "stored_controller": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+        "epoch_writes": 1,
+        "epoch_seq": 2,
+        "continuity": "replaced",
+        "old_registered_ids_reason": "root_replaced"
       }
     }
   ],
@@ -8409,5 +11252,162 @@
         }
       }
     ]
+  },
+  "namespace_rotation_requests": {
+    "valid": {
+      "body": {
+        "domain": "example.com",
+        "operation": "rotate_namespace_controller",
+        "from_seq": 1,
+        "previous_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "new_did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+      },
+      "body_utf8": "{\"domain\":\"example.com\",\"from_seq\":1,\"new_did_key\":\"did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH\",\"operation\":\"rotate_namespace_controller\",\"previous_did_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\"}",
+      "payload": {
+        "v": 2,
+        "type": "aweb.awid-controller-request",
+        "aud": "https://registry.example.com",
+        "method": "POST",
+        "path": "/v1/namespaces/example.com/rotate",
+        "body_sha256": "dc2d34e0b2b16548409099eb977cd6b84f6b7cec96f98dc2ffd0bb4b3c7fcdf1",
+        "timestamp": "2026-10-26T00:10:00Z",
+        "domain": "example.com",
+        "operation": "rotate_namespace_controller",
+        "from_seq": 1,
+        "previous_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "new_did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+      },
+      "canonical_payload_utf8": "{\"aud\":\"https://registry.example.com\",\"body_sha256\":\"dc2d34e0b2b16548409099eb977cd6b84f6b7cec96f98dc2ffd0bb4b3c7fcdf1\",\"domain\":\"example.com\",\"from_seq\":1,\"method\":\"POST\",\"new_did_key\":\"did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH\",\"operation\":\"rotate_namespace_controller\",\"path\":\"/v1/namespaces/example.com/rotate\",\"previous_did_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\",\"timestamp\":\"2026-10-26T00:10:00Z\",\"type\":\"aweb.awid-controller-request\",\"v\":2}",
+      "headers": {
+        "Authorization": "DIDKey did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX DPJwZkcM5wsZrZqGcBqtkctDL5FUNBCipaQPVZAe5ZvBMZQucwCtBBnTwRvrYzohTQ6+5nWA/P1899K60buYAg",
+        "X-AWEB-New-Key-Authorization": "DIDKey did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH NTxZ71m17/mt/l+RKyLTv/z3I47msdFrngE7f34dOLNxGvezv6esGfz787ReZkq53NpQS5xum79iEd7LG5azBw",
+        "X-AWEB-Timestamp": "2026-10-26T00:10:00Z",
+        "X-AWEB-Signed-Payload": "eyJhdWQiOiJodHRwczovL3JlZ2lzdHJ5LmV4YW1wbGUuY29tIiwiYm9keV9zaGEyNTYiOiJkYzJkMzRlMGIyYjE2NTQ4NDA5MDk5ZWI5NzdjZDZiODRmNmI3Y2VjOTZmOThkYzJmZmQwYmI0YjNjN2ZjZGYxIiwiZG9tYWluIjoiZXhhbXBsZS5jb20iLCJmcm9tX3NlcSI6MSwibWV0aG9kIjoiUE9TVCIsIm5ld19kaWRfa2V5IjoiZGlkOmtleTp6Nk1rbzloVGdnTXdqU1RFYUphUFVmRTZ0cWN5Mnh2VTZCbk5xM2UzbzhxVkJpeUgiLCJvcGVyYXRpb24iOiJyb3RhdGVfbmFtZXNwYWNlX2NvbnRyb2xsZXIiLCJwYXRoIjoiL3YxL25hbWVzcGFjZXMvZXhhbXBsZS5jb20vcm90YXRlIiwicHJldmlvdXNfZGlkX2tleSI6ImRpZDprZXk6ejZNa29uM05lY2Q2TmtreWZvR29IeGlkMnpuR2M1OUxVM0s3bXViYVJjRmJMZkxYIiwidGltZXN0YW1wIjoiMjAyNi0xMC0yNlQwMDoxMDowMFoiLCJ0eXBlIjoiYXdlYi5hd2lkLWNvbnRyb2xsZXItcmVxdWVzdCIsInYiOjJ9"
+      }
+    },
+    "wrong-from-seq": {
+      "body": {
+        "domain": "example.com",
+        "operation": "rotate_namespace_controller",
+        "from_seq": 2,
+        "previous_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "new_did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+      },
+      "body_utf8": "{\"domain\":\"example.com\",\"from_seq\":2,\"new_did_key\":\"did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH\",\"operation\":\"rotate_namespace_controller\",\"previous_did_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\"}",
+      "payload": {
+        "v": 2,
+        "type": "aweb.awid-controller-request",
+        "aud": "https://registry.example.com",
+        "method": "POST",
+        "path": "/v1/namespaces/example.com/rotate",
+        "body_sha256": "a4b138a574517929d28f567fe26ed38165d98002f75d83d5f2bedf390b46a1f5",
+        "timestamp": "2026-10-26T00:10:00Z",
+        "domain": "example.com",
+        "operation": "rotate_namespace_controller",
+        "from_seq": 2,
+        "previous_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "new_did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+      },
+      "canonical_payload_utf8": "{\"aud\":\"https://registry.example.com\",\"body_sha256\":\"a4b138a574517929d28f567fe26ed38165d98002f75d83d5f2bedf390b46a1f5\",\"domain\":\"example.com\",\"from_seq\":2,\"method\":\"POST\",\"new_did_key\":\"did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH\",\"operation\":\"rotate_namespace_controller\",\"path\":\"/v1/namespaces/example.com/rotate\",\"previous_did_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\",\"timestamp\":\"2026-10-26T00:10:00Z\",\"type\":\"aweb.awid-controller-request\",\"v\":2}",
+      "headers": {
+        "Authorization": "DIDKey did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX EzM1Y2CgRvZzh2aS6lpUD+mYUGhh8x2uv7krw4CMCcIQNHQGUMg8kKx8kiKGR1laXSj8QXtgBTRfw0syzwgDDw",
+        "X-AWEB-New-Key-Authorization": "DIDKey did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH /G04BtzUG67hj6VgE0QEBz19WudeueC9zSw4e+T30ET08eGI6XovApP0DL506LAV7NV4MYArOw2dVJB5dZA2Bw",
+        "X-AWEB-Timestamp": "2026-10-26T00:10:00Z",
+        "X-AWEB-Signed-Payload": "eyJhdWQiOiJodHRwczovL3JlZ2lzdHJ5LmV4YW1wbGUuY29tIiwiYm9keV9zaGEyNTYiOiJhNGIxMzhhNTc0NTE3OTI5ZDI4ZjU2N2ZlMjZlZDM4MTY1ZDk4MDAyZjc1ZDgzZDVmMmJlZGYzOTBiNDZhMWY1IiwiZG9tYWluIjoiZXhhbXBsZS5jb20iLCJmcm9tX3NlcSI6MiwibWV0aG9kIjoiUE9TVCIsIm5ld19kaWRfa2V5IjoiZGlkOmtleTp6Nk1rbzloVGdnTXdqU1RFYUphUFVmRTZ0cWN5Mnh2VTZCbk5xM2UzbzhxVkJpeUgiLCJvcGVyYXRpb24iOiJyb3RhdGVfbmFtZXNwYWNlX2NvbnRyb2xsZXIiLCJwYXRoIjoiL3YxL25hbWVzcGFjZXMvZXhhbXBsZS5jb20vcm90YXRlIiwicHJldmlvdXNfZGlkX2tleSI6ImRpZDprZXk6ejZNa29uM05lY2Q2TmtreWZvR29IeGlkMnpuR2M1OUxVM0s3bXViYVJjRmJMZkxYIiwidGltZXN0YW1wIjoiMjAyNi0xMC0yNlQwMDoxMDowMFoiLCJ0eXBlIjoiYXdlYi5hd2lkLWNvbnRyb2xsZXItcmVxdWVzdCIsInYiOjJ9"
+      }
+    },
+    "new-key-only": {
+      "body": {
+        "domain": "example.com",
+        "operation": "rotate_namespace_controller",
+        "from_seq": 1,
+        "previous_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "new_did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+      },
+      "body_utf8": "{\"domain\":\"example.com\",\"from_seq\":1,\"new_did_key\":\"did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH\",\"operation\":\"rotate_namespace_controller\",\"previous_did_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\"}",
+      "payload": {
+        "v": 2,
+        "type": "aweb.awid-controller-request",
+        "aud": "https://registry.example.com",
+        "method": "POST",
+        "path": "/v1/namespaces/example.com/rotate",
+        "body_sha256": "dc2d34e0b2b16548409099eb977cd6b84f6b7cec96f98dc2ffd0bb4b3c7fcdf1",
+        "timestamp": "2026-10-26T00:10:00Z",
+        "domain": "example.com",
+        "operation": "rotate_namespace_controller",
+        "from_seq": 1,
+        "previous_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "new_did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+      },
+      "canonical_payload_utf8": "{\"aud\":\"https://registry.example.com\",\"body_sha256\":\"dc2d34e0b2b16548409099eb977cd6b84f6b7cec96f98dc2ffd0bb4b3c7fcdf1\",\"domain\":\"example.com\",\"from_seq\":1,\"method\":\"POST\",\"new_did_key\":\"did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH\",\"operation\":\"rotate_namespace_controller\",\"path\":\"/v1/namespaces/example.com/rotate\",\"previous_did_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\",\"timestamp\":\"2026-10-26T00:10:00Z\",\"type\":\"aweb.awid-controller-request\",\"v\":2}",
+      "headers": {
+        "Authorization": "DIDKey did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH NTxZ71m17/mt/l+RKyLTv/z3I47msdFrngE7f34dOLNxGvezv6esGfz787ReZkq53NpQS5xum79iEd7LG5azBw",
+        "X-AWEB-New-Key-Authorization": "DIDKey did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH NTxZ71m17/mt/l+RKyLTv/z3I47msdFrngE7f34dOLNxGvezv6esGfz787ReZkq53NpQS5xum79iEd7LG5azBw",
+        "X-AWEB-Timestamp": "2026-10-26T00:10:00Z",
+        "X-AWEB-Signed-Payload": "eyJhdWQiOiJodHRwczovL3JlZ2lzdHJ5LmV4YW1wbGUuY29tIiwiYm9keV9zaGEyNTYiOiJkYzJkMzRlMGIyYjE2NTQ4NDA5MDk5ZWI5NzdjZDZiODRmNmI3Y2VjOTZmOThkYzJmZmQwYmI0YjNjN2ZjZGYxIiwiZG9tYWluIjoiZXhhbXBsZS5jb20iLCJmcm9tX3NlcSI6MSwibWV0aG9kIjoiUE9TVCIsIm5ld19kaWRfa2V5IjoiZGlkOmtleTp6Nk1rbzloVGdnTXdqU1RFYUphUFVmRTZ0cWN5Mnh2VTZCbk5xM2UzbzhxVkJpeUgiLCJvcGVyYXRpb24iOiJyb3RhdGVfbmFtZXNwYWNlX2NvbnRyb2xsZXIiLCJwYXRoIjoiL3YxL25hbWVzcGFjZXMvZXhhbXBsZS5jb20vcm90YXRlIiwicHJldmlvdXNfZGlkX2tleSI6ImRpZDprZXk6ejZNa29uM05lY2Q2TmtreWZvR29IeGlkMnpuR2M1OUxVM0s3bXViYVJjRmJMZkxYIiwidGltZXN0YW1wIjoiMjAyNi0xMC0yNlQwMDoxMDowMFoiLCJ0eXBlIjoiYXdlYi5hd2lkLWNvbnRyb2xsZXItcmVxdWVzdCIsInYiOjJ9"
+      }
+    },
+    "stale-old-key": {
+      "body": {
+        "domain": "example.com",
+        "operation": "rotate_namespace_controller",
+        "from_seq": 2,
+        "previous_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "new_did_key": "did:key:z6MkmNL6xksdEJENGk9Z1qqGsY5njKQdjU1UhnUEUvWyQUVX"
+      },
+      "body_utf8": "{\"domain\":\"example.com\",\"from_seq\":2,\"new_did_key\":\"did:key:z6MkmNL6xksdEJENGk9Z1qqGsY5njKQdjU1UhnUEUvWyQUVX\",\"operation\":\"rotate_namespace_controller\",\"previous_did_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\"}",
+      "payload": {
+        "v": 2,
+        "type": "aweb.awid-controller-request",
+        "aud": "https://registry.example.com",
+        "method": "POST",
+        "path": "/v1/namespaces/example.com/rotate",
+        "body_sha256": "ff3707ca142799626a65bac657caba1838560bafeb15e0b3ee6dfa76d5cf240b",
+        "timestamp": "2026-10-26T00:10:00Z",
+        "domain": "example.com",
+        "operation": "rotate_namespace_controller",
+        "from_seq": 2,
+        "previous_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "new_did_key": "did:key:z6MkmNL6xksdEJENGk9Z1qqGsY5njKQdjU1UhnUEUvWyQUVX"
+      },
+      "canonical_payload_utf8": "{\"aud\":\"https://registry.example.com\",\"body_sha256\":\"ff3707ca142799626a65bac657caba1838560bafeb15e0b3ee6dfa76d5cf240b\",\"domain\":\"example.com\",\"from_seq\":2,\"method\":\"POST\",\"new_did_key\":\"did:key:z6MkmNL6xksdEJENGk9Z1qqGsY5njKQdjU1UhnUEUvWyQUVX\",\"operation\":\"rotate_namespace_controller\",\"path\":\"/v1/namespaces/example.com/rotate\",\"previous_did_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\",\"timestamp\":\"2026-10-26T00:10:00Z\",\"type\":\"aweb.awid-controller-request\",\"v\":2}",
+      "headers": {
+        "Authorization": "DIDKey did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX 8UG9+hTKla8OW4PbavqIBmycqHmeWVBIVO1gjBAPAaWg+Tlh4MJGri79TbemNlyMSA2D1s64CuljK3+gRjOaBw",
+        "X-AWEB-New-Key-Authorization": "DIDKey did:key:z6MkmNL6xksdEJENGk9Z1qqGsY5njKQdjU1UhnUEUvWyQUVX vU2c29XmfHuM20BIdfZgaAc7rHzdQueGu9NYV9P7MQcQB9BVBHhMwUEkrdcI0fUuZTMODYjxCsrAmpxKR3WyDA",
+        "X-AWEB-Timestamp": "2026-10-26T00:10:00Z",
+        "X-AWEB-Signed-Payload": "eyJhdWQiOiJodHRwczovL3JlZ2lzdHJ5LmV4YW1wbGUuY29tIiwiYm9keV9zaGEyNTYiOiJmZjM3MDdjYTE0Mjc5OTYyNmE2NWJhYzY1N2NhYmExODM4NTYwYmFmZWIxNWUwYjNlZTZkZmE3NmQ1Y2YyNDBiIiwiZG9tYWluIjoiZXhhbXBsZS5jb20iLCJmcm9tX3NlcSI6MiwibWV0aG9kIjoiUE9TVCIsIm5ld19kaWRfa2V5IjoiZGlkOmtleTp6Nk1rbU5MNnhrc2RFSkVOR2s5WjFxcUdzWTVuaktRZGpVMVVoblVFVXZXeVFVVlgiLCJvcGVyYXRpb24iOiJyb3RhdGVfbmFtZXNwYWNlX2NvbnRyb2xsZXIiLCJwYXRoIjoiL3YxL25hbWVzcGFjZXMvZXhhbXBsZS5jb20vcm90YXRlIiwicHJldmlvdXNfZGlkX2tleSI6ImRpZDprZXk6ejZNa29uM05lY2Q2TmtreWZvR29IeGlkMnpuR2M1OUxVM0s3bXViYVJjRmJMZkxYIiwidGltZXN0YW1wIjoiMjAyNi0xMC0yNlQwMDoxMDowMFoiLCJ0eXBlIjoiYXdlYi5hd2lkLWNvbnRyb2xsZXItcmVxdWVzdCIsInYiOjJ9"
+      }
+    },
+    "swapped-roles": {
+      "body": {
+        "domain": "example.com",
+        "operation": "rotate_namespace_controller",
+        "from_seq": 1,
+        "previous_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "new_did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+      },
+      "body_utf8": "{\"domain\":\"example.com\",\"from_seq\":1,\"new_did_key\":\"did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH\",\"operation\":\"rotate_namespace_controller\",\"previous_did_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\"}",
+      "payload": {
+        "v": 2,
+        "type": "aweb.awid-controller-request",
+        "aud": "https://registry.example.com",
+        "method": "POST",
+        "path": "/v1/namespaces/example.com/rotate",
+        "body_sha256": "dc2d34e0b2b16548409099eb977cd6b84f6b7cec96f98dc2ffd0bb4b3c7fcdf1",
+        "timestamp": "2026-10-26T00:10:00Z",
+        "domain": "example.com",
+        "operation": "rotate_namespace_controller",
+        "from_seq": 1,
+        "previous_did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+        "new_did_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+      },
+      "canonical_payload_utf8": "{\"aud\":\"https://registry.example.com\",\"body_sha256\":\"dc2d34e0b2b16548409099eb977cd6b84f6b7cec96f98dc2ffd0bb4b3c7fcdf1\",\"domain\":\"example.com\",\"from_seq\":1,\"method\":\"POST\",\"new_did_key\":\"did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH\",\"operation\":\"rotate_namespace_controller\",\"path\":\"/v1/namespaces/example.com/rotate\",\"previous_did_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\",\"timestamp\":\"2026-10-26T00:10:00Z\",\"type\":\"aweb.awid-controller-request\",\"v\":2}",
+      "headers": {
+        "Authorization": "DIDKey did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH NTxZ71m17/mt/l+RKyLTv/z3I47msdFrngE7f34dOLNxGvezv6esGfz787ReZkq53NpQS5xum79iEd7LG5azBw",
+        "X-AWEB-New-Key-Authorization": "DIDKey did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX DPJwZkcM5wsZrZqGcBqtkctDL5FUNBCipaQPVZAe5ZvBMZQucwCtBBnTwRvrYzohTQ6+5nWA/P1899K60buYAg",
+        "X-AWEB-Timestamp": "2026-10-26T00:10:00Z",
+        "X-AWEB-Signed-Payload": "eyJhdWQiOiJodHRwczovL3JlZ2lzdHJ5LmV4YW1wbGUuY29tIiwiYm9keV9zaGEyNTYiOiJkYzJkMzRlMGIyYjE2NTQ4NDA5MDk5ZWI5NzdjZDZiODRmNmI3Y2VjOTZmOThkYzJmZmQwYmI0YjNjN2ZjZGYxIiwiZG9tYWluIjoiZXhhbXBsZS5jb20iLCJmcm9tX3NlcSI6MSwibWV0aG9kIjoiUE9TVCIsIm5ld19kaWRfa2V5IjoiZGlkOmtleTp6Nk1rbzloVGdnTXdqU1RFYUphUFVmRTZ0cWN5Mnh2VTZCbk5xM2UzbzhxVkJpeUgiLCJvcGVyYXRpb24iOiJyb3RhdGVfbmFtZXNwYWNlX2NvbnRyb2xsZXIiLCJwYXRoIjoiL3YxL25hbWVzcGFjZXMvZXhhbXBsZS5jb20vcm90YXRlIiwicHJldmlvdXNfZGlkX2tleSI6ImRpZDprZXk6ejZNa29uM05lY2Q2TmtreWZvR29IeGlkMnpuR2M1OUxVM0s3bXViYVJjRmJMZkxYIiwidGltZXN0YW1wIjoiMjAyNi0xMC0yNlQwMDoxMDowMFoiLCJ0eXBlIjoiYXdlYi5hd2lkLWNvbnRyb2xsZXItcmVxdWVzdCIsInYiOjJ9"
+      }
+    }
   }
 }
