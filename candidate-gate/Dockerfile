@@ -1,7 +1,7 @@
 # Tool image for the complete local candidate suite.
 FROM python:3.12-bookworm
 
-ARG GO_VERSION=1.24.13
+ARG GO_VERSION=1.26.10
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -29,7 +29,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /uvx /opt/uv/
 
 RUN python3 --version \
     && node --version | grep '^v22\.' \
-    && test "$(go env GOVERSION)" = "go1.24.13" \
+    && test "$(go env GOVERSION)" = "go1.26.10" \
     && docker --version \
     && uv --version \
     && tmux -V
