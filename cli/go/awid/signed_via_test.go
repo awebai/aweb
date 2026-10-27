@@ -1,7 +1,9 @@
 package awid
 
 import (
+	"crypto/ecdh"
 	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"os"
@@ -9,6 +11,95 @@ import (
 	"testing"
 	"time"
 )
+
+type viaCryptoIdentity struct {
+	Address       string                  `json:"address"`
+	DID           string                  `json:"did"`
+	StableID      string                  `json:"stable_id"`
+	TeamID        string                  `json:"team_id"`
+	SeedHex       string                  `json:"seed_hex"`
+	X25519Private string                  `json:"x25519_private"`
+	EncryptionKey *EncryptionKeyAssertion `json:"encryption_key"`
+}
+
+type viaCryptoCase struct {
+	Producer string              `json:"producer"`
+	Kind     string              `json:"kind"`
+	Via      string              `json:"via"`
+	Envelope E2EEMessageEnvelope `json:"envelope"`
+}
+
+func TestSignedViaCrossLanguageCrypto(t *testing.T) {
+	path := "../../../docs/vectors/human-channels-signed-via-crypto-v1.json"
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Description string                       `json:"description"`
+		Identities  map[string]viaCryptoIdentity `json:"identities"`
+		Cases       []viaCryptoCase              `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	if os.Getenv("AW_GENERATE_SIGNED_VIA_CRYPTO") == "1" {
+		for _, c := range fixture.Cases {
+			if c.Producer == "go" {
+				t.Fatal("refusing to refreeze existing Go vectors")
+			}
+		}
+		alice, bob := fixture.Identities["alice"], fixture.Identities["bob"]
+		seed, err := hex.DecodeString(alice.SeedHex)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, kind := range []string{"mail", "chat"} {
+			for _, via := range []string{"", "telegram", "msteams"} {
+				envelope, err := EncryptE2EEMessage(E2EEEncryptMessageParams{Kind: kind, Via: via,
+					Sender:     E2EESenderKey{Address: alice.Address, DID: alice.DID, StableID: alice.StableID, TeamID: alice.TeamID, EncryptionKey: alice.EncryptionKey, SigningKey: ed25519.NewKeyFromSeed(seed)},
+					Recipients: []E2EERecipientKey{{Address: bob.Address, DID: bob.DID, StableID: bob.StableID, TeamID: bob.TeamID, EncryptionKey: bob.EncryptionKey}},
+					Subject:    "P1 subject", Body: "P1 public test body", MessageID: "11111111-1111-4111-8111-111111111111", ConversationID: "22222222-2222-4222-8222-222222222222", CreatedAt: time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)})
+				if err != nil {
+					t.Fatal(err)
+				}
+				fixture.Cases = append(fixture.Cases, viaCryptoCase{Producer: "go", Kind: kind, Via: via, Envelope: *envelope})
+			}
+		}
+		encoded, err := json.MarshalIndent(fixture, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, append(encoded, '\n'), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(fixture.Cases) != 12 {
+		t.Fatalf("want both producers x mail/chat x absent/telegram/msteams, got %d", len(fixture.Cases))
+	}
+	for _, c := range fixture.Cases {
+		t.Run(c.Producer+"/"+c.Kind+"/"+c.Via, func(t *testing.T) {
+			for _, alias := range []string{"bob", "alice"} {
+				identity := fixture.Identities[alias]
+				raw, err := base64.RawStdEncoding.DecodeString(identity.X25519Private)
+				if err != nil {
+					t.Fatal(err)
+				}
+				private, err := ecdh.X25519().NewPrivateKey(raw)
+				if err != nil {
+					t.Fatal(err)
+				}
+				plain, err := DecryptE2EEMessage(&c.Envelope, E2EEDecryptIdentity{Address: identity.Address, DID: identity.DID, StableID: identity.StableID, EncryptionKeyID: identity.EncryptionKey.EncryptionKeyID, PrivateKey: private})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if plain.Via != c.Via || plain.Body != "P1 public test body" {
+					t.Fatalf("lost authenticated content: %#v", plain)
+				}
+			}
+		})
+	}
+}
 
 // These are the frozen P0 bytes, not a second copy of their grammar or vectors.
 func TestSignedViaNativeFrozenBytes(t *testing.T) {
@@ -212,5 +303,42 @@ func TestSignedViaMalformedWireRefused(t *testing.T) {
 		if err := json.Unmarshal([]byte(raw), &inner); err == nil {
 			t.Errorf("inner accepted %s", raw)
 		}
+	}
+}
+
+func TestSignedViaPublishedCanonicalAgreement(t *testing.T) {
+	raw, err := os.ReadFile("../../../docs/vectors/human-channels-signed-via-v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Seed  string `json:"public_test_seed_hex"`
+		Cases []struct {
+			Name        string          `json:"name"`
+			Payload     MessageEnvelope `json:"payload"`
+			SignedBytes string          `json:"signed_bytes"`
+			Signature   string          `json:"signature"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	seed, err := hex.DecodeString(fixture.Seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range fixture.Cases {
+		t.Run(c.Name, func(t *testing.T) {
+			if CanonicalJSON(&c.Payload) != c.SignedBytes {
+				t.Fatalf("canonical bytes differ: %s", CanonicalJSON(&c.Payload))
+			}
+			signature, err := SignMessage(ed25519.NewKeyFromSeed(seed), &c.Payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if signature != c.Signature {
+				t.Fatal("signature differs from published record")
+			}
+		})
 	}
 }

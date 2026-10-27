@@ -97,3 +97,13 @@ signed artifact and never strips it. Its native delivery is local-retained by
 construction; no remote branch or retention flag is introduced. Low-level Go
 and Python composers validate and preserve explicitly supplied via. P1 adds no
 Via option to the high-level Go send API; N1 owns its first runtime caller.
+
+The installed `aweb.human_channels` package includes
+`human-channels-signed-via-v1.json`: mail/chat payloads with and without via,
+their exact signed bytes and public-test signatures. Python `awid.signing`, Go
+and the published `NativePlaintext` canonical record consume the same frozen
+root fixture. The packaged copy is byte-enforced by vector provenance checking;
+Cloud can load it with `importlib.resources.files("aweb.human_channels")`.
+P1's JSON outputs retain unfamiliar valid kinds as escaped string data, with
+no platform name/icon mapping or authority attached. The admitted ASCII grammar
+excludes markup; malformed kinds refuse rather than entering a renderer.
