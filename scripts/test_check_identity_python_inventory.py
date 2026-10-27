@@ -119,6 +119,27 @@ class PythonIdentityInventoryTests(unittest.TestCase):
             "reference:awid.id_certificates.verify_id_chain": 1,
             "reference:nacl.signing.VerifyKey": 1})
 
+    def test_primitive_wildcard_imports_refuse_including_relative_form(self):
+        for source in ("from nacl.bindings import *", "from .did import *"):
+            with self.subTest(source=source), self.assertRaisesRegex(ValueError, "wildcard import"):
+                GUARD.scan_python_source(source, module="awid.consumer")
+
+    def test_test_named_production_modules_are_not_excluded(self):
+        for file in ("new-package/src/pkg/test_production.py", "new-package/src/pkg/test/consumer.py",
+                     "new-package/src/pkg/conftest.py"):
+            with self.subTest(file=file):
+                path = self.root / file
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("def check(k,m,s):\n    k.verify(m,s)\n")
+                self.assertTrue(any(file in e and "unlisted" in e for e in self.errors()))
+                path.unlink()
+
+    def test_explicit_source_tests_directory_is_excluded(self):
+        path = self.root / "new-package/src/pkg/tests/check.py"
+        path.parent.mkdir(parents=True)
+        path.write_text("def check(k,m,s):\n    k.verify(m,s)\n")
+        self.assertEqual(self.errors(), [])
+
     def test_docstrings_do_not_add_did_literal_sites(self):
         self.assertEqual(GUARD.scan_python_source('"""did:key:example"""\ndef f():\n    """did:aw:example"""\n'), {})
 

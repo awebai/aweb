@@ -12,7 +12,9 @@ scans every tracked Python source, plus new nonignored Python files awaiting
 `git add`, using the Python AST. New packages, all naapp apps, runner source
 and scripts are included without extending an allowlist. Exclusions are test
 paths/names (`tests/`, `test/`, `test_*`, `conftest.py`) and the explicitly
-reviewed `EXCLUDED_SCRIPTS` set, currently the scanner itself. The primitive API catalog is
+reviewed `EXCLUDED_SCRIPTS` set, currently the scanner itself. Below `src/`,
+only directories named `tests` are excluded: production `test_*.py`, `test/`
+and `conftest.py` modules stay scanned. The primitive API catalog is
 `PRIMITIVE_NAMES` and `PRIMITIVE_MODULES` in
 `scripts/check_identity_python_inventory.py`: raw Ed25519 signing/verification
 and constructors (including raw `nacl.bindings` APIs), DID construction, public identity/certificate verification
@@ -35,7 +37,8 @@ class/function names; module-level calls use `<module>`. An existing file or
 function is not a blanket exemption: a new primitive call, changed count,
 missing mapping or stale entry fails. Import aliases and chained constructors
 are resolved syntactically, including relative imports resolved against each
-source file's package path. Metadata cannot downgrade the strict ID-certificate
+source file's package path. Wildcard imports from primitive modules refuse.
+Metadata cannot downgrade the strict ID-certificate
 module or add a raw verifier there outside its shared verification function.
 
 When a legitimate change fails, review the new call's authority, update its
