@@ -4834,7 +4834,7 @@
       },
       "original_auth": "passed",
       "expected_request": {
-        "ordinary": "refuse",
+        "ordinary": "continue",
         "human_required": "refuse"
       }
     },
@@ -4963,7 +4963,7 @@
       },
       "original_auth": "passed",
       "expected_request": {
-        "ordinary": "refuse",
+        "ordinary": "continue",
         "human_required": "refuse"
       }
     },
@@ -5858,7 +5858,7 @@
       "expected_cache_mode": "unavailable",
       "original_auth": "passed",
       "expected_request": {
-        "ordinary": "refuse",
+        "ordinary": "continue",
         "human_required": "refuse"
       }
     },
@@ -5888,7 +5888,7 @@
       },
       "original_auth": "passed",
       "expected_request": {
-        "ordinary": "refuse",
+        "ordinary": "continue",
         "human_required": "refuse"
       }
     },
@@ -5915,7 +5915,7 @@
       "status_source": "caller",
       "original_auth": "passed",
       "expected_request": {
-        "ordinary": "refuse",
+        "ordinary": "continue",
         "human_required": "refuse"
       }
     },
@@ -6020,7 +6020,7 @@
       },
       "original_auth": "passed",
       "expected_request": {
-        "ordinary": "refuse",
+        "ordinary": "continue",
         "human_required": "refuse"
       }
     },
@@ -6109,7 +6109,7 @@
       },
       "original_auth": "passed",
       "expected_request": {
-        "ordinary": "refuse",
+        "ordinary": "continue",
         "human_required": "refuse"
       }
     },
@@ -6957,6 +6957,34 @@
       "original_auth": "passed",
       "expected_request": {
         "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "oats-subtree-stale-after-human-rotation",
+      "chain": [
+        "alice",
+        "coordinator",
+        "seat",
+        "subseat"
+      ],
+      "status": "alice-rotated",
+      "subject": {
+        "id": "did:key:z6Mkfmm57fsb6VL7zVusP8zeA9SYkCKdvUhby2G7Yh8vvQ1P",
+        "did_key": "did:key:z6Mkfmm57fsb6VL7zVusP8zeA9SYkCKdvUhby2G7Yh8vvQ1P",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkfmm57fsb6VL7zVusP8zeA9SYkCKdvUhby2G7Yh8vvQ1P"
+      },
+      "expected": {
+        "outcome": "unknown",
+        "human_id": null,
+        "identity_valid": false,
+        "kind": null,
+        "reason": "stale_issuer_key"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
         "human_required": "refuse"
       }
     },

@@ -482,15 +482,27 @@ is nearest_human. Identity validity and application roles remain separate.
 | nearest_human / verified | continue | continue | continue | continue | continue |
 | no_human / verified | continue | continue | continue | continue | continue |
 | unknown / legacy_no_chain, or authoritative unregistered_identity | continue | continue | continue | continue | continue |
-| unknown / revoked, including enrolled omission | refuse | refuse | refuse | refuse | refuse |
-| unknown / stale_issuer_key, superseded_certificate, malformed/invalid presented proof or subject mismatch | refuse | refuse | refuse | refuse | refuse |
+| Local leaf: unknown / stale_issuer_key, or unavailable / status_expired or evidence_unavailable | continue | continue | continue | continue | continue |
+| unknown / revoked, including enrolled omission (local refusal is advisory; see below) | refuse | refuse | refuse | refuse | refuse |
+| Enrolled ID: unknown / stale_issuer_key or superseded_certificate | refuse | refuse | refuse | refuse | refuse |
+| Any leaf: malformed/invalid presented proof or subject_mismatch | refuse | refuse | refuse | refuse | refuse |
 | unavailable / status_expired or evidence_unavailable for enrolled ID/chain, or stable-ID enrollment not established | refuse | refuse | refuse | refuse | refuse |
 
+A local leaf here is an authenticated did:key with no enrollment witness;
+its presented leaf must still match that authenticated key. Stale issuer keys
+and unavailable ancestry take the SAME ordinary disposition as omission:
+continue with unknown/unavailable accountability, human_required=refuse. This
+applies to every local descendant of a rotated parent, so an OATS coordinator →
+seat → sub-seat tree continues ordinary work until re-signed, and an AWID
+outage does not penalize presenting the chain. Malformed/invalid proof and
+subject_mismatch still refuse for every leaf.
+
 A chainless local did:key retains ordinary legacy auth without an ID-tree
-lookup, including during AWID outage. This preserves membership-only actions
-for a local ID omitting its chain: without registration there is no portable
-enrollment witness to discover. Enforce ancestor-based authority by requiring
-a valid chain, or end that team authority through ordinary member revocation.
+lookup, including during AWID outage. Local revoked refusal is ADVISORY: an
+honest client stops, but an omitting client keeps ordinary membership-only
+actions because there is no portable enrollment witness to discover. Ordinary
+membership revocation is the real offboarding control for local agents. A
+policy requiring ancestor-based authority requires a valid chain.
 A legacy did:aw whose authoritative
 resolution establishes no enrollment also retains ordinary auth. If that
 stable-ID enrollment evidence cannot be established past 900s, it cannot be

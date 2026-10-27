@@ -53,6 +53,7 @@ scenarios. Registry fixtures are independently supplied test authority facts;
 transaction scenarios are not runtime proof. This is docs-only: shared
 Python/Go/TypeScript consumers follow review. Existing certificate/message
 fixtures are byte-identical.
+`expected_request` is the request decision; case names describe proof outcomes.
 
 ### `member-attribution-v1.json` — superseded, historical only
 
