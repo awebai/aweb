@@ -22,12 +22,12 @@ export function excluded(file) {
  return file==='scripts/check_identity_ts_inventory.mjs' || parts.slice(0,-1).some(p=>['test','tests','testdata','fixtures'].includes(p)) || /(?:\.test\.|\.spec\.|^test[-_])/.test(name);
 }
 function primitiveModule(name) {
- return ['@noble/ed25519.', '@noble/curves/ed25519.', '@noble/curves/ed25519.js.', 'node:crypto.', 'crypto.'].some(prefix=>name.startsWith(prefix));
+ return ['@noble/ed25519', '@noble/curves', 'tweetnacl', 'libsodium-wrappers'].some(prefix=>name.startsWith(prefix)) || /^(?:node:crypto|crypto)(?:$|[./])/.test(name);
 }
 function primitive(name) {return primitiveModule(name) || nameFamily.test(name.split('.').at(-1));}
 function rawVerifier(name) {
  name=name.replace(/^reference:/,'');
- return primitiveModule(name) && /(?:verify|verifyAsync|createVerify)$/.test(name) || /(?:^|\.)(?:verifyMessage|verifySignedPayload|VerifyKey|Ed25519PublicKey)$/.test(name);
+ return primitiveModule(name) && /(?:verify|verifyAsync|createVerify|open)$/.test(name) || /(?:^|\.)(?:verifyMessage|verifySignedPayload|VerifyKey|Ed25519PublicKey)$/.test(name);
 }
 
 export function exportedIdentityAPI(source,file) {
@@ -46,10 +46,11 @@ export function scanSource(source, file='fixture.ts', identityAPI=new Set()) {
  const tree=ts.createSourceFile(file,source,ts.ScriptTarget.Latest,true,kind);
  if(tree.parseDiagnostics.length) throw new Error(ts.flattenDiagnosticMessageText(tree.parseDiagnostics[0].messageText,' '));
  const aliases=new Map();
+ const requireFunctions=new Set(["require"]);
  function moduleValue(node) {
   if(!node)return null;
   if(ts.isIdentifier(node))return aliases.get(node.text)??null;
-  if(ts.isCallExpression(node) && node.expression.getText(tree)==='require' && node.arguments.length===1 && ts.isStringLiteral(node.arguments[0]))return node.arguments[0].text;
+  if(ts.isCallExpression(node) && ts.isIdentifier(node.expression) && requireFunctions.has(node.expression.text) && node.arguments.length===1 && ts.isStringLiteral(node.arguments[0]))return node.arguments[0].text;
   if(ts.isPropertyAccessExpression(node)){const base=moduleValue(node.expression);return base?base+'.'+node.name.text:null;}
   return null;
  }
@@ -62,6 +63,7 @@ export function scanSource(source, file='fixture.ts', identityAPI=new Set()) {
    if(bindings && ts.isNamedImports(bindings)) for(const item of bindings.elements) if(!item.isTypeOnly) aliases.set(item.name.text,module+'.'+(item.propertyName??item.name).text);
   }
   if(ts.isVariableDeclaration(node)) {
+   if(ts.isIdentifier(node.name) && node.initializer && ts.isCallExpression(node.initializer) && moduleValue(node.initializer.expression)==='node:module.createRequire')requireFunctions.add(node.name.text);
    const module=moduleValue(node.initializer);
    if(module && ts.isIdentifier(node.name))aliases.set(node.name.text,module);
    if(module && ts.isObjectBindingPattern(node.name))for(const element of node.name.elements)if(ts.isIdentifier(element.name))aliases.set(element.name.text,module+'.'+(element.propertyName??element.name).text);
@@ -91,6 +93,7 @@ export function scanSource(source, file='fixture.ts', identityAPI=new Set()) {
    }
    return;
   }
+  if(ts.isCallExpression(node) && node.expression.kind===ts.SyntaxKind.ImportKeyword && node.arguments.length && ts.isStringLiteral(node.arguments[0]) && primitiveModule(node.arguments[0].text+'.'))throw new Error('dynamic import hides identity primitive: '+node.arguments[0].text);
   let next=scope;
   if(ts.isClassDeclaration(node) || ts.isClassExpression(node) || ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isMethodDeclaration(node) || ts.isArrowFunction(node)) {
    let label=node.name?.getText(tree);
@@ -105,7 +108,10 @@ export function scanSource(source, file='fixture.ts', identityAPI=new Set()) {
    const definition=(ts.isVariableDeclaration(parent)||ts.isFunctionDeclaration(parent)||ts.isFunctionExpression(parent)||ts.isClassDeclaration(parent)||ts.isMethodDeclaration(parent)||ts.isParameter(parent)||ts.isPropertyDeclaration(parent)||ts.isPropertyAssignment(parent)||ts.isBindingElement(parent)) && parent.name===node;
    if(!callee && !receiver && !definition){const ref=name(node);if(isPrimitive(ref))record(next,'reference:'+ref);}
   }
-  if(ts.isStringLiteral(node)||ts.isNoSubstitutionTemplateLiteral(node)||ts.isTemplateHead(node)) for(const prefix of ['did:key','did:aw'])if(node.text.startsWith(prefix+':'))record(next,'literal:'+prefix);
+  if(ts.isStringLiteral(node)||ts.isNoSubstitutionTemplateLiteral(node)||ts.isTemplateHead(node)) {
+   for(const prefix of ['did:key','did:aw'])if(node.text.startsWith(prefix+':'))record(next,'literal:'+prefix);
+   if(primitiveModule(node.text))record(next,'module-literal:'+node.text);
+  }
   ts.forEachChild(node,child=>visit(child,next));
  }
  visit(tree);
@@ -125,6 +131,18 @@ export function scanRepository(root) {
  return sites;
 }
 
+function disallowedStrictPrimitive(entry,callee) {
+ if(rawVerifier(callee))return true;
+ const name=callee.replace(/^reference:/,'');
+ if(!primitiveModule(name))return false;
+ const codec=entry.file==='channel-core/src/identity/id_certificates.ts';
+ if(codec && ['idEd25519Verify','primeSubgroupPoint'].includes(entry.symbol))return false;
+ // Hash wiring and the group-order constant in the reviewed codec are not a
+ // second verifier. These exact uses are still pinned by the source catalog.
+ if(codec && entry.symbol==='<module>' && ['reference:@noble/ed25519.etc.sha512Sync','@noble/ed25519.etc.concatBytes','reference:@noble/ed25519.CURVE.n'].includes(callee))return false;
+ return true;
+}
+
 export function checkCatalog(rows,entries,observed) {
  const errors=[];const byID=new Map();
  for(const row of rows){if(!row.id || byID.has(row.id))errors.push('missing or duplicate inventory row '+row.id);byID.set(row.id,row);}
@@ -138,7 +156,7 @@ export function checkCatalog(rows,entries,observed) {
   if(row?.repo!=='aweb' || !row.files?.includes(entry.file) || !row.sites?.some(site=>site.file===entry.file && site.symbol===entry.symbol))errors.push('TS primitive needs mapped exact site '+key(entry));
   if(!['strict','legacy'].includes(row?.ed25519_profile))errors.push('TS row requires strict|legacy profile '+entry.row);
   if(strictModules.has(entry.file) && row?.ed25519_profile!=='strict')errors.push('ID module cannot downgrade strict profile '+entry.file);
-  if(row?.ed25519_profile==='strict' && entry.calls && Object.keys(entry.calls).some(rawVerifier))errors.push('raw ID crypto must use shared strict verifier '+key(entry));
+  if(row?.ed25519_profile==='strict' && entry.calls && Object.keys(entry.calls).some(callee=>disallowedStrictPrimitive(entry,callee)))errors.push('raw ID crypto must use shared strict verifier '+key(entry));
  }
  for(const entry of observed){actual.set(key(entry),entry.calls);if(!declared.has(key(entry)))errors.push('unlisted TS identity primitive site '+key(entry));else if(!isDeepStrictEqual(declared.get(key(entry)),entry.calls))errors.push('TS primitive counts changed '+key(entry));}
  for(const entry of declared.keys())if(!actual.has(entry))errors.push('stale TS identity primitive site '+entry);

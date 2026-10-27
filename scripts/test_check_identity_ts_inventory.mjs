@@ -71,3 +71,31 @@ test('public identity APIs are derived from their source',()=>{
  const got=scanSource('import {computeStableID as derive} from "./did.js"; function f(){derive(x)}','consumer.ts',names);
  assert.equal(got.f['./did.js.computeStableID'],1);
 });
+
+for(const source of [
+ 'const c=await import("@noble/curves/ed25519"); c.Point.fromHex(x)',
+ 'const {ed25519:c}=await import("@noble/curves/ed25519"); c.Point.fromHex(x)',
+ 'import("@noble/ed25519").then(c=>c.Point.fromHex(x))',
+]) test('primitive dynamic import refuses '+source,()=>assert.throws(()=>scanSource(source),/dynamic import/));
+for(const module of ['@noble/curves/abstract/edwards','@noble/curves/abstract/modular','@noble/curves/abstract/curve']) test('abstract curves are primitive '+module,()=>{
+ const got=scanSource('import * as curve from "'+module+'"; function f(){curve.Point.fromHex(x)}');
+ assert.equal(got.f[module+'.Point.fromHex'],1);
+});
+
+for(const [label,source,callee] of [
+ ['noble deep import','import * as ed from "@noble/ed25519/index.js"; function f(){ed.Point.fromHex(x)}','@noble/ed25519/index.js.Point.fromHex'],
+ ['tweetnacl','import nacl from "tweetnacl"; function f(){nacl.sign.open(x,k)}','tweetnacl.sign.open'],
+ ['libsodium','import sodium from "libsodium-wrappers-sumo"; function f(){sodium.crypto_sign_open(x,k)}','libsodium-wrappers-sumo.crypto_sign_open'],
+ ['createRequire','import {createRequire} from "node:module"; const req=createRequire(import.meta.url);const c=req("node:crypto");function f(){c.createPublicKey(x)}','node:crypto.createPublicKey'],
+]) test(label,()=>assert.equal(scanSource(source).f[callee],1));
+test('primitive package strings outside static imports are inventoried',()=>{
+ const got=scanSource('function f(){unknownLoader("@noble/curves/abstract/edwards")}');
+ assert.equal(got.f['module-literal:@noble/curves/abstract/edwards'],1);
+});
+
+test('a listed strict consumer cannot implement independent curve arithmetic',()=>{
+ const file='channel-core/src/identity/id_verification.ts';const symbol='anotherVerifier';
+ const row={id:'r',repo:'aweb',files:[file],sites:[{file,symbol}],ed25519_profile:'strict'};
+ const entry={row:'r',file,symbol,calls:{'@noble/curves/abstract/edwards.Point.fromHex':1}};
+ assert.match(checkCatalog([row],[entry],[entry]).join('\n'),/shared strict/);
+});

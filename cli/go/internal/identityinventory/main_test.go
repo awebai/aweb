@@ -128,3 +128,79 @@ func TestGoScannerCatchesNewPackageAndRawBypass(t *testing.T) {
 		t.Fatal("listed strict raw verifier bypassed guard")
 	}
 }
+
+func TestGoCryptoPackagesArePrimitiveRegardlessOfName(t *testing.T) {
+	for _, module := range []string{"crypto/ed25519", "golang.org/x/crypto/ed25519", "filippo.io/edwards25519"} {
+		for _, operation := range []string{"SetBytes", "SetCanonicalBytes", "SetUniformBytes", "VarTimeDoubleScalarBaseMult", "Negate", "Bytes", "VerifyWithOptions"} {
+			t.Run(module+"/"+operation, func(t *testing.T) {
+				source := `package p; import curve "` + module + `"; func f(){curve.` + operation + `(a)}`
+				got, err := scanGoSource([]byte(source))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got["f"][module+"."+operation] != 1 {
+					t.Fatalf("package primitive hidden: %#v", got)
+				}
+			})
+		}
+	}
+}
+
+func TestGoIdentityPublicAPIIsDiscoveredFromSource(t *testing.T) {
+	root := t.TempDir()
+	command := exec.Command("git", "init", "--quiet")
+	command.Dir = root
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("%v %s", err, output)
+	}
+	directory := filepath.Join(root, "cli", "go", "awid")
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	source := `package awid; func GenerateKeypair(){}; func ComputeStableID(){}; func LoadSigningKey(){}; func SaveSigningKey(){}; func EncodeTeamCertificateHeader(){}; func DecodeTeamCertificateHeader(){}; func ScanKeysForPublicKey(){}; type Client struct{}; func (*Client) RotateDIDKey(){}`
+	if err := os.WriteFile(filepath.Join(directory, "keys_new.go"), []byte(source), 0600); err != nil {
+		t.Fatal(err)
+	}
+	consumer := `package x; import id "github.com/awebai/aw/awid"; func f(){id.GenerateKeypair();id.ComputeStableID();id.LoadSigningKey();id.SaveSigningKey();id.EncodeTeamCertificateHeader();id.DecodeTeamCertificateHeader();id.ScanKeysForPublicKey();client.RotateDIDKey()}`
+	if err := os.WriteFile(filepath.Join(root, "consumer.go"), []byte(consumer), 0600); err != nil {
+		t.Fatal(err)
+	}
+	sites, err := scanRepository(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := sites[siteKey{"consumer.go", "f"}]
+	for _, name := range []string{"GenerateKeypair", "ComputeStableID", "LoadSigningKey", "SaveSigningKey", "EncodeTeamCertificateHeader", "DecodeTeamCertificateHeader", "ScanKeysForPublicKey"} {
+		if calls["github.com/awebai/aw/awid."+name] != 1 {
+			t.Fatal("undiscovered API: " + name)
+		}
+	}
+	if calls["client.RotateDIDKey"] != 1 {
+		t.Fatal("rotation escaped")
+	}
+}
+
+func TestGoHandRolledVerifyCannotHideInStrictRow(t *testing.T) {
+	source := `package p; import curve "filippo.io/edwards25519"; func alternate(){
+  A,_:=new(curve.Point).SetBytes(a); R,_:=new(curve.Point).SetBytes(r)
+  S,_:=new(curve.Scalar).SetCanonicalBytes(s); K,_:=new(curve.Scalar).SetUniformBytes(k)
+  check:=new(curve.Point).VarTimeDoubleScalarBaseMult(K,A,S)
+  _=check.Equal(R); _=new(curve.Point).Negate(A).Bytes()
+ }`
+	got, err := scanGoSource([]byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := got["alternate"]
+	for _, name := range []string{"filippo.io/edwards25519.Point().SetBytes", "filippo.io/edwards25519.Scalar().SetCanonicalBytes", "filippo.io/edwards25519.Scalar().SetUniformBytes", "filippo.io/edwards25519.Point().VarTimeDoubleScalarBaseMult", "filippo.io/edwards25519.Point().Negate"} {
+		if calls[name] < 1 {
+			t.Fatalf("hand-rolled verify missed %s: %#v", name, calls)
+		}
+	}
+	file := "new/package/alternate.go"
+	rows := map[string]row{"strict": {ID: "strict", Repo: "aweb", Profile: "strict", Files: []string{file}, Sites: []site{{File: file, Symbol: "alternate"}}}}
+	entries := []catalogSite{{Row: "strict", File: file, Symbol: "alternate", Calls: calls}}
+	if errors := checkCatalog(rows, entries, map[siteKey]map[string]int{{file, "alternate"}: calls}); !strings.Contains(strings.Join(errors, "\n"), "shared strict") {
+		t.Fatal(errors)
+	}
+}

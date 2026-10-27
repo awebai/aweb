@@ -1017,6 +1017,14 @@
         {
           "file": "cli/go/awid/keys.go",
           "symbol": "LoadSigningKey"
+        },
+        {
+          "file": "cli/go/awid/keys.go",
+          "symbol": "LoadPublicKey"
+        },
+        {
+          "file": "cli/go/awid/keys.go",
+          "symbol": "SaveKeypair"
         }
       ]
     },
@@ -1059,7 +1067,14 @@
         "J7"
       ],
       "proving_tests": [],
-      "acceptance": "Human-less local coordination remains valid; evidenced parent signs, otherwise unknown."
+      "acceptance": "Human-less local coordination remains valid; evidenced parent signs, otherwise unknown.",
+      "ed25519_profile": "legacy",
+      "sites": [
+        {
+          "file": "cli/go/cmd/aw/init_local.go",
+          "symbol": "runImplicitLocalInit"
+        }
+      ]
     },
     {
       "id": "CLI.INIT.BYOD",
@@ -1144,6 +1159,10 @@
         {
           "file": "cli/go/cmd/aw/init_apikey.go",
           "symbol": "verifyAPIKeyBootstrapCertificate"
+        },
+        {
+          "file": "cli/go/cmd/aw/init_apikey.go",
+          "symbol": "postAPIKeyWorkspaceInit"
         }
       ]
     },
@@ -1176,6 +1195,14 @@
         {
           "file": "cli/go/cmd/aw/connect.go",
           "symbol": "registerBootstrapDID"
+        },
+        {
+          "file": "cli/go/cmd/aw/connect.go",
+          "symbol": "persistBootstrapConnectState"
+        },
+        {
+          "file": "cli/go/cmd/aw/connect.go",
+          "symbol": "validateBootstrapRedeemResponse"
         }
       ]
     },
@@ -1302,6 +1329,10 @@
         {
           "file": "cli/go/cmd/aw/team_ensure.go",
           "symbol": "runTeamEnsure"
+        },
+        {
+          "file": "cli/go/cmd/aw/team_ensure.go",
+          "symbol": "decodeWorkspaceTeamTeamCert"
         }
       ]
     },
@@ -1399,6 +1430,10 @@
         {
           "file": "cli/go/cmd/aw/init_connect.go",
           "symbol": "initCertificateConnectWithOptions"
+        },
+        {
+          "file": "cli/go/cmd/aw/init_connect.go",
+          "symbol": "loadCertificateForConnectAt"
         }
       ]
     },
@@ -1456,6 +1491,18 @@
         {
           "file": "cli/go/cmd/aw/id_team_reissue_cert.go",
           "symbol": "runTeamReissueCert"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_team_reissue_cert.go",
+          "symbol": "resolveActiveReissueCertMember"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_team_reissue_cert.go",
+          "symbol": "resolveLatestRevokedReissueCertMember"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_team_reissue_cert.go",
+          "symbol": "resolveReissueCertRegistryURL"
         }
       ]
     },
@@ -1491,6 +1538,14 @@
         {
           "file": "cli/go/awid/registry_team.go",
           "symbol": "(*RegistryClient).FetchTeamCertificate"
+        },
+        {
+          "file": "cli/go/awid/registry_team.go",
+          "symbol": "(*RegistryClient).RegisterCertificate"
+        },
+        {
+          "file": "cli/go/awid/registry_team.go",
+          "symbol": "IsTeamPrivateError"
         }
       ]
     },
@@ -2672,6 +2727,10 @@
         {
           "file": "cli/go/wake/channel_core_runner_bundle.mjs",
           "symbol": "start"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "subtle"
         }
       ]
     },
@@ -7831,6 +7890,14 @@
         {
           "file": "cli/go/awid/a2a_publication.go",
           "symbol": "validateA2ADIDKey"
+        },
+        {
+          "file": "cli/go/awid/a2a_publication.go",
+          "symbol": "A2ADelegationCanonical"
+        },
+        {
+          "file": "cli/go/awid/a2a_publication.go",
+          "symbol": "A2APublicationCanonical"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -7932,6 +7999,14 @@
         {
           "file": "cli/go/awid/atomic_address_claim.go",
           "symbol": "normalizeAtomicAddressClaimFields"
+        },
+        {
+          "file": "cli/go/awid/atomic_address_claim.go",
+          "symbol": "AtomicAddressClaimIdentityCanonical"
+        },
+        {
+          "file": "cli/go/awid/atomic_address_claim.go",
+          "symbol": "AtomicAddressClaimNamespaceCanonical"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -7967,6 +8042,14 @@
         {
           "file": "cli/go/awid/attestation_records.go",
           "symbol": "requireAttestationDIDKey"
+        },
+        {
+          "file": "cli/go/awid/attestation_records.go",
+          "symbol": "AttestationRecordSigningBytes"
+        },
+        {
+          "file": "cli/go/awid/attestation_records.go",
+          "symbol": "decodeAttestationSignature"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -8054,6 +8137,26 @@
         {
           "file": "cli/go/awid/client.go",
           "symbol": "SignRequestCredential"
+        },
+        {
+          "file": "cli/go/awid/client.go",
+          "symbol": "(*Client).ResolveIdentity"
+        },
+        {
+          "file": "cli/go/awid/client.go",
+          "symbol": "(*Client).resolveAgentMetaFresh"
+        },
+        {
+          "file": "cli/go/awid/client.go",
+          "symbol": "(*Client).seedVerifiedHeadFromPin"
+        },
+        {
+          "file": "cli/go/awid/client.go",
+          "symbol": "decorateTimeoutError"
+        },
+        {
+          "file": "cli/go/awid/client.go",
+          "symbol": "requestAuthPayload"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -8121,6 +8224,22 @@
         {
           "file": "cli/go/awid/custody.go",
           "symbol": "verifyCustodyProofFields"
+        },
+        {
+          "file": "cli/go/awid/custody.go",
+          "symbol": "(*UnixCustodyClient).do"
+        },
+        {
+          "file": "cli/go/awid/custody.go",
+          "symbol": "custodyDigestValue"
+        },
+        {
+          "file": "cli/go/awid/custody.go",
+          "symbol": "custodyProofCanonical"
+        },
+        {
+          "file": "cli/go/awid/custody.go",
+          "symbol": "custodyRequestDigest"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -8152,6 +8271,14 @@
         {
           "file": "cli/go/awid/didkey.go",
           "symbol": "ComputeStableID"
+        },
+        {
+          "file": "cli/go/awid/didkey.go",
+          "symbol": "ComputeDIDKey"
+        },
+        {
+          "file": "cli/go/awid/didkey.go",
+          "symbol": "ExtractPublicKey"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -8191,6 +8318,10 @@
         {
           "file": "cli/go/awid/e2ee_keys.go",
           "symbol": "VerifyEncryptionKeyAssertion"
+        },
+        {
+          "file": "cli/go/awid/e2ee_keys.go",
+          "symbol": "encryptionAssertionSignedPayload"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -8238,6 +8369,10 @@
         {
           "file": "cli/go/awid/e2ee_messages.go",
           "symbol": "hpkeBaseSealX25519AES256GCM"
+        },
+        {
+          "file": "cli/go/awid/e2ee_messages.go",
+          "symbol": "canonicalJSONBytes"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -8265,6 +8400,10 @@
         {
           "file": "cli/go/awid/events.go",
           "symbol": "(*Client).EventStream"
+        },
+        {
+          "file": "cli/go/awid/events.go",
+          "symbol": "(*AgentEventDecodeError).Error"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -8296,6 +8435,10 @@
         {
           "file": "cli/go/awid/federation_authority.go",
           "symbol": "parseStrictFederationTXT"
+        },
+        {
+          "file": "cli/go/awid/federation_authority.go",
+          "symbol": "(*NetFederationTXTResolver).LookupFederationTXT"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -8401,6 +8544,10 @@
         {
           "file": "cli/go/awid/identity.go",
           "symbol": "resolvedIdentityFromPin"
+        },
+        {
+          "file": "cli/go/awid/identity.go",
+          "symbol": "(*ChainResolver).ResolveFresh"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -8583,6 +8730,10 @@
         {
           "file": "cli/go/awid/received_identity.go",
           "symbol": "(*Client).receivedLocalSenderTrust"
+        },
+        {
+          "file": "cli/go/awid/received_identity.go",
+          "symbol": "(*RegistryResolver).receivedRegistry"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -8618,6 +8769,46 @@
         {
           "file": "cli/go/awid/registry_client.go",
           "symbol": "signedPathHeaders"
+        },
+        {
+          "file": "cli/go/awid/registry_client.go",
+          "symbol": "(*RegistryClient).DiscoverRegistry"
+        },
+        {
+          "file": "cli/go/awid/registry_client.go",
+          "symbol": "(*RegistryClient).GetNamespace"
+        },
+        {
+          "file": "cli/go/awid/registry_client.go",
+          "symbol": "(*RegistryClient).ListNamespaceAddresses"
+        },
+        {
+          "file": "cli/go/awid/registry_client.go",
+          "symbol": "(*RegistryClient).ListNamespaceAddressesAtSigned"
+        },
+        {
+          "file": "cli/go/awid/registry_client.go",
+          "symbol": "(*RegistryClient).ListNamespaceAddressesSigned"
+        },
+        {
+          "file": "cli/go/awid/registry_client.go",
+          "symbol": "(*RegistryClient).ResolveKey"
+        },
+        {
+          "file": "cli/go/awid/registry_client.go",
+          "symbol": "(*RegistryClient).SetFallbackRegistryURL"
+        },
+        {
+          "file": "cli/go/awid/registry_client.go",
+          "symbol": "NewAWIDRegistryClient"
+        },
+        {
+          "file": "cli/go/awid/registry_client.go",
+          "symbol": "isAmbiguousDIDRotationSubmitError"
+        },
+        {
+          "file": "cli/go/awid/registry_client.go",
+          "symbol": "shouldRetryRegistryTransportError"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -8645,6 +8836,18 @@
         {
           "file": "cli/go/awid/registry_dns.go",
           "symbol": "ParseAWIDTXTRecord"
+        },
+        {
+          "file": "cli/go/awid/registry_dns.go",
+          "symbol": "(*NetTXTResolver).LookupTXT"
+        },
+        {
+          "file": "cli/go/awid/registry_dns.go",
+          "symbol": "isTXTNotFound"
+        },
+        {
+          "file": "cli/go/awid/registry_dns.go",
+          "symbol": "lookupDomainAuthority"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -8708,6 +8911,30 @@
         {
           "file": "cli/go/awid/registry_namespace.go",
           "symbol": "signedCanonicalHeaders"
+        },
+        {
+          "file": "cli/go/awid/registry_namespace.go",
+          "symbol": "(*RegistryClient).DeleteAddress"
+        },
+        {
+          "file": "cli/go/awid/registry_namespace.go",
+          "symbol": "(*RegistryClient).DeleteNamespace"
+        },
+        {
+          "file": "cli/go/awid/registry_namespace.go",
+          "symbol": "(*RegistryClient).GetNamespaceAddress"
+        },
+        {
+          "file": "cli/go/awid/registry_namespace.go",
+          "symbol": "(*RegistryClient).GetNamespaceAddressAtSigned"
+        },
+        {
+          "file": "cli/go/awid/registry_namespace.go",
+          "symbol": "(*RegistryClient).GetNamespaceAddressSigned"
+        },
+        {
+          "file": "cli/go/awid/registry_namespace.go",
+          "symbol": "(*RegistryClient).UpdateNamespaceDeliveryOrigin"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -8782,6 +9009,10 @@
         {
           "file": "cli/go/awid/registry_resolver.go",
           "symbol": "(*RegistryResolver).verifyStableIdentityViaFullLog"
+        },
+        {
+          "file": "cli/go/awid/registry_resolver.go",
+          "symbol": "(*RegistryResolver).discoverAuthority"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -8906,6 +9137,10 @@
         {
           "file": "cli/go/awid/team_rotate.go",
           "symbol": "ResignTeamServerRecord"
+        },
+        {
+          "file": "cli/go/awid/team_rotate.go",
+          "symbol": "ResignedRecordsIncompleteDetail"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -8937,6 +9172,10 @@
         {
           "file": "cli/go/awid/team_server.go",
           "symbol": "VerifyTeamServerRecord"
+        },
+        {
+          "file": "cli/go/awid/team_server.go",
+          "symbol": "TeamServerRecordSigningBytes"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -8976,6 +9215,14 @@
         {
           "file": "cli/go/chat/chat.go",
           "symbol": "stableAlias"
+        },
+        {
+          "file": "cli/go/chat/chat.go",
+          "symbol": "Open"
+        },
+        {
+          "file": "cli/go/chat/chat.go",
+          "symbol": "Send"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -9007,6 +9254,18 @@
         {
           "file": "cli/go/cmd/aw/a2a.go",
           "symbol": "runA2APublish"
+        },
+        {
+          "file": "cli/go/cmd/aw/a2a.go",
+          "symbol": "loadA2APublishSigningKey"
+        },
+        {
+          "file": "cli/go/cmd/aw/a2a.go",
+          "symbol": "redactedRegistryError"
+        },
+        {
+          "file": "cli/go/cmd/aw/a2a.go",
+          "symbol": "verifyA2ACardWithAWID"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -9077,6 +9336,14 @@
         {
           "file": "cli/go/cmd/aw/agent_status.go",
           "symbol": "statusSigningIdentity"
+        },
+        {
+          "file": "cli/go/cmd/aw/agent_status.go",
+          "symbol": "canonicalUTF8JSON"
+        },
+        {
+          "file": "cli/go/cmd/aw/agent_status.go",
+          "symbol": "statusLocalError"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -9104,6 +9371,10 @@
         {
           "file": "cli/go/cmd/aw/auth.go",
           "symbol": "runAuthLogout"
+        },
+        {
+          "file": "cli/go/cmd/aw/auth.go",
+          "symbol": "cliAuthHTTPStatusErrorFromResponse"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -9151,6 +9422,22 @@
         {
           "file": "cli/go/cmd/aw/custody.go",
           "symbol": "(*custodyService).verifyE2EERecipients"
+        },
+        {
+          "file": "cli/go/cmd/aw/custody.go",
+          "symbol": "(*custodyService).handleCreateE2EEEnvelope"
+        },
+        {
+          "file": "cli/go/cmd/aw/custody.go",
+          "symbol": "(*custodyService).handleUnwrapE2EEMessage"
+        },
+        {
+          "file": "cli/go/cmd/aw/custody.go",
+          "symbol": "e2eeEnvelopesEqual"
+        },
+        {
+          "file": "cli/go/cmd/aw/custody.go",
+          "symbol": "newCustodyService"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -9209,6 +9496,14 @@
         {
           "file": "cli/go/cmd/aw/did.go",
           "symbol": "loadDIDLog"
+        },
+        {
+          "file": "cli/go/cmd/aw/did.go",
+          "symbol": "formatIDLog"
+        },
+        {
+          "file": "cli/go/cmd/aw/did.go",
+          "symbol": "unsupportedLocalIdentityLog"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -9236,6 +9531,10 @@
         {
           "file": "cli/go/cmd/aw/doctor_aweb.go",
           "symbol": "collectDoctorAwebStateAt"
+        },
+        {
+          "file": "cli/go/cmd/aw/doctor_aweb.go",
+          "symbol": "(*doctorRunner).addServerConfiguredChecks"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -9341,6 +9640,50 @@
         {
           "file": "cli/go/cmd/aw/doctor_identity.go",
           "symbol": "registryPreconditionFailure"
+        },
+        {
+          "file": "cli/go/cmd/aw/doctor_identity.go",
+          "symbol": "(*doctorIdentityState).loadIdentityExpectationFromCertificate"
+        },
+        {
+          "file": "cli/go/cmd/aw/doctor_identity.go",
+          "symbol": "(*doctorRunner).addAddressChecks"
+        },
+        {
+          "file": "cli/go/cmd/aw/doctor_identity.go",
+          "symbol": "(*doctorRunner).addAddressReverseListingCheck"
+        },
+        {
+          "file": "cli/go/cmd/aw/doctor_identity.go",
+          "symbol": "(*doctorRunner).addDIDResolveChecks"
+        },
+        {
+          "file": "cli/go/cmd/aw/doctor_identity.go",
+          "symbol": "(*doctorRunner).addIdentityLocalChecks"
+        },
+        {
+          "file": "cli/go/cmd/aw/doctor_identity.go",
+          "symbol": "(*doctorRunner).addRegistryChecks"
+        },
+        {
+          "file": "cli/go/cmd/aw/doctor_identity.go",
+          "symbol": "(*doctorRunner).addRegistryURLSourceCheck"
+        },
+        {
+          "file": "cli/go/cmd/aw/doctor_identity.go",
+          "symbol": "awidDoctorRegistryClient.GetDIDLog"
+        },
+        {
+          "file": "cli/go/cmd/aw/doctor_identity.go",
+          "symbol": "awidDoctorRegistryClient.GetNamespaceAddressAtSigned"
+        },
+        {
+          "file": "cli/go/cmd/aw/doctor_identity.go",
+          "symbol": "awidDoctorRegistryClient.ListNamespaceAddressesAtSigned"
+        },
+        {
+          "file": "cli/go/cmd/aw/doctor_identity.go",
+          "symbol": "awidDoctorRegistryClient.ResolveKeyAt"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -9372,6 +9715,26 @@
         {
           "file": "cli/go/cmd/aw/doctor_local.go",
           "symbol": "(*doctorRunner).runSigningKeyFileChecks"
+        },
+        {
+          "file": "cli/go/cmd/aw/doctor_local.go",
+          "symbol": "(*doctorRunner).runIdentityChecks"
+        },
+        {
+          "file": "cli/go/cmd/aw/doctor_local.go",
+          "symbol": "(*doctorRunner).runIdentityFileOnlyChecks"
+        },
+        {
+          "file": "cli/go/cmd/aw/doctor_local.go",
+          "symbol": "(*doctorRunner).runIdentityRegistryChecks"
+        },
+        {
+          "file": "cli/go/cmd/aw/doctor_local.go",
+          "symbol": "(*doctorRunner).runLocalChecks"
+        },
+        {
+          "file": "cli/go/cmd/aw/doctor_local.go",
+          "symbol": "(*doctorRunner).runWorkspaceChecks"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -9500,6 +9863,46 @@
         {
           "file": "cli/go/cmd/aw/helpers.go",
           "symbol": "validateResolvedIdentity"
+        },
+        {
+          "file": "cli/go/cmd/aw/helpers.go",
+          "symbol": "configureResolvedClientWithRoster"
+        },
+        {
+          "file": "cli/go/cmd/aw/helpers.go",
+          "symbol": "loadOptionalWorktreeSigningKey"
+        },
+        {
+          "file": "cli/go/cmd/aw/helpers.go",
+          "symbol": "newConfiguredRegistryClient"
+        },
+        {
+          "file": "cli/go/cmd/aw/helpers.go",
+          "symbol": "newConfiguredRegistryResolver"
+        },
+        {
+          "file": "cli/go/cmd/aw/helpers.go",
+          "symbol": "newSelectionRegistryResolver"
+        },
+        {
+          "file": "cli/go/cmd/aw/helpers.go",
+          "symbol": "probeAwebBaseURLOutcome"
+        },
+        {
+          "file": "cli/go/cmd/aw/helpers.go",
+          "symbol": "resolveCertificateClient"
+        },
+        {
+          "file": "cli/go/cmd/aw/helpers.go",
+          "symbol": "resolveLiveTeamMemberAliasTarget"
+        },
+        {
+          "file": "cli/go/cmd/aw/helpers.go",
+          "symbol": "resolveWorkingBaseURLContext"
+        },
+        {
+          "file": "cli/go/cmd/aw/helpers.go",
+          "symbol": "validateSelectedIdentityHome"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -9531,6 +9934,10 @@
         {
           "file": "cli/go/cmd/aw/id_address.go",
           "symbol": "loadAddressClaimNamespaceController"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_address.go",
+          "symbol": "resolveAddressClaimRegistryURL"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -9578,6 +9985,22 @@
         {
           "file": "cli/go/cmd/aw/id_create.go",
           "symbol": "verifyIDCreateDomainAuthority"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_create.go",
+          "symbol": "ensureStandaloneRegistryRegistration"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_create.go",
+          "symbol": "executeIDCreate"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_create.go",
+          "symbol": "isIDCreateTXTLookupMiss"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_create.go",
+          "symbol": "isRegistryUnavailableError"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -9621,6 +10044,14 @@
         {
           "file": "cli/go/cmd/aw/id_encryption_key.go",
           "symbol": "validateEncryptionRecordAssertionAt"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_encryption_key.go",
+          "symbol": "publishIdentityEncryptionKey"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_encryption_key.go",
+          "symbol": "shouldRefreshEncryptionKeyForIdentityBinding"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -9703,6 +10134,10 @@
         {
           "file": "cli/go/cmd/aw/id_grant.go",
           "symbol": "runGrantRevoke"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_grant.go",
+          "symbol": "resolveGrantClientSelectionForTeam"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -9757,6 +10192,10 @@
         {
           "file": "cli/go/cmd/aw/id_namespace_check_txt.go",
           "symbol": "executeIDNamespaceCheckTXT"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_namespace_check_txt.go",
+          "symbol": "loadIDNamespaceCheckTXTKey"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -9784,6 +10223,10 @@
         {
           "file": "cli/go/cmd/aw/id_namespace_delete_address.go",
           "symbol": "loadVerifiedNamespaceControllerKey"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_namespace_delete_address.go",
+          "symbol": "executeIDNamespaceDeleteAddress"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -9873,6 +10316,34 @@
         {
           "file": "cli/go/cmd/aw/id_registry.go",
           "symbol": "runIDVerify"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_registry.go",
+          "symbol": "currentIdentityRegistryURL"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_registry.go",
+          "symbol": "executeIDNamespaceRotateController"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_registry.go",
+          "symbol": "newRegistryClientWithPreferredBaseURL"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_registry.go",
+          "symbol": "registryLookupURL"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_registry.go",
+          "symbol": "resolveIdentitySigningKey"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_registry.go",
+          "symbol": "runIDNamespace"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_registry.go",
+          "symbol": "runIDShow"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -9904,6 +10375,18 @@
         {
           "file": "cli/go/cmd/aw/id_registry_read.go",
           "symbol": "runIDAddresses"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_registry_read.go",
+          "symbol": "registryReadResolveKeyEnvelope"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_registry_read.go",
+          "symbol": "runIDNamespaceAddresses"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_registry_read.go",
+          "symbol": "runIDNamespaceResolve"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -9970,6 +10453,10 @@
         {
           "file": "cli/go/cmd/aw/id_request.go",
           "symbol": "signIDRequestHeaders"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_request.go",
+          "symbol": "teamRequestCertificate"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -10001,6 +10488,10 @@
         {
           "file": "cli/go/cmd/aw/id_rotate_key_recover.go",
           "symbol": "localRotationMatchesDID"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_rotate_key_recover.go",
+          "symbol": "recoverPendingRotation"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -10040,6 +10531,22 @@
         {
           "file": "cli/go/cmd/aw/id_rotation_recovery.go",
           "symbol": "validatePendingRotationState"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_rotation_recovery.go",
+          "symbol": "cleanupPendingRotationKeypair"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_rotation_recovery.go",
+          "symbol": "ensurePublicKeyMatchesPrivate"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_rotation_recovery.go",
+          "symbol": "promotePendingRotationKeypair"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_rotation_recovery.go",
+          "symbol": "savePendingRotationKeypair"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -10139,6 +10646,42 @@
         {
           "file": "cli/go/cmd/aw/id_team.go",
           "symbol": "verifyTeamRegisterLocalKey"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_team.go",
+          "symbol": "hostedAcceptSigningKeyAt"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_team.go",
+          "symbol": "loadCurrentTeamCertificate"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_team.go",
+          "symbol": "loadTeamCleanupCloudKey"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_team.go",
+          "symbol": "rollbackDefaultAddressClaimAfterCertificateFailure"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_team.go",
+          "symbol": "runTeamCleanupCloud"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_team.go",
+          "symbol": "runTeamCreate"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_team.go",
+          "symbol": "runTeamFetchCert"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_team.go",
+          "symbol": "runTeamMembers"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_team.go",
+          "symbol": "validateMemberAddressForCertificate"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -10178,6 +10721,14 @@
         {
           "file": "cli/go/cmd/aw/id_team_rotate_key.go",
           "symbol": "didOf"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_team_rotate_key.go",
+          "symbol": "executeTeamRotateKey"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_team_rotate_key.go",
+          "symbol": "onlyMissingCustodians"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -10209,6 +10760,10 @@
         {
           "file": "cli/go/cmd/aw/id_team_server.go",
           "symbol": "executeTeamShowServer"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_team_server.go",
+          "symbol": "teamServerTarget"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -10267,6 +10822,10 @@
         {
           "file": "cli/go/cmd/aw/mail.go",
           "symbol": "applyMailRecipientTarget"
+        },
+        {
+          "file": "cli/go/cmd/aw/mail.go",
+          "symbol": "<module>"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -10352,6 +10911,18 @@
         {
           "file": "cli/go/cmd/aw/onboarding_wizard.go",
           "symbol": "registerHostedDID"
+        },
+        {
+          "file": "cli/go/cmd/aw/onboarding_wizard.go",
+          "symbol": "persistLocalSigningKeyAndCertificateAt"
+        },
+        {
+          "file": "cli/go/cmd/aw/onboarding_wizard.go",
+          "symbol": "provisionBYODIdentity"
+        },
+        {
+          "file": "cli/go/cmd/aw/onboarding_wizard.go",
+          "symbol": "validateHostedSignupResponse"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -10445,6 +11016,10 @@
         {
           "file": "cli/go/cmd/aw/task_close.go",
           "symbol": "runTaskClose"
+        },
+        {
+          "file": "cli/go/cmd/aw/task_close.go",
+          "symbol": "formatTaskCloseOutput"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -10600,6 +11175,14 @@
         {
           "file": "cli/go/cmd/aw/team_human.go",
           "symbol": "runTeamHumanRemoveAgent"
+        },
+        {
+          "file": "cli/go/cmd/aw/team_human.go",
+          "symbol": "bootstrapTeamHumanAddAgentWithAPIKey"
+        },
+        {
+          "file": "cli/go/cmd/aw/team_human.go",
+          "symbol": "teamHumanAddFailurePlans"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -10670,6 +11253,14 @@
         {
           "file": "cli/go/cmd/aw/team_replace_key.go",
           "symbol": "runTeamHumanReplaceKey"
+        },
+        {
+          "file": "cli/go/cmd/aw/team_replace_key.go",
+          "symbol": "(*replacementRosterOutcomeUnknownError).Error"
+        },
+        {
+          "file": "cli/go/cmd/aw/team_replace_key.go",
+          "symbol": "formatTeamHumanReplaceKey"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -10724,6 +11315,10 @@
         {
           "file": "cli/go/cmd/aw/team_up.go",
           "symbol": "init"
+        },
+        {
+          "file": "cli/go/cmd/aw/team_up.go",
+          "symbol": "preflightTeamUpCommands"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -10805,6 +11400,14 @@
         {
           "file": "cli/go/cmd/aw/workspace.go",
           "symbol": "addWorktreeViaLocalTeamKey"
+        },
+        {
+          "file": "cli/go/cmd/aw/workspace.go",
+          "symbol": "migrateLegacyWorkspaceToMultiTeamAt"
+        },
+        {
+          "file": "cli/go/cmd/aw/workspace.go",
+          "symbol": "runWorkspaceMigrateMultiTeam"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -10832,6 +11435,26 @@
         {
           "file": "cli/go/cmd/aweb-a2a-gw/main.go",
           "symbol": "workspaceMailClient"
+        },
+        {
+          "file": "cli/go/cmd/aweb-a2a-gw/main.go",
+          "symbol": "(*managedGateway).markRefreshError"
+        },
+        {
+          "file": "cli/go/cmd/aweb-a2a-gw/main.go",
+          "symbol": "checkRegistryHealth"
+        },
+        {
+          "file": "cli/go/cmd/aweb-a2a-gw/main.go",
+          "symbol": "degradedManagedConfig"
+        },
+        {
+          "file": "cli/go/cmd/aweb-a2a-gw/main.go",
+          "symbol": "isFatalInitialManagedRuntimeConfigError"
+        },
+        {
+          "file": "cli/go/cmd/aweb-a2a-gw/main.go",
+          "symbol": "managedConfigHealth"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -10898,6 +11521,10 @@
         {
           "file": "cli/go/internal/appmanifest/interpret.go",
           "symbol": "validateEventEmitters"
+        },
+        {
+          "file": "cli/go/internal/appmanifest/interpret.go",
+          "symbol": "buildBody"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -10925,6 +11552,14 @@
         {
           "file": "cli/go/internal/appmanifest/manifest_v2.go",
           "symbol": "validateAppKeys"
+        },
+        {
+          "file": "cli/go/internal/appmanifest/manifest_v2.go",
+          "symbol": "(*Error).Error"
+        },
+        {
+          "file": "cli/go/internal/appmanifest/manifest_v2.go",
+          "symbol": "Load"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -11114,6 +11749,14 @@
         {
           "file": "cli/go/wake/control.go",
           "symbol": "(*Broker).Handle"
+        },
+        {
+          "file": "cli/go/wake/control.go",
+          "symbol": "callWithTimeout"
+        },
+        {
+          "file": "cli/go/wake/control.go",
+          "symbol": "handleControlConn"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -12088,6 +12731,1228 @@
         {
           "file": "scripts/prepare-pinned-oats.mjs",
           "symbol": "<module>"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.a2a.card",
+      "repo": "aweb",
+      "files": [
+        "cli/go/a2a/card.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/a2a/card.go",
+          "symbol": "CardDigest"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.a2a.client",
+      "repo": "aweb",
+      "files": [
+        "cli/go/a2a/client.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/a2a/client.go",
+          "symbol": "(*Client).Call"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.a2agw.rpc",
+      "repo": "aweb",
+      "files": [
+        "cli/go/a2agw/rpc.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/a2agw/rpc.go",
+          "symbol": "(*Gateway).rpcCancelTask"
+        },
+        {
+          "file": "cli/go/a2agw/rpc.go",
+          "symbol": "(*Gateway).rpcGetTask"
+        },
+        {
+          "file": "cli/go/a2agw/rpc.go",
+          "symbol": "(*Gateway).rpcListTasks"
+        },
+        {
+          "file": "cli/go/a2agw/rpc.go",
+          "symbol": "(*Gateway).rpcSendMessage"
+        },
+        {
+          "file": "cli/go/a2agw/rpc.go",
+          "symbol": "(*Gateway).serveRPC"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.awconfig.identity",
+      "repo": "aweb",
+      "files": [
+        "cli/go/awconfig/identity.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/awconfig/identity.go",
+          "symbol": "resolvedIdentityFromState"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.awconfig.selection",
+      "repo": "aweb",
+      "files": [
+        "cli/go/awconfig/selection.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/awconfig/selection.go",
+          "symbol": "finalizeWorkspaceSelection"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.awconfig.team-certs",
+      "repo": "aweb",
+      "files": [
+        "cli/go/awconfig/team_certs.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/awconfig/team_certs.go",
+          "symbol": "LoadTeamCertificateForTeam"
+        },
+        {
+          "file": "cli/go/awconfig/team_certs.go",
+          "symbol": "LoadTeamCertificateForTeamFromIdentityHome"
+        },
+        {
+          "file": "cli/go/awconfig/team_certs.go",
+          "symbol": "SaveTeamCertificateForTeam"
+        },
+        {
+          "file": "cli/go/awconfig/team_certs.go",
+          "symbol": "SaveTeamCertificateForTeamToIdentityHome"
+        },
+        {
+          "file": "cli/go/awconfig/team_certs.go",
+          "symbol": "listTeamCertificatesFromDir"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.awconfig.workspace-index",
+      "repo": "aweb",
+      "files": [
+        "cli/go/awconfig/workspace_index.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/awconfig/workspace_index.go",
+          "symbol": "annotateMachineWorkspaceAvailability"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.awid.a2a-publication-registry",
+      "repo": "aweb",
+      "files": [
+        "cli/go/awid/a2a_publication_registry.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/awid/a2a_publication_registry.go",
+          "symbol": "(*RegistryClient).GetA2APublication"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.awid.federation-http",
+      "repo": "aweb",
+      "files": [
+        "cli/go/awid/federation_http.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/awid/federation_http.go",
+          "symbol": "(*pinnedFederationRoundTripper).RoundTrip"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.awid.http-diagnostics",
+      "repo": "aweb",
+      "files": [
+        "cli/go/awid/http_diagnostics.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/awid/http_diagnostics.go",
+          "symbol": "diagnosticErrorClass"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.awid.keys-scan",
+      "repo": "aweb",
+      "files": [
+        "cli/go/awid/keys_scan.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/awid/keys_scan.go",
+          "symbol": "ScanKeysForPublicKey"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.cmd.aw.app-approvals",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/app_approvals.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/cmd/aw/app_approvals.go",
+          "symbol": "pluginManagementHome"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.cmd.aw.app-installation-approval",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/app_installation_approval.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/cmd/aw/app_installation_approval.go",
+          "symbol": "annotateInstallationApprovals"
+        },
+        {
+          "file": "cli/go/cmd/aw/app_installation_approval.go",
+          "symbol": "bindGrantInstallations"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.cmd.aw.beads-mail-dualwrite",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/beads_mail_dualwrite.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/cmd/aw/beads_mail_dualwrite.go",
+          "symbol": "beadsMailRecordBead"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.cmd.aw.beads-mail-send",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/beads_mail_send.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/cmd/aw/beads_mail_send.go",
+          "symbol": "<module>"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.cmd.aw.channel-setup",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/channel_setup.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/cmd/aw/channel_setup.go",
+          "symbol": "printChannelMCPResult"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.cmd.aw.claude-hooks",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/claude_hooks.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/cmd/aw/claude_hooks.go",
+          "symbol": "printClaudeHooksResult"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.cmd.aw.claude-hooks-cleanup",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/claude_hooks_cleanup.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/cmd/aw/claude_hooks_cleanup.go",
+          "symbol": "CleanupClaudeNotifyHook"
+        },
+        {
+          "file": "cli/go/cmd/aw/claude_hooks_cleanup.go",
+          "symbol": "runRemoveClaudeNotifyHook"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.cmd.aw.doctor-support-bundle",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/doctor_support_bundle.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/cmd/aw/doctor_support_bundle.go",
+          "symbol": "collectDoctorKnownSecretsAt"
+        },
+        {
+          "file": "cli/go/cmd/aw/doctor_support_bundle.go",
+          "symbol": "collectDoctorSupportBundleLocalMetadataAt"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.cmd.aw.gc-mail",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/gc_mail.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/cmd/aw/gc_mail.go",
+          "symbol": "gcMailForceExitCode"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.cmd.aw.gc-mail-ops",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/gc_mail_ops.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/cmd/aw/gc_mail_ops.go",
+          "symbol": "<module>"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.cmd.aw.grant-app-tools",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/grant_app_tools.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/cmd/aw/grant_app_tools.go",
+          "symbol": "(*appSnapshotFailure).Error"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.cmd.aw.heartbeat",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/heartbeat.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/cmd/aw/heartbeat.go",
+          "symbol": "<module>"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.cmd.aw.id-namespace-delete",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/id_namespace_delete.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/cmd/aw/id_namespace_delete.go",
+          "symbol": "executeIDNamespaceDelete"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.cmd.aw.id-team-delete",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/id_team_delete.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/cmd/aw/id_team_delete.go",
+          "symbol": "executeTeamDelete"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.cmd.aw.id-team-format",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/id_team_format.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/cmd/aw/id_team_format.go",
+          "symbol": "formatTeamImportRequest"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.cmd.aw.init-apikey-diagnostic",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/init_apikey_diagnostic.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/cmd/aw/init_apikey_diagnostic.go",
+          "symbol": "workspaceInitHTTPDiagnostic"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.cmd.aw.inject-docs",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/inject_docs.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/cmd/aw/inject_docs.go",
+          "symbol": "InjectAgentDocs"
+        },
+        {
+          "file": "cli/go/cmd/aw/inject_docs.go",
+          "symbol": "InjectAgentDocsAtIdentityHome"
+        },
+        {
+          "file": "cli/go/cmd/aw/inject_docs.go",
+          "symbol": "writeProvidedAgentDocs"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.cmd.aw.introspect",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/introspect.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/cmd/aw/introspect.go",
+          "symbol": "<module>"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.cmd.aw.library-profile",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/library_profile.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/cmd/aw/library_profile.go",
+          "symbol": "configureMaterializedAgentHome"
+        },
+        {
+          "file": "cli/go/cmd/aw/library_profile.go",
+          "symbol": "isMissingLibraryPluginError"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.cmd.aw.org",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/org.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/cmd/aw/org.go",
+          "symbol": "orgCommandError"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.cmd.aw.root",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/root.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/cmd/aw/root.go",
+          "symbol": "Execute"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.cmd.aw.team-agent-status",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/team_agent_status.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/cmd/aw/team_agent_status.go",
+          "symbol": "readAgentCertificateState"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.cmd.aw.team-join-harness",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/team_join_harness.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/cmd/aw/team_join_harness.go",
+          "symbol": "setupJoinHarness"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.cmd.aw.team-read-auth",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/team_read_auth.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/cmd/aw/team_read_auth.go",
+          "symbol": "containsSigningKey"
+        },
+        {
+          "file": "cli/go/cmd/aw/team_read_auth.go",
+          "symbol": "friendlyTeamReadError"
+        },
+        {
+          "file": "cli/go/cmd/aw/team_read_auth.go",
+          "symbol": "readSignedTeamState"
+        },
+        {
+          "file": "cli/go/cmd/aw/team_read_auth.go",
+          "symbol": "teamReadSigners"
+        },
+        {
+          "file": "cli/go/cmd/aw/team_read_auth.go",
+          "symbol": "teamReadSignersForKeyPath"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.cmd.aw.workspace-self-retire",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/workspace_self_retire.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/cmd/aw/workspace_self_retire.go",
+          "symbol": "hasSelfRetireTeamCertificate"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.run.eventbus",
+      "repo": "aweb",
+      "files": [
+        "cli/go/run/eventbus.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/run/eventbus.go",
+          "symbol": "formatStreamDisconnectNotice"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.wake.channel-core-runner",
+      "repo": "aweb",
+      "files": [
+        "cli/go/wake/channel_core_runner.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/wake/channel_core_runner.go",
+          "symbol": "(*ChannelCoreChild).readChildLines"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner.go",
+          "symbol": "(*ChannelCoreChild).readStatus"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner.go",
+          "symbol": "(*ChannelCoreChild).recordExit"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner.go",
+          "symbol": "(*ChannelCoreChild).runOnce"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner.go",
+          "symbol": "(*ChannelCoreChild).setError"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.wake.instance",
+      "repo": "aweb",
+      "files": [
+        "cli/go/wake/instance.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/wake/instance.go",
+          "symbol": "(*instanceRunner).recordRegistrationError"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.wake.session.fake",
+      "repo": "aweb",
+      "files": [
+        "cli/go/wake/session/fake.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/wake/session/fake.go",
+          "symbol": "(*Fake).Inspect"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.wake.session.session",
+      "repo": "aweb",
+      "files": [
+        "cli/go/wake/session/session.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/wake/session/session.go",
+          "symbol": "(*ExecClient).run"
+        }
+      ],
+      "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "GO.SOURCE.wake.stream",
+      "repo": "aweb",
+      "files": [
+        "cli/go/wake/stream.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S8b",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [],
+      "sites": [
+        {
+          "file": "cli/go/wake/stream.go",
+          "symbol": "(*streamRunner).run"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -15727,6 +17592,22 @@
     "v": 1,
     "sites": [
       {
+        "row": "GO.SOURCE.a2a.card",
+        "file": "cli/go/a2a/card.go",
+        "symbol": "CardDigest",
+        "calls": {
+          "github.com/awebai/aw/awid.CanonicalJSONValue": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.a2a.client",
+        "file": "cli/go/a2a/client.go",
+        "symbol": "(*Client).Call",
+        "calls": {
+          "reference:envelope.Error": 2
+        }
+      },
+      {
         "row": "GO.SOURCE.a2agw.mail-bridge",
         "file": "cli/go/a2agw/mail_bridge.go",
         "symbol": "(*MailBridge).IngestInboxMessage",
@@ -15735,11 +17616,108 @@
         }
       },
       {
+        "row": "GO.SOURCE.a2agw.rpc",
+        "file": "cli/go/a2agw/rpc.go",
+        "symbol": "(*Gateway).rpcCancelTask",
+        "calls": {
+          "err.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.a2agw.rpc",
+        "file": "cli/go/a2agw/rpc.go",
+        "symbol": "(*Gateway).rpcGetTask",
+        "calls": {
+          "err.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.a2agw.rpc",
+        "file": "cli/go/a2agw/rpc.go",
+        "symbol": "(*Gateway).rpcListTasks",
+        "calls": {
+          "err.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.a2agw.rpc",
+        "file": "cli/go/a2agw/rpc.go",
+        "symbol": "(*Gateway).rpcSendMessage",
+        "calls": {
+          "err.Error": 3
+        }
+      },
+      {
+        "row": "GO.SOURCE.a2agw.rpc",
+        "file": "cli/go/a2agw/rpc.go",
+        "symbol": "(*Gateway).serveRPC",
+        "calls": {
+          "reference:Error": 4
+        }
+      },
+      {
         "row": "GO.SOURCE.awconfig.controllers",
         "file": "cli/go/awconfig/controllers.go",
         "symbol": "LoadControllerKey",
         "calls": {
-          "crypto/ed25519.NewKeyFromSeed": 1
+          "crypto/ed25519.NewKeyFromSeed": 1,
+          "reference:crypto/ed25519.SeedSize": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awconfig.identity",
+        "file": "cli/go/awconfig/identity.go",
+        "symbol": "resolvedIdentityFromState",
+        "calls": {
+          "reference:SigningKeyPath": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awconfig.selection",
+        "file": "cli/go/awconfig/selection.go",
+        "symbol": "finalizeWorkspaceSelection",
+        "calls": {
+          "github.com/awebai/aw/awid.LoadTeamCertificate": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awconfig.team-certs",
+        "file": "cli/go/awconfig/team_certs.go",
+        "symbol": "LoadTeamCertificateForTeam",
+        "calls": {
+          "github.com/awebai/aw/awid.LoadTeamCertificate": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awconfig.team-certs",
+        "file": "cli/go/awconfig/team_certs.go",
+        "symbol": "LoadTeamCertificateForTeamFromIdentityHome",
+        "calls": {
+          "github.com/awebai/aw/awid.LoadTeamCertificate": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awconfig.team-certs",
+        "file": "cli/go/awconfig/team_certs.go",
+        "symbol": "SaveTeamCertificateForTeam",
+        "calls": {
+          "github.com/awebai/aw/awid.SaveTeamCertificate": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awconfig.team-certs",
+        "file": "cli/go/awconfig/team_certs.go",
+        "symbol": "SaveTeamCertificateForTeamToIdentityHome",
+        "calls": {
+          "github.com/awebai/aw/awid.SaveTeamCertificate": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awconfig.team-certs",
+        "file": "cli/go/awconfig/team_certs.go",
+        "symbol": "listTeamCertificatesFromDir",
+        "calls": {
+          "github.com/awebai/aw/awid.LoadTeamCertificate": 1
         }
       },
       {
@@ -15747,7 +17725,32 @@
         "file": "cli/go/awconfig/team_keys.go",
         "symbol": "decodeTeamKey",
         "calls": {
-          "crypto/ed25519.NewKeyFromSeed": 1
+          "crypto/ed25519.NewKeyFromSeed": 1,
+          "reference:crypto/ed25519.SeedSize": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awconfig.workspace-index",
+        "file": "cli/go/awconfig/workspace_index.go",
+        "symbol": "annotateMachineWorkspaceAvailability",
+        "calls": {
+          "err.Error": 3
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.a2a-publication",
+        "file": "cli/go/awid/a2a_publication.go",
+        "symbol": "A2ADelegationCanonical",
+        "calls": {
+          "CanonicalJSONValue": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.a2a-publication",
+        "file": "cli/go/awid/a2a_publication.go",
+        "symbol": "A2APublicationCanonical",
+        "calls": {
+          "CanonicalJSONValue": 1
         }
       },
       {
@@ -15756,7 +17759,8 @@
         "symbol": "signedA2ADelegationBody",
         "calls": {
           "ComputeDIDKey": 1,
-          "crypto/ed25519.Sign": 1
+          "crypto/ed25519.Sign": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -15765,7 +17769,8 @@
         "symbol": "signedA2APublicationBody",
         "calls": {
           "ComputeDIDKey": 1,
-          "crypto/ed25519.Sign": 1
+          "crypto/ed25519.Sign": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -15782,6 +17787,14 @@
         "symbol": "validateA2ADIDKey",
         "calls": {
           "literal:did:key": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.a2a-publication-registry",
+        "file": "cli/go/awid/a2a_publication_registry.go",
+        "symbol": "(*RegistryClient).GetA2APublication",
+        "calls": {
+          "c.DiscoverRegistry": 1
         }
       },
       {
@@ -15805,7 +17818,9 @@
         "file": "cli/go/awid/agents.go",
         "symbol": "(*TeamRosterResolver).resolve",
         "calls": {
-          "ExtractPublicKey": 1
+          "ExtractPublicKey": 1,
+          "crypto/ed25519.PublicKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -15835,10 +17850,28 @@
       {
         "row": "GO.SOURCE.awid.atomic-address-claim",
         "file": "cli/go/awid/atomic_address_claim.go",
+        "symbol": "AtomicAddressClaimIdentityCanonical",
+        "calls": {
+          "CanonicalJSONValue": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.atomic-address-claim",
+        "file": "cli/go/awid/atomic_address_claim.go",
+        "symbol": "AtomicAddressClaimNamespaceCanonical",
+        "calls": {
+          "CanonicalJSONValue": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.atomic-address-claim",
+        "file": "cli/go/awid/atomic_address_claim.go",
         "symbol": "BuildAtomicAddressClaimIdentityProof",
         "calls": {
           "ComputeDIDKey": 2,
-          "crypto/ed25519.Sign": 2
+          "ComputeStableID": 2,
+          "crypto/ed25519.Sign": 2,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -15848,6 +17881,14 @@
         "calls": {
           "literal:did:aw": 1,
           "literal:did:key": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.attestation-records",
+        "file": "cli/go/awid/attestation_records.go",
+        "symbol": "AttestationRecordSigningBytes",
+        "calls": {
+          "CanonicalJSONValue": 1
         }
       },
       {
@@ -15864,7 +17905,16 @@
         "symbol": "VerifyAttestationRecord",
         "calls": {
           "ExtractPublicKey": 1,
-          "crypto/ed25519.Verify": 1
+          "crypto/ed25519.Verify": 1,
+          "err.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.attestation-records",
+        "file": "cli/go/awid/attestation_records.go",
+        "symbol": "decodeAttestationSignature",
+        "calls": {
+          "reference:crypto/ed25519.SignatureSize": 1
         }
       },
       {
@@ -15882,7 +17932,8 @@
         "symbol": "SignTeamCertificate",
         "calls": {
           "ComputeDIDKey": 1,
-          "crypto/ed25519.Sign": 1
+          "crypto/ed25519.Sign": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -15906,6 +17957,7 @@
         "file": "cli/go/awid/chat.go",
         "symbol": "(*Client).ChatHistory",
         "calls": {
+          "SignedPayloadConversationStatus": 1,
           "VerifyMessage": 2,
           "VerifySignedPayload": 1,
           "literal:did:aw": 1
@@ -15972,6 +18024,14 @@
       {
         "row": "GO.SOURCE.awid.client",
         "file": "cli/go/awid/client.go",
+        "symbol": "(*Client).ResolveIdentity",
+        "calls": {
+          "c.resolver.Resolve": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.client",
+        "file": "cli/go/awid/client.go",
         "symbol": "(*Client).checkRecipientBinding",
         "calls": {
           "literal:did:aw": 1
@@ -16007,11 +18067,30 @@
       {
         "row": "GO.SOURCE.awid.client",
         "file": "cli/go/awid/client.go",
+        "symbol": "(*Client).resolveAgentMetaFresh",
+        "calls": {
+          "reference:c.resolver.Resolve": 1,
+          "reference:fresh.ResolveFresh": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.client",
+        "file": "cli/go/awid/client.go",
+        "symbol": "(*Client).seedVerifiedHeadFromPin",
+        "calls": {
+          "seeder.SeedVerifiedHead": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.client",
+        "file": "cli/go/awid/client.go",
         "symbol": "(*Client).signEnvelope",
         "calls": {
+          "CanonicalJSON": 1,
           "SignCustodyProof": 1,
           "SignMessage": 1,
           "c.plainMessageSigner.SignPlainMessage": 1,
+          "c.resolver.Resolve": 1,
           "literal:did:aw": 3
         }
       },
@@ -16038,7 +18117,8 @@
         "symbol": "(*Client).verifyReplacementAnnouncement",
         "calls": {
           "ExtractPublicKey": 1,
-          "VerifyReplacementSignature": 1
+          "VerifyReplacementSignature": 1,
+          "c.resolver.Resolve": 1
         }
       },
       {
@@ -16055,7 +18135,9 @@
         "file": "cli/go/awid/client.go",
         "symbol": "NewWithCertificate",
         "calls": {
-          "ComputeDIDKey": 1
+          "ComputeDIDKey": 1,
+          "EncodeTeamCertificateHeader": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -16063,7 +18145,8 @@
         "file": "cli/go/awid/client.go",
         "symbol": "NewWithGrant",
         "calls": {
-          "ComputeDIDKey": 1
+          "ComputeDIDKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -16071,7 +18154,8 @@
         "file": "cli/go/awid/client.go",
         "symbol": "NewWithIdentity",
         "calls": {
-          "ComputeDIDKey": 1
+          "ComputeDIDKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -16080,7 +18164,25 @@
         "symbol": "SignRequestCredential",
         "calls": {
           "ComputeDIDKey": 1,
-          "crypto/ed25519.Sign": 1
+          "crypto/ed25519.Sign": 1,
+          "reference:crypto/ed25519.PrivateKeySize": 1,
+          "reference:crypto/ed25519.PublicKey": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.client",
+        "file": "cli/go/awid/client.go",
+        "symbol": "decorateTimeoutError",
+        "calls": {
+          "reference:net.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.client",
+        "file": "cli/go/awid/client.go",
+        "symbol": "requestAuthPayload",
+        "calls": {
+          "CanonicalJSONValue": 1
         }
       },
       {
@@ -16095,9 +18197,18 @@
       {
         "row": "GO.SOURCE.awid.custody",
         "file": "cli/go/awid/custody.go",
+        "symbol": "(*UnixCustodyClient).do",
+        "calls": {
+          "reference:er.Error": 2
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.custody",
+        "file": "cli/go/awid/custody.go",
         "symbol": "SignAppRequestCustodyProof",
         "calls": {
           "ComputeDIDKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1,
           "signCustodyProofFields": 1
         }
       },
@@ -16107,7 +18218,8 @@
         "symbol": "SignCustodyProof",
         "calls": {
           "ComputeDIDKey": 1,
-          "crypto/ed25519.Sign": 1
+          "crypto/ed25519.Sign": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -16116,6 +18228,7 @@
         "symbol": "SignE2EECreateCustodyProof",
         "calls": {
           "ComputeDIDKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1,
           "signCustodyProofFields": 1
         }
       },
@@ -16125,6 +18238,7 @@
         "symbol": "SignE2EEUnwrapCustodyProof",
         "calls": {
           "ComputeDIDKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1,
           "signCustodyProofFields": 1
         }
       },
@@ -16164,10 +18278,36 @@
       {
         "row": "GO.SOURCE.awid.custody",
         "file": "cli/go/awid/custody.go",
+        "symbol": "custodyDigestValue",
+        "calls": {
+          "CanonicalJSONValue": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.custody",
+        "file": "cli/go/awid/custody.go",
+        "symbol": "custodyProofCanonical",
+        "calls": {
+          "CanonicalJSONValue": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.custody",
+        "file": "cli/go/awid/custody.go",
+        "symbol": "custodyRequestDigest",
+        "calls": {
+          "CanonicalJSONValue": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.custody",
+        "file": "cli/go/awid/custody.go",
         "symbol": "signCustodyProofFields",
         "calls": {
+          "CanonicalJSONValue": 1,
           "ComputeDIDKey": 1,
-          "crypto/ed25519.Sign": 1
+          "crypto/ed25519.Sign": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -16175,6 +18315,7 @@
         "file": "cli/go/awid/custody.go",
         "symbol": "verifyCustodyProofFields",
         "calls": {
+          "CanonicalJSONValue": 1,
           "ExtractPublicKey": 1,
           "crypto/ed25519.Verify": 1
         }
@@ -16190,9 +18331,26 @@
       {
         "row": "GO.SOURCE.awid.didkey",
         "file": "cli/go/awid/didkey.go",
+        "symbol": "ComputeDIDKey",
+        "calls": {
+          "reference:crypto/ed25519.PublicKeySize": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.didkey",
+        "file": "cli/go/awid/didkey.go",
         "symbol": "ComputeStableID",
         "calls": {
           "literal:did:aw": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.didkey",
+        "file": "cli/go/awid/didkey.go",
+        "symbol": "ExtractPublicKey",
+        "calls": {
+          "crypto/ed25519.PublicKey": 1,
+          "reference:crypto/ed25519.PublicKeySize": 1
         }
       },
       {
@@ -16201,7 +18359,8 @@
         "symbol": "BuildEncryptionKeyAssertion",
         "calls": {
           "ComputeDIDKey": 1,
-          "SignEncryptionKeyAssertion": 1
+          "SignEncryptionKeyAssertion": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -16227,6 +18386,14 @@
         "calls": {
           "ExtractPublicKey": 1,
           "crypto/ed25519.Verify": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.e2ee-keys",
+        "file": "cli/go/awid/e2ee_keys.go",
+        "symbol": "encryptionAssertionSignedPayload",
+        "calls": {
+          "CanonicalJSONValue": 1
         }
       },
       {
@@ -16261,7 +18428,8 @@
         "calls": {
           "ComputeDIDKey": 1,
           "VerifyEncryptionKeyAssertion": 2,
-          "crypto/ed25519.Sign": 1
+          "crypto/ed25519.Sign": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -16276,6 +18444,14 @@
       {
         "row": "GO.SOURCE.awid.e2ee-messages",
         "file": "cli/go/awid/e2ee_messages.go",
+        "symbol": "canonicalJSONBytes",
+        "calls": {
+          "CanonicalJSONValue": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.e2ee-messages",
+        "file": "cli/go/awid/e2ee_messages.go",
         "symbol": "hpkeBaseSealX25519AES256GCM",
         "calls": {
           "crypto/ecdh.X25519().GenerateKey": 1
@@ -16284,9 +18460,25 @@
       {
         "row": "GO.SOURCE.awid.events",
         "file": "cli/go/awid/events.go",
+        "symbol": "(*AgentEventDecodeError).Error",
+        "calls": {
+          "e.Err.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.events",
+        "file": "cli/go/awid/events.go",
         "symbol": "(*Client).EventStream",
         "calls": {
           "c.signRequest": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.federation-authority",
+        "file": "cli/go/awid/federation_authority.go",
+        "symbol": "(*NetFederationTXTResolver).LookupFederationTXT",
+        "calls": {
+          "resolver.LookupTXT": 1
         }
       },
       {
@@ -16316,12 +18508,30 @@
         }
       },
       {
+        "row": "GO.SOURCE.awid.federation-http",
+        "file": "cli/go/awid/federation_http.go",
+        "symbol": "(*pinnedFederationRoundTripper).RoundTrip",
+        "calls": {
+          "err.Error": 2
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.http-diagnostics",
+        "file": "cli/go/awid/http_diagnostics.go",
+        "symbol": "diagnosticErrorClass",
+        "calls": {
+          "reference:net.Error": 1
+        }
+      },
+      {
         "row": "GO.SOURCE.awid.human-channels-presence",
         "file": "cli/go/awid/human_channels_presence.go",
         "symbol": "SignHumanChannelsPresenceRecord",
         "calls": {
           "ComputeDIDKey": 1,
-          "crypto/ed25519.Sign": 1
+          "crypto/ed25519.Sign": 1,
+          "reference:crypto/ed25519.PrivateKeySize": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -16387,10 +18597,13 @@
           "ExtractPublicKey": 1,
           "IDCertificateSigningBytes": 1,
           "crypto/ed25519.Verify": 1,
+          "filippo.io/edwards25519.Scalar().SetCanonicalBytes": 1,
           "idCertificateDecodeB64": 1,
           "idCertificatePrimePoint": 1,
           "idCertificateRefusal": 7,
-          "idCertificateShape": 1
+          "idCertificateShape": 1,
+          "reference:crypto/ed25519.SignatureSize": 1,
+          "reference:filippo.io/edwards25519.Scalar": 1
         }
       },
       {
@@ -16409,6 +18622,7 @@
         "file": "cli/go/awid/id_certificates.go",
         "symbol": "idCertificateCanonical",
         "calls": {
+          "CanonicalJSONValue": 1,
           "idCertificateJSONValue": 1,
           "idCertificateRefusal": 1
         }
@@ -16450,6 +18664,20 @@
         "calls": {
           "idCertificateJSONValue": 2,
           "idCertificateRefusal": 4
+        }
+      },
+      {
+        "row": "S1.GO.CODEC",
+        "file": "cli/go/awid/id_certificates.go",
+        "symbol": "idCertificatePrimePoint",
+        "calls": {
+          "filippo.io/edwards25519.NewIdentityPoint": 1,
+          "filippo.io/edwards25519.Point().MultByCofactor": 1,
+          "filippo.io/edwards25519.Point().SetBytes": 1,
+          "filippo.io/edwards25519.Scalar().Invert": 1,
+          "filippo.io/edwards25519.Scalar().SetCanonicalBytes": 1,
+          "reference:filippo.io/edwards25519.Point": 2,
+          "reference:filippo.io/edwards25519.Scalar": 2
         }
       },
       {
@@ -16603,7 +18831,21 @@
         "file": "cli/go/awid/identity.go",
         "symbol": "(*ChainResolver).Resolve",
         "calls": {
-          "ExtractPublicKey": 1
+          "ExtractPublicKey": 1,
+          "r.DIDKey.Resolve": 1,
+          "r.Pin.Resolve": 3,
+          "r.Registry.Resolve": 2,
+          "r.Team.Resolve": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.identity",
+        "file": "cli/go/awid/identity.go",
+        "symbol": "(*ChainResolver).ResolveFresh",
+        "calls": {
+          "r.Registry.ResolveFresh": 1,
+          "r.Resolve": 1,
+          "r.Team.ResolveFresh": 1
         }
       },
       {
@@ -16649,9 +18891,36 @@
       {
         "row": "CLI.KEYS.AGENT",
         "file": "cli/go/awid/keys.go",
+        "symbol": "LoadPublicKey",
+        "calls": {
+          "crypto/ed25519.PublicKey": 1,
+          "reference:crypto/ed25519.PublicKeySize": 1
+        }
+      },
+      {
+        "row": "CLI.KEYS.AGENT",
+        "file": "cli/go/awid/keys.go",
         "symbol": "LoadSigningKey",
         "calls": {
-          "crypto/ed25519.NewKeyFromSeed": 1
+          "crypto/ed25519.NewKeyFromSeed": 1,
+          "reference:crypto/ed25519.SeedSize": 1
+        }
+      },
+      {
+        "row": "CLI.KEYS.AGENT",
+        "file": "cli/go/awid/keys.go",
+        "symbol": "SaveKeypair",
+        "calls": {
+          "SaveKeypairAt": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.keys-scan",
+        "file": "cli/go/awid/keys_scan.go",
+        "symbol": "ScanKeysForPublicKey",
+        "calls": {
+          "LoadSigningKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -16668,6 +18937,7 @@
         "file": "cli/go/awid/mail.go",
         "symbol": "(*Client).normalizeInboxResponse",
         "calls": {
+          "SignedPayloadConversationStatus": 1,
           "VerifyMessage": 2,
           "VerifySignedPayload": 1,
           "literal:did:aw": 1
@@ -16678,7 +18948,8 @@
         "file": "cli/go/awid/mail.go",
         "symbol": "(*Client).prepareE2EEMail",
         "calls": {
-          "SignE2EECreateCustodyProof": 1
+          "SignE2EECreateCustodyProof": 1,
+          "err.Error": 1
         }
       },
       {
@@ -16719,7 +18990,8 @@
         "file": "cli/go/awid/onboarding_cli_signup.go",
         "symbol": "CliSignup",
         "calls": {
-          "ComputeDIDKey": 1
+          "ComputeDIDKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -16728,7 +19000,8 @@
         "symbol": "onboardingDIDKeyHeaders",
         "calls": {
           "ComputeDIDKey": 1,
-          "crypto/ed25519.Sign": 1
+          "crypto/ed25519.Sign": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -16737,7 +19010,9 @@
         "symbol": "DIDKeyRequestHeadersForAudience",
         "calls": {
           "ComputeDIDKey": 1,
-          "crypto/ed25519.Sign": 1
+          "crypto/ed25519.Sign": 1,
+          "reference:crypto/ed25519.PrivateKeySize": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -16746,7 +19021,8 @@
         "symbol": "SignOwnerAct",
         "calls": {
           "ComputeDIDKey": 1,
-          "crypto/ed25519.Sign": 1
+          "crypto/ed25519.Sign": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -16772,6 +19048,7 @@
         "symbol": "(*Client).NormalizeReceivedSenderTrust",
         "calls": {
           "literal:did:aw": 1,
+          "registry.SeedVerifiedHead": 1,
           "registry.verifyStableIdentityAtRegistry": 1
         }
       },
@@ -16792,13 +19069,75 @@
         }
       },
       {
+        "row": "GO.SOURCE.awid.received-identity",
+        "file": "cli/go/awid/received_identity.go",
+        "symbol": "(*RegistryResolver).receivedRegistry",
+        "calls": {
+          "NewRegistryResolver": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.registry-client",
+        "file": "cli/go/awid/registry_client.go",
+        "symbol": "(*RegistryClient).DiscoverRegistry",
+        "calls": {
+          "c.Resolver.DiscoverRegistry": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.registry-client",
+        "file": "cli/go/awid/registry_client.go",
+        "symbol": "(*RegistryClient).GetNamespace",
+        "calls": {
+          "c.DiscoverRegistry": 1,
+          "c.GetNamespaceAt": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.registry-client",
+        "file": "cli/go/awid/registry_client.go",
+        "symbol": "(*RegistryClient).ListNamespaceAddresses",
+        "calls": {
+          "c.DiscoverRegistry": 1,
+          "c.ListNamespaceAddressesAt": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.registry-client",
+        "file": "cli/go/awid/registry_client.go",
+        "symbol": "(*RegistryClient).ListNamespaceAddressesAtSigned",
+        "calls": {
+          "c.ListNamespaceAddressesAt": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.registry-client",
+        "file": "cli/go/awid/registry_client.go",
+        "symbol": "(*RegistryClient).ListNamespaceAddressesSigned",
+        "calls": {
+          "c.DiscoverRegistry": 1,
+          "c.ListNamespaceAddressesAtSigned": 1
+        }
+      },
+      {
         "row": "GO.SOURCE.awid.registry-client",
         "file": "cli/go/awid/registry_client.go",
         "symbol": "(*RegistryClient).RegisterIdentity",
         "calls": {
           "ComputeDIDKey": 1,
+          "c.GetDIDFull": 1,
+          "c.ResolveKeyAt": 1,
           "crypto/ed25519.Sign": 1,
-          "literal:did:aw": 1
+          "literal:did:aw": 1,
+          "reference:crypto/ed25519.PublicKey": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.registry-client",
+        "file": "cli/go/awid/registry_client.go",
+        "symbol": "(*RegistryClient).ResolveKey",
+        "calls": {
+          "c.ResolveKeyAt": 1
         }
       },
       {
@@ -16807,7 +19146,42 @@
         "symbol": "(*RegistryClient).RotateDIDKey",
         "calls": {
           "ComputeDIDKey": 2,
-          "crypto/ed25519.Sign": 1
+          "c.GetDIDFull": 1,
+          "c.ResolveKeyAt": 2,
+          "crypto/ed25519.Sign": 1,
+          "reference:crypto/ed25519.PublicKey": 2
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.registry-client",
+        "file": "cli/go/awid/registry_client.go",
+        "symbol": "(*RegistryClient).SetFallbackRegistryURL",
+        "calls": {
+          "c.Resolver.SetFallbackRegistryURL": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.registry-client",
+        "file": "cli/go/awid/registry_client.go",
+        "symbol": "NewAWIDRegistryClient",
+        "calls": {
+          "NewRegistryResolver": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.registry-client",
+        "file": "cli/go/awid/registry_client.go",
+        "symbol": "isAmbiguousDIDRotationSubmitError",
+        "calls": {
+          "reference:net.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.registry-client",
+        "file": "cli/go/awid/registry_client.go",
+        "symbol": "shouldRetryRegistryTransportError",
+        "calls": {
+          "reference:net.Error": 1
         }
       },
       {
@@ -16816,7 +19190,16 @@
         "symbol": "signedPathHeaders",
         "calls": {
           "ComputeDIDKey": 1,
-          "crypto/ed25519.Sign": 1
+          "crypto/ed25519.Sign": 1,
+          "reference:crypto/ed25519.PublicKey": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.registry-dns",
+        "file": "cli/go/awid/registry_dns.go",
+        "symbol": "(*NetTXTResolver).LookupTXT",
+        "calls": {
+          "resolver.LookupTXT": 1
         }
       },
       {
@@ -16828,6 +19211,24 @@
         }
       },
       {
+        "row": "GO.SOURCE.awid.registry-dns",
+        "file": "cli/go/awid/registry_dns.go",
+        "symbol": "isTXTNotFound",
+        "calls": {
+          "err.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.registry-dns",
+        "file": "cli/go/awid/registry_dns.go",
+        "symbol": "lookupDomainAuthority",
+        "calls": {
+          "AWIDTXTName": 2,
+          "ParseAWIDTXTRecord": 1,
+          "resolver.LookupTXT": 1
+        }
+      },
+      {
         "row": "GO.SOURCE.awid.registry-namespace",
         "file": "cli/go/awid/registry_namespace.go",
         "symbol": "(*RegistryClient).ClaimIdentityAddressAt",
@@ -16835,7 +19236,52 @@
           "ComputeDIDKey": 1,
           "crypto/ed25519.Sign": 2,
           "literal:did:aw": 1,
-          "literal:did:key": 1
+          "literal:did:key": 1,
+          "reference:crypto/ed25519.PublicKey": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.registry-namespace",
+        "file": "cli/go/awid/registry_namespace.go",
+        "symbol": "(*RegistryClient).DeleteAddress",
+        "calls": {
+          "c.DeleteAddressAt": 1,
+          "c.DiscoverRegistry": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.registry-namespace",
+        "file": "cli/go/awid/registry_namespace.go",
+        "symbol": "(*RegistryClient).DeleteNamespace",
+        "calls": {
+          "c.DeleteNamespaceAt": 1,
+          "c.DiscoverRegistry": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.registry-namespace",
+        "file": "cli/go/awid/registry_namespace.go",
+        "symbol": "(*RegistryClient).GetNamespaceAddress",
+        "calls": {
+          "c.DiscoverRegistry": 1,
+          "c.GetNamespaceAddressAt": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.registry-namespace",
+        "file": "cli/go/awid/registry_namespace.go",
+        "symbol": "(*RegistryClient).GetNamespaceAddressAtSigned",
+        "calls": {
+          "c.GetNamespaceAddressAt": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.registry-namespace",
+        "file": "cli/go/awid/registry_namespace.go",
+        "symbol": "(*RegistryClient).GetNamespaceAddressSigned",
+        "calls": {
+          "c.DiscoverRegistry": 1,
+          "c.GetNamespaceAddressAtSigned": 1
         }
       },
       {
@@ -16843,6 +19289,7 @@
         "file": "cli/go/awid/registry_namespace.go",
         "symbol": "(*RegistryClient).RegisterAddress",
         "calls": {
+          "c.DiscoverRegistry": 1,
           "c.RegisterAddressAt": 1
         }
       },
@@ -16860,6 +19307,7 @@
         "file": "cli/go/awid/registry_namespace.go",
         "symbol": "(*RegistryClient).RegisterNamespace",
         "calls": {
+          "c.DiscoverRegistry": 1,
           "c.RegisterNamespaceAt": 1
         }
       },
@@ -16876,6 +19324,7 @@
         "file": "cli/go/awid/registry_namespace.go",
         "symbol": "(*RegistryClient).RegisterNamespaceWithDeliveryOrigin",
         "calls": {
+          "c.DiscoverRegistry": 1,
           "c.RegisterNamespaceWithDeliveryOriginAt": 1
         }
       },
@@ -16890,9 +19339,21 @@
       {
         "row": "GO.SOURCE.awid.registry-namespace",
         "file": "cli/go/awid/registry_namespace.go",
+        "symbol": "(*RegistryClient).UpdateNamespaceDeliveryOrigin",
+        "calls": {
+          "c.DiscoverRegistry": 1,
+          "c.UpdateNamespaceDeliveryOriginAt": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.registry-namespace",
+        "file": "cli/go/awid/registry_namespace.go",
         "symbol": "(*RegistryClient).atomicAddressClaimDIDLogProof",
         "calls": {
-          "crypto/ed25519.Sign": 1
+          "ComputeStableID": 1,
+          "c.ResolveKeyAt": 1,
+          "crypto/ed25519.Sign": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -16900,7 +19361,8 @@
         "file": "cli/go/awid/registry_namespace.go",
         "symbol": "requireSigningKeyMatchesDID",
         "calls": {
-          "ComputeDIDKey": 1
+          "ComputeDIDKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -16909,7 +19371,8 @@
         "symbol": "signedCanonicalHeaders",
         "calls": {
           "ComputeDIDKey": 1,
-          "crypto/ed25519.Sign": 1
+          "crypto/ed25519.Sign": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -16917,6 +19380,7 @@
         "file": "cli/go/awid/registry_register.go",
         "symbol": "RegisterIdentity",
         "calls": {
+          "NewAWIDRegistryClient": 1,
           "client.RegisterIdentity": 1
         }
       },
@@ -16933,7 +19397,17 @@
         "file": "cli/go/awid/registry_resolver.go",
         "symbol": "(*RegistryResolver).VerifyStableIdentityCurrent",
         "calls": {
-          "r.verifyStableIdentityAtRegistry": 1
+          "err.Error": 2,
+          "r.verifyStableIdentityAtRegistry": 1,
+          "reference:Error": 3
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.registry-resolver",
+        "file": "cli/go/awid/registry_resolver.go",
+        "symbol": "(*RegistryResolver).discoverAuthority",
+        "calls": {
+          "DiscoverAuthoritativeRegistry": 1
         }
       },
       {
@@ -16943,6 +19417,7 @@
         "calls": {
           "ExtractPublicKey": 3,
           "VerifyDidKeyResolution": 1,
+          "crypto/ed25519.PublicKey": 3,
           "literal:did:aw": 1
         }
       },
@@ -16960,7 +19435,10 @@
         "symbol": "(*RegistryResolver).verifyStableIdentityAtRegistry",
         "calls": {
           "VerifyDidKeyResolution": 1,
-          "r.verifyStableIdentityViaFullLog": 2
+          "err.Error": 2,
+          "r.verifyStableIdentityViaFullLog": 2,
+          "reference:Error": 4,
+          "verifyErr.Error": 1
         }
       },
       {
@@ -16968,7 +19446,9 @@
         "file": "cli/go/awid/registry_resolver.go",
         "symbol": "(*RegistryResolver).verifyStableIdentityViaFullLog",
         "calls": {
-          "VerifyDidLogEntries": 1
+          "VerifyDidLogEntries": 1,
+          "err.Error": 2,
+          "reference:Error": 6
         }
       },
       {
@@ -16977,8 +19457,27 @@
         "symbol": "(*RegistryClient).FetchTeamCertificate",
         "calls": {
           "ComputeDIDKey": 1,
+          "DecodeTeamCertificateHeader": 1,
           "ExtractPublicKey": 1,
-          "VerifyTeamCertificate": 1
+          "VerifyTeamCertificate": 1,
+          "reference:crypto/ed25519.PublicKey": 1
+        }
+      },
+      {
+        "row": "CLI.VERIFY.TEAM",
+        "file": "cli/go/awid/registry_team.go",
+        "symbol": "(*RegistryClient).RegisterCertificate",
+        "calls": {
+          "EncodeTeamCertificateHeader": 1,
+          "registryErr.HasCode": 1
+        }
+      },
+      {
+        "row": "CLI.VERIFY.TEAM",
+        "file": "cli/go/awid/registry_team.go",
+        "symbol": "IsTeamPrivateError",
+        "calls": {
+          "regErr.HasCode": 1
         }
       },
       {
@@ -16986,6 +19485,7 @@
         "file": "cli/go/awid/rotate.go",
         "symbol": "(*Client).RotateKey",
         "calls": {
+          "CanonicalRotationJSON": 1,
           "crypto/ed25519.Sign": 1
         }
       },
@@ -16994,6 +19494,7 @@
         "file": "cli/go/awid/rotate.go",
         "symbol": "SignRotation",
         "calls": {
+          "CanonicalRotationJSON": 1,
           "crypto/ed25519.Sign": 1
         }
       },
@@ -17002,6 +19503,7 @@
         "file": "cli/go/awid/rotate.go",
         "symbol": "VerifyRotationSignature",
         "calls": {
+          "CanonicalRotationJSON": 1,
           "crypto/ed25519.Verify": 1
         }
       },
@@ -17020,6 +19522,7 @@
         "symbol": "SignAppEmitCredential",
         "calls": {
           "ComputeDIDKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1,
           "signProtocolPayload": 1
         }
       },
@@ -17044,6 +19547,7 @@
         "file": "cli/go/awid/signing.go",
         "symbol": "SignMessage",
         "calls": {
+          "CanonicalJSON": 1,
           "crypto/ed25519.Sign": 1
         }
       },
@@ -17052,6 +19556,7 @@
         "file": "cli/go/awid/signing.go",
         "symbol": "VerifyMessage",
         "calls": {
+          "CanonicalJSON": 1,
           "ExtractPublicKey": 1,
           "crypto/ed25519.Verify": 1,
           "literal:did:key": 1
@@ -17062,6 +19567,7 @@
         "file": "cli/go/awid/signing.go",
         "symbol": "VerifyReplacementSignature",
         "calls": {
+          "CanonicalReplacementJSON": 1,
           "crypto/ed25519.Verify": 1
         }
       },
@@ -17080,8 +19586,10 @@
         "file": "cli/go/awid/signing.go",
         "symbol": "signPayload",
         "calls": {
+          "CanonicalJSONValue": 1,
           "ComputeDIDKey": 1,
-          "crypto/ed25519.Sign": 1
+          "crypto/ed25519.Sign": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -17097,6 +19605,7 @@
         "file": "cli/go/awid/stable_identity.go",
         "symbol": "VerifyDidKeyResolution",
         "calls": {
+          "ComputeStableID": 1,
           "ExtractPublicKey": 5,
           "crypto/ed25519.Verify": 1,
           "literal:did:aw": 1
@@ -17117,7 +19626,8 @@
         "symbol": "ResignAttestationRecord",
         "calls": {
           "ComputeDIDKey": 1,
-          "SignAttestationRecord": 1
+          "SignAttestationRecord": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -17126,7 +19636,16 @@
         "symbol": "ResignTeamServerRecord",
         "calls": {
           "ComputeDIDKey": 1,
-          "SignTeamServerRecord": 1
+          "SignTeamServerRecord": 1,
+          "reference:crypto/ed25519.PublicKey": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.team-rotate",
+        "file": "cli/go/awid/team_rotate.go",
+        "symbol": "ResignedRecordsIncompleteDetail",
+        "calls": {
+          "regErr.HasCode": 1
         }
       },
       {
@@ -17140,10 +19659,34 @@
       {
         "row": "GO.SOURCE.awid.team-server",
         "file": "cli/go/awid/team_server.go",
+        "symbol": "TeamServerRecordSigningBytes",
+        "calls": {
+          "CanonicalJSONValue": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.team-server",
+        "file": "cli/go/awid/team_server.go",
         "symbol": "VerifyTeamServerRecord",
         "calls": {
           "ExtractPublicKey": 1,
           "crypto/ed25519.Verify": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.chat.chat",
+        "file": "cli/go/chat/chat.go",
+        "symbol": "Open",
+        "calls": {
+          "err.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.chat.chat",
+        "file": "cli/go/chat/chat.go",
+        "symbol": "Send",
+        "calls": {
+          "findErr.Error": 1
         }
       },
       {
@@ -17190,10 +19733,41 @@
       {
         "row": "GO.SOURCE.cmd.aw.a2a",
         "file": "cli/go/cmd/aw/a2a.go",
+        "symbol": "loadA2APublishSigningKey",
+        "calls": {
+          "github.com/awebai/aw/awid.LoadSigningKey": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.a2a",
+        "file": "cli/go/cmd/aw/a2a.go",
+        "symbol": "redactedRegistryError",
+        "calls": {
+          "err.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.a2a",
+        "file": "cli/go/cmd/aw/a2a.go",
         "symbol": "runA2APublish",
         "calls": {
           "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.ComputeStableID": 1,
+          "github.com/awebai/aw/awid.NewAWIDRegistryClient": 1,
+          "reference:crypto/ed25519.PublicKey": 1,
+          "registry.DiscoverRegistry": 1,
+          "registry.SetFallbackRegistryURL": 1,
           "verifyA2ACardWithAWID": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.a2a",
+        "file": "cli/go/cmd/aw/a2a.go",
+        "symbol": "verifyA2ACardWithAWID",
+        "calls": {
+          "err.Error": 2,
+          "github.com/awebai/aw/awid.NewAWIDRegistryClient": 1,
+          "registry.SetFallbackRegistryURL": 1
         }
       },
       {
@@ -17210,7 +19784,9 @@
         "symbol": "newActivityPublisher",
         "calls": {
           "github.com/awebai/aw/awid.ComputeDIDKey": 1,
-          "literal:did:aw": 1
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "literal:did:aw": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -17224,10 +19800,20 @@
       {
         "row": "GO.SOURCE.cmd.aw.agent-status",
         "file": "cli/go/cmd/aw/agent_status.go",
+        "symbol": "canonicalUTF8JSON",
+        "calls": {
+          "github.com/awebai/aw/awid.CanonicalJSONValue": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.agent-status",
+        "file": "cli/go/cmd/aw/agent_status.go",
         "symbol": "runStatusPublish",
         "calls": {
           "crypto/ed25519.NewKeyFromSeed": 1,
           "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1,
+          "reference:crypto/ed25519.SeedSize": 1,
           "signAgentStatus": 1
         }
       },
@@ -17242,9 +19828,53 @@
       {
         "row": "GO.SOURCE.cmd.aw.agent-status",
         "file": "cli/go/cmd/aw/agent_status.go",
+        "symbol": "statusLocalError",
+        "calls": {
+          "err.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.agent-status",
+        "file": "cli/go/cmd/aw/agent_status.go",
         "symbol": "statusSigningIdentity",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "reference:SigningKeyPath": 1,
+          "reference:crypto/ed25519.PublicKey": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.app-approvals",
+        "file": "cli/go/cmd/aw/app_approvals.go",
+        "symbol": "pluginManagementHome",
+        "calls": {
+          "github.com/awebai/aw/awid.LoadSigningKey": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.app-installation-approval",
+        "file": "cli/go/cmd/aw/app_installation_approval.go",
+        "symbol": "annotateInstallationApprovals",
+        "calls": {
+          "err.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.app-installation-approval",
+        "file": "cli/go/cmd/aw/app_installation_approval.go",
+        "symbol": "bindGrantInstallations",
+        "calls": {
+          "err.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.auth",
+        "file": "cli/go/cmd/aw/auth.go",
+        "symbol": "cliAuthHTTPStatusErrorFromResponse",
+        "calls": {
+          "reference:detailObject.Error": 1,
+          "reference:doc.Error": 1
         }
       },
       {
@@ -17256,11 +19886,65 @@
         }
       },
       {
+        "row": "GO.SOURCE.cmd.aw.beads-mail-dualwrite",
+        "file": "cli/go/cmd/aw/beads_mail_dualwrite.go",
+        "symbol": "beadsMailRecordBead",
+        "calls": {
+          "err.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.beads-mail-send",
+        "file": "cli/go/cmd/aw/beads_mail_send.go",
+        "symbol": "<module>",
+        "calls": {
+          "ackErr.Error": 1,
+          "cwdErr.Error": 1,
+          "mapErr.Error": 2
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.channel-setup",
+        "file": "cli/go/cmd/aw/channel_setup.go",
+        "symbol": "printChannelMCPResult",
+        "calls": {
+          "reference:result.Error": 2
+        }
+      },
+      {
         "row": "CLI.CLAIM.MANAGE",
         "file": "cli/go/cmd/aw/claim_human.go",
         "symbol": "resolveClaimHumanIdentity",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1,
+          "reference:identity.SigningKeyPath": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.claude-hooks",
+        "file": "cli/go/cmd/aw/claude_hooks.go",
+        "symbol": "printClaudeHooksResult",
+        "calls": {
+          "reference:result.Error": 2
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.claude-hooks-cleanup",
+        "file": "cli/go/cmd/aw/claude_hooks_cleanup.go",
+        "symbol": "CleanupClaudeNotifyHook",
+        "calls": {
+          "reference:result.Error": 2
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.claude-hooks-cleanup",
+        "file": "cli/go/cmd/aw/claude_hooks_cleanup.go",
+        "symbol": "runRemoveClaudeNotifyHook",
+        "calls": {
+          "reference:result.Error": 4,
+          "result.Error.Error": 1
         }
       },
       {
@@ -17269,7 +19953,18 @@
         "symbol": "bootstrapConnect",
         "calls": {
           "github.com/awebai/aw/awid.ComputeDIDKey": 1,
-          "registerBootstrapDID": 1
+          "github.com/awebai/aw/awid.ComputeStableID": 1,
+          "github.com/awebai/aw/awid.GenerateKeypair": 1,
+          "registerBootstrapDID": 1,
+          "registry.SetFallbackRegistryURL": 1
+        }
+      },
+      {
+        "row": "CLI.BOOTSTRAP.CONNECT",
+        "file": "cli/go/cmd/aw/connect.go",
+        "symbol": "persistBootstrapConnectState",
+        "calls": {
+          "github.com/awebai/aw/awid.SaveSigningKey": 1
         }
       },
       {
@@ -17278,6 +19973,14 @@
         "symbol": "registerBootstrapDID",
         "calls": {
           "registry.RegisterIdentity": 1
+        }
+      },
+      {
+        "row": "CLI.BOOTSTRAP.CONNECT",
+        "file": "cli/go/cmd/aw/connect.go",
+        "symbol": "validateBootstrapRedeemResponse",
+        "calls": {
+          "github.com/awebai/aw/awid.DecodeTeamCertificateHeader": 1
         }
       },
       {
@@ -17292,9 +19995,29 @@
       {
         "row": "GO.SOURCE.cmd.aw.custody",
         "file": "cli/go/cmd/aw/custody.go",
+        "symbol": "(*custodyService).handleCreateE2EEEnvelope",
+        "calls": {
+          "err.Error": 1,
+          "net/http.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.custody",
+        "file": "cli/go/cmd/aw/custody.go",
         "symbol": "(*custodyService).handleSignPlainMessage",
         "calls": {
+          "err.Error": 1,
+          "net/http.Error": 1,
           "s.signPlainMessage": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.custody",
+        "file": "cli/go/cmd/aw/custody.go",
+        "symbol": "(*custodyService).handleUnwrapE2EEMessage",
+        "calls": {
+          "err.Error": 1,
+          "net/http.Error": 1
         }
       },
       {
@@ -17302,6 +20025,7 @@
         "file": "cli/go/cmd/aw/custody.go",
         "symbol": "(*custodyService).signPlainMessage",
         "calls": {
+          "github.com/awebai/aw/awid.CanonicalJSON": 1,
           "github.com/awebai/aw/awid.SignMessage": 1,
           "github.com/awebai/aw/awid.VerifyCustodyProof": 1
         }
@@ -17311,6 +20035,7 @@
         "file": "cli/go/cmd/aw/custody.go",
         "symbol": "(*custodyService).storedMailReplyRecipient",
         "calls": {
+          "github.com/awebai/aw/awid.CanonicalJSONValue": 2,
           "github.com/awebai/aw/awid.VerifyE2EEMessageEnvelopeSignature": 1
         }
       },
@@ -17331,10 +20056,29 @@
         }
       },
       {
+        "row": "GO.SOURCE.cmd.aw.custody",
+        "file": "cli/go/cmd/aw/custody.go",
+        "symbol": "e2eeEnvelopesEqual",
+        "calls": {
+          "github.com/awebai/aw/awid.CanonicalJSONValue": 2
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.custody",
+        "file": "cli/go/cmd/aw/custody.go",
+        "symbol": "newCustodyService",
+        "calls": {
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "reference:identity.SigningKeyPath": 1
+        }
+      },
+      {
         "row": "GO.SOURCE.cmd.aw.custody-app",
         "file": "cli/go/cmd/aw/custody_app.go",
         "symbol": "(*custodyService).handleSignAppRequest",
         "calls": {
+          "err.Error": 1,
+          "net/http.Error": 1,
           "s.signAppRequest": 1
         }
       },
@@ -17343,8 +20087,18 @@
         "file": "cli/go/cmd/aw/custody_app.go",
         "symbol": "(*custodyService).signAppRequest",
         "calls": {
+          "err.Error": 1,
           "github.com/awebai/aw/awid.VerifyAppRequestCustodyProof": 1,
+          "github.com/awebai/aw/internal/appmanifest.Resolve": 1,
           "signIDRequestHeaders": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.did",
+        "file": "cli/go/cmd/aw/did.go",
+        "symbol": "formatIDLog",
+        "calls": {
+          "reference:out.Error": 3
         }
       },
       {
@@ -17352,8 +20106,30 @@
         "file": "cli/go/cmd/aw/did.go",
         "symbol": "loadDIDLog",
         "calls": {
+          "err.Error": 2,
           "github.com/awebai/aw/awid.VerifyDidLogEntries": 1,
-          "literal:did:aw": 1
+          "literal:did:aw": 1,
+          "reference:Error": 3,
+          "registry.DiscoverRegistry": 1,
+          "registry.GetDIDLog": 1,
+          "registry.GetNamespaceAddressAt": 1,
+          "verifyErr.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.did",
+        "file": "cli/go/cmd/aw/did.go",
+        "symbol": "unsupportedLocalIdentityLog",
+        "calls": {
+          "reference:Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.doctor-aweb",
+        "file": "cli/go/cmd/aw/doctor_aweb.go",
+        "symbol": "(*doctorRunner).addServerConfiguredChecks",
+        "calls": {
+          "state.urlErr.Error": 1
         }
       },
       {
@@ -17361,7 +20137,10 @@
         "file": "cli/go/cmd/aw/doctor_aweb.go",
         "symbol": "collectDoctorAwebStateAt",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "github.com/awebai/aw/awid.LoadTeamCertificate": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -17383,9 +20162,19 @@
       {
         "row": "GO.SOURCE.cmd.aw.doctor-identity",
         "file": "cli/go/cmd/aw/doctor_identity.go",
+        "symbol": "(*doctorIdentityState).loadIdentityExpectationFromCertificate",
+        "calls": {
+          "github.com/awebai/aw/awid.LoadTeamCertificate": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.doctor-identity",
+        "file": "cli/go/cmd/aw/doctor_identity.go",
         "symbol": "(*doctorIdentityState).loadSigningKey",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -17393,7 +20182,24 @@
         "file": "cli/go/cmd/aw/doctor_identity.go",
         "symbol": "(*doctorRunner).addAWIDEncryptionKeyCheck",
         "calls": {
+          "err.Error": 1,
           "github.com/awebai/aw/awid.VerifyEncryptionKeyAssertion": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.doctor-identity",
+        "file": "cli/go/cmd/aw/doctor_identity.go",
+        "symbol": "(*doctorRunner).addAddressChecks",
+        "calls": {
+          "client.GetNamespaceAddressAtSigned": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.doctor-identity",
+        "file": "cli/go/cmd/aw/doctor_identity.go",
+        "symbol": "(*doctorRunner).addAddressReverseListingCheck",
+        "calls": {
+          "client.ListNamespaceAddressesAtSigned": 1
         }
       },
       {
@@ -17401,7 +20207,16 @@
         "file": "cli/go/cmd/aw/doctor_identity.go",
         "symbol": "(*doctorRunner).addDIDLogCheck",
         "calls": {
+          "client.GetDIDLog": 1,
           "github.com/awebai/aw/awid.VerifyDidLogEntries": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.doctor-identity",
+        "file": "cli/go/cmd/aw/doctor_identity.go",
+        "symbol": "(*doctorRunner).addDIDResolveChecks",
+        "calls": {
+          "client.ResolveKeyAt": 1
         }
       },
       {
@@ -17425,7 +20240,64 @@
         "file": "cli/go/cmd/aw/doctor_identity.go",
         "symbol": "(*doctorRunner).addIdentityEncryptionKeyLocalChecks",
         "calls": {
+          "err.Error": 3,
           "github.com/awebai/aw/awid.VerifyEncryptionKeyAssertion": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.doctor-identity",
+        "file": "cli/go/cmd/aw/doctor_identity.go",
+        "symbol": "(*doctorRunner).addIdentityLocalChecks",
+        "calls": {
+          "state.identityErr.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.doctor-identity",
+        "file": "cli/go/cmd/aw/doctor_identity.go",
+        "symbol": "(*doctorRunner).addRegistryChecks",
+        "calls": {
+          "github.com/awebai/aw/awid.NewAWIDRegistryClient": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.doctor-identity",
+        "file": "cli/go/cmd/aw/doctor_identity.go",
+        "symbol": "(*doctorRunner).addRegistryURLSourceCheck",
+        "calls": {
+          "state.registryURLErr.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.doctor-identity",
+        "file": "cli/go/cmd/aw/doctor_identity.go",
+        "symbol": "awidDoctorRegistryClient.GetDIDLog",
+        "calls": {
+          "c.client.GetDIDLog": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.doctor-identity",
+        "file": "cli/go/cmd/aw/doctor_identity.go",
+        "symbol": "awidDoctorRegistryClient.GetNamespaceAddressAtSigned",
+        "calls": {
+          "c.client.GetNamespaceAddressAtSigned": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.doctor-identity",
+        "file": "cli/go/cmd/aw/doctor_identity.go",
+        "symbol": "awidDoctorRegistryClient.ListNamespaceAddressesAtSigned",
+        "calls": {
+          "c.client.ListNamespaceAddressesAtSigned": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.doctor-identity",
+        "file": "cli/go/cmd/aw/doctor_identity.go",
+        "symbol": "awidDoctorRegistryClient.ResolveKeyAt",
+        "calls": {
+          "c.client.ResolveKeyAt": 1
         }
       },
       {
@@ -17442,8 +20314,42 @@
         "file": "cli/go/cmd/aw/doctor_local.go",
         "symbol": "(*doctorRunner).runCertificateChecks",
         "calls": {
+          "err.Error": 4,
           "github.com/awebai/aw/awid.ExtractPublicKey": 1,
+          "github.com/awebai/aw/awid.LoadTeamCertificate": 1,
           "github.com/awebai/aw/awid.VerifyTeamCertificate": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.doctor-local",
+        "file": "cli/go/cmd/aw/doctor_local.go",
+        "symbol": "(*doctorRunner).runIdentityChecks",
+        "calls": {
+          "err.Error": 2
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.doctor-local",
+        "file": "cli/go/cmd/aw/doctor_local.go",
+        "symbol": "(*doctorRunner).runIdentityFileOnlyChecks",
+        "calls": {
+          "err.Error": 2
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.doctor-local",
+        "file": "cli/go/cmd/aw/doctor_local.go",
+        "symbol": "(*doctorRunner).runIdentityRegistryChecks",
+        "calls": {
+          "err.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.doctor-local",
+        "file": "cli/go/cmd/aw/doctor_local.go",
+        "symbol": "(*doctorRunner).runLocalChecks",
+        "calls": {
+          "err.Error": 1
         }
       },
       {
@@ -17451,7 +20357,18 @@
         "file": "cli/go/cmd/aw/doctor_local.go",
         "symbol": "(*doctorRunner).runSigningKeyFileChecks",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "err.Error": 2,
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.doctor-local",
+        "file": "cli/go/cmd/aw/doctor_local.go",
+        "symbol": "(*doctorRunner).runWorkspaceChecks",
+        "calls": {
+          "err.Error": 2
         }
       },
       {
@@ -17459,7 +20376,8 @@
         "file": "cli/go/cmd/aw/doctor_messaging.go",
         "symbol": "(*doctorRunner).addMessagingLocalSignatureChecks",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 2
+          "github.com/awebai/aw/awid.ComputeDIDKey": 2,
+          "reference:crypto/ed25519.PublicKey": 2
         }
       },
       {
@@ -17476,7 +20394,24 @@
         "file": "cli/go/cmd/aw/doctor_messaging.go",
         "symbol": "(*doctorRunner).doctorMessagingClient",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.doctor-support-bundle",
+        "file": "cli/go/cmd/aw/doctor_support_bundle.go",
+        "symbol": "collectDoctorKnownSecretsAt",
+        "calls": {
+          "github.com/awebai/aw/awid.LoadTeamCertificate": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.doctor-support-bundle",
+        "file": "cli/go/cmd/aw/doctor_support_bundle.go",
+        "symbol": "collectDoctorSupportBundleLocalMetadataAt",
+        "calls": {
+          "github.com/awebai/aw/awid.LoadTeamCertificate": 1
         }
       },
       {
@@ -17485,7 +20420,8 @@
         "symbol": "renewIdentityEncryptionAssertionWithBackoff",
         "calls": {
           "github.com/awebai/aw/awid.ComputeDIDKey": 1,
-          "github.com/awebai/aw/awid.SignEncryptionKeyAssertion": 1
+          "github.com/awebai/aw/awid.SignEncryptionKeyAssertion": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -17497,11 +20433,108 @@
         }
       },
       {
+        "row": "GO.SOURCE.cmd.aw.gc-mail",
+        "file": "cli/go/cmd/aw/gc_mail.go",
+        "symbol": "gcMailForceExitCode",
+        "calls": {
+          "err.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.gc-mail-ops",
+        "file": "cli/go/cmd/aw/gc_mail_ops.go",
+        "symbol": "<module>",
+        "calls": {
+          "ackErr.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.grant-app-tools",
+        "file": "cli/go/cmd/aw/grant_app_tools.go",
+        "symbol": "(*appSnapshotFailure).Error",
+        "calls": {
+          "e.err.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.heartbeat",
+        "file": "cli/go/cmd/aw/heartbeat.go",
+        "symbol": "<module>",
+        "calls": {
+          "err.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.helpers",
+        "file": "cli/go/cmd/aw/helpers.go",
+        "symbol": "configureResolvedClientWithRoster",
+        "calls": {
+          "github.com/awebai/aw/awid.NewRegistryResolver": 1,
+          "teamRegistry.SetFallbackRegistryURL": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.helpers",
+        "file": "cli/go/cmd/aw/helpers.go",
+        "symbol": "loadOptionalWorktreeSigningKey",
+        "calls": {
+          "github.com/awebai/aw/awid.LoadSigningKey": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.helpers",
+        "file": "cli/go/cmd/aw/helpers.go",
+        "symbol": "newConfiguredRegistryClient",
+        "calls": {
+          "github.com/awebai/aw/awid.NewAWIDRegistryClient": 1,
+          "reference:client.SetFallbackRegistryURL": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.helpers",
+        "file": "cli/go/cmd/aw/helpers.go",
+        "symbol": "newConfiguredRegistryResolver",
+        "calls": {
+          "github.com/awebai/aw/awid.NewRegistryResolver": 1,
+          "reference:registry.SetFallbackRegistryURL": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.helpers",
+        "file": "cli/go/cmd/aw/helpers.go",
+        "symbol": "newSelectionRegistryResolver",
+        "calls": {
+          "github.com/awebai/aw/awid.NewRegistryResolver": 1,
+          "registry.SetFallbackRegistryURL": 1,
+          "registry.SetIdentityRegistryURL": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.helpers",
+        "file": "cli/go/cmd/aw/helpers.go",
+        "symbol": "probeAwebBaseURLOutcome",
+        "calls": {
+          "reference:net.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.helpers",
+        "file": "cli/go/cmd/aw/helpers.go",
+        "symbol": "resolveCertificateClient",
+        "calls": {
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "github.com/awebai/aw/awid.LoadTeamCertificate": 1
+        }
+      },
+      {
         "row": "GO.SOURCE.cmd.aw.helpers",
         "file": "cli/go/cmd/aw/helpers.go",
         "symbol": "resolveCertificateIdentityAtHome",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "reference:SigningKeyPath": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -17509,7 +20542,19 @@
         "file": "cli/go/cmd/aw/helpers.go",
         "symbol": "resolveIdentityMessagingClientSelectionForDir",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1,
+          "reference:identity.SigningKeyPath": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.helpers",
+        "file": "cli/go/cmd/aw/helpers.go",
+        "symbol": "resolveLiveTeamMemberAliasTarget",
+        "calls": {
+          "registry.ResolveTeamMember": 1,
+          "registry.SetFallbackRegistryURL": 1
         }
       },
       {
@@ -17517,7 +20562,18 @@
         "file": "cli/go/cmd/aw/helpers.go",
         "symbol": "resolveLocalIdentityWithoutState",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "reference:SigningKeyPath": 1,
+          "reference:crypto/ed25519.PublicKey": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.helpers",
+        "file": "cli/go/cmd/aw/helpers.go",
+        "symbol": "resolveWorkingBaseURLContext",
+        "calls": {
+          "err.Error": 1
         }
       },
       {
@@ -17525,7 +20581,18 @@
         "file": "cli/go/cmd/aw/helpers.go",
         "symbol": "validateResolvedIdentity",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1,
+          "reference:identity.SigningKeyPath": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.helpers",
+        "file": "cli/go/cmd/aw/helpers.go",
+        "symbol": "validateSelectedIdentityHome",
+        "calls": {
+          "github.com/awebai/aw/awid.LoadSigningKey": 1
         }
       },
       {
@@ -17533,7 +20600,11 @@
         "file": "cli/go/cmd/aw/id_address.go",
         "symbol": "executeIDAddressClaim",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1,
+          "reference:identity.SigningKeyPath": 1,
+          "registry.ClaimIdentityAddressAt": 1
         }
       },
       {
@@ -17541,7 +20612,17 @@
         "file": "cli/go/cmd/aw/id_address.go",
         "symbol": "loadAddressClaimNamespaceController",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-address",
+        "file": "cli/go/cmd/aw/id_address.go",
+        "symbol": "resolveAddressClaimRegistryURL",
+        "calls": {
+          "registry.DiscoverRegistry": 1,
+          "registry.SetFallbackRegistryURL": 1
         }
       },
       {
@@ -17565,7 +20646,45 @@
         "file": "cli/go/cmd/aw/id_create.go",
         "symbol": "ensureStandaloneNamespace",
         "calls": {
+          "registry.GetNamespaceAt": 2,
           "registry.RegisterNamespaceAt": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-create",
+        "file": "cli/go/cmd/aw/id_create.go",
+        "symbol": "ensureStandaloneRegistryRegistration",
+        "calls": {
+          "registry.ClaimIdentityAddressAt": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-create",
+        "file": "cli/go/cmd/aw/id_create.go",
+        "symbol": "executeIDCreate",
+        "calls": {
+          "github.com/awebai/aw/awid.SaveSigningKey": 1,
+          "reference:SigningKeyPath": 2,
+          "reference:plan.SigningKeyPath": 3,
+          "registry.PublishEncryptionKey": 1,
+          "registry.SetFallbackRegistryURL": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-create",
+        "file": "cli/go/cmd/aw/id_create.go",
+        "symbol": "isIDCreateTXTLookupMiss",
+        "calls": {
+          "err.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-create",
+        "file": "cli/go/cmd/aw/id_create.go",
+        "symbol": "isRegistryUnavailableError",
+        "calls": {
+          "reference:net.Error": 1,
+          "reference:net/url.Error": 1
         }
       },
       {
@@ -17573,7 +20692,12 @@
         "file": "cli/go/cmd/aw/id_create.go",
         "symbol": "prepareIDCreatePlan",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.AWIDTXTName": 1,
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.ComputeStableID": 1,
+          "github.com/awebai/aw/awid.GenerateKeypair": 1,
+          "reference:SigningKeyPath": 1,
+          "registry.SetFallbackRegistryURL": 1
         }
       },
       {
@@ -17581,7 +20705,9 @@
         "file": "cli/go/cmd/aw/id_create.go",
         "symbol": "resolveOrCreateControllerKey",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 2
+          "github.com/awebai/aw/awid.ComputeDIDKey": 2,
+          "github.com/awebai/aw/awid.GenerateKeypair": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -17589,6 +20715,7 @@
         "file": "cli/go/cmd/aw/id_create.go",
         "symbol": "verifyIDCreateDomainAuthority",
         "calls": {
+          "github.com/awebai/aw/awid.AWIDTXTName": 1,
           "github.com/awebai/aw/awid.VerifyExactDomainAuthority": 1
         }
       },
@@ -17598,7 +20725,13 @@
         "symbol": "prepareHostedIdentity",
         "calls": {
           "crypto/ed25519.NewKeyFromSeed": 1,
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.ComputeStableID": 1,
+          "github.com/awebai/aw/awid.GenerateKeypair": 1,
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "reference:crypto/ed25519.PrivateKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1,
+          "reference:crypto/ed25519.SeedSize": 1
         }
       },
       {
@@ -17607,7 +20740,9 @@
         "symbol": "runHostedIdentityCreate",
         "calls": {
           "crypto/ed25519.Sign": 1,
-          "registry.RegisterIdentity": 1
+          "github.com/awebai/aw/awid.CanonicalJSONValue": 1,
+          "registry.RegisterIdentity": 1,
+          "registry.SetFallbackRegistryURL": 1
         }
       },
       {
@@ -17623,7 +20758,9 @@
         "file": "cli/go/cmd/aw/id_create_owner.go",
         "symbol": "loadHostedOwnerAuthority",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -17631,7 +20768,16 @@
         "file": "cli/go/cmd/aw/id_encryption_key.go",
         "symbol": "ensureLocalIdentityEncryptionKeyForDir",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-encryption-key",
+        "file": "cli/go/cmd/aw/id_encryption_key.go",
+        "symbol": "publishIdentityEncryptionKey",
+        "calls": {
+          "registry.PublishEncryptionKey": 1
         }
       },
       {
@@ -17639,7 +20785,10 @@
         "file": "cli/go/cmd/aw/id_encryption_key.go",
         "symbol": "resolveActiveCertificateIdentityForEncryptionKey",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "reference:SigningKeyPath": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -17647,7 +20796,10 @@
         "file": "cli/go/cmd/aw/id_encryption_key.go",
         "symbol": "resolveIdentityForEncryptionKeyForDir",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "reference:SigningKeyPath": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -17655,7 +20807,16 @@
         "file": "cli/go/cmd/aw/id_encryption_key.go",
         "symbol": "setupOrRotateIdentityEncryptionKeyForDir",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-encryption-key",
+        "file": "cli/go/cmd/aw/id_encryption_key.go",
+        "symbol": "shouldRefreshEncryptionKeyForIdentityBinding",
+        "calls": {
+          "err.Error": 1
         }
       },
       {
@@ -17672,7 +20833,8 @@
         "symbol": "formatIDCreate",
         "calls": {
           "literal:did:aw": 1,
-          "literal:did:key": 1
+          "literal:did:key": 1,
+          "reference:out.SigningKeyPath": 1
         }
       },
       {
@@ -17724,7 +20886,16 @@
         "symbol": "formatIDVerify",
         "calls": {
           "literal:did:aw": 1,
-          "literal:did:key": 1
+          "literal:did:key": 1,
+          "reference:out.Error": 2
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-grant",
+        "file": "cli/go/cmd/aw/id_grant.go",
+        "symbol": "resolveGrantClientSelectionForTeam",
+        "calls": {
+          "github.com/awebai/aw/awid.LoadSigningKey": 1
         }
       },
       {
@@ -17734,6 +20905,8 @@
         "calls": {
           "client.RevokeIdentityGrant": 1,
           "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.GenerateKeypair": 1,
+          "github.com/awebai/aw/awid.SaveSigningKeyExclusive": 1,
           "revokeCancel": 1
         }
       },
@@ -17752,7 +20925,12 @@
         "calls": {
           "github.com/awebai/aw/awid.ComputeDIDKey": 1,
           "literal:did:aw": 2,
-          "registry.RegisterAddressAt": 1
+          "reference:crypto/ed25519.PublicKey": 1,
+          "registry.DiscoverRegistry": 1,
+          "registry.GetNamespaceAddressAt": 1,
+          "registry.GetNamespaceAt": 1,
+          "registry.RegisterAddressAt": 1,
+          "registry.ResolveKeyAt": 1
         }
       },
       {
@@ -17760,8 +20938,36 @@
         "file": "cli/go/cmd/aw/id_namespace_check_txt.go",
         "symbol": "executeIDNamespaceCheckTXT",
         "calls": {
+          "github.com/awebai/aw/awid.AWIDTXTName": 1,
           "github.com/awebai/aw/awid.ComputeDIDKey": 1,
-          "github.com/awebai/aw/awid.VerifyExactDomainAuthority": 1
+          "github.com/awebai/aw/awid.VerifyExactDomainAuthority": 1,
+          "reference:crypto/ed25519.PublicKey": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-namespace-check-txt",
+        "file": "cli/go/cmd/aw/id_namespace_check_txt.go",
+        "symbol": "loadIDNamespaceCheckTXTKey",
+        "calls": {
+          "github.com/awebai/aw/awid.LoadSigningKey": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-namespace-delete",
+        "file": "cli/go/cmd/aw/id_namespace_delete.go",
+        "symbol": "executeIDNamespaceDelete",
+        "calls": {
+          "registry.DeleteNamespaceAt": 1,
+          "registry.DiscoverRegistry": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-namespace-delete-address",
+        "file": "cli/go/cmd/aw/id_namespace_delete_address.go",
+        "symbol": "executeIDNamespaceDeleteAddress",
+        "calls": {
+          "registry.DeleteAddressAt": 1,
+          "registry.DiscoverRegistry": 1
         }
       },
       {
@@ -17769,7 +20975,10 @@
         "file": "cli/go/cmd/aw/id_namespace_delete_address.go",
         "symbol": "loadVerifiedNamespaceControllerKey",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1,
+          "registry.DiscoverRegistry": 1,
+          "registry.GetNamespaceAt": 1
         }
       },
       {
@@ -17777,7 +20986,11 @@
         "file": "cli/go/cmd/aw/id_namespace_delivery_origin.go",
         "symbol": "executeIDNamespaceDeliveryOrigin",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1,
+          "registry.DiscoverRegistry": 1,
+          "registry.GetNamespaceAt": 1,
+          "registry.UpdateNamespaceDeliveryOriginAt": 1
         }
       },
       {
@@ -17785,7 +20998,64 @@
         "file": "cli/go/cmd/aw/id_namespace_prepare_controller.go",
         "symbol": "executeIDNamespacePrepareController",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.AWIDTXTName": 1,
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1,
+          "registry.SetFallbackRegistryURL": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-registry",
+        "file": "cli/go/cmd/aw/id_registry.go",
+        "symbol": "currentIdentityRegistryURL",
+        "calls": {
+          "registry.DiscoverRegistry": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-registry",
+        "file": "cli/go/cmd/aw/id_registry.go",
+        "symbol": "executeIDNamespaceRotateController",
+        "calls": {
+          "github.com/awebai/aw/awid.DiscoverAuthoritativeRegistry": 1,
+          "github.com/awebai/aw/awid.NewAWIDRegistryClient": 1,
+          "registry.ReverifyNamespaceAt": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-registry",
+        "file": "cli/go/cmd/aw/id_registry.go",
+        "symbol": "newRegistryClientWithPreferredBaseURL",
+        "calls": {
+          "registry.SetFallbackRegistryURL": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-registry",
+        "file": "cli/go/cmd/aw/id_registry.go",
+        "symbol": "registryLookupURL",
+        "calls": {
+          "registry.DiscoverRegistry": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-registry",
+        "file": "cli/go/cmd/aw/id_registry.go",
+        "symbol": "resolveIdentitySigningKey",
+        "calls": {
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "reference:identity.SigningKeyPath": 2
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-registry",
+        "file": "cli/go/cmd/aw/id_registry.go",
+        "symbol": "runIDNamespace",
+        "calls": {
+          "registry.DiscoverRegistry": 1,
+          "registry.GetNamespaceAt": 1,
+          "registry.ListNamespaceAddressesAt": 1,
+          "registry.ListNamespaceAddressesAtSigned": 1
         }
       },
       {
@@ -17801,7 +21071,19 @@
         "file": "cli/go/cmd/aw/id_registry.go",
         "symbol": "runIDResolve",
         "calls": {
-          "literal:did:aw": 1
+          "literal:did:aw": 1,
+          "registry.ResolveKeyAt": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-registry",
+        "file": "cli/go/cmd/aw/id_registry.go",
+        "symbol": "runIDShow",
+        "calls": {
+          "err.Error": 1,
+          "regClientErr.Error": 1,
+          "regErr.Error": 1,
+          "registry.ResolveKeyAt": 1
         }
       },
       {
@@ -17809,8 +21091,20 @@
         "file": "cli/go/cmd/aw/id_registry.go",
         "symbol": "runIDVerify",
         "calls": {
+          "err.Error": 1,
           "github.com/awebai/aw/awid.VerifyDidLogEntries": 1,
-          "literal:did:aw": 1
+          "literal:did:aw": 1,
+          "reference:Error": 2,
+          "registry.GetDIDLog": 1,
+          "verifyErr.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-registry-read",
+        "file": "cli/go/cmd/aw/id_registry_read.go",
+        "symbol": "registryReadResolveKeyEnvelope",
+        "calls": {
+          "registry.ResolveKeyAt": 1
         }
       },
       {
@@ -17818,7 +21112,8 @@
         "file": "cli/go/cmd/aw/id_registry_read.go",
         "symbol": "resolveRegistryReadAuthority",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 2
+          "github.com/awebai/aw/awid.ComputeDIDKey": 2,
+          "reference:crypto/ed25519.PublicKey": 2
         }
       },
       {
@@ -17826,7 +21121,28 @@
         "file": "cli/go/cmd/aw/id_registry_read.go",
         "symbol": "runIDAddresses",
         "calls": {
-          "literal:did:aw": 1
+          "literal:did:aw": 1,
+          "registry.ListDIDAddressesAt": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-registry-read",
+        "file": "cli/go/cmd/aw/id_registry_read.go",
+        "symbol": "runIDNamespaceAddresses",
+        "calls": {
+          "registry.DiscoverRegistry": 1,
+          "registry.ListNamespaceAddressesAt": 1,
+          "registry.ListNamespaceAddressesAtSigned": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-registry-read",
+        "file": "cli/go/cmd/aw/id_registry_read.go",
+        "symbol": "runIDNamespaceResolve",
+        "calls": {
+          "registry.DiscoverRegistry": 1,
+          "registry.GetNamespaceAddressAt": 1,
+          "registry.GetNamespaceAddressAtSigned": 1
         }
       },
       {
@@ -17835,7 +21151,8 @@
         "symbol": "formatRegistryRead",
         "calls": {
           "literal:did:aw": 2,
-          "literal:did:key": 2
+          "literal:did:key": 2,
+          "reference:out.Payload.Error": 1
         }
       },
       {
@@ -17851,7 +21168,10 @@
         "file": "cli/go/cmd/aw/id_request.go",
         "symbol": "resolveLocalSigningIdentity",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "reference:SigningKeyPath": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -17867,7 +21187,17 @@
         "file": "cli/go/cmd/aw/id_request.go",
         "symbol": "signIDRequestHeaders",
         "calls": {
-          "github.com/awebai/aw/awid.SignRequestCredential": 1
+          "github.com/awebai/aw/awid.EncodeTeamCertificateHeader": 1,
+          "github.com/awebai/aw/awid.SignRequestCredential": 1,
+          "reference:crypto/ed25519.PrivateKeySize": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-request",
+        "file": "cli/go/cmd/aw/id_request.go",
+        "symbol": "teamRequestCertificate",
+        "calls": {
+          "github.com/awebai/aw/awid.LoadTeamCertificate": 1
         }
       },
       {
@@ -17875,7 +21205,9 @@
         "file": "cli/go/cmd/aw/id_rotate_key.go",
         "symbol": "runIDRotateKey",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.GenerateKeypair": 1,
+          "registry.RotateDIDKey": 1
         }
       },
       {
@@ -17883,7 +21215,11 @@
         "file": "cli/go/cmd/aw/id_rotate_key_recover.go",
         "symbol": "finalizePendingRotation",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 2
+          "github.com/awebai/aw/awid.ArchiveKey": 1,
+          "github.com/awebai/aw/awid.ComputeDIDKey": 2,
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "reference:crypto/ed25519.PublicKey": 3,
+          "reference:identity.SigningKeyPath": 5
         }
       },
       {
@@ -17891,7 +21227,19 @@
         "file": "cli/go/cmd/aw/id_rotate_key_recover.go",
         "symbol": "localRotationMatchesDID",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1,
+          "reference:identity.SigningKeyPath": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-rotate-key-recover",
+        "file": "cli/go/cmd/aw/id_rotate_key_recover.go",
+        "symbol": "recoverPendingRotation",
+        "calls": {
+          "err.Error": 2,
+          "registry.ResolveKeyAt": 1
         }
       },
       {
@@ -17899,7 +21247,9 @@
         "file": "cli/go/cmd/aw/id_rotation_recovery.go",
         "symbol": "activeKeyMatchesDID",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -17907,7 +21257,28 @@
         "file": "cli/go/cmd/aw/id_rotation_recovery.go",
         "symbol": "cleanupMatchingRotationPrivateTemps",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-rotation-recovery",
+        "file": "cli/go/cmd/aw/id_rotation_recovery.go",
+        "symbol": "cleanupPendingRotationKeypair",
+        "calls": {
+          "github.com/awebai/aw/awid.PublicKeyPath": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-rotation-recovery",
+        "file": "cli/go/cmd/aw/id_rotation_recovery.go",
+        "symbol": "ensurePublicKeyMatchesPrivate",
+        "calls": {
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "github.com/awebai/aw/awid.PublicKeyPath": 1,
+          "github.com/awebai/aw/awid.SaveKeypairAt": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -17915,7 +21286,25 @@
         "file": "cli/go/cmd/aw/id_rotation_recovery.go",
         "symbol": "loadRotationSigningKey",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.LoadSigningKey": 2,
+          "reference:crypto/ed25519.PublicKey": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-rotation-recovery",
+        "file": "cli/go/cmd/aw/id_rotation_recovery.go",
+        "symbol": "promotePendingRotationKeypair",
+        "calls": {
+          "github.com/awebai/aw/awid.PublicKeyPath": 3
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-rotation-recovery",
+        "file": "cli/go/cmd/aw/id_rotation_recovery.go",
+        "symbol": "savePendingRotationKeypair",
+        "calls": {
+          "github.com/awebai/aw/awid.SaveKeypairAt": 1
         }
       },
       {
@@ -17923,7 +21312,11 @@
         "file": "cli/go/cmd/aw/id_rotation_recovery.go",
         "symbol": "validatePendingRotationState",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.LoadPublicKey": 1,
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "github.com/awebai/aw/awid.PublicKeyPath": 2,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -17931,7 +21324,11 @@
         "file": "cli/go/cmd/aw/id_team.go",
         "symbol": "acceptHostedTeamInviteWithDetails",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.ComputeStableID": 1,
+          "reference:crypto/ed25519.PrivateKey": 1,
+          "reference:crypto/ed25519.PublicKey": 2,
+          "registry.ResolveKeyAt": 1
         }
       },
       {
@@ -17940,6 +21337,7 @@
         "symbol": "acceptTeamInviteWithDetails",
         "calls": {
           "github.com/awebai/aw/awid.SignTeamCertificate": 1,
+          "registry.ClaimIdentityAddressAt": 2,
           "registry.RegisterCertificate": 1
         }
       },
@@ -17950,6 +21348,7 @@
         "calls": {
           "github.com/awebai/aw/awid.ComputeDIDKey": 1,
           "github.com/awebai/aw/awid.SignTeamCertificate": 1,
+          "reference:crypto/ed25519.PublicKey": 1,
           "registry.RegisterCertificate": 1
         }
       },
@@ -17959,7 +21358,9 @@
         "symbol": "buildTeamImportRequestOutput",
         "calls": {
           "crypto/ed25519.Sign": 1,
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.CanonicalJSONValue": 1,
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -17967,7 +21368,12 @@
         "file": "cli/go/cmd/aw/id_team.go",
         "symbol": "ensureLocalTeamRegistered",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 2
+          "github.com/awebai/aw/awid.ComputeDIDKey": 2,
+          "github.com/awebai/aw/awid.GenerateKeypair": 1,
+          "reference:crypto/ed25519.PrivateKey": 1,
+          "reference:crypto/ed25519.PublicKey": 2,
+          "registry.CreateTeam": 1,
+          "registry.GetTeam": 1
         }
       },
       {
@@ -17976,7 +21382,9 @@
         "symbol": "executeTeamCleanupCloud",
         "calls": {
           "crypto/ed25519.Sign": 1,
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.CanonicalJSONValue": 1,
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -17985,7 +21393,36 @@
         "symbol": "executeTeamRegisterWithTarget",
         "calls": {
           "crypto/ed25519.Sign": 1,
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.CanonicalJSONValue": 1,
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-team",
+        "file": "cli/go/cmd/aw/id_team.go",
+        "symbol": "hostedAcceptSigningKeyAt",
+        "calls": {
+          "github.com/awebai/aw/awid.GenerateKeypair": 1,
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "github.com/awebai/aw/awid.SaveSigningKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-team",
+        "file": "cli/go/cmd/aw/id_team.go",
+        "symbol": "loadCurrentTeamCertificate",
+        "calls": {
+          "github.com/awebai/aw/awid.LoadTeamCertificate": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-team",
+        "file": "cli/go/cmd/aw/id_team.go",
+        "symbol": "loadTeamCleanupCloudKey",
+        "calls": {
+          "github.com/awebai/aw/awid.LoadSigningKey": 1
         }
       },
       {
@@ -17994,7 +21431,10 @@
         "symbol": "loadTeamCleanupCloudNamespaceKey",
         "calls": {
           "github.com/awebai/aw/awid.ComputeDIDKey": 1,
-          "github.com/awebai/aw/awid.VerifyExactDomainAuthority": 1
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "github.com/awebai/aw/awid.VerifyExactDomainAuthority": 1,
+          "reference:crypto/ed25519.PrivateKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -18002,7 +21442,10 @@
         "file": "cli/go/cmd/aw/id_team.go",
         "symbol": "resolveGlobalIdentityForTeamAccept",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1,
+          "reference:identity.SigningKeyPath": 1
         }
       },
       {
@@ -18010,7 +21453,11 @@
         "file": "cli/go/cmd/aw/id_team.go",
         "symbol": "resolveOrGenerateMemberDIDKeyAt",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 2
+          "github.com/awebai/aw/awid.ComputeDIDKey": 2,
+          "github.com/awebai/aw/awid.GenerateKeypair": 1,
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "github.com/awebai/aw/awid.SaveSigningKeyExclusive": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -18018,7 +21465,8 @@
         "file": "cli/go/cmd/aw/id_team.go",
         "symbol": "revokeAcceptedTeamCertificate",
         "calls": {
-          "registry.RevokeCertificate": 1
+          "registry.RevokeCertificate": 1,
+          "registry.SetFallbackRegistryURL": 1
         }
       },
       {
@@ -18040,6 +21488,14 @@
       {
         "row": "GO.SOURCE.cmd.aw.id-team",
         "file": "cli/go/cmd/aw/id_team.go",
+        "symbol": "rollbackDefaultAddressClaimAfterCertificateFailure",
+        "calls": {
+          "registry.DeleteAddressIfMatchesAt": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-team",
+        "file": "cli/go/cmd/aw/id_team.go",
         "symbol": "runHostedTeamRemoveMember",
         "calls": {
           "revokeHostedTeamCertificate": 1
@@ -18051,7 +21507,44 @@
         "symbol": "runTeamAddMember",
         "calls": {
           "github.com/awebai/aw/awid.SignTeamCertificate": 1,
+          "registry.GetNamespaceAddressAt": 1,
+          "registry.GetNamespaceAddressAtSigned": 1,
           "registry.RegisterCertificate": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-team",
+        "file": "cli/go/cmd/aw/id_team.go",
+        "symbol": "runTeamCleanupCloud",
+        "calls": {
+          "reference:crypto/ed25519.PrivateKey": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-team",
+        "file": "cli/go/cmd/aw/id_team.go",
+        "symbol": "runTeamCreate",
+        "calls": {
+          "registry.SetFallbackRegistryURL": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-team",
+        "file": "cli/go/cmd/aw/id_team.go",
+        "symbol": "runTeamFetchCert",
+        "calls": {
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "registry.FetchTeamCertificate": 1,
+          "registry.SetFallbackRegistryURL": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-team",
+        "file": "cli/go/cmd/aw/id_team.go",
+        "symbol": "runTeamMembers",
+        "calls": {
+          "registry.ListCertificates": 1,
+          "registry.SetFallbackRegistryURL": 1
         }
       },
       {
@@ -18067,6 +21560,7 @@
         "file": "cli/go/cmd/aw/id_team.go",
         "symbol": "runTeamRemoveMember",
         "calls": {
+          "registry.ResolveTeamMember": 1,
           "revokeRegistryTeamCertificate": 1,
           "verifyNamedMember": 1
         }
@@ -18076,6 +21570,7 @@
         "file": "cli/go/cmd/aw/id_team.go",
         "symbol": "validateHostedTeamInviteAcceptResponse",
         "calls": {
+          "github.com/awebai/aw/awid.DecodeTeamCertificateHeader": 1,
           "github.com/awebai/aw/awid.ExtractPublicKey": 1,
           "github.com/awebai/aw/awid.VerifyTeamCertificate": 1
         }
@@ -18083,9 +21578,38 @@
       {
         "row": "GO.SOURCE.cmd.aw.id-team",
         "file": "cli/go/cmd/aw/id_team.go",
+        "symbol": "validateMemberAddressForCertificate",
+        "calls": {
+          "registry.GetNamespaceAddressAt": 1,
+          "registry.GetNamespaceAddressAtSigned": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-team",
+        "file": "cli/go/cmd/aw/id_team.go",
         "symbol": "verifyTeamRegisterLocalKey",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1,
+          "registry.GetTeam": 1,
+          "registry.SetFallbackRegistryURL": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-team-delete",
+        "file": "cli/go/cmd/aw/id_team_delete.go",
+        "symbol": "executeTeamDelete",
+        "calls": {
+          "registry.DeleteTeam": 1,
+          "registry.DiscoverRegistry": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-team-format",
+        "file": "cli/go/cmd/aw/id_team_format.go",
+        "symbol": "formatTeamImportRequest",
+        "calls": {
+          "github.com/awebai/aw/awid.CanonicalJSONValue": 1
         }
       },
       {
@@ -18093,7 +21617,34 @@
         "file": "cli/go/cmd/aw/id_team_reissue_cert.go",
         "symbol": "preflightReissueCertMemberHome",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1
+        }
+      },
+      {
+        "row": "CLI.ROTATE.TEAM",
+        "file": "cli/go/cmd/aw/id_team_reissue_cert.go",
+        "symbol": "resolveActiveReissueCertMember",
+        "calls": {
+          "registry.GetTeam": 1,
+          "registry.ResolveTeamMember": 1
+        }
+      },
+      {
+        "row": "CLI.ROTATE.TEAM",
+        "file": "cli/go/cmd/aw/id_team_reissue_cert.go",
+        "symbol": "resolveLatestRevokedReissueCertMember",
+        "calls": {
+          "registry.ListCertificates": 1
+        }
+      },
+      {
+        "row": "CLI.ROTATE.TEAM",
+        "file": "cli/go/cmd/aw/id_team_reissue_cert.go",
+        "symbol": "resolveReissueCertRegistryURL",
+        "calls": {
+          "registry.SetFallbackRegistryURL": 2
         }
       },
       {
@@ -18101,6 +21652,7 @@
         "file": "cli/go/cmd/aw/id_team_reissue_cert.go",
         "symbol": "runTeamReissueCert",
         "calls": {
+          "github.com/awebai/aw/awid.EncodeTeamCertificateHeader": 1,
           "github.com/awebai/aw/awid.ExtractPublicKey": 1,
           "github.com/awebai/aw/awid.SignTeamCertificate": 1,
           "registry.RegisterCertificate": 1,
@@ -18112,6 +21664,8 @@
         "file": "cli/go/cmd/aw/id_team_rotate_key.go",
         "symbol": "(*teamRotation).addCustodian",
         "calls": {
+          "github.com/awebai/aw/awid.ResignAttestationRecord": 1,
+          "r.registry.GetTeamCustodianRecord": 1,
           "r.verifyStored": 1
         }
       },
@@ -18120,7 +21674,10 @@
         "file": "cli/go/cmd/aw/id_team_rotate_key.go",
         "symbol": "(*teamRotation).collect",
         "calls": {
+          "github.com/awebai/aw/awid.ResignAttestationRecord": 1,
+          "github.com/awebai/aw/awid.ResignTeamServerRecord": 1,
           "github.com/awebai/aw/awid.VerifyTeamServerRecord": 1,
+          "r.registry.ListTeamSignedRecords": 1,
           "r.verifyStored": 1
         }
       },
@@ -18137,7 +21694,31 @@
         "file": "cli/go/cmd/aw/id_team_rotate_key.go",
         "symbol": "didOf",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-team-rotate-key",
+        "file": "cli/go/cmd/aw/id_team_rotate_key.go",
+        "symbol": "executeTeamRotateKey",
+        "calls": {
+          "github.com/awebai/aw/awid.GenerateKeypair": 1,
+          "github.com/awebai/aw/awid.NewAWIDRegistryClient": 1,
+          "github.com/awebai/aw/awid.ResignedRecordsIncompleteDetail": 1,
+          "registry.GetNamespaceAt": 1,
+          "registry.GetTeam": 2,
+          "registry.RotateTeamKey": 2,
+          "rotateRefusal": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-team-rotate-key",
+        "file": "cli/go/cmd/aw/id_team_rotate_key.go",
+        "symbol": "onlyMissingCustodians",
+        "calls": {
+          "detail.Changed.IsEmpty": 1,
+          "detail.Extra.IsEmpty": 1
         }
       },
       {
@@ -18147,7 +21728,9 @@
         "calls": {
           "github.com/awebai/aw/awid.ComputeDIDKey": 1,
           "github.com/awebai/aw/awid.SignTeamServerRecord": 1,
-          "github.com/awebai/aw/awid.VerifyTeamServerRecord": 1
+          "github.com/awebai/aw/awid.VerifyTeamServerRecord": 1,
+          "reference:crypto/ed25519.PublicKey": 1,
+          "registry.GetTeam": 1
         }
       },
       {
@@ -18155,7 +21738,17 @@
         "file": "cli/go/cmd/aw/id_team_server.go",
         "symbol": "executeTeamShowServer",
         "calls": {
-          "github.com/awebai/aw/awid.VerifyTeamServerRecord": 1
+          "github.com/awebai/aw/awid.VerifyTeamServerRecord": 1,
+          "reference:crypto/ed25519.PrivateKey": 1,
+          "registry.GetTeam": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.id-team-server",
+        "file": "cli/go/cmd/aw/id_team_server.go",
+        "symbol": "teamServerTarget",
+        "calls": {
+          "registry.DiscoverRegistry": 1
         }
       },
       {
@@ -18179,7 +21772,9 @@
         "file": "cli/go/cmd/aw/init_apikey.go",
         "symbol": "generateAPIKeyBootstrapIdentity",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.ComputeStableID": 1,
+          "github.com/awebai/aw/awid.GenerateKeypair": 1
         }
       },
       {
@@ -18187,7 +21782,19 @@
         "file": "cli/go/cmd/aw/init_apikey.go",
         "symbol": "materialFromAPIKeyPartialInit",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "crypto/ed25519.PrivateKey": 1,
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.ComputeStableID": 1,
+          "reference:crypto/ed25519.PrivateKeySize": 1,
+          "reference:crypto/ed25519.PublicKey": 1
+        }
+      },
+      {
+        "row": "CLI.INIT.APIKEY",
+        "file": "cli/go/cmd/aw/init_apikey.go",
+        "symbol": "postAPIKeyWorkspaceInit",
+        "calls": {
+          "reference:crypto/ed25519.PrivateKeySize": 1
         }
       },
       {
@@ -18195,6 +21802,7 @@
         "file": "cli/go/cmd/aw/init_apikey.go",
         "symbol": "runAPIKeyBootstrapInit",
         "calls": {
+          "github.com/awebai/aw/awid.DecodeTeamCertificateHeader": 1,
           "registry.RegisterIdentity": 1
         }
       },
@@ -18216,11 +21824,93 @@
         }
       },
       {
+        "row": "GO.SOURCE.cmd.aw.init-apikey-diagnostic",
+        "file": "cli/go/cmd/aw/init_apikey_diagnostic.go",
+        "symbol": "workspaceInitHTTPDiagnostic",
+        "calls": {
+          "reference:envelope.Error": 1
+        }
+      },
+      {
         "row": "CLI.RECONNECT",
         "file": "cli/go/cmd/aw/init_connect.go",
         "symbol": "initCertificateConnectWithOptions",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1
+        }
+      },
+      {
+        "row": "CLI.RECONNECT",
+        "file": "cli/go/cmd/aw/init_connect.go",
+        "symbol": "loadCertificateForConnectAt",
+        "calls": {
+          "github.com/awebai/aw/awid.LoadTeamCertificate": 1
+        }
+      },
+      {
+        "row": "CLI.INIT.LOCAL",
+        "file": "cli/go/cmd/aw/init_local.go",
+        "symbol": "runImplicitLocalInit",
+        "calls": {
+          "registry.SetFallbackRegistryURL": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.inject-docs",
+        "file": "cli/go/cmd/aw/inject_docs.go",
+        "symbol": "InjectAgentDocs",
+        "calls": {
+          "err.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.inject-docs",
+        "file": "cli/go/cmd/aw/inject_docs.go",
+        "symbol": "InjectAgentDocsAtIdentityHome",
+        "calls": {
+          "err.Error": 2
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.inject-docs",
+        "file": "cli/go/cmd/aw/inject_docs.go",
+        "symbol": "writeProvidedAgentDocs",
+        "calls": {
+          "err.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.introspect",
+        "file": "cli/go/cmd/aw/introspect.go",
+        "symbol": "<module>",
+        "calls": {
+          "err.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.library-profile",
+        "file": "cli/go/cmd/aw/library_profile.go",
+        "symbol": "configureMaterializedAgentHome",
+        "calls": {
+          "reference:result.Error": 2
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.library-profile",
+        "file": "cli/go/cmd/aw/library_profile.go",
+        "symbol": "isMissingLibraryPluginError",
+        "calls": {
+          "err.Error": 2
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.mail",
+        "file": "cli/go/cmd/aw/mail.go",
+        "symbol": "<module>",
+        "calls": {
+          "err.Error": 1
         }
       },
       {
@@ -18250,10 +21940,30 @@
       {
         "row": "GO.SOURCE.cmd.aw.onboarding-wizard",
         "file": "cli/go/cmd/aw/onboarding_wizard.go",
+        "symbol": "persistLocalSigningKeyAndCertificateAt",
+        "calls": {
+          "github.com/awebai/aw/awid.SaveSigningKey": 1,
+          "github.com/awebai/aw/awid.SaveTeamCertificate": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.onboarding-wizard",
+        "file": "cli/go/cmd/aw/onboarding_wizard.go",
+        "symbol": "provisionBYODIdentity",
+        "calls": {
+          "registry.SetFallbackRegistryURL": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.onboarding-wizard",
+        "file": "cli/go/cmd/aw/onboarding_wizard.go",
         "symbol": "provisionHostedIdentity",
         "calls": {
           "github.com/awebai/aw/awid.ComputeDIDKey": 1,
-          "registerHostedDID": 1
+          "github.com/awebai/aw/awid.ComputeStableID": 1,
+          "github.com/awebai/aw/awid.GenerateKeypair": 1,
+          "registerHostedDID": 1,
+          "registry.SetFallbackRegistryURL": 1
         }
       },
       {
@@ -18262,6 +21972,22 @@
         "symbol": "registerHostedDID",
         "calls": {
           "registry.RegisterIdentity": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.onboarding-wizard",
+        "file": "cli/go/cmd/aw/onboarding_wizard.go",
+        "symbol": "validateHostedSignupResponse",
+        "calls": {
+          "github.com/awebai/aw/awid.DecodeTeamCertificateHeader": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.org",
+        "file": "cli/go/cmd/aw/org.go",
+        "symbol": "orgCommandError",
+        "calls": {
+          "err.Error": 1
         }
       },
       {
@@ -18278,7 +22004,8 @@
         "file": "cli/go/cmd/aw/plugin.go",
         "symbol": "executeGrantManifestTool",
         "calls": {
-          "client.SignAppRequestViaCustody": 1
+          "client.SignAppRequestViaCustody": 1,
+          "err.Error": 1
         }
       },
       {
@@ -18307,10 +22034,28 @@
         }
       },
       {
+        "row": "GO.SOURCE.cmd.aw.root",
+        "file": "cli/go/cmd/aw/root.go",
+        "symbol": "Execute",
+        "calls": {
+          "err.Error": 2
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.task-close",
+        "file": "cli/go/cmd/aw/task_close.go",
+        "symbol": "formatTaskCloseOutput",
+        "calls": {
+          "reference:fail.Error": 1
+        }
+      },
+      {
         "row": "GO.SOURCE.cmd.aw.task-close",
         "file": "cli/go/cmd/aw/task_close.go",
         "symbol": "runTaskClose",
         "calls": {
+          "err.Error": 1,
+          "reference:Error": 1,
           "verifyTaskUpdate": 1
         }
       },
@@ -18343,6 +22088,7 @@
         "file": "cli/go/cmd/aw/team_agent_retire.go",
         "symbol": "retireTeamAgent",
         "calls": {
+          "err.Error": 1,
           "revoke": 1
         }
       },
@@ -18351,7 +22097,27 @@
         "file": "cli/go/cmd/aw/team_agent_retire.go",
         "symbol": "verifyRetirementTarget",
         "calls": {
+          "reference:crypto/ed25519.PrivateKey": 1,
+          "registry.ResolveTeamMember": 1,
           "verifyNamedMember": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.team-agent-status",
+        "file": "cli/go/cmd/aw/team_agent_status.go",
+        "symbol": "readAgentCertificateState",
+        "calls": {
+          "reference:crypto/ed25519.PrivateKey": 1,
+          "registry.GetTeam": 1,
+          "registry.ResolveTeamMember": 1
+        }
+      },
+      {
+        "row": "CLI.ENROLL.WORKSPACE",
+        "file": "cli/go/cmd/aw/team_ensure.go",
+        "symbol": "decodeWorkspaceTeamTeamCert",
+        "calls": {
+          "github.com/awebai/aw/awid.DecodeTeamCertificateHeader": 1
         }
       },
       {
@@ -18359,7 +22125,10 @@
         "file": "cli/go/cmd/aw/team_ensure.go",
         "symbol": "materialFromWorkspaceTeamPartial",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "crypto/ed25519.PrivateKey": 1,
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "reference:crypto/ed25519.PrivateKeySize": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -18367,7 +22136,8 @@
         "file": "cli/go/cmd/aw/team_ensure.go",
         "symbol": "postWorkspaceTeamEnroll",
         "calls": {
-          "crypto/ed25519.Sign": 1
+          "crypto/ed25519.Sign": 1,
+          "github.com/awebai/aw/awid.CanonicalJSONValue": 1
         }
       },
       {
@@ -18375,7 +22145,10 @@
         "file": "cli/go/cmd/aw/team_ensure.go",
         "symbol": "prepareWorkspaceTeamIdentityMaterial",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 2
+          "github.com/awebai/aw/awid.ComputeDIDKey": 2,
+          "github.com/awebai/aw/awid.LoadSigningKey": 2,
+          "reference:crypto/ed25519.PublicKey": 2,
+          "reference:identity.SigningKeyPath": 1
         }
       },
       {
@@ -18389,10 +22162,19 @@
       {
         "row": "GO.SOURCE.cmd.aw.team-human",
         "file": "cli/go/cmd/aw/team_human.go",
+        "symbol": "bootstrapTeamHumanAddAgentWithAPIKey",
+        "calls": {
+          "github.com/awebai/aw/awid.LoadTeamCertificate": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.team-human",
+        "file": "cli/go/cmd/aw/team_human.go",
         "symbol": "foundTeamWithNamespaceControllerAuthority",
         "calls": {
           "github.com/awebai/aw/awid.SignTeamCertificate": 1,
-          "registry.RegisterCertificate": 1
+          "registry.RegisterCertificate": 1,
+          "registry.SetFallbackRegistryURL": 1
         }
       },
       {
@@ -18418,7 +22200,8 @@
         "file": "cli/go/cmd/aw/team_human.go",
         "symbol": "rollbackJustCreatedTeamMemberWithExplicitHostedAuth",
         "calls": {
-          "registry.RevokeCertificate": 1
+          "registry.RevokeCertificate": 1,
+          "registry.SetFallbackRegistryURL": 1
         }
       },
       {
@@ -18426,8 +22209,67 @@
         "file": "cli/go/cmd/aw/team_human.go",
         "symbol": "runTeamHumanRemoveAgent",
         "calls": {
+          "hostedErr.Error": 1,
           "revokeTeamCertificate": 1,
           "verifyRetirementTarget": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.team-human",
+        "file": "cli/go/cmd/aw/team_human.go",
+        "symbol": "teamHumanAddFailurePlans",
+        "calls": {
+          "failure.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.team-join-harness",
+        "file": "cli/go/cmd/aw/team_join_harness.go",
+        "symbol": "setupJoinHarness",
+        "calls": {
+          "reference:installed.Error": 4
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.team-read-auth",
+        "file": "cli/go/cmd/aw/team_read_auth.go",
+        "symbol": "containsSigningKey",
+        "calls": {
+          "reference:crypto/ed25519.PrivateKey": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.team-read-auth",
+        "file": "cli/go/cmd/aw/team_read_auth.go",
+        "symbol": "friendlyTeamReadError",
+        "calls": {
+          "github.com/awebai/aw/awid.IsTeamPrivateError": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.team-read-auth",
+        "file": "cli/go/cmd/aw/team_read_auth.go",
+        "symbol": "readSignedTeamState",
+        "calls": {
+          "github.com/awebai/aw/awid.IsTeamPrivateError": 1,
+          "reference:crypto/ed25519.PrivateKey": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.team-read-auth",
+        "file": "cli/go/cmd/aw/team_read_auth.go",
+        "symbol": "teamReadSigners",
+        "calls": {
+          "reference:crypto/ed25519.PrivateKey": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.team-read-auth",
+        "file": "cli/go/cmd/aw/team_read_auth.go",
+        "symbol": "teamReadSignersForKeyPath",
+        "calls": {
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "reference:crypto/ed25519.PrivateKey": 2
         }
       },
       {
@@ -18436,6 +22278,22 @@
         "symbol": "init",
         "calls": {
           "registerTeamAdminCommand": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.team-replace-key",
+        "file": "cli/go/cmd/aw/team_replace_key.go",
+        "symbol": "(*replacementRosterOutcomeUnknownError).Error",
+        "calls": {
+          "e.err.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.team-replace-key",
+        "file": "cli/go/cmd/aw/team_replace_key.go",
+        "symbol": "formatTeamHumanReplaceKey",
+        "calls": {
+          "reference:out.SigningKeyPath": 2
         }
       },
       {
@@ -18452,7 +22310,8 @@
         "symbol": "postLocalIdentityKeyReplacementOnce",
         "calls": {
           "crypto/ed25519.Sign": 1,
-          "github.com/awebai/aw/awid.ComputeDIDKey": 2
+          "github.com/awebai/aw/awid.ComputeDIDKey": 2,
+          "reference:crypto/ed25519.PublicKey": 2
         }
       },
       {
@@ -18460,7 +22319,9 @@
         "file": "cli/go/cmd/aw/team_replace_key.go",
         "symbol": "preflightReplacementAgentHome",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -18468,7 +22329,9 @@
         "file": "cli/go/cmd/aw/team_replace_key.go",
         "symbol": "prepareGeneratedReplacementAgentHome",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.GenerateKeypair": 1,
+          "github.com/awebai/aw/awid.SaveSigningKeyExclusive": 1
         }
       },
       {
@@ -18477,10 +22340,14 @@
         "symbol": "runTeamHumanReplaceKey",
         "calls": {
           "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.EncodeTeamCertificateHeader": 1,
           "github.com/awebai/aw/awid.ExtractPublicKey": 2,
+          "github.com/awebai/aw/awid.NewAWIDRegistryClient": 1,
           "github.com/awebai/aw/awid.SignTeamCertificate": 1,
+          "reference:crypto/ed25519.PublicKey": 1,
           "registry.RegisterCertificate": 1,
-          "registry.RevokeCertificate": 1
+          "registry.RevokeCertificate": 1,
+          "registry.SetFallbackRegistryURL": 1
         }
       },
       {
@@ -18488,7 +22355,9 @@
         "file": "cli/go/cmd/aw/team_request.go",
         "symbol": "runTeamRequest",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -18497,6 +22366,14 @@
         "symbol": "init",
         "calls": {
           "registerTeamAdminCommand": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.team-up",
+        "file": "cli/go/cmd/aw/team_up.go",
+        "symbol": "preflightTeamUpCommands",
+        "calls": {
+          "reference:result.Error": 4
         }
       },
       {
@@ -18512,6 +22389,7 @@
         "file": "cli/go/cmd/aw/wake.go",
         "symbol": "<module>",
         "calls": {
+          "err.Error": 1,
           "github.com/awebai/aw/wake.RegisterInStore": 1
         }
       },
@@ -18524,11 +22402,82 @@
         }
       },
       {
+        "row": "GO.SOURCE.cmd.aw.workspace",
+        "file": "cli/go/cmd/aw/workspace.go",
+        "symbol": "migrateLegacyWorkspaceToMultiTeamAt",
+        "calls": {
+          "github.com/awebai/aw/awid.LoadTeamCertificate": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.workspace",
+        "file": "cli/go/cmd/aw/workspace.go",
+        "symbol": "runWorkspaceMigrateMultiTeam",
+        "calls": {
+          "err.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aw.workspace-self-retire",
+        "file": "cli/go/cmd/aw/workspace_self_retire.go",
+        "symbol": "hasSelfRetireTeamCertificate",
+        "calls": {
+          "github.com/awebai/aw/awid.LoadTeamCertificate": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aweb-a2a-gw.main",
+        "file": "cli/go/cmd/aweb-a2a-gw/main.go",
+        "symbol": "(*managedGateway).markRefreshError",
+        "calls": {
+          "err.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aweb-a2a-gw.main",
+        "file": "cli/go/cmd/aweb-a2a-gw/main.go",
+        "symbol": "checkRegistryHealth",
+        "calls": {
+          "err.Error": 1,
+          "reference:Error": 2,
+          "reference:out.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aweb-a2a-gw.main",
+        "file": "cli/go/cmd/aweb-a2a-gw/main.go",
+        "symbol": "degradedManagedConfig",
+        "calls": {
+          "err.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aweb-a2a-gw.main",
+        "file": "cli/go/cmd/aweb-a2a-gw/main.go",
+        "symbol": "isFatalInitialManagedRuntimeConfigError",
+        "calls": {
+          "err.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.cmd.aweb-a2a-gw.main",
+        "file": "cli/go/cmd/aweb-a2a-gw/main.go",
+        "symbol": "managedConfigHealth",
+        "calls": {
+          "reference:Error": 1
+        }
+      },
+      {
         "row": "GO.SOURCE.cmd.aweb-a2a-gw.main",
         "file": "cli/go/cmd/aweb-a2a-gw/main.go",
         "symbol": "workspaceMailClient",
         "calls": {
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "github.com/awebai/aw/awid.LoadTeamCertificate": 1,
+          "github.com/awebai/aw/awid.NewRegistryResolver": 1,
+          "reference:crypto/ed25519.PublicKey": 1,
+          "resolver.SetFallbackRegistryURL": 1
         }
       },
       {
@@ -18538,7 +22487,9 @@
         "calls": {
           "VerifySignature": 1,
           "crypto/ed25519.Sign": 1,
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.EncodeTeamCertificateHeader": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -18557,6 +22508,7 @@
         "file": "cli/go/hookevent/delivery.go",
         "symbol": "verifyClientCertificate",
         "calls": {
+          "github.com/awebai/aw/awid.DecodeTeamCertificateHeader": 1,
           "github.com/awebai/aw/awid.ExtractPublicKey": 1,
           "github.com/awebai/aw/awid.VerifyTeamCertificate": 1
         }
@@ -18575,7 +22527,8 @@
         "symbol": "Sign",
         "calls": {
           "crypto/ed25519.Sign": 1,
-          "github.com/awebai/aw/awid.ComputeDIDKey": 1
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "reference:crypto/ed25519.PublicKey": 1
         }
       },
       {
@@ -18598,9 +22551,33 @@
       {
         "row": "GO.SOURCE.internal.appmanifest.interpret",
         "file": "cli/go/internal/appmanifest/interpret.go",
+        "symbol": "buildBody",
+        "calls": {
+          "github.com/awebai/aw/awid.CanonicalJSONValue": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.internal.appmanifest.interpret",
+        "file": "cli/go/internal/appmanifest/interpret.go",
         "symbol": "validateEventEmitters",
         "calls": {
           "github.com/awebai/aw/awid.ExtractPublicKey": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.internal.appmanifest.manifest-v2",
+        "file": "cli/go/internal/appmanifest/manifest_v2.go",
+        "symbol": "(*Error).Error",
+        "calls": {
+          "e.err.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.internal.appmanifest.manifest-v2",
+        "file": "cli/go/internal/appmanifest/manifest_v2.go",
+        "symbol": "Load",
+        "calls": {
+          "Resolve": 1
         }
       },
       {
@@ -18653,12 +22630,63 @@
         }
       },
       {
+        "row": "GO.SOURCE.run.eventbus",
+        "file": "cli/go/run/eventbus.go",
+        "symbol": "formatStreamDisconnectNotice",
+        "calls": {
+          "err.Error": 1
+        }
+      },
+      {
         "row": "GO.SOURCE.tools.a2a-gateway-check-workspace.main",
         "file": "cli/go/tools/a2a-gateway-check-workspace/main.go",
         "symbol": "writeWorkspace",
         "calls": {
           "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.ComputeStableID": 1,
+          "github.com/awebai/aw/awid.GenerateKeypair": 2,
+          "github.com/awebai/aw/awid.SaveSigningKey": 1,
           "github.com/awebai/aw/awid.SignTeamCertificate": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.wake.channel-core-runner",
+        "file": "cli/go/wake/channel_core_runner.go",
+        "symbol": "(*ChannelCoreChild).readChildLines",
+        "calls": {
+          "err.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.wake.channel-core-runner",
+        "file": "cli/go/wake/channel_core_runner.go",
+        "symbol": "(*ChannelCoreChild).readStatus",
+        "calls": {
+          "reference:line.Error": 2
+        }
+      },
+      {
+        "row": "GO.SOURCE.wake.channel-core-runner",
+        "file": "cli/go/wake/channel_core_runner.go",
+        "symbol": "(*ChannelCoreChild).recordExit",
+        "calls": {
+          "err.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.wake.channel-core-runner",
+        "file": "cli/go/wake/channel_core_runner.go",
+        "symbol": "(*ChannelCoreChild).runOnce",
+        "calls": {
+          "err.Error": 2
+        }
+      },
+      {
+        "row": "GO.SOURCE.wake.channel-core-runner",
+        "file": "cli/go/wake/channel_core_runner.go",
+        "symbol": "(*ChannelCoreChild).setError",
+        "calls": {
+          "err.Error": 1
         }
       },
       {
@@ -18666,7 +22694,60 @@
         "file": "cli/go/wake/control.go",
         "symbol": "(*Broker).Handle",
         "calls": {
-          "b.Register": 1
+          "b.Register": 1,
+          "err.Error": 4,
+          "reference:Error": 7
+        }
+      },
+      {
+        "row": "GO.SOURCE.wake.control",
+        "file": "cli/go/wake/control.go",
+        "symbol": "callWithTimeout",
+        "calls": {
+          "reference:resp.Error": 2
+        }
+      },
+      {
+        "row": "GO.SOURCE.wake.control",
+        "file": "cli/go/wake/control.go",
+        "symbol": "handleControlConn",
+        "calls": {
+          "reference:Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.wake.instance",
+        "file": "cli/go/wake/instance.go",
+        "symbol": "(*instanceRunner).recordRegistrationError",
+        "calls": {
+          "err.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.wake.session.fake",
+        "file": "cli/go/wake/session/fake.go",
+        "symbol": "(*Fake).Inspect",
+        "calls": {
+          "reference:Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.wake.session.session",
+        "file": "cli/go/wake/session/session.go",
+        "symbol": "(*ExecClient).run",
+        "calls": {
+          "parseErr.Error": 1,
+          "reference:env.Error": 1,
+          "runErr.Error": 1
+        }
+      },
+      {
+        "row": "GO.SOURCE.wake.stream",
+        "file": "cli/go/wake/stream.go",
+        "symbol": "(*streamRunner).run",
+        "calls": {
+          "consumeErr.Error": 1,
+          "err.Error": 2
         }
       },
       {
@@ -18674,7 +22755,8 @@
         "file": "cli/tests/request_auth_v2_driver.go",
         "symbol": "run",
         "calls": {
-          "crypto/ed25519.NewKeyFromSeed": 1
+          "crypto/ed25519.NewKeyFromSeed": 1,
+          "github.com/awebai/aw/awid.DecodeTeamCertificateHeader": 1
         }
       }
     ]
@@ -19512,6 +23594,14 @@
           "@awebai/channel-core.SenderTrustManager": 1
         },
         "row": "TS.SOURCE.channel.src.index"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "subtle",
+        "calls": {
+          "module-literal:crypto.subtle must be defined": 1
+        },
+        "row": "CHANNEL.GENERATED.RUNNER"
       },
       {
         "file": "cli/go/wake/channel_core_runner_bundle.mjs",
@@ -20368,6 +24458,7 @@
         "file": "scripts/e2e/pin-store-multiprocess-gate/orchestrate.mjs",
         "symbol": "<module>",
         "calls": {
+          "module-literal:@noble/ed25519": 1,
           "reference:@noble/ed25519.etc.sha512Sync": 1,
           "@noble/ed25519.etc.concatBytes": 1,
           "literal:did:aw": 2,

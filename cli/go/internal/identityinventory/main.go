@@ -51,10 +51,22 @@ func excluded(file string) bool {
 	return strings.HasSuffix(file, "_test.go") || strings.Contains("/"+file, "/testdata/") || file == "cli/go/internal/identityinventory/main.go"
 }
 
+func cryptoPrimitive(name string) bool {
+	for _, module := range []string{"crypto/ed25519", "golang.org/x/crypto/ed25519", "filippo.io/edwards25519"} {
+		if strings.HasPrefix(name, module+".") {
+			return true
+		}
+	}
+	return false
+}
+
 func primitive(name string) bool {
+	if cryptoPrimitive(name) {
+		return true
+	}
 	terminal := name[strings.LastIndex(name, ".")+1:]
 	lower := strings.ToLower(terminal)
-	for _, prefix := range []string{"sign", "verify", "register", "revoke", "generatekey", "newkeyfromseed", "computedid", "extractpublickey", "idcertificate", "encodeidchain", "decodeidchain", "idstatus", "idrequest", "idchain"} {
+	for _, prefix := range []string{"sign", "verify", "register", "revoke", "rotate", "generatekeypair", "generatekey", "newkeyfromseed", "computedid", "extractpublickey", "idcertificate", "encodeidchain", "decodeidchain", "idstatus", "idrequest", "idchain"} {
 		if strings.HasPrefix(lower, prefix) && (len(terminal) == len(prefix) || terminal[len(prefix)] == '_' || (terminal[len(prefix)] >= 'A' && terminal[len(prefix)] <= 'Z')) {
 			return true
 		}
@@ -63,10 +75,13 @@ func primitive(name string) bool {
 }
 
 func primitiveModule(module string) bool {
-	return module == "crypto/ed25519" || strings.HasPrefix(module, "filippo.io/edwards25519") || module == "github.com/awebai/aw/awid"
+	return module == "crypto/ed25519" || module == "golang.org/x/crypto/ed25519" || strings.HasPrefix(module, "filippo.io/edwards25519") || module == "github.com/awebai/aw/awid"
 }
 
-func scanGoSource(source []byte) (map[string]map[string]int, error) {
+func scanGoSource(source []byte, api ...map[string]bool) (map[string]map[string]int, error) {
+	isPrimitive := func(name string) bool {
+		return primitive(name) || (len(api) > 0 && api[0][name[strings.LastIndex(name, ".")+1:]])
+	}
 	tree, err := parser.ParseFile(token.NewFileSet(), "source.go", source, 0)
 	if err != nil {
 		return nil, err
@@ -97,6 +112,9 @@ func scanGoSource(source []byte) (map[string]map[string]int, error) {
 		case *ast.SelectorExpr:
 			return name(n.X) + "." + n.Sel.Name
 		case *ast.CallExpr:
+			if id, ok := n.Fun.(*ast.Ident); ok && id.Name == "new" && len(n.Args) == 1 {
+				return name(n.Args[0]) + "()"
+			}
 			return name(n.Fun) + "()"
 		case *ast.ParenExpr:
 			return name(n.X)
@@ -145,7 +163,7 @@ func scanGoSource(source []byte) (map[string]map[string]int, error) {
 			switch n := node.(type) {
 			case *ast.CallExpr:
 				callee := name(n.Fun)
-				if primitive(callee) {
+				if isPrimitive(callee) {
 					record(symbol, callee)
 				}
 			case *ast.SelectorExpr, *ast.Ident:
@@ -180,7 +198,7 @@ func scanGoSource(source []byte) (map[string]map[string]int, error) {
 				}
 				if !skip {
 					callee := name(n)
-					if primitive(callee) {
+					if isPrimitive(callee) {
 						record(symbol, "reference:"+callee)
 					}
 				}
@@ -204,7 +222,7 @@ func scanGoSource(source []byte) (map[string]map[string]int, error) {
 
 func rawVerifier(callee string) bool {
 	callee = strings.TrimPrefix(callee, "reference:")
-	return callee == "Verify" || strings.HasSuffix(callee, ".Verify") || strings.HasSuffix(callee, ".VerifyMessage") || strings.HasSuffix(callee, ".VerifySignedPayload") || callee == "VerifyMessage" || callee == "VerifySignedPayload"
+	return cryptoPrimitive(callee) || callee == "Verify" || strings.HasSuffix(callee, ".Verify") || strings.HasSuffix(callee, ".VerifyMessage") || strings.HasSuffix(callee, ".VerifySignedPayload") || callee == "VerifyMessage" || callee == "VerifySignedPayload"
 }
 
 func contains(values []string, value string) bool {
@@ -254,9 +272,10 @@ func checkCatalog(rows map[string]row, entries []catalogSite, observed map[siteK
 		if (key.File == strictModule || key.File == "cli/go/awid/id_chain.go") && r.Profile != "strict" {
 			errors = append(errors, "ID module cannot downgrade strict profile: "+key.Symbol)
 		}
-		if r.Profile == "strict" && key != (siteKey{strictModule, "VerifyIDCertificate"}) {
+		if r.Profile == "strict" {
 			for callee := range entry.Calls {
-				if rawVerifier(callee) {
+				allowed := key == (siteKey{strictModule, "VerifyIDCertificate"}) || (key == (siteKey{strictModule, "idCertificatePrimePoint"}) && strings.HasPrefix(strings.TrimPrefix(callee, "reference:"), "filippo.io/edwards25519."))
+				if rawVerifier(callee) && !allowed {
 					errors = append(errors, "raw ID crypto must use shared strict verifier: "+fmt.Sprint(key))
 				}
 			}
@@ -279,6 +298,34 @@ func checkCatalog(rows map[string]row, entries []catalogSite, observed map[siteK
 	return errors
 }
 
+// Public APIs are derived before scanning callers, including newly added files.
+// Registry paths are included conservatively (both reads and writes).
+func identityFile(file string) bool {
+	if path.Dir(file) != "cli/go/awid" {
+		return false
+	}
+	base := path.Base(file)
+	return strings.HasPrefix(base, "id_") || strings.HasPrefix(base, "did") || strings.HasPrefix(base, "keys") || strings.HasPrefix(base, "registry") || strings.Contains(base, "rotate") || base == "signing.go" || base == "certificate.go"
+}
+func exportedIdentityAPI(files map[string][]byte) (map[string]bool, error) {
+	api := map[string]bool{}
+	for file, source := range files {
+		if !identityFile(file) {
+			continue
+		}
+		tree, err := parser.ParseFile(token.NewFileSet(), file, source, 0)
+		if err != nil {
+			return nil, err
+		}
+		for _, decl := range tree.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok && ast.IsExported(fn.Name.Name) {
+				api[fn.Name.Name] = true
+			}
+		}
+	}
+	return api, nil
+}
+
 func scanRepository(root string) (map[siteKey]map[string]int, error) {
 	command := exec.Command("git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "*.go")
 	command.Dir = root
@@ -287,6 +334,7 @@ func scanRepository(root string) (map[siteKey]map[string]int, error) {
 		return nil, err
 	}
 	result := map[siteKey]map[string]int{}
+	sources := map[string][]byte{}
 	seen := map[string]bool{}
 	for _, file := range strings.Split(string(output), "\x00") {
 		if file == "" || seen[file] || excluded(file) {
@@ -300,7 +348,14 @@ func scanRepository(root string) (map[siteKey]map[string]int, error) {
 		if e != nil {
 			return nil, e
 		}
-		calls, e := scanGoSource(source)
+		sources[file] = source
+	}
+	api, err := exportedIdentityAPI(sources)
+	if err != nil {
+		return nil, err
+	}
+	for file, source := range sources {
+		calls, e := scanGoSource(source, api)
 		if e != nil {
 			return nil, fmt.Errorf("cannot scan %s: %w", file, e)
 		}

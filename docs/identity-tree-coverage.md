@@ -62,12 +62,18 @@ Import aliases are resolved to module paths; methods use `(*Type).method` or
 initializers use `<module>`. Identity calls and callback references are pinned,
 as are executable string literals beginning with `did:key:` or `did:aw:`.
 `primitive` in `cli/go/internal/identityinventory/main.go` defines the API name
-families (sign/verify/register/revoke, key generation, DID construction and
-ID-certificate/chain helpers). Dot imports from identity/crypto modules refuse.
+families (sign/verify/register/revoke/rotate, key generation, DID construction
+and ID-certificate/chain helpers). Every crypto/ed25519, x/crypto/ed25519 or
+filippo.io/edwards25519 call/reference is discovered by package regardless of
+name. Public functions and methods from AWID's id_*, did*, keys*, registry*,
+rotation, signing and certificate source files are also derived directly from
+source before callers are scanned. Dot imports from identity/crypto modules refuse.
 
 New sites, changed primitive counts, stale entries and missing exact row
-mappings fail. Strict rows cannot add raw verification outside the shared
-`VerifyIDCertificate` function; the codec and ancestry modules cannot downgrade
+mappings fail. Strict rows cannot add crypto/curve operations outside the shared
+`VerifyIDCertificate` function; the shared `idCertificatePrimePoint` predicate
+permits only its curve-package operations. These are exact file/symbol sites;
+listed files are never blanket crypto exemptions. Additionally, the codec and ancestry modules cannot downgrade
 their profile. Existing released families remain explicitly `legacy` pending
 their owner and the acmz ruling. Newly discovered rows marked `pending` are
 source coverage, not converted behavior or passing journey evidence. This is
@@ -89,15 +95,20 @@ imports, CommonJS imports and destructuring, named re-exports and callback
 references are resolved syntactically. Class methods and named arrows use their
 enclosing symbols; anonymous closures belong to their enclosing function.
 Public functions and methods exported by channel-core's identity source files
-are discovered from source. Calls/references into noble Ed25519/curve modules
-and Node crypto are inventoried regardless of name; signing, verification,
+are discovered from source. Calls/references into all noble Ed25519/curves subpaths, tweetnacl, libsodium
+wrappers and Node crypto are inventoried regardless of name; signing, verification,
 registration, revocation, rotation and key-generation names are also covered.
 DID-prefixed executable literals are recorded. Primitive wildcard re-exports
-refuse rather than hide their origin.
+and dynamic import() calls refuse rather than hide their origin. Calls on
+createRequire-bound loaders resolve as module values. Any executable string
+literal naming a primitive package outside a static import is also inventoried,
+so an unfamiliar loader cannot hide the package behind an unlisted symbol.
 
 Exact counts, stale entries, row mappings and strict profiles are checked as
 in the other languages. ID modules must stay strict and cannot substitute bare
-crypto verification for the shared explicit-profile verifier. New legacy/pending
+crypto verification for the shared explicit-profile verifier. Independent
+curve operations in a strict consumer refuse too; only the codec's exact
+verifier/point-predicate sites and reviewed hash wiring are permitted. New legacy/pending
 rows describe source coverage only. The scanner has no catalog-update mode;
 reflection and whole-program data-flow remain outside the guard's scope.
 
