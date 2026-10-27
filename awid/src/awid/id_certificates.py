@@ -146,13 +146,30 @@ def _decode_b64(value: Any) -> bytes:
     return decoded
 
 
-def verify_id_certificate(signed: dict[str, Any], *, issuer_key: str) -> None:
-    """Check shape and signature with an independently selected issuer key."""
-    c = _shape(signed)
-    signature = _decode_b64(signed["signature"])
-    if len(signature) != 64:
-        raise IDCertificateError("invalid_encoding")
-    if c["issuer_key"] != issuer_key:
+def strict_did_key(did_key: str) -> bool:
+    """Whether a canonical did:key meets the ID family's strict point profile.
+
+    This predicate establishes no key ownership, issuance or current authority.
+    Released generic DID decoding retains its own contract.
+    """
+    try:
+        _id(did_key, key_only=True)
+    except IDCertificateError:
+        return False
+    return True
+
+
+def verify_ed25519(did_key: str, message: bytes, signature: bytes) -> None:
+    """Verify exact bytes with the ID family's strict Ed25519 profile.
+
+    Raises IDCertificateError with invalid_shape for the key or message type,
+    or invalid_signature for malformed/incorrect raw signature bytes. No I/O
+    or identity/issuer authority decision is performed.
+    """
+    _id(did_key, key_only=True)
+    if not isinstance(message, bytes):
+        raise IDCertificateError("invalid_shape")
+    if not isinstance(signature, bytes) or len(signature) != 64:
         raise IDCertificateError("invalid_signature")
     # This profile requires canonical, nonidentity prime-subgroup R and S<L.
     # Library verification alone can accept a mixed-order A for some messages.
@@ -163,9 +180,20 @@ def verify_id_certificate(signed: dict[str, Any], *, issuer_key: str) -> None:
     ):
         raise IDCertificateError("invalid_signature")
     try:
-        VerifyKey(public_key_from_did(issuer_key)).verify(id_certificate_signing_bytes(c), signature)
+        VerifyKey(public_key_from_did(did_key)).verify(message, signature)
     except (BadSignatureError, ValueError, TypeError) as exc:
         raise IDCertificateError("invalid_signature") from exc
+
+
+def verify_id_certificate(signed: dict[str, Any], *, issuer_key: str) -> None:
+    """Check shape and signature with an independently selected issuer key."""
+    c = _shape(signed)
+    signature = _decode_b64(signed["signature"])
+    if len(signature) != 64:
+        raise IDCertificateError("invalid_encoding")
+    if c["issuer_key"] != issuer_key:
+        raise IDCertificateError("invalid_signature")
+    verify_ed25519(issuer_key, id_certificate_signing_bytes(c), signature)
 
 
 def _bundle_shape(bundle: Any) -> None:
