@@ -46,10 +46,13 @@ export {
   type SignedIdCertificate,
 } from "./identity/id_certificates.js";
 export {
+  idRequestDisposition,
   idStatusCacheMode,
   idStatusRequest,
   verifyIdChain,
+  type IdDisposition,
   type IdNamespaceAuthority,
+  type IdRequestDisposition,
   type IdStatusCacheMode,
   type IdStatusEvidence,
   type IdStatusPlan,

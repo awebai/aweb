@@ -473,3 +473,35 @@ function isTimestamp(value: unknown): value is string {
 function isPositiveInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
+
+export type IdDisposition = "continue" | "refuse";
+
+/** What the request does with a verification result: the same on all five lanes. */
+export interface IdRequestDisposition {
+  ordinary: IdDisposition;
+  human_required: IdDisposition;
+}
+
+/**
+ * Section 5's disposition table. Ordinary admission (signatures, membership,
+ * grant scope, audience) must already have passed; this never replaces it. A
+ * local did:key leaf with stale or unavailable ancestry keeps ordinary work,
+ * as omission would; the same result for an enrolled ID refuses.
+ */
+export function idRequestDisposition(result: IdVerification, subject: IdSubject, originalAuthPassed: boolean): IdRequestDisposition {
+  if (!originalAuthPassed) return { ordinary: "refuse", human_required: "refuse" };
+  const human_required: IdDisposition = result.outcome === "nearest_human" ? "continue" : "refuse";
+  const localLeaf = !subject.id.startsWith("did:aw:");
+  switch (result.reason) {
+    case "verified":
+    case "legacy_no_chain":
+    case "unregistered_identity":
+      return { ordinary: "continue", human_required };
+    case "stale_issuer_key":
+    case "status_expired":
+    case "evidence_unavailable":
+      return { ordinary: localLeaf ? "continue" : "refuse", human_required };
+    default:
+      return { ordinary: "refuse", human_required };
+  }
+}
