@@ -379,12 +379,18 @@ class RegistryClient:
                 headers=request_headers,
                 json=json,
             ) as response:
-                max_bytes = (
-                    MAX_REGISTRY_RESPONSE_BYTES
-                    if 200 <= response.status_code < 300
-                    else MAX_REGISTRY_ERROR_BYTES
-                )
-                content = await _read_bounded_response(response, max_bytes)
+                succeeded = 200 <= response.status_code < 300
+                max_bytes = MAX_REGISTRY_RESPONSE_BYTES if succeeded else MAX_REGISTRY_ERROR_BYTES
+                try:
+                    content = await _read_bounded_response(response, max_bytes)
+                except ValueError as exc:
+                    if succeeded:
+                        raise
+                    # An unreadable error page is still this refusal.
+                    raise RegistryError(
+                        f"unreadable HTTP {response.status_code} response",
+                        status_code=response.status_code,
+                    ) from exc
         if not 200 <= response.status_code < 300:
             detail = None
             try:
@@ -1373,6 +1379,10 @@ class CachedRegistryClient(RegistryClient):
             return IDChainEvidence(status={}, namespace_authority={}, age_seconds=None)
         cache_key = self._id_status_cache_key(request)
         cached = await self._read_id_status_entry(cache_key)
+        if cached is not None and _cache_now() < cached["fetched_at"]:
+            # Fetched by a writer whose clock is ahead of this one: its age is
+            # unknown here, so it is neither fresh nor last-known-good.
+            cached = None
         if cached is not None and _id_status_age(cached) <= _ID_STATUS_FRESH_SECONDS:
             return _id_status_evidence(cached, refresh_failed=False)
         refresh = await self._coalesced_id_status_refresh(cache_key, request)
@@ -1386,7 +1396,7 @@ class CachedRegistryClient(RegistryClient):
         task = self._id_status_refreshes.get(cache_key)
         if task is None:
             failed_at = self._id_status_failed_at.get(request["domain"])
-            if failed_at is not None and _cache_now() - failed_at <= _ID_STATUS_FAILURE_COOLDOWN_SECONDS:
+            if failed_at is not None and 0 <= _cache_now() - failed_at <= _ID_STATUS_FAILURE_COOLDOWN_SECONDS:
                 return _IDStatusRefresh(entry=None, failed=True)
             task = asyncio.create_task(self._refresh_id_status(cache_key, request))
             self._id_status_refreshes[cache_key] = task
@@ -2403,7 +2413,8 @@ class _IDStatusRefresh:
 
 
 def _id_status_age(entry: dict[str, Any]) -> int:
-    return max(0, _cache_now() - entry["fetched_at"])
+    # Never clamped: a negative age is unavailable evidence to the verifier.
+    return _cache_now() - entry["fetched_at"]
 
 
 def _id_status_evidence(entry: dict[str, Any], *, refresh_failed: bool) -> IDChainEvidence:

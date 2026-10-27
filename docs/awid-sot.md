@@ -1192,7 +1192,11 @@ which raises.
   `controller_key`) from the client's `DomainVerifier`, both fetched in one
   attempt. The entry's age is measured on this client's clock from when that
   attempt began, never from the body's `observed_at`, and it survives
-  restarts.
+  restarts. An entry whose fetch time is ahead of this client's clock (written
+  by a process with a faster clock, or before a clock step back) has no known
+  age here: it is neither fresh nor last-known-good, and is refreshed. Ages
+  are never clamped; a negative one is unavailable evidence to the verifier.
+  An entry that is not exactly this shape is dropped and refreshed.
 - Evidence aged 60 seconds or less is served with no DNS, routing or HTTP
   work. Older evidence waits for one refresh shared by every concurrent caller
   of that request; a cancelled caller does not cancel it. DNS, routing and HTTP
@@ -1201,13 +1205,14 @@ which raises.
   revoked, replaced or contradictory one, and the verifier judges it. A
   successful answer that is not a JSON object within the response bound
   removes the entry, so no older tree outlives it.
-- A failed attempt (timeout, transport error, DNS failure, any refusal
-  including 429) never touches the entry. The caller gets the last-known-good
+- A failed attempt (timeout, transport error, DNS failure, any non-2xx answer
+  including 429, whatever its body) never touches the entry. The caller gets the last-known-good
   evidence with its true age and `refresh_failed`, or, with none, evidence
   without an age. The verifier allows the outage grace through 900 seconds and
   reports `status_expired` after it.
 - A failed attempt stands for every refresh of its domain for the next 60
-  seconds inclusive, in process memory only, so a stalled registry costs one
+  seconds inclusive (and only while its recorded time is not ahead of the
+  clock), in process memory only, so a stalled registry costs one
   timeout per window. During it callers get exactly the failed-refresh answer
   above, with no network attempt; it never changes an age or extends the
   grace. A successful answer ends it. Each domain's entries and cooldown are

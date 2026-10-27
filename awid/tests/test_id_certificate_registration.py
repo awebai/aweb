@@ -114,24 +114,23 @@ OWNED_ELSEWHERE = {
     "csr-import-mismatch-preserves-old-certificate": "S3 child response import",
     "csr-local-import-matching-response": "S3 child response import",
     "csr-human-import-remains-pending": "S3 child response import",
-}
-
-# Consumed cases another slice also tests, for its own component's half.
-SHARED_WITH = {
     "csr-awid-success-local-failure-exact-retry": (
-        "S2 consumes the AWID half (same certificate and invitation ID keep the original registered_at, "
-        "no new revision); S3 owns the child's local retry"
+        "S3 owns the child's local retry; S2 also consumes the AWID half (same certificate and invitation ID "
+        "keep the original registered_at, no new revision)"
     ),
 }
+
+# The only cases with two owners: S2 consumes their AWID half by name.
+TWO_OWNERS = {"csr-awid-success-local-failure-exact-retry"}
 
 
 def test_every_frozen_operation_case_is_accounted_for_by_name():
     names = [case["name"] for case in VECTORS["operation_cases"]]
     assert len(names) == len(set(names))
     groups = [CONSUMED, S2_LATER, set(OWNED_ELSEWHERE)]
-    assert sum(len(group) for group in groups) == len(set().union(*groups))
+    assert CONSUMED & set(OWNED_ELSEWHERE) == TWO_OWNERS
+    assert sum(len(group) for group in groups) == len(set().union(*groups)) + len(TWO_OWNERS)
     assert set(names) == set().union(*groups)
-    assert set(SHARED_WITH) <= CONSUMED
 
 
 @pytest_asyncio.fixture
@@ -192,13 +191,17 @@ async def test_a_child_retrying_its_registered_response_keeps_the_original_regis
     # The child's local commit failed; it resubmits the same response unchanged.
     retry = await tree.register(chain, invitation_id=request["invitation_id"], when=at("2026-10-26T00:30:00Z"))
 
-    assert retry.status_code == 200, retry.text
-    assert retry.json() == first.json()
-    assert retry.json()["registered_at"] == "2026-10-26T00:03:00.000000Z"
+    expected = case["expected"]
+    assert (retry.status_code == 200) is expected["accepted"], retry.text
+    stored = [(row["certificate_id"], str(row["invitation_id"])) for row in before if row["id"] == request["id"]]
+    assert (retry.json()["certificate_id"] == first.json()["certificate_id"] == certificate_id("bob")) is (
+        expected["same_certificate"]
+    )
+    assert (stored == [(certificate_id("bob"), request["invitation_id"])]) is expected["same_invitation_id"]
+    assert (retry.json()["registered_at"] == first.json()["registered_at"] == "2026-10-26T00:03:00.000000Z") is (
+        expected["registered_at_preserved"]
+    )
     assert await _revisions(awid_db_infra) == before
-    assert [(row["certificate_id"], str(row["invitation_id"])) for row in before if row["id"] == request["id"]] == [
-        (certificate_id("bob"), request["invitation_id"]),
-    ]
 
 
 @consumes("exact-invitation-retry-keeps-time")

@@ -67,6 +67,8 @@ class Registry:
         self.controller = {DOMAIN: _open_epoch_key(self.status[DOMAIN])}
         self.http_status = 200
         self.raw_body: bytes | None = None
+        self.error_body: bytes | None = None
+        self.error_headers: dict[str, str] = {}
         self.requests: list[dict] = []
         self.dns_lookups: list[str] = []
         self.routings: list[str] = []
@@ -85,6 +87,11 @@ class Registry:
         await asyncio.sleep(self.http_delay)
         self.clock[0] += self.advance_during_fetch
         if self.http_status != 200:
+            if self.error_body is not None:
+                # Streamed, as a real transport delivers it, so the body is read raw.
+                return httpx.Response(
+                    self.http_status, headers=self.error_headers, stream=httpx.ByteStream(self.error_body),
+                )
             return httpx.Response(self.http_status, json={"detail": "registry unavailable"})
         if self.raw_body is not None:
             return httpx.Response(200, content=self.raw_body)
@@ -403,6 +410,76 @@ async def test_the_observation_time_is_when_the_refresh_began(env):
     env.advance_during_fetch = 7
     evidence = await _evidence(env)
     assert evidence.age_seconds == 7
+
+
+@pytest.mark.asyncio
+async def test_an_entry_fetched_ahead_of_this_clock_is_never_served_as_fresh(env):
+    await _evidence(env)
+    env.status[DOMAIN] = _fixture("alice-revoked-now")
+    env.clock[0] -= 600  # this reader's clock is ten minutes behind the writer's
+    evidence = await _evidence(env)
+    assert evidence.status == _fixture("alice-revoked-now")
+    assert (evidence.age_seconds, evidence.refresh_failed) == (0, False)
+    assert len(env.requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_an_entry_fetched_ahead_of_this_clock_gives_no_grace(env):
+    await _evidence(env)
+    env.clock[0] -= 1
+    env.http_status = 503
+    evidence = await _evidence(env)
+    assert (evidence.age_seconds, evidence.refresh_failed) == (None, True)
+    assert _verdict(evidence)["reason"] == "evidence_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_a_clock_stepping_back_during_a_refresh_leaves_its_evidence_unavailable(env):
+    env.advance_during_fetch = -5
+    evidence = await _evidence(env)
+    assert evidence.age_seconds == -5
+    assert _verdict(evidence)["reason"] == "evidence_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_a_cooldown_recorded_ahead_of_this_clock_does_not_suppress_attempts(env):
+    env.http_status = 503
+    await _evidence(env)
+    env.clock[0] -= 1
+    env.http_status = 200
+    evidence = await _evidence(env)
+    assert (evidence.age_seconds, evidence.refresh_failed) == (0, False)
+    assert len(env.requests) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fetched_at", [1_000_000.5, "1000000", True, None])
+async def test_a_corrupt_stored_entry_is_dropped_and_refreshed(env, fetched_at):
+    await _evidence(env)
+    [key] = env.redis.values
+    entry = json.loads(env.redis.values[key])
+    env.redis.values[key] = json.dumps(entry | {"fetched_at": fetched_at})
+    env.clock[0] += 1
+    evidence = await _evidence(env)
+    assert (evidence.age_seconds, evidence.refresh_failed) == (0, False)
+    assert len(env.requests) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body, headers", [
+    (b"<html>" + b"x" * (64 * 1024) + b"</html>", {"Content-Type": "text/html"}),
+    (b"\x1f\x8b compressed error page", {"Content-Encoding": "gzip"}),
+], ids=["oversized-error-page", "encoded-error-page"])
+async def test_an_unreadable_refusal_is_a_failed_refresh(env, body, headers):
+    first = await _evidence(env)
+    env.clock[0] += 61
+    env.http_status = 502
+    env.error_body, env.error_headers = body, headers
+    evidence = await _evidence(env)
+    assert evidence == IDChainEvidence(first.status, first.namespace_authority, 61, True)
+    env.clock[0] += 1
+    assert (await _evidence(env)).refresh_failed is True
+    assert len(env.requests) == 2  # the failure opened the cooldown
 
 
 @pytest.mark.asyncio
