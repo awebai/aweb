@@ -674,25 +674,17 @@ async def test_a_job_with_a_missing_credential_is_shown_unavailable(access):
 async def test_a_declared_writer_is_listed_before_a_possible_writer_and_never_downgraded(access):
     w = access.world
     possible = _member(44)
+    open_on = {"open_request": True, "policy": OPEN_POLICY}
     async with w.db.transaction() as tx:
-        # A possible writer on the sensitive secret, and the declared writer also given an
-        # open request: the declared write still decides that agent's summary.
-        for grant_id, secret, member in (
-            ("grt_openordr", ORDERS_DB, possible),
-            ("grt_opendb01", PAYMENTS, DB_AGENT),
+        # Open requests are refused on sensitive secrets, so a sensitive possible writer may
+        # write payments-api and only read orders-db. The declared writer is also given an
+        # open request: its declared write still decides its summary.
+        for record in (
+            grant("grt_openpay1", PAYMENTS, {"principal": possible.did_aw}, **open_on),
+            grant("grt_readord1", ORDERS_DB, {"principal": possible.did_aw}, operations=[READ]),
+            grant("grt_opendb01", PAYMENTS, {"principal": DB_AGENT.did_aw}, **open_on),
         ):
-            await records.create_grant(
-                tx,
-                INSTALLATION_ID,
-                TEAM,
-                grant(
-                    grant_id,
-                    secret,
-                    {"principal": member.did_aw},
-                    open_request=True,
-                    policy=OPEN_POLICY,
-                ),
-            )
+            await records.create_grant(tx, INSTALLATION_ID, TEAM, record)
     async with clients(access) as (human, _):
         await sign_in(w, human, owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did))
         page = await owner_page(human, access)
