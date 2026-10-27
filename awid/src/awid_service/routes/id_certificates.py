@@ -9,19 +9,21 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from awid.controller_request import verify_controller_json_request
 from awid.dns_verify import DnsVerificationError, DomainVerifier
 from awid.id_certificates import IDCertificateError, decode_id_chain_header, verify_id_certificate
-from awid.ratelimit import rate_limit_dep
+from awid.did import validate_stable_id
+from awid.ratelimit import enforce_rate_limit, ip_bucket_key, rate_limit_dep
 from awid_service.deps import get_db, get_domain_verifier
 from awid_service.id_chains import check_chain_structure
 from awid_service.id_registration import register_certificate
 from awid_service.id_revocation import revoke_identity
+from awid_service.id_status import status_snapshot
 from awid_service.id_tree_gate import IdentityTreeRefusal, strict_json_object
 from awid_service.id_tree_clock import app_clock
-from awid_service.namespace_epochs import is_exact
+from awid_service.namespace_epochs import is_exact, strict_did_key
 
 router = APIRouter(prefix="/v1/id-certificates", tags=["id-certificates"])
 
@@ -29,6 +31,8 @@ ID_CHAIN_HEADER = "X-AWID-ID-Chain"
 SIGNED_PAYLOAD_HEADER = "X-AWEB-Signed-Payload"
 _REGISTER_FIELDS = frozenset({"certificate", "expected_head", "invitation_id"})
 _REVOKE_FIELDS = frozenset({"domain", "id", "expected_head", "effective_from"})
+_STATUS_FIELDS = frozenset({"v", "domain", "ids"})
+_MAX_STATUS_IDS = 8
 _CERTIFICATE_ID = re.compile(r"sha256:[0-9a-f]{64}")
 _WIRE_TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z")
 
@@ -83,6 +87,40 @@ def _revoke_body(raw: bytes) -> tuple[str, str, str | None, datetime | None]:
         except ValueError as exc:
             raise IDCertificateError("invalid_shape") from exc
     return domain, id_, _expected_head(body["expected_head"]), effective_from
+
+
+def _status_body(raw: bytes) -> tuple[str, list[str]]:
+    body = strict_json_object(raw)
+    if set(body) != _STATUS_FIELDS or type(body["v"]) is not int or body["v"] != 1:
+        raise IDCertificateError("invalid_shape")
+    domain, ids = body["domain"], body["ids"]
+    if type(domain) is not str or not domain or type(ids) is not list or len(ids) > _MAX_STATUS_IDS:
+        raise IDCertificateError("invalid_shape")
+    if len(set(map(str, ids))) != len(ids) or not all(_is_stable_id(id_) for id_ in ids):
+        raise IDCertificateError("invalid_shape")
+    return domain, ids
+
+
+def _is_stable_id(value) -> bool:
+    if type(value) is not str or not value.startswith("did:aw:"):
+        return False
+    try:
+        return validate_stable_id(value) == value
+    except ValueError:
+        return False
+
+
+async def _status_caller(request: Request, domain: str) -> str | None:
+    """The verified did:key of an authenticated status caller, or None when anonymous.
+
+    Supplied but invalid proof is refused, never treated as anonymous.
+    """
+    if request.headers.get("Authorization") is None and request.headers.get(SIGNED_PAYLOAD_HEADER) is None:
+        return None
+    caller = await _covering_signer(request, domain=domain, operation="read_id_certificate_status")
+    if not strict_did_key(caller):
+        raise HTTPException(status_code=401, detail="Invalid caller key")
+    return caller
 
 
 async def _exact_dns_key(verify_domain: DomainVerifier, domain: str) -> str | None:
@@ -170,5 +208,30 @@ async def revoke_id_certificate(
             db, domain=domain, subject_id=id_, expected_head=expected_head, effective_from=effective_from,
             signer=signer, dns_key=dns_key, clock=app_clock(request.app),
         )
+    except IdentityTreeRefusal as refused:
+        raise _refusal(refused.code, refused.status) from refused
+
+
+@router.post("/status")
+async def id_certificate_status(
+    request: Request,
+    response: Response,
+    db_infra=Depends(get_db),
+    verify_domain: DomainVerifier = Depends(get_domain_verifier),
+) -> dict:
+    """A coherent snapshot of the domain's epochs and of exact requested registered IDs."""
+    try:
+        domain, ids = _status_body(await request.body())
+    except IDCertificateError as exc:
+        raise _refusal(exc.code, 400) from exc
+    caller = await _status_caller(request, domain)
+    await enforce_rate_limit(
+        request, response, bucket="id_certificate_status",
+        key=f"did:{caller}" if caller is not None else ip_bucket_key(request),
+    )
+    dns_key = await _exact_dns_key(verify_domain, domain)
+    db = db_infra.get_manager("aweb")
+    try:
+        return await status_snapshot(db, domain=domain, ids=ids, dns_key=dns_key, clock=app_clock(request.app))
     except IdentityTreeRefusal as refused:
         raise _refusal(refused.code, refused.status) from refused

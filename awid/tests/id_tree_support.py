@@ -25,6 +25,7 @@ from nacl.bindings import (
 )
 from nacl.signing import SigningKey
 
+from awid import dns_auth
 from awid.did import did_from_public_key
 from awid.dns_verify import DnsVerificationError, DomainAuthority
 from awid.id_certificates import encode_id_chain_header, id_certificate_signing_bytes
@@ -133,6 +134,16 @@ def chain_header(chain: list[dict]) -> str:
     return encode_id_chain_header({"v": 1, "type": "aweb.id-chain", "certificates": chain})
 
 
+def did_registration_entry(key_name: str) -> dict:
+    """The frozen register_did log entry of a vector identity, from the status fixtures."""
+    target = did_aw(key_name)
+    for fixture in VECTORS["status_fixtures"].values():
+        for identity in fixture["identities"]:
+            if identity["id"] == target and identity["key_history"][0]["entry"]["operation"] == "register_did":
+                return identity["key_history"][0]["entry"]
+    raise KeyError(key_name)
+
+
 def ed25519_vector_key(name: str) -> str:
     """The did:key of a frozen ed25519_verification public key, such as a small-order one."""
     [case] = [case for case in VECTORS["ed25519_verification"]["cases"] if case["name"] == name]
@@ -157,18 +168,44 @@ class MixedOrderController:
         self.did_key = did_from_public_key(self._public)
 
     def signed_headers(self, *, domain: str, operation: str, **extra) -> dict:
+        """Legacy DIDKey headers over {domain, operation, timestamp, **extra}."""
+
+        def payload(timestamp: str) -> bytes:
+            return canonical_json_bytes({"domain": domain, "operation": operation, "timestamp": timestamp, **extra})
+
+        timestamp, _, signature = self._sign_with_divisible_challenge(payload)
+        return {"Authorization": f"DIDKey {self.did_key} {signature}", "X-AWEB-Timestamp": timestamp}
+
+    def covering_headers(self, *, method: str, path: str, body: bytes, domain: str, operation: str) -> dict:
+        """Covering-v2 headers signed by this key."""
+
+        def payload(timestamp: str) -> bytes:
+            return canonical_json_bytes({
+                "v": 2, "type": REQUEST_TYPE, "aud": ORIGIN, "method": method, "path": path,
+                "body_sha256": hashlib.sha256(body).hexdigest(), "timestamp": timestamp,
+                "domain": domain, "operation": operation,
+            })
+
+        timestamp, raw, signature = self._sign_with_divisible_challenge(payload)
+        return {
+            "Authorization": f"DIDKey {self.did_key} {signature}",
+            "X-AWEB-Timestamp": timestamp,
+            "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(raw).rstrip(b"=").decode(),
+            "Content-Type": "application/json",
+        }
+
+    def _sign_with_divisible_challenge(self, payload) -> tuple[str, bytes, str]:
         base = datetime.now(timezone.utc).replace(microsecond=0)
         for offset in range(0, 240):
             timestamp = (base - timedelta(seconds=offset)).isoformat().replace("+00:00", "Z")
-            payload = canonical_json_bytes({"domain": domain, "operation": operation, "timestamp": timestamp, **extra})
+            raw = payload(timestamp)
             nonce = crypto_core_ed25519_scalar_reduce(os.urandom(64))
             commitment = crypto_scalarmult_ed25519_base_noclamp(nonce)
-            challenge = crypto_core_ed25519_scalar_reduce(hashlib.sha512(commitment + self._public + payload).digest())
+            challenge = crypto_core_ed25519_scalar_reduce(hashlib.sha512(commitment + self._public + raw).digest())
             if int.from_bytes(challenge, "little") % 8:
                 continue
             response = crypto_core_ed25519_scalar_add(nonce, crypto_core_ed25519_scalar_mul(challenge, self._scalar))
-            signature = base64.b64encode(commitment + response).rstrip(b"=").decode()
-            return {"Authorization": f"DIDKey {self.did_key} {signature}", "X-AWEB-Timestamp": timestamp}
+            return timestamp, raw, base64.b64encode(commitment + response).rstrip(b"=").decode()
         raise AssertionError("no timestamp gave a challenge divisible by 8")
 
 
@@ -231,6 +268,22 @@ class Tree:
 
     async def did(self, key_name: str) -> None:
         await register_identity(self.client, seed(key_name), did_key(key_name))
+
+    async def vector_did(self, key_name: str) -> None:
+        """Register ``key_name``'s did:aw with its frozen log entry, witnessed at that entry's time."""
+        entry = did_registration_entry(key_name)
+        fields = ("did_aw", "new_did_key", "operation", "previous_did_key", "prev_entry_hash", "seq",
+                  "state_hash", "authorized_by", "timestamp")
+        body = {"did_aw": did_aw(key_name), **{field: entry[field] for field in fields[1:]}, "proof": entry["signature"]}
+        signed_at = datetime.fromisoformat(entry["timestamp"].replace("Z", "+00:00"))
+        self.clock.now = signed_at
+        real_now = dns_auth._utc_now
+        dns_auth._utc_now = lambda: signed_at
+        try:
+            resp = await self.client.post("/v1/did", json=body)
+        finally:
+            dns_auth._utc_now = real_now
+        assert resp.status_code == 200, resp.text
 
     async def rotate_did(self, key_name: str, new_key_name: str) -> None:
         resp = await request_rotation(

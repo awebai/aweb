@@ -24,6 +24,7 @@ from awid.ratelimit import MemoryFixedWindowRateLimiter
 from conftest import build_signed_headers
 
 import test_id_namespace_epochs  # noqa: F401  (consumes namespace cases by name)
+import test_id_certificate_status  # noqa: F401  (consumes status cases by name)
 import test_id_namespace_rotation  # noqa: F401  (consumes rotation cases by name)
 from id_tree_support import (
     CONSUMED,
@@ -55,9 +56,6 @@ S2_LATER = {
     "loss-replacement-is-a-new-human-id",
     "address-replacement-does-not-transfer-contact-trust",
     "public-chain-not-private-team-read-authority",
-    "status-rate-limit",
-    "status-prefix-enumeration-refuses",
-    "status-never-discloses-private-team-data",
     # A parent's revocation authority needs its whole current chain verified
     # (checkpoint 4); until then the parent path refuses evidence_unavailable.
     "live-parent-revokes-now",
