@@ -89,6 +89,10 @@ ROOT_CONSUMERS = {
         "id-certificates-v1.json",
         'filepath.Join("..", "..", "..", "docs", "vectors", "id-certificates-v1.json")',
     ),
+    PurePosixPath("cli/go/awconfig/id_chain_install_test.go"): _consumer(
+        "id-certificates-v1.json",
+        'filepath.Join("..", "..", "..", "docs", "vectors", "id-certificates-v1.json")',
+    ),
     PurePosixPath("server/tests/test_c2_vectors.py"): _consumer(
         ("app-task-authorization-v1.json", "app-request-credential-v1.json", "task-answer-v1.json"),
         'Path(__file__).resolve().parents[2] / "docs" / "vectors"',
@@ -576,6 +580,10 @@ ROOT_CONSUMERS = {
         'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
     ),
     PurePosixPath("channel-core/test/id_signature_non_narrowing.test.ts"): _consumer(
+        "id-certificates-v1.json",
+        'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
+    ),
+    PurePosixPath("channel-core/test/id_key_response_id_tree.test.ts"): _consumer(
         "id-certificates-v1.json",
         'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
     ),
