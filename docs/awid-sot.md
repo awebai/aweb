@@ -1017,6 +1017,9 @@ Current ordered effects are:
 9. `009_principal_attestation_records.sql` adds the team-key-signed team
    custodian, member custody and member person records, deleted with their
    team or certificate.
+10. `010_id_certificates.sql` adds the identity tree's registered identities
+    with their revocation, every registered ID-certificate revision, and the
+    namespace controller epochs ([identity certificates](id-certificates.md)).
 
 The following inventory is exhaustive for current **AWID application tables
 declared by** that ordered component chain. It intentionally excludes pgdbm's
@@ -1041,6 +1044,9 @@ full ordered SQL, not a copied `001` snapshot.
 - `team_custodians`
 - `member_custody`
 - `member_person`
+- `id_identities`
+- `id_certificates`
+- `id_namespace_epochs`
 <!-- END SOURCE INVENTORY: awid-tables -->
 
 ---
