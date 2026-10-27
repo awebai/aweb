@@ -1011,6 +1011,31 @@
       "acceptance": "Fetch through production cache, nearest human/no human/unknown/unavailable and distinct refusal reasons; owner supplies final path."
     },
     {
+      "id": "CLI.STATUS.CLIENT",
+      "repo": "aweb",
+      "files": [
+        "cli/go/awid/id_status_client.go"
+      ],
+      "operations": [
+        "verify"
+      ],
+      "change": "add",
+      "slice": "S3",
+      "status": "candidate",
+      "journeys": [
+        "J1",
+        "J4",
+        "J5",
+        "J6",
+        "J7",
+        "J10"
+      ],
+      "proving_tests": [
+        "cli/go/awid/id_status_client_test.go"
+      ],
+      "acceptance": "One policy with AWID.STATUS.CLIENT (S2 6b): 60s fresh inclusive with no DNS or HTTP, one coalesced detached refresh, one timeout over DNS and HTTP, grace to 900s only after a failed refresh with last-known-good aged through the wait, 60s per-domain failed-attempt cooldown, malformed success ends the old tree, a future stamp is untrusted, unclamped ages; in-process cache on this process's clock."
+    },
+    {
       "id": "SERVER.CONNECT",
       "repo": "aweb",
       "files": [
