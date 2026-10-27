@@ -319,6 +319,20 @@ func TestIDResignProbes(t *testing.T) {
 			t.Fatal("the submitted certificate was recorded")
 		}
 	})
+	t.Run("log holds another certificate of the same child", func(t *testing.T) {
+		f := caseFixture(t, v, accepted)
+		other := map[string]any{}
+		for k, x := range f.request.Signed["certificate"].(map[string]any) {
+			other[k] = x
+		}
+		other["issued_at"] = "2026-10-26T00:05:00Z"
+		id, err := awid.IDCertificateID(other)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.log = newIssuanceLog(id)
+		refuses(t, f, "issuance_not_recorded")
+	})
 	t.Run("stale parent evidence is unavailable", func(t *testing.T) {
 		f := caseFixture(t, v, accepted)
 		calls := 0
