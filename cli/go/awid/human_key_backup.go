@@ -16,6 +16,8 @@ import (
 
 const (
 	HumanKeyBackupMinIterations = 600000
+	// HumanKeyBackupMaxIterations bounds the work a hostile backup can demand.
+	HumanKeyBackupMaxIterations = 10000000
 	humanKeyBackupSaltBytes     = 16
 	humanKeyBackupIVBytes       = 16
 	humanKeyBackupKeyBytes      = 32
@@ -128,6 +130,9 @@ func checkHumanKeyBackupParameters(der []byte) error {
 	}
 	var iv []byte
 	if !unmarshalExactly(scheme.Cipher.Parameters.FullBytes, &iv) || len(iv) != humanKeyBackupIVBytes {
+		return unsupported
+	}
+	if kdf.Iterations > HumanKeyBackupMaxIterations {
 		return unsupported
 	}
 	if kdf.Iterations < HumanKeyBackupMinIterations {
