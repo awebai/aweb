@@ -119,7 +119,7 @@ wheels = [
 
 [[package]]
 name = "aweb-naapp"
-version = "0.5.1rc4"
+version = "0.5.1rc5"
 source = { editable = "../../naapp-lib" }
 
 [package.metadata]
@@ -172,7 +172,7 @@ dev = [
 
 [[package]]
 name = "awid-service"
-version = "0.5.33rc3"
+version = "0.5.33rc4"
 source = { editable = "../../awid" }
 dependencies = [
     { name = "base58" },
