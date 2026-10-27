@@ -305,7 +305,7 @@ func TestIDChildFileRefusals(t *testing.T) {
 	for _, c := range v.ChildRequests.FileRefusals {
 		names = append(names, c.Name)
 	}
-	want := []string{"csr-request-file-over-limit", "csr-request-file-at-limit-invalid-json", "csr-response-file-over-limit", "csr-response-file-at-limit-invalid-json"}
+	want := []string{"csr-request-file-over-limit", "csr-request-file-at-limit-invalid-json", "csr-response-file-over-limit", "csr-response-file-at-limit-invalid-json", "csr-request-file-ascii-over-limit", "csr-response-file-ascii-over-limit"}
 	if !reflect.DeepEqual(names, want) {
 		t.Fatalf("file refusals=%v want %v", names, want)
 	}
