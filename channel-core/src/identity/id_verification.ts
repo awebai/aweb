@@ -283,7 +283,8 @@ function trustedSnapshot(evidence: IdStatusEvidence | null, domain: string | und
   // Only last-known-good evidence outliving its outage grace has expired;
   // stale evidence that was never refreshed is not evidence at all.
   if (mode === "unavailable") {
-    const expired = evidence.age_seconds !== null && evidence.refresh_failed;
+    const expired =
+      evidence.refresh_failed && evidence.age_seconds !== null && evidence.age_seconds > ID_STATUS_OUTAGE_GRACE_SECONDS;
     throw new Refusal(expired ? "status_expired" : "evidence_unavailable");
   }
   const authority = evidence.namespace_authority;
