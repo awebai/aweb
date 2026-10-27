@@ -205,8 +205,8 @@ async def test_a_failed_revoke_far_down_the_page_is_reported_where_the_owner_is(
         focused = await page.evaluate("() => document.activeElement.outerHTML.slice(0, 160)")
         (tmp_path / "failed-revoke-focus.json").write_text(json.dumps({"focused": focused}))
         await page.screenshot(path=tmp_path / "failed-revoke-375.png")
+        assert await admission(uses, OPEN_AGENT, PAYMENTS, "", 1) is None
         await expect(notice).to_be_in_viewport()
-    assert await admission(uses, OPEN_AGENT, PAYMENTS, "", 1) is None
 
 
 async def test_keyboard_only_list_secret_return_and_cancelled_narrowing(

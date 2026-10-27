@@ -616,3 +616,35 @@ async def test_a_job_with_a_missing_credential_is_shown_unavailable(access):
     assert "can run" not in run["_text"]
     assert "not usable" in run["_text"]
     assert run["data-source-refusal"] == "grant_missing"
+
+
+async def test_a_declared_writer_is_listed_before_a_possible_writer_and_never_downgraded(access):
+    w = access.world
+    possible = _member(44)
+    async with w.db.transaction() as tx:
+        # A possible writer on the sensitive secret, and the declared writer also given an
+        # open request: the declared write still decides that agent's summary.
+        for grant_id, secret, member in (
+            ("grt_openordr", ORDERS_DB, possible),
+            ("grt_opendb01", PAYMENTS, DB_AGENT),
+        ):
+            await records.create_grant(
+                tx,
+                INSTALLATION_ID,
+                TEAM,
+                grant(
+                    grant_id,
+                    secret,
+                    {"principal": member.did_aw},
+                    open_request=True,
+                    policy=OPEN_POLICY,
+                ),
+            )
+    async with clients(access) as (human, _):
+        await sign_in(w, human, owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did))
+        page = await owner_page(human, access)
+    order = [a["data-principal-did"] for a in page.all("access-agent")]
+    assert order == [DB_AGENT.did_aw, possible.did_aw, OPEN_AGENT.did_aw, READER.did_aw]
+    listed = agents(page)
+    assert set(listed[DB_AGENT.did_aw]["data-flags"].split()) == {"sensitive", "write"}
+    assert set(listed[possible.did_aw]["data-flags"].split()) == {"sensitive", "may-write"}
