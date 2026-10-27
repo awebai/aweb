@@ -61,7 +61,7 @@
         "awid/tests/test_id_key_response_vectors.py::test_key_response_id_tree_frozen_parse"
       ],
       "acceptance": "Frozen certificate bytes, raw refusals and strict Ed25519 probes; this is not ancestry verification.",
-      "candidate_head": "015d08b00a71968d288ebaefb2569e403a2e599b",
+      "candidate_head": "e8ad712bfa650d44f70dfe72aca6842e82447d5c",
       "ed25519_profile": "strict",
       "sites": [
         {
@@ -143,7 +143,7 @@
         "cli/go/internal/conformance/id_key_response_test.go::TestIDKeyResponseTreeFrozenParse"
       ],
       "acceptance": "Same root vectors, namespace binding and strict point/scalar checks; this is not ancestry verification.",
-      "candidate_head": "9fc3c5855c434904ab36a113baa654c2488fe6d3",
+      "candidate_head": "e8ad712bfa650d44f70dfe72aca6842e82447d5c",
       "ed25519_profile": "strict",
       "sites": [
         {
