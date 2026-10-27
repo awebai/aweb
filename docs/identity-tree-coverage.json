@@ -1,0 +1,1831 @@
+{
+  "v": 1,
+  "status": "draft_seed_inventory_not_release_complete",
+  "governing_contract": "docs/id-certificates.md",
+  "source_inventory": {
+    "oss_plan_pin": "fa5ae8430b7f2120fec0242ffc93d7e006985edb",
+    "aweb_main_seed": "101c6cf98c1c3249eb86e252a7c06d2caa7721c1",
+    "oats_aweb_seed": "bcd63631eb7c07c4d0741ecf25329da99c85e5b7",
+    "oats_seed": "7b3f2a046b59580299c825231cb0fe472b53d7fc"
+  },
+  "release_requirements": {
+    "complete_callsite_scan": "pending",
+    "ci_unlisted_call_and_shared_verifier_strict_profile_guard": "pending",
+    "real_chain_or_refuse_per_creation_path": "pending",
+    "juan_aweb_ai_fleet_under_juan": "pending"
+  },
+  "interpretation": [
+    "Stable row IDs are named in every conversion handoff. Split a coarse draft row when source scanning identifies independent boundaries; retain its ID as the grouping reference.",
+    "Pending rows have no claimed new-protocol test proof. Candidate proof refers to an unlanded checkpoint, not a released feature.",
+    "Keep means retain a distinct released authority contract and test its relationship to the new tree, not omit it from the coverage scan.",
+    "This seed is not exhaustive: scanner-derived callsite locations and external owners final paths/tests must be added before the release guard can pass.",
+    "New unlisted create/sign/register/present/verify calls, shared-verifier bypasses and strict ID Ed25519 bypasses must fail CI; that guard is NOT implemented by this JSON.",
+    "Old signature families, B3 and controller-signed owner acts remain governed by their existing contracts."
+  ],
+  "sites": [
+    {
+      "id": "S1.PY.CODEC",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid/id_certificates.py"
+      ],
+      "operations": [
+        "signing_bytes",
+        "encode",
+        "verify"
+      ],
+      "change": "add",
+      "slice": "S1",
+      "status": "candidate",
+      "journeys": [
+        "J1",
+        "J4",
+        "J8"
+      ],
+      "proving_tests": [
+        "awid/tests/test_id_certificate_vectors.py"
+      ],
+      "acceptance": "Frozen certificate bytes, raw refusals and strict Ed25519 probes; this is not ancestry verification.",
+      "candidate_head": "c5ec4e87feeb11bdc0c074826a0cdf2cf58b04de",
+      "ed25519_profile": "strict"
+    },
+    {
+      "id": "S1.GO.CODEC",
+      "repo": "aweb",
+      "files": [
+        "cli/go/awid/id_certificates.go"
+      ],
+      "operations": [
+        "signing_bytes",
+        "encode",
+        "verify"
+      ],
+      "change": "add",
+      "slice": "S1",
+      "status": "candidate",
+      "journeys": [
+        "J1",
+        "J4",
+        "J8"
+      ],
+      "proving_tests": [
+        "cli/go/internal/conformance/id_certificates_test.go"
+      ],
+      "acceptance": "Same root vectors, namespace binding and strict point/scalar checks; this is not ancestry verification.",
+      "candidate_head": "c5ec4e87feeb11bdc0c074826a0cdf2cf58b04de",
+      "ed25519_profile": "strict"
+    },
+    {
+      "id": "S1.TS.VERIFIER",
+      "repo": "aweb",
+      "files": [
+        "channel-core/src/identity/id_certificates.ts",
+        "channel-core/src/identity/id_verification.ts",
+        "channel-core/src/identity/strict_json.ts"
+      ],
+      "operations": [
+        "encode",
+        "verify"
+      ],
+      "change": "add",
+      "slice": "S1",
+      "status": "candidate",
+      "journeys": [
+        "J1",
+        "J4",
+        "J8"
+      ],
+      "proving_tests": [
+        "channel-core/test/id_certificates_codec.test.ts",
+        "channel-core/test/id_certificates_verify.test.ts",
+        "channel-core/test/id_certificates_verify_probes.test.ts",
+        "channel-core/test/id_certificates_disposition.test.ts"
+      ],
+      "acceptance": "All frozen cases and refusal dispositions; owner supplies exact proving test paths after review.",
+      "candidate_head": "63ea94aa7c1e6d84857325f3ec05fc28c40f96ab",
+      "ed25519_profile": "strict"
+    },
+    {
+      "id": "S1.PY.ANCESTRY",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid/id_certificates.py"
+      ],
+      "operations": [
+        "verify"
+      ],
+      "change": "add",
+      "slice": "S1",
+      "status": "candidate",
+      "journeys": [
+        "J1",
+        "J4",
+        "J5",
+        "J8",
+        "J10"
+      ],
+      "proving_tests": [
+        "awid/tests/test_id_chain_vectors.py"
+      ],
+      "acceptance": "Whole chain with independent issuer/subject keys, R1-R3, witnessed sequence, replacement cutoff, cascade and request disposition.",
+      "candidate_head": "64d7988fe22dc3f422b28e747cb94c82d4d6bb67",
+      "ed25519_profile": "strict"
+    },
+    {
+      "id": "S1.GO.ANCESTRY",
+      "repo": "aweb",
+      "files": [
+        "cli/go/awid/id_chain.go"
+      ],
+      "operations": [
+        "verify"
+      ],
+      "change": "add",
+      "slice": "S1",
+      "status": "candidate",
+      "journeys": [
+        "J1",
+        "J4",
+        "J5",
+        "J8",
+        "J10"
+      ],
+      "proving_tests": [
+        "cli/go/internal/conformance/id_chain_test.go"
+      ],
+      "acceptance": "Whole chain with independent issuer/subject keys, R1-R3, witnessed sequence, replacement cutoff, cascade and request disposition.",
+      "candidate_head": "64d7988fe22dc3f422b28e747cb94c82d4d6bb67",
+      "ed25519_profile": "strict"
+    },
+    {
+      "id": "AWID.NAMESPACE.DNS",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid/dns_verify.py"
+      ],
+      "operations": [
+        "verify"
+      ],
+      "change": "adapt",
+      "slice": "S2",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J2",
+        "J3"
+      ],
+      "proving_tests": [],
+      "acceptance": "Exact-domain authority for the tree; no inherited ancestor authority. Other DNS consumers keep their contracts."
+    },
+    {
+      "id": "AWID.NAMESPACE.REGISTER",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid_service/routes/dns_namespaces.py"
+      ],
+      "operations": [
+        "register"
+      ],
+      "change": "adapt",
+      "slice": "S2",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J2",
+        "J3"
+      ],
+      "proving_tests": [],
+      "acceptance": "Exact authority, witnessed epochs and initial/replaced continuity."
+    },
+    {
+      "id": "AWID.NAMESPACE.REVERIFY",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid_service/routes/dns_namespaces.py"
+      ],
+      "operations": [
+        "register",
+        "verify"
+      ],
+      "change": "adapt",
+      "slice": "S2",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J2",
+        "J3"
+      ],
+      "proving_tests": [],
+      "acceptance": "No epoch backfill; unchanged live exact authority is not a replacement."
+    },
+    {
+      "id": "AWID.NAMESPACE.ROTATE",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid_service/routes/dns_namespaces.py"
+      ],
+      "operations": [
+        "register",
+        "verify"
+      ],
+      "change": "adapt",
+      "slice": "S2",
+      "status": "pending",
+      "journeys": [
+        "J5",
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "Previous-key-authorized rotation versus DNS-only replacement; serialize against child registration."
+    },
+    {
+      "id": "AWID.NAMESPACE.DELETE",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid_service/routes/dns_namespaces.py"
+      ],
+      "operations": [
+        "register"
+      ],
+      "change": "adapt",
+      "slice": "S2",
+      "status": "pending",
+      "journeys": [
+        "J5",
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "Retain epochs/revisions; delete/re-register cannot revive the old tree, including same-key reuse."
+    },
+    {
+      "id": "AWID.DID.GENESIS",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid/did.py",
+        "awid/src/awid_service/routes/did.py"
+      ],
+      "operations": [
+        "create",
+        "register"
+      ],
+      "change": "adapt",
+      "slice": "S2",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J6",
+        "J7"
+      ],
+      "proving_tests": [],
+      "acceptance": "Keep DID syntax and key proof; separate ID-tree enrollment from bare DID creation."
+    },
+    {
+      "id": "AWID.DID.ROTATE",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid_service/routes/did.py"
+      ],
+      "operations": [
+        "register",
+        "verify"
+      ],
+      "change": "adapt",
+      "slice": "S2",
+      "status": "pending",
+      "journeys": [
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "Current-key CAS and monotone post-lock witnesses; no inference from pre-upgrade log timestamps."
+    },
+    {
+      "id": "AWID.DID.LOG",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid/identity_log_verify.py"
+      ],
+      "operations": [
+        "verify"
+      ],
+      "change": "keep",
+      "slice": "S1",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J8",
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "Verified genesis/checkpoint and hash/signature continuity remain prerequisites; no replacement of the released log signature contract."
+    },
+    {
+      "id": "AWID.ADDRESS.REPLACE",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid_service/routes/dns_addresses.py"
+      ],
+      "operations": [
+        "register",
+        "verify"
+      ],
+      "change": "keep",
+      "slice": "S2 S3",
+      "status": "pending",
+      "journeys": [
+        "J6",
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "Address replacement changes DID, never resets continuity or silently transfers contact trust."
+    },
+    {
+      "id": "AWID.ID.REGISTER",
+      "repo": "aweb",
+      "files": [],
+      "operations": [
+        "register",
+        "verify"
+      ],
+      "change": "add",
+      "slice": "S2",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J3",
+        "J5",
+        "J6",
+        "J8",
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "Subject proof, R1-R3 and current parent/replacement state checked atomically; exact invitation retry preserves registration time. S2 owner supplies final module path and test selectors."
+    },
+    {
+      "id": "AWID.ID.REPARENT",
+      "repo": "aweb",
+      "files": [],
+      "operations": [
+        "register",
+        "verify"
+      ],
+      "change": "add",
+      "slice": "S2",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J3",
+        "J5",
+        "J6",
+        "J8",
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "Explicit new-parent signature and subject proof, expected-head CAS; preserve key and team certificates. S2 owner supplies final module path and test selectors."
+    },
+    {
+      "id": "AWID.ID.REVOKE",
+      "repo": "aweb",
+      "files": [],
+      "operations": [
+        "register",
+        "verify"
+      ],
+      "change": "add",
+      "slice": "S2",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J3",
+        "J5",
+        "J6",
+        "J8",
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "Self/current-valid-parent/root authority, root-only past cutoff, cascade and namespace replacement. S2 owner supplies final module path and test selectors."
+    },
+    {
+      "id": "AWID.ID.STATUS",
+      "repo": "aweb",
+      "files": [],
+      "operations": [
+        "present"
+      ],
+      "change": "add",
+      "slice": "S2",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J3",
+        "J5",
+        "J6",
+        "J8",
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "Bounded exact proof closure, no enumeration, complete epoch continuity and certificate/key history. S2 owner supplies final module path and test selectors."
+    },
+    {
+      "id": "AWID.STATUS.CLIENT",
+      "repo": "aweb",
+      "files": [],
+      "operations": [
+        "verify"
+      ],
+      "change": "add",
+      "slice": "S2",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J5",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Production cached client, 60/900 bounds, domain isolation, timeout/negative-cache/429 and enrolled omission; S2 checkpoint6 owns final paths."
+    },
+    {
+      "id": "AWID.TEAM.CERTIFICATES",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid_service/routes/teams.py",
+        "awid/src/awid/team_certificate.py"
+      ],
+      "operations": [
+        "sign",
+        "register",
+        "verify"
+      ],
+      "change": "keep",
+      "slice": "S2 S4",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J7",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Team controller authority, private certificate gate and membership revocation remain separate from the identity tree."
+    },
+    {
+      "id": "AWID.MEMBER.ATTESTATIONS",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid/attestation_records.py",
+        "awid/src/awid_service/routes/attestation_records.py"
+      ],
+      "operations": [
+        "sign",
+        "register",
+        "verify"
+      ],
+      "change": "keep",
+      "slice": "S4",
+      "status": "pending",
+      "journeys": [
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "member_person/member_custody remain compatibility evidence; never infer an ID tree from them."
+    },
+    {
+      "id": "CLI.KEYS.AGENT",
+      "repo": "aweb",
+      "files": [
+        "cli/go/awid/keys.go"
+      ],
+      "operations": [
+        "create",
+        "sign"
+      ],
+      "change": "keep",
+      "slice": "S3",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J7",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Agent file custody stays; human keys must not be placed here."
+    },
+    {
+      "id": "CLI.KEYS.HUMAN",
+      "repo": "aweb",
+      "files": [],
+      "operations": [
+        "create",
+        "sign"
+      ],
+      "change": "add",
+      "slice": "S3",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J3",
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "OS keychain signer, one-person ID and approved encrypted key export/import; CLI owner supplies final paths."
+    },
+    {
+      "id": "CLI.INIT.LOCAL",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/init.go",
+        "cli/go/cmd/aw/init_local.go",
+        "cli/go/cmd/aw/id_team.go"
+      ],
+      "operations": [
+        "create",
+        "sign"
+      ],
+      "change": "adapt",
+      "slice": "S3",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J7"
+      ],
+      "proving_tests": [],
+      "acceptance": "Human-less local coordination remains valid; evidenced parent signs, otherwise unknown."
+    },
+    {
+      "id": "CLI.INIT.BYOD",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/id_create.go",
+        "cli/go/cmd/aw/onboarding_wizard.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register"
+      ],
+      "change": "adapt",
+      "slice": "S3",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J3"
+      ],
+      "proving_tests": [],
+      "acceptance": "Actual root/human/agent parent; key proof and exact domain, no account-label inference."
+    },
+    {
+      "id": "CLI.INIT.HOSTED",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/onboarding_wizard.go"
+      ],
+      "operations": [
+        "create",
+        "register"
+      ],
+      "change": "adapt",
+      "slice": "S3 S6",
+      "status": "pending",
+      "journeys": [
+        "J2",
+        "J3"
+      ],
+      "proving_tests": [],
+      "acceptance": "Host-supplied exact chain verified before installation; no guessed human on signup."
+    },
+    {
+      "id": "CLI.INIT.APIKEY",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/init.go",
+        "cli/go/cmd/aw/init_apikey.go"
+      ],
+      "operations": [
+        "create",
+        "register"
+      ],
+      "change": "adapt",
+      "slice": "S3 S6",
+      "status": "pending",
+      "journeys": [
+        "J2",
+        "J7"
+      ],
+      "proving_tests": [],
+      "acceptance": "API key with and without evidenced parent is chain-or-unknown/refuse, never guessed attribution."
+    },
+    {
+      "id": "CLI.BOOTSTRAP.CONNECT",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/connect.go"
+      ],
+      "operations": [
+        "register",
+        "verify"
+      ],
+      "change": "adapt",
+      "slice": "S3 S4",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J2",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Bootstrap/reconnect verifies or installs evidence; token/reuse never creates ancestry."
+    },
+    {
+      "id": "CLI.CREATE.DOMAIN",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/id_create.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register"
+      ],
+      "change": "adapt",
+      "slice": "S3",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J6"
+      ],
+      "proving_tests": [],
+      "acceptance": "Keep key/DID/address while explicitly enrolling; addresses do not prove parentage."
+    },
+    {
+      "id": "CLI.CREATE.HOSTED",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/id_create_hosted.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "register"
+      ],
+      "change": "adapt",
+      "slice": "S3 S6",
+      "status": "pending",
+      "journeys": [
+        "J2",
+        "J3"
+      ],
+      "proving_tests": [],
+      "acceptance": "Human-session issuance and owner-principal issuance keep their distinct authority."
+    },
+    {
+      "id": "CLI.CREATE.OWNER",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/id_create_owner.go"
+      ],
+      "operations": [
+        "create",
+        "sign"
+      ],
+      "change": "adapt",
+      "slice": "S3 S6",
+      "status": "pending",
+      "journeys": [
+        "J3",
+        "J4"
+      ],
+      "proving_tests": [],
+      "acceptance": "Retain unattended signing owner-agent parent; owner role or owner-team membership alone is not a target parent."
+    },
+    {
+      "id": "CLI.ENROLL.WORKSPACE",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/team_ensure.go",
+        "cli/go/cmd/aw/team_admission_invite.go",
+        "cli/go/cmd/aw/init.go"
+      ],
+      "operations": [
+        "register",
+        "verify"
+      ],
+      "change": "adapt",
+      "slice": "S3 S6",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J2",
+        "J3"
+      ],
+      "proving_tests": [],
+      "acceptance": "Direct authenticated enrollment/admission returns the exact signed parent link."
+    },
+    {
+      "id": "CLI.INVITE.LOCAL",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/id_team.go",
+        "cli/go/awconfig/team_invites.go"
+      ],
+      "operations": [
+        "create",
+        "sign"
+      ],
+      "change": "adapt",
+      "slice": "S3",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J4"
+      ],
+      "proving_tests": [],
+      "acceptance": "Membership team key stays distinct from ID parent; spawn inherits issuing identity."
+    },
+    {
+      "id": "CLI.INVITE.HOSTED",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/id_team.go",
+        "cli/go/awid/spawn_invites.go"
+      ],
+      "operations": [
+        "create",
+        "register"
+      ],
+      "change": "adapt",
+      "slice": "S3 S6",
+      "status": "pending",
+      "journeys": [
+        "J2",
+        "J4"
+      ],
+      "proving_tests": [],
+      "acceptance": "Preserve issuing ID/purpose; exact child and pending recipient-bound human signing, never token-only human attribution."
+    },
+    {
+      "id": "CLI.CLAIM.MANAGE",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/claim_human.go"
+      ],
+      "operations": [
+        "register",
+        "verify"
+      ],
+      "change": "adapt",
+      "slice": "S3 S6",
+      "status": "pending",
+      "journeys": [
+        "J2",
+        "J3",
+        "J6"
+      ],
+      "proving_tests": [],
+      "acceptance": "Manage org/team and adopt identity are separate; no email record or SMTP claim implementation."
+    },
+    {
+      "id": "CLI.RECONNECT",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/init_connect.go",
+        "cli/go/cmd/aw/init.go"
+      ],
+      "operations": [
+        "verify"
+      ],
+      "change": "adapt",
+      "slice": "S3 S4",
+      "status": "pending",
+      "journeys": [
+        "J6",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Reuse/import never mint ancestry or silently re-parent."
+    },
+    {
+      "id": "CLI.ROTATE.ID",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/id_rotate_key.go"
+      ],
+      "operations": [
+        "sign",
+        "register"
+      ],
+      "change": "adapt",
+      "slice": "S3",
+      "status": "pending",
+      "journeys": [
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "Stable ID/kind/parent; registered children retain issuer witness, local children re-sign on next contact with issuance provenance."
+    },
+    {
+      "id": "CLI.ROTATE.TEAM",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/id_team_reissue_cert.go"
+      ],
+      "operations": [
+        "sign",
+        "register"
+      ],
+      "change": "keep",
+      "slice": "S3",
+      "status": "pending",
+      "journeys": [
+        "J8",
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "Membership rotation remains its own operation; ID re-parent does not churn unchanged member bindings."
+    },
+    {
+      "id": "CLI.VERIFY.TEAM",
+      "repo": "aweb",
+      "files": [
+        "cli/go/awid/certificate.go",
+        "cli/go/awid/registry_team.go"
+      ],
+      "operations": [
+        "verify"
+      ],
+      "change": "adapt",
+      "slice": "S4",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Preserve ordinary member proof and bind adjacent chain to the same key/DID."
+    },
+    {
+      "id": "CLI.VERIFY.MESSAGE",
+      "repo": "aweb",
+      "files": [
+        "cli/go/awid/signing.go",
+        "cli/go/awid/mail.go",
+        "cli/go/awid/chat.go"
+      ],
+      "sites": [
+        {
+          "file": "cli/go/awid/signing.go",
+          "symbol": "VerifyMessage"
+        },
+        {
+          "file": "cli/go/awid/signing.go",
+          "symbol": "VerifySignedPayload"
+        },
+        {
+          "file": "cli/go/awid/mail.go",
+          "symbol": "(*Client).normalizeInboxResponse"
+        },
+        {
+          "file": "cli/go/awid/chat.go",
+          "symbol": "(*Client).ChatHistory"
+        }
+      ],
+      "operations": [
+        "verify"
+      ],
+      "change": "adapt",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J4",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Preserve released message-signature and sender-binding behavior; verify adjacent identity-chain metadata against the authenticated mail/chat author. Shared strict-profile changes follow the aweb-acmz ruling, not team-certificate verification."
+    },
+    {
+      "id": "CLI.WHO",
+      "repo": "aweb",
+      "files": [],
+      "operations": [
+        "verify"
+      ],
+      "change": "add",
+      "slice": "S3",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J4",
+        "J5",
+        "J6",
+        "J7",
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "Fetch through production cache, nearest human/no human/unknown/unavailable and distinct refusal reasons; owner supplies final path."
+    },
+    {
+      "id": "SERVER.CONNECT",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/routes/connect.py"
+      ],
+      "operations": [
+        "create",
+        "register",
+        "verify"
+      ],
+      "change": "adapt",
+      "slice": "S4",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J2",
+        "J3",
+        "J6",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Birth versus projection/reuse; verify/project public evidence, never mint a new origin on reconnect."
+    },
+    {
+      "id": "SERVER.AUTH.TEAM",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/team_auth_deps.py"
+      ],
+      "operations": [
+        "verify"
+      ],
+      "change": "adapt",
+      "slice": "S4",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J5",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Same authenticated subject/key as membership; no enrolled revocation bypass by omission."
+    },
+    {
+      "id": "SERVER.AUTH.IDENTITY",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/identity_auth_deps.py"
+      ],
+      "operations": [
+        "verify"
+      ],
+      "change": "adapt",
+      "slice": "S4",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J5",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Carrier cannot switch auth lane or supply missing membership."
+    },
+    {
+      "id": "SERVER.AUTH.GRANT",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/identity_grant_auth.py",
+        "server/src/aweb/routes/identity_grants.py"
+      ],
+      "operations": [
+        "sign",
+        "verify"
+      ],
+      "change": "adapt",
+      "slice": "S4",
+      "status": "pending",
+      "journeys": [
+        "J4",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Chain belongs to grant SUBJECT, never session key; granting is not a new birth."
+    },
+    {
+      "id": "SERVER.AUTH.BINDING",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/identity_binding.py"
+      ],
+      "operations": [
+        "verify"
+      ],
+      "change": "adapt",
+      "slice": "S4",
+      "status": "pending",
+      "journeys": [
+        "J5",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Enrolled omission in the existing stable-ID resolution; preserve its independent 60-second binding rule."
+    },
+    {
+      "id": "SERVER.MAIL.CHAT",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/messaging/messages.py"
+      ],
+      "operations": [
+        "present",
+        "verify"
+      ],
+      "change": "adapt",
+      "slice": "S4",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J4",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Carry adjacent author chain without changing signed or E2EE payload bytes; same true author binding."
+    },
+    {
+      "id": "SERVER.TASKS",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/coordination/routes/tasks.py"
+      ],
+      "operations": [
+        "present",
+        "verify"
+      ],
+      "change": "adapt",
+      "slice": "S4",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J4",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Task principal and adjacent identity proof remain bound; no per-action snapshots."
+    },
+    {
+      "id": "SERVER.FEDERATION",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/federation/envelope.py"
+      ],
+      "operations": [
+        "present",
+        "verify"
+      ],
+      "change": "adapt",
+      "slice": "S4",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Bind author, not relay; old strict wrappers remain accepted."
+    },
+    {
+      "id": "SERVER.ROUTING.KIND",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/messaging/participants.py",
+        "server/src/aweb/routes/chat.py",
+        "server/src/aweb/routes/dashboard.py"
+      ],
+      "operations": [
+        "verify"
+      ],
+      "change": "adapt",
+      "slice": "S4",
+      "status": "pending",
+      "journeys": [
+        "J2",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Verified kind drives new routing; legacy dashboard-human route survives without treating a label as proof."
+    },
+    {
+      "id": "NAAPP.AUTH.TEAM",
+      "repo": "aweb",
+      "files": [
+        "naapp-lib/src/aweb_naapp/runtime/team_auth.py"
+      ],
+      "operations": [
+        "verify"
+      ],
+      "change": "adapt",
+      "slice": "S4",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J5",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Shared verifier and production cached client; keep ordinary membership and app policy separate."
+    },
+    {
+      "id": "NAAPP.HOOKS.VERIFY",
+      "repo": "aweb",
+      "files": [
+        "naapp-lib/src/aweb_naapp/hooks/delivery.py"
+      ],
+      "operations": [
+        "present",
+        "verify"
+      ],
+      "change": "adapt",
+      "slice": "S4",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J4",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Client producer chain binds authenticated producer; service/app signing authority stays distinct."
+    },
+    {
+      "id": "GO.HOOKS.VERIFY",
+      "repo": "aweb",
+      "files": [
+        "cli/go/hookevent/delivery.go"
+      ],
+      "operations": [
+        "present",
+        "verify"
+      ],
+      "change": "adapt",
+      "slice": "S4",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J4",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Same producer proof/binding and refusal dispositions as Python."
+    },
+    {
+      "id": "NAAPP.OWNER.B3",
+      "repo": "aweb",
+      "files": [
+        "naapp-lib/src/aweb_naapp/hooks/owner_act.py"
+      ],
+      "operations": [
+        "sign",
+        "verify"
+      ],
+      "change": "keep",
+      "slice": "S4",
+      "status": "pending",
+      "journeys": [
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Controller-signed BYOT owner acts and B3 contacts/passkeys need no human ID."
+    },
+    {
+      "id": "TS.REQUESTS",
+      "repo": "aweb",
+      "files": [
+        "channel-core/src/api/client.ts"
+      ],
+      "operations": [
+        "sign",
+        "present"
+      ],
+      "change": "adapt",
+      "slice": "S4",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J4",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Present bounded optional chain next to existing subject/team/grant authentication."
+    },
+    {
+      "id": "TS.MESSAGE.SIGNATURE",
+      "repo": "aweb",
+      "files": [
+        "channel-core/src/identity/signing.ts",
+        "channel-core/src/identity/certificate.ts"
+      ],
+      "operations": [
+        "verify"
+      ],
+      "change": "adapt",
+      "slice": "S4",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J4",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Keep existing signature families; new ID signature profile must not silently narrow released message/certificate acceptance."
+    },
+    {
+      "id": "TS.MAIL.CHAT",
+      "repo": "aweb",
+      "files": [
+        "channel-core/src/api/mail.ts",
+        "channel-core/src/api/chat.ts"
+      ],
+      "operations": [
+        "present",
+        "verify"
+      ],
+      "change": "adapt",
+      "slice": "S4",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J4",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Verify adjacent chain against actual author after ordinary proof."
+    },
+    {
+      "id": "TS.E2EE",
+      "repo": "aweb",
+      "files": [
+        "channel-core/src/identity/encrypted.ts",
+        "channel-core/src/channel.ts"
+      ],
+      "operations": [
+        "verify"
+      ],
+      "change": "adapt",
+      "slice": "S4",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J4",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Preserve encrypted bytes; bind verified decrypted author, not relay metadata."
+    },
+    {
+      "id": "CHANNEL.GENERATED.RUNNER",
+      "repo": "aweb",
+      "files": [
+        "cli/go/wake/channel_core_runner_bundle.mjs"
+      ],
+      "operations": [
+        "present",
+        "verify"
+      ],
+      "change": "adapt",
+      "slice": "S4",
+      "status": "pending",
+      "journeys": [
+        "J4",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Generated from channel-core; rebuild and test published bundle, never hand-maintain another verifier."
+    },
+    {
+      "id": "OATS.SPAWN",
+      "repo": "oats-aweb",
+      "files": [
+        "oats-package/capabilities/oats-aweb/bin/oats-aweb.mjs"
+      ],
+      "operations": [
+        "create",
+        "sign"
+      ],
+      "change": "adapt",
+      "slice": "S5",
+      "status": "pending",
+      "journeys": [
+        "J1",
+        "J4"
+      ],
+      "proving_tests": [],
+      "acceptance": "Actual parent signs coordinator/seat/sub-seat; deployment team root is not automatically the identity parent."
+    },
+    {
+      "id": "OATS.RESIDENT",
+      "repo": "oats-aweb",
+      "files": [
+        "oats-package/capabilities/oats-aweb/lib/resident.mjs"
+      ],
+      "operations": [
+        "create",
+        "sign"
+      ],
+      "change": "adapt",
+      "slice": "S5",
+      "status": "pending",
+      "journeys": [
+        "J3",
+        "J4"
+      ],
+      "proving_tests": [],
+      "acceptance": "Unattended owner-ID to resident link; no human gesture per owned spawn."
+    },
+    {
+      "id": "OATS.GRANT",
+      "repo": "oats-aweb",
+      "files": [
+        "oats-package/capabilities/oats-aweb/bin/oats-aweb.mjs"
+      ],
+      "operations": [
+        "present",
+        "verify"
+      ],
+      "change": "adapt",
+      "slice": "S5",
+      "status": "pending",
+      "journeys": [
+        "J4",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Resident grant carries subject chain; no fresh identity or child for the session key."
+    },
+    {
+      "id": "OATS.PARENT.METADATA",
+      "repo": "oats",
+      "files": [
+        "lib/core.mjs"
+      ],
+      "operations": [
+        "create"
+      ],
+      "change": "adapt",
+      "slice": "S5",
+      "status": "pending",
+      "journeys": [
+        "J4"
+      ],
+      "proving_tests": [],
+      "acceptance": "Unsigned logical parent metadata is not authority; provider binds the actual signed parent."
+    },
+    {
+      "id": "CLOUD.CUSTODY",
+      "repo": "ac",
+      "files": [],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S6",
+      "status": "pending",
+      "journeys": [
+        "J2",
+        "J3",
+        "J5",
+        "J6",
+        "J8",
+        "J9",
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "One checked user+domain human key/ID, session/exact-invitation signer; BYOT root never in Cloud. Cloud owner supplies the exact per-site paths and proving tests before conversion."
+    },
+    {
+      "id": "CLOUD.DASHBOARD.CREATE",
+      "repo": "ac",
+      "files": [],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S6",
+      "status": "pending",
+      "journeys": [
+        "J2",
+        "J3",
+        "J5",
+        "J6",
+        "J8",
+        "J9",
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "Birth signed by authenticated human; new teams reuse that domain human. Cloud owner supplies the exact per-site paths and proving tests before conversion."
+    },
+    {
+      "id": "CLOUD.DEVICE.CREATE",
+      "repo": "ac",
+      "files": [],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S6",
+      "status": "pending",
+      "journeys": [
+        "J2",
+        "J3",
+        "J5",
+        "J6",
+        "J8",
+        "J9",
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "Device login maps to a verified human; not merely an email label. Cloud owner supplies the exact per-site paths and proving tests before conversion."
+    },
+    {
+      "id": "CLOUD.APIKEY.INIT",
+      "repo": "ac",
+      "files": [],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S6",
+      "status": "pending",
+      "journeys": [
+        "J2",
+        "J3",
+        "J5",
+        "J6",
+        "J8",
+        "J9",
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "Bound versus shared key, nullable user, explicit evidenced parent or unknown/refusal. Cloud owner supplies the exact per-site paths and proving tests before conversion."
+    },
+    {
+      "id": "CLOUD.OWNER.RESIDENT",
+      "repo": "ac",
+      "files": [],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S6",
+      "status": "pending",
+      "journeys": [
+        "J2",
+        "J3",
+        "J5",
+        "J6",
+        "J8",
+        "J9",
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "Actual authorized owner-agent parent, including differing owner/target teams. Cloud owner supplies the exact per-site paths and proving tests before conversion."
+    },
+    {
+      "id": "CLOUD.MCP.NEW",
+      "repo": "ac",
+      "files": [],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S6",
+      "status": "pending",
+      "journeys": [
+        "J2",
+        "J3",
+        "J5",
+        "J6",
+        "J8",
+        "J9",
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "New agent birth has actual parent. Cloud owner supplies the exact per-site paths and proving tests before conversion."
+    },
+    {
+      "id": "CLOUD.MCP.REUSE",
+      "repo": "ac",
+      "files": [],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S6",
+      "status": "pending",
+      "journeys": [
+        "J2",
+        "J3",
+        "J5",
+        "J6",
+        "J8",
+        "J9",
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "Existing-agent binding is reuse; chain is not proof of custody. Cloud owner supplies the exact per-site paths and proving tests before conversion."
+    },
+    {
+      "id": "CLOUD.BOOTSTRAP",
+      "repo": "ac",
+      "files": [],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S6",
+      "status": "pending",
+      "journeys": [
+        "J2",
+        "J3",
+        "J5",
+        "J6",
+        "J8",
+        "J9",
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "Hosted/gateway/embedded/service and builder/no-user paths covered individually by S6 owner. Cloud owner supplies the exact per-site paths and proving tests before conversion."
+    },
+    {
+      "id": "CLOUD.REPLACEMENT",
+      "repo": "ac",
+      "files": [],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S6",
+      "status": "pending",
+      "journeys": [
+        "J2",
+        "J3",
+        "J5",
+        "J6",
+        "J8",
+        "J9",
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "Actual authorized parent, same custody/refusal boundaries. Cloud owner supplies the exact per-site paths and proving tests before conversion."
+    },
+    {
+      "id": "CLOUD.SPAWN.INVITE",
+      "repo": "ac",
+      "files": [],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S6",
+      "status": "pending",
+      "journeys": [
+        "J2",
+        "J3",
+        "J5",
+        "J6",
+        "J8",
+        "J9",
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "Inherited issuer and exact pending child; no new login on spawn. Cloud owner supplies the exact per-site paths and proving tests before conversion."
+    },
+    {
+      "id": "CLOUD.BYOT.CONNECT",
+      "repo": "ac",
+      "files": [],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S6",
+      "status": "pending",
+      "journeys": [
+        "J2",
+        "J3",
+        "J5",
+        "J6",
+        "J8",
+        "J9",
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "Verify incoming evidence, preserve reuse; no guessed owner. Cloud owner supplies the exact per-site paths and proving tests before conversion."
+    },
+    {
+      "id": "CLOUD.SNAPSHOT.IMPORT",
+      "repo": "ac",
+      "files": [],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S6",
+      "status": "pending",
+      "journeys": [
+        "J2",
+        "J3",
+        "J5",
+        "J6",
+        "J8",
+        "J9",
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "Restore evidence/unknown; never a new birth. Cloud owner supplies the exact per-site paths and proving tests before conversion."
+    },
+    {
+      "id": "CLOUD.ORG.INVITE",
+      "repo": "ac",
+      "files": [],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S6",
+      "status": "pending",
+      "journeys": [
+        "J2",
+        "J3",
+        "J5",
+        "J6",
+        "J8",
+        "J9",
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "Token, verified-email and immediate existing-user paths; membership may complete while identity pending. Cloud owner supplies the exact per-site paths and proving tests before conversion."
+    },
+    {
+      "id": "CLOUD.MANAGE.ADOPT",
+      "repo": "ac",
+      "files": [],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S6",
+      "status": "pending",
+      "journeys": [
+        "J2",
+        "J3",
+        "J5",
+        "J6",
+        "J8",
+        "J9",
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "Org/team management separate from explicit adoption. Cloud owner supplies the exact per-site paths and proving tests before conversion."
+    },
+    {
+      "id": "CLOUD.DASHBOARD.ACTOR",
+      "repo": "ac",
+      "files": [],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S6",
+      "status": "pending",
+      "journeys": [
+        "J2",
+        "J3",
+        "J5",
+        "J6",
+        "J8",
+        "J9",
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "Legacy team actors remain projections; do not rewrite old signatures or encrypted history. Cloud owner supplies the exact per-site paths and proving tests before conversion."
+    },
+    {
+      "id": "CLOUD.OFFBOARD",
+      "repo": "ac",
+      "files": [],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S6",
+      "status": "pending",
+      "journeys": [
+        "J2",
+        "J3",
+        "J5",
+        "J6",
+        "J8",
+        "J9",
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "Membership removal separate from domain-ID revoke/re-parent, current session/roles and deployment-specific signer. Cloud owner supplies the exact per-site paths and proving tests before conversion."
+    },
+    {
+      "id": "CLOUD.OWNER.CONTROL",
+      "repo": "ac",
+      "files": [],
+      "operations": [
+        "create",
+        "sign",
+        "register",
+        "present",
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S6",
+      "status": "pending",
+      "journeys": [
+        "J2",
+        "J3",
+        "J5",
+        "J6",
+        "J8",
+        "J9",
+        "J10"
+      ],
+      "proving_tests": [],
+      "acceptance": "Full C2-D predicate with current verified human, mapping, membership/session/resource checks; no admin/API-key substitution. Cloud owner supplies the exact per-site paths and proving tests before conversion."
+    }
+  ],
+  "guard_checkpoint": {
+    "slice": "S4/S8b",
+    "status": "planned",
+    "acceptance": [
+      "Inventory each call site as {file, symbol}; maintain one primitive identity-API list covering Ed25519 sign/verify, key generation, did:key construction, certificate parse/verify and registry register/revoke. Include VerifyKey.verify, crypto/ed25519.Verify, noble ed25519.verify and Ed25519PublicKey.verify. Fail any primitive call in an unlisted function, or an id-family verify bypassing the shared verifier/strict profile; a listed file is not a blanket exemption.",
+      "Name proving test IDs: pytest nodes, Go -run patterns, or vitest case names, not only test files.",
+      "Add a versioned schema and CI checker. The status ladder is pending|candidate|landed|released; candidate and later states require proving_tests, candidate requires candidate_head, landed requires landed_sha, released requires the tag; kept requires its relationship test. For repo=aweb, files and test IDs exist at HEAD; candidate_head is an ancestor when landed. The TS candidate paths become locally required when its branch joins the train.",
+      "Require ed25519_profile=strict|legacy per verify row, established from its exact call sites. Track aweb-acmz in this same inventory; preserve released-family rulings and split mixed rows rather than guessing a profile.",
+      "For non-aweb repos, pin an exact SHA and run an equivalent repository guard, or have the release gate read that repo own guarded inventory. Missing external evidence fails qualification.",
+      "Keep fleet-under-Juan as a separate release step in release_requirements, proved by verified aw who chains for the fleet, not a source-inventory row."
+    ]
+  }
+}

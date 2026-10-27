@@ -268,6 +268,7 @@ func VerifyIDCertificate(signed map[string]any, issuer string) error {
 	if !idCertificatePrimePoint(b[:32]) {
 		return idCertificateRefusal("invalid_signature")
 	}
+	// Redundant with crypto/ed25519; kept to pin the profile.
 	if _, err := new(edwards25519.Scalar).SetCanonicalBytes(b[32:]); err != nil {
 		return idCertificateRefusal("invalid_signature")
 	}
