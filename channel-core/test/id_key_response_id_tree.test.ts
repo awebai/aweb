@@ -12,6 +12,12 @@ describe("key response id_tree enrollment parse", () => {
     expect(new Set(cases.map((c) => c.name)).size).toBe(19);
   });
 
+  test("N64 a whole response that is not an object is malformed", () => {
+    for (const response of [null, "unknown", 7, [], [{ id_tree: { enrolled: false } }]]) {
+      expect(keyResponseIdTree(response)).toEqual({ state: "malformed", domain: null });
+    }
+  });
+
   for (const c of cases) {
     test(c.name, () => {
       expect(keyResponseIdTree(c.key_response)).toEqual(c.expected_parse);
