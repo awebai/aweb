@@ -667,6 +667,21 @@ async def delete_namespace(
         if active_cert is not None:
             raise HTTPException(status_code=409, detail="Namespace has active certificates")
 
+        # Registered identities verify against the epoch valid at their
+        # registration, so retiring the root under them would leave a tree
+        # whose old members verify while new root children cannot.
+        live_identity = await tx.fetch_one(
+            """
+            SELECT id
+            FROM {{tables.id_identities}}
+            WHERE domain = $1 AND revoked_at IS NULL
+            LIMIT 1
+            """,
+            domain,
+        )
+        if live_identity is not None:
+            raise HTTPException(status_code=409, detail="Namespace has registered identities")
+
         now = datetime.now(timezone.utc)
         await tx.execute(
             """

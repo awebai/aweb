@@ -8,7 +8,7 @@ bypass and the reserved local domain are recorded but never exact.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -275,3 +275,50 @@ async def test_deletion_retires_the_epoch_and_history_spans_reregistration(
     first, second = await _epochs(awid_db_infra)
     assert (first["seq"], first["retired_at"]) == (1, deleted_at)
     assert (second["seq"], second["did_key"], second["retired_at"]) == (2, did, None)
+
+
+async def _registered_identity(awid_db_infra, id_, *, revoked=False, domain=DOMAIN):
+    db = awid_db_infra.get_manager("aweb")
+    at = datetime(2026, 10, 26, tzinfo=timezone.utc)
+    await db.execute(
+        """
+        INSERT INTO {{tables.id_identities}}
+            (id, domain, kind, first_registered_at, revoked_at, effective_from, revoked_by)
+        VALUES ($1, $2, 'human', $3, $4, $4, $5)
+        """,
+        id_, domain, at, at if revoked else None, "did:key:z6Mk" if revoked else None,
+    )
+
+
+async def _delete(client, key, did):
+    headers = _sign(key, did, domain=DOMAIN, operation="delete_namespace")
+    return await client.request("DELETE", f"/v1/namespaces/{DOMAIN}", headers=headers)
+
+
+@pytest.mark.asyncio
+async def test_deletion_refuses_while_a_registered_identity_is_live(clocked_client, awid_db_infra):
+    key, did = _keypair()
+    _dns(clocked_client, did)
+    await _register(clocked_client, key, did)
+    await _registered_identity(awid_db_infra, "did:aw:revoked", revoked=True)
+    await _registered_identity(awid_db_infra, "did:aw:live")
+    await _registered_identity(awid_db_infra, "did:aw:elsewhere", domain="other.example")
+
+    resp = await _delete(clocked_client, key, did)
+
+    assert resp.status_code == 409, resp.text
+    [epoch] = await _epochs(awid_db_infra)
+    assert epoch["retired_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_deletion_proceeds_once_every_registered_identity_is_revoked(clocked_client, awid_db_infra):
+    key, did = _keypair()
+    _dns(clocked_client, did)
+    await _register(clocked_client, key, did)
+    await _registered_identity(awid_db_infra, "did:aw:revoked", revoked=True)
+    await _registered_identity(awid_db_infra, "did:aw:elsewhere", domain="other.example")
+
+    resp = await _delete(clocked_client, key, did)
+
+    assert resp.status_code == 200, resp.text
