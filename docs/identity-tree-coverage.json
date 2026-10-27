@@ -46,7 +46,8 @@
         "awid/tests/test_id_certificate_vectors.py"
       ],
       "acceptance": "Frozen certificate bytes, raw refusals and strict Ed25519 probes; this is not ancestry verification.",
-      "candidate_head": "c5ec4e87feeb11bdc0c074826a0cdf2cf58b04de"
+      "candidate_head": "c5ec4e87feeb11bdc0c074826a0cdf2cf58b04de",
+      "ed25519_profile": "strict"
     },
     {
       "id": "S1.GO.CODEC",
@@ -71,7 +72,8 @@
         "cli/go/internal/conformance/id_certificates_test.go"
       ],
       "acceptance": "Same root vectors, namespace binding and strict point/scalar checks; this is not ancestry verification.",
-      "candidate_head": "c5ec4e87feeb11bdc0c074826a0cdf2cf58b04de"
+      "candidate_head": "c5ec4e87feeb11bdc0c074826a0cdf2cf58b04de",
+      "ed25519_profile": "strict"
     },
     {
       "id": "S1.TS.VERIFIER",
@@ -100,7 +102,8 @@
         "channel-core/test/id_certificates_disposition.test.ts"
       ],
       "acceptance": "All frozen cases and refusal dispositions; owner supplies exact proving test paths after review.",
-      "candidate_head": "3c9c2c0d67815764e4ea1b0bfe0d9cb8fdf8abab"
+      "candidate_head": "63ea94aa7c1e6d84857325f3ec05fc28c40f96ab",
+      "ed25519_profile": "strict"
     },
     {
       "id": "S1.PY.ANCESTRY",
@@ -125,7 +128,8 @@
         "awid/tests/test_id_chain_vectors.py"
       ],
       "acceptance": "Whole chain with independent issuer/subject keys, R1-R3, witnessed sequence, replacement cutoff, cascade and request disposition.",
-      "candidate_head": "4132141f0baf98d13ea5a8612c1671c418041414"
+      "candidate_head": "4132141f0baf98d13ea5a8612c1671c418041414",
+      "ed25519_profile": "strict"
     },
     {
       "id": "S1.GO.ANCESTRY",
@@ -150,7 +154,8 @@
         "cli/go/internal/conformance/id_chain_test.go"
       ],
       "acceptance": "Whole chain with independent issuer/subject keys, R1-R3, witnessed sequence, replacement cutoff, cascade and request disposition.",
-      "candidate_head": "4132141f0baf98d13ea5a8612c1671c418041414"
+      "candidate_head": "4132141f0baf98d13ea5a8612c1671c418041414",
+      "ed25519_profile": "strict"
     },
     {
       "id": "AWID.NAMESPACE.DNS",
@@ -854,6 +859,47 @@
       ],
       "proving_tests": [],
       "acceptance": "Preserve ordinary member proof and bind adjacent chain to the same key/DID."
+    },
+    {
+      "id": "CLI.VERIFY.MESSAGE",
+      "repo": "aweb",
+      "files": [
+        "cli/go/awid/signing.go",
+        "cli/go/awid/mail.go",
+        "cli/go/awid/chat.go"
+      ],
+      "sites": [
+        {
+          "file": "cli/go/awid/signing.go",
+          "symbol": "VerifyMessage"
+        },
+        {
+          "file": "cli/go/awid/signing.go",
+          "symbol": "VerifySignedPayload"
+        },
+        {
+          "file": "cli/go/awid/mail.go",
+          "symbol": "(*Client).normalizeInboxResponse"
+        },
+        {
+          "file": "cli/go/awid/chat.go",
+          "symbol": "(*Client).ChatHistory"
+        }
+      ],
+      "operations": [
+        "verify"
+      ],
+      "change": "adapt",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J4",
+        "J8"
+      ],
+      "proving_tests": [],
+      "acceptance": "Preserve released message-signature and sender-binding behavior; verify adjacent identity-chain metadata against the authenticated mail/chat author. Shared strict-profile changes follow the aweb-acmz ruling, not team-certificate verification."
     },
     {
       "id": "CLI.WHO",
@@ -1769,5 +1815,17 @@
       "proving_tests": [],
       "acceptance": "Full C2-D predicate with current verified human, mapping, membership/session/resource checks; no admin/API-key substitution. Cloud owner supplies the exact per-site paths and proving tests before conversion."
     }
-  ]
+  ],
+  "guard_checkpoint": {
+    "slice": "S4/S8b",
+    "status": "planned",
+    "acceptance": [
+      "Inventory each call site as {file, symbol}; maintain one primitive identity-API list covering Ed25519 sign/verify, key generation, did:key construction, certificate parse/verify and registry register/revoke. Include VerifyKey.verify, crypto/ed25519.Verify, noble ed25519.verify and Ed25519PublicKey.verify. Fail any primitive call in an unlisted function, or an id-family verify bypassing the shared verifier/strict profile; a listed file is not a blanket exemption.",
+      "Name proving test IDs: pytest nodes, Go -run patterns, or vitest case names, not only test files.",
+      "Add a versioned schema and CI checker. The status ladder is pending|candidate|landed|released; candidate and later states require proving_tests, candidate requires candidate_head, landed requires landed_sha, released requires the tag; kept requires its relationship test. For repo=aweb, files and test IDs exist at HEAD; candidate_head is an ancestor when landed. The TS candidate paths become locally required when its branch joins the train.",
+      "Require ed25519_profile=strict|legacy per verify row, established from its exact call sites. Track aweb-acmz in this same inventory; preserve released-family rulings and split mixed rows rather than guessing a profile.",
+      "For non-aweb repos, pin an exact SHA and run an equivalent repository guard, or have the release gate read that repo own guarded inventory. Missing external evidence fails qualification.",
+      "Keep fleet-under-Juan as a separate release step in release_requirements, proved by verified aw who chains for the fleet, not a source-inventory row."
+    ]
+  }
 }

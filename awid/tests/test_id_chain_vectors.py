@@ -51,7 +51,7 @@ def test_ancestry_does_not_reuse_decode_time_claimed_issuer_verdict():
     verify_id_certificate(signed, issuer_key=signed['certificate']['issuer_key'])
     assert verify_id_chain(bundle, subject=subject, evidence=evidence, domain=domain)['reason'] == 'stale_issuer_key'
 
-@pytest.mark.parametrize('mutation', ['extra', 'duplicate', 'missing', 'wrong-domain', 'over-limit'])
+@pytest.mark.parametrize('mutation', ['extra', 'duplicate', 'missing', 'wrong-domain', 'over-limit', 'revocation-after-witness'])
 def test_invalid_status_never_confers_authority(mutation):
     bundle, subject, evidence, domain = inputs(V['verification_cases'][0])
     s = evidence.status
@@ -60,15 +60,21 @@ def test_invalid_status_never_confers_authority(mutation):
     if mutation == 'missing': del s['missing']
     if mutation == 'wrong-domain': s['domain'] = 'attacker.example'
     if mutation == 'over-limit': s['missing'] = ['x' * 131072]
+    if mutation == 'revocation-after-witness':
+        s['identities'][0]['revocation'] = {
+            'revoked_at': '2026-10-26T00:10:00.000000Z',
+            'effective_from': '2026-10-26T00:11:00.000000Z',
+        }
     assert verify_id_chain(bundle, subject=subject, evidence=evidence, domain=domain)['reason'] == 'evidence_unavailable'
 
 
 def test_final_vector_names_include_the_isolated_authority_boundaries():
     names = [case['name'] for case in V['verification_cases']]
-    assert len(names) == len(set(names)) == 124
+    assert len(names) == len(set(names)) == 125
     assert {
         'namespace-overlapping-replaced-successor-unavailable',
         'namespace-unretired-predecessor-unavailable',
         'root-replacement-cutoff-in-historical-human-parent',
         'namespace-epoch-at-retirement-unavailable',
+        'cached-status-age-61-without-failed-refresh',
     } <= set(names)

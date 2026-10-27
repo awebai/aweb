@@ -49,8 +49,8 @@ func loadIDChainVectors(t *testing.T) idChainVectors {
 
 func TestIDChainFinalVectors(t *testing.T) {
 	v := loadIDChainVectors(t)
-	if len(v.Cases) != 124 {
-		t.Fatalf("case count=%d want124", len(v.Cases))
+	if len(v.Cases) != 125 {
+		t.Fatalf("case count=%d want125", len(v.Cases))
 	}
 	names := map[string]bool{}
 	for _, c := range v.Cases {
@@ -59,7 +59,7 @@ func TestIDChainFinalVectors(t *testing.T) {
 		}
 		names[c.Name] = true
 	}
-	for _, name := range []string{"namespace-overlapping-replaced-successor-unavailable", "namespace-unretired-predecessor-unavailable", "root-replacement-cutoff-in-historical-human-parent", "namespace-epoch-at-retirement-unavailable"} {
+	for _, name := range []string{"namespace-overlapping-replaced-successor-unavailable", "namespace-unretired-predecessor-unavailable", "root-replacement-cutoff-in-historical-human-parent", "namespace-epoch-at-retirement-unavailable", "cached-status-age-61-without-failed-refresh"} {
 		if !names[name] {
 			t.Fatal("missing required boundary", name)
 		}
@@ -128,7 +128,7 @@ func TestIDChainFinalVectors(t *testing.T) {
 }
 
 func TestIDChainInvalidStatusIsUnavailable(t *testing.T) {
-	for _, mutation := range []string{"extra", "duplicate", "missing", "wrong-domain", "over-limit"} {
+	for _, mutation := range []string{"extra", "duplicate", "missing", "wrong-domain", "over-limit", "revocation-after-witness"} {
 		t.Run(mutation, func(t *testing.T) {
 			v := loadIDChainVectors(t)
 			c := v.Cases[0]
@@ -155,6 +155,9 @@ func TestIDChainInvalidStatusIsUnavailable(t *testing.T) {
 				status["domain"] = "attacker.example"
 			case "over-limit":
 				status["missing"] = []any{strings.Repeat("x", 131072)}
+			case "revocation-after-witness":
+				status["identities"].([]any)[0].(map[string]any)["revocation"] = map[string]any{"revoked_at": "2026-10-26T00:10:00.000000Z", "effective_from": "2026-10-26T00:11:00.000000Z"}
+
 			}
 			if got := awid.VerifyIDChain(bundle, subject, evidence, domain); got.Reason != "evidence_unavailable" || got.IdentityValid != nil {
 				t.Fatalf("got %+v", got)
