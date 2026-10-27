@@ -9,7 +9,7 @@ from fastapi import HTTPException
 
 from awid.dns_verify import DnsVerificationError, DomainVerifier
 from awid_service.id_tree_clock import Clock
-from awid_service.namespace_epochs import DNS_EXACT, record_namespace_controller
+from awid_service.namespace_epochs import dns_establishment, record_namespace_controller
 
 logger = logging.getLogger(__name__)
 
@@ -96,14 +96,13 @@ async def reverify_namespace_row(
         )
         if row is None:
             raise HTTPException(status_code=404, detail="Namespace not found")
-        if not dns_authority.inherited:
-            await record_namespace_controller(
-                tx,
-                domain=domain,
-                did_key=new_controller_did,
-                established_by=DNS_EXACT,
-                clock=clock,
-            )
+        await record_namespace_controller(
+            tx,
+            domain=domain,
+            did_key=new_controller_did,
+            established_by=dns_establishment(dns_authority),
+            clock=clock,
+        )
 
     if new_controller_did == old_controller_did:
         return NamespaceReverifyResult(

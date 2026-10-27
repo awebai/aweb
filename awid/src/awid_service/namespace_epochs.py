@@ -26,16 +26,17 @@ def dns_establishment(authority: DomainAuthority) -> str:
 async def record_namespace_controller(
     tx, *, domain: str, did_key: str, established_by: str, clock: Clock,
 ) -> None:
-    """Open an epoch for ``did_key`` unless the open one already covers it.
+    """Open an epoch for ``did_key`` unless the open one already records it.
 
-    A re-assertion of the open key keeps its epoch, except that exact DNS
-    proof of a key held on weaker evidence opens a new, exact epoch.
+    The open epoch stands only when the same key arrives with the same
+    evidence. Any other evidence for the same key opens a new epoch, so a key
+    that loses its exact DNS proof no longer looks exact-authorized.
     """
     current = await _lock_open_epoch(tx, domain)
     if (
         current is not None
         and current["did_key"] == did_key
-        and (current["established_by"] == DNS_EXACT or established_by != DNS_EXACT)
+        and current["established_by"] == established_by
     ):
         return
     at = serialization_time(clock, await _latest_domain_event(tx, domain))

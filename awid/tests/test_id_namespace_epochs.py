@@ -190,7 +190,7 @@ async def test_non_exact_rotation_closes_the_exact_epoch(clocked_client, awid_db
 
 
 @pytest.mark.asyncio
-async def test_non_exact_reassertion_of_the_same_key_keeps_the_exact_epoch(
+async def test_non_exact_reassertion_of_the_same_key_closes_the_exact_epoch(
     clocked_client, awid_db_infra, monkeypatch,
 ):
     key, did = _keypair()
@@ -198,6 +198,20 @@ async def test_non_exact_reassertion_of_the_same_key_keeps_the_exact_epoch(
     await _register(clocked_client, key, did)
 
     monkeypatch.setenv("AWID_SKIP_DNS_VERIFY", "1")
+    await _rotate(clocked_client, key, did)
+
+    first, second = await _epochs(awid_db_infra)
+    assert (first["established_by"], first["retired_at"] is not None) == ("dns_exact", True)
+    assert (second["did_key"], second["established_by"], second["retired_at"]) == (did, "unverified", None)
+
+
+@pytest.mark.asyncio
+async def test_repeating_the_same_evidence_for_the_same_key_records_nothing(
+    clocked_client, awid_db_infra,
+):
+    key, did = _keypair()
+    _dns(clocked_client, did)
+    await _register(clocked_client, key, did)
     await _rotate(clocked_client, key, did)
 
     [epoch] = await _epochs(awid_db_infra)
@@ -241,18 +255,20 @@ async def test_exact_reverify_to_a_new_key_opens_a_new_epoch(clocked_client, awi
 
 
 @pytest.mark.asyncio
-async def test_inherited_reverify_records_nothing(clocked_client, awid_db_infra, monkeypatch):
+async def test_inherited_reverify_closes_the_exact_epoch_and_keeps_the_controller(
+    clocked_client, awid_db_infra,
+):
     key, did = _keypair()
-    monkeypatch.setenv("AWID_SKIP_DNS_VERIFY", "1")
+    _dns(clocked_client, did)
     await _register(clocked_client, key, did)
-    monkeypatch.delenv("AWID_SKIP_DNS_VERIFY")
 
     _, ancestor_did = _keypair()
     _dns(clocked_client, ancestor_did, inherited=True)
     await _reverify(clocked_client)
 
-    [epoch] = await _epochs(awid_db_infra)
-    assert (epoch["did_key"], epoch["established_by"], epoch["retired_at"]) == (did, "unverified", None)
+    first, second = await _epochs(awid_db_infra)
+    assert (first["established_by"], first["retired_at"] is not None) == ("dns_exact", True)
+    assert (second["did_key"], second["established_by"], second["retired_at"]) == (did, "dns_inherited", None)
 
 
 @pytest.mark.asyncio

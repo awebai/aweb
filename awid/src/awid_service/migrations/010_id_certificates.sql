@@ -16,6 +16,9 @@ CREATE TABLE IF NOT EXISTS {{tables.id_identities}} (
     revoked_at          TIMESTAMPTZ,
     effective_from      TIMESTAMPTZ,
     revoked_by          TEXT,
+    -- The composite key lets every revision carry its identity's fixed
+    -- domain and kind (R2) as a foreign key rather than by convention.
+    CONSTRAINT uq_id_identities_id_domain_kind UNIQUE (id, domain, kind),
     CONSTRAINT chk_id_identities_revocation CHECK (
         (revoked_at IS NULL AND effective_from IS NULL AND revoked_by IS NULL)
         OR (revoked_at IS NOT NULL AND effective_from IS NOT NULL
@@ -29,7 +32,7 @@ CREATE TABLE IF NOT EXISTS {{tables.id_identities}} (
 -- version: a namespace epoch seq, or the parent did:aw log seq.
 CREATE TABLE IF NOT EXISTS {{tables.id_certificates}} (
     certificate_id        TEXT PRIMARY KEY,
-    id                    TEXT NOT NULL REFERENCES {{tables.id_identities}}(id),
+    id                    TEXT NOT NULL,
     domain                TEXT NOT NULL,
     parent_kind           TEXT NOT NULL CHECK (parent_kind IN ('namespace', 'identity')),
     parent_id             TEXT NOT NULL,
@@ -41,8 +44,10 @@ CREATE TABLE IF NOT EXISTS {{tables.id_certificates}} (
     invitation_id         UUID,
     registered_at         TIMESTAMPTZ NOT NULL,
     superseded_at         TIMESTAMPTZ,
+    CONSTRAINT fk_id_certificates_identity FOREIGN KEY (id, domain, kind)
+        REFERENCES {{tables.id_identities}}(id, domain, kind),
     CONSTRAINT chk_id_certificates_supersession CHECK (
-        superseded_at IS NULL OR superseded_at >= registered_at
+        superseded_at IS NULL OR superseded_at > registered_at
     )
 );
 
@@ -76,7 +81,7 @@ CREATE TABLE IF NOT EXISTS {{tables.id_namespace_epochs}} (
     retired_at     TIMESTAMPTZ,
     PRIMARY KEY (domain, seq),
     CONSTRAINT chk_id_namespace_epochs_retirement CHECK (
-        retired_at IS NULL OR retired_at >= registered_at
+        retired_at IS NULL OR retired_at > registered_at
     )
 );
 

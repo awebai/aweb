@@ -131,3 +131,29 @@ async def test_a_domain_has_one_open_namespace_epoch_per_sequence(awid_db_infra)
     with pytest.raises(QueryError):
         await _epoch(db, 0, retired_at=T1, domain="other.example")
     await _epoch(db, 1, domain="other.example")
+
+
+@pytest.mark.asyncio
+async def test_a_revision_cannot_be_superseded_at_its_registration_time(awid_db_infra):
+    db = awid_db_infra.get_manager("aweb")
+    await _identity(db, "did:aw:alice")
+    with pytest.raises(QueryError):
+        await _certificate(db, "sha256:aa", "did:aw:alice", superseded_at=T0)
+
+
+@pytest.mark.asyncio
+async def test_an_epoch_cannot_retire_at_its_registration_time(awid_db_infra):
+    db = awid_db_infra.get_manager("aweb")
+    with pytest.raises(QueryError):
+        await _epoch(db, 1, retired_at=T0)
+
+
+@pytest.mark.asyncio
+async def test_a_revision_carries_its_identity_kind_and_domain(awid_db_infra):
+    db = awid_db_infra.get_manager("aweb")
+    await _identity(db, "did:aw:alice", kind="agent")
+    with pytest.raises(QueryError):
+        await _certificate(db, "sha256:aa", "did:aw:alice")
+    await _identity(db, "did:aw:bob", domain="other.example")
+    with pytest.raises(QueryError):
+        await _certificate(db, "sha256:bb", "did:aw:bob")

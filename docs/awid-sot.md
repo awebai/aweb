@@ -228,10 +228,11 @@ POST   /v1/namespaces/{domain}/rotate   Rotate controller key
 DELETE /v1/namespaces/{domain}          Delete (controller auth)
 ```
 
-Every controller change (registration, rotation, reverification to a new key,
-deletion) appends to the domain's `id_namespace_epochs` history at a post-lock
-witness time instead of overwriting the old key's evidence. Each epoch records
-how AWID accepted its key. Only an epoch proven by the exact `_awid.<domain>`
+Every controller change (registration, rotation, reverification, deletion)
+appends to the domain's `id_namespace_epochs` history at a post-lock witness
+time instead of overwriting the old key's evidence. Each epoch records how AWID
+accepted its key; the same key accepted on different evidence opens a new
+epoch, so a key that loses its exact DNS proof no longer looks exact. Only an epoch proven by the exact `_awid.<domain>`
 TXT record is identity-tree root evidence for that domain. An inherited
 ancestor record, a parent-namespace authorization, the skip-DNS bypass and the
 reserved `local` domain are recorded but never exact
