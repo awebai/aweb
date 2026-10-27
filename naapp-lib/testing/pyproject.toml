@@ -1,6 +1,6 @@
 [project]
 name = "aweb-naapp-testing"
-version = "0.5.1rc2"
+version = "0.5.1rc3"
 description = "Test support for naapps on aweb-naapp: real AWID routes on PostgreSQL, a team-auth v2 signer, a software WebAuthn authenticator, a team owner-act signer and a real local SMTP server. Dev-only; never a production dependency."
 license = { text = "MIT" }
 authors = [{ name = "aweb.ai", email = "hello@aweb.ai" }]
@@ -8,9 +8,9 @@ requires-python = ">=3.12"
 dependencies = [
   "aiosmtpd>=1.4.6",
   # Released in lockstep with aweb-naapp, from the same tag and at the same version.
-  "aweb-naapp[hooks,runtime]==0.5.1rc2",
+  "aweb-naapp[hooks,runtime]==0.5.1rc3",
   # The first AWID release with the shared in-process registry fixtures.
-  "awid-service>=0.5.33rc1",
+  "awid-service>=0.5.33rc2",
   "cbor2>=5.6.0",
   "cryptography>=46.0.0",
   "dnspython>=2.7.0",
@@ -20,7 +20,7 @@ dependencies = [
 # The aweb coordination server in-process (aweb.testing), found through a
 # team's AWID record as a naapp finds it. Needs Redis at REDIS_URL.
 server = [
-  "aweb>=1.27.35rc2",
+  "aweb>=1.27.35rc3",
   "pytest-asyncio>=1.2.0",
   "redis>=6.4.0",
 ]
