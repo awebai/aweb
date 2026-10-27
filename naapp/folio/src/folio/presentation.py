@@ -1122,6 +1122,13 @@ def render_editor_page(
       .pane-edit {{ border-right: 0; border-bottom: 1px solid var(--border); }}
     }}
     @media (max-width: 600px) {{
+      :root {{ --bar-h: 104px; }}
+      .bar {{
+        display: grid; grid-template-columns: 1fr auto; grid-template-rows: 1fr 1fr;
+        gap: 4px 12px; padding: 6px 16px;
+      }}
+      .actions {{ grid-column: 1 / -1; margin-left: 0; }}
+      .status {{ flex: 1; }}
       .tabs {{ display: inline-flex; }}
       .ghost-input {{ display: none; }}
       .workspace {{ grid-template-columns: 1fr; grid-template-rows: 1fr; }}

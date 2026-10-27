@@ -43,6 +43,7 @@ async def capture_layout(page, destination):
           if (overflow !== 'visible') containers.push({element: identify(parent), overflow});
         }
         return {element: identify(el), left: rect.left, right: rect.right, width: rect.width,
+          top: rect.top, bottom: rect.bottom, height: rect.height,
           clientWidth: el.clientWidth, scrollWidth: el.scrollWidth,
           display: css.display, overflowX: css.overflowX, containers};
       };
@@ -120,6 +121,9 @@ async def test_editor_chrome_stays_within_viewport_after_prose_and_rows(authors,
                     await expect(page.locator("#save")).to_have_text("Saved")
                     report = await capture_layout(page, output)
                     assert report["documentWidth"] <= width, json.dumps(report, indent=2)
+                    bar = await page.locator(".bar").bounding_box()
+                    pane = await page.locator("#pane-edit").bounding_box()
+                    assert bar["y"] + bar["height"] <= pane["y"] + 0.5
                     # The existing split view has no tabs on desktop; phone tabs
                     # and both save/discard controls must remain in the viewport.
                     for control in (page.locator("#discard"), page.locator("#save")):
