@@ -43,11 +43,55 @@
         "J8"
       ],
       "proving_tests": [
-        "awid/tests/test_id_certificate_vectors.py"
+        "awid/tests/test_id_certificate_vectors.py::test_certificate_signing_bytes_and_digest_are_frozen",
+        "awid/tests/test_id_certificate_vectors.py::test_chain_header_round_trip_is_the_frozen_canonical_header",
+        "awid/tests/test_id_certificate_vectors.py::test_raw_header_refusals",
+        "awid/tests/test_id_certificate_vectors.py::test_human_cannot_be_a_local_did_key_even_with_a_valid_signature",
+        "awid/tests/test_id_certificate_vectors.py::test_certificate_signature_checks_the_independent_issuer_key",
+        "awid/tests/test_id_certificate_vectors.py::test_a_signature_for_one_certificate_does_not_cover_a_changed_parent",
+        "awid/tests/test_id_certificate_vectors.py::test_canonical_utf8_preserves_literal_escape_text",
+        "awid/tests/test_id_certificate_vectors.py::test_ed25519_profile_probes_through_certificate_verification",
+        "awid/tests/test_id_certificate_vectors.py::test_codec_depth_limit_on_genuinely_signed_chains",
+        "awid/tests/test_id_certificate_vectors.py::test_claimed_issuer_cannot_differ_from_the_independently_selected_signer",
+        "awid/tests/test_id_certificate_vectors.py::test_year_zero_is_not_a_calendar_instant"
       ],
       "acceptance": "Frozen certificate bytes, raw refusals and strict Ed25519 probes; this is not ancestry verification.",
-      "candidate_head": "c5ec4e87feeb11bdc0c074826a0cdf2cf58b04de",
-      "ed25519_profile": "strict"
+      "candidate_head": "9fc3c5855c434904ab36a113baa654c2488fe6d3",
+      "ed25519_profile": "strict",
+      "sites": [
+        {
+          "file": "awid/src/awid/id_certificates.py",
+          "symbol": "id_certificate_signing_bytes"
+        },
+        {
+          "file": "awid/src/awid/id_certificates.py",
+          "symbol": "id_certificate_id"
+        },
+        {
+          "file": "awid/src/awid/id_certificates.py",
+          "symbol": "_id"
+        },
+        {
+          "file": "awid/src/awid/id_certificates.py",
+          "symbol": "_shape"
+        },
+        {
+          "file": "awid/src/awid/id_certificates.py",
+          "symbol": "verify_id_certificate"
+        },
+        {
+          "file": "awid/src/awid/id_certificates.py",
+          "symbol": "_bundle_shape"
+        },
+        {
+          "file": "awid/src/awid/id_certificates.py",
+          "symbol": "encode_id_chain_header"
+        },
+        {
+          "file": "awid/src/awid/id_certificates.py",
+          "symbol": "decode_id_chain_header"
+        }
+      ]
     },
     {
       "id": "S1.GO.CODEC",
@@ -69,11 +113,58 @@
         "J8"
       ],
       "proving_tests": [
-        "cli/go/internal/conformance/id_certificates_test.go"
+        "cli/go/internal/conformance/id_certificates_test.go::TestIDCertificateFrozenSigningBytesAndDigest",
+        "cli/go/internal/conformance/id_certificates_test.go::TestIDCertificateFrozenHeaderRoundTrip",
+        "cli/go/internal/conformance/id_certificates_test.go::TestIDCertificateRawHeaderRefusals",
+        "cli/go/internal/conformance/id_certificates_test.go::TestIDCertificateHumanRequiresStableIDAtShapeTime",
+        "cli/go/internal/conformance/id_certificates_test.go::TestIDCertificateChecksIndependentIssuer",
+        "cli/go/internal/conformance/id_certificates_test.go::TestIDCertificateCanonicalUTF8DoesNotRewriteLiteralEscapes",
+        "cli/go/internal/conformance/id_certificates_test.go::TestIDCertificateStrictEd25519Probes",
+        "cli/go/internal/conformance/id_certificates_test.go::TestIDCertificateDepthCapOnSignedChain",
+        "cli/go/internal/conformance/id_certificates_test.go::TestIDCertificateClaimedIssuerMustMatchSelectedSigner",
+        "cli/go/internal/conformance/id_certificates_test.go::TestIDCertificateYearZeroRefusesAtShape"
       ],
       "acceptance": "Same root vectors, namespace binding and strict point/scalar checks; this is not ancestry verification.",
-      "candidate_head": "c5ec4e87feeb11bdc0c074826a0cdf2cf58b04de",
-      "ed25519_profile": "strict"
+      "candidate_head": "9fc3c5855c434904ab36a113baa654c2488fe6d3",
+      "ed25519_profile": "strict",
+      "sites": [
+        {
+          "file": "cli/go/awid/id_certificates.go",
+          "symbol": "IDCertificateSigningBytes"
+        },
+        {
+          "file": "cli/go/awid/id_certificates.go",
+          "symbol": "IDCertificateID"
+        },
+        {
+          "file": "cli/go/awid/id_certificates.go",
+          "symbol": "idCertificatePrimePoint"
+        },
+        {
+          "file": "cli/go/awid/id_certificates.go",
+          "symbol": "idCertificateIDValid"
+        },
+        {
+          "file": "cli/go/awid/id_certificates.go",
+          "symbol": "idCertificateShape"
+        },
+        {
+          "file": "cli/go/awid/id_certificates.go",
+          "symbol": "VerifyIDCertificate"
+        },
+        {
+          "file": "cli/go/awid/id_certificates.go",
+          "symbol": "idCertificateBundleShape"
+        },
+        {
+          "file": "cli/go/awid/id_certificates.go",
+          "symbol": "EncodeIDChainHeader"
+        },
+        {
+          "file": "cli/go/awid/id_certificates.go",
+          "symbol": "DecodeIDChainHeader"
+        }
+      ]
     },
     {
       "id": "S1.TS.VERIFIER",
@@ -125,11 +216,66 @@
         "J10"
       ],
       "proving_tests": [
-        "awid/tests/test_id_chain_vectors.py"
+        "awid/tests/test_id_chain_vectors.py::test_final_identity_tree_verification_and_request_decision",
+        "awid/tests/test_id_chain_vectors.py::test_omitted_global_domain_requires_private_resolution_input",
+        "awid/tests/test_id_chain_vectors.py::test_status_request_only_sends_global_ids_in_chain_order",
+        "awid/tests/test_id_chain_vectors.py::test_ancestry_does_not_reuse_decode_time_claimed_issuer_verdict",
+        "awid/tests/test_id_chain_vectors.py::test_invalid_status_never_confers_authority",
+        "awid/tests/test_id_chain_vectors.py::test_final_vector_names_include_the_isolated_authority_boundaries"
       ],
       "acceptance": "Whole chain with independent issuer/subject keys, R1-R3, witnessed sequence, replacement cutoff, cascade and request disposition.",
-      "candidate_head": "64d7988fe22dc3f422b28e747cb94c82d4d6bb67",
-      "ed25519_profile": "strict"
+      "candidate_head": "9fc3c5855c434904ab36a113baa654c2488fe6d3",
+      "ed25519_profile": "strict",
+      "sites": [
+        {
+          "file": "awid/src/awid/id_certificates.py",
+          "symbol": "status_cache_mode"
+        },
+        {
+          "file": "awid/src/awid/id_certificates.py",
+          "symbol": "status_request"
+        },
+        {
+          "file": "awid/src/awid/id_certificates.py",
+          "symbol": "request_disposition"
+        },
+        {
+          "file": "awid/src/awid/id_certificates.py",
+          "symbol": "_IDStatus.__init__"
+        },
+        {
+          "file": "awid/src/awid/id_certificates.py",
+          "symbol": "_IDStatus.epoch"
+        },
+        {
+          "file": "awid/src/awid/id_certificates.py",
+          "symbol": "_IDStatus.row"
+        },
+        {
+          "file": "awid/src/awid/id_certificates.py",
+          "symbol": "_IDStatus.revision"
+        },
+        {
+          "file": "awid/src/awid/id_certificates.py",
+          "symbol": "_IDStatus.current_key"
+        },
+        {
+          "file": "awid/src/awid/id_certificates.py",
+          "symbol": "_IDStatus.issuer"
+        },
+        {
+          "file": "awid/src/awid/id_certificates.py",
+          "symbol": "_chain_structure"
+        },
+        {
+          "file": "awid/src/awid/id_certificates.py",
+          "symbol": "_id_chain"
+        },
+        {
+          "file": "awid/src/awid/id_certificates.py",
+          "symbol": "verify_id_chain"
+        }
+      ]
     },
     {
       "id": "S1.GO.ANCESTRY",
@@ -151,11 +297,59 @@
         "J10"
       ],
       "proving_tests": [
-        "cli/go/internal/conformance/id_chain_test.go"
+        "cli/go/internal/conformance/id_chain_test.go::TestIDChainFinalVectors",
+        "cli/go/internal/conformance/id_chain_test.go::TestIDChainInvalidStatusIsUnavailable",
+        "cli/go/internal/conformance/id_chain_test.go::TestIDChainOmittedLocalDoesNotPlanALookup"
       ],
       "acceptance": "Whole chain with independent issuer/subject keys, R1-R3, witnessed sequence, replacement cutoff, cascade and request disposition.",
-      "candidate_head": "64d7988fe22dc3f422b28e747cb94c82d4d6bb67",
-      "ed25519_profile": "strict"
+      "candidate_head": "9fc3c5855c434904ab36a113baa654c2488fe6d3",
+      "ed25519_profile": "strict",
+      "sites": [
+        {
+          "file": "cli/go/awid/id_chain.go",
+          "symbol": "IDStatusCacheMode"
+        },
+        {
+          "file": "cli/go/awid/id_chain.go",
+          "symbol": "IDRequestDisposition"
+        },
+        {
+          "file": "cli/go/awid/id_chain.go",
+          "symbol": "IDStatusRequest"
+        },
+        {
+          "file": "cli/go/awid/id_chain.go",
+          "symbol": "idChainStructure"
+        },
+        {
+          "file": "cli/go/awid/id_chain.go",
+          "symbol": "parseIDStatus"
+        },
+        {
+          "file": "cli/go/awid/id_chain.go",
+          "symbol": "(*idStatusSnapshot).row"
+        },
+        {
+          "file": "cli/go/awid/id_chain.go",
+          "symbol": "(*idStatusSnapshot).revision"
+        },
+        {
+          "file": "cli/go/awid/id_chain.go",
+          "symbol": "(*idStatusSnapshot).currentKey"
+        },
+        {
+          "file": "cli/go/awid/id_chain.go",
+          "symbol": "(*idStatusSnapshot).issuer"
+        },
+        {
+          "file": "cli/go/awid/id_chain.go",
+          "symbol": "verifyIDChain"
+        },
+        {
+          "file": "cli/go/awid/id_chain.go",
+          "symbol": "VerifyIDChain"
+        }
+      ]
     },
     {
       "id": "AWID.NAMESPACE.DNS",
@@ -1536,7 +1730,7 @@
         "backend/tests/test_human_identity_keys.py::test_pending_key_is_stable_per_account_and_domain_and_returns_no_secret",
         "backend/tests/test_human_identity_keys.py::test_pending_key_creation_uses_and_rolls_back_with_callers_transaction",
         "backend/tests/test_human_identity_keys.py::test_concurrent_preparation_keeps_one_key_after_the_user_lock_wait",
-        "backend/tests/test_human_identity_keys.py::test_account_disabled_while_preparation_waits_cannot_get_a_pending_key",
+        "backend/tests/test_human_identity_keys.py::test_account_disabled_or_deleted_while_preparation_waits_cannot_get_a_pending_key",
         "backend/tests/test_human_identity_keys.py::test_storage_requires_selected_canonical_domain_without_silent_relabel",
         "backend/tests/test_stored_key_crypto.py"
       ],
@@ -1569,7 +1763,10 @@
         "focused_result": "passed_as_reported_by_owner",
         "focused_command": "make ENV_FILE=/dev/null test-backend PYTEST_BACKEND_ARGS='-n 0 -q -x tests/test_human_identity_keys.py tests/test_stored_key_crypto.py'",
         "focused_summary": "20 passed in 1.89s; exit 0",
-        "focused_source_message_id": "dbfe593e-eda6-465f-83a0-eb41a3cf2ccf"
+        "focused_source_message_id": "dbfe593e-eda6-465f-83a0-eb41a3cf2ccf",
+        "latest_test_only_checkpoint": "a417ff18",
+        "latest_test_only_source_message_id": "a5ed6194-70e7-47a0-8c5a-1c2ba9c0297b",
+        "latest_test_only_summary": "21 passed in 2.07s, as reported by owner; product bytes unchanged"
       }
     },
     {
