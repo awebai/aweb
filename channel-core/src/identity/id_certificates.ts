@@ -291,9 +291,10 @@ export interface IdTreeEnrollment {
  * grants nothing: absent evidence is unknown and malformed evidence is never
  * proven not enrolled.
  */
-export function keyResponseIdTree(response: Record<string, unknown>): IdTreeEnrollment {
-  if (!Object.prototype.hasOwnProperty.call(response, "id_tree")) return { state: "unknown", domain: null };
+export function keyResponseIdTree(response: unknown): IdTreeEnrollment {
   const malformed: IdTreeEnrollment = { state: "malformed", domain: null };
+  if (!isRecord(response)) return malformed;
+  if (!Object.prototype.hasOwnProperty.call(response, "id_tree")) return { state: "unknown", domain: null };
   const tree = response.id_tree;
   if (!isRecord(tree) || typeof tree.enrolled !== "boolean") return malformed;
   if (!tree.enrolled) return hasExactKeys(tree, ["enrolled"]) ? { state: "not_enrolled", domain: null } : malformed;
