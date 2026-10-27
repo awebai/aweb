@@ -10,8 +10,11 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
-// InstalledIDChain is an identity's own ID chain, the one in force for it,
-// validated whenever it is loaded.
+// InstalledIDChain is an identity's own ID chain, the one in force for it.
+// Loading checks its encoding, shape, limits and that each certificate's
+// signature verifies under the issuer key it names. That is self-consistency,
+// not authority: anything that relies on the chain verifies it with
+// awid.VerifyIDChain against current status.
 type InstalledIDChain struct {
 	Bundle map[string]any
 	// Header is the bundle's X-AWID-ID-Chain value.
@@ -23,7 +26,7 @@ func installedIDChainPath(identityHome string) string {
 }
 
 // LoadInstalledIDChain returns the identity's installed chain, or nil when it
-// has none. A damaged file is an error, never an absent chain.
+// has none. A file that fails the checks is an error, never an absent chain.
 func LoadInstalledIDChain(identityHome string) (*InstalledIDChain, error) {
 	data, err := os.ReadFile(installedIDChainPath(identityHome))
 	if errors.Is(err, os.ErrNotExist) {
@@ -40,8 +43,8 @@ func LoadInstalledIDChain(identityHome string) (*InstalledIDChain, error) {
 	return &InstalledIDChain{Bundle: bundle, Header: header}, nil
 }
 
-// SaveInstalledIDChain validates bundle and durably installs it as the
-// identity's chain.
+// SaveInstalledIDChain applies the same checks to bundle and durably
+// installs it as the identity's chain.
 func SaveInstalledIDChain(identityHome string, bundle map[string]any) error {
 	header, err := awid.EncodeIDChainHeader(bundle)
 	if err != nil {
