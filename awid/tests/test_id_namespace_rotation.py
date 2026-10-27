@@ -29,6 +29,7 @@ from id_tree_support import (
     consumes,
     covering_headers,
     did_key,
+    ed25519_vector_key,
     seed,
 )
 
@@ -156,6 +157,8 @@ async def test_a_rotation_against_a_later_epoch_refuses(case, tree, awid_db_infr
         _body(new_did_key=REQUESTS["valid"]["body"]["previous_did_key"]),
         _body(new_did_key="did:key:z6Mkexample"),
         _body(previous_did_key=None),
+        _body(previous_did_key=ed25519_vector_key("small-order-A-1")),
+        _body(new_did_key=ed25519_vector_key("mixed-order-A-k-div-8")),
     ],
 )
 @pytest.mark.asyncio

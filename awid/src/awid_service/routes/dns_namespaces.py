@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from nacl.bindings import crypto_core_ed25519_is_valid_point
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from awid.dns_verify import DomainVerifier
@@ -19,7 +18,6 @@ from awid.pagination import encode_cursor, validate_pagination_params
 from awid_service.delivery_origin import validate_delivery_origin
 from awid.ratelimit import rate_limit_dep
 from awid.dns_auth import enforce_timestamp_skew, require_timestamp, validate_did_key as _validate_did_key
-from awid.did import did_from_public_key, public_key_from_did
 from awid.id_certificates import IDCertificateError
 from awid_service.id_tree_gate import strict_json_object
 from awid.controller_request import ControllerAuthRoute, verify_controller_json_request
@@ -27,6 +25,8 @@ from awid_service.id_tree_clock import app_clock
 from awid_service.namespace_epochs import (
     REPLACED,
     ROTATED,
+    proves_root,
+    strict_did_key,
     has_epoch_history,
     is_exact,
     open_epoch,
@@ -167,17 +167,6 @@ def _coded(code: str, status: int) -> HTTPException:
     return HTTPException(status_code=status, detail={"code": code, "message": code.replace("_", " ")})
 
 
-def _strict_did_key(value) -> bool:
-    """A canonical did:key whose Ed25519 point is in the prime-order subgroup."""
-    if not isinstance(value, str):
-        return False
-    try:
-        public = public_key_from_did(value)
-        return did_from_public_key(public) == value and bool(crypto_core_ed25519_is_valid_point(public))
-    except (TypeError, ValueError):
-        return False
-
-
 def _rotation_body(raw: bytes, domain: str) -> dict:
     try:
         body = strict_json_object(raw)
@@ -189,8 +178,8 @@ def _rotation_body(raw: bytes, domain: str) -> dict:
         or body["operation"] != "rotate_namespace_controller"
         or type(body["from_seq"]) is not int
         or body["from_seq"] < 1
-        or not _strict_did_key(body["previous_did_key"])
-        or not _strict_did_key(body["new_did_key"])
+        or not strict_did_key(body["previous_did_key"])
+        or not strict_did_key(body["new_did_key"])
         or body["previous_did_key"] == body["new_did_key"]
     ):
         raise _coded("invalid_shape", 400)
@@ -345,7 +334,6 @@ async def register_namespace(
                 status_code=403,
                 detail="Signing key does not match DNS controller",
             )
-    exact_dns = is_exact(dns_authority)
 
     # Transactional: check-then-insert to prevent duplicate races
     async with db.transaction() as tx:
@@ -360,7 +348,7 @@ async def register_namespace(
         )
 
         if existing is not None:
-            if exact_dns:
+            if proves_root(dns_authority, caller_did):
                 await _open_first_epoch_for_existing_namespace(
                     tx, domain=domain, caller_did=caller_did, clock=app_clock(request.app),
                 )
@@ -395,7 +383,7 @@ async def register_namespace(
             now,
             now,
         )
-        if exact_dns:
+        if proves_root(dns_authority, controller_did):
             await open_epoch(
                 tx, domain=domain, did_key=controller_did, continuity=REPLACED, clock=app_clock(request.app),
             )
@@ -611,7 +599,7 @@ async def rotate_namespace_controller(
         )
         if row is None:
             raise HTTPException(status_code=404, detail="Namespace not found")
-        if is_exact(dns_authority):
+        if proves_root(dns_authority, new_controller_did):
             # Recovery compares against the open epoch, not the stored row,
             # which reverify may already have moved to this key.
             epoch = await open_epoch_of(tx, domain, for_update=True)

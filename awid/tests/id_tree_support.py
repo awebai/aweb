@@ -11,12 +11,21 @@ import base64
 import copy
 import hashlib
 import json
-from datetime import datetime, timezone
+import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from nacl.bindings import (
+    crypto_core_ed25519_add,
+    crypto_core_ed25519_scalar_add,
+    crypto_core_ed25519_scalar_mul,
+    crypto_core_ed25519_scalar_reduce,
+    crypto_scalarmult_ed25519_base_noclamp,
+)
 from nacl.signing import SigningKey
 
+from awid.did import did_from_public_key
 from awid.dns_verify import DnsVerificationError, DomainAuthority
 from awid.id_certificates import encode_id_chain_header, id_certificate_signing_bytes
 from awid.signing import canonical_json_bytes, sign_message
@@ -122,6 +131,45 @@ def covering_headers(
 
 def chain_header(chain: list[dict]) -> str:
     return encode_id_chain_header({"v": 1, "type": "aweb.id-chain", "certificates": chain})
+
+
+def ed25519_vector_key(name: str) -> str:
+    """The did:key of a frozen ed25519_verification public key, such as a small-order one."""
+    [case] = [case for case in VECTORS["ed25519_verification"]["cases"] if case["name"] == name]
+    return did_from_public_key(bytes.fromhex(case["public_key_hex"]))
+
+
+class MixedOrderController:
+    """A controller key that is an honest key plus an order-8 torsion point.
+
+    It passes did:key syntax and, whenever the signature's hash scalar is a
+    multiple of 8, ordinary cofactorless verification too, so a registry that
+    only checks those would accept it. ``signed_headers`` searches the
+    request timestamp, within the allowed skew, until that holds.
+    """
+
+    def __init__(self) -> None:
+        torsion = bytes.fromhex(
+            [c for c in VECTORS["ed25519_verification"]["cases"] if c["name"] == "small-order-A-1"][0]["public_key_hex"]
+        )
+        self._scalar = crypto_core_ed25519_scalar_reduce(os.urandom(64))
+        self._public = crypto_core_ed25519_add(crypto_scalarmult_ed25519_base_noclamp(self._scalar), torsion)
+        self.did_key = did_from_public_key(self._public)
+
+    def signed_headers(self, *, domain: str, operation: str, **extra) -> dict:
+        base = datetime.now(timezone.utc).replace(microsecond=0)
+        for offset in range(0, 240):
+            timestamp = (base - timedelta(seconds=offset)).isoformat().replace("+00:00", "Z")
+            payload = canonical_json_bytes({"domain": domain, "operation": operation, "timestamp": timestamp, **extra})
+            nonce = crypto_core_ed25519_scalar_reduce(os.urandom(64))
+            commitment = crypto_scalarmult_ed25519_base_noclamp(nonce)
+            challenge = crypto_core_ed25519_scalar_reduce(hashlib.sha512(commitment + self._public + payload).digest())
+            if int.from_bytes(challenge, "little") % 8:
+                continue
+            response = crypto_core_ed25519_scalar_add(nonce, crypto_core_ed25519_scalar_mul(challenge, self._scalar))
+            signature = base64.b64encode(commitment + response).rstrip(b"=").decode()
+            return {"Authorization": f"DIDKey {self.did_key} {signature}", "X-AWEB-Timestamp": timestamp}
+        raise AssertionError("no timestamp gave a challenge divisible by 8")
 
 
 class Tree:

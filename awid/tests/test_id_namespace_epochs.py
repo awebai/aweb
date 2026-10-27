@@ -14,8 +14,13 @@ import asyncio
 import pytest
 import pytest_asyncio
 
+from awid.dns_verify import DomainAuthority
+from awid_service.deps import get_domain_verifier
+
 from id_tree_support import (
     DOMAIN,
+    MixedOrderController,
+    ORIGIN,
     Tree,
     at,
     certificate,
@@ -133,6 +138,45 @@ async def test_a_first_registration_without_exact_proof_opens_no_epoch(
 
     assert resp.status_code == 200, resp.text
     assert await _epochs(awid_db_infra) == []
+
+
+def _dns_for_key(tree, key: str) -> None:
+    async def _verify(queried: str) -> DomainAuthority:
+        return DomainAuthority(controller_did=key, registry_url=ORIGIN, dns_name=f"_awid.{queried}")
+
+    tree.client.app.dependency_overrides[get_domain_verifier] = lambda: _verify
+
+
+@pytest.mark.asyncio
+async def test_a_mixed_order_controller_registers_but_opens_no_epoch(clocked_client, manual_clock, awid_db_infra):
+    tree = Tree(clocked_client, manual_clock)
+    controller = MixedOrderController()
+    _dns_for_key(tree, controller.did_key)
+
+    resp = await tree.client.post(
+        "/v1/namespaces", json={"domain": DOMAIN},
+        headers=controller.signed_headers(domain=DOMAIN, operation="register"),
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert await _epochs(awid_db_infra) == []
+
+
+@pytest.mark.asyncio
+async def test_a_put_to_a_mixed_order_controller_opens_no_epoch(tree, awid_db_infra):
+    epochs = await _epochs(awid_db_infra)
+    controller = MixedOrderController()
+    _dns_for_key(tree, controller.did_key)
+
+    resp = await tree.client.put(
+        f"/v1/namespaces/{DOMAIN}", json={"new_controller_did": controller.did_key},
+        headers=controller.signed_headers(
+            domain=DOMAIN, operation="rotate_controller", new_controller_did=controller.did_key,
+        ),
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert await _epochs(awid_db_infra) == epochs
 
 
 @consumes("namespace-delete-with-live-ids-preserves-history")

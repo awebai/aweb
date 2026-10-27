@@ -244,7 +244,10 @@ authenticated POST with exact DNS for that same key, rechecked under the
 namespace row lock while the domain has no epoch at all. Inherited, failed
 or skipped DNS, parent authorization and reverify never open, replace or
 retire an epoch; reverify still updates the stored controller from exact DNS.
-Deletion retires the open epoch, and sequences never reset.
+Deletion retires the open epoch, and sequences never reset. A controller key
+outside the prime-order Ed25519 subgroup (small- or mixed-order) never opens an
+epoch, even with exact DNS: the namespace write itself keeps its released
+contract, but the identity tree has no root until a strict key is proven.
 
 `POST /v1/namespaces/{domain}/rotate` takes exactly `{domain, operation,
 from_seq, previous_did_key, new_did_key}` (`operation` is
