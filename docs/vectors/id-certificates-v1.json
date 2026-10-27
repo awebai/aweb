@@ -481,6 +481,50 @@
       "certificate_id": "sha256:2514ee1ec4428f1daaffe8619c22378e56f5cea4bf515bf6454ec80cfeb7dd4d",
       "signer": "bob"
     },
+    "did-key-human": {
+      "signed": {
+        "certificate": {
+          "v": 1,
+          "type": "aweb.id-certificate",
+          "id": "did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z",
+          "domain": "example.com",
+          "parent": {
+            "kind": "identity",
+            "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"
+          },
+          "kind": "human",
+          "issuer_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+          "issued_at": "2026-10-26T00:07:00Z"
+        },
+        "signature": "cwzwS6QRWrXFa-XC065da35ZTQ1irv3d4qig320wr3-M2cSfJIMqyNFusxfEG0IqcbZV9w16vvEcx-VDcQfTBw"
+      },
+      "canonical_utf8": "{\"domain\":\"example.com\",\"id\":\"did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z\",\"issued_at\":\"2026-10-26T00:07:00Z\",\"issuer_key\":\"did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2\",\"kind\":\"human\",\"parent\":{\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"kind\":\"identity\"},\"type\":\"aweb.id-certificate\",\"v\":1}",
+      "signing_bytes_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a6b65793a7a364d6b76447147543534635865735947764142704631556170564e776a43715263616669345078365468763554335a222c226973737565645f6174223a22323032362d31302d32365430303a30373a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b7652584e596345374d4d6475796e575467654b624461543169696a44534338705a71585a6338724850726632222c226b696e64223a2268756d616e222c22706172656e74223a7b226964223a226469643a61773a335944414d355a4c524b6737654848315a733673534d776b67613877222c226b696e64223a226964656e74697479227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+      "certificate_id": "sha256:a4093d48771643c14d189bc091ab62f6aa22e4c4c70fb5c3bdc001e78d9b67b5",
+      "signer": "alice"
+    },
+    "forged-old-key-local": {
+      "signed": {
+        "certificate": {
+          "v": 1,
+          "type": "aweb.id-certificate",
+          "id": "did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z",
+          "domain": "example.com",
+          "parent": {
+            "kind": "identity",
+            "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"
+          },
+          "kind": "agent",
+          "issuer_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+          "issued_at": "2026-10-26T00:01:00Z"
+        },
+        "signature": "bOvIEhfRsQOJTlFH3aXrgsf2M9FrWMhtaxwSKKToydbCM9KxqDCrSaHtPhfQaCinWHpEnjP6LhFVpLa4u7u6Cw"
+      },
+      "canonical_utf8": "{\"domain\":\"example.com\",\"id\":\"did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z\",\"issued_at\":\"2026-10-26T00:01:00Z\",\"issuer_key\":\"did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2\",\"kind\":\"agent\",\"parent\":{\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"kind\":\"identity\"},\"type\":\"aweb.id-certificate\",\"v\":1}",
+      "signing_bytes_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a6b65793a7a364d6b76447147543534635865735947764142704631556170564e776a43715263616669345078365468763554335a222c226973737565645f6174223a22323032362d31302d32365430303a30313a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b7652584e596345374d4d6475796e575467654b624461543169696a44534338705a71585a6338724850726632222c226b696e64223a226167656e74222c22706172656e74223a7b226964223a226469643a61773a335944414d355a4c524b6737654848315a733673534d776b67613877222c226b696e64223a226964656e74697479227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+      "certificate_id": "sha256:09c7a2a6e38784777c57a2cf994c965952f42ff889634b8d9de6c8552e319be9",
+      "signer": "alice"
+    },
     "human-issued-by-agent": {
       "signed": {
         "certificate": {
@@ -870,8 +914,7 @@
               },
               "registered_at": "2026-10-26T00:01:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -917,8 +960,7 @@
               },
               "registered_at": "2026-10-26T00:03:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -964,8 +1006,7 @@
               },
               "registered_at": "2026-10-26T00:04:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -1011,8 +1052,7 @@
               },
               "registered_at": "2026-10-26T00:02:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -1091,8 +1131,7 @@
               },
               "registered_at": "2026-10-26T00:01:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -1138,8 +1177,7 @@
               },
               "registered_at": "2026-10-26T00:03:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -1185,8 +1223,7 @@
               },
               "registered_at": "2026-10-26T00:04:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -1232,8 +1269,7 @@
               },
               "registered_at": "2026-10-26T00:02:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -1303,8 +1339,7 @@
               },
               "registered_at": "2026-10-26T00:01:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -1350,8 +1385,7 @@
               },
               "registered_at": "2026-10-26T00:03:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -1397,8 +1431,7 @@
               },
               "registered_at": "2026-10-26T00:04:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -1444,8 +1477,7 @@
               },
               "registered_at": "2026-10-26T00:02:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -1509,8 +1541,7 @@
               },
               "registered_at": "2026-10-26T00:01:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": {
@@ -1559,8 +1590,7 @@
               },
               "registered_at": "2026-10-26T00:03:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -1606,8 +1636,7 @@
               },
               "registered_at": "2026-10-26T00:04:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -1653,8 +1682,7 @@
               },
               "registered_at": "2026-10-26T00:02:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -1718,8 +1746,7 @@
               },
               "registered_at": "2026-10-26T00:01:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": {
@@ -1768,8 +1795,7 @@
               },
               "registered_at": "2026-10-26T00:03:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -1815,8 +1841,7 @@
               },
               "registered_at": "2026-10-26T00:04:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -1862,8 +1887,7 @@
               },
               "registered_at": "2026-10-26T00:02:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -1927,8 +1951,7 @@
               },
               "registered_at": "2026-10-26T00:01:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": {
@@ -1977,8 +2000,7 @@
               },
               "registered_at": "2026-10-26T00:03:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -2024,8 +2046,7 @@
               },
               "registered_at": "2026-10-26T00:04:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -2071,8 +2092,7 @@
               },
               "registered_at": "2026-10-26T00:02:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -2136,8 +2156,7 @@
               },
               "registered_at": "2026-10-26T00:01:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": {
@@ -2186,8 +2205,7 @@
               },
               "registered_at": "2026-10-26T00:03:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -2233,8 +2251,7 @@
               },
               "registered_at": "2026-10-26T00:04:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -2280,8 +2297,7 @@
               },
               "registered_at": "2026-10-26T00:02:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -2345,8 +2361,7 @@
               },
               "registered_at": "2026-10-26T00:03:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -2392,8 +2407,7 @@
               },
               "registered_at": "2026-10-26T00:04:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -2439,8 +2453,7 @@
               },
               "registered_at": "2026-10-26T00:02:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -2506,8 +2519,7 @@
               },
               "registered_at": "2026-10-26T00:01:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -2553,8 +2565,7 @@
               },
               "registered_at": "2026-10-26T00:03:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -2600,8 +2611,7 @@
               },
               "registered_at": "2026-10-26T00:02:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -2667,8 +2677,7 @@
               },
               "registered_at": "2026-10-26T00:01:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -2714,8 +2723,7 @@
               },
               "registered_at": "2026-10-26T00:03:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -2761,8 +2769,7 @@
               },
               "registered_at": "2026-10-26T00:04:00.000000Z",
               "superseded_at": "2026-10-26T00:15:00.000000Z",
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             },
             {
               "signed": {
@@ -2783,8 +2790,7 @@
               },
               "registered_at": "2026-10-26T00:15:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -2830,8 +2836,7 @@
               },
               "registered_at": "2026-10-26T00:02:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -2895,8 +2900,7 @@
               },
               "registered_at": "2026-10-26T00:01:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -2942,8 +2946,7 @@
               },
               "registered_at": "2026-10-26T00:03:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -2989,8 +2992,7 @@
               },
               "registered_at": "2026-10-26T00:04:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -3036,8 +3038,7 @@
               },
               "registered_at": "2026-10-26T00:08:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -3045,7 +3046,7 @@
       ],
       "missing": []
     },
-    "global-child-local-parent": {
+    "invalid-registration-local-parent": {
       "v": 1,
       "domain": "example.com",
       "observed_at": "2026-10-26T00:30:00.000000Z",
@@ -3101,8 +3102,7 @@
               },
               "registered_at": "2026-10-26T00:01:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -3148,8 +3148,7 @@
               },
               "registered_at": "2026-10-26T00:03:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -3195,8 +3194,7 @@
               },
               "registered_at": "2026-10-26T00:04:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -3242,8 +3240,7 @@
               },
               "registered_at": "2026-10-26T00:02:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -3289,338 +3286,7 @@
               },
               "registered_at": "2026-10-26T00:09:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 0,
-              "invitation_id": null
-            }
-          ],
-          "revocation": null
-        },
-        {
-          "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
-          "current_certificate_id": null,
-          "current_key_seq": 0,
-          "key_history": [],
-          "certificates": [
-            {
-              "signed": {
-                "certificate": {
-                  "v": 1,
-                  "type": "aweb.id-certificate",
-                  "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
-                  "domain": "example.com",
-                  "parent": {
-                    "kind": "identity",
-                    "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"
-                  },
-                  "kind": "agent",
-                  "issuer_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
-                  "issued_at": "2026-10-26T00:04:00Z"
-                },
-                "signature": "DannjvTjueGeZ7kPwfoli8A8jcxXiiAKCrRmvqkTVWXZ5TkOYidQh5Xo4Pzc-vSdTmr5TC-lTkSuEQtPxiGdAA"
-              },
-              "registered_at": null,
-              "superseded_at": null,
-              "issuer_key_seq": 0,
-              "invitation_id": null
-            }
-          ],
-          "revocation": null
-        }
-      ],
-      "missing": []
-    },
-    "global-child-local-parent-rotated": {
-      "v": 1,
-      "domain": "example.com",
-      "observed_at": "2026-10-26T00:30:00.000000Z",
-      "namespace": {
-        "epochs": [
-          {
-            "seq": 1,
-            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
-            "registered_at": "2026-10-26T00:00:00.000000Z",
-            "retired_at": null
-          }
-        ]
-      },
-      "identities": [
-        {
-          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
-          "current_certificate_id": "sha256:301e3b3926861a4c057c810b042d5fbb7d539dcaa824b1acee77054d877cb1c9",
-          "current_key_seq": 2,
-          "key_history": [
-            {
-              "entry": {
-                "authorized_by": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
-                "new_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
-                "operation": "register_did",
-                "prev_entry_hash": null,
-                "previous_did_key": null,
-                "seq": 1,
-                "state_hash": "f101717425d7c37244133f3c85015836ed22cd5eb43d666f4a9d533edf8d82d4",
-                "timestamp": "2026-10-26T00:00:00Z",
-                "entry_hash": "2cf9b9ca49d6d52198137ecd65b4f22115e43686868be41d029e80c7cd60fcf9",
-                "signature": "0mxM7sA/FFflCx7MKD2/WIlu9ik329eWDeNl2x01wH5pO7Ot8ThAzFnNbn64y+hYxsqGqSJZgXTeArk15cHWAw"
-              },
-              "registered_at": "2026-10-26T00:00:00.000000Z"
-            },
-            {
-              "entry": {
-                "authorized_by": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
-                "new_did_key": "did:key:z6Mkt6316e2PN3mZdB6N9CrzomJYUd1s5yBZi1XYHmwT9TUP",
-                "operation": "rotate_key",
-                "prev_entry_hash": "2cf9b9ca49d6d52198137ecd65b4f22115e43686868be41d029e80c7cd60fcf9",
-                "previous_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
-                "seq": 2,
-                "state_hash": "61023505fd38615398528f06df54f61f7666ad112c6b724113e01e30ea3477a9",
-                "timestamp": "2026-10-26T00:10:00Z",
-                "entry_hash": "28a0c877bb93aed8cbf50886df9685d87939aac5f8ffac43a55b7f4660e7d033",
-                "signature": "np/68OE3iNthRKsrTLSpUF0xMWXaOo/tjH/xObH9X/JTPx2Xc4iKy+FFk/TItO0wZ78q20CllF7RjWdRMjAEDQ"
-              },
-              "registered_at": "2026-10-26T00:10:00.000000Z"
-            }
-          ],
-          "certificates": [
-            {
-              "signed": {
-                "certificate": {
-                  "v": 1,
-                  "type": "aweb.id-certificate",
-                  "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
-                  "domain": "example.com",
-                  "parent": {
-                    "kind": "namespace",
-                    "id": "example.com"
-                  },
-                  "kind": "human",
-                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
-                  "issued_at": "2026-10-26T00:00:00Z"
-                },
-                "signature": "UsTQXXWmQYmDLZNsqHs6ebs9763IcHsYI3zbPFYJ9lgdkYMRKtmAdnFerb7hjFS5bxrCU_7XcQYNYQhoAjdlBA"
-              },
-              "registered_at": "2026-10-26T00:01:00.000000Z",
-              "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
-            }
-          ],
-          "revocation": null
-        },
-        {
-          "id": "did:aw:2e2SPDJNyxg5Dt6EFJX3Tcn8Tauj",
-          "current_certificate_id": "sha256:c7601ac7ae45a13626785274489fbe6bc6807d2963067b1f94c8bc2827247971",
-          "current_key_seq": 1,
-          "key_history": [
-            {
-              "entry": {
-                "authorized_by": "did:key:z6MkmtWtY63GQVBrpMyRJWEzsnxfsGkemu6CtMDwGTv4RYj2",
-                "new_did_key": "did:key:z6MkmtWtY63GQVBrpMyRJWEzsnxfsGkemu6CtMDwGTv4RYj2",
-                "operation": "register_did",
-                "prev_entry_hash": null,
-                "previous_did_key": null,
-                "seq": 1,
-                "state_hash": "3f55928a5f305ce731303197a1b9ae3a3743f19fdb907fe400b8903e87a6a6ce",
-                "timestamp": "2026-10-26T00:00:00Z",
-                "entry_hash": "22b20203490a77c8213833a1451862235268e5cd4ed5ce7e5df0ca966c52c3be",
-                "signature": "BlYAgnzsonrr28GZvngPUQ2LplGi6XKpubByO7FcMd01sD2H+MKVY+jDL9HcaHdARH9pX69SxI/jPpl+rk+MAg"
-              },
-              "registered_at": "2026-10-26T00:00:00.000000Z"
-            }
-          ],
-          "certificates": [
-            {
-              "signed": {
-                "certificate": {
-                  "v": 1,
-                  "type": "aweb.id-certificate",
-                  "id": "did:aw:2e2SPDJNyxg5Dt6EFJX3Tcn8Tauj",
-                  "domain": "example.com",
-                  "parent": {
-                    "kind": "identity",
-                    "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"
-                  },
-                  "kind": "human",
-                  "issuer_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
-                  "issued_at": "2026-10-26T00:02:00Z"
-                },
-                "signature": "MOL86pnAcZCRTvNyZMWLguKYeIfts0EjbzJmmQXZ7nOgeMLzqv8BU9GY9dXuqA5prGC9m5q1nmF746QijrpOAA"
-              },
-              "registered_at": "2026-10-26T00:03:00.000000Z",
-              "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
-            }
-          ],
-          "revocation": null
-        },
-        {
-          "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
-          "current_certificate_id": "sha256:e9dfa77e5eda11fe82215d62ac5878734a6cde3a56d7e15f037c2ac0d4532282",
-          "current_key_seq": 1,
-          "key_history": [
-            {
-              "entry": {
-                "authorized_by": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
-                "new_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
-                "operation": "register_did",
-                "prev_entry_hash": null,
-                "previous_did_key": null,
-                "seq": 1,
-                "state_hash": "8850abacd19a6f27f56d30697f74b95366e709fabbbe10e0cb8313811cda3c5f",
-                "timestamp": "2026-10-26T00:00:00Z",
-                "entry_hash": "131c7c9321862318e212c7a28f1a9b8d0063419e56af047939d56b17fe83fc08",
-                "signature": "nY622ouwJ5/Gyd5bbaic5yEOgqNQTBIyEvv57brQLRpVzWRLRX95CHxEwwezq+y/E4uAUTYD6RbbUMjE2X5RBA"
-              },
-              "registered_at": "2026-10-26T00:00:00.000000Z"
-            }
-          ],
-          "certificates": [
-            {
-              "signed": {
-                "certificate": {
-                  "v": 1,
-                  "type": "aweb.id-certificate",
-                  "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
-                  "domain": "example.com",
-                  "parent": {
-                    "kind": "identity",
-                    "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"
-                  },
-                  "kind": "agent",
-                  "issuer_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
-                  "issued_at": "2026-10-26T00:03:00Z"
-                },
-                "signature": "z2oS4uSNgiaSaT7QX9AWmqRTkFFy-8TRjIrEP0PyuU_w0ptPTEbv8OjWqhbxP7oLivvi2AEFg0Anq5bkoGTECw"
-              },
-              "registered_at": "2026-10-26T00:04:00.000000Z",
-              "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
-            }
-          ],
-          "revocation": null
-        },
-        {
-          "id": "did:aw:4YDPf9bG55GJLKFKhsQG5XqbM2Mz",
-          "current_certificate_id": "sha256:221e308452d77573197827ea77fbaba8e988edb1c46e37f86fca84357843ac06",
-          "current_key_seq": 1,
-          "key_history": [
-            {
-              "entry": {
-                "authorized_by": "did:key:z6MkmNL6xksdEJENGk9Z1qqGsY5njKQdjU1UhnUEUvWyQUVX",
-                "new_did_key": "did:key:z6MkmNL6xksdEJENGk9Z1qqGsY5njKQdjU1UhnUEUvWyQUVX",
-                "operation": "register_did",
-                "prev_entry_hash": null,
-                "previous_did_key": null,
-                "seq": 1,
-                "state_hash": "c8455f10c3febf3d2c29f5af334dd6ec323e4ba82baeb9b1b8597116166f6eff",
-                "timestamp": "2026-10-26T00:00:00Z",
-                "entry_hash": "c4182f836e13f2ecb45d285c3ab65190aea3238e4e26ea51aacaad8113922284",
-                "signature": "BXuD38wkhL2xU951L3n8xZa7kSudTOx4kREh9SlfDn6BHwYI+p9gjEMPyntVb4UamCnH2pnQkNW2uU4UuzleCw"
-              },
-              "registered_at": "2026-10-26T00:00:00.000000Z"
-            }
-          ],
-          "certificates": [
-            {
-              "signed": {
-                "certificate": {
-                  "v": 1,
-                  "type": "aweb.id-certificate",
-                  "id": "did:aw:4YDPf9bG55GJLKFKhsQG5XqbM2Mz",
-                  "domain": "example.com",
-                  "parent": {
-                    "kind": "namespace",
-                    "id": "example.com"
-                  },
-                  "kind": "human",
-                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
-                  "issued_at": "2026-10-26T00:01:00Z"
-                },
-                "signature": "Oluz1HZhQvyjCvWAZBe0bVXOCHPqS3sSb3FjCbVvzMB2-oL1SJ1b0d3nhxZ5Z0V-rbRQpFOWax9YKwfP0zwOBQ"
-              },
-              "registered_at": "2026-10-26T00:02:00.000000Z",
-              "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
-            }
-          ],
-          "revocation": null
-        },
-        {
-          "id": "did:aw:41Saaf5D8DUoF5wVrdSfiNrioxEv",
-          "current_certificate_id": "sha256:b1faf00b30606ad0d6d1791c882f562b8a2dec45f122df76c17632762e8c120d",
-          "current_key_seq": 1,
-          "key_history": [
-            {
-              "entry": {
-                "authorized_by": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
-                "new_did_key": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
-                "operation": "register_did",
-                "prev_entry_hash": null,
-                "previous_did_key": null,
-                "seq": 1,
-                "state_hash": "94fbc73276579fdaecab9307f5ea4694aa8d3f6721a3e3e6836acb5a7a59e5af",
-                "timestamp": "2026-10-26T00:00:00Z",
-                "entry_hash": "96625bef0ffd74e5a4277112d3d778884a3faa4f056f40d220ebdfbb78d568bd",
-                "signature": "W4CQ7VUAfErgEusMO9EwXMyYdd2MpXFCSHNuRx7T+J73O/f3gipY1npV915V5E+14IfLcxLdd6ip/QmH4asyCA"
-              },
-              "registered_at": "2026-10-26T00:00:00.000000Z"
-            }
-          ],
-          "certificates": [
-            {
-              "signed": {
-                "certificate": {
-                  "v": 1,
-                  "type": "aweb.id-certificate",
-                  "id": "did:aw:41Saaf5D8DUoF5wVrdSfiNrioxEv",
-                  "domain": "example.com",
-                  "parent": {
-                    "kind": "identity",
-                    "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
-                  },
-                  "kind": "agent",
-                  "issuer_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
-                  "issued_at": "2026-10-26T00:08:00Z"
-                },
-                "signature": "cCPtz6mqWtp5p8aJkzWriJ_v_qoToMfFC65Smu8xSI0Wn0aGK_cCa9Xp7OJZ4N-qgUmazfzmq47zPe28yse8Cw"
-              },
-              "registered_at": "2026-10-26T00:09:00.000000Z",
-              "superseded_at": null,
-              "issuer_key_seq": 0,
-              "invitation_id": null
-            }
-          ],
-          "revocation": null
-        },
-        {
-          "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
-          "current_certificate_id": null,
-          "current_key_seq": 0,
-          "key_history": [],
-          "certificates": [
-            {
-              "signed": {
-                "certificate": {
-                  "v": 1,
-                  "type": "aweb.id-certificate",
-                  "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
-                  "domain": "example.com",
-                  "parent": {
-                    "kind": "identity",
-                    "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"
-                  },
-                  "kind": "agent",
-                  "issuer_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
-                  "issued_at": "2026-10-26T00:04:00Z"
-                },
-                "signature": "DannjvTjueGeZ7kPwfoli8A8jcxXiiAKCrRmvqkTVWXZ5TkOYidQh5Xo4Pzc-vSdTmr5TC-lTkSuEQtPxiGdAA"
-              },
-              "registered_at": null,
-              "superseded_at": null,
-              "issuer_key_seq": 0,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -3684,8 +3350,7 @@
               },
               "registered_at": "2026-10-26T00:01:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": {
@@ -3734,8 +3399,7 @@
               },
               "registered_at": "2026-10-26T00:03:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -3781,8 +3445,7 @@
               },
               "registered_at": "2026-10-26T00:04:00.000000Z",
               "superseded_at": "2026-10-26T00:19:00.000000Z",
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             },
             {
               "signed": {
@@ -3803,8 +3466,7 @@
               },
               "registered_at": "2026-10-26T00:19:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -3850,8 +3512,7 @@
               },
               "registered_at": "2026-10-26T00:02:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -3897,8 +3558,7 @@
               },
               "registered_at": "2026-10-26T00:18:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -3962,8 +3622,7 @@
               },
               "registered_at": "2026-10-26T00:01:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -4009,8 +3668,7 @@
               },
               "registered_at": "2026-10-26T00:03:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -4056,8 +3714,7 @@
               },
               "registered_at": "2026-10-26T00:04:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
             }
           ],
           "revocation": {
@@ -4106,8 +3763,426 @@
               },
               "registered_at": "2026-10-26T00:02:00.000000Z",
               "superseded_at": null,
-              "issuer_key_seq": 1,
-              "invitation_id": null
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        }
+      ],
+      "missing": []
+    },
+    "broken-key-history-signature": {
+      "v": 1,
+      "domain": "example.com",
+      "observed_at": "2026-10-26T00:30:00.000000Z",
+      "namespace": {
+        "epochs": [
+          {
+            "seq": 1,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:00:00.000000Z",
+            "retired_at": null
+          }
+        ]
+      },
+      "identities": [
+        {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "current_certificate_id": "sha256:301e3b3926861a4c057c810b042d5fbb7d539dcaa824b1acee77054d877cb1c9",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "new_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "f101717425d7c37244133f3c85015836ed22cd5eb43d666f4a9d533edf8d82d4",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "2cf9b9ca49d6d52198137ecd65b4f22115e43686868be41d029e80c7cd60fcf9",
+                "signature": "02xM7sA/FFflCx7MKD2/WIlu9ik329eWDeNl2x01wH5pO7Ot8ThAzFnNbn64y+hYxsqGqSJZgXTeArk15cHWAw"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "example.com"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:00:00Z"
+                },
+                "signature": "UsTQXXWmQYmDLZNsqHs6ebs9763IcHsYI3zbPFYJ9lgdkYMRKtmAdnFerb7hjFS5bxrCU_7XcQYNYQhoAjdlBA"
+              },
+              "registered_at": "2026-10-26T00:01:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        },
+        {
+          "id": "did:aw:2e2SPDJNyxg5Dt6EFJX3Tcn8Tauj",
+          "current_certificate_id": "sha256:c7601ac7ae45a13626785274489fbe6bc6807d2963067b1f94c8bc2827247971",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkmtWtY63GQVBrpMyRJWEzsnxfsGkemu6CtMDwGTv4RYj2",
+                "new_did_key": "did:key:z6MkmtWtY63GQVBrpMyRJWEzsnxfsGkemu6CtMDwGTv4RYj2",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "3f55928a5f305ce731303197a1b9ae3a3743f19fdb907fe400b8903e87a6a6ce",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "22b20203490a77c8213833a1451862235268e5cd4ed5ce7e5df0ca966c52c3be",
+                "signature": "BlYAgnzsonrr28GZvngPUQ2LplGi6XKpubByO7FcMd01sD2H+MKVY+jDL9HcaHdARH9pX69SxI/jPpl+rk+MAg"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:2e2SPDJNyxg5Dt6EFJX3Tcn8Tauj",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "identity",
+                    "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                  "issued_at": "2026-10-26T00:02:00Z"
+                },
+                "signature": "MOL86pnAcZCRTvNyZMWLguKYeIfts0EjbzJmmQXZ7nOgeMLzqv8BU9GY9dXuqA5prGC9m5q1nmF746QijrpOAA"
+              },
+              "registered_at": "2026-10-26T00:03:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        },
+        {
+          "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+          "current_certificate_id": "sha256:e9dfa77e5eda11fe82215d62ac5878734a6cde3a56d7e15f037c2ac0d4532282",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+                "new_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "8850abacd19a6f27f56d30697f74b95366e709fabbbe10e0cb8313811cda3c5f",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "131c7c9321862318e212c7a28f1a9b8d0063419e56af047939d56b17fe83fc08",
+                "signature": "nY622ouwJ5/Gyd5bbaic5yEOgqNQTBIyEvv57brQLRpVzWRLRX95CHxEwwezq+y/E4uAUTYD6RbbUMjE2X5RBA"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "identity",
+                    "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"
+                  },
+                  "kind": "agent",
+                  "issuer_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                  "issued_at": "2026-10-26T00:03:00Z"
+                },
+                "signature": "z2oS4uSNgiaSaT7QX9AWmqRTkFFy-8TRjIrEP0PyuU_w0ptPTEbv8OjWqhbxP7oLivvi2AEFg0Anq5bkoGTECw"
+              },
+              "registered_at": "2026-10-26T00:04:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        },
+        {
+          "id": "did:aw:4YDPf9bG55GJLKFKhsQG5XqbM2Mz",
+          "current_certificate_id": "sha256:221e308452d77573197827ea77fbaba8e988edb1c46e37f86fca84357843ac06",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkmNL6xksdEJENGk9Z1qqGsY5njKQdjU1UhnUEUvWyQUVX",
+                "new_did_key": "did:key:z6MkmNL6xksdEJENGk9Z1qqGsY5njKQdjU1UhnUEUvWyQUVX",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "c8455f10c3febf3d2c29f5af334dd6ec323e4ba82baeb9b1b8597116166f6eff",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "c4182f836e13f2ecb45d285c3ab65190aea3238e4e26ea51aacaad8113922284",
+                "signature": "BXuD38wkhL2xU951L3n8xZa7kSudTOx4kREh9SlfDn6BHwYI+p9gjEMPyntVb4UamCnH2pnQkNW2uU4UuzleCw"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:4YDPf9bG55GJLKFKhsQG5XqbM2Mz",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "example.com"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:01:00Z"
+                },
+                "signature": "Oluz1HZhQvyjCvWAZBe0bVXOCHPqS3sSb3FjCbVvzMB2-oL1SJ1b0d3nhxZ5Z0V-rbRQpFOWax9YKwfP0zwOBQ"
+              },
+              "registered_at": "2026-10-26T00:02:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        }
+      ],
+      "missing": []
+    },
+    "broken-key-history-prev-hash": {
+      "v": 1,
+      "domain": "example.com",
+      "observed_at": "2026-10-26T00:30:00.000000Z",
+      "namespace": {
+        "epochs": [
+          {
+            "seq": 1,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:00:00.000000Z",
+            "retired_at": null
+          }
+        ]
+      },
+      "identities": [
+        {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "current_certificate_id": "sha256:301e3b3926861a4c057c810b042d5fbb7d539dcaa824b1acee77054d877cb1c9",
+          "current_key_seq": 2,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "new_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "f101717425d7c37244133f3c85015836ed22cd5eb43d666f4a9d533edf8d82d4",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "2cf9b9ca49d6d52198137ecd65b4f22115e43686868be41d029e80c7cd60fcf9",
+                "signature": "0mxM7sA/FFflCx7MKD2/WIlu9ik329eWDeNl2x01wH5pO7Ot8ThAzFnNbn64y+hYxsqGqSJZgXTeArk15cHWAw"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            },
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "new_did_key": "did:key:z6Mkt6316e2PN3mZdB6N9CrzomJYUd1s5yBZi1XYHmwT9TUP",
+                "operation": "rotate_key",
+                "prev_entry_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+                "previous_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "seq": 2,
+                "state_hash": "61023505fd38615398528f06df54f61f7666ad112c6b724113e01e30ea3477a9",
+                "timestamp": "2026-10-26T00:10:00Z",
+                "entry_hash": "a044839b98d9f374a153989eb6ee97458cb3a2bab2518b6d6fe1febab667f72b",
+                "signature": "d7KWYgaUFjIer4pbPjEoQpg6Jb1uTpCKouCAKWRqt166CuSAwEXf14ZvujiylTjU1hwkFAYzWdHLLKE67LNJBA"
+              },
+              "registered_at": "2026-10-26T00:10:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "example.com"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:00:00Z"
+                },
+                "signature": "UsTQXXWmQYmDLZNsqHs6ebs9763IcHsYI3zbPFYJ9lgdkYMRKtmAdnFerb7hjFS5bxrCU_7XcQYNYQhoAjdlBA"
+              },
+              "registered_at": "2026-10-26T00:01:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        },
+        {
+          "id": "did:aw:2e2SPDJNyxg5Dt6EFJX3Tcn8Tauj",
+          "current_certificate_id": "sha256:c7601ac7ae45a13626785274489fbe6bc6807d2963067b1f94c8bc2827247971",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkmtWtY63GQVBrpMyRJWEzsnxfsGkemu6CtMDwGTv4RYj2",
+                "new_did_key": "did:key:z6MkmtWtY63GQVBrpMyRJWEzsnxfsGkemu6CtMDwGTv4RYj2",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "3f55928a5f305ce731303197a1b9ae3a3743f19fdb907fe400b8903e87a6a6ce",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "22b20203490a77c8213833a1451862235268e5cd4ed5ce7e5df0ca966c52c3be",
+                "signature": "BlYAgnzsonrr28GZvngPUQ2LplGi6XKpubByO7FcMd01sD2H+MKVY+jDL9HcaHdARH9pX69SxI/jPpl+rk+MAg"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:2e2SPDJNyxg5Dt6EFJX3Tcn8Tauj",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "identity",
+                    "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                  "issued_at": "2026-10-26T00:02:00Z"
+                },
+                "signature": "MOL86pnAcZCRTvNyZMWLguKYeIfts0EjbzJmmQXZ7nOgeMLzqv8BU9GY9dXuqA5prGC9m5q1nmF746QijrpOAA"
+              },
+              "registered_at": "2026-10-26T00:03:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        },
+        {
+          "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+          "current_certificate_id": "sha256:e9dfa77e5eda11fe82215d62ac5878734a6cde3a56d7e15f037c2ac0d4532282",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+                "new_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "8850abacd19a6f27f56d30697f74b95366e709fabbbe10e0cb8313811cda3c5f",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "131c7c9321862318e212c7a28f1a9b8d0063419e56af047939d56b17fe83fc08",
+                "signature": "nY622ouwJ5/Gyd5bbaic5yEOgqNQTBIyEvv57brQLRpVzWRLRX95CHxEwwezq+y/E4uAUTYD6RbbUMjE2X5RBA"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "identity",
+                    "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"
+                  },
+                  "kind": "agent",
+                  "issuer_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                  "issued_at": "2026-10-26T00:03:00Z"
+                },
+                "signature": "z2oS4uSNgiaSaT7QX9AWmqRTkFFy-8TRjIrEP0PyuU_w0ptPTEbv8OjWqhbxP7oLivvi2AEFg0Anq5bkoGTECw"
+              },
+              "registered_at": "2026-10-26T00:04:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        },
+        {
+          "id": "did:aw:4YDPf9bG55GJLKFKhsQG5XqbM2Mz",
+          "current_certificate_id": "sha256:221e308452d77573197827ea77fbaba8e988edb1c46e37f86fca84357843ac06",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkmNL6xksdEJENGk9Z1qqGsY5njKQdjU1UhnUEUvWyQUVX",
+                "new_did_key": "did:key:z6MkmNL6xksdEJENGk9Z1qqGsY5njKQdjU1UhnUEUvWyQUVX",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "c8455f10c3febf3d2c29f5af334dd6ec323e4ba82baeb9b1b8597116166f6eff",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "c4182f836e13f2ecb45d285c3ab65190aea3238e4e26ea51aacaad8113922284",
+                "signature": "BXuD38wkhL2xU951L3n8xZa7kSudTOx4kREh9SlfDn6BHwYI+p9gjEMPyntVb4UamCnH2pnQkNW2uU4UuzleCw"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:4YDPf9bG55GJLKFKhsQG5XqbM2Mz",
+                  "domain": "example.com",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "example.com"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:01:00Z"
+                },
+                "signature": "Oluz1HZhQvyjCvWAZBe0bVXOCHPqS3sSb3FjCbVvzMB2-oL1SJ1b0d3nhxZ5Z0V-rbRQpFOWax9YKwfP0zwOBQ"
+              },
+              "registered_at": "2026-10-26T00:02:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
             }
           ],
           "revocation": null
@@ -4223,6 +4298,11 @@
         "identity_valid": true,
         "kind": "agent",
         "reason": "verified"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
       }
     },
     {
@@ -4244,6 +4324,11 @@
         "identity_valid": true,
         "kind": "human",
         "reason": "verified"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
       }
     },
     {
@@ -4265,6 +4350,11 @@
         "identity_valid": true,
         "kind": "agent",
         "reason": "verified"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
       }
     },
     {
@@ -4287,72 +4377,11 @@
         "identity_valid": true,
         "kind": "agent",
         "reason": "verified"
-      }
-    },
-    {
-      "name": "registered-child-of-local-parent",
-      "chain": [
-        "alice",
-        "coordinator",
-        "global-from-local"
-      ],
-      "status": "global-child-local-parent",
-      "subject": {
-        "id": "did:aw:41Saaf5D8DUoF5wVrdSfiNrioxEv",
-        "did_key": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
-        "team_member_did_aw": "did:aw:41Saaf5D8DUoF5wVrdSfiNrioxEv",
-        "team_member_did_key": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs"
       },
-      "expected": {
-        "outcome": "nearest_human",
-        "human_id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
-        "identity_valid": true,
-        "kind": "agent",
-        "reason": "verified"
-      }
-    },
-    {
-      "name": "registered-child-needs-live-local-parent-proof",
-      "chain": [
-        "alice",
-        "coordinator",
-        "global-from-local"
-      ],
-      "status": "global-child-local-parent-rotated",
-      "subject": {
-        "id": "did:aw:41Saaf5D8DUoF5wVrdSfiNrioxEv",
-        "did_key": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
-        "team_member_did_aw": "did:aw:41Saaf5D8DUoF5wVrdSfiNrioxEv",
-        "team_member_did_key": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs"
-      },
-      "expected": {
-        "outcome": "unknown",
-        "human_id": null,
-        "identity_valid": false,
-        "kind": null,
-        "reason": "stale_issuer_key"
-      }
-    },
-    {
-      "name": "registered-child-with-resigned-local-parent",
-      "chain": [
-        "alice",
-        "coordinator-resigned",
-        "global-from-local"
-      ],
-      "status": "global-child-local-parent-rotated",
-      "subject": {
-        "id": "did:aw:41Saaf5D8DUoF5wVrdSfiNrioxEv",
-        "did_key": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
-        "team_member_did_aw": "did:aw:41Saaf5D8DUoF5wVrdSfiNrioxEv",
-        "team_member_did_key": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs"
-      },
-      "expected": {
-        "outcome": "nearest_human",
-        "human_id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
-        "identity_valid": true,
-        "kind": "agent",
-        "reason": "verified"
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
       }
     },
     {
@@ -4376,6 +4405,11 @@
         "identity_valid": true,
         "kind": "agent",
         "reason": "verified"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
       }
     },
     {
@@ -4396,6 +4430,11 @@
         "identity_valid": true,
         "kind": "agent",
         "reason": "verified"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
       }
     },
     {
@@ -4423,6 +4462,11 @@
         "identity_valid": true,
         "kind": "agent",
         "reason": "verified"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
       }
     },
     {
@@ -4451,6 +4495,11 @@
         "identity_valid": false,
         "kind": null,
         "reason": "depth_exceeded"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
       }
     },
     {
@@ -4473,6 +4522,11 @@
         "identity_valid": false,
         "kind": null,
         "reason": "duplicate_id"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
       }
     },
     {
@@ -4494,6 +4548,11 @@
         "identity_valid": false,
         "kind": null,
         "reason": "cycle"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
       }
     },
     {
@@ -4515,6 +4574,11 @@
         "identity_valid": false,
         "kind": null,
         "reason": "missing_parent"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
       }
     },
     {
@@ -4537,6 +4601,11 @@
         "identity_valid": false,
         "kind": null,
         "reason": "human_issuer_is_agent"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
       }
     },
     {
@@ -4559,6 +4628,11 @@
         "identity_valid": false,
         "kind": null,
         "reason": "human_issuer_is_agent"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
       }
     },
     {
@@ -4581,6 +4655,11 @@
         "identity_valid": false,
         "kind": null,
         "reason": "domain_mismatch"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
       }
     },
     {
@@ -4601,6 +4680,11 @@
         "identity_valid": false,
         "kind": null,
         "reason": "invalid_domain"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
       }
     },
     {
@@ -4621,6 +4705,11 @@
         "identity_valid": false,
         "kind": null,
         "reason": "invalid_kind"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
       }
     },
     {
@@ -4641,6 +4730,11 @@
         "identity_valid": false,
         "kind": null,
         "reason": "invalid_shape"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
       }
     },
     {
@@ -4659,6 +4753,11 @@
         "identity_valid": null,
         "kind": null,
         "reason": "legacy_no_chain"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
       }
     },
     {
@@ -4680,6 +4779,11 @@
         "identity_valid": null,
         "kind": null,
         "reason": "unregistered_identity"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
       }
     },
     {
@@ -4701,6 +4805,11 @@
         "identity_valid": null,
         "kind": null,
         "reason": "unregistered_identity"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
       }
     },
     {
@@ -4722,6 +4831,11 @@
         "identity_valid": false,
         "kind": null,
         "reason": "stale_issuer_key"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
       }
     },
     {
@@ -4743,6 +4857,11 @@
         "identity_valid": true,
         "kind": "agent",
         "reason": "verified"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
       }
     },
     {
@@ -4764,6 +4883,11 @@
         "identity_valid": true,
         "kind": "agent",
         "reason": "verified"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
       }
     },
     {
@@ -4785,6 +4909,11 @@
         "identity_valid": true,
         "kind": "human",
         "reason": "verified"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
       }
     },
     {
@@ -4806,6 +4935,11 @@
         "identity_valid": true,
         "kind": "agent",
         "reason": "verified"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
       }
     },
     {
@@ -4826,6 +4960,11 @@
         "identity_valid": false,
         "kind": null,
         "reason": "stale_issuer_key"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
       }
     },
     {
@@ -4846,6 +4985,11 @@
         "identity_valid": true,
         "kind": "agent",
         "reason": "verified"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
       }
     },
     {
@@ -4867,6 +5011,11 @@
         "identity_valid": false,
         "kind": null,
         "reason": "revoked"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
       }
     },
     {
@@ -4888,6 +5037,11 @@
         "identity_valid": false,
         "kind": null,
         "reason": "revoked"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
       }
     },
     {
@@ -4909,6 +5063,11 @@
         "identity_valid": false,
         "kind": null,
         "reason": "revoked"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
       }
     },
     {
@@ -4932,7 +5091,12 @@
         "reason": "revoked"
       },
       "presented_chain": false,
-      "resolve_current_head": true
+      "resolve_current_head": true,
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
     },
     {
       "name": "earlier-invited-human-survives",
@@ -4953,6 +5117,11 @@
         "identity_valid": true,
         "kind": "human",
         "reason": "verified"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
       }
     },
     {
@@ -4975,6 +5144,11 @@
         "identity_valid": true,
         "kind": "agent",
         "reason": "verified"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
       }
     },
     {
@@ -4996,6 +5170,11 @@
         "identity_valid": false,
         "kind": null,
         "reason": "revoked"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
       }
     },
     {
@@ -5018,6 +5197,11 @@
         "identity_valid": false,
         "kind": null,
         "reason": "revoked"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
       }
     },
     {
@@ -5039,6 +5223,11 @@
         "identity_valid": false,
         "kind": null,
         "reason": "revoked"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
       }
     },
     {
@@ -5060,6 +5249,11 @@
         "identity_valid": true,
         "kind": "human",
         "reason": "verified"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
       }
     },
     {
@@ -5081,6 +5275,11 @@
         "identity_valid": false,
         "kind": null,
         "reason": "superseded_certificate"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
       }
     },
     {
@@ -5103,6 +5302,11 @@
         "identity_valid": true,
         "kind": "agent",
         "reason": "verified"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
       }
     },
     {
@@ -5126,6 +5330,11 @@
         "identity_valid": true,
         "kind": "agent",
         "reason": "verified"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
       }
     },
     {
@@ -5147,6 +5356,11 @@
         "identity_valid": true,
         "kind": "agent",
         "reason": "verified"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
       }
     },
     {
@@ -5169,6 +5383,11 @@
         "identity_valid": true,
         "kind": "agent",
         "reason": "verified"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
       }
     },
     {
@@ -5190,6 +5409,11 @@
         "identity_valid": false,
         "kind": null,
         "reason": "revoked"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
       }
     },
     {
@@ -5214,6 +5438,11 @@
       },
       "subject_patch": {
         "did_key": "did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
       }
     },
     {
@@ -5238,6 +5467,11 @@
       },
       "subject_patch": {
         "team_member_did_key": "did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
       }
     },
     {
@@ -5262,6 +5496,11 @@
       },
       "subject_patch": {
         "team_member_did_aw": "did:aw:2e2SPDJNyxg5Dt6EFJX3Tcn8Tauj"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
       }
     },
     {
@@ -5288,7 +5527,12 @@
         "team_member_did_aw": null
       },
       "membership_scope": "local",
-      "expected_membership_scope": "local"
+      "expected_membership_scope": "local",
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
+      }
     },
     {
       "name": "grant-binds-subject-not-session-key",
@@ -5311,7 +5555,12 @@
         "reason": "verified"
       },
       "auth_lane": "grant",
-      "session_key": "did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z"
+      "session_key": "did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z",
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
+      }
     },
     {
       "name": "grant-session-used-as-subject-refuses",
@@ -5337,7 +5586,12 @@
       "subject_patch": {
         "did_key": "did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z"
       },
-      "session_key": "did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z"
+      "session_key": "did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z",
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
     },
     {
       "name": "team-omission-of-enrolled-revoked-id",
@@ -5361,7 +5615,12 @@
       },
       "auth_lane": "team",
       "presented_chain": false,
-      "resolve_current_head": true
+      "resolve_current_head": true,
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
     },
     {
       "name": "identity-omission-of-enrolled-revoked-id",
@@ -5385,7 +5644,12 @@
       },
       "auth_lane": "identity",
       "presented_chain": false,
-      "resolve_current_head": true
+      "resolve_current_head": true,
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
     },
     {
       "name": "grant-omission-of-enrolled-revoked-id",
@@ -5409,7 +5673,12 @@
       },
       "auth_lane": "grant",
       "presented_chain": false,
-      "resolve_current_head": true
+      "resolve_current_head": true,
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
     },
     {
       "name": "federation-omission-of-enrolled-revoked-id",
@@ -5433,7 +5702,12 @@
       },
       "auth_lane": "federation",
       "presented_chain": false,
-      "resolve_current_head": true
+      "resolve_current_head": true,
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
     },
     {
       "name": "hook-omission-of-enrolled-revoked-id",
@@ -5457,7 +5731,12 @@
       },
       "auth_lane": "hook",
       "presented_chain": false,
-      "resolve_current_head": true
+      "resolve_current_head": true,
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
     },
     {
       "name": "cached-status-age-60",
@@ -5483,7 +5762,12 @@
         "age_seconds": 60,
         "refresh": "not_needed"
       },
-      "expected_cache_mode": "fresh"
+      "expected_cache_mode": "fresh",
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
+      }
     },
     {
       "name": "cached-status-age-61",
@@ -5509,7 +5793,12 @@
         "age_seconds": 61,
         "refresh": "failed"
       },
-      "expected_cache_mode": "outage_grace"
+      "expected_cache_mode": "outage_grace",
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
+      }
     },
     {
       "name": "cached-status-age-900",
@@ -5535,7 +5824,12 @@
         "age_seconds": 900,
         "refresh": "failed"
       },
-      "expected_cache_mode": "outage_grace"
+      "expected_cache_mode": "outage_grace",
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
+      }
     },
     {
       "name": "cached-status-age-901",
@@ -5561,7 +5855,12 @@
         "age_seconds": 901,
         "refresh": "failed"
       },
-      "expected_cache_mode": "unavailable"
+      "expected_cache_mode": "unavailable",
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
     },
     {
       "name": "no-cache-and-registry-outage",
@@ -5586,6 +5885,11 @@
       "cache": {
         "age_seconds": null,
         "refresh": "failed"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
       }
     },
     {
@@ -5608,7 +5912,1083 @@
         "kind": null,
         "reason": "evidence_unavailable"
       },
-      "status_source": "caller"
+      "status_source": "caller",
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "broken-key-history-signature-refuses",
+      "chain": [
+        "alice",
+        "global-agent"
+      ],
+      "status": "broken-key-history-signature",
+      "subject": {
+        "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "team_member_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "evidence_unavailable"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "broken-key-history-prev-hash-refuses",
+      "chain": [
+        "alice",
+        "global-agent"
+      ],
+      "status": "broken-key-history-prev-hash",
+      "subject": {
+        "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "team_member_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "evidence_unavailable"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "registered-child-of-local-parent-refuses",
+      "chain": [
+        "alice",
+        "coordinator",
+        "global-from-local"
+      ],
+      "status": "invalid-registration-local-parent",
+      "subject": {
+        "id": "did:aw:41Saaf5D8DUoF5wVrdSfiNrioxEv",
+        "did_key": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+        "team_member_did_aw": "did:aw:41Saaf5D8DUoF5wVrdSfiNrioxEv",
+        "team_member_did_key": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs"
+      },
+      "expected": {
+        "outcome": "unknown",
+        "human_id": null,
+        "identity_valid": false,
+        "kind": null,
+        "reason": "unregistered_parent"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "forged-old-key-local-is-stale",
+      "chain": [
+        "alice",
+        "forged-old-key-local"
+      ],
+      "status": "alice-rotated",
+      "subject": {
+        "id": "did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z",
+        "did_key": "did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z"
+      },
+      "expected": {
+        "outcome": "unknown",
+        "human_id": null,
+        "identity_valid": false,
+        "kind": null,
+        "reason": "stale_issuer_key"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "did-key-human-shape-refuses",
+      "chain": [
+        "alice",
+        "did-key-human"
+      ],
+      "status": "normal",
+      "subject": {
+        "id": "did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z",
+        "did_key": "did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z"
+      },
+      "expected": {
+        "outcome": "unknown",
+        "human_id": null,
+        "identity_valid": false,
+        "kind": null,
+        "reason": "invalid_shape"
+      },
+      "mandatory_in_every_ci": true,
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "subject-and-member-key-agree-but-leaf-key-differs",
+      "chain": [
+        "alice",
+        "global-agent"
+      ],
+      "status": "normal",
+      "subject": {
+        "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "team_member_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3"
+      },
+      "expected": {
+        "outcome": "unknown",
+        "human_id": null,
+        "identity_valid": false,
+        "kind": null,
+        "reason": "subject_mismatch"
+      },
+      "subject_patch": {
+        "did_key": "did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z",
+        "team_member_did_key": "did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "namespace-ancestor-authority-refuses",
+      "chain": [
+        "alice",
+        "coordinator"
+      ],
+      "status": "normal",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "evidence_unavailable"
+      },
+      "namespace_authority": {
+        "domain": "com",
+        "dns_name": "_awid.com",
+        "inherited": true,
+        "controller_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "namespace-exact-authority-passes",
+      "chain": [
+        "alice",
+        "coordinator"
+      ],
+      "status": "normal",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "nearest_human",
+        "human_id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+        "identity_valid": true,
+        "kind": "agent",
+        "reason": "verified"
+      },
+      "namespace_authority": {
+        "domain": "example.com",
+        "dns_name": "_awid.example.com",
+        "inherited": false,
+        "controller_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
+      }
+    },
+    {
+      "name": "team-legacy-local-outage",
+      "chain": [],
+      "status": "normal",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unknown",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "legacy_no_chain"
+      },
+      "auth_lane": "team",
+      "cache": {
+        "age_seconds": 901,
+        "refresh": "failed"
+      },
+      "tree_lookup": false,
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "team-legacy-global-known-unenrolled",
+      "chain": [],
+      "status": "global-not-registered",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unknown",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "unregistered_identity"
+      },
+      "auth_lane": "team",
+      "enrollment": "absent",
+      "subject_patch": {
+        "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "team-stable-id-enrollment-outage",
+      "chain": [],
+      "status": "normal",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "status_expired"
+      },
+      "auth_lane": "team",
+      "enrollment": "unavailable",
+      "subject_patch": {
+        "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
+      },
+      "cache": {
+        "age_seconds": 901,
+        "refresh": "failed"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "team-legacy-global-expired-absence",
+      "chain": [],
+      "status": "global-not-registered",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "status_expired"
+      },
+      "auth_lane": "team",
+      "enrollment": "unavailable",
+      "subject_patch": {
+        "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
+      },
+      "cache": {
+        "age_seconds": 901,
+        "refresh": "failed"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "team-enrolled-omission-outage",
+      "chain": [
+        "alice",
+        "global-agent"
+      ],
+      "status": "normal",
+      "subject": {
+        "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "team_member_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "status_expired"
+      },
+      "auth_lane": "team",
+      "presented_chain": false,
+      "resolve_current_head": true,
+      "cache": {
+        "age_seconds": 901,
+        "refresh": "failed"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "identity-legacy-local-outage",
+      "chain": [],
+      "status": "normal",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unknown",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "legacy_no_chain"
+      },
+      "auth_lane": "identity",
+      "cache": {
+        "age_seconds": 901,
+        "refresh": "failed"
+      },
+      "tree_lookup": false,
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "identity-legacy-global-known-unenrolled",
+      "chain": [],
+      "status": "global-not-registered",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unknown",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "unregistered_identity"
+      },
+      "auth_lane": "identity",
+      "enrollment": "absent",
+      "subject_patch": {
+        "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "identity-stable-id-enrollment-outage",
+      "chain": [],
+      "status": "normal",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "status_expired"
+      },
+      "auth_lane": "identity",
+      "enrollment": "unavailable",
+      "subject_patch": {
+        "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
+      },
+      "cache": {
+        "age_seconds": 901,
+        "refresh": "failed"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "identity-legacy-global-expired-absence",
+      "chain": [],
+      "status": "global-not-registered",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "status_expired"
+      },
+      "auth_lane": "identity",
+      "enrollment": "unavailable",
+      "subject_patch": {
+        "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
+      },
+      "cache": {
+        "age_seconds": 901,
+        "refresh": "failed"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "identity-enrolled-omission-outage",
+      "chain": [
+        "alice",
+        "global-agent"
+      ],
+      "status": "normal",
+      "subject": {
+        "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "team_member_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "status_expired"
+      },
+      "auth_lane": "identity",
+      "presented_chain": false,
+      "resolve_current_head": true,
+      "cache": {
+        "age_seconds": 901,
+        "refresh": "failed"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "grant-legacy-local-outage",
+      "chain": [],
+      "status": "normal",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unknown",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "legacy_no_chain"
+      },
+      "auth_lane": "grant",
+      "cache": {
+        "age_seconds": 901,
+        "refresh": "failed"
+      },
+      "tree_lookup": false,
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "grant-legacy-global-known-unenrolled",
+      "chain": [],
+      "status": "global-not-registered",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unknown",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "unregistered_identity"
+      },
+      "auth_lane": "grant",
+      "enrollment": "absent",
+      "subject_patch": {
+        "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "grant-stable-id-enrollment-outage",
+      "chain": [],
+      "status": "normal",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "status_expired"
+      },
+      "auth_lane": "grant",
+      "enrollment": "unavailable",
+      "subject_patch": {
+        "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
+      },
+      "cache": {
+        "age_seconds": 901,
+        "refresh": "failed"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "grant-legacy-global-expired-absence",
+      "chain": [],
+      "status": "global-not-registered",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "status_expired"
+      },
+      "auth_lane": "grant",
+      "enrollment": "unavailable",
+      "subject_patch": {
+        "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
+      },
+      "cache": {
+        "age_seconds": 901,
+        "refresh": "failed"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "grant-enrolled-omission-outage",
+      "chain": [
+        "alice",
+        "global-agent"
+      ],
+      "status": "normal",
+      "subject": {
+        "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "team_member_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "status_expired"
+      },
+      "auth_lane": "grant",
+      "presented_chain": false,
+      "resolve_current_head": true,
+      "cache": {
+        "age_seconds": 901,
+        "refresh": "failed"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "federation-legacy-local-outage",
+      "chain": [],
+      "status": "normal",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unknown",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "legacy_no_chain"
+      },
+      "auth_lane": "federation",
+      "cache": {
+        "age_seconds": 901,
+        "refresh": "failed"
+      },
+      "tree_lookup": false,
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "federation-legacy-global-known-unenrolled",
+      "chain": [],
+      "status": "global-not-registered",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unknown",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "unregistered_identity"
+      },
+      "auth_lane": "federation",
+      "enrollment": "absent",
+      "subject_patch": {
+        "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "federation-stable-id-enrollment-outage",
+      "chain": [],
+      "status": "normal",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "status_expired"
+      },
+      "auth_lane": "federation",
+      "enrollment": "unavailable",
+      "subject_patch": {
+        "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
+      },
+      "cache": {
+        "age_seconds": 901,
+        "refresh": "failed"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "federation-legacy-global-expired-absence",
+      "chain": [],
+      "status": "global-not-registered",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "status_expired"
+      },
+      "auth_lane": "federation",
+      "enrollment": "unavailable",
+      "subject_patch": {
+        "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
+      },
+      "cache": {
+        "age_seconds": 901,
+        "refresh": "failed"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "federation-enrolled-omission-outage",
+      "chain": [
+        "alice",
+        "global-agent"
+      ],
+      "status": "normal",
+      "subject": {
+        "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "team_member_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "status_expired"
+      },
+      "auth_lane": "federation",
+      "presented_chain": false,
+      "resolve_current_head": true,
+      "cache": {
+        "age_seconds": 901,
+        "refresh": "failed"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "hook-legacy-local-outage",
+      "chain": [],
+      "status": "normal",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unknown",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "legacy_no_chain"
+      },
+      "auth_lane": "hook",
+      "cache": {
+        "age_seconds": 901,
+        "refresh": "failed"
+      },
+      "tree_lookup": false,
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "hook-legacy-global-known-unenrolled",
+      "chain": [],
+      "status": "global-not-registered",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unknown",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "unregistered_identity"
+      },
+      "auth_lane": "hook",
+      "enrollment": "absent",
+      "subject_patch": {
+        "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "hook-stable-id-enrollment-outage",
+      "chain": [],
+      "status": "normal",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "status_expired"
+      },
+      "auth_lane": "hook",
+      "enrollment": "unavailable",
+      "subject_patch": {
+        "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
+      },
+      "cache": {
+        "age_seconds": 901,
+        "refresh": "failed"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "hook-legacy-global-expired-absence",
+      "chain": [],
+      "status": "global-not-registered",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "status_expired"
+      },
+      "auth_lane": "hook",
+      "enrollment": "unavailable",
+      "subject_patch": {
+        "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
+      },
+      "cache": {
+        "age_seconds": 901,
+        "refresh": "failed"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "hook-enrolled-omission-outage",
+      "chain": [
+        "alice",
+        "global-agent"
+      ],
+      "status": "normal",
+      "subject": {
+        "id": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3",
+        "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp",
+        "team_member_did_key": "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "status_expired"
+      },
+      "auth_lane": "hook",
+      "presented_chain": false,
+      "resolve_current_head": true,
+      "cache": {
+        "age_seconds": 901,
+        "refresh": "failed"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
+    },
+    {
+      "name": "tree-grace-does-not-extend-original-key-binding",
+      "chain": [
+        "alice",
+        "coordinator"
+      ],
+      "status": "normal",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "nearest_human",
+        "human_id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+        "identity_valid": true,
+        "kind": "agent",
+        "reason": "verified"
+      },
+      "cache": {
+        "age_seconds": 61,
+        "refresh": "failed"
+      },
+      "original_auth": "unavailable",
+      "expected_request": {
+        "ordinary": "refuse",
+        "human_required": "refuse"
+      }
     }
   ],
   "operation_cases": [
@@ -5854,11 +7234,31 @@
       "input": {
         "old_certificate": "coordinator",
         "parent_status": "alice-rotated",
-        "subject_key_proved": true
+        "subject_key_proved": true,
+        "issued_certificate_ids": [
+          "sha256:101a89303275362d5d3a366a19a59911e1dda6d39b57b45bbb2bd0e43e1cb2d9"
+        ]
       },
       "expected": {
         "accepted": true,
         "new_certificate": "coordinator-resigned"
+      }
+    },
+    {
+      "name": "resign-forged-old-key-refuses",
+      "action": "resign",
+      "input": {
+        "old_certificate": "forged-old-key-local",
+        "parent_status": "alice-rotated",
+        "subject_key_proved": true,
+        "issued_certificate_ids": [
+          "sha256:101a89303275362d5d3a366a19a59911e1dda6d39b57b45bbb2bd0e43e1cb2d9"
+        ]
+      },
+      "expected": {
+        "accepted": false,
+        "reason": "issuance_not_recorded",
+        "writes": 0
       }
     },
     {
@@ -6240,6 +7640,84 @@
       }
     },
     {
+      "name": "registered-child-under-local-parent-refuses",
+      "action": "register",
+      "input": {
+        "child_kind": "agent",
+        "child_id": "did:aw:41Saaf5D8DUoF5wVrdSfiNrioxEv",
+        "parent": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "accepted": false,
+        "reason": "unregistered_parent",
+        "writes": 0
+      }
+    },
+    {
+      "name": "token-holder-not-recipient",
+      "action": "invite_accept",
+      "input": {
+        "human": "bob",
+        "fixed_recipient": "bob@example.com",
+        "accepting_verified_email": "mallory@example.com",
+        "token_possessed": true
+      },
+      "expected": {
+        "membership": "complete",
+        "id_registration": "pending",
+        "parent_signatures": 0,
+        "registration_requests": 0
+      }
+    },
+    {
+      "name": "fixed-recipient-deferred-human-signing",
+      "action": "invite_accept",
+      "input": {
+        "human": "bob",
+        "fixed_recipient": "bob@example.com",
+        "accepting_verified_email": "bob@example.com",
+        "token_possessed": true,
+        "parent_current": true
+      },
+      "expected": {
+        "membership": "complete",
+        "id_registration": "pending",
+        "parent_signatures": 1,
+        "registration_requests": 1
+      }
+    },
+    {
+      "name": "post-lock-revocation-time-is-not-transaction-start",
+      "action": "revoke_after_wait",
+      "input": {
+        "actor": "alice",
+        "subject": "bob",
+        "transaction_started_at": "2026-10-26T00:01:00.000000Z",
+        "registration_serialized_at": "2026-10-26T00:03:00.000000Z",
+        "last_lock_acquired_at": "2026-10-26T00:05:00.000000Z",
+        "effective_from": null
+      },
+      "expected": {
+        "accepted": true,
+        "revoked_at": "2026-10-26T00:05:00.000000Z",
+        "effective_from": "2026-10-26T00:05:00.000000Z"
+      }
+    },
+    {
+      "name": "post-lock-registration-time-is-monotone",
+      "action": "register_after_wait",
+      "input": {
+        "certificate": "bob",
+        "transaction_started_at": "2026-10-26T00:01:00.000000Z",
+        "last_authority_serialization_at": "2026-10-26T00:05:00.000000Z",
+        "last_lock_acquired_at": "2026-10-26T00:06:00.000000Z"
+      },
+      "expected": {
+        "accepted": true,
+        "registered_at": "2026-10-26T00:06:00.000000Z"
+      }
+    },
+    {
       "name": "status-prefix-enumeration-refuses",
       "action": "status",
       "input": {
@@ -6270,6 +7748,21 @@
         "contains_message_or_task_bodies": false,
         "contains_email_or_account": false
       }
+    },
+    {
+      "name": "key-import-below-kdf-floor-refuses",
+      "action": "import_keychain",
+      "input": {
+        "human": "alice",
+        "backup": "weak_encrypted_pkcs8_pem",
+        "iterations": 2048,
+        "minimum_iterations": 600000
+      },
+      "expected": {
+        "accepted": false,
+        "reason": "weak_backup_kdf",
+        "writes": 0
+      }
     }
   ],
   "raw_wire_refusals": [
@@ -6291,7 +7784,12 @@
     {
       "name": "fractional-version",
       "raw_utf8": "{\"certificates\":[{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"issued_at\":\"2026-10-26T00:00:00Z\",\"issuer_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\",\"kind\":\"human\",\"parent\":{\"id\":\"example.com\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"UsTQXXWmQYmDLZNsqHs6ebs9763IcHsYI3zbPFYJ9lgdkYMRKtmAdnFerb7hjFS5bxrCU_7XcQYNYQhoAjdlBA\"},{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x\",\"issued_at\":\"2026-10-26T00:04:00Z\",\"issuer_key\":\"did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2\",\"kind\":\"agent\",\"parent\":{\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"kind\":\"identity\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"DannjvTjueGeZ7kPwfoli8A8jcxXiiAKCrRmvqkTVWXZ5TkOYidQh5Xo4Pzc-vSdTmr5TC-lTkSuEQtPxiGdAA\"},{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z\",\"issued_at\":\"2026-10-26T00:05:00Z\",\"issuer_key\":\"did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x\",\"kind\":\"agent\",\"parent\":{\"id\":\"did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x\",\"kind\":\"identity\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"jMmgRe2R2Ine8mH_TEywduyDbu0Vq6pUK5rzkXoIx2oW5LiCgaJlAE4td-8hq6d1et8SIdchdZA5QHkFOsFNAA\"},{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:key:z6Mkfmm57fsb6VL7zVusP8zeA9SYkCKdvUhby2G7Yh8vvQ1P\",\"issued_at\":\"2026-10-26T00:06:00Z\",\"issuer_key\":\"did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z\",\"kind\":\"agent\",\"parent\":{\"id\":\"did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z\",\"kind\":\"identity\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"_3KbatxU8qtsHA0McQ9HnwgxSysp0MbXbaACkKzokoy_sXTPQBdHg6v--MfiUd6PS8dM879ISdmVQbGBq8z2Cw\"}],\"type\":\"aweb.id-chain\",\"v\":1.0}",
-      "expected_reason": "invalid_shape"
+      "expected_reason": "invalid_shape",
+      "expected_refusal_class": "shape_or_encoding",
+      "allowed_reasons": [
+        "invalid_shape",
+        "noncanonical_json"
+      ]
     },
     {
       "name": "empty-bundle",
@@ -6327,7 +7825,7 @@
     {
       "name": "tampered-kind-bad-signature",
       "raw_utf8": "{\"certificates\":[{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"issued_at\":\"2026-10-26T00:00:00Z\",\"issuer_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\",\"kind\":\"human\",\"parent\":{\"id\":\"example.com\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"UsTQXXWmQYmDLZNsqHs6ebs9763IcHsYI3zbPFYJ9lgdkYMRKtmAdnFerb7hjFS5bxrCU_7XcQYNYQhoAjdlBA\"},{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x\",\"issued_at\":\"2026-10-26T00:04:00Z\",\"issuer_key\":\"did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2\",\"kind\":\"agent\",\"parent\":{\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"kind\":\"identity\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"DannjvTjueGeZ7kPwfoli8A8jcxXiiAKCrRmvqkTVWXZ5TkOYidQh5Xo4Pzc-vSdTmr5TC-lTkSuEQtPxiGdAA\"},{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z\",\"issued_at\":\"2026-10-26T00:05:00Z\",\"issuer_key\":\"did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x\",\"kind\":\"agent\",\"parent\":{\"id\":\"did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x\",\"kind\":\"identity\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"jMmgRe2R2Ine8mH_TEywduyDbu0Vq6pUK5rzkXoIx2oW5LiCgaJlAE4td-8hq6d1et8SIdchdZA5QHkFOsFNAA\"},{\"certificate\":{\"domain\":\"example.com\",\"id\":\"did:key:z6Mkfmm57fsb6VL7zVusP8zeA9SYkCKdvUhby2G7Yh8vvQ1P\",\"issued_at\":\"2026-10-26T00:06:00Z\",\"issuer_key\":\"did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z\",\"kind\":\"human\",\"parent\":{\"id\":\"did:key:z6MkvDqGT54cXesYGvABpF1UapVNwjCqRcafi4Px6Thv5T3Z\",\"kind\":\"identity\"},\"type\":\"aweb.id-certificate\",\"v\":1},\"signature\":\"_3KbatxU8qtsHA0McQ9HnwgxSysp0MbXbaACkKzokoy_sXTPQBdHg6v--MfiUd6PS8dM879ISdmVQbGBq8z2Cw\"}],\"type\":\"aweb.id-chain\",\"v\":1}",
-      "expected_reason": "invalid_signature"
+      "expected_reason": "invalid_shape"
     },
     {
       "name": "tampered-parent-bad-signature",
@@ -6348,9 +7846,17 @@
   "keychain_backup": {
     "human_id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
     "passphrase": "public-vector-passphrase",
-    "encrypted_pkcs8_pem": "-----BEGIN ENCRYPTED PRIVATE KEY-----\nMIGjMF8GCSqGSIb3DQEFDTBSMDEGCSqGSIb3DQEFDDAkBBAEFYlEJnVJJdFrlFtW\nc1IpAgIIADAMBggqhkiG9w0CCQUAMB0GCWCGSAFlAwQBKgQQyJRD6ZNvrsmAtgSc\nbHq2wgRAmhf6UCrLZ156NF3IQW2ijWRrE3szxZi+Ypdapr+UvDEJxr2D1ki/ZR7y\njEa4iL/uNv6YZIGhSP3JdrfaHBlmrg==\n-----END ENCRYPTED PRIVATE KEY-----\n",
+    "encrypted_pkcs8_pem": "-----BEGIN ENCRYPTED PRIVATE KEY-----\nMIGkMGAGCSqGSIb3DQEFDTBTMDIGCSqGSIb3DQEFDDAlBBAAESIzRFVmd4iZqrvM\n3e7/AgMJJ8AwDAYIKoZIhvcNAgkFADAdBglghkgBZQMEASoEEP/u3cy7qpmId2ZV\nRDMiEQAEQADqHCRcBcBybKYPGxz/C3N0GWS2ik7sZy4HoLgtboc7/2pBpl9iJLo/\n/DqN1PpfMJx4AgBUOIa2PI7pKm4e1HY=\n-----END ENCRYPTED PRIVATE KEY-----\n",
     "expected_public_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
-    "wrong_passphrase_refuses": true
+    "wrong_passphrase_refuses": true,
+    "format": "PBES2/PBKDF2-HMAC-SHA256/AES-256-CBC",
+    "iterations": 600000,
+    "minimum_iterations": 600000,
+    "salt_hex": "00112233445566778899aabbccddeeff",
+    "iv_hex": "ffeeddccbbaa99887766554433221100",
+    "weak_encrypted_pkcs8_pem": "-----BEGIN ENCRYPTED PRIVATE KEY-----\nMIGjMF8GCSqGSIb3DQEFDTBSMDEGCSqGSIb3DQEFDDAkBBAAESIzRFVmd4iZqrvM\n3e7/AgIIADAMBggqhkiG9w0CCQUAMB0GCWCGSAFlAwQBKgQQ/+7dzLuqmYh3ZlVE\nMyIRAARA6EQDqpMAHkAW8Hza9aIXj6c9K+SL5BDPF7EkESJiCnKrM5CQtqbQc8uN\nejLNvnVTk4RuHsu3BYakEM5q62dM6Q==\n-----END ENCRYPTED PRIVATE KEY-----\n",
+    "weak_backup_iterations": 2048,
+    "weak_backup_expected_reason": "weak_backup_kdf"
   },
   "registration_example": {
     "body": {

@@ -56,7 +56,9 @@ Unicode, wrong types and defaulted/omitted fields refuse. An ID certificate is:
 ```
 
 - `id` is a canonical existing `did:aw` or Ed25519 `did:key`. A human always has
-  a registered `did:aw`. An unregistered local agent uses its `did:key` as ID;
+  a registered `did:aw`: reject kind=human with did:key as invalid_shape
+  at shape validation, BEFORE cryptography. An unregistered local agent uses
+  its `did:key` as ID;
   that ID cannot rotate. Global agents use registered `did:aw` IDs. No DID
   syntax changes and no address allocation are required by this certificate.
 - `domain` is a canonical ASCII DNS name: lowercase A-labels, at most 253 bytes;
@@ -65,8 +67,14 @@ Unicode, wrong types and defaulted/omitted fields refuse. An ID certificate is:
   a signed field, not inferred from the domain-free `did:aw` or from a team.
 - `parent` is exactly `{kind,id}`. `kind="namespace"` names this exact `domain`;
   `kind="identity"` names a canonical parent ID in the same domain. The former
-  is resolved from the domain's `_awid` DNS authority and its registry history;
-  the latter from the parent's certificate and key evidence. `issuer_key` is
+  is resolved from EXACTLY `_awid.<domain>` and that domain's own registry
+  authority/epochs, never an inherited ancestor TXT/controller/registry or
+  an ancestor's epoch history. Missing exact-domain authority is unavailable;
+  a conflicting root key is invalid. Hosted `*.aweb.ai` identities require
+  the hosted namespace's own key and exact TXT authority (aweb-acic.6), not
+  `aweb.ai`'s parent key. Existing ancestor lookup behaviour for other
+  contracts is unchanged. An identity parent resolves from its certificate and
+  key evidence. `issuer_key` is
   an Ed25519 `did:key`, a selector to verify, never independent authority.
 - `kind` is exactly `human` or `agent`. `issued_at` is ASCII RFC 3339 UTC to the
   second with `Z`; it is informational, not an admission time witness.
@@ -143,10 +151,12 @@ child certificate already to confer tree authority.
 
 Register also carries `X-AWID-ID-Chain` with the full candidate chain; its leaf
 must be byte-identical to the signed certificate in the body. The registry
-retains the supporting public chain with the registered revision. A global
-agent can have an unregistered local agent as parent: that parent's immutable
-did:key is its key version, represented by issuer_key_seq=0. Retaining its
-signed proof does not register that local identity or give it a registry head.
+retains the supporting public chain with the registered revision. Every
+identity parent of a registered child MUST itself be registered; no registered
+child under an unregistered local parent in v1. Enroll that parent first or
+issue from a registered parent/root. No J1–J10 journey requires the extra local
+support rows or issuer_key_seq=0; ordinary unregistered local spawn chains
+remain supported.
 
 One AWID transaction serializes registration with parent/namespace rotation,
 revocation and re-parenting. After its last lock wait it checks the full chain,
@@ -156,9 +166,12 @@ cutoffs and expected head. It records witnessed `registered_at`, the exact
 issuer key-version sequence, invitation ID and immutable signed bytes before
 success. `registered_at` is assigned by AWID, never taken from `issued_at` or
 a local signing time. Registry timestamps use fixed UTC microseconds
-(`YYYY-MM-DDTHH:MM:SS.ffffffZ`); key-version sequences disambiguate a rotation
-and admission at the same timestamp. No registration can authorize a signature
-from a key already retired when it is registered.
+(`YYYY-MM-DDTHH:MM:SS.ffffffZ`); key-version sequences identify the witnessed
+issuer epoch explicitly. Assign registered_at, revoked_at, default
+effective_from and epoch times from the clock AFTER the last lock wait, strictly
+monotone for conflicting authority events in serialization order (never
+PostgreSQL transaction-start now()); only an explicit root backdate may precede
+that order. No registration authorizes a signature from an already retired key.
 Success returns exactly `{certificate_id,registered_at}`. It is a registration
 receipt, not a current-authority result; verification still uses §4.
 
@@ -189,7 +202,12 @@ An unregistered local child verifies against the parent's **current key**.
 Parent rotation therefore makes its old-key certificate stale until re-signed.
 On its next contact the child presents its old certificate and proves its own
 key; the parent verifies the
-old signature against its own verified key history and signs the **same
+old signature against its own verified key history AND requires that exact
+certificate_id in its own durable issuance log (local signer log, or custodial
+store). Possession of an old valid signature alone is insufficient: a leaked
+retired key can forge/backdate one. Missing issuance provenance refuses; never
+seed that log from a submitted certificate. Record issuance before releasing
+a certificate, and retain entries across rotation. It then signs the **same
 id/domain/parent/kind** with the current issuer key and a new issued_at. It must
 not sign a request with a substituted ID or kind. The local child carries the
 re-signed certificate. There is no job or silent fallback to an old signing key.
@@ -208,20 +226,34 @@ of an old root key. No pre-upgrade namespace history is guessed. A local
 
 Routine rotation retains the did:aw through the existing old-key-signed
 continuity log. Registered children retain their historic issuer-key witness;
-unregistered children request re-sign on contact. Rotating a member's own key
-still requires ordinary member-certificate reissue, as today.
+unregistered children request re-sign on contact. Rotation is NOT a compromise
+remedy: registered children admitted under a leaked key survive rotation.
+Compromise needs root-backdated revocation or explicit per-child revocation;
+S7 must show that choice. Rotating a member's own key still requires ordinary member-certificate reissue, as today.
 
 The ONE v1 multi-machine method is an explicit password-encrypted export/import
 of the SAME human Ed25519 key between OS keychains, using the established
-encrypted PKCS#8 private-key format, not a new aweb backup protocol. Standard
-[private-key serialization](https://cryptography.io/en/latest/hazmat/primitives/asymmetric/serialization/#serialization-formats)
-supports this encoding. A human invokes it interactively; passphrases never
+encrypted PKCS#8 private-key format, not a new aweb backup protocol. The ONE
+v1 export form is PBES2/PBKDF2-HMAC-SHA256 with at least **600000 iterations**,
+at least 16 random salt bytes, and AES-256-CBC with a fresh random 16-byte IV.
+Import parses these ASN.1 parameters and refuses other algorithms, missing
+parameters or a below-floor work factor BEFORE deriving/decrypting; a
+decryptable weak backup still refuses without keychain writes. Go S3 uses
+[`github.com/youmark/pkcs8`](https://github.com/youmark/pkcs8) generic
+MarshalPrivateKey/ParsePrivateKey with explicit PBKDF2Opts (IterationCount>=600000,
+HMACHash=crypto.SHA256, SaltSize>=16) and AES256CBC, plus the import parameter
+check; its defaults do NOT meet this floor and must not be used. This names the
+implementation dependency, not a claim that Go stdlib supports encrypted PKCS#8.
+The frozen public synthetic backup pins these parameters. A human invokes it
+interactively; passphrases never
 appear in argv, environment or agent scripts. Cleartext key material stays in
 memory; the encrypted backup is kept outside agent homes. Import compares its
 public key with the current verified human key before installing it in the
 second keychain. A wrong password/key refuses without replacing the existing
 entry. It creates no new human, key, parent certificate or device-flow signer.
-Rotation requires refreshing the other machine's keychain from a new encrypted
+A key import alone supplies no issuance provenance; it cannot re-sign local
+children absent from that signer's issuance log. Rotation requires refreshing
+the other machine's keychain from a new encrypted
 export; an old machine cannot keep signing as the current key.
 
 Loss without the old key is replacement, not ordinary did:aw rotation. The
@@ -242,7 +274,8 @@ not add root-authorized reset of an existing global DID's continuity log.
 `{domain,id,expected_head,effective_from}` and request-bound proof from the ID
 itself, its current parent while that parent is valid, or the namespace root.
 A team admin or unrelated human cannot revoke it. `effective_from=null` means
-AWID's transaction time. Only the namespace root may supply an earlier cutoff;
+AWID's post-lock serialization time. Only the namespace root may supply an
+earlier cutoff;
 a parent or the subject cannot backdate, and future cutoffs refuse. A Cloud
 owner exercises root backdating only through the actual authorized namespace
 signer; an owner role alone is not a portable revocation proof. Repeated revoke
@@ -292,7 +325,7 @@ evidence for a root→local-agent chain. The response is a coherent snapshot:
     id, current_certificate_id, current_key_seq,
     key_history: [{entry, registered_at}],
     certificates: [{signed, registered_at, superseded_at,
-                    issuer_key_seq, invitation_id}],
+                    issuer_key_seq}],
     revocation: null | {revoked_at, effective_from}
   }],
   missing: [id]
@@ -300,25 +333,23 @@ evidence for a root→local-agent chain. The response is a coherent snapshot:
 ```
 
 This pseudocode fixes field names, not a second encoding: bodies use strict
-JSON. All fields are required; `retired_at`/`superseded_at`/`invitation_id` may
-be null; the other values have the types above. A proof-supporting LOCAL row,
-if needed by a registered descendant, has current_certificate_id=null,
-current_key_seq=0, empty key_history and revocation=null. Its certificate
-entries have registered_at=null, superseded_at=null, issuer_key_seq=0 and
-invitation_id=null. These are signed support bytes retained with the registered
-descendant, not local registration witnesses. A fresh local re-sign presented
-with the same id/domain/parent/kind can replace that old supporting proof for
-current verification; its signature must pass the current-key rule. Old local
-proof left stale after rotation yields unknown, not automatic re-signing.
-Human/global rows must have nonnull registration/head evidence.
+JSON. All fields are required; `retired_at`/`superseded_at` may be null.
+Identity rows contain registered IDs only, with nonnull registration/head
+witnesses and positive issuer key sequences. Invitation IDs stay in private
+registration/idempotency storage and receipts' lookup; no invitation field is
+returned by status.
 `entry` is an existing complete
 DID-log evidence object (seq, operation, previous_did_key, new_did_key,
 prev_entry_hash, entry_hash, state_hash, authorized_by, signature, timestamp).
 Verify that log from its genesis ID/key or an independently verified checkpoint;
-never pin a key merely because a server returned it. Its registered_at is the
+never pin a key merely because a server returned it. A broken log signature or
+prev_entry_hash makes the required status evidence unavailable
+(reason=evidence_unavailable); it never establishes a human. Its registered_at
+is the
 registry's witness of the epoch, not the log's caller-signed timestamp.
-Namespace epochs have positive increasing sequence numbers and verified DNS
-authority at their witnessed time. Namespace history/time witnesses come from
+Namespace epochs have positive increasing sequence numbers and verified EXACT
+domain DNS authority at their witnessed time; an ancestor fallback is never
+evidence for this domain. Namespace history/time witnesses come from
 the registry independently selected through DNS, not an agent-supplied URL.
 
 Each certificate entry's digest is recomputed from `signed`. Heads and history
@@ -359,7 +390,8 @@ just a test wrapper. Reuse complete evidence to age **60 seconds inclusive**;
 then synchronously refresh through that client. If refresh fails, reuse only
 last-known-good evidence to age **900 seconds inclusive**, with an explicit
 stale/outage indication. Past 900s, with no prior evidence, or with invalid
-evidence, authority fails closed and display reports unknown/unavailable. Grace
+evidence, tree authority fails closed and display reports unknown/unavailable;
+ordinary request disposition is specified in §5. Grace
 does not restart on a failed fetch or process restart; a local trusted fetch
 time measures age. Do not mix fresh and stale fragments to manufacture a valid
 chain or an uncached network dependency on every request.
@@ -421,7 +453,7 @@ Cloud copy of the ancestor algorithm:
 The result has exactly `outcome`, `human_id`, `identity_valid`, `kind` and
 `reason`. `identity_valid` is true, false, or JSON null (unknown); `kind` is
 human/agent only for an established valid chain and otherwise null. `reason`
-is the stable code from the vectors. Revoked or malformed proof has
+is the stable code from the vectors. Revoked, stale or malformed proof has
 identity_valid=false; missing proof has unknown;
 unavailable evidence has unknown. No outcome silently grants a role. A policy
 needing a valid/current human refuses unknown/unavailable/no_human. `aw who`
@@ -431,10 +463,52 @@ prints a supplied label as a verified human.
 
 An enrolled global ID cannot evade status/revocation by omitting the header:
 its independently authenticated stable ID is checked through the same cached
-batch and its current certificate is fetched there. A known enrolled ID with
+batch and its current certificate is fetched there within the SAME cached
+identity resolution, not a second live lookup. A known enrolled ID with
 invalid/revoked evidence does not become a legacy success. A truly chainless
 legacy identity retains ordinary authentication, with unknown accountability.
 Invalid presented evidence never yields human authority or changes auth lane.
+
+### Request disposition (same on all five lanes)
+
+Original signatures, member-certificate/revocation, grant scope, audience and
+other ordinary admission checks MUST pass first; `continue` below never skips
+them. `refuse` rejects the request/ingestion with no action, delivery or hook
+invocation. A use requiring human attribution always refuses unless the result
+is nearest_human. Identity validity and application roles remain separate.
+
+| Attribution result / evidence | Team | Identity-only | Grant | Federation | Hook |
+|---|---|---|---|---|---|
+| nearest_human / verified | continue | continue | continue | continue | continue |
+| no_human / verified | continue | continue | continue | continue | continue |
+| unknown / legacy_no_chain, or authoritative unregistered_identity | continue | continue | continue | continue | continue |
+| unknown / revoked, including enrolled omission | refuse | refuse | refuse | refuse | refuse |
+| unknown / stale_issuer_key, superseded_certificate, malformed/invalid presented proof or subject mismatch | refuse | refuse | refuse | refuse | refuse |
+| unavailable / status_expired or evidence_unavailable for enrolled ID/chain, or stable-ID enrollment not established | refuse | refuse | refuse | refuse | refuse |
+
+A chainless local did:key retains ordinary legacy auth without an ID-tree
+lookup, including during AWID outage. This preserves membership-only actions
+for a local ID omitting its chain: without registration there is no portable
+enrollment witness to discover. Enforce ancestor-based authority by requiring
+a valid chain, or end that team authority through ordinary member revocation.
+A legacy did:aw whose authoritative
+resolution establishes no enrollment also retains ordinary auth. If that
+stable-ID enrollment evidence cannot be established past 900s, it cannot be
+assumed legacy: refuse, rather than allowing a revoked enrolled ID to omit its
+chain and evade revocation. Thus an outage can also refuse a legacy GLOBAL ID
+whose enrollment state cannot be established; it never manufactures no_human
+or nearest_human. This lookup is part of existing cached identity resolution.
+The existing did:aw key-binding check keeps its current independent 60-second
+positive-cache/fresh-resolution rule; the new 900-second tree-status grace
+MUST NOT loosen it. `expected_request` assumes ordinary authentication has
+passed unless original_auth explicitly says otherwise; status-cache fixtures
+alone do not claim original authentication survives an AWID outage for 900s.
+An enrolled ID with no presented chain resolves its current head before this
+table, including a currently revoked head. Age 60/61/900/901 has the same
+meaning on every lane; last-known-good valid evidence through 900s can still
+permit actions, and the bound is measured from that successful fetch.
+`expected_request` vectors freeze ordinary and human-required dispositions
+alongside (separately from) the shared result.
 
 Servers derive verified human/agent kind from this result, never self-declared
 agent_type. Without proof that field may be shown only as unverified legacy
@@ -449,7 +523,12 @@ recipient, domain, parent and kind at issue, privately; after the child key
 exists that human's signer signs the exact certificate. No portable signed
 delegation. A custodial server can perform bounded deferred signing for that
 exact pending invitation, rechecking session/invitation authorization and the
-parent after lock waits. A self-custodial parent receives a CSR-style pending
+parent after lock waits. Deferred kind=human signing additionally requires
+the accepting authenticated account's VERIFIED email to equal the fixed
+recipient. Token possession alone may complete ordinary membership, but leaves
+id_registration=pending and emits NO parent signature or registration request.
+Do not switch recipient/parent or mint a new key on retry. A self-custodial
+parent receives a CSR-style pending
 request; its aw signs on next contact. Immediate init/spawn signs directly.
 Agents can issue agent spawns, never human invites. An untyped new invite from
 an attributed agent is a spawn/inherits or refuses, not an unattributed escape.
@@ -513,9 +592,23 @@ canonical/signing bytes, signatures and digests. Cases carry independently
 supplied synthetic registry/cache facts, not permission to accept such facts
 from a real caller. A structurally invalid record is signed correctly wherever
 the intended refusal is shape/binding, rather than accidental bad crypto.
-Wire-negative cases test raw decoding before the semantic cases. Ordered
-operation cases test effects and atomicity; they are not substitutes for real
-Postgres/concurrency and released-client journeys in later slices.
+Wire-negative cases test raw decoding before the semantic cases. The
+validly signed did:key-human negative is mandatory in every Python/Go/TS CI,
+alongside R1–R3 negatives. Apply its kind/ID shape refusal before crypto.
+After shape/R1–R3 checks, check required registered-ID presence before issuer
+key-version selection: unregistered_identity takes precedence over a resulting
+stale_issuer_key (unregistered-human-refuses). An expected reason is exact for
+a single-fault case. Other multi-fault cases instead
+carry expected_refusal_class (shape_or_encoding or invalid_proof); any listed
+reason in allowed_reasons satisfies that class, with the same refusal/outcome
+and no human authority. Do not make cross-language JSON re-encoding or check
+ordering a security requirement.
+Ordered operation cases test effects and atomicity; S2 tests consume the frozen
+cases by NAME, so a dropped/renamed scenario fails CI. They are not substitutes
+for real Postgres/concurrency and released-client journeys in later slices.
+S4 acceptance includes per-domain registry isolation, bounded refresh timeouts,
+negative caching and 429 treated as refresh failure (old evidence only through
+900s), so an attacker-selected DNS registry cannot stall other domains.
 
 Freeze docs/vectors first; then shared Python/Go/TS verification, AWID history/
 registration/cache, CLI/keychain, transport and creation adapters. Publish OSS
