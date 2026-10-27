@@ -667,6 +667,10 @@ the intended refusal is shape/binding, rather than accidental bad crypto.
 Wire-negative cases test raw decoding before the semantic cases. The
 validly signed did:key-human negative is mandatory in every Python/Go/TS CI,
 alongside R1–R3 negatives. Apply its kind/ID shape refusal before crypto.
+The validly signed namespace-parent-domain negatives are also mandatory:
+a namespace parent naming another domain refuses as domain_mismatch at shape
+time. The oversized-integer wire case refuses as invalid_shape, including a
+JSON parser's integer-conversion limit; never leak an uncoded parser exception.
 After shape/R1–R3 checks, check required registered-ID presence before issuer
 key-version selection: unregistered_identity takes precedence over a resulting
 stale_issuer_key (unregistered-human-refuses). An expected reason is exact for
@@ -675,6 +679,8 @@ carry expected_refusal_class (shape_or_encoding or invalid_proof); any listed
 reason in allowed_reasons satisfies that class, with the same refusal/outcome
 and no human authority. Do not make cross-language JSON re-encoding or check
 ordering a security requirement.
+Deep JSON may refuse as invalid_json at the parser limit or invalid_shape at
+the object-shape check; the frozen shape_or_encoding class allows both.
 Ordered operation cases test effects and atomicity; S2 tests consume the frozen
 cases by NAME, so a dropped/renamed scenario fails CI. They are not substitutes
 for real Postgres/concurrency and released-client journeys in later slices.
