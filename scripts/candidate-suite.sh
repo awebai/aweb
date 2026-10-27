@@ -31,6 +31,7 @@ checks() {
   run lint-naapp
   run test-sot-source-inventories
   run test-identity-python-inventory
+  run test-identity-go-inventory
   run test-vector-provenance
   run test-federation-error-reference
   run test-federation-authority-mutations

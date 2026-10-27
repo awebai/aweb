@@ -48,10 +48,36 @@ row records an existing signed family; it never exempts a new ID-family proof
 from the shared verifier. These checks help reviewers catch source drift;
 they do not prove control flow or discover arbitrary dynamic Python dispatch.
 
+## Go source guard
+
+`make test-identity-go-inventory` runs in the ordinary test target and candidate
+checks stage. The standard-library Go AST parser scans every tracked or new
+nonignored `*.go` file, including tools and new packages. Only `*_test.go`,
+`testdata/` fixtures and the scanner itself are excluded. Build tags do not
+hide source from the guard. The scanner has no catalog-update mode.
+
+`go_guard` uses the same versioned row/file/symbol/calls entries as Python.
+Import aliases are resolved to module paths; methods use `(*Type).method` or
+`Type.method`, and closures belong to their enclosing function. Package-level
+initializers use `<module>`. Identity calls and callback references are pinned,
+as are executable string literals beginning with `did:key:` or `did:aw:`.
+`primitive` in `cli/go/internal/identityinventory/main.go` defines the API name
+families (sign/verify/register/revoke, key generation, DID construction and
+ID-certificate/chain helpers). Dot imports from identity/crypto modules refuse.
+
+New sites, changed primitive counts, stale entries and missing exact row
+mappings fail. Strict rows cannot add raw verification outside the shared
+`VerifyIDCertificate` function; the codec and ancestry modules cannot downgrade
+their profile. Existing released families remain explicitly `legacy` pending
+their owner and the acmz ruling. Newly discovered rows marked `pending` are
+source coverage, not converted behavior or passing journey evidence. This is
+syntactic discovery: reflection, dynamically chosen methods and full data-flow
+analysis are outside its scope.
+
 ## Remaining release work
 
-This checkpoint is Python source-call coverage only. S8b is incomplete until
-Go and TypeScript call guards, the complete status/head/tag/test schema,
+Python and Go source-call guards are implemented. S8b is incomplete until
+the TypeScript call guard, the complete status/head/tag/test schema,
 per-path chain-or-refuse tests, external repository pins and equivalent guards,
 and verified fleet enrollment under Juan are qualified. Unmerged candidate
 files and owner-reported external tests remain candidate evidence, not files
