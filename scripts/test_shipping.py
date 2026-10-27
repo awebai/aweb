@@ -868,7 +868,7 @@ class ReleaseStampContractTest(unittest.TestCase):
             fake_go.write_text(
                 "#!/usr/bin/env bash\n"
                 "if [[ \"$1 $2\" == \"env GOVERSION\" ]]; then\n"
-                "  printf 'go1.24.13\\n'\n"
+                "  printf 'go1.26.10\\n'\n"
                 "  exit 0\n"
                 "fi\n"
                 "printf 'sentinel go build failure\\n' >&2\n"
