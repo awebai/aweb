@@ -12,10 +12,14 @@ import ast
 from collections import Counter, defaultdict
 import json
 from pathlib import Path, PurePosixPath
+import subprocess
 import sys
 
 
-ROOTS = ("awid/src", "server/src", "naapp-lib/src")
+# Everything tracked (and new nonignored source awaiting git add) is scanned.
+# This checker is the only reviewed script exclusion: it contains the literal
+# primitive catalog itself. Tests are excluded separately by path/name.
+EXCLUDED_SCRIPTS = frozenset({"scripts/check_identity_python_inventory.py"})
 # Constructors, raw crypto and the public identity/certificate authority seams.
 # Do not derive this list from imports in the inventory: deleting an inventory
 # field must not switch off source discovery.
@@ -27,9 +31,10 @@ PRIMITIVE_NAMES = frozenset({
     "encode_id_chain_header", "decode_id_chain_header", "verify_identity_binding",
     "register_did", "register_certificate", "revoke_certificate",
     "verify_identity_log", "crypto_core_ed25519_is_valid_point",
+    "crypto_sign", "crypto_sign_open", "crypto_sign_verify_detached",
 })
 PRIMITIVE_MODULES = (
-    "nacl.signing.", "cryptography.hazmat.primitives.asymmetric.ed25519.",
+    "nacl.signing.", "nacl.bindings.", "cryptography.hazmat.primitives.asymmetric.ed25519.",
     "awid.did.", "awid.signing.", "awid.team_certificate.",
     "awid.identity_log_verify.", "awid.id_certificates.",
 )
@@ -38,10 +43,35 @@ RAW_VERIFY_SITE = (STRICT_MODULE, "verify_id_certificate")
 RAW_VERIFY_NAMES = frozenset({
     "verify", "VerifyKey", "verify_signature", "verify_signature_with_public_key",
     "verify_did_key_signature",
+    "crypto_sign", "crypto_sign_open", "crypto_sign_verify_detached",
 })
 
 
-def scan_python_source(source: str) -> dict[str, Counter]:
+def excluded(file: str) -> bool:
+    path = PurePosixPath(file)
+    return (file in EXCLUDED_SCRIPTS or path.name.startswith("test_")
+            or path.name == "conftest.py" or any(p in {"test", "tests"} for p in path.parts[:-1]))
+
+
+def source_files(root: Path) -> list[Path]:
+    result = subprocess.run(
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "*.py"],
+        cwd=root, check=True, capture_output=True,
+    )
+    return [root / file for file in sorted(set(result.stdout.decode().split("\0")))
+            if file and not excluded(file) and (root / file).is_file()]
+
+
+def module_name(file: str) -> str:
+    parts = list(PurePosixPath(file).with_suffix("").parts)
+    if "src" in parts:
+        parts = parts[len(parts) - 1 - parts[::-1].index("src") + 1:]
+    if parts[-1] == "__init__":
+        parts.pop()
+    return ".".join(parts)
+
+
+def scan_python_source(source: str, *, module: str = "fixture", package: bool = False) -> dict[str, Counter]:
     tree = ast.parse(source)
     aliases = {}
     for node in ast.walk(tree):
@@ -49,8 +79,14 @@ def scan_python_source(source: str) -> dict[str, Counter]:
             for name in node.names:
                 aliases[name.asname or name.name.split(".")[0]] = name.name if name.asname else name.name.split(".")[0]
         elif isinstance(node, ast.ImportFrom):
+            base = node.module or ""
+            if node.level:
+                parent = module.split(".") if package else module.split(".")[:-1]
+                if node.level > len(parent):
+                    raise ValueError("relative import escapes its package")
+                base = ".".join(parent[:len(parent) - node.level + 1] + ([base] if base else []))
             for name in node.names:
-                aliases[name.asname or name.name] = (node.module or "") + "." + name.name
+                aliases[name.asname or name.name] = base + "." + name.name
 
     def called_name(node):
         if isinstance(node, ast.Name):
@@ -62,6 +98,18 @@ def scan_python_source(source: str) -> dict[str, Counter]:
         return "<expression>"
 
     calls = defaultdict(Counter)
+    parents = {id(child): parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    docstrings = {
+        id(node.body[0].value)
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.body and isinstance(node.body[0], ast.Expr)
+        and isinstance(node.body[0].value, ast.Constant) and isinstance(node.body[0].value.value, str)
+    }
+
+    def primitive(name):
+        terminal = name.rsplit(".", 1)[-1]
+        return terminal in PRIMITIVE_NAMES or terminal.startswith(("sign_", "verify_")) or name.startswith(PRIMITIVE_MODULES)
 
     class Visitor(ast.NodeVisitor):
         def __init__(self):
@@ -81,23 +129,28 @@ def scan_python_source(source: str) -> dict[str, Counter]:
 
         def visit_Call(self, node):
             name = called_name(node.func)
-            if name.rsplit(".", 1)[-1] in PRIMITIVE_NAMES or name.startswith(PRIMITIVE_MODULES):
+            if primitive(name):
                 self.record(name)
             self.generic_visit(node)
 
-        def visit_BinOp(self, node):
-            if isinstance(node.op, ast.Add) and isinstance(node.left, ast.Constant) and isinstance(node.left.value, str):
-                for prefix in ("did:key", "did:aw"):
-                    if node.left.value.startswith(prefix + ":"):
-                        self.record("construct:" + prefix)
+        def reference(self, node):
+            parent = parents.get(id(node))
+            is_callee = isinstance(parent, ast.Call) and parent.func is node
+            is_receiver = isinstance(parent, ast.Attribute) and parent.value is node
+            if isinstance(node.ctx, ast.Load) and not is_callee and not is_receiver:
+                name = called_name(node)
+                if primitive(name):
+                    self.record("reference:" + name)
             self.generic_visit(node)
 
-        def visit_JoinedStr(self, node):
-            if node.values and isinstance(node.values[0], ast.Constant) and isinstance(node.values[0].value, str):
+        visit_Name = reference
+        visit_Attribute = reference
+
+        def visit_Constant(self, node):
+            if id(node) not in docstrings and isinstance(node.value, str):
                 for prefix in ("did:key", "did:aw"):
-                    if node.values[0].value.startswith(prefix + ":"):
-                        self.record("construct:" + prefix)
-            self.generic_visit(node)
+                    if node.value.startswith(prefix + ":"):
+                        self.record("literal:" + prefix)
 
     Visitor().visit(tree)
     return dict(calls)
@@ -125,8 +178,8 @@ def check_inventory(root: Path, inventory: dict) -> list[str]:
             errors.append("Python catalog file and symbol must be strings")
             continue
         path = PurePosixPath(file)
-        if path.is_absolute() or ".." in path.parts or not file.endswith(".py") or not any(file.startswith(r + "/") for r in ROOTS):
-            errors.append("Python catalog path outside source roots: " + file)
+        if path.is_absolute() or ".." in path.parts or not file.endswith(".py") or excluded(file):
+            errors.append("Python catalog path outside scanned source: " + file)
             continue
         key = (file, symbol)
         if key in declared:
@@ -145,15 +198,14 @@ def check_inventory(root: Path, inventory: dict) -> list[str]:
         if row.get("ed25519_profile") == "strict" and any(c.rsplit(".", 1)[-1] in RAW_VERIFY_NAMES for c in counts) and key != RAW_VERIFY_SITE:
             errors.append("raw ID crypto must use the shared strict verifier: " + symbol)
     observed = {}
-    for directory in ROOTS:
-        for path in sorted((root / directory).rglob("*.py")):
-            file = path.relative_to(root).as_posix()
-            try:
-                calls = scan_python_source(path.read_text(encoding="utf-8"))
-            except (SyntaxError, UnicodeError) as exc:
-                errors.append(f"cannot scan {file}: {exc}")
-                continue
-            observed.update({(file, symbol): dict(counts) for symbol, counts in calls.items()})
+    for path in source_files(root):
+        file = path.relative_to(root).as_posix()
+        try:
+            calls = scan_python_source(path.read_text(encoding="utf-8"), module=module_name(file), package=path.name == "__init__.py")
+        except (SyntaxError, UnicodeError, ValueError) as exc:
+            errors.append(f"cannot scan {file}: {exc}")
+            continue
+        observed.update({(file, symbol): dict(counts) for symbol, counts in calls.items()})
     for key, counts in observed.items():
         if key not in declared:
             errors.append("unlisted Python identity primitive site: " + repr(key))

@@ -8,13 +8,19 @@ The inventory's release requirements remain separate from source-call coverage.
 ## Python source guard
 
 `make test-identity-python-inventory` runs in the candidate checks stage. It
-scans Python under `awid/src`, `server/src` and `naapp-lib/src` using the Python
-AST, including new files inside those roots. The primitive API catalog is
+scans every tracked Python source, plus new nonignored Python files awaiting
+`git add`, using the Python AST. New packages, all naapp apps, runner source
+and scripts are included without extending an allowlist. Exclusions are test
+paths/names (`tests/`, `test/`, `test_*`, `conftest.py`) and the explicitly
+reviewed `EXCLUDED_SCRIPTS` set, currently the scanner itself. The primitive API catalog is
 `PRIMITIVE_NAMES` and `PRIMITIVE_MODULES` in
 `scripts/check_identity_python_inventory.py`: raw Ed25519 signing/verification
-and constructors, DID construction, public identity/certificate verification
+and constructors (including raw `nacl.bindings` APIs), DID construction, public identity/certificate verification
 and registration calls. Direct DID string construction is also inventoried.
-Comments and strings describing calls are not executable calls.
+Comments and docstrings are excluded. Other string literals beginning with
+`did:key:` or `did:aw:` are inventoried conservatively, including validation
+patterns, named prefixes and format templates. Primitive references passed as
+callbacks, assigned aliases or used with `partial` are inventoried too.
 
 The version-1 `python_guard` section contains exact entries:
 
@@ -28,7 +34,8 @@ with positive call counts. Function and method names include their enclosing
 class/function names; module-level calls use `<module>`. An existing file or
 function is not a blanket exemption: a new primitive call, changed count,
 missing mapping or stale entry fails. Import aliases and chained constructors
-are resolved syntactically. Metadata cannot downgrade the strict ID-certificate
+are resolved syntactically, including relative imports resolved against each
+source file's package path. Metadata cannot downgrade the strict ID-certificate
 module or add a raw verifier there outside its shared verification function.
 
 When a legitimate change fails, review the new call's authority, update its
