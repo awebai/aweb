@@ -204,21 +204,31 @@ async def clients(context: Uses):
 
 
 class Page(HTMLParser):
-    """Each element's data attributes, by class, in document order."""
+    """Each element's data attributes, by class, in document order; a job item's text as "_text"."""
 
     def __init__(self, html: str) -> None:
         super().__init__()
         self.found: list[tuple[str, dict[str, str]]] = []
         self.text: list[str] = []
+        self._run: dict[str, str] | None = None
         self.feed(html)
 
     def handle_starttag(self, tag, attrs):
         attributes = {name: value or "" for name, value in attrs}
         for name in attributes.get("class", "").split():
             self.found.append((name, attributes))
+        if "access-run" in attributes.get("class", "").split():
+            self._run = attributes
+            attributes["_text"] = ""
+
+    def handle_endtag(self, tag):
+        if tag == "li":
+            self._run = None
 
     def handle_data(self, data):
         self.text.append(data)
+        if self._run is not None:
+            self._run["_text"] += data
 
     def all(self, name: str) -> list[dict[str, str]]:
         return [attributes for found, attributes in self.found if found == name]
@@ -569,21 +579,21 @@ async def test_a_job_pin_covers_one_credential_and_never_claims_the_whole_run(ac
     async with clients(access) as (human, _):
         await sign_in(w, human, owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did))
         page = await owner_page(human, access)
-    run = runs_of(page)[(DB_AGENT.did_aw, orders.grant_id, job.job_id)]
-    # The grant covers its own credential slot; the job uses two, so no run is claimed.
-    assert run["data-covered"] == "true"
-    assert run["data-job-credentials"] == "2"
-    assert "data-source-refusal" not in run
-    assert await planned(access, DB_AGENT, job, 1) is not None
-    # With the other slot granted too, the same job is planned.
+    # The planner needs each slot granted: refused with one, planned once the other is added.
+    assert await planned(access, DB_AGENT, job, 1) == "job_not_allowed"
     async with w.db.transaction() as tx:
         await records.create_grant(
             tx, INSTALLATION_ID, TEAM, run_grant("grt_runpaymt", PAYMENTS, DB_AGENT, job)
         )
     assert await planned(access, DB_AGENT, job, 2) is None
+    # With one slot granted, the page shows that grant's own credential, not a runnable job.
+    run = runs_of(page)[(DB_AGENT.did_aw, orders.grant_id, job.job_id)]
+    assert run["data-covered"] == "true" and "data-source-refusal" not in run
+    assert "can run" not in run["_text"]
+    assert "2 credentials" in run["_text"]
 
 
-async def test_a_job_with_a_missing_credential_shows_the_planner_refusal(access):
+async def test_a_job_with_a_missing_credential_is_shown_unavailable(access):
     w = access.world
     job = await job_using(w, [ORDERS_DB.ref, "retired-key"])
     orders = run_grant("grt_runorder", ORDERS_DB, DB_AGENT, job)
@@ -592,5 +602,8 @@ async def test_a_job_with_a_missing_credential_shows_the_planner_refusal(access)
     async with clients(access) as (human, _):
         await sign_in(w, human, owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did))
         page = await owner_page(human, access)
+    assert await planned(access, DB_AGENT, job, 1) == "grant_missing"
     run = runs_of(page)[(DB_AGENT.did_aw, orders.grant_id, job.job_id)]
-    assert run["data-source-refusal"] == await planned(access, DB_AGENT, job, 1)
+    assert "can run" not in run["_text"]
+    assert "not usable" in run["_text"]
+    assert run["data-source-refusal"] == "job_not_allowed"
