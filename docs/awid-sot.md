@@ -234,6 +234,38 @@ with previous- and new-key proofs. This is new work; the released PUT remains
 key-loss recovery. Its epoch and pre-upgrade first-registration rules are fixed
 in that contract.
 
+AWID keeps each domain's root-key history in `id_namespace_epochs`. Every
+epoch was proven by exact `_awid.<domain>` DNS on an explicit act. The first
+registration, re-registration after deletion, and an exact-DNS PUT to a key
+other than the open epoch's each open a `replaced` epoch; an exact-DNS PUT of
+the open epoch's key changes no epoch. A namespace registered before this
+history existed gets epoch 1 when its stored controller repeats its
+authenticated POST with exact DNS for that same key, rechecked under the
+namespace row lock while the domain has no epoch at all. Inherited, failed
+or skipped DNS, parent authorization and reverify never open, replace or
+retire an epoch; reverify still updates the stored controller from exact DNS.
+Deletion retires the open epoch, and sequences never reset. A controller key
+outside the prime-order Ed25519 subgroup (small- or mixed-order) never opens an
+epoch, even with exact DNS: the namespace write itself keeps its released
+contract, but the identity tree has no root until a strict key is proven.
+
+`POST /v1/namespaces/{domain}/rotate` takes exactly `{domain, operation,
+from_seq, previous_did_key, new_did_key}` (`operation` is
+`rotate_namespace_controller`, `domain` the canonical path domain,
+`from_seq` a positive integer, two different strict did:keys). The previous
+key signs the covering-v2 request in `Authorization` and the new key signs
+the same payload in `X-AWEB-New-Key-Authorization`; there is no legacy form.
+Exact DNS for `new_did_key` is looked up before the transaction. Under the
+namespace row lock AWID rechecks the request timestamp and requires the
+open epoch to be `from_seq` with key `previous_did_key`. It then stores the
+new controller, retires that epoch and opens its `rotated` successor at the
+same witness time, so registrations under the previous key stay valid.
+Refusals use `detail.code`: 400 `invalid_shape`; 401 `invalid_signature` for
+a missing, wrong-role or legacy proof or a stale timestamp; 409
+`head_conflict` when the open epoch is not the named one (a replay or a stale
+key); 503 `evidence_unavailable` when exact DNS does not prove the new key.
+It shares the `namespace_rotate` rate-limit bucket with the PUT.
+
 ## Addresses
 
 Identity handles within namespaces. `acme.com/alice`.
@@ -444,7 +476,10 @@ After the rotation is appended to the log, `new_did_key` becomes the
 `current_did_key` in `did_aw_mappings`.
 
 Rotation is a single-row update of `did_aw_mappings.current_did_key`
-plus one append to `did_aw_log`. There is no cascade to address rows:
+plus one append to `did_aw_log`. It locks the mapping row before reading the
+log head, so concurrent rotations and identity-tree registrations that select
+this key serialize, and the appended entry's `created_at` is the post-lock
+witness time of the new key epoch. There is no cascade to address rows:
 `public_addresses` does not store the current key — address reads
 resolve it via JOIN on `did_aw_mappings`. Any number of addresses
 can be bound to a `did_aw` without affecting rotation cost or
@@ -466,7 +501,20 @@ enforcement of Principle 5.
 
 - `GET /v1/did/{did_aw}/key` — current `did_key`. Public. Used by aweb
   and other services for message-signature verification. It is not a
-  delivery route lookup.
+  delivery route lookup. Its `id_tree` field states the identity's
+  identity-tree enrollment ([identity certificates](id-certificates.md)
+  §5): `{"enrolled": true, "domain": "<domain fixed at first enrollment>"}`
+  for every registered identity, revoked or root-replaced ones included, or
+  `{"enrolled": false}`. It only locates status; it is not a verified
+  identity or current authority. The key, log head, encryption key and
+  enrollment are read in one read-only `REPEATABLE READ` snapshot.
+  `KeyResolution.id_tree` in the client is the same fact: an
+  `IDTreeEnrollment`, or `None` (unknown) when the registry did not state it.
+  The client parses it with the shared `awid.id_certificates.key_response_id_tree`;
+  a malformed stated value rejects the resolution. `CachedRegistryClient`
+  keeps it in the same cache entry under the same TTL, and never serves a
+  cached resolution that does not state it: that one is fetched fresh, and if
+  the fresh answer still lacks it, enrollment stays unknown.
 - `GET /v1/did/{did_aw}/full` — full identity record. Identity auth (the
   DID holder).
 - `GET /v1/did/{did_aw}/log` — append-only audit log of `register_did`
@@ -995,6 +1043,231 @@ current-key data.
 
 ---
 
+## Identity-tree registration and revocation
+
+The identity tree's wire contract is [identity certificates](id-certificates.md);
+this section states how AWID implements its registration and revocation
+endpoints.
+
+```
+POST /v1/id-certificates/register   Register a parent-signed ID certificate
+```
+
+The body is exactly `{certificate, expected_head, invitation_id}`. The request
+carries the covering controller envelope (`operation="register_id_certificate"`,
+`domain` = the certificate's domain) signed by the subject did:aw's current
+key; there is no legacy-envelope fallback. `X-AWID-ID-Chain` carries the full
+chain, leaf byte-identical to the body certificate. Only did:aw subjects
+register; a local agent's did:key certificate is carried, never registered.
+
+Before its transaction, AWID checks the body, certificate shape and signature,
+the envelope, and the chain's structure (links, R1, R3, cycles), and looks up
+the controller key exact DNS proves for the domain. The
+transaction then takes, in order: an advisory lock on the exact domain, the
+domain's `dns_namespaces` row FOR SHARE, the subject's and parent's
+`did_aw_mappings` rows FOR SHARE sorted by did:aw, and the subject's
+`id_identities` row FOR UPDATE with its identity parent's FOR SHARE, in id
+order. A registration and a revocation of its parent therefore serialize on
+the parent's row as well as on the domain lock. Namespace rotation, reverify and delete hold
+the namespace row FOR UPDATE, and did:aw rotation holds its mapping row FOR
+UPDATE, so each serializes with registration. After the last lock wait it
+resolves an exact existing receipt (same digest and invitation) before any
+fresh-issuance check, then checks invitation reuse, the subject's fixed kind
+and domain, revocation and head CAS, current root authority (the stored
+controller, the open epoch's key and that DNS key agree; the skip-DNS bypass
+proves nothing), the parent (the root key for a namespace parent; a
+registered, unrevoked, same-domain parent's current key for an identity
+parent) and that the presented ancestors are the
+registered current heads. For an identity parent it then has the shared chain
+verifier (`awid.id_certificates.verify_id_chain`) judge the parent's whole
+current chain against a status snapshot read inside this transaction, with
+the DNS key observed before it: a revoked or replaced ancestor, an agent edge
+whose parent is no longer valid, or a stale key refuses with the verifier's
+reason (`revoked`, `root_replaced`, ...), and unavailable evidence (for
+example a proof over the byte limit) refuses `evidence_unavailable` (503). A
+human invitee keeps its standing after its inviter's later revocation, as the
+contract's historical human-parent rule says. It records `registered_at` from the post-lock clock,
+strictly after the latest identity-tree event in the domain and the selected
+key epochs, with the exact `issuer_key_seq`.
+
+A success returns exactly `{certificate_id, registered_at}`. Refusals use
+`detail.code`: 400 for shape and encoding (`invalid_shape`, `invalid_json`,
+`invalid_encoding`, `invalid_signature`, `bundle_too_large`,
+`noncanonical_json`, `depth_exceeded`), 401 for the envelope, 403
+`subject_mismatch`, 409 `head_conflict` and `invitation_conflict`, and 422 for
+the tree's refusals (`domain_mismatch`, `human_issuer_is_agent`, `cycle`,
+`duplicate_id`, `missing_parent`, `identity_kind_immutable`, `subject_revoked`,
+`unregistered_parent`, `parent_revoked`, `issuer_key_not_current`,
+`superseded_certificate`, `root_replaced`), and 503 `evidence_unavailable` when the domain has
+no current root authority.
+
+Registration is rate limited in the `id_certificate_register` bucket: 300
+requests per hour per client IP. Every request does signature and database
+work before it can be refused, so an anonymous caller must not be able to
+drive it unbounded; a human or global-agent enrollment is rare, so the bucket
+does not limit ordinary use. The only exemption is the deployment's
+configured `AWID_SERVICE_TOKEN` presented in `X-AWID-Service-Token` (the
+hosted service registering on behalf of its users). A missing or wrong token,
+or any token while none is configured, counts against the caller's bucket.
+The exemption is rate-limit only: it never replaces the subject's key proof
+or the parent's signature.
+
+```
+POST /v1/id-certificates/revoke     Revoke a registered ID
+```
+
+The body is exactly `{domain, id, expected_head, effective_from}`: `id` is a
+registered did:aw, `expected_head` its current certificate digest, and
+`effective_from` either null or a fixed-microsecond UTC time
+(`YYYY-MM-DDTHH:MM:SS.ffffffZ`). The covering controller envelope
+(`operation="revoke_id_certificate"`, `domain` = the request's domain) is
+signed by one of the allowed revokers; there is no legacy-envelope fallback.
+The transaction takes registration's locks in the same order, reading the
+subject's current head under the domain lock to find its parent, so it
+serializes with registration, re-parenting and rotation in the domain.
+
+After the last lock wait, a registered ID with no current head refuses
+`evidence_unavailable`. It then resolves the signer, the root first:
+
+- the namespace root, by the current root key (the stored controller, the
+  open epoch's key and the exact DNS key looked up before the transaction
+  agree), even when that key is also the subject's or the parent's current
+  key;
+- the ID itself, by its did:aw's current key;
+- its current parent, by the parent did:aw's current key, but only while the
+  shared chain verifier finds the parent's whole current chain valid in a
+  snapshot read inside this transaction: an invalid parent (revoked itself,
+  or under a revoked or replaced ancestor) is `revocation_forbidden`, and
+  unavailable evidence is `evidence_unavailable`;
+- any other signer is `revocation_forbidden`, unless the domain has no
+  current root authority: then AWID cannot tell whether the signer is the
+  root, and it refuses `evidence_unavailable`.
+
+A null `effective_from` means the post-lock serialization time, which also
+becomes `revoked_at`: strictly after the domain's latest identity-tree event
+and the revoking ID's or parent's key epoch. Only the root names a cutoff, and never a
+future one. A repeat writes nothing and returns the stored times, after the
+same head and actor checks. The root may move an existing cutoff earlier,
+which changes only `effective_from`; `revoked_at` keeps the original
+witness time. A later cutoff is refused.
+
+A success returns exactly `{revoked_at, effective_from}`. Refusals use
+`detail.code`: 400 `invalid_shape` and `invalid_json`, 401 for the envelope,
+403 `revocation_forbidden` and `backdate_forbidden`, 404 `unknown_id` (no
+registered ID by that id), 409 `head_conflict`, 422 `domain_mismatch` and
+`invalid_cutoff`, and 503 `evidence_unavailable`. Revocation is rate limited
+in the `id_certificate_revoke` bucket, 300 requests per hour per client IP,
+with the same `AWID_SERVICE_TOKEN`-only exemption and rationale as
+registration.
+
+```
+POST /v1/id-certificates/status     Snapshot of exact registered IDs and namespace epochs
+```
+
+The body is exactly `{v: 1, domain, ids}` with 0–8 distinct canonical did:aw
+strings; any other field (a prefix, a search) is `invalid_shape`. An
+authenticated caller signs the covering-v2 request
+(`operation="read_id_certificate_status"`) with a strict-profile key. Supplied
+but invalid proof, or the legacy form, is 401, never anonymous. Every request
+is charged to its source IP's `id_certificate_status` bucket, and a verified
+caller also to its key's (keys cost nothing to mint, so a key bucket alone is
+no limit). Each allows 60 requests per minute, with no service exemption, and
+both are charged before the DNS lookup and any database read. The domain is
+canonicalized (lowercase, no trailing dot) and must be a valid name.
+
+The response is one coherent snapshot, read in a single read-only REPEATABLE
+READ transaction: the domain's complete epoch history with `continuity`, then
+each requested registered ID in request order followed by its proof closure
+(every same-domain identity named as a parent by any revision of an included
+identity, deduplicated by a visited set), each with its full certificate
+revisions, DID-log key history and revocation; `missing` lists requested IDs
+not registered in this domain. `observed_at` never precedes the snapshot's
+latest event. No invitation, membership, email or account data appears. While
+the stored controller, the open epoch and exact DNS disagree, or as soon as
+the response being built would exceed 131072 bytes, the endpoint answers 503
+`evidence_unavailable` with no partial evidence.
+
+### Cached status client
+
+A status response is authority evidence only when the production cached
+client obtained it. `CachedRegistryClient.id_chain_evidence(bundle, subject,
+*, domain)` (`awid/src/awid/registry.py`) returns the verifier's
+`IDChainEvidence` and never raises on a fetch failure;
+`RegistryClient.fetch_id_certificate_status(domain, request)` is the raw POST,
+which raises.
+
+- `domain` is always supplied by the caller. A chainless local subject, or a
+  request the verifier would refuse before reading evidence (another domain,
+  an oversized bundle), does no DNS or HTTP work and gets evidence without an
+  age.
+- One Redis entry per exact status request holds the status response together
+  with the namespace authority (`domain`, `dns_name`, `inherited`,
+  `controller_key`) from the client's `DomainVerifier`, both fetched in one
+  attempt. Every process sharing the entry ages it on one clock, the Redis
+  server's: the entry is stamped with Redis `TIME` when the attempt begins,
+  and each read takes Redis `TIME` with the entry in one pipelined round
+  trip. The body's `observed_at` is never used, and the age survives
+  restarts. An entry stamped ahead of the Redis clock (the clock stepped
+  back) has no known age: it is neither fresh nor last-known-good, and is
+  refreshed. After a failed attempt the last-known-good age includes the
+  time spent waiting for it. Ages are never clamped; a negative one is
+  unavailable evidence to the verifier. An entry that is not exactly this
+  shape is dropped and refreshed. Without Redis nothing is stored, so each
+  read fetches.
+- Evidence aged 60 seconds or less is served with no DNS, routing or HTTP
+  work. Older evidence waits for one refresh shared by every concurrent caller
+  of that request; a cancelled caller does not cancel it. DNS, routing and HTTP
+  share one `timeout_seconds` bound.
+- Any successful JSON object answer replaces the entry, including a missing,
+  revoked, replaced or contradictory one, and the verifier judges it. A
+  successful answer that is not a JSON object within the response bound
+  removes the entry, so no older tree outlives it.
+- A failed attempt (timeout, transport error, DNS failure, any non-2xx answer
+  including 429, whatever its body) never touches the entry. The caller gets the last-known-good
+  evidence with its true age and `refresh_failed`, or, with none, evidence
+  without an age. The verifier allows the outage grace through 900 seconds and
+  reports `status_expired` after it.
+- A failed attempt stands for every refresh of its domain for the next 60
+  seconds inclusive (and only while its recorded time is not ahead of the
+  clock), in process memory only, so a stalled registry costs one
+  timeout per window. During it callers get exactly the failed-refresh answer
+  above, with no network attempt; it never changes an age or extends the
+  grace. A successful answer ends it. Each domain's entries and cooldown are
+  independent of every other domain's.
+
+### Public identity-tree write client
+
+`RegistryClient` (`awid/src/awid/registry.py`) makes the three identity-tree
+writes:
+
+- `register_id_certificate(bundle, *, signer, expected_head, invitation_id)`
+  sends the bundle's last certificate, with the bundle itself as
+  `X-AWID-ID-Chain`, and returns the receipt. An exact retry returns the
+  original receipt.
+- `revoke_id_certificate(domain, id, *, signer, expected_head,
+  effective_from=None)` returns `{revoked_at, effective_from}`. AWID decides
+  whether the signer acts as root, self or parent.
+- `rotate_namespace_with_previous_key(domain, *, from_seq, previous_did_key,
+  new_did_key, previous_signer, new_signer)` returns the namespace. Both keys
+  are named because they are inside the signed payload; each signer must
+  answer with the key named for its role. `CachedRegistryClient` refreshes its
+  namespace entry around it. This is distinct from
+  `rotate_namespace_controller`, the new-key-only `PUT` recovery that opens a
+  `replaced` epoch.
+
+A signer signs exactly the bytes it is given and answers `(did_key, raw
+64-byte signature)`, directly or as an awaitable, so a custodial host can
+finish its own checks first. No key material crosses this boundary. The client
+owns everything else: the canonical body bytes, the covering-v2 payload and
+its headers. Before anything is sent it checks each answer with the shared
+strict profile (`awid.id_certificates.verify_ed25519`). A signer that raises,
+or answers with a malformed result, a key outside the profile, a signature
+that does not verify or the wrong role's key, sends nothing. A refusal raises
+`RegistryError` with `status_code`, `detail`, and `code` when the registry
+sent a coded refusal.
+
+---
+
 ## awid database schema
 
 AWID applies the files in `awid/src/awid_service/migrations/` in filename order
@@ -1023,6 +1296,9 @@ Current ordered effects are:
 9. `009_principal_attestation_records.sql` adds the team-key-signed team
    custodian, member custody and member person records, deleted with their
    team or certificate.
+10. `010_id_certificates.sql` adds the identity tree's registered identities
+    with their revocation, every registered ID-certificate revision, and the
+    namespace controller epochs ([identity certificates](id-certificates.md)).
 
 The following inventory is exhaustive for current **AWID application tables
 declared by** that ordered component chain. It intentionally excludes pgdbm's
@@ -1047,6 +1323,9 @@ full ordered SQL, not a copied `001` snapshot.
 - `team_custodians`
 - `member_custody`
 - `member_person`
+- `id_identities`
+- `id_certificates`
+- `id_namespace_epochs`
 <!-- END SOURCE INVENTORY: awid-tables -->
 
 ---

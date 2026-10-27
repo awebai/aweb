@@ -545,7 +545,26 @@
         "awid/tests/test_id_certificate_registration.py::test_replacement_races_parent_registration"
       ],
       "acceptance": "Previous-key-authorized rotation versus DNS-only replacement; serialize against child registration.",
-      "candidate_head": "3688bfe71eee1bfa2ed1b5702f3fa1be4ab3672b"
+      "candidate_head": "3688bfe71eee1bfa2ed1b5702f3fa1be4ab3672b",
+      "ed25519_profile": "strict",
+      "sites": [
+        {
+          "file": "awid/src/awid_service/routes/dns_namespaces.py",
+          "symbol": "_rotation_body"
+        },
+        {
+          "file": "awid/src/awid_service/routes/dns_namespaces.py",
+          "symbol": "_verify_rotation_proofs"
+        },
+        {
+          "file": "awid/src/awid_service/routes/dns_namespaces.py",
+          "symbol": "rotate_namespace_with_previous_key"
+        },
+        {
+          "file": "awid/src/awid_service/namespace_epochs.py",
+          "symbol": "proves_root"
+        }
+      ]
     },
     {
       "id": "AWID.NAMESPACE.DELETE",
@@ -768,8 +787,52 @@
       ],
       "acceptance": "Subject proof, R1-R3 and current parent/replacement state checked atomically; exact invitation retry preserves registration time.",
       "candidate_head": "3688bfe71eee1bfa2ed1b5702f3fa1be4ab3672b",
-      "open_items": [
-        "Full ancestor cascade through S1 verify_id_chain (L1, checkpoint 4)."
+      "ed25519_profile": "strict",
+      "sites": [
+        {
+          "file": "awid/src/awid_service/id_registration.py",
+          "symbol": "register_certificate"
+        },
+        {
+          "file": "awid/src/awid_service/routes/id_certificates.py",
+          "symbol": "register_id_certificate"
+        },
+        {
+          "file": "awid/src/awid_service/routes/id_certificates.py",
+          "symbol": "_register_body"
+        },
+        {
+          "file": "awid/src/awid_service/routes/id_certificates.py",
+          "symbol": "_expected_head"
+        },
+        {
+          "file": "awid/src/awid_service/routes/id_certificates.py",
+          "symbol": "_is_stable_id"
+        },
+        {
+          "file": "awid/src/awid_service/routes/id_certificates.py",
+          "symbol": "_covering_signer"
+        },
+        {
+          "file": "awid/src/awid_service/routes/id_certificates.py",
+          "symbol": "_canonical_domain"
+        },
+        {
+          "file": "awid/src/awid_service/id_tree_gate.py",
+          "symbol": "strict_json_object"
+        },
+        {
+          "file": "awid/src/awid_service/id_tree_gate.py",
+          "symbol": "strict_json_object.pairs"
+        },
+        {
+          "file": "awid/src/awid_service/id_tree_gate.py",
+          "symbol": "strict_json_object.reject"
+        },
+        {
+          "file": "awid/src/awid_service/id_tree_gate.py",
+          "symbol": "identity_parent_did"
+        }
       ]
     },
     {
@@ -823,7 +886,7 @@
       ],
       "change": "add",
       "slice": "S2",
-      "status": "partial",
+      "status": "candidate",
       "journeys": [
         "J1",
         "J3",
@@ -835,30 +898,46 @@
       "proving_tests": [
         "awid/tests/test_id_certificate_registration.py::test_root_revokes_with_compromise_cutoff",
         "awid/tests/test_id_certificate_registration.py::test_self_revokes_now",
-        "awid/tests/test_id_certificate_registration.py::test_a_live_parent_cannot_revoke_before_its_chain_is_verified",
         "awid/tests/test_id_certificate_registration.py::test_unrelated_human_cannot_revoke",
         "awid/tests/test_id_certificate_registration.py::test_revoked_parent_cannot_revoke",
         "awid/tests/test_id_certificate_registration.py::test_only_the_root_backdates",
         "awid/tests/test_id_certificate_registration.py::test_non_root_explicit_now_cutoff_refuses",
         "awid/tests/test_id_certificate_registration.py::test_future_cutoff_refuses",
-        "awid/tests/test_id_certificate_registration.py::test_a_registration_waits_for_its_parents_revocation"
+        "awid/tests/test_id_certificate_registration.py::test_a_registration_waits_for_its_parents_revocation",
+        "awid/tests/test_id_certificate_registration.py::test_live_parent_revokes_now",
+        "awid/tests/test_id_certificate_registration.py::test_post_lock_revocation_time_is_not_transaction_start"
       ],
       "acceptance": "Self/current-valid-parent/root authority, root-only past cutoff, cascade and namespace replacement.",
       "candidate_head": "3688bfe71eee1bfa2ed1b5702f3fa1be4ab3672b",
-      "open_items": [
-        "Parent authority refuses evidence_unavailable until checkpoint 4 wires the cascade: live-parent-revokes-now and post-lock-revocation-time-is-not-transaction-start remain open."
+      "ed25519_profile": "strict",
+      "sites": [
+        {
+          "file": "awid/src/awid_service/id_revocation.py",
+          "symbol": "revoke_identity"
+        },
+        {
+          "file": "awid/src/awid_service/routes/id_certificates.py",
+          "symbol": "revoke_id_certificate"
+        },
+        {
+          "file": "awid/src/awid_service/routes/id_certificates.py",
+          "symbol": "_revoke_body"
+        }
       ]
     },
     {
       "id": "AWID.ID.STATUS",
       "repo": "aweb",
-      "files": [],
+      "files": [
+        "awid/src/awid_service/id_status.py",
+        "awid/src/awid_service/routes/id_certificates.py"
+      ],
       "operations": [
         "present"
       ],
       "change": "add",
       "slice": "S2",
-      "status": "pending",
+      "status": "candidate",
       "journeys": [
         "J1",
         "J3",
@@ -867,26 +946,119 @@
         "J8",
         "J10"
       ],
-      "proving_tests": [],
-      "acceptance": "Bounded exact proof closure, no enumeration, complete epoch continuity and certificate/key history. S2 owner supplies final module path and test selectors."
+      "proving_tests": [
+        "awid/tests/test_id_certificate_status.py",
+        "awid/tests/test_id_certificate_registration.py::test_an_agent_whose_human_was_revoked_cannot_issue"
+      ],
+      "acceptance": "Bounded exact proof closure, no enumeration, complete epoch continuity and certificate/key history. S2 owner supplies final module path and test selectors.",
+      "ed25519_profile": "strict",
+      "sites": [
+        {
+          "file": "awid/src/awid_service/id_status.py",
+          "symbol": "verify_parent_chain"
+        },
+        {
+          "file": "awid/src/awid_service/routes/id_certificates.py",
+          "symbol": "id_certificate_status"
+        },
+        {
+          "file": "awid/src/awid_service/routes/id_certificates.py",
+          "symbol": "_status_body"
+        },
+        {
+          "file": "awid/src/awid_service/routes/id_certificates.py",
+          "symbol": "_status_caller"
+        },
+        {
+          "file": "awid/src/awid_service/routes/id_certificates.py",
+          "symbol": "_exact_dns_key"
+        }
+      ]
     },
     {
       "id": "AWID.STATUS.CLIENT",
       "repo": "aweb",
-      "files": [],
+      "files": [
+        "awid/src/awid/registry.py"
+      ],
       "operations": [
         "verify"
       ],
       "change": "add",
       "slice": "S2",
-      "status": "pending",
+      "status": "candidate",
       "journeys": [
         "J1",
         "J5",
         "J8"
       ],
-      "proving_tests": [],
-      "acceptance": "Production cached client, 60/900 bounds, domain isolation, timeout/negative-cache/429 and enrolled omission; S2 checkpoint6 owns final paths."
+      "proving_tests": [
+        "awid/tests/test_id_status_client.py",
+        "awid/tests/test_id_enrollment_resolution.py"
+      ],
+      "acceptance": "Production cached client, 60/900 bounds, domain isolation, timeout/negative-cache/429 and enrolled omission; S2 checkpoint6 owns final paths.",
+      "ed25519_profile": "strict",
+      "sites": [
+        {
+          "file": "awid/src/awid/registry.py",
+          "symbol": "CachedRegistryClient.id_chain_evidence"
+        },
+        {
+          "file": "awid/src/awid/registry.py",
+          "symbol": "CachedRegistryClient._refresh_id_status"
+        },
+        {
+          "file": "awid/src/awid/registry.py",
+          "symbol": "CachedRegistryClient._id_status_cache_key"
+        },
+        {
+          "file": "awid/src/awid/registry.py",
+          "symbol": "_id_status_evidence"
+        },
+        {
+          "file": "awid/src/awid/registry.py",
+          "symbol": "_id_tree_enrollment"
+        }
+      ]
+    },
+    {
+      "id": "AWID.ID.WRITE_CLIENT",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid/registry.py"
+      ],
+      "operations": [
+        "sign",
+        "register"
+      ],
+      "change": "add",
+      "slice": "S2",
+      "status": "candidate",
+      "journeys": [
+        "J1",
+        "J3",
+        "J5",
+        "J10"
+      ],
+      "proving_tests": [
+        "awid/tests/test_id_registry_client.py"
+      ],
+      "acceptance": "Public register, revoke and signed-rotation client: exact covering-v2 bytes; a sync-or-awaitable signer whose answer is verified with the shared strict profile before anything is sent; a refusing signer sends nothing.",
+      "ed25519_profile": "strict",
+      "sites": [
+        {
+          "file": "awid/src/awid/registry.py",
+          "symbol": "RegistryClient.register_id_certificate"
+        },
+        {
+          "file": "awid/src/awid/registry.py",
+          "symbol": "RegistryClient._covering_request"
+        },
+        {
+          "file": "awid/src/awid/registry.py",
+          "symbol": "_payload_signature"
+        }
+      ]
     },
     {
       "id": "AWID.TEAM.CERTIFICATES",
@@ -17594,6 +17766,273 @@
         "symbol": "compact_team_auth_payload",
         "calls": {
           "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "AWID.ID.REGISTER",
+        "file": "awid/src/awid_service/id_registration.py",
+        "symbol": "register_certificate",
+        "calls": {
+          "awid.id_certificates.id_certificate_id": 1,
+          "awid_service.id_status.verify_parent_chain": 1
+        }
+      },
+      {
+        "row": "AWID.ID.REGISTER",
+        "file": "awid/src/awid_service/routes/id_certificates.py",
+        "symbol": "register_id_certificate",
+        "calls": {
+          "reference:awid.id_certificates.IDCertificateError": 2,
+          "awid.id_certificates.decode_id_chain_header": 1,
+          "reference:verify_domain": 1,
+          "awid_service.id_registration.register_certificate": 1
+        }
+      },
+      {
+        "row": "AWID.ID.REGISTER",
+        "file": "awid/src/awid_service/routes/id_certificates.py",
+        "symbol": "_register_body",
+        "calls": {
+          "awid.id_certificates.IDCertificateError": 4,
+          "awid.id_certificates.verify_id_certificate": 1,
+          "literal:did:aw": 1
+        }
+      },
+      {
+        "row": "AWID.ID.REGISTER",
+        "file": "awid/src/awid_service/routes/id_certificates.py",
+        "symbol": "_expected_head",
+        "calls": {
+          "awid.id_certificates.IDCertificateError": 1
+        }
+      },
+      {
+        "row": "AWID.ID.REGISTER",
+        "file": "awid/src/awid_service/routes/id_certificates.py",
+        "symbol": "_is_stable_id",
+        "calls": {
+          "literal:did:aw": 1,
+          "awid.did.validate_stable_id": 1
+        }
+      },
+      {
+        "row": "AWID.ID.REGISTER",
+        "file": "awid/src/awid_service/routes/id_certificates.py",
+        "symbol": "_covering_signer",
+        "calls": {
+          "awid.controller_request.verify_controller_json_request": 1
+        }
+      },
+      {
+        "row": "AWID.ID.REGISTER",
+        "file": "awid/src/awid_service/routes/id_certificates.py",
+        "symbol": "_canonical_domain",
+        "calls": {
+          "awid.id_certificates.IDCertificateError": 2
+        }
+      },
+      {
+        "row": "AWID.ID.REGISTER",
+        "file": "awid/src/awid_service/id_tree_gate.py",
+        "symbol": "strict_json_object",
+        "calls": {
+          "awid.id_certificates.IDCertificateError": 3,
+          "reference:awid.id_certificates.IDCertificateError": 1
+        }
+      },
+      {
+        "row": "AWID.ID.REGISTER",
+        "file": "awid/src/awid_service/id_tree_gate.py",
+        "symbol": "strict_json_object.pairs",
+        "calls": {
+          "awid.id_certificates.IDCertificateError": 1
+        }
+      },
+      {
+        "row": "AWID.ID.REGISTER",
+        "file": "awid/src/awid_service/id_tree_gate.py",
+        "symbol": "strict_json_object.reject",
+        "calls": {
+          "awid.id_certificates.IDCertificateError": 1
+        }
+      },
+      {
+        "row": "AWID.ID.REGISTER",
+        "file": "awid/src/awid_service/id_tree_gate.py",
+        "symbol": "identity_parent_did",
+        "calls": {
+          "literal:did:aw": 1
+        }
+      },
+      {
+        "row": "AWID.ID.REVOKE",
+        "file": "awid/src/awid_service/id_revocation.py",
+        "symbol": "revoke_identity",
+        "calls": {
+          "awid_service.id_status.verify_parent_chain": 1
+        }
+      },
+      {
+        "row": "AWID.ID.REVOKE",
+        "file": "awid/src/awid_service/routes/id_certificates.py",
+        "symbol": "revoke_id_certificate",
+        "calls": {
+          "reference:awid.id_certificates.IDCertificateError": 1,
+          "reference:verify_domain": 1
+        }
+      },
+      {
+        "row": "AWID.ID.REVOKE",
+        "file": "awid/src/awid_service/routes/id_certificates.py",
+        "symbol": "_revoke_body",
+        "calls": {
+          "awid.id_certificates.IDCertificateError": 4,
+          "literal:did:aw": 1
+        }
+      },
+      {
+        "row": "AWID.ID.STATUS",
+        "file": "awid/src/awid_service/id_status.py",
+        "symbol": "verify_parent_chain",
+        "calls": {
+          "awid.id_certificates.IDChainEvidence": 1,
+          "awid.id_certificates.verify_id_chain": 1
+        }
+      },
+      {
+        "row": "AWID.ID.STATUS",
+        "file": "awid/src/awid_service/routes/id_certificates.py",
+        "symbol": "id_certificate_status",
+        "calls": {
+          "reference:awid.id_certificates.IDCertificateError": 1,
+          "reference:verify_domain": 1
+        }
+      },
+      {
+        "row": "AWID.ID.STATUS",
+        "file": "awid/src/awid_service/routes/id_certificates.py",
+        "symbol": "_status_body",
+        "calls": {
+          "awid.id_certificates.IDCertificateError": 3
+        }
+      },
+      {
+        "row": "AWID.ID.STATUS",
+        "file": "awid/src/awid_service/routes/id_certificates.py",
+        "symbol": "_status_caller",
+        "calls": {
+          "awid.id_certificates.strict_did_key": 1
+        }
+      },
+      {
+        "row": "AWID.ID.STATUS",
+        "file": "awid/src/awid_service/routes/id_certificates.py",
+        "symbol": "_exact_dns_key",
+        "calls": {
+          "verify_domain": 1
+        }
+      },
+      {
+        "row": "AWID.NAMESPACE.ROTATE",
+        "file": "awid/src/awid_service/routes/dns_namespaces.py",
+        "symbol": "_rotation_body",
+        "calls": {
+          "reference:awid.id_certificates.IDCertificateError": 1,
+          "awid.id_certificates.strict_did_key": 2
+        }
+      },
+      {
+        "row": "AWID.NAMESPACE.ROTATE",
+        "file": "awid/src/awid_service/routes/dns_namespaces.py",
+        "symbol": "_verify_rotation_proofs",
+        "calls": {
+          "awid.controller_request.verify_controller_json_request": 2
+        }
+      },
+      {
+        "row": "AWID.NAMESPACE.ROTATE",
+        "file": "awid/src/awid_service/routes/dns_namespaces.py",
+        "symbol": "rotate_namespace_with_previous_key",
+        "calls": {
+          "verify_domain": 1
+        }
+      },
+      {
+        "row": "AWID.NAMESPACE.ROTATE",
+        "file": "awid/src/awid_service/namespace_epochs.py",
+        "symbol": "proves_root",
+        "calls": {
+          "awid.id_certificates.strict_did_key": 1
+        }
+      },
+      {
+        "row": "AWID.STATUS.CLIENT",
+        "file": "awid/src/awid/registry.py",
+        "symbol": "CachedRegistryClient.id_chain_evidence",
+        "calls": {
+          "awid.id_certificates.status_request": 1,
+          "reference:awid.id_certificates.IDCertificateError": 1,
+          "awid.id_certificates.IDChainEvidence": 2,
+          "reference:awid.id_certificates.IDChainEvidence": 1
+        }
+      },
+      {
+        "row": "AWID.STATUS.CLIENT",
+        "file": "awid/src/awid/registry.py",
+        "symbol": "CachedRegistryClient._refresh_id_status",
+        "calls": {
+          "reference:awid.dns_verify.verify_domain": 1,
+          "awid.dns_verify.verify_domain": 1
+        }
+      },
+      {
+        "row": "AWID.STATUS.CLIENT",
+        "file": "awid/src/awid/registry.py",
+        "symbol": "CachedRegistryClient._id_status_cache_key",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "AWID.STATUS.CLIENT",
+        "file": "awid/src/awid/registry.py",
+        "symbol": "_id_status_evidence",
+        "calls": {
+          "awid.id_certificates.IDChainEvidence": 1,
+          "reference:awid.id_certificates.IDChainEvidence": 1
+        }
+      },
+      {
+        "row": "AWID.ID.WRITE_CLIENT",
+        "file": "awid/src/awid/registry.py",
+        "symbol": "RegistryClient.register_id_certificate",
+        "calls": {
+          "awid.id_certificates.encode_id_chain_header": 1
+        }
+      },
+      {
+        "row": "AWID.ID.WRITE_CLIENT",
+        "file": "awid/src/awid/registry.py",
+        "symbol": "RegistryClient._covering_request",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 2
+        }
+      },
+      {
+        "row": "AWID.ID.WRITE_CLIENT",
+        "file": "awid/src/awid/registry.py",
+        "symbol": "_payload_signature",
+        "calls": {
+          "awid.id_certificates.verify_ed25519": 1,
+          "reference:awid.id_certificates.IDCertificateError": 1
+        }
+      },
+      {
+        "row": "AWID.STATUS.CLIENT",
+        "file": "awid/src/awid/registry.py",
+        "symbol": "_id_tree_enrollment",
+        "calls": {
+          "awid.id_certificates.key_response_id_tree": 1
         }
       }
     ]

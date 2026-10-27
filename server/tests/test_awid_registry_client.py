@@ -1087,6 +1087,7 @@ async def test_cached_registry_client_reuses_cached_resolve_key():
                 "did_aw": did_aw,
                 "current_did_key": did_key,
                 "log_head": None,
+                "id_tree": {"enrolled": False},
             },
         )
 
@@ -1198,7 +1199,7 @@ async def test_key_and_address_cache_429_stale_is_bounded(monkeypatch):
                 return httpx.Response(429, json={"detail": "rate limit exceeded"})
             return httpx.Response(
                 200,
-                json={"did_aw": did_aw, "current_did_key": did_key, "log_head": None},
+                json={"did_aw": did_aw, "current_did_key": did_key, "log_head": None, "id_tree": {"enrolled": False}},
             )
         if request.url.path == f"/v1/did/{did_aw}/addresses":
             request_counts["addresses"] += 1
@@ -1256,6 +1257,29 @@ async def test_key_and_address_cache_429_stale_is_bounded(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_cached_registry_client_never_reuses_a_key_resolution_without_enrollment():
+    """An AWID that predates id_tree leaves enrollment unknown, and each read fetches it fresh."""
+    did_aw = "did:aw:legacy"
+    request_count = {"value": 0}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        request_count["value"] += 1
+        return httpx.Response(200, json={"did_aw": did_aw, "current_did_key": "did:key:legacy", "log_head": None})
+
+    client = CachedRegistryClient(
+        registry_url="https://api.awid.ai",
+        redis_client=_FakeRedis(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    first = await client.resolve_key(did_aw)
+    second = await client.resolve_key(did_aw)
+
+    assert first.id_tree is None and second.id_tree is None
+    assert request_count["value"] == 2
+
+
+@pytest.mark.asyncio
 async def test_cached_registry_client_resolve_key_fresh_bypasses_stale_cache():
     did_aw = "did:aw:rotated"
     request_count = {"value": 0}
@@ -1271,6 +1295,7 @@ async def test_cached_registry_client_resolve_key_fresh_bypasses_stale_cache():
                 "did_aw": did_aw,
                 "current_did_key": did_key,
                 "log_head": None,
+                "id_tree": {"enrolled": False},
             },
         )
 
@@ -1531,6 +1556,7 @@ async def test_cached_registry_client_serves_stale_then_refreshes_in_background(
                 "did_aw": did_aw,
                 "current_did_key": current_key["value"],
                 "log_head": None,
+                "id_tree": {"enrolled": False},
             },
         )
 
