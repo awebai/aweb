@@ -224,21 +224,15 @@ like any other namespace.
 ```
 POST   /v1/namespaces                  Create (controller auth)
 GET    /v1/namespaces/{domain}          Read (public)
-POST   /v1/namespaces/{domain}/rotate   Rotate controller key
+PUT    /v1/namespaces/{domain}          Replace controller key (new-key proof)
 DELETE /v1/namespaces/{domain}          Delete (controller auth)
 ```
 
-Every controller change (registration, rotation, reverification, deletion)
-appends to the domain's `id_namespace_epochs` history at a post-lock witness
-time instead of overwriting the old key's evidence. Each epoch records how AWID
-accepted its key; the same key accepted on different evidence opens a new
-epoch, so a key that loses its exact DNS proof no longer looks exact. Only an epoch proven by the exact `_awid.<domain>`
-TXT record is identity-tree root evidence for that domain. An inherited
-ancestor record, a parent-namespace authorization, the skip-DNS bypass and the
-reserved `local` domain are recorded but never exact
-([identity certificates](id-certificates.md) §1, §4). No epoch is inferred for
-a namespace registered before this history existed: the first exact
-registration, rotation or reverification witnesses its current key.
+The identity-tree contract adds a continuity-preserving
+[`POST /v1/namespaces/{domain}/rotate`](id-certificates.md#continuity-preserving-namespace-rotation-new-operation),
+with previous- and new-key proofs. This is new work; the released PUT remains
+key-loss recovery. Its epoch and pre-upgrade first-registration rules are fixed
+in that contract.
 
 ## Addresses
 
