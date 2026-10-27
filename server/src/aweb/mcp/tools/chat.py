@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.messaging.ingress import ingress_projection
+
 from aweb.messaging.participants import messaging_participant_by_alias
 
 from aweb.attachments import readable_attachments
@@ -300,7 +302,7 @@ async def _wait_for_replies(
                 """
                 SELECT message_id, from_did, from_alias, from_address,
                        CASE WHEN content_mode = 'encrypted_v2' THEN '' ELSE body END AS body,
-                       signature, signed_payload,
+                       signature, signed_payload, ingress,
                        content_mode, message_version, encrypted_envelope, created_at,
                        sender_leaving, hang_on
                 FROM {{tables.chat_messages}}
@@ -336,6 +338,7 @@ async def _wait_for_replies(
                             "from_did": row["from_did"],
                             "signature": row.get("signature"),
                             "signed_payload": row.get("signed_payload"),
+                            **ingress_projection(row),
                             **verified_signed_recipient_fields({**row, "conversation_id": session_id_str}),
                             **verified_signed_via({**row, "conversation_id": session_id_str}),
                             "body": content["body"],
@@ -1072,6 +1075,7 @@ async def chat_history(
                 "from_did": msg.get("from_did"),
                 "signature": msg.get("signature"),
                 "signed_payload": msg.get("signed_payload"),
+                **ingress_projection(msg),
                 **verified_signed_recipient_fields({**msg, "conversation_id": str(session_uuid)}),
                 **verified_signed_via({**msg, "conversation_id": str(session_uuid)}),
                 "body": content["body"],

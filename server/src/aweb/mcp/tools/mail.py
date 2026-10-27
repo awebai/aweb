@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.messaging.ingress import ingress_projection
+
 from aweb.messaging.participants import messaging_participant_by_alias
 
 from aweb.attachments import readable_attachments
@@ -138,6 +140,7 @@ def mcp_mail_message_from_row(
         msg["signed_payload"] = row["signed_payload"]
     msg["verification_status"] = message_verification_status(dict(row))
     msg.update(verified_signed_via(dict(row)))
+    msg.update(ingress_projection(row))
     return msg
 
 
@@ -767,7 +770,7 @@ async def check_inbox(
         """
         SELECT message_id, conversation_id, from_agent_id, from_alias, from_address, to_alias,
                subject, body, priority, read_at, created_at,
-               from_did, to_did, signature, signed_payload, content_mode, message_version,
+               from_did, to_did, signature, signed_payload, ingress, content_mode, message_version,
                encrypted_envelope
         FROM {{tables.messages}}
         WHERE to_did = ANY($1::text[])

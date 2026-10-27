@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.messaging.ingress import ingress_projection
+
 from aweb.attachment_service import prepare_attachment_send, refuse_remote_attachments, attachment_retry, attachment_references
 
 import json
@@ -248,10 +250,13 @@ class InboxMessage(BaseModel):
     signed_payload: Optional[str] = None
     verification_status: Optional[str] = None
     via: Optional[str] = None
+    ingress: Optional[dict[str, str]] = None
 
     @model_serializer(mode="wrap")
     def _serialize(self, handler):
         data = handler(self)
+        if self.ingress is None:
+            data.pop("ingress", None)
         if self.via is None or self.content_mode != "legacy_plaintext_v1":
             data.pop("via", None)
         if self.content_mode != "legacy_plaintext_v1":
@@ -329,6 +334,7 @@ async def _inbox_response_from_rows(
                 signed_payload=r.get("signed_payload"),
                 verification_status=message_verification_status(dict(r)),
                 **verified_signed_via(dict(r)),
+                **ingress_projection(r),
             )
         )
 
@@ -428,7 +434,7 @@ async def get_mail_conversation(
             f"""
             SELECT m.team_id, m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
                    m.subject, m.body, m.priority, m.read_at, m.created_at,
-                   m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id,
+                   m.from_did, m.to_did, m.signature, m.signed_payload, m.ingress, m.conversation_id,
                    m.content_mode, m.message_version, m.encrypted_envelope
             FROM {{{{tables.messages}}}} m
             {where}
@@ -457,7 +463,7 @@ async def get_mail_conversation(
         """
         SELECT m.team_id, m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
                m.subject, m.body, m.priority, m.read_at, m.created_at,
-               m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id,
+               m.from_did, m.to_did, m.signature, m.signed_payload, m.ingress, m.conversation_id,
                m.content_mode, m.message_version, m.encrypted_envelope
         FROM {{tables.messages}} m
         WHERE m.message_id = $1
@@ -2036,7 +2042,7 @@ async def get_inbox(
         f"""
         SELECT m.team_id, m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
                m.subject, m.body, m.priority, m.read_at, m.created_at,
-               m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id,
+               m.from_did, m.to_did, m.signature, m.signed_payload, m.ingress, m.conversation_id,
                m.content_mode, m.message_version, m.encrypted_envelope
         FROM {{{{tables.messages}}}} m
         {where_clause}
@@ -2085,7 +2091,7 @@ async def get_message(
         """
         SELECT m.team_id, m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
                m.subject, m.body, m.priority, m.read_at, m.created_at,
-               m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id,
+               m.from_did, m.to_did, m.signature, m.signed_payload, m.ingress, m.conversation_id,
                m.content_mode, m.message_version, m.encrypted_envelope
         FROM {{tables.messages}} m
         WHERE m.message_id = $1

@@ -5,7 +5,7 @@ from aweb.human_channels.participants import require_native_participant_input
 from aweb.service_errors import ValidationError
 
 from aweb.attachment_service import attachment_transaction
-from aweb.messaging.ingress import validate_ingress
+from aweb.messaging.ingress import ingress_projection, validate_ingress
 
 import logging
 import uuid as uuid_mod
@@ -716,7 +716,7 @@ async def get_message_history(
             SELECT message_id, from_alias, from_address,
                    CASE WHEN content_mode = 'encrypted_v2' THEN '' ELSE body END AS body,
                    created_at, sender_leaving, from_agent_id, reply_to, from_did,
-                   signature, signed_payload, content_mode, message_version,
+                   signature, signed_payload, ingress, content_mode, message_version,
                    encrypted_envelope
             FROM {{tables.chat_messages}}
             WHERE session_id = $1
@@ -739,7 +739,7 @@ async def get_message_history(
             SELECT message_id, from_alias, from_address,
                    CASE WHEN content_mode = 'encrypted_v2' THEN '' ELSE body END AS body,
                    created_at, sender_leaving, from_agent_id, reply_to, from_did,
-                   signature, signed_payload, content_mode, message_version,
+                   signature, signed_payload, ingress, content_mode, message_version,
                    encrypted_envelope
             FROM {{{{tables.chat_messages}}}}
             WHERE session_id = $1
@@ -780,6 +780,7 @@ async def get_message_history(
             "reply_to": str(row["reply_to"]) if row.get("reply_to") is not None else None,
             "signature": row.get("signature"),
             "signed_payload": row.get("signed_payload"),
+            **ingress_projection(row),
             "content_mode": row.get("content_mode") or "legacy_plaintext_v1",
             "message_version": int(row.get("message_version") or 1),
             "encrypted_envelope": _json_object(row.get("encrypted_envelope")),

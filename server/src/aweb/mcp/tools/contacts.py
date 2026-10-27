@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.messaging.ingress import ingress_projection
+
 import json
 from uuid import UUID
 
@@ -494,7 +496,7 @@ async def _read_mail_messages_from_target(db_infra, *, target: dict, limit: int)
         )
         SELECT m.message_id, m.conversation_id, m.from_agent_id, m.from_did, m.to_did,
                m.from_alias, m.from_address, m.to_alias, m.subject, m.body, m.priority,
-               m.read_at, m.created_at, m.signature, m.signed_payload, m.content_mode,
+               m.read_at, m.created_at, m.signature, m.signed_payload, m.ingress, m.content_mode,
                m.message_version, m.encrypted_envelope
         FROM {{tables.messages}} m
         WHERE m.conversation_id IN (SELECT conversation_id FROM matching_conversations)
@@ -536,7 +538,7 @@ async def _read_chat_messages_from_target(db_infra, *, target: dict, limit: int)
         )
         SELECT m.message_id, m.session_id, m.from_did, m.from_alias, m.from_address,
                m.body, m.sender_leaving, m.hang_on, m.created_at,
-               m.signature, m.signed_payload, m.content_mode
+               m.signature, m.signed_payload, m.ingress, m.content_mode
         FROM {{tables.chat_messages}} m
         WHERE m.session_id IN (SELECT session_id FROM matching_sessions)
         ORDER BY m.created_at DESC, m.message_id DESC
@@ -556,6 +558,7 @@ async def _read_chat_messages_from_target(db_infra, *, target: dict, limit: int)
             "from_did": row["from_did"],
             "signature": row.get("signature"),
             "signed_payload": row.get("signed_payload"),
+            **ingress_projection(row),
             **verified_signed_recipient_fields({**row, "conversation_id": str(row["session_id"])}),
             **verified_signed_via({**row, "conversation_id": str(row["session_id"])}),
             "from_alias": row["from_alias"],

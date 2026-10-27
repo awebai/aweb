@@ -7,6 +7,8 @@ Event dataclasses to Redis pub/sub for the SSE event stream.
 
 from __future__ import annotations
 
+from aweb.messaging.ingress import ingress_from_row
+
 import logging
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -495,6 +497,7 @@ def _translate(event_type: str, ctx: dict):
             workspace_id=ctx.get("to_agent_id", ""),
             message_id=ctx.get("message_id", ""),
             from_workspace=ctx.get("from_agent_id", ""),
+            ingress=ingress_from_row(ctx),
             subject=_event_subject(ctx),
             content_mode=str(ctx.get("content_mode") or "legacy_plaintext_v1"),
             encrypted=encrypted,
@@ -514,6 +517,7 @@ def _translate(event_type: str, ctx: dict):
         return ChatMessageEvent(
             workspace_id=ctx.get("from_agent_id", ""),
             session_id=ctx.get("session_id", ""),
+            ingress=ingress_from_row(ctx),
             message_id=ctx.get("message_id", ""),
         )
 

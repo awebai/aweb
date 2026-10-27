@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.messaging.ingress import ingress_projection
+
 from aweb.attachment_service import prepare_attachment_send, refuse_remote_attachments, attachment_retry, attachment_references
 
 from aweb.messaging.participants import messaging_participant_by_alias, messaging_participants_by_aliases
@@ -2044,6 +2046,7 @@ async def history(
                 "from_stable_id": identity_map.get(from_did, {}).get("stable_id") or None,
                 "signature": msg.get("signature"),
                 "signed_payload": msg.get("signed_payload"),
+                **ingress_projection(msg),
                 **verified_signed_recipient_fields({**msg, "conversation_id": str(session_uuid)}),
                 **verified_signed_via({**msg, "conversation_id": str(session_uuid)}),
                 "is_contact": is_address_in_contacts(from_address, contact_addrs),
@@ -2291,7 +2294,7 @@ async def _sse_events(
                 SELECT message_id, from_agent_id, from_alias, from_address,
                        CASE WHEN content_mode = 'encrypted_v2' THEN '' ELSE body END AS body,
                        content_mode, message_version, encrypted_envelope, created_at,
-                       sender_leaving, hang_on, reply_to, from_did, signature, signed_payload
+                       sender_leaving, hang_on, reply_to, from_did, signature, signed_payload, ingress
                 FROM {{tables.chat_messages}}
                 WHERE session_id = $1 AND created_at > $2
                 ORDER BY created_at ASC
@@ -2342,6 +2345,7 @@ async def _sse_events(
                     "from_did": row.get("from_did"),
                     "signature": row.get("signature"),
                     "signed_payload": row.get("signed_payload"),
+                    **ingress_projection(row),
                     **verified_signed_recipient_fields({**row, "conversation_id": session_id_str}),
                     **verified_signed_via({**row, "conversation_id": session_id_str}),
                     "is_contact": is_address_in_contacts(from_address, contact_addrs),
@@ -2429,7 +2433,7 @@ async def _sse_events(
                     SELECT message_id, from_agent_id, from_alias, from_address,
                            CASE WHEN content_mode = 'encrypted_v2' THEN '' ELSE body END AS body,
                            content_mode, message_version, encrypted_envelope, created_at,
-                           sender_leaving, hang_on, reply_to, from_did, signature, signed_payload
+                           sender_leaving, hang_on, reply_to, from_did, signature, signed_payload, ingress
                     FROM {{tables.chat_messages}}
                     WHERE session_id = $1 AND created_at > $2
                     ORDER BY created_at ASC
@@ -2478,6 +2482,7 @@ async def _sse_events(
                         "from_did": row.get("from_did"),
                         "signature": row.get("signature"),
                         "signed_payload": row.get("signed_payload"),
+                        **ingress_projection(row),
                         **verified_signed_recipient_fields({**row, "conversation_id": session_id_str}),
                         **verified_signed_via({**row, "conversation_id": session_id_str}),
                         "is_contact": is_address_in_contacts(from_address, contact_addrs),

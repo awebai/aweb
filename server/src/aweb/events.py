@@ -36,7 +36,10 @@ class Event:
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        value = asdict(self)
+        if "ingress" in value and value["ingress"] is None:
+            value.pop("ingress")
+        return value
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict())
@@ -91,6 +94,7 @@ class MessageDeliveredEvent(Event):
     priority: str = "normal"
     content_mode: str = "legacy_plaintext_v1"
     encrypted: bool = False
+    ingress: dict[str, str] | None = None
 
 
 @dataclass
@@ -115,6 +119,7 @@ class ChatMessageEvent(Event):
     from_alias: str = ""
     to_aliases: list[str] = field(default_factory=list)
     preview: str = ""
+    ingress: dict[str, str] | None = None
 
 
 @dataclass

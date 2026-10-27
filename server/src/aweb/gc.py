@@ -16,6 +16,9 @@ def _rows_affected(status: str) -> int:
 
 
 async def gc_expired_messages(db_infra, *, ttl_days: int = 30) -> dict:
+    # Native ingress receipts outlive message bodies. Their mutation intents
+    # must outlive the receipts or be deleted together: recovery uses an intent
+    # to distinguish an expired ordinary message from missing channel context.
     aweb_db = db_infra.get_manager("aweb")
     cutoff = datetime.now(timezone.utc) - timedelta(days=ttl_days)
 

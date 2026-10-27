@@ -56,8 +56,8 @@ async def _channel_service(env):
     return service
 
 
-async def _prepare(env, kind="mail", via=None):
-    mid, cid = str(uuid4()), str(uuid4())
+async def _prepare(env, kind="mail", via=None, conversation_id=None):
+    mid, cid = str(uuid4()), conversation_id or str(uuid4())
     auth = env["auth"]
     recipient_alias = env.get("recipient_alias", "human")
     payload = dict(type=kind, from_did=auth.did_key, to_did=env["recipient_did"],

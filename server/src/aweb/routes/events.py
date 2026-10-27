@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.messaging.ingress import ingress_projection
+
 import asyncio
 import json
 import logging
@@ -152,14 +154,14 @@ async def _current_actionable_mail(aweb_db, *, inbox_dids: list[str]) -> list[di
         """
         WITH unread AS (
             SELECT message_id, conversation_id, from_did, from_alias, from_address, subject, priority,
-                   created_at, content_mode, message_version
+                   created_at, content_mode, message_version, ingress
             FROM {{tables.messages}}
             WHERE to_did = ANY($1::text[])
               AND read_at IS NULL
         ),
         windowed AS (
             SELECT message_id, conversation_id, from_did, from_alias, from_address, subject, priority,
-                   created_at, content_mode, message_version
+                   created_at, content_mode, message_version, ingress
             FROM unread
             ORDER BY created_at DESC, message_id DESC
             LIMIT 50
@@ -174,6 +176,7 @@ async def _current_actionable_mail(aweb_db, *, inbox_dids: list[str]) -> list[di
             priority,
             content_mode,
             message_version,
+            ingress,
             created_at,
             (SELECT COUNT(*)::int FROM unread) AS unread_count
         FROM windowed
@@ -188,6 +191,7 @@ async def _current_actionable_mail(aweb_db, *, inbox_dids: list[str]) -> list[di
     return [
         {
             "type": "actionable_mail",
+            **ingress_projection(r),
             "message_id": str(r["message_id"]),
             "conversation_id": str(r["conversation_id"]),
             "from_alias": r["from_alias"],
