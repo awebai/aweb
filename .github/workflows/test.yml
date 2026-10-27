@@ -1,15 +1,8 @@
 name: Test suite
 
-# `make test` on every pull request. This is the PR-time signal that the
-# deleted comprehensive hosted gate used to provide as a side effect of running
-# on pull requests too - at the cost of a ~120-minute job with a 54%
-# cancellation rate, most of whose expensive half the focused workflows already
-# cover (cli-e2e, federation-e2e and library-ci each run their Docker journey
-# on pull requests). The complete proof runs locally in Docker through
-# `make release-candidate TAGS='...'` before any publication tag exists.
-#
-# No Docker journeys: `make test` contains none, which is what makes this cheap.
-
+# Every existing test target remains covered. The four isolated groups run in
+# parallel; the remaining source/packaging controls retain their native setup.
+# The final stable check fails if either the matrix or remaining targets fail.
 on:
   pull_request:
   workflow_dispatch:
@@ -22,8 +15,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: Test suite
+  isolated:
+    name: Isolated (${{ matrix.suite }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: server
+            targets: test-server
+          - suite: awid
+            targets: test-awid
+          - suite: cli
+            targets: test-cli
+          - suite: channel-pi
+            targets: test-channel test-channel-name-live-contract test-channel-core test-pi-extension
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Run isolated suites
+        run: python3 scripts/test-egress/docker.py --evidence "${{ runner.temp }}/test-egress" ${{ matrix.targets }}
+      - name: Preserve network isolation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-egress-${{ matrix.suite }}
+          path: ${{ runner.temp }}/test-egress
+
+  remaining:
+    name: Remaining test targets
     runs-on: ubuntu-latest
     timeout-minutes: 45
     services:
@@ -105,18 +130,18 @@ jobs:
       - name: Install tmux for the guarded launcher tests
         run: sudo apt-get update && sudo apt-get install -y tmux
 
-      - name: Run Go, Python and Node suites without external network access
-        run: make test-isolated
-        env:
-          TEST_EGRESS_EVIDENCE: ${{ runner.temp }}/test-egress
-
       - name: Run remaining test targets
-        # These suites ran above on the isolated Docker network.
+        # These suites run in the isolated matrix jobs.
         run: make -o test-server -o test-awid -o test-cli -o test-channel -o test-channel-name-live-contract -o test-channel-core -o test-pi-extension test
 
-      - name: Preserve network isolation evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-egress
-          path: ${{ runner.temp }}/test-egress
+
+  test:
+    name: Test suite
+    if: ${{ always() }}
+    needs: [isolated, remaining]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every suite to pass
+        run: |
+          test "${{ needs.isolated.result }}" = success
+          test "${{ needs.remaining.result }}" = success
