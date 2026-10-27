@@ -41,15 +41,24 @@ identity/trust vector family.
 
 ## Accepting protocols awaiting client rollout
 
-### `member-attribution-v1.json` — contract candidate
+### `id-certificates-v1.json` — contract candidate
 
-The [member attribution contract](../member-attribution.md) freezes the new
-controller-signed certificate binding, private email/public team-scoped
-fingerprint, optional presentation and fetch-on-none procedure. Synthetic
-Ed25519 known answers cover exact bytes, binding/shape refusals and monotonic
-updates. This is a docs-only freeze candidate, not a shipped implementation or
-runtime pass. Go/Python consumers are added in the implementation slice; no
-existing certificate/message vector is changed.
+The [identity certificates contract](../id-certificates.md) freezes
+parent-signed human/agent certificates, their domain binding and bounded chain
+carrier, registered/historical versus local/current issuer-key selection,
+revocation cutoffs, cached status and prospective adoption. Synthetic Ed25519
+known answers pin exact bytes/signatures/digests, a three-agent OATS subtree,
+negative R1–R3/rotation/presentation cases, and pending-invitation/lifecycle
+scenarios. Registry fixtures are independently supplied test authority facts;
+transaction scenarios are not runtime proof. This is docs-only: shared
+Python/Go/TypeScript consumers follow review. Existing certificate/message
+fixtures are byte-identical.
+
+### `member-attribution-v1.json` — superseded, historical only
+
+The [old member attribution proposal](../member-attribution.md) is superseded
+by the identity tree. Its frozen bytes remain evidence, not a new email/SMTP
+implementation contract. No new consumer should implement this record.
 
 ### `awid-controller-request-v2.json`
 
