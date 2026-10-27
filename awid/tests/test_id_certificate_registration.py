@@ -541,6 +541,38 @@ def _covering_payload(path: str, body: bytes, operation: str) -> tuple[str, byte
     })
 
 
+async def _contradict_alices_epoch_window(awid_db_infra):
+    """Fault injection: the first epoch now starts after alice's registration under it."""
+    db = awid_db_infra.get_manager("aweb")
+    await db.execute(
+        "UPDATE {{tables.id_namespace_epochs}} SET registered_at = $2 WHERE domain = $1 AND seq = 1",
+        DOMAIN, at("2026-10-26T00:01:30Z"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_parent_with_contradictory_evidence_cannot_issue(tree, awid_db_infra):
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+    await _contradict_alices_epoch_window(awid_db_infra)
+    before = await _revisions(awid_db_infra)
+
+    resp = await tree.register([certificate("alice"), certificate("bob")], when=at("2026-10-26T00:12:00Z"))
+
+    assert (resp.status_code, _code(resp)) == (503, "evidence_unavailable"), resp.text
+    assert await _revisions(awid_db_infra) == before
+
+
+@pytest.mark.asyncio
+async def test_a_parent_with_contradictory_evidence_cannot_revoke(tree, awid_db_infra):
+    await _enroll_normal_tree(tree)
+    await _contradict_alices_epoch_window(awid_db_infra)
+
+    resp = await tree.revoke("alice", "bob", expected_head=certificate_id("bob"), when=REVOKED_AT_NOW)
+
+    assert (resp.status_code, _code(resp)) == (503, "evidence_unavailable"), resp.text
+    assert await _revocations(awid_db_infra) == []
+
+
 @pytest.mark.asyncio
 async def test_a_parent_revocation_is_timed_after_the_parents_key_epoch(tree, awid_db_infra):
     await _enroll_normal_tree(tree)
@@ -1435,6 +1467,31 @@ async def test_only_the_domain_lock_orders_a_registration_before_its_grandparent
     assert revoked.status_code == 200, revoked.text
     [child] = await _revisions(awid_db_infra, did_aw("child_of_global"))
     assert child["registered_at"] < at(revoked.json()["effective_from"])
+
+
+@pytest.mark.asyncio
+async def test_a_registration_queued_behind_its_grandparents_revocation_refuses(tree, awid_db_infra):
+    """The revocation holds the domain lock first; the registration then sees its cutoff."""
+    await tree.did("child_of_global")
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+    await tree.enroll("alice", "global-agent", when=at("2026-10-26T00:04:00Z"))
+    chain = [certificate("alice"), certificate("global-agent"), _registered_agent("child_of_global", "global_agent")]
+    db = awid_db_infra.get_manager("aweb")
+    async with db.transaction() as holder:
+        # The revocation takes the domain lock, then waits here for alice's row.
+        await holder.fetch_one("SELECT id FROM {{tables.id_identities}} WHERE id = $1 FOR SHARE", did_aw("alice"))
+        tree.clock.now = at("2026-10-26T00:10:00Z")
+        revocation = asyncio.create_task(tree.revoke("root", "alice", expected_head=certificate_id("alice")))
+        await wait_until_blocked_on_lock(db, revocation)
+        registration = asyncio.create_task(tree.register(chain))
+        await wait_until_blocked_on_lock(db, registration, waiters=2)
+    revoked = await revocation
+    tree.clock.now = at("2026-10-26T00:12:00Z")
+    registered = await registration
+
+    assert revoked.status_code == 200, revoked.text
+    assert (registered.status_code, _code(registered)) == (422, "revoked"), registered.text
+    assert await _revisions(awid_db_infra, did_aw("child_of_global")) == []
 
 
 @pytest.mark.parametrize("held", ["alice", "bob"], ids=["parent-mapping", "subject-mapping"])

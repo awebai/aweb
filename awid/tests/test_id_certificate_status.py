@@ -13,6 +13,7 @@ import copy
 import hashlib
 import json
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
@@ -20,6 +21,7 @@ import pytest_asyncio
 from awid.did import did_from_public_key, generate_keypair
 from awid.signing import canonical_json_bytes, sign_message
 from awid.id_certificates import id_certificate_id
+from awid import ratelimit as ratelimit_module
 from awid.ratelimit import NoOpRateLimiter
 from awid_service import id_status
 from awid_service.deps import get_domain_verifier
@@ -62,6 +64,12 @@ async def tree(clocked_client, manual_clock):
     await tree.enroll("alice", "bob", when=at("2026-10-26T00:03:00Z"))
     await tree.enroll("alice", "global-agent", when=at("2026-10-26T00:04:00Z"))
     return tree
+
+
+@pytest.fixture
+def one_rate_window(monkeypatch):
+    """Keep every request of a budget test inside one fixed rate-limit window."""
+    monkeypatch.setattr(ratelimit_module, "time", SimpleNamespace(time=lambda: 1_800_000_000.0))
 
 
 async def _status(tree, body, *, signer=None, when=OBSERVED_AT, headers=None):
@@ -134,7 +142,7 @@ async def test_status_prefix_enumeration_refuses(case, tree):
 
 
 @consumes("status-rate-limit")
-async def test_status_rate_limit(case, tree):
+async def test_status_rate_limit(case, tree, one_rate_window):
     statuses = [(await _status(tree, _request("alice"))).status_code for _ in range(case["input"]["requests_in_minute"])]
 
     assert statuses[:-1] == [200] * (case["input"]["requests_in_minute"] - 1)
@@ -168,7 +176,7 @@ async def _signed_by_fresh_key(tree, body, headers):
 
 
 @pytest.mark.asyncio
-async def test_fresh_caller_keys_from_one_ip_share_its_budget(tree, monkeypatch):
+async def test_fresh_caller_keys_from_one_ip_share_its_budget(tree, monkeypatch, one_rate_window):
     headers = _from_ip(monkeypatch, "198.51.100.7")
     tree.clock.now = OBSERVED_AT
 
@@ -178,7 +186,7 @@ async def test_fresh_caller_keys_from_one_ip_share_its_budget(tree, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_a_rate_limited_request_does_no_dns_lookup(tree):
+async def test_a_rate_limited_request_does_no_dns_lookup(tree, one_rate_window):
     for _ in range(60):
         assert (await _status(tree, _request("alice"))).status_code == 200
     answer = tree.client.app.dependency_overrides[get_domain_verifier]()
@@ -197,7 +205,7 @@ async def test_a_rate_limited_request_does_no_dns_lookup(tree):
 
 
 @pytest.mark.asyncio
-async def test_requests_with_invalid_envelopes_still_spend_the_ip_budget(tree):
+async def test_requests_with_invalid_envelopes_still_spend_the_ip_budget(tree, one_rate_window):
     raw = json.dumps(_request("alice")).encode()
     mismatched = covering_headers(
         "bob", method="POST", path=STATUS_PATH, body=b"{}", domain=DOMAIN, operation="read_id_certificate_status",
@@ -211,7 +219,7 @@ async def test_requests_with_invalid_envelopes_still_spend_the_ip_budget(tree):
 
 
 @pytest.mark.asyncio
-async def test_one_caller_key_from_many_ips_has_one_budget(tree, monkeypatch):
+async def test_one_caller_key_from_many_ips_has_one_budget(tree, monkeypatch, one_rate_window):
     statuses = []
     for n in range(61):
         resp = await _status(tree, _request("alice"), signer="bob", headers=_from_ip(monkeypatch, f"198.51.100.{n + 1}"))
