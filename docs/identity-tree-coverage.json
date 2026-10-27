@@ -57,7 +57,8 @@
         "awid/tests/test_id_certificate_vectors.py::test_public_raw_verifier_uses_the_frozen_strict_profile",
         "awid/tests/test_id_certificate_vectors.py::test_public_raw_verifier_refuses_non_signature_bytes",
         "awid/tests/test_id_certificate_vectors.py::test_public_key_predicate_does_not_accept_non_keys",
-        "awid/tests/test_id_certificate_vectors.py::test_public_raw_verifier_requires_exact_message_bytes"
+        "awid/tests/test_id_certificate_vectors.py::test_public_raw_verifier_requires_exact_message_bytes",
+        "awid/tests/test_id_key_response_vectors.py::test_key_response_id_tree_frozen_parse"
       ],
       "acceptance": "Frozen certificate bytes, raw refusals and strict Ed25519 probes; this is not ancestry verification.",
       "candidate_head": "015d08b00a71968d288ebaefb2569e403a2e599b",
@@ -102,6 +103,10 @@
         {
           "file": "awid/src/awid/id_certificates.py",
           "symbol": "verify_ed25519"
+        },
+        {
+          "file": "awid/src/awid/id_certificates.py",
+          "symbol": "key_response_id_tree"
         }
       ]
     },
@@ -134,7 +139,8 @@
         "cli/go/internal/conformance/id_certificates_test.go::TestIDCertificateStrictEd25519Probes",
         "cli/go/internal/conformance/id_certificates_test.go::TestIDCertificateDepthCapOnSignedChain",
         "cli/go/internal/conformance/id_certificates_test.go::TestIDCertificateClaimedIssuerMustMatchSelectedSigner",
-        "cli/go/internal/conformance/id_certificates_test.go::TestIDCertificateYearZeroRefusesAtShape"
+        "cli/go/internal/conformance/id_certificates_test.go::TestIDCertificateYearZeroRefusesAtShape",
+        "cli/go/internal/conformance/id_key_response_test.go::TestIDKeyResponseTreeFrozenParse"
       ],
       "acceptance": "Same root vectors, namespace binding and strict point/scalar checks; this is not ancestry verification.",
       "candidate_head": "9fc3c5855c434904ab36a113baa654c2488fe6d3",
@@ -191,6 +197,10 @@
         {
           "file": "cli/go/awid/id_certificates.go",
           "symbol": "idCertificateJSONValue"
+        },
+        {
+          "file": "cli/go/awid/id_certificates.go",
+          "symbol": "KeyResponseIDTree"
         }
       ]
     },
@@ -18587,6 +18597,14 @@
         "symbol": "IDCertificateSigningBytes",
         "calls": {
           "idCertificateCanonical": 1
+        }
+      },
+      {
+        "row": "S1.GO.CODEC",
+        "file": "cli/go/awid/id_certificates.go",
+        "symbol": "KeyResponseIDTree",
+        "calls": {
+          "idCertificateDomain": 1
         }
       },
       {
