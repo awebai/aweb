@@ -2104,7 +2104,8 @@
       "files": [
         "backend/src/aweb_cloud/services/human_identity_keys.py",
         "backend/src/aweb_cloud/stored_key_crypto.py",
-        "backend/src/aweb_cloud/migrations/069_human_identity_keys.sql"
+        "backend/src/aweb_cloud/migrations/069_human_identity_keys.sql",
+        "backend/src/aweb_cloud/services/human_identity_signer.py"
       ],
       "operations": [
         "create",
@@ -2131,10 +2132,19 @@
         "backend/tests/test_human_identity_keys.py::test_concurrent_preparation_keeps_one_key_after_the_user_lock_wait",
         "backend/tests/test_human_identity_keys.py::test_account_disabled_or_deleted_while_preparation_waits_cannot_get_a_pending_key",
         "backend/tests/test_human_identity_keys.py::test_storage_requires_selected_canonical_domain_without_silent_relabel",
-        "backend/tests/test_stored_key_crypto.py"
+        "backend/tests/test_stored_key_crypto.py",
+        "backend/tests/test_human_identity_signer.py::test_session_signs_exact_bytes_without_returning_a_key_or_signer",
+        "backend/tests/test_human_identity_signer.py::test_agent_and_api_credentials_cannot_unlock_a_human_key",
+        "backend/tests/test_human_identity_signer.py::test_a_real_browser_cannot_sign_another_accounts_key",
+        "backend/tests/test_human_identity_signer.py::test_every_decrypt_rechecks_the_locked_account",
+        "backend/tests/test_human_identity_signer.py::test_logout_committed_before_signing_refuses_without_decrypt",
+        "backend/tests/test_human_identity_signer.py::test_signing_holds_user_lock_until_outer_commit",
+        "backend/tests/test_human_identity_signer.py::test_signing_rechecks_after_waiting_for_account_or_session_change",
+        "backend/tests/test_human_identity_signer.py::test_human_identity_decryption_has_one_production_module",
+        "backend/tests/test_human_identity_signer.py::test_human_decrypt_guard_detects_an_aliased_purpose_in_another_module"
       ],
       "acceptance": "One checked user+domain human key/ID, session/exact-invitation signer; BYOT root never in Cloud.",
-      "candidate_head": "91518d85dd5cb52cfbbb71eee7ec7bfa4aef9a38",
+      "candidate_head": "a61701107b4e6d78c7055bff02871641fbd28ec1",
       "sites": [
         {
           "file": "backend/src/aweb_cloud/services/human_identity_keys.py",
@@ -2147,25 +2157,34 @@
         {
           "file": "backend/src/aweb_cloud/stored_key_crypto.py",
           "symbol": "StoredKeyPurpose.HUMAN_IDENTITY"
+        },
+        {
+          "file": "backend/src/aweb_cloud/services/human_identity_signer.py",
+          "symbol": "lock_human_session"
+        },
+        {
+          "file": "backend/src/aweb_cloud/services/human_identity_signer.py",
+          "symbol": "sign_session_payload"
         }
       ],
-      "coverage_scope": "Prepared custodial pending-key storage only; no registered-human authority.",
+      "coverage_scope": "Pending custodial-key storage and checked-session exact-payload signing; no registered-human authority or public registry exchange.",
       "open_items": [
-        "Signing/export route, external-human account binding and BYOT completion remain pending.",
-        "Registered-human authority, constructor conversion and runtime verifier remain pending."
+        "Real public verifier and registration exchange, device/exact-invitation signer and production wrapper delegation remain pending.",
+        "Registered-human authority, constructor conversion and current-owner predicate remain pending."
       ],
       "validation": {
-        "source_message_id": "0cb8da69-324d-469f-93ef-47ae17ad18ef",
+        "source_message_id": "860948d0-4124-4d5b-8b9e-605b017ce126",
         "reported_by": "aweb-cloud-expert-channels-plan-review",
-        "static_command": "make lint release-verify-migration-checksums verify-gate-idioms release-verify-migrations",
-        "static_result": "passed_as_reported_by_owner",
+        "tested_head": "a61701107b4e6d78c7055bff02871641fbd28ec1",
+        "focused_command": "make ENV_FILE=/dev/null test-backend PYTEST_BACKEND_ARGS='-n 0 -q -x tests/test_human_identity_keys.py tests/test_human_identity_signer.py tests/test_human_identity_enrollment.py tests/test_stored_key_crypto.py'",
         "focused_result": "passed_as_reported_by_owner",
-        "focused_command": "make ENV_FILE=/dev/null test-backend PYTEST_BACKEND_ARGS='-n 0 -q -x tests/test_human_identity_keys.py tests/test_stored_key_crypto.py'",
-        "focused_summary": "20 passed in 1.89s; exit 0",
-        "focused_source_message_id": "dbfe593e-eda6-465f-83a0-eb41a3cf2ccf",
-        "latest_test_only_checkpoint": "a417ff18",
-        "latest_test_only_source_message_id": "a5ed6194-70e7-47a0-8c5a-1c2ba9c0297b",
-        "latest_test_only_summary": "21 passed in 2.07s, as reported by owner; product bytes unchanged"
+        "focused_summary": "56 passed in 6.60s; runner94537 exit 0 through suite lock",
+        "static_result": "passed_as_reported_by_owner",
+        "static_summary": "lint/typecheck/checksum/idioms/docs-contract/migrations passed; 272 files, 73 checksums",
+        "logs": [
+          "tmp/acmj-s6a-signer-red-6787093d.log",
+          "tmp/acmj-s6a-static-a6170110.log"
+        ]
       }
     },
     {
@@ -2405,7 +2424,10 @@
     {
       "id": "CLOUD.BYOT.CONNECT",
       "repo": "ac",
-      "files": [],
+      "files": [
+        "backend/src/aweb_cloud/services/human_identity_enrollment.py",
+        "backend/src/aweb_cloud/migrations/070_human_identity_enrollments.sql"
+      ],
       "operations": [
         "create",
         "sign",
@@ -2413,9 +2435,9 @@
         "present",
         "verify"
       ],
-      "change": "owner_to_refine",
+      "change": "add",
       "slice": "S6",
-      "status": "pending",
+      "status": "partial",
       "journeys": [
         "J2",
         "J3",
@@ -2425,8 +2447,51 @@
         "J9",
         "J10"
       ],
-      "proving_tests": [],
-      "acceptance": "Verify incoming evidence, preserve reuse; no guessed owner. Cloud owner supplies the exact per-site paths and proving tests before conversion."
+      "proving_tests": [
+        "backend/tests/test_human_identity_enrollment.py::test_byot_preparation_reuses_exact_account_key_domain_request",
+        "backend/tests/test_human_identity_enrollment.py::test_verified_completion_persists_original_receipt_on_retry",
+        "backend/tests/test_human_identity_enrollment.py::test_wrong_or_unavailable_verified_identity_never_binds_account",
+        "backend/tests/test_human_identity_enrollment.py::test_receipt_alone_and_substituted_private_request_are_refused",
+        "backend/tests/test_human_identity_enrollment.py::test_session_changed_during_external_verification_cannot_complete",
+        "backend/tests/test_human_identity_enrollment.py::test_verification_expiring_during_user_lock_wait_cannot_complete",
+        "backend/tests/test_human_identity_enrollment.py::test_registry_success_then_cloud_rollback_preserves_request_for_retry",
+        "backend/tests/test_human_identity_enrollment.py::test_failed_registration_retains_key_and_request_and_can_complete"
+      ],
+      "acceptance": "Verify incoming evidence, preserve reuse; no guessed owner. Cloud owner supplies the exact per-site paths and proving tests before conversion.",
+      "candidate_head": "a61701107b4e6d78c7055bff02871641fbd28ec1",
+      "sites": [
+        {
+          "file": "backend/src/aweb_cloud/services/human_identity_enrollment.py",
+          "symbol": "prepare_byot_enrollment"
+        },
+        {
+          "file": "backend/src/aweb_cloud/services/human_identity_enrollment.py",
+          "symbol": "complete_byot_enrollment"
+        },
+        {
+          "file": "backend/src/aweb_cloud/services/human_identity_enrollment.py",
+          "symbol": "mark_enrollment_failed"
+        }
+      ],
+      "coverage_scope": "Private account/key/domain-pinned enrollment lifecycle only; fixture verifier facts are not public proof.",
+      "open_items": [
+        "Real public verifier/registration exchange and HTTP enrollment remain pending.",
+        "Production Cloud wrapper delegation to the published cached status client remains pending."
+      ],
+      "validation": {
+        "source_message_id": "860948d0-4124-4d5b-8b9e-605b017ce126",
+        "reported_by": "aweb-cloud-expert-channels-plan-review",
+        "tested_head": "a61701107b4e6d78c7055bff02871641fbd28ec1",
+        "focused_command": "make ENV_FILE=/dev/null test-backend PYTEST_BACKEND_ARGS='-n 0 -q -x tests/test_human_identity_keys.py tests/test_human_identity_signer.py tests/test_human_identity_enrollment.py tests/test_stored_key_crypto.py'",
+        "focused_result": "passed_as_reported_by_owner",
+        "focused_summary": "56 passed in 6.60s; runner94537 exit 0 through suite lock",
+        "static_result": "passed_as_reported_by_owner",
+        "static_summary": "lint/typecheck/checksum/idioms/docs-contract/migrations passed; 272 files, 73 checksums",
+        "logs": [
+          "tmp/acmj-s6a-signer-red-6787093d.log",
+          "tmp/acmj-s6a-static-a6170110.log"
+        ]
+      }
     },
     {
       "id": "CLOUD.SNAPSHOT.IMPORT",
