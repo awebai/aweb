@@ -32,6 +32,7 @@ export type IdVerificationReason =
   | "stale_issuer_key"
   | "superseded_certificate"
   | "revoked"
+  | "root_replaced"
   | "subject_mismatch"
   | "status_expired"
   | "evidence_unavailable"
@@ -191,7 +192,8 @@ function verify(presented: IdChain | null, subject: IdSubject, evidence: IdStatu
   for (let i = 0; i < certificates.length; i += 1) checkIssuerKey(snapshot, certificates, i);
   // Which ancestors must be currently valid follows from the leaf: agent
   // edges need a current parent, human edges a parent valid at registration.
-  if (!currentlyValid(snapshot, certificates, certificates.length - 1)) throw new Refusal("revoked");
+  const invalid = invalidity(snapshot, certificates, certificates.length - 1);
+  if (invalid) throw new Refusal(invalid);
 
   const human = [...certificates].reverse().find(certificate => certificate.kind === "human");
   return {
@@ -244,6 +246,7 @@ interface Epoch {
   didKey: string;
   registeredAt: string;
   retiredAt: string | null;
+  continuity: "rotated" | "replaced";
 }
 
 interface CertificateRevision {
@@ -265,6 +268,8 @@ interface IdentityStatus {
 
 interface Snapshot {
   epochs: Epoch[];
+  /** Registered revisions admitted before this time lost their authority to a namespace replacement. */
+  replacedAt: string;
   identities: Map<string, IdentityStatus>;
   missing: Set<string>;
 }
@@ -308,21 +313,26 @@ function parseSnapshot(status: unknown, domain: string): Snapshot | undefined {
     if (typeof id !== "string" || !isCanonicalDidAw(id) || identities.has(id) || missing.has(id)) return undefined;
     missing.add(id);
   }
-  return { epochs, identities, missing };
+  const replacedAt = epochs.filter(epoch => epoch.continuity === "replaced").at(-1)!.registeredAt;
+  return { epochs, replacedAt, identities, missing };
 }
 
 function parseEpochs(namespace: unknown): Epoch[] | undefined {
   if (!isRecord(namespace) || !hasExactKeys(namespace, ["epochs"]) || !Array.isArray(namespace.epochs)) return undefined;
   const epochs: Epoch[] = [];
   for (const [index, row] of namespace.epochs.entries()) {
-    if (!isRecord(row) || !hasExactKeys(row, ["did_key", "registered_at", "retired_at", "seq"])) return undefined;
-    const { seq, did_key, registered_at, retired_at } = row;
+    if (!isRecord(row) || !hasExactKeys(row, ["continuity", "did_key", "registered_at", "retired_at", "seq"])) return undefined;
+    const { seq, did_key, registered_at, retired_at, continuity } = row;
+    if (continuity !== "rotated" && continuity !== "replaced") return undefined;
     if (!isPositiveInteger(seq) || typeof did_key !== "string" || !isCanonicalDidKey(did_key)) return undefined;
     if (!isTimestamp(registered_at) || !(retired_at === null || isTimestamp(retired_at))) return undefined;
     const previous = epochs[index - 1];
     if (previous && (seq <= previous.seq || previous.retiredAt === null || previous.retiredAt > registered_at)) return undefined;
     if (retired_at !== null && retired_at <= registered_at) return undefined;
-    epochs.push({ seq, didKey: did_key, registeredAt: registered_at, retiredAt: retired_at });
+    // Only the previous controller can continue the history: a rotation starts
+    // exactly when its predecessor retires, and the first epoch has none.
+    if (continuity === "rotated" && (!previous || previous.retiredAt !== registered_at)) return undefined;
+    epochs.push({ seq, didKey: did_key, registeredAt: registered_at, retiredAt: retired_at, continuity });
   }
   if (epochs.length === 0 || epochs[epochs.length - 1].retiredAt !== null) return undefined;
   return epochs;
@@ -419,7 +429,13 @@ function checkIssuerKey(snapshot: Snapshot, certificates: IdCertificate[], i: nu
 }
 
 function witnessedIssuerKey(snapshot: Snapshot, parentId: string | null, revision: CertificateRevision): string | undefined {
-  if (parentId === null) return snapshot.epochs.find(epoch => epoch.seq === revision.issuerKeySeq)?.didKey;
+  if (parentId === null) {
+    // The witnessed epoch must have been open when the revision was registered.
+    const epoch = snapshot.epochs.find(epoch => epoch.seq === revision.issuerKeySeq);
+    if (!epoch || epoch.registeredAt > revision.registeredAt) return undefined;
+    if (epoch.retiredAt !== null && revision.registeredAt >= epoch.retiredAt) return undefined;
+    return epoch.didKey;
+  }
   return snapshot.identities.get(parentId)?.keys.get(revision.issuerKeySeq);
 }
 
@@ -430,40 +446,49 @@ function currentKey(snapshot: Snapshot, parentId: string | null): string {
   return snapshot.identities.get(parentId)!.currentKey;
 }
 
+type Invalidity = "revoked" | "root_replaced" | null;
+
 /**
- * Current validity of the identity at chain position i. An agent needs a
- * currently valid parent; a human needs its parent to have been valid when
- * the human was registered.
+ * Why the identity at chain position i is not currently valid, or null. An
+ * agent needs a currently valid parent; a human needs its parent to have been
+ * valid when the human was registered.
  */
-function currentlyValid(snapshot: Snapshot, certificates: IdCertificate[], i: number): boolean {
+function invalidity(snapshot: Snapshot, certificates: IdCertificate[], i: number): Invalidity {
   const certificate = certificates[i];
-  if (isRegistered(certificate) && snapshot.identities.get(certificate.id)!.revocation) return false;
-  if (i === 0) return true;
-  if (certificate.kind === "agent") return currentlyValid(snapshot, certificates, i - 1);
+  if (isRegistered(certificate)) {
+    const identity = snapshot.identities.get(certificate.id)!;
+    if (identity.revocation) return "revoked";
+    if (identity.head.registeredAt < snapshot.replacedAt) return "root_replaced";
+  }
+  if (i === 0) return null;
+  if (certificate.kind === "agent") return invalidity(snapshot, certificates, i - 1);
   const registeredAt = snapshot.identities.get(certificate.id)!.head.registeredAt;
-  return validAt(snapshot, certificates[i - 1].id, registeredAt, ID_CHAIN_MAX_CERTIFICATES);
+  return invalidityAt(snapshot, certificates[i - 1].id, registeredAt, ID_CHAIN_MAX_CERTIFICATES);
 }
 
 /**
- * Whether a registered human parent was valid at time `at`: its certificate
- * revision in force then, any revocation cutoff strictly after `at`, and the
- * same rule repeated through its own historical human parent.
+ * Why a registered human parent was not valid at time `at`, or null: its
+ * certificate revision in force then, any revocation cutoff strictly after
+ * `at`, the latest namespace replacement, and the same rule repeated through
+ * its own historical human parent.
  */
-function validAt(snapshot: Snapshot, id: string, at: string, depth: number): boolean {
+function invalidityAt(snapshot: Snapshot, id: string, at: string, depth: number): Invalidity {
   const identity = snapshot.identities.get(id);
   if (!identity || depth === 0) throw new Refusal("evidence_unavailable");
   const revision = identity.revisions.find(r => r.registeredAt < at && (r.supersededAt === null || r.supersededAt > at));
   if (!revision) throw new Refusal("evidence_unavailable");
   // Registration exactly at the cutoff is not before it.
-  if (identity.revocation && identity.revocation.effectiveFrom <= at) return false;
+  if (identity.revocation && identity.revocation.effectiveFrom <= at) return "revoked";
+  // Surviving an ordinary revocation does not cross a namespace replacement.
+  if (revision.registeredAt < snapshot.replacedAt) return "root_replaced";
   const { parent } = revision.certificate;
   const parentId = parent.kind === "identity" ? parent.id : null;
   if (witnessedIssuerKey(snapshot, parentId, revision) !== revision.certificate.issuer_key) {
     throw new Refusal("evidence_unavailable");
   }
-  if (parentId === null) return true;
+  if (parentId === null) return null;
   if (snapshot.identities.get(parentId)?.revisions[0].certificate.kind !== "human") throw new Refusal("human_issuer_is_agent");
-  return validAt(snapshot, parentId, revision.registeredAt, depth - 1);
+  return invalidityAt(snapshot, parentId, revision.registeredAt, depth - 1);
 }
 
 function isTimestamp(value: unknown): value is string {

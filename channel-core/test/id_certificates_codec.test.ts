@@ -32,7 +32,7 @@ describe("id certificate bytes", () => {
   const certificates = Object.entries(vector.certificates) as [string, any][];
 
   test("the fixture has the certificates this suite was written against", () => {
-    expect(certificates).toHaveLength(35);
+    expect(certificates).toHaveLength(40);
   });
 
   test.each(certificates)("%s: signing bytes and certificate id", (_name, entry) => {
