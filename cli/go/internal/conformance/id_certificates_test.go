@@ -140,3 +140,14 @@ func TestIDCertificateChecksIndependentIssuer(t *testing.T) {
 		t.Fatalf("refusal=%q, want invalid_signature", got)
 	}
 }
+
+func TestIDCertificateCanonicalUTF8DoesNotRewriteLiteralEscapes(t *testing.T) {
+	got, err := awid.IDCertificateSigningBytes(map[string]any{"text": "\u2028", "literal": `\u2028`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := awid.IDCertificatePrefix + "{\"literal\":\"\\\\u2028\",\"text\":\"\u2028\"}"
+	if string(got) != want {
+		t.Fatalf("canonical UTF8 bytes=%q, want %q", got, want)
+	}
+}

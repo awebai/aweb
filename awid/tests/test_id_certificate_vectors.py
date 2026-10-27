@@ -75,3 +75,11 @@ def test_a_signature_for_one_certificate_does_not_cover_a_changed_parent():
     with pytest.raises(IDCertificateError) as caught:
         verify_id_certificate(signed, issuer_key=VECTORS["keys"]["alice"]["did_key"])
     assert caught.value.code == "invalid_signature"
+
+
+def test_canonical_utf8_preserves_literal_escape_text():
+    assert id_certificate_signing_bytes({"text": "\u2028", "literal": r"\u2028"}) == (
+        b'aweb.id-certificate/1\n{"literal":"\\\\u2028","text":"'
+        + "\u2028".encode()
+        + b'"}'
+    )
