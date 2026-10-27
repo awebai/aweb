@@ -93,19 +93,28 @@ func (c *IDStatusClient) FetchIDCertificateStatus(ctx context.Context, domain st
 	if err != nil {
 		return nil, err
 	}
-	var raw json.RawMessage
-	if err := c.Registry.requestJSON(ctx, "POST", registryURL, idStatusPath, nil, request, &raw); err != nil {
-		// A successful answer that cannot be read is malformed, not an outage.
-		var syntax *json.SyntaxError
-		if errors.As(err, &syntax) || errors.Is(err, ErrResponseTooLarge) {
-			return nil, ErrMalformedIDStatus
-		}
+	req, err := c.Registry.newRequest(ctx, "POST", registryURL, idStatusPath, nil, request)
+	if err != nil {
 		return nil, err
 	}
+	resp, err := DoNoRedirectWithTimeout(c.Registry.httpClient(), req, APITimeout())
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, parseRegistryError(resp)
+	}
+	// A successful answer that cannot be read in full, within the bound, as
+	// one JSON object is malformed, not an outage.
+	body, err := ReadAllBounded(resp.Body, MaxResponseSize)
+	if err != nil {
+		return nil, ErrMalformedIDStatus
+	}
 	var status map[string]any
-	d := json.NewDecoder(bytes.NewReader(raw))
+	d := json.NewDecoder(bytes.NewReader(body))
 	d.UseNumber()
-	if err := d.Decode(&status); err != nil || status == nil {
+	if err := d.Decode(&status); err != nil || status == nil || d.More() {
 		return nil, ErrMalformedIDStatus
 	}
 	return status, nil
