@@ -414,3 +414,33 @@ async def test_a_rotation_whose_answer_is_lost_leaves_no_cached_namespace():
         assert (await client.get_namespace(DOMAIN)).controller_did == did_key("root_rotated")
     finally:
         await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_a_write_to_another_registry_is_addressed_to_it_without_the_service_token():
+    other = "https://other-registry.example"
+    recorder = Recorder(httpx.Response(200, json=EXAMPLE["response"]))
+
+    async def route(domain: str) -> str:
+        assert domain == DOMAIN
+        return other
+
+    client = RegistryClient(
+        ORIGIN, transport=httpx.MockTransport(recorder.handler), domain_registry_resolver=route,
+        service_token="s" * 32,
+    )
+    try:
+        await client.register_id_certificate(
+            _bundle("alice", "bob"), signer=signer_for("bob"), expected_head=None, invitation_id=None,
+        )
+        await client.revoke_id_certificate(
+            DOMAIN, did_aw("bob"), signer=signer_for("root"), expected_head=certificate_id("bob"),
+        )
+    finally:
+        await client.aclose()
+    assert len(recorder.requests) == 2
+    for sent in recorder.requests:
+        header = sent.headers["X-AWEB-Signed-Payload"]
+        signed = json.loads(base64.b64decode(header + "=" * (-len(header) % 4), altchars=b"-_", validate=True))
+        assert f"{sent.url.scheme}://{sent.url.host}" == signed["aud"] == other
+        assert "X-AWID-Service-Token" not in sent.headers

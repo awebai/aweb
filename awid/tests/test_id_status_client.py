@@ -424,7 +424,7 @@ async def test_one_timeout_bounds_dns_and_http_together(env):
     evidence = await _evidence(env)
     assert (evidence.age_seconds, evidence.refresh_failed) == (None, True)
     env.clock[0] += 61
-    env.dns_delay = env.http_delay = 0.1
+    env.dns_delay = env.http_delay = 0.01  # far inside the bound, so scheduler jitter cannot reach it
     evidence = await _evidence(env)
     assert (evidence.age_seconds, evidence.refresh_failed) == (0, False)
 
