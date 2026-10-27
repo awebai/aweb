@@ -94,7 +94,13 @@ HTTPS Cloud origin and an absolute, dedicated private state directory:
 uv run --no-sync python e2e/provision_hosted.py --cloud-origin <HTTPS Cloud origin> --state-dir <absolute private directory>
 ```
 
-The controller creates a new dedicated test team, activates one test role,
+The controller first creates a dedicated organization with slug
+`awtest-secrets-<random label>` so its hosted namespace starts with `awtest-`.
+It creates the test team with that organization's explicit `owner_org_id` and
+the same name/slug. A team slug alone does not select its namespace: omitting
+`owner_org_id` would select the owner's personal organization. Completed reruns
+keep the persisted organization and team; this does not rename older teams.
+The controller activates one test role,
 creates two global custodial agents in that role, and authorizes one normal
 OAuth/PKCE connection for each. Owner login uses a separate in-memory cookie
 session. Owner cookies, the login password and returned identity API keys are

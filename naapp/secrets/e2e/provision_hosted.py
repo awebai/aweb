@@ -404,6 +404,15 @@ async def authorize_agent(
         store.save()
 
 
+def organization_create_payload(label: str) -> dict[str, str]:
+    slug = "awtest-secrets-" + label
+    return {"name": slug, "slug": slug}
+
+
+def team_create_payload(label: str, organization_id: str) -> dict[str, str]:
+    return {**organization_create_payload(label), "owner_org_id": organization_id}
+
+
 async def bootstrap(
     owner: httpx.AsyncClient, oauth: httpx.AsyncClient, store: StateStore, login: OwnerLogin
 ) -> None:
@@ -417,14 +426,25 @@ async def bootstrap(
     store.data["owner_id"] = public_uuid(user, "id")
     label = uuid.uuid4().hex[:16]
     store.data.update(label=label, agents={}, pairs={})
+    store.before("organization_create")
+    organization_payload = organization_create_payload(label)
+    organization = await request(
+        owner, "POST", "/api/v1/organizations", 200, json=organization_payload
+    )
+    if organization.get("slug") != organization_payload["slug"]:
+        raise ProvisioningError("organization_namespace_mismatch")
+    organization_id = public_uuid(organization, "id")
+    store.data["organization_id"] = organization_id
     store.before("team_create")
     team = await request(
         owner,
         "POST",
         "/api/v1/teams",
         200,
-        json={"name": "S19 proof " + label, "slug": "s19-proof-" + label},
+        json=team_create_payload(label, organization_id),
     )
+    if team.get("owner_org_id") != organization_id:
+        raise ProvisioningError("team_organization_mismatch")
     cloud_id, canonical = public_uuid(team, "id"), text(team, "aweb_team_id")
     store.data.update(cloud_team_id=cloud_id, team_id=canonical)
     store.before("role_create")
