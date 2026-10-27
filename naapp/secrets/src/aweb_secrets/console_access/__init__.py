@@ -62,6 +62,7 @@ class RunAccess:
     job_id: str
     covered: bool
     source_refusal: str | None
+    credentials: int
 
 
 @dataclass(frozen=True)
@@ -147,6 +148,7 @@ def _grant_access(candidate: access_reads.GrantAccessCandidate) -> GrantAccess:
             and pin.current is not None
             and run_grant_covers_job(grant, pin.current),
             pin.source_refusal,
+            0 if pin.current is None else len(pin.current.after["credentials"]),
         )
         for pin in candidate.jobs
         if grant.capability == "run"
@@ -311,16 +313,29 @@ def _use(agent: AgentAccess, grant: GrantAccess, use: UseAccess) -> str:
 
 
 def _run(agent: AgentAccess, grant: GrantAccess, run: RunAccess) -> str:
-    detail = (
-        "can run" if run.covered else "not usable: this job's current definition is not granted"
-    )
-    if run.covered and run.source_refusal is not None:
-        detail += " (a required credential is missing)"
-    return (
-        f'<li class="access-run" data-principal-did="{escape(agent.principal_did, quote=True)}"'
+    """This grant's credential slot in one job; whether the whole job runs is never claimed."""
+    if not run.covered:
+        detail = "not usable: this job's current definition is not granted"
+    elif run.source_refusal is not None:
+        detail = "not usable: a credential this job uses does not exist"
+    elif run.credentials == 1:
+        detail = "this grant supplies the job's only credential"
+    else:
+        detail = (
+            f"this grant supplies one of the job's {run.credentials} credentials;"
+            " a run needs each one granted"
+        )
+    attributes = (
+        f' data-principal-did="{escape(agent.principal_did, quote=True)}"'
         f' data-grant-id="{escape(grant.grant_id, quote=True)}"'
         f' data-job-id="{escape(run.job_id, quote=True)}"'
-        f' data-covered="{"true" if run.covered else "false"}">'
+        f' data-covered="{"true" if run.covered else "false"}"'
+        f' data-job-credentials="{run.credentials}"'
+    )
+    if run.source_refusal is not None:
+        attributes += f' data-source-refusal="{escape(run.source_refusal, quote=True)}"'
+    return (
+        f'<li class="access-run"{attributes}>'
         f"Job <code>{escape(run.job_id)}</code> — {escape(detail)}</li>"
     )
 
