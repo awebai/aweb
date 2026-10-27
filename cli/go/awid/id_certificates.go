@@ -10,12 +10,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/mr-tron/base58"
 	"io"
 	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"filippo.io/edwards25519"
+	"github.com/mr-tron/base58"
 )
 
 const (
@@ -134,6 +136,22 @@ func idCertificateDomain(value any) bool {
 	}
 	return true
 }
+
+// A nonidentity canonical point is in the prime subgroup iff undoing its
+// cofactor multiplication with 8^-1 mod L recovers the same point. The library
+// performs the point arithmetic; no new curve implementation is introduced.
+func idCertificatePrimePoint(raw []byte) bool {
+	p, err := new(edwards25519.Point).SetBytes(raw)
+	if err != nil || !bytes.Equal(p.Bytes(), raw) || p.Equal(edwards25519.NewIdentityPoint()) == 1 {
+		return false
+	}
+	eight := [32]byte{8}
+	s, _ := new(edwards25519.Scalar).SetCanonicalBytes(eight[:])
+	inv := new(edwards25519.Scalar).Invert(s)
+	q := new(edwards25519.Point).MultByCofactor(p)
+	return q.ScalarMult(inv, q).Equal(p) == 1
+}
+
 func idCertificateIDValid(value any, keyOnly bool) bool {
 	id, ok := value.(string)
 	if !ok {
@@ -141,7 +159,7 @@ func idCertificateIDValid(value any, keyOnly bool) bool {
 	}
 	if strings.HasPrefix(id, "did:key:") {
 		k, e := ExtractPublicKey(id)
-		return e == nil && ComputeDIDKey(k) == id
+		return e == nil && ComputeDIDKey(k) == id && idCertificatePrimePoint(k)
 	}
 	if !keyOnly && strings.HasPrefix(id, "did:aw:") {
 		b, e := base58.Decode(strings.TrimPrefix(id, "did:aw:"))
@@ -193,6 +211,9 @@ func idCertificateShape(signed map[string]any) (map[string]any, error) {
 		if !idCertificateDomain(p["id"]) {
 			return nil, idCertificateRefusal("invalid_domain")
 		}
+		if p["id"] != c["domain"] {
+			return nil, idCertificateRefusal("domain_mismatch")
+		}
 	case "identity":
 		if !idCertificateIDValid(p["id"], false) {
 			return nil, invalid
@@ -207,7 +228,7 @@ func idCertificateShape(signed map[string]any) (map[string]any, error) {
 	if !ok || !attestationTimestampRE.MatchString(issued) {
 		return nil, invalid
 	}
-	if _, e := time.Parse("2006-01-02T15:04:05Z", issued); e != nil {
+	if instant, e := time.Parse("2006-01-02T15:04:05Z", issued); e != nil || instant.Year() < 1 {
 		return nil, invalid
 	}
 	return c, nil
@@ -242,6 +263,12 @@ func VerifyIDCertificate(signed map[string]any, issuer string) error {
 		return idCertificateRefusal("invalid_encoding")
 	}
 	if c["issuer_key"] != issuer {
+		return idCertificateRefusal("invalid_signature")
+	}
+	if !idCertificatePrimePoint(b[:32]) {
+		return idCertificateRefusal("invalid_signature")
+	}
+	if _, err := new(edwards25519.Scalar).SetCanonicalBytes(b[32:]); err != nil {
 		return idCertificateRefusal("invalid_signature")
 	}
 	k, e := ExtractPublicKey(issuer)
