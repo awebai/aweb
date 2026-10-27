@@ -8,7 +8,9 @@ domain is listed or disclosed, and the endpoint is rate limited per caller.
 from __future__ import annotations
 
 import asyncio
+import base64
 import copy
+import hashlib
 import json
 from datetime import datetime, timezone
 
@@ -16,7 +18,7 @@ import pytest
 import pytest_asyncio
 
 from awid.did import did_from_public_key, generate_keypair
-from awid.signing import sign_message
+from awid.signing import canonical_json_bytes, sign_message
 from awid.id_certificates import id_certificate_id
 from awid.ratelimit import NoOpRateLimiter
 
@@ -25,6 +27,7 @@ from identity_support import request_rotation
 from lock_waits import wait_until_blocked_on_lock
 from id_tree_support import (
     DOMAIN,
+    ORIGIN,
     MixedOrderController,
     VECTORS,
     Tree,
@@ -133,16 +136,50 @@ async def test_status_rate_limit(case, tree):
     assert statuses[-1] == case["expected"]["http_status"]
 
 
+def _from_ip(monkeypatch, address: str) -> dict:
+    """Headers that make a trusted edge attribute the request to ``address``."""
+    monkeypatch.setenv("AWEB_TRUSTED_PROXY_CIDRS", "127.0.0.1/32")
+    monkeypatch.setenv("AWEB_CF_EDGE_CIDRS", "203.0.113.0/24")
+    return {"X-Forwarded-For": f"{address}, 203.0.113.1"}
+
+
+async def _signed_by_fresh_key(tree, body, headers):
+    signing_key, public = generate_keypair()
+    caller = did_from_public_key(public)
+    raw = json.dumps(body, separators=(",", ":")).encode()
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    payload = canonical_json_bytes({
+        "v": 2, "type": "aweb.awid-controller-request", "aud": ORIGIN, "method": "POST", "path": STATUS_PATH,
+        "body_sha256": hashlib.sha256(raw).hexdigest(), "timestamp": timestamp,
+        "domain": DOMAIN, "operation": "read_id_certificate_status",
+    })
+    return await tree.client.post(STATUS_PATH, content=raw, headers={
+        "Authorization": f"DIDKey {caller} {sign_message(signing_key, payload)}",
+        "X-AWEB-Timestamp": timestamp,
+        "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(payload).rstrip(b"=").decode(),
+        "Content-Type": "application/json",
+        **headers,
+    })
+
+
 @pytest.mark.asyncio
-async def test_a_verified_caller_has_its_own_bucket(tree):
-    for _ in range(60):
-        assert (await _status(tree, _request("alice"))).status_code == 200
+async def test_fresh_caller_keys_from_one_ip_share_its_budget(tree, monkeypatch):
+    headers = _from_ip(monkeypatch, "198.51.100.7")
+    tree.clock.now = OBSERVED_AT
 
-    anonymous = await _status(tree, _request("alice"))
-    signed = await _status(tree, _request("alice"), signer="bob")
+    statuses = [(await _signed_by_fresh_key(tree, _request("alice"), headers)).status_code for _ in range(61)]
 
-    assert anonymous.status_code == 429
-    assert signed.status_code == 200, signed.text
+    assert statuses == [200] * 60 + [429]
+
+
+@pytest.mark.asyncio
+async def test_one_caller_key_from_many_ips_has_one_budget(tree, monkeypatch):
+    statuses = []
+    for n in range(61):
+        resp = await _status(tree, _request("alice"), signer="bob", headers=_from_ip(monkeypatch, f"198.51.100.{n + 1}"))
+        statuses.append(resp.status_code)
+
+    assert statuses == [200] * 60 + [429]
 
 
 @pytest.mark.asyncio
@@ -357,6 +394,22 @@ async def test_the_snapshot_is_coherent_while_a_revocation_commits(tree, awid_db
 @pytest.mark.asyncio
 async def test_the_status_body_has_exactly_the_contract_fields(tree, body):
     resp = await _status(tree, body)
+
+    assert (resp.status_code, _code(resp)) == (400, "invalid_shape"), resp.text
+
+
+@pytest.mark.asyncio
+async def test_the_domain_is_canonicalized_before_lookup(tree):
+    resp = await _status(tree, {"v": 1, "domain": "Example.COM.", "ids": [did_aw("alice")]})
+
+    assert resp.status_code == 200, resp.text
+    assert (resp.json()["domain"], _ids(resp)) == (DOMAIN, [did_aw("alice")])
+
+
+@pytest.mark.parametrize("domain", ["", "exa mple.com", "-example.com", "example..com", "a" * 64 + ".com"])
+@pytest.mark.asyncio
+async def test_an_invalid_domain_name_refuses(tree, domain):
+    resp = await _status(tree, {"v": 1, "domain": domain, "ids": []})
 
     assert (resp.status_code, _code(resp)) == (400, "invalid_shape"), resp.text
 

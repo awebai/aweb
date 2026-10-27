@@ -72,12 +72,23 @@ async def status_snapshot(db, *, domain: str, ids: list[str], dns_key: str | Non
             "domain": domain,
             "observed_at": wire_time(serialization_time(clock, await latest_domain_event(tx, domain))),
             "namespace": {"epochs": [_epoch(row) for row in epochs]},
-            "identities": [await _identity(tx, id_) for id_ in included],
+            "identities": [],
             "missing": [id_ for id_ in ids if id_ not in registered],
         }
-    if len(canonical_json(snapshot).encode()) > MAX_RESPONSE_BYTES:
-        raise IdentityTreeRefusal("evidence_unavailable", 503)
+        # The response's exact compact size, kept as identities are added,
+        # so an oversized proof stops being built as soon as it is too big.
+        size = _size(snapshot)
+        for id_ in included:
+            identity = await _identity(tx, id_)
+            size += _size(identity) + (1 if snapshot["identities"] else 0)
+            if size > MAX_RESPONSE_BYTES:
+                raise IdentityTreeRefusal("evidence_unavailable", 503)
+            snapshot["identities"].append(identity)
     return snapshot
+
+
+def _size(value) -> int:
+    return len(canonical_json(value).encode())
 
 
 def _epoch(row) -> dict:

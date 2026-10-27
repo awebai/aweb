@@ -1147,11 +1147,13 @@ POST /v1/id-certificates/status     Snapshot of exact registered IDs and namespa
 The body is exactly `{v: 1, domain, ids}` with 0–8 distinct canonical did:aw
 strings; any other field (a prefix, a search) is `invalid_shape`. An
 authenticated caller signs the covering-v2 request
-(`operation="read_id_certificate_status"`) with a strict-profile key and is
-rate limited by that key; an anonymous caller is limited by source IP. Supplied
-but invalid proof, or the legacy form, is 401, never anonymous. The
-`id_certificate_status` bucket allows 60 requests per minute and has no
-service exemption; it is charged before the DNS lookup and any database read.
+(`operation="read_id_certificate_status"`) with a strict-profile key. Supplied
+but invalid proof, or the legacy form, is 401, never anonymous. Every request
+is charged to its source IP's `id_certificate_status` bucket, and a verified
+caller also to its key's (keys cost nothing to mint, so a key bucket alone is
+no limit). Each allows 60 requests per minute, with no service exemption, and
+both are charged before the DNS lookup and any database read. The domain is
+canonicalized (lowercase, no trailing dot) and must be a valid name.
 
 The response is one coherent snapshot, read in a single read-only REPEATABLE
 READ transaction: the domain's complete epoch history with `continuity`, then
@@ -1161,8 +1163,8 @@ identity, deduplicated by a visited set), each with its full certificate
 revisions, DID-log key history and revocation; `missing` lists requested IDs
 not registered in this domain. `observed_at` never precedes the snapshot's
 latest event. No invitation, membership, email or account data appears. While
-the stored controller, the open epoch and exact DNS disagree, or when the
-response would exceed 131072 bytes, the endpoint answers 503
+the stored controller, the open epoch and exact DNS disagree, or as soon as
+the response being built would exceed 131072 bytes, the endpoint answers 503
 `evidence_unavailable` with no partial evidence.
 
 ---

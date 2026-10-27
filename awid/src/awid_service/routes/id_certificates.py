@@ -32,6 +32,7 @@ SIGNED_PAYLOAD_HEADER = "X-AWEB-Signed-Payload"
 _REGISTER_FIELDS = frozenset({"certificate", "expected_head", "invitation_id"})
 _REVOKE_FIELDS = frozenset({"domain", "id", "expected_head", "effective_from"})
 _STATUS_FIELDS = frozenset({"v", "domain", "ids"})
+_DOMAIN_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 _MAX_STATUS_IDS = 8
 _CERTIFICATE_ID = re.compile(r"sha256:[0-9a-f]{64}")
 _WIRE_TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z")
@@ -93,12 +94,22 @@ def _status_body(raw: bytes) -> tuple[str, list[str]]:
     body = strict_json_object(raw)
     if set(body) != _STATUS_FIELDS or type(body["v"]) is not int or body["v"] != 1:
         raise IDCertificateError("invalid_shape")
-    domain, ids = body["domain"], body["ids"]
-    if type(domain) is not str or not domain or type(ids) is not list or len(ids) > _MAX_STATUS_IDS:
+    domain, ids = _canonical_domain(body["domain"]), body["ids"]
+    if type(ids) is not list or len(ids) > _MAX_STATUS_IDS:
         raise IDCertificateError("invalid_shape")
     if len(set(map(str, ids))) != len(ids) or not all(_is_stable_id(id_) for id_ in ids):
         raise IDCertificateError("invalid_shape")
     return domain, ids
+
+
+def _canonical_domain(value) -> str:
+    """The lowercase name without a trailing dot, as the namespace routes store it."""
+    if type(value) is not str:
+        raise IDCertificateError("invalid_shape")
+    domain = value.lower().rstrip(".")
+    if not 0 < len(domain) <= 253 or not all(_DOMAIN_LABEL.fullmatch(label) for label in domain.split(".")):
+        raise IDCertificateError("invalid_shape")
+    return domain
 
 
 def _is_stable_id(value) -> bool:
@@ -219,16 +230,20 @@ async def id_certificate_status(
     db_infra=Depends(get_db),
     verify_domain: DomainVerifier = Depends(get_domain_verifier),
 ) -> dict:
-    """A coherent snapshot of the domain's epochs and of exact requested registered IDs."""
+    """A coherent snapshot of the domain's epochs and of exact requested registered IDs.
+
+    Every request is charged to its source IP's bucket, and a verified
+    caller additionally to its key's: keys cost nothing to mint, so a key
+    bucket alone would be no limit at all.
+    """
+    await enforce_rate_limit(request, response, bucket="id_certificate_status", key=ip_bucket_key(request))
     try:
         domain, ids = _status_body(await request.body())
     except IDCertificateError as exc:
         raise _refusal(exc.code, 400) from exc
     caller = await _status_caller(request, domain)
-    await enforce_rate_limit(
-        request, response, bucket="id_certificate_status",
-        key=f"did:{caller}" if caller is not None else ip_bucket_key(request),
-    )
+    if caller is not None:
+        await enforce_rate_limit(request, response, bucket="id_certificate_status", key=f"did:{caller}")
     dns_key = await _exact_dns_key(verify_domain, domain)
     db = db_infra.get_manager("aweb")
     try:
