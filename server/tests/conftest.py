@@ -23,6 +23,15 @@ os.environ.setdefault("AWEB_INTERNAL_AUTH_SECRET", "test-internal-auth-secret")
 os.environ.setdefault("AWID_SERVICE_TOKEN", "aweb-server-tests-service-token-32-bytes")
 
 
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(items):
+    for item in items:
+        # These fixtures rebuild shared Node output, deleting dist and skills.
+        # Keep every builder and reader on one worker, including imported fixtures.
+        if {"runtime_packages", "channel_core_build"}.intersection(item.fixturenames):
+            item.add_marker(pytest.mark.xdist_group("runtime-packages"))
+
+
 @pytest.fixture(scope="session", autouse=True)
 def worker_test_services(worker_id):
     if worker_id == "master":
