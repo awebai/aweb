@@ -34,8 +34,13 @@ async def credential_audit(*, db, passkeys, owner, fence, admitted, origin, prod
     from aweb_naapp.hooks.producer import HookProducer, ServerProducer
     from aweb_naapp.outbox import apply_outbox_migrations
     from aweb_naapp.runtime.approvals import PgApprovalStore
+    from aweb_naapp.runtime.credential_audit import CredentialAudit
 
-    from aweb_secrets.credential_audit import CredentialAudit
+    from aweb_secrets.credential_governance import (
+        CREDENTIAL_AUDIT_MIGRATIONS,
+        ChangeApprovals,
+        credential_role,
+    )
 
     await apply_outbox_migrations(db)
     store = PgApprovalStore(db)
@@ -66,9 +71,11 @@ async def credential_audit(*, db, passkeys, owner, fence, admitted, origin, prod
         owner_act_scope=owner.verifier.scope,
         producer=lambda **scope: producer,
         passkeys=lambda: passkeys,
-        approval=approval,
+        role_of=credential_role,
+        approvals=ChangeApprovals(approval),
         registration_view=registration,
         max_backlog_age=timedelta(minutes=5),
+        migration_module=CREDENTIAL_AUDIT_MIGRATIONS,
     )
     await audit.migrate()
     passkeys._audit = audit

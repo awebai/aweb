@@ -16,11 +16,11 @@ from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
-from typing import Literal, Protocol
+from typing import Literal
 from uuid import UUID
 
 from aweb_naapp.hooks.commitment import CommitmentContext
-from aweb_naapp.hooks.producer import HookProducer, RegistrationView
+from aweb_naapp.hooks.producer import HookProducerFactory, RegistrationView
 from aweb_naapp.runtime.approvals import Approval, ApprovalState
 from aweb_naapp.runtime.approvals.request import DOMAIN_PREFIX, parse_request_json, request_sha256
 from aweb_naapp.runtime.audit import AuditEvent, AuditKind
@@ -63,10 +63,6 @@ class UseAuditUnavailable(RuntimeError):
 
     def __init__(self) -> None:
         super().__init__("use approval audit context unavailable")
-
-
-class HookProducerFactory(Protocol):
-    def __call__(self, *, installation_id: str, generation: int) -> HookProducer: ...
 
 
 class UseApprovalAudit:

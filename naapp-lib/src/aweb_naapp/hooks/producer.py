@@ -467,6 +467,12 @@ class HookProducer:
         return owed
 
 
+class HookProducerFactory(Protocol):
+    """The app's producer for one installation generation of itself."""
+
+    def __call__(self, *, installation_id: str, generation: int) -> HookProducer: ...
+
+
 def hook_targets(
     registrations: Registrations, *, clock: Clock = _now
 ) -> Callable[[StoredEvent], Awaitable[Sequence[Target] | None]]:

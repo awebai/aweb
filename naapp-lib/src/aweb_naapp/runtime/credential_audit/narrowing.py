@@ -7,19 +7,19 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from aweb_naapp.console import ConsoleSession
-from aweb_naapp.roles import principal_key
-from aweb_naapp.runtime.audit import AuditEvent, AuditKind
-from aweb_naapp.runtime.installation import AdmittedInstallation
-from aweb_naapp.runtime.passkeys import PasskeyInstallationContext, PasskeyProofUnavailable
-from aweb_naapp.runtime.team_auth import Principal
 from pgdbm.core import TransactionManager
 from webauthn.helpers import base64url_to_bytes
 
-from aweb_secrets.credential_audit import GovernanceUnavailable
+from aweb_naapp.roles import principal_key
+from aweb_naapp.runtime.audit import AuditEvent, AuditKind
+from aweb_naapp.runtime.credential_audit.recorder import GovernanceUnavailable
+from aweb_naapp.runtime.installation import AdmittedInstallation
+from aweb_naapp.runtime.passkeys import PasskeyInstallationContext, PasskeyProofUnavailable
 
 if TYPE_CHECKING:
-    from aweb_secrets.credential_audit import CredentialAudit
+    from aweb_naapp.console import ConsoleSession
+    from aweb_naapp.runtime.credential_audit.recorder import CredentialAudit
+    from aweb_naapp.runtime.team_auth import Principal
 
 
 @dataclass(frozen=True, repr=False)

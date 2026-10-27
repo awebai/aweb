@@ -7,6 +7,7 @@ from aweb_naapp.runtime.passkeys.proof import (
     ProofContextResolver,
     ProofContextUnavailable,
     RetainedPasskeyProof,
+    installation_context,
     passkey_evidence_commitment,
 )
 from aweb_naapp.runtime.passkeys.rp import RelyingParty
@@ -42,6 +43,7 @@ from aweb_naapp.runtime.passkeys.webauthn import (
 )
 
 __all__ = [
+    "installation_context",
     "PasskeyInstallationContext",
     "PasskeyProofUnavailable",
     "ProofContextResolver",

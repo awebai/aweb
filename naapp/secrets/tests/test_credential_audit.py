@@ -12,11 +12,16 @@ from aweb_naapp.hooks.producer import Registration, RegistrationView
 from aweb_naapp.hooks.strictjson import Refused
 from aweb_naapp.roles import assign
 from aweb_naapp.runtime.approvals import PgApprovalStore
+from aweb_naapp.runtime.credential_audit import CredentialAudit, GovernanceUnavailable
 from aweb_naapp.runtime.passkeys import EnrolmentRefused, contact_sha256
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 
-from aweb_secrets.credential_audit import CredentialAudit, GovernanceUnavailable
+from aweb_secrets.credential_governance import (
+    CREDENTIAL_AUDIT_MIGRATIONS,
+    ChangeApprovals,
+    credential_role,
+)
 from aweb_secrets.owners import OWNER_ROLE, owner_scope, record_owner
 from tests.test_change_sets import ALICE, APP_ID, ORIGIN, TEAM
 from tests.test_change_sets import world as _world
@@ -61,9 +66,11 @@ async def audit_for(world, *, registration_view=None, shared_producer=None):
         owner_act_scope=world.owner.verifier.scope,
         producer=shared_producer or world.credential_audit._producer,
         passkeys=lambda: world.passkeys,
-        approval=approval,
+        role_of=credential_role,
+        approvals=ChangeApprovals(approval),
         registration_view=registration_view or default_view,
         max_backlog_age=timedelta(minutes=5),
+        migration_module=CREDENTIAL_AUDIT_MIGRATIONS,
     )
     await audit.migrate()
     world.passkeys._audit = audit

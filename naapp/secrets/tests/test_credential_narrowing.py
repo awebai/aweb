@@ -5,10 +5,10 @@ from uuid import uuid4
 
 import pytest
 from aweb_naapp.roles import assign, hold_role, principal_key
+from aweb_naapp.runtime.credential_audit import GovernanceUnavailable
 from aweb_naapp.runtime.passkeys import PasskeyInstallationContext
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 
-from aweb_secrets.credential_audit import GovernanceUnavailable
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
 from tests.test_change_sets import ALICE, APP_ID, ORIGIN, TEAM
 from tests.test_containment_console import login_session, sibling_session

@@ -12,14 +12,14 @@ from typing import Any
 from uuid import UUID
 
 from aweb_naapp.dispatch import State, Transition
-from aweb_naapp.hooks.producer import RegistrationView
+from aweb_naapp.hooks.producer import HookProducerFactory, RegistrationView
 from aweb_naapp.runtime.approvals import Approval
 from aweb_naapp.runtime.approvals.request import DOMAIN_PREFIX, parse_request_json, request_sha256
 from pgdbm.core import TransactionManager
 
 from aweb_secrets.broker_audit import _ACTIONS, _COMPLETED, _activity, _same_producer
 from aweb_secrets.run_context import original_run
-from aweb_secrets.use_audit import HookProducerFactory, UseAuditUnavailable
+from aweb_secrets.use_audit import UseAuditUnavailable
 
 
 async def associate_run_approval(

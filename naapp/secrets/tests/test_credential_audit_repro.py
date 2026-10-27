@@ -1,8 +1,8 @@
 """Root consumer regressions exercise the canonical writer order and resolver."""
 
 import pytest
+from aweb_naapp.runtime.credential_audit import GovernanceUnavailable
 
-from aweb_secrets.credential_audit import GovernanceUnavailable
 from tests.test_change_sets import (
     ALICE,
     TEAM,

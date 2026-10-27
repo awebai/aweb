@@ -40,7 +40,7 @@ from aweb_secrets.revisions import bump_config_revision
 from aweb_secrets.tokens import TokenCache
 
 if TYPE_CHECKING:
-    from aweb_secrets.credential_audit import CredentialAudit
+    from aweb_naapp.runtime.credential_audit import CredentialAudit
 
 _LOG = logging.getLogger(__name__)
 

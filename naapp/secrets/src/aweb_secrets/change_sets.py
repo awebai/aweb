@@ -98,7 +98,7 @@ from aweb_secrets.runner_protocol import RunnerRefused
 from aweb_secrets.secret import SecretRecord, sealed_shape_changed
 
 if TYPE_CHECKING:
-    from aweb_secrets.credential_audit import CredentialAudit
+    from aweb_naapp.runtime.credential_audit import CredentialAudit
 
 
 MIGRATIONS_PATH = Path(__file__).resolve().parent / "change_set_migrations"
