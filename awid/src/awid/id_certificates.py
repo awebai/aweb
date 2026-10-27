@@ -490,7 +490,9 @@ def _id_chain(bundle: dict[str, Any] | None, subject: dict[str, Any], evidence: 
     if evidence is None:
         raise IDCertificateError('evidence_unavailable')
     if status_cache_mode(evidence.age_seconds, evidence.refresh_failed) == 'unavailable':
-        raise IDCertificateError('status_expired' if evidence.age_seconds is not None and evidence.age_seconds > 900 else 'evidence_unavailable')
+        # Expired grace describes last-known-good evidence after a failed refresh.
+        expired = evidence.refresh_failed and evidence.age_seconds is not None and evidence.age_seconds > 900
+        raise IDCertificateError('status_expired' if expired else 'evidence_unavailable')
     status = _IDStatus(evidence, domain)
     if subject['id'].startswith('did:aw:') and status.current_key(subject['id']) != subject['did_key']:
         raise IDCertificateError('subject_mismatch')

@@ -511,7 +511,8 @@ func verifyIDChain(bundle map[string]any, subject IDChainSubject, evidence *IDCh
 		return bad("evidence_unavailable")
 	}
 	if IDStatusCacheMode(evidence.AgeSeconds, evidence.RefreshFailed) == "unavailable" {
-		if evidence.AgeSeconds != nil && *evidence.AgeSeconds > 900 {
+		// Expired grace requires a failed refresh of last-known-good evidence.
+		if evidence.RefreshFailed && evidence.AgeSeconds != nil && *evidence.AgeSeconds > 900 {
 			return bad("status_expired")
 		}
 		return bad("evidence_unavailable")
