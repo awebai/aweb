@@ -11,6 +11,7 @@ from aweb_naapp_testing.owner_acts import INSTALLATION_ID
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 from fastapi import FastAPI
 
+from aweb_secrets.approval_kind import approval_kind
 from aweb_secrets.change_sets import ChangeSets
 from aweb_secrets.console import OwnerConsole, owner_console_router
 from aweb_secrets.console_changes import ConsoleChanges, console_changes_router
@@ -67,6 +68,7 @@ async def client(w, audit, *, registrations=None):
         changes=writer,
         approvals=w.approvals,
         registrations=registrations or Registrations(),
+        approval_kind=approval_kind,
         after_commit=cleanup,
     )
     app = FastAPI()

@@ -34,7 +34,7 @@ from aweb_naapp.egress import (
     InternalDestinations,
 )
 from aweb_naapp.hooks.commitment import CommitmentContext
-from aweb_naapp.hooks.producer import RegistrationView
+from aweb_naapp.hooks.producer import HookProducerFactory, RegistrationView
 from aweb_naapp.hooks.strictjson import Refused as HookRefused
 from aweb_naapp.roles import principal_key
 from aweb_naapp.runtime.approvals import (
@@ -70,7 +70,7 @@ from aweb_secrets.status_service import UseStatus
 from aweb_secrets.tokens import TokenCache
 from aweb_secrets.use_approval import BrokerOpen, BrokerOperation, UseApprovalRefused
 from aweb_secrets.use_approvals import admit_approved_use, request_use_approval
-from aweb_secrets.use_audit import HookProducerFactory, UseApprovalAudit, UseAuditUnavailable
+from aweb_secrets.use_audit import UseApprovalAudit, UseAuditUnavailable
 from aweb_secrets.use_context import UseCommitter, store_use_context, use_context
 
 if TYPE_CHECKING:

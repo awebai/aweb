@@ -3,6 +3,14 @@
 Preparation fetches only a registration view and admitted G1 context before
 locks. It grants no authority. Completion's explicit effect fence holds F6
 before B3 and checks live state after the signed enqueue, before commit.
+
+The app answers two questions in the original transaction: the catalog role
+of one of its scopes (``role_of``), and, only when its scopes can be
+designated or changed by an owner approval rather than an owner act, how that
+approval is read and which scopes hold owner authority (``approvals``). An
+app that keeps its own record of governance takes each signed event in the
+transaction that enqueued it (``after_enqueue``); its failure rolls the whole
+effect back.
 """
 
 from __future__ import annotations
@@ -15,10 +23,14 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
-from uuid import uuid4
+from typing import TYPE_CHECKING, Protocol
+from uuid import UUID, uuid4
 
-from aweb_naapp.hooks.producer import RegistrationView
+from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
+from pgdbm.core import TransactionManager
+from webauthn.helpers import base64url_to_bytes
+
+from aweb_naapp.hooks.producer import HookProducerFactory, RegistrationView
 from aweb_naapp.runtime.approvals import Approval, ApprovalState, Assurance
 from aweb_naapp.runtime.audit import AuditEvent, AuditKind
 from aweb_naapp.runtime.installation import (
@@ -39,18 +51,11 @@ from aweb_naapp.runtime.passkeys import (
     ProofContextUnavailable,
     contact_sha256,
 )
-from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
-from pgdbm.core import TransactionManager
-from webauthn.helpers import base64url_to_bytes
-
-from aweb_secrets.change_sets import POLICY_PREFIX
-from aweb_secrets.use_audit import HookProducerFactory
 
 if TYPE_CHECKING:
     from aweb_naapp.console import ConsoleSession
+    from aweb_naapp.runtime.credential_audit.narrowing import PreparedContainment
     from aweb_naapp.runtime.team_auth import Principal
-
-    from aweb_secrets.credential_narrowing import PreparedContainment
 
 
 _HOOK = "post-governance-hook"
@@ -87,11 +92,26 @@ def is_credential_event(event: AuditEvent) -> bool:
     return event.kind in _CREDENTIAL_KINDS
 
 
-def is_change_approval(event: AuditEvent) -> bool:
-    return (
-        event.kind in _CHANGE_KINDS
-        and event.details.get("policy_ref", "").split("|", 1)[0] == POLICY_PREFIX
-    )
+class RoleOf(Protocol):
+    async def __call__(
+        self, tx: TransactionManager, *, scope: str, admitted: AdmittedInstallation
+    ) -> str | None:
+        """The catalog role of the app's ``scope`` in ``admitted``, or None."""
+        ...
+
+
+class ApprovalGovernance(Protocol):
+    """How the app's owner approvals govern credentials: its change policy's
+    prefix, the plain B2 reader on the original transaction, and which scopes
+    hold owner authority in an installation."""
+
+    policy_prefix: str
+
+    async def approval(self, tx: TransactionManager, approval_id: str) -> Approval | None: ...
+
+    async def is_authority_scope(
+        self, tx: TransactionManager, *, scope: str, admitted: AdmittedInstallation
+    ) -> bool: ...
 
 
 class GovernanceUnavailable(RuntimeError):
@@ -109,6 +129,10 @@ class _OwnerActContext:
     view: RegistrationView | None
     signing: bytes
     signature: str
+
+
+def _owner_act_actor(event: AuditEvent) -> dict:
+    return {"authority_mode": "owner_act", "did_key": event.actor, "attestations": []}
 
 
 @dataclass(frozen=True, repr=False)
@@ -227,23 +251,29 @@ class CredentialAudit:
         owner_act_scope: str,
         producer: HookProducerFactory,
         passkeys: Callable[[], Passkeys],
-        approval: Callable[[TransactionManager, str], Awaitable[Approval | None]],
+        role_of: RoleOf,
         registration_view: Callable[[str], Awaitable[RegistrationView | None]],
         max_backlog_age: timedelta,
+        migration_module: str,
+        approvals: ApprovalGovernance | None = None,
+        after_enqueue: Callable[[TransactionManager, UUID], Awaitable[None]] | None = None,
     ) -> None:
         if (
             not app_id
             or app_id != fence.app_id
             or not owner_act_scope
             or max_backlog_age <= timedelta(0)
+            or not migration_module
         ):
             raise ValueError(
                 "credential governance requires its exact app, verifier and backlog bound"
             )
         self.db, self.fence = db, fence
         self._app_id, self._contexts, self._owner_act_scope = app_id, contexts, owner_act_scope
-        self._producer, self._passkeys, self._approval = producer, passkeys, approval
+        self._producer, self._passkeys = producer, passkeys
+        self._role_of, self._approvals = role_of, approvals
         self._view, self._max_backlog_age = registration_view, max_backlog_age
+        self._migration_module, self._after_enqueue = migration_module, after_enqueue
         self._prepared: ContextVar[
             _OwnerActContext
             | _ApprovalContext
@@ -256,9 +286,17 @@ class CredentialAudit:
     async def migrate(self) -> None:
         await AsyncMigrationManager(
             self.db,
-            migrations_path=str(Path(__file__).with_name("credential_audit_migrations")),
-            module_name="aweb_secrets_credential_audit",
+            migrations_path=str(Path(__file__).with_name("migrations")),
+            module_name=self._migration_module,
         ).apply_pending_migrations()
+
+    def is_change_approval(self, event: AuditEvent) -> bool:
+        return (
+            self._approvals is not None
+            and event.kind in _CHANGE_KINDS
+            and event.details.get("policy_ref", "").split("|", 1)[0]
+            == self._approvals.policy_prefix
+        )
 
     @contextmanager
     def prepared(
@@ -286,7 +324,11 @@ class CredentialAudit:
         view: RegistrationView | None,
     ) -> Iterator[None]:
         """Bind the writer's actually admitted B3 evidence and prefetched view."""
-        if admitted.app_id != self._app_id or not isinstance(evidence, OwnerApproval):
+        if (
+            self._approvals is None
+            or admitted.app_id != self._app_id
+            or not isinstance(evidence, OwnerApproval)
+        ):
             raise GovernanceUnavailable()
         with self.prepared(_ApprovalContext(self, admitted, view, evidence)):
             yield
@@ -300,7 +342,7 @@ class CredentialAudit:
         session: ConsoleSession | None = None,
         signed_trace_id: str | None = None,
     ) -> PreparedContainment:
-        from aweb_secrets.credential_narrowing import prepare_containment
+        from aweb_naapp.runtime.credential_audit.narrowing import prepare_containment
 
         return await prepare_containment(
             self,
@@ -367,10 +409,12 @@ class CredentialAudit:
 
     async def emit(self, event: AuditEvent, transaction: TransactionManager) -> None:
         tx = transaction
-        if is_change_approval(event):
+        if self.is_change_approval(event):
             # B2 change ceremonies are local audit. The writer signs the actual
             # governance effect with its retained APPROVE in the same commit.
-            approval = await self._approval(tx, event.approval_id) if event.approval_id else None
+            approval = (
+                await self._approvals.approval(tx, event.approval_id) if event.approval_id else None
+            )
             if approval is None or (
                 approval.policy_ref != event.details.get("policy_ref")
                 or approval.request_sha256 != event.details.get("request_sha256")
@@ -386,7 +430,7 @@ class CredentialAudit:
         elif event.kind is AuditKind.APPROVER_CONTACT_PROVEN:
             await self._contact_proven(event, tx)
         elif event.kind in {AuditKind.APPROVER_RETIRED, AuditKind.APPROVER_PASSKEY_REVOKED}:
-            from aweb_secrets.credential_narrowing import record_narrowing
+            from aweb_naapp.runtime.credential_audit.narrowing import record_narrowing
 
             await record_narrowing(self, event, tx, self._prepared.get())
         elif event.kind not in _LOCAL:
@@ -423,27 +467,16 @@ class CredentialAudit:
         role = await self._role(tx, scope, context.admitted)
         approval_id, signing, signature, retained = None, None, None, None
         if isinstance(context, _OwnerActContext):
-            digest = hashlib.sha256(context.signing).hexdigest()
-            nonce = await tx.fetch_one(
-                "SELECT nonce FROM {{tables.owner_act_nonces}} WHERE scope=$1 AND team_id=$2 AND act_sha256=$3",
-                self._owner_act_scope,
-                context.admitted.team_id,
-                digest,
-            )
-            expected_act = (
+            digest = await self._consumed_act(
+                tx,
+                context,
+                event,
                 "app-role.designate"
                 if event.kind is AuditKind.APPROVER_DESIGNATED
-                else "app-credential.recover"
+                else "app-credential.recover",
             )
-            if (
-                nonce is None
-                or event.details.get("owner_act_id")
-                != f"{context.admitted.team_id}:{nonce['nonce']}"
-                or event.details.get("owner_act_kind") != expected_act
-            ):
-                raise GovernanceUnavailable()
             authority, signing, signature = "owner_act", context.signing, context.signature
-            actor = {"authority_mode": "owner_act", "did_key": event.actor, "attestations": []}
+            actor = _owner_act_actor(event)
         else:
             digest, retained = await self._approved_proof(tx, context, event, scope)
             authority, approval_id, actor = "passkey_session", context.evidence.approval_id, _SYSTEM
@@ -483,6 +516,24 @@ class CredentialAudit:
         )
         await self._enqueue(tx, context.admitted, payload, actor, event.occurred_at, context.view)
 
+    async def _consumed_act(self, tx, context: _OwnerActContext, event, expected_act) -> str:
+        """The SHA-256 of the prepared act, which this event names and which
+        was consumed for this team under this app's owner-act scope."""
+        digest = hashlib.sha256(context.signing).hexdigest()
+        nonce = await tx.fetch_one(
+            "SELECT nonce FROM {{tables.owner_act_nonces}} WHERE scope=$1 AND team_id=$2 AND act_sha256=$3",
+            self._owner_act_scope,
+            context.admitted.team_id,
+            digest,
+        )
+        if (
+            nonce is None
+            or event.details.get("owner_act_id") != f"{context.admitted.team_id}:{nonce['nonce']}"
+            or event.details.get("owner_act_kind") != expected_act
+        ):
+            raise GovernanceUnavailable()
+        return digest
+
     async def _approved_proof(self, tx, context, event, scope):
         evidence = context.evidence
         if event.kind is AuditKind.APPROVER_DESIGNATED:
@@ -501,7 +552,7 @@ class CredentialAudit:
         ):
             raise GovernanceUnavailable()
         # This is the shared store's non-locking reader on the original tx.
-        approval = await self._approval(tx, evidence.approval_id)
+        approval = await self._approvals.approval(tx, evidence.approval_id)
         if (
             approval is None
             or approval.state is not ApprovalState.CONSUMED
@@ -512,11 +563,8 @@ class CredentialAudit:
             != (evidence.approver_scope, evidence.approver_subject)
         ):
             raise GovernanceUnavailable()
-        if not await tx.fetch_value(
-            "SELECT 1 FROM {{tables.owner_principals}} WHERE scope=$1 AND installation_id=$2 AND team_id=$3",
-            evidence.approver_scope,
-            context.admitted.installation_id,
-            context.admitted.team_id,
+        if not await self._approvals.is_authority_scope(
+            tx, scope=evidence.approver_scope, admitted=context.admitted
         ):
             raise GovernanceUnavailable()
         passkeys = self._passkeys()
@@ -573,22 +621,10 @@ class CredentialAudit:
         }
 
     async def _role(self, tx, scope, admitted) -> str:
-        if await tx.fetch_value(
-            "SELECT 1 FROM {{tables.owner_principals}} WHERE scope=$1 AND installation_id=$2 AND team_id=$3",
-            scope,
-            admitted.installation_id,
-            admitted.team_id,
-        ):
-            return "secrets.owner"
-        ref = await tx.fetch_value(
-            "SELECT approver_ref FROM {{tables.approvers}} WHERE scope=$1 AND installation_id=$2 AND team_id=$3",
-            scope,
-            admitted.installation_id,
-            admitted.team_id,
-        )
-        if ref is None:
+        role = await self._role_of(tx, scope=scope, admitted=admitted)
+        if role is None:
             raise GovernanceUnavailable()
-        return "secrets.approver." + ref
+        return role
 
     async def _associate_links(self, tx, subject) -> None:
         if not await tx.fetch_value(
@@ -873,7 +909,7 @@ class CredentialAudit:
                 view=view,
                 max_backlog_age=self._max_backlog_age,
             )
-        return await producer.enqueue(
+        event_id = await producer.enqueue(
             tx,
             hook=_HOOK,
             team_id=admitted.team_id,
@@ -884,3 +920,6 @@ class CredentialAudit:
             signed_trace_id=signed_trace_id,
             view=view,
         )
+        if self._after_enqueue is not None:
+            await self._after_enqueue(tx, event_id)
+        return event_id

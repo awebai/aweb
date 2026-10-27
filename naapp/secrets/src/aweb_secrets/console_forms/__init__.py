@@ -209,7 +209,7 @@ def console_forms_router(*, changes: ConsoleChanges) -> APIRouter:
                 raise
             response = _page(
                 "Sign in to review",
-                "<h1>Sign in to review an approval</h1>"
+                "<div data-approval-entry></div><h1>Sign in to review an approval</h1>"
                 "<p>The approval link selects your sign-in. Your passkey is required to continue.</p>"
                 '<form id="approval-login" method="post" action="/login">'
                 '<button type="submit" disabled>Sign in with your passkey</button></form>'
@@ -218,10 +218,10 @@ def console_forms_router(*, changes: ConsoleChanges) -> APIRouter:
             )
             response.headers.update(refused.headers or {})
             return response
-        async with _errors(changes.console, current):
-            await changes.installation_for_session(current)
         return console_page(
-            title="Review approval", session=current, body_html=_REVIEW + _STATUS + _SCRIPT
+            title="Review approval",
+            session=current,
+            body_html="<div data-approval-entry></div>" + _REVIEW + _STATUS + _SCRIPT,
         )
 
     @router.get(

@@ -7,7 +7,11 @@ authority. Refresh/admission belongs before B3; proof retrieval never calls
 this resolver to relabel historical evidence.
 """
 
-from aweb_naapp.runtime.passkeys import PasskeyInstallationContext, ProofContextUnavailable
+from aweb_naapp.runtime.passkeys import (
+    PasskeyInstallationContext,
+    ProofContextUnavailable,
+    installation_context,
+)
 from pgdbm.core import TransactionManager
 
 
@@ -18,31 +22,19 @@ class PasskeyContexts:
         self._app_id = app_id
 
     async def __call__(self, scope: str, *, tx: TransactionManager) -> PasskeyInstallationContext:
-        rows = await tx.fetch_all(
+        bindings = await tx.fetch_all(
             """
-            WITH bindings AS (
-                SELECT installation_id,team_id FROM {{tables.owner_principals}} WHERE scope=$1
-                UNION
-                SELECT installation_id,team_id FROM {{tables.approvers}} WHERE scope=$1
-            )
-            SELECT f.app_id,b.team_id,b.installation_id,f.generation
-            FROM bindings b JOIN {{tables.installation_fences}} f
-                ON f.team_id=b.team_id AND f.installation_id=b.installation_id
-                AND f.active_installation_id=b.installation_id
-            WHERE f.app_id=$2 AND f.state='active' AND f.fresh_until>clock_timestamp()
-                AND (SELECT count(*) FROM bindings)=1
-                AND NOT EXISTS (
-                    SELECT 1 FROM {{tables.retired_installation_fences}} r
-                    WHERE r.app_id=f.app_id AND r.team_id=b.team_id
-                        AND r.installation_id=b.installation_id
-                )
+            SELECT installation_id,team_id FROM {{tables.owner_principals}} WHERE scope=$1
+            UNION
+            SELECT installation_id,team_id FROM {{tables.approvers}} WHERE scope=$1
             """,
             scope,
-            self._app_id,
         )
-        if len(rows) != 1:
+        if len(bindings) != 1:
             raise ProofContextUnavailable()
-        row = rows[0]
-        return PasskeyInstallationContext(
-            row["app_id"], row["team_id"], row["installation_id"], row["generation"]
+        return await installation_context(
+            tx,
+            app_id=self._app_id,
+            team_id=bindings[0]["team_id"],
+            installation_id=bindings[0]["installation_id"],
         )

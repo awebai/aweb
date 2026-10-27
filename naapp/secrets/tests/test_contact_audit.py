@@ -4,10 +4,10 @@ import json
 from datetime import UTC, datetime
 
 import pytest
+from aweb_naapp.runtime.credential_audit import GovernanceUnavailable
 from aweb_naapp.runtime.passkeys import ContactChangeRefused, contact_sha256
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 
-from aweb_secrets.credential_audit import GovernanceUnavailable
 from aweb_secrets.owners import approver_scope
 from tests.test_change_sets import (
     ALICE,

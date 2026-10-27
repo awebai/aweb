@@ -1,4 +1,5 @@
-"""Caller-authorized B3 narrowing, including its nested effect savepoints."""
+"""B3 narrowing, authorized by the caller or by a consumed owner act, including
+its nested effect savepoints."""
 
 from __future__ import annotations
 
@@ -7,19 +8,23 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from aweb_naapp.console import ConsoleSession
-from aweb_naapp.roles import principal_key
-from aweb_naapp.runtime.audit import AuditEvent, AuditKind
-from aweb_naapp.runtime.installation import AdmittedInstallation
-from aweb_naapp.runtime.passkeys import PasskeyInstallationContext, PasskeyProofUnavailable
-from aweb_naapp.runtime.team_auth import Principal
 from pgdbm.core import TransactionManager
 from webauthn.helpers import base64url_to_bytes
 
-from aweb_secrets.credential_audit import GovernanceUnavailable
+from aweb_naapp.roles import principal_key
+from aweb_naapp.runtime.audit import AuditEvent, AuditKind
+from aweb_naapp.runtime.credential_audit.recorder import (
+    GovernanceUnavailable,
+    _owner_act_actor,
+    _OwnerActContext,
+)
+from aweb_naapp.runtime.installation import AdmittedInstallation
+from aweb_naapp.runtime.passkeys import PasskeyInstallationContext, PasskeyProofUnavailable
 
 if TYPE_CHECKING:
-    from aweb_secrets.credential_audit import CredentialAudit
+    from aweb_naapp.console import ConsoleSession
+    from aweb_naapp.runtime.credential_audit.recorder import CredentialAudit
+    from aweb_naapp.runtime.team_auth import Principal
 
 
 @dataclass(frozen=True, repr=False)
@@ -104,16 +109,69 @@ async def prepare_containment(
     )
 
 
+@dataclass(frozen=True, repr=False)
+class _NarrowingAuthority:
+    admitted: AdmittedInstallation
+    authority: str
+    actor: dict
+    commitment: str | None
+    retained_json: str | None
+    signing: bytes | None
+    signature: str | None
+    signed_trace_id: str | None
+
+
+# The payload field that carries each authority's commitment.
+_COMMITMENT_FIELDS = {
+    "passkey_session": "approval_evidence_sha256",
+    "owner_act": "owner_act_sha256",
+}
+
+
+async def _narrowing_authority(
+    owner: CredentialAudit, event: AuditEvent, tx: TransactionManager, context: Any
+) -> _NarrowingAuthority:
+    if isinstance(context, PreparedContainment):
+        if (
+            context.owner is not owner
+            or context.transaction_id != await tx.fetch_value("SELECT txid_current()")
+            or event.actor != context.authorized_by
+        ):
+            raise GovernanceUnavailable()
+        return _NarrowingAuthority(
+            context.admitted,
+            context.authority,
+            json.loads(context.actor_json),
+            context.commitment,
+            context.retained_json,
+            None,
+            None,
+            context.signed_trace_id,
+        )
+    # An owner act revokes a role; it never revokes one passkey.
+    if (
+        isinstance(context, _OwnerActContext)
+        and context.owner is owner
+        and event.kind is AuditKind.APPROVER_RETIRED
+    ):
+        digest = await owner._consumed_act(tx, context, event, "app-role.revoke")
+        return _NarrowingAuthority(
+            context.admitted,
+            "owner_act",
+            _owner_act_actor(event),
+            digest,
+            None,
+            context.signing,
+            context.signature,
+            None,
+        )
+    raise GovernanceUnavailable()
+
+
 async def record_narrowing(
     owner: CredentialAudit, event: AuditEvent, tx: TransactionManager, context: Any
 ) -> None:
-    if (
-        not isinstance(context, PreparedContainment)
-        or context.owner is not owner
-        or context.transaction_id != await tx.fetch_value("SELECT txid_current()")
-        or event.actor != context.authorized_by
-    ):
-        raise GovernanceUnavailable()
+    authority = await _narrowing_authority(owner, event, tx, context)
     # Containment removes application approver metadata before B3. The frozen
     # designation association survives that removal; no live resolver is used.
     row = await tx.fetch_one(
@@ -123,7 +181,7 @@ async def record_narrowing(
     )
     if (
         row is None
-        or owner._admitted(row) != context.admitted
+        or owner._admitted(row) != authority.admitted
         or event.details.get("scope") != row["scope"]
     ):
         raise GovernanceUnavailable()
@@ -132,7 +190,7 @@ async def record_narrowing(
         direction="narrowing",
         subject_ref=event.subject,
         role=row["role"],
-        authority=context.authority,
+        authority=authority.authority,
     )
     if event.kind is AuditKind.APPROVER_RETIRED:
         if row["superseded_at"] != event.occurred_at:
@@ -154,30 +212,33 @@ async def record_narrowing(
         payload.update(
             act="credential.revoked", resource_type="passkey", resource_ref=key["credential_ref"]
         )
-    if context.commitment is not None:
-        payload["approval_evidence_sha256"] = context.commitment
+    if authority.commitment is not None:
+        payload[_COMMITMENT_FIELDS[authority.authority]] = authority.commitment
     event_id = await owner._enqueue(
         tx,
-        context.admitted,
+        authority.admitted,
         payload,
-        json.loads(context.actor_json),
+        authority.actor,
         event.occurred_at,
         None,
-        signed_trace_id=context.signed_trace_id,
+        signed_trace_id=authority.signed_trace_id,
     )
     await tx.execute(
         "INSERT INTO {{tables.credential_narrowing_authority}} "
         "(event_id,subject,app_id,team_id,installation_id,generation,authority,actor,"
-        "commitment,retained_proof,occurred_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10::jsonb,$11)",
+        "commitment,retained_proof,signing,signature,occurred_at) "
+        "VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10::jsonb,$11,$12,$13)",
         event_id,
         event.subject,
-        context.admitted.app_id,
-        context.admitted.team_id,
-        context.admitted.installation_id,
-        context.admitted.generation,
-        context.authority,
-        context.actor_json,
-        context.commitment,
-        context.retained_json,
+        authority.admitted.app_id,
+        authority.admitted.team_id,
+        authority.admitted.installation_id,
+        authority.admitted.generation,
+        authority.authority,
+        json.dumps(authority.actor),
+        authority.commitment,
+        authority.retained_json,
+        authority.signing,
+        authority.signature,
         event.occurred_at,
     )

@@ -26,6 +26,7 @@ from aweb_naapp.console import (
 from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier
 from aweb_naapp.hooks.strictjson import Refused
 from aweb_naapp.roles import PrincipalKey, assign, hold_role
+from aweb_naapp.runtime.credential_audit import GovernanceUnavailable
 from aweb_naapp.runtime.installation import (
     AdmittedInstallation,
     InstallationFence,
@@ -44,12 +45,11 @@ from pgdbm import AsyncDatabaseManager
 
 from aweb_secrets.change import ChangeRefused
 from aweb_secrets.change_policy import keep_four_eyes_owners
-from aweb_secrets.credential_audit import GovernanceUnavailable
 from aweb_secrets.owners import OWNER_ROLE, OwnerDirectory, OwnerRequired, owner_scope, record_owner
 from aweb_secrets.principal import is_principal
 
 if TYPE_CHECKING:
-    from aweb_secrets.credential_audit import CredentialAudit
+    from aweb_naapp.runtime.credential_audit import CredentialAudit
 
 
 class InstallationLookup(Protocol):

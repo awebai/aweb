@@ -22,7 +22,7 @@ from aweb_naapp import ratelimit
 from aweb_naapp.dispatch import Dispatch, Dispatches, DispatchInFlight, ReconciliationPending, State
 from aweb_naapp.egress import InternalDestinations
 from aweb_naapp.hooks.commitment import CommitmentContext
-from aweb_naapp.hooks.producer import RegistrationView
+from aweb_naapp.hooks.producer import HookProducerFactory, RegistrationView
 from aweb_naapp.hooks.strictjson import Refused as HookRefused
 from aweb_naapp.idempotency import IdempotencyConflict, IdempotencyExpired, claim
 from aweb_naapp.roles import hold_role, principal_key, roles_of
@@ -90,7 +90,7 @@ from aweb_secrets.runner_protocol import (
 )
 from aweb_secrets.runner_results import RunnerResultInvalid, process_runner_result
 from aweb_secrets.runner_types import RunnerReply, RunnerSubmission
-from aweb_secrets.use_audit import HookProducerFactory, UseApprovalAudit, UseAuditUnavailable
+from aweb_secrets.use_audit import UseApprovalAudit, UseAuditUnavailable
 from aweb_secrets.use_context import UseCommitter
 
 if TYPE_CHECKING:

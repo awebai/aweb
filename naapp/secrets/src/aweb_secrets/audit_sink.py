@@ -1,14 +1,13 @@
 """Required credential/change and use/run branches on the original caller tx."""
 
 from aweb_naapp.runtime.audit import AuditEvent
-from pgdbm.core import TransactionManager
-
-from aweb_secrets.credential_audit import (
+from aweb_naapp.runtime.credential_audit import (
     CredentialAudit,
     GovernanceUnavailable,
-    is_change_approval,
     is_credential_event,
 )
+from pgdbm.core import TransactionManager
+
 from aweb_secrets.use_audit import UseApprovalAudit, is_run_approval, is_use_approval
 
 
@@ -23,7 +22,7 @@ class SecretsAudit:
             # One shared branch; its explicit run opt-in rejects reserved run
             # events before any run-table read. No governance fallback.
             await self._use.emit(event, transaction)
-        elif is_credential_event(event) or is_change_approval(event):
+        elif is_credential_event(event) or self._credentials.is_change_approval(event):
             await self._credentials.emit(event, transaction)
         else:
             raise GovernanceUnavailable()
