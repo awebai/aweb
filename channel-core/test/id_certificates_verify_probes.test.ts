@@ -120,8 +120,6 @@ describe("status consistency probes", () => {
     expect(verifyIdChain(chain, globalAgent, evidence(normal(), { inherited: true }))).toEqual(unavailable);
   });
 
-  // The code for DNS versus registry disagreement awaits contract confirmation
-  // (thread 434353fe, Q1); this pins that the disagreement is never verified.
   test("a DNS controller key that disagrees with the current namespace epoch is unavailable", () => {
     expect(verifyIdChain(chain, globalAgent, evidence(normal(), { controller_key: keys.bob.did_key }))).toEqual(unavailable);
   });

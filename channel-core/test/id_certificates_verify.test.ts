@@ -44,8 +44,8 @@ function evidenceOf(c: any): IdStatusEvidence | null {
 
 describe("id chain verification cases", () => {
   test("the fixture has the cases this suite was written against", () => {
-    expect(cases).toHaveLength(95);
-    expect(new Set(cases.map(c => c.name)).size).toBe(95);
+    expect(cases).toHaveLength(98);
+    expect(new Set(cases.map(c => c.name)).size).toBe(98);
   });
 
   // R1-R3 and the did:key-human shape negative are required in every CI.
@@ -55,6 +55,8 @@ describe("id chain verification cases", () => {
     "registry-admission-does-not-excuse-R1",
     "superseded-head-refuses",
     "domain-disagreement-refuses",
+    "namespace-parent-domain-human",
+    "namespace-parent-domain-agent",
   ])("mandatory negative %s is present and refuses", name => {
     const c = cases.find(entry => entry.name === name);
     expect(c).toBeDefined();

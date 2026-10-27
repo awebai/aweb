@@ -6,6 +6,7 @@ import {
   encodeIdChainHeader,
   idCertificateId,
   idCertificateSigningBytes,
+  idEd25519Verify,
   parseSignedIdCertificate,
   type SignedIdCertificate,
 } from "../src/identity/id_certificates.js";
@@ -23,13 +24,15 @@ const SHAPE_REFUSALS: Record<string, string> = {
   "wrong-kind": "invalid_kind", // invalid-kind-refuses
   "readable-email-field": "invalid_shape", // unknown-field-refuses
   "noncanonical-domain": "invalid_domain", // noncanonical-domain-refuses
+  "namespace-parent-domain-human": "domain_mismatch", // namespace-parent-domain-human
+  "namespace-parent-domain-agent": "domain_mismatch", // namespace-parent-domain-agent
 };
 
 describe("id certificate bytes", () => {
   const certificates = Object.entries(vector.certificates) as [string, any][];
 
   test("the fixture has the certificates this suite was written against", () => {
-    expect(certificates).toHaveLength(33);
+    expect(certificates).toHaveLength(35);
   });
 
   test.each(certificates)("%s: signing bytes and certificate id", (_name, entry) => {
@@ -67,21 +70,8 @@ describe("id chain raw wire refusals", () => {
   const cases = vector.raw_wire_refusals as any[];
 
   test("the fixture has the refusals this suite was written against", () => {
-    expect(cases.map(c => c.name)).toEqual([
-      "duplicate-json-key",
-      "noncanonical-json",
-      "unknown-bundle-field",
-      "fractional-version",
-      "empty-bundle",
-      "encoded-header-too-large",
-      "decoded-bundle-too-large",
-      "padded-header",
-      "padded-signature",
-      "tampered-kind-bad-signature",
-      "tampered-parent-bad-signature",
-      "wrong-controller-signature",
-      "wrong-signature-purpose",
-    ]);
+    expect(cases).toHaveLength(36);
+    expect(new Set(cases.map(c => c.name)).size).toBe(36);
   });
 
   const accepted = (c: any): string[] => c.allowed_reasons ?? [c.expected_reason];
@@ -186,23 +176,20 @@ describe("id chain primitive boundaries", () => {
     expect(parseSignedIdCertificate(withCertificate({ domain: `${"a".repeat(64)}.com` }))).toEqual({ ok: false, reason: "invalid_domain" });
     expect(parseSignedIdCertificate(withCertificate({ domain: "-a.com" }))).toEqual({ ok: false, reason: "invalid_domain" });
   });
+});
 
-  test("a malleated signature (S + L) refuses", () => {
-    const signature = Buffer.from(alice.signature, "base64url");
-    // S + L verifies the same equation; every language must refuse it.
-    const L = (1n << 252n) + 27742317777372353535851937790883648493n;
-    let s = 0n;
-    for (let i = 31; i >= 0; i -= 1) s = (s << 8n) | BigInt(signature[32 + i]);
-    s += L;
-    const malleated = Buffer.from(signature);
-    for (let i = 0; i < 32; i += 1) {
-      malleated[32 + i] = Number(s & 0xffn);
-      s >>= 8n;
-    }
-    expect(s).toBe(0n);
-    expect(parseSignedIdCertificate({ ...alice, signature: malleated.toString("base64url") })).toEqual({
-      ok: false,
-      reason: "invalid_signature",
-    });
+// The ID-certificate acceptance rule: canonical, nonidentity prime-subgroup A
+// and R, S < L, and the cofactorless equation. Mandatory in every CI.
+describe("id certificate Ed25519 acceptance", () => {
+  const { mode, cases } = vector.ed25519_verification;
+  const bytes = (hexText: string) => Uint8Array.from(Buffer.from(hexText, "hex"));
+
+  test("the fixture pins the mode and the cases this suite was written against", () => {
+    expect(mode).toBe("canonical-nonidentity-prime-subgroup-cofactorless");
+    expect(cases).toHaveLength(19);
+  });
+
+  test.each(cases as any[])("$name", c => {
+    expect(idEd25519Verify(bytes(c.public_key_hex), bytes(c.message_hex), bytes(c.signature_hex))).toEqual(c.expected);
   });
 });
