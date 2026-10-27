@@ -226,6 +226,7 @@ dev = [
     { name = "aweb-naapp-testing", editable = "testing" },
     { name = "pytest", specifier = ">=9.0.0" },
     { name = "pytest-asyncio", specifier = ">=1.2.0" },
+    { name = "pytest-xdist", specifier = ">=3.8.0" },
 ]
 
 [[package]]
