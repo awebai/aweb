@@ -14,6 +14,7 @@ import copy
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 import pytest
 import pytest_asyncio
@@ -27,6 +28,7 @@ from awid.ratelimit import MemoryFixedWindowRateLimiter, NoOpRateLimiter
 from awid.signing import canonical_json_bytes, sign_message
 
 from conftest import build_signed_headers
+from test_certificates import _signed_certificate_blob
 
 import test_id_namespace_epochs  # noqa: F401  (consumes namespace cases by name)
 import test_id_certificate_status  # noqa: F401  (consumes status cases by name)
@@ -55,17 +57,16 @@ from id_tree_support import (
 from identity_support import request_rotation
 from lock_waits import wait_until_blocked_on_lock
 
-# S2 cases whose effects land in a later S2 checkpoint (3 revoke, 4 status,
-# 5 races and lost-key replacement). This set must be empty when S2 closes.
-S2_LATER = {
-    "concurrent-registration-cas",
-    "reparent-register-race",
-    "loss-replacement-is-a-new-human-id",
-    "address-replacement-does-not-transfer-contact-trust",
-}
+# S2 cases left for a later S2 checkpoint. Every S2 case is consumed, and the
+# set must stay empty while S2 is landable.
+S2_LATER: set[str] = set()
 
 # Cases whose effects belong to another slice's component.
 OWNED_ELSEWHERE = {
+    "address-replacement-does-not-transfer-contact-trust": (
+        "S4, aweb server contacts (explicit replacement rebind; server/src/aweb/routes/contacts.py:117-166), "
+        "owner aweb-protocol-expert-telegram-bridge"
+    ),
     "resign-after-revoke-refuses": "S3 local signer",
     "resign-mismatched-id": "S3 local signer",
     "resign-mismatched-kind": "S3 local signer",
@@ -326,30 +327,19 @@ async def test_post_lock_registration_time_is_monotone(case, tree, awid_db_infra
     assert resp.json()["registered_at"] == case["expected"]["registered_at"]
 
 
-async def _revoked_directly(awid_db_infra, key_name, *, revoked_at, effective_from=None):
-    """Put a revocation in place without the revoke endpoint.
-
-    These tests isolate the registration gate's revocation checks; the
-    revoke endpoint's own authority and timing are tested with it.
-    """
-    db = awid_db_infra.get_manager("aweb")
-    updated = await db.fetch_value(
-        """
-        UPDATE {{tables.id_identities}}
-        SET revoked_at = $2, effective_from = $3, revoked_by = $4
-        WHERE id = $1
-        RETURNING id
-        """,
-        did_aw(key_name), revoked_at, effective_from or revoked_at, did_key("root"),
+async def _revoked(tree, key_name, *, when, by=None):
+    """Revoke ``key_name``'s registered ID through the revoke endpoint (self-revocation by default)."""
+    resp = await tree.revoke(
+        by or key_name, key_name, expected_head=certificate_id(key_name.replace("_", "-")), when=when,
     )
-    assert updated == did_aw(key_name)
+    assert resp.status_code == 200, resp.text
 
 
 @consumes("registration-after-sign-then-parent-revoke")
 async def test_registration_after_sign_then_parent_revoke(case, tree, awid_db_infra):
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     assert certificate(case["input"]["certificate"])["certificate"]["issued_at"] == "2026-10-26T00:02:00Z"
-    await _revoked_directly(awid_db_infra, "alice", revoked_at=at(case["input"]["parent_revoked_at"]))
+    await _revoked(tree, "alice", when=at(case["input"]["parent_revoked_at"]))
     before = await _revisions(awid_db_infra)
 
     resp = await tree.register(
@@ -365,7 +355,7 @@ async def test_registration_after_sign_then_parent_revoke(case, tree, awid_db_in
 async def test_signed_issued_at_cannot_backdate(case, tree, awid_db_infra):
     await tree.enroll("alice", when=at("2026-10-26T00:00:30Z"))
     cutoff = at(case["input"]["parent_effective_from"])
-    await _revoked_directly(awid_db_infra, "alice", revoked_at=cutoff, effective_from=cutoff)
+    await _revoked(tree, "alice", when=cutoff, by="root")
     backdated = _bob_variant(issued_at=case["input"]["issued_at"])
     before = await _revisions(awid_db_infra)
 
@@ -382,7 +372,7 @@ async def test_directly_revoked_subject_cannot_reopen_head(case, tree, awid_db_i
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     await tree.enroll("alice", "bob", when=at("2026-10-26T00:02:00Z"))
     await tree.enroll("alice", "global-agent", when=at("2026-10-26T00:04:00Z"))
-    await _revoked_directly(awid_db_infra, "global_agent", revoked_at=at("2026-10-26T00:20:00Z"))
+    await _revoked(tree, "global_agent", when=at("2026-10-26T00:20:00Z"))
     before = await _revisions(awid_db_infra)
 
     resp = await tree.register(
@@ -401,7 +391,7 @@ async def test_accepted_human_invite_retry_after_inviter_revoke(case, tree, awid
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     first = await tree.register(chain, invitation_id=invitation, when=at(case["input"]["original_registered_at"]))
     assert first.status_code == 200, first.text
-    await _revoked_directly(awid_db_infra, "alice", revoked_at=at("2026-10-26T00:20:00Z"))
+    await _revoked(tree, "alice", when=at("2026-10-26T00:20:00Z"))
     before = await _revisions(awid_db_infra)
 
     retry = await tree.register(chain, invitation_id=invitation, when=at(case["input"]["retry_at"]))
@@ -1104,7 +1094,7 @@ async def test_a_since_revoked_subjects_exact_retry_returns_its_receipt_and_writ
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     first = await tree.register(chain, when=at("2026-10-26T00:03:00Z"))
     assert first.status_code == 200, first.text
-    await _revoked_directly(awid_db_infra, "bob", revoked_at=at("2026-10-26T00:20:00Z"))
+    await _revoked(tree, "bob", when=at("2026-10-26T00:20:00Z"))
     before = await _revisions(awid_db_infra)
 
     retry = await tree.register(chain, when=at("2026-10-26T00:30:00Z"))
@@ -1492,6 +1482,183 @@ async def test_a_registration_queued_behind_its_grandparents_revocation_refuses(
     assert revoked.status_code == 200, revoked.text
     assert (registered.status_code, _code(registered)) == (422, "revoked"), registered.text
     assert await _revisions(awid_db_infra, did_aw("child_of_global")) == []
+
+
+async def _register_both_at_once(tree, db, attempts):
+    """Queue registrations behind one held namespace row, then release them together."""
+    async with db.transaction() as holder:
+        await holder.fetch_one(
+            "SELECT namespace_id FROM {{tables.dns_namespaces}} WHERE domain = $1 FOR UPDATE", DOMAIN,
+        )
+        tasks = [asyncio.create_task(tree.register(chain, expected_head=head)) for chain, head in attempts]
+        await wait_until_blocked_on_lock(db, tasks[-1], waiters=len(tasks))
+    return await asyncio.gather(*tasks)
+
+
+@consumes("concurrent-registration-cas")
+async def test_concurrent_registration_cas(case, tree, awid_db_infra):
+    assert case["input"]["different_certificates"] is True
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+    await tree.enroll("alice", "bob", when=at("2026-10-26T00:02:00Z"))
+    tree.clock.now = at("2026-10-26T00:04:00Z")
+    head = case["input"]["expected_head"]
+
+    responses = await _register_both_at_once(tree, awid_db_infra.get_manager("aweb"), [
+        ([certificate("alice"), certificate("global-agent")], head),
+        ([certificate("alice"), certificate("bob"), certificate("global-agent-reparented")], head),
+    ])
+
+    statuses = sorted(resp.status_code for resp in responses)
+    assert statuses == [200, 409], [resp.text for resp in responses]
+    [loser] = [resp for resp in responses if resp.status_code == 409]
+    assert _code(loser) == case["expected"]["other_reason"]
+    assert len(await _revisions(awid_db_infra, did_aw("global_agent"))) == case["expected"]["accepted_writes"]
+
+
+@consumes("reparent-register-race")
+async def test_reparent_register_race(case, tree, awid_db_infra):
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+    await tree.enroll("alice", "bob", when=at("2026-10-26T00:02:00Z"))
+    await tree.enroll("alice", "global-agent", when=at("2026-10-26T00:04:00Z"))
+    assert case["input"]["new_parents"] == ["alice", "bob"]
+    resigned = copy.deepcopy(certificate("global-agent")["certificate"])
+    resigned["issued_at"] = "2026-10-26T00:13:00Z"
+    tree.clock.now = at("2026-10-26T00:14:00Z")
+    head = case["input"]["expected_head"]
+
+    responses = await _register_both_at_once(tree, awid_db_infra.get_manager("aweb"), [
+        ([certificate("alice"), sign(resigned, "alice")], head),
+        ([certificate("alice"), certificate("bob"), certificate("global-agent-reparented")], head),
+    ])
+
+    statuses = sorted(resp.status_code for resp in responses)
+    assert statuses == [200, 409], [resp.text for resp in responses]
+    [loser] = [resp for resp in responses if resp.status_code == 409]
+    assert _code(loser) == case["expected"]["other_reason"]
+    revisions = await _revisions(awid_db_infra, did_aw("global_agent"))
+    assert len(revisions) == 1 + case["expected"]["accepted_writes"]
+    assert [revision["superseded_at"] is None for revision in revisions] == [False, True]
+
+
+@pytest.mark.asyncio
+async def test_a_resign_queued_behind_the_subjects_revocation_refuses(tree, awid_db_infra):
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+    await tree.enroll("alice", "bob", when=at("2026-10-26T00:02:00Z"))
+    resigned = sign(_bob_variant(issued_at="2026-10-26T00:09:00Z"), "alice")
+    db = awid_db_infra.get_manager("aweb")
+    before = await _revisions(awid_db_infra, did_aw("bob"))
+    tree.clock.now = at("2026-10-26T00:10:00Z")
+    async with db.transaction() as holder:
+        await holder.fetch_one(
+            "SELECT namespace_id FROM {{tables.dns_namespaces}} WHERE domain = $1 FOR UPDATE", DOMAIN,
+        )
+        revocation = asyncio.create_task(tree.revoke("bob", "bob", expected_head=certificate_id("bob")))
+        await wait_until_blocked_on_lock(db, revocation)
+        resign = asyncio.create_task(
+            tree.register([certificate("alice"), resigned], expected_head=certificate_id("bob")),
+        )
+        await wait_until_blocked_on_lock(db, resign, waiters=2)
+    revoked, registered = await revocation, await resign
+
+    assert revoked.status_code == 200, revoked.text
+    assert (registered.status_code, _code(registered)) == (422, "subject_revoked"), registered.text
+    assert await _revisions(awid_db_infra, did_aw("bob")) == before
+
+
+async def _team_member(tree, *, member: str) -> tuple[bytes, str, str]:
+    """A private team with ``member``'s did:aw key as a member; returns its certificate id."""
+    team_key, team_public = generate_keypair()
+    team_did = did_from_public_key(team_public)
+    created = await tree.client.post(
+        f"/v1/namespaces/{DOMAIN}/teams",
+        json={"name": "ops", "team_did_key": team_did, "visibility": "private"},
+        headers=build_signed_headers(seed("root"), did_key("root"), domain=DOMAIN, operation="create_team", name="ops"),
+    )
+    assert created.status_code == 200, created.text
+    cert_id = str(uuid4())
+    registered = await tree.client.post(
+        f"/v1/namespaces/{DOMAIN}/teams/ops/certificates",
+        json={
+            "certificate_id": cert_id, "member_did_key": did_key(member), "alias": "agent", "identity_scope": "local",
+            "certificate": _signed_certificate_blob(
+                team_key, certificate_id=cert_id, team_id=f"ops:{DOMAIN}", team_did_key=team_did,
+                member_did_key=did_key(member), alias="agent", lifetime="local",
+            ),
+        },
+        headers=build_signed_headers(
+            team_key, team_did, domain=DOMAIN, operation="register_certificate", team_name="ops", certificate_id=cert_id,
+        ),
+    )
+    assert registered.status_code == 200, registered.text
+    return team_key, team_did, cert_id
+
+
+async def _address(tree, name: str, owner: str):
+    return await tree.client.post(
+        f"/v1/namespaces/{DOMAIN}/addresses",
+        json={"name": name, "did_aw": did_aw(owner), "current_did_key": did_key(owner), "reachability": "public"},
+        headers=build_signed_headers(seed("root"), did_key("root"), domain=DOMAIN, operation="register_address", name=name),
+    )
+
+
+@consumes("loss-replacement-is-a-new-human-id")
+async def test_loss_replacement_is_a_new_human_id(case, tree, awid_db_infra):
+    assert (case["input"]["old_human"], case["input"]["new_human"]) == ("alice", "replacement_human")
+    db = awid_db_infra.get_manager("aweb")
+    await tree.did("replacement_human")
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+    await tree.enroll("alice", "global-agent", when=at("2026-10-26T00:04:00Z"))
+    assert (await _address(tree, "alice", "alice")).status_code == 200
+    await _team_member(tree, member="global_agent")
+    alice_history = await _revisions(awid_db_infra, did_aw("alice"))
+    alice_log = await db.fetch_all("SELECT * FROM {{tables.did_aw_log}} WHERE did_aw = $1 ORDER BY seq", did_aw("alice"))
+    agent_key = await db.fetch_value(
+        "SELECT current_did_key FROM {{tables.did_aw_mappings}} WHERE did_aw = $1", did_aw("global_agent"),
+    )
+    team_certificates = await db.fetch_all("SELECT * FROM {{tables.team_certificates}} ORDER BY certificate_id")
+    replacement_log = await db.fetch_all(
+        "SELECT * FROM {{tables.did_aw_log}} WHERE did_aw = $1 ORDER BY seq", did_aw("replacement_human"),
+    )
+
+    # Alice has lost her key: the root admits a replacement human ID, the kept
+    # agent re-parents to it with its own key, the address is reassigned
+    # through the existing procedure, and the old human is revoked now.
+    admitted = await tree.register([certificate("replacement-human")], when=at("2026-10-26T00:10:00Z"))
+    reparented = await tree.register(
+        [certificate("replacement-human"), certificate("agent-reparented-after-loss")],
+        expected_head=certificate_id("global-agent"), when=at("2026-10-26T00:11:00Z"),
+    )
+    reassigned = await tree.client.post(
+        f"/v1/namespaces/{DOMAIN}/addresses/alice/reassign",
+        json={"did_aw": did_aw("replacement_human"), "current_did_key": did_key("replacement_human")},
+        headers=build_signed_headers(
+            seed("root"), did_key("root"), domain=DOMAIN, operation="reassign_address", name="alice",
+        ),
+    )
+    revoked = await tree.revoke("root", "alice", expected_head=certificate_id("alice"), when=at("2026-10-26T00:12:00Z"))
+
+    for resp in (admitted, reparented, reassigned, revoked):
+        assert resp.status_code == 200, resp.text
+    assert (did_aw("replacement_human") != did_aw("alice")) is case["expected"]["id_changed"]
+    assert (await _revisions(awid_db_infra, did_aw("alice")) != alice_history) is case["expected"]["old_history_changed"]
+    assert await db.fetch_all(
+        "SELECT * FROM {{tables.did_aw_log}} WHERE did_aw = $1 ORDER BY seq", did_aw("alice"),
+    ) == alice_log
+    assert (await db.fetch_value(
+        "SELECT current_did_key FROM {{tables.did_aw_mappings}} WHERE did_aw = $1", did_aw("global_agent"),
+    ) != agent_key) is case["expected"]["kept_registered_agent_keys_changed"]
+    assert (await db.fetch_all(
+        "SELECT * FROM {{tables.team_certificates}} ORDER BY certificate_id",
+    ) != team_certificates) is case["expected"]["kept_registered_team_certificates_changed"]
+    # The AWID half of address replacement: the address is kept and now names
+    # the replacement, whose own DID log is untouched (contact trust is the
+    # server's, see address-replacement-does-not-transfer-contact-trust).
+    address = await tree.client.get(f"/v1/namespaces/{DOMAIN}/addresses/alice")
+    assert address.json()["did_aw"] == did_aw("replacement_human")
+    assert await db.fetch_all(
+        "SELECT * FROM {{tables.did_aw_log}} WHERE did_aw = $1 ORDER BY seq", did_aw("replacement_human"),
+    ) == replacement_log
+    assert revoked.json()["effective_from"] == revoked.json()["revoked_at"]
 
 
 @pytest.mark.parametrize("held", ["alice", "bob"], ids=["parent-mapping", "subject-mapping"])
