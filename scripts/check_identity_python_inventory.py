@@ -39,7 +39,7 @@ PRIMITIVE_MODULES = (
     "awid.identity_log_verify.", "awid.id_certificates.",
 )
 STRICT_MODULE = "awid/src/awid/id_certificates.py"
-RAW_VERIFY_SITE = (STRICT_MODULE, "verify_id_certificate")
+RAW_VERIFY_SITE = (STRICT_MODULE, "verify_ed25519")
 RAW_VERIFY_NAMES = frozenset({
     "verify", "VerifyKey", "verify_signature", "verify_signature_with_public_key",
     "verify_did_key_signature",

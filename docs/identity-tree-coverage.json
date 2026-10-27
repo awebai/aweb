@@ -53,7 +53,11 @@
         "awid/tests/test_id_certificate_vectors.py::test_ed25519_profile_probes_through_certificate_verification",
         "awid/tests/test_id_certificate_vectors.py::test_codec_depth_limit_on_genuinely_signed_chains",
         "awid/tests/test_id_certificate_vectors.py::test_claimed_issuer_cannot_differ_from_the_independently_selected_signer",
-        "awid/tests/test_id_certificate_vectors.py::test_year_zero_is_not_a_calendar_instant"
+        "awid/tests/test_id_certificate_vectors.py::test_year_zero_is_not_a_calendar_instant",
+        "awid/tests/test_id_certificate_vectors.py::test_public_raw_verifier_uses_the_frozen_strict_profile",
+        "awid/tests/test_id_certificate_vectors.py::test_public_raw_verifier_refuses_non_signature_bytes",
+        "awid/tests/test_id_certificate_vectors.py::test_public_key_predicate_does_not_accept_non_keys",
+        "awid/tests/test_id_certificate_vectors.py::test_public_raw_verifier_requires_exact_message_bytes"
       ],
       "acceptance": "Frozen certificate bytes, raw refusals and strict Ed25519 probes; this is not ancestry verification.",
       "candidate_head": "9fc3c5855c434904ab36a113baa654c2488fe6d3",
@@ -90,6 +94,14 @@
         {
           "file": "awid/src/awid/id_certificates.py",
           "symbol": "decode_id_chain_header"
+        },
+        {
+          "file": "awid/src/awid/id_certificates.py",
+          "symbol": "strict_did_key"
+        },
+        {
+          "file": "awid/src/awid/id_certificates.py",
+          "symbol": "verify_ed25519"
         }
       ]
     },
@@ -7367,13 +7379,21 @@
       {
         "row": "S1.PY.CODEC",
         "file": "awid/src/awid/id_certificates.py",
-        "symbol": "verify_id_certificate",
+        "symbol": "verify_ed25519",
         "calls": {
           "awid.did.public_key_from_did": 1,
-          "id_certificate_signing_bytes": 1,
           "nacl.bindings.crypto_core_ed25519_is_valid_point": 1,
           "nacl.signing.VerifyKey": 1,
           "nacl.signing.VerifyKey().verify": 1
+        }
+      },
+      {
+        "row": "S1.PY.CODEC",
+        "file": "awid/src/awid/id_certificates.py",
+        "symbol": "verify_id_certificate",
+        "calls": {
+          "id_certificate_signing_bytes": 1,
+          "verify_ed25519": 1
         }
       },
       {

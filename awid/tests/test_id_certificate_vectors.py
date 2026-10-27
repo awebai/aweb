@@ -14,6 +14,8 @@ from awid.id_certificates import (
     encode_id_chain_header,
     id_certificate_id,
     id_certificate_signing_bytes,
+    strict_did_key,
+    verify_ed25519,
     verify_id_certificate,
 )
 
@@ -99,6 +101,39 @@ def test_ed25519_profile_probes_through_certificate_verification(case):
         with pytest.raises(IDCertificateError) as caught:
             verify_id_certificate(signed, issuer_key=signed["certificate"]["issuer_key"])
         assert caught.value.code == case["expected"]["reason"]
+
+
+@pytest.mark.parametrize("case", VECTORS["ed25519_verification"]["cases"], ids=lambda case: case["name"])
+def test_public_raw_verifier_uses_the_frozen_strict_profile(case):
+    from awid.did import did_from_public_key
+
+    did_key = did_from_public_key(bytes.fromhex(case["public_key_hex"]))
+    assert strict_did_key(did_key) is (case["expected"]["reason"] != "invalid_shape")
+    message, signature = bytes.fromhex(case["message_hex"]), bytes.fromhex(case["signature_hex"])
+    if case["expected"]["accepted"]:
+        assert verify_ed25519(did_key, message, signature) is None
+    else:
+        with pytest.raises(IDCertificateError) as caught:
+            verify_ed25519(did_key, message, signature)
+        assert caught.value.code == case["expected"]["reason"]
+
+
+@pytest.mark.parametrize("signature", [b"", b"x" * 63, b"x" * 65, "x" * 64, None])
+def test_public_raw_verifier_refuses_non_signature_bytes(signature):
+    with pytest.raises(IDCertificateError) as caught:
+        verify_ed25519(VECTORS["keys"]["alice"]["did_key"], b"payload", signature)
+    assert caught.value.code == "invalid_signature"
+
+
+@pytest.mark.parametrize("value", [None, "", VECTORS["keys"]["alice"]["did_aw"], "did:key:zbad"])
+def test_public_key_predicate_does_not_accept_non_keys(value):
+    assert strict_did_key(value) is False
+
+
+def test_public_raw_verifier_requires_exact_message_bytes():
+    with pytest.raises(IDCertificateError) as caught:
+        verify_ed25519(VECTORS["keys"]["alice"]["did_key"], "payload", b"x" * 64)
+    assert caught.value.code == "invalid_shape"
 
 
 @pytest.mark.parametrize("name", ["maximum-depth-eight", "depth-nine-refuses"])
