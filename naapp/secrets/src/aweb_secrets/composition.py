@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
+from functools import partial
 from typing import Any
 
 import httpx
@@ -39,6 +40,7 @@ from pgdbm.core import TransactionManager
 from aweb_secrets.activity_service import ActivityReads
 from aweb_secrets.app import Authorized, ConsoleRouter, SecretsService, create_app
 from aweb_secrets.approval_email import ApprovalEmailDelivery
+from aweb_secrets.approval_kind import approval_kind
 from aweb_secrets.audit_sink import SecretsAudit
 from aweb_secrets.broker_service import BrokerRequests
 from aweb_secrets.catalog import Catalog
@@ -300,6 +302,9 @@ async def _compose(
         approvals=approvals,
         registrations=registrations,
         after_commit=containment.evict,
+        # Run stores and both typed pages are composed above/below. The
+        # reconciliation stores and page are deliberately not composed here.
+        approval_kind=partial(approval_kind, enable_runs=True, enable_reconciliation=False),
     )
     opener = UseSecretOpener(
         db,
