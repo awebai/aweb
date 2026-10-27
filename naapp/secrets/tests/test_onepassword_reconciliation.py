@@ -247,14 +247,27 @@ async def test_reconciliation_voids_real_root_and_descendant_approvals_atomicall
             await reconciler(w).reconcile(observation, admitted=w.admitted)
     else:
         import asyncpg
+        from aweb_naapp.roles import hold_role
 
-        from aweb_secrets.owners import approver_scope
+        from aweb_secrets.owners import OWNER_ROLE, approver_scope
+        from tests.test_containment_console import login_session
 
+        session = await login_session(
+            w, owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did), w.devices["alice@acme.com"]
+        )
         scope = approver_scope(INSTALLATION_ID, TEAM, "finance")
         holder = await w.passkeys.designated_approver(scope)
         task = None
         try:
             async with w.db.transaction() as retirement:
+                await w.fence.check(retirement, w.admitted)
+                assert await hold_role(retirement, ALICE, OWNER_ROLE)
+                assert await w.passkeys.login_evidence_is_current(
+                    session.scope, session.subject, session.evidence_ref, tx=retirement
+                )
+                prepared = await w.credential_audit.prepare_containment(
+                    retirement, admitted=w.admitted, session=session
+                )
                 pid = await retirement.fetch_value("SELECT pg_backend_pid()")
                 low = min(decisions)
                 await retirement.fetch_value(
@@ -292,9 +305,15 @@ async def test_reconciliation_voids_real_root_and_descendant_approvals_atomicall
                         )
                         == record.secret_id
                     )
-                await w.passkeys.retire_in(
-                    retirement, scope=scope, subject=holder.subject, authorized_by="owner"
-                )
+                with w.credential_audit.prepared(prepared):
+                    await w.passkeys.retire_in(
+                        retirement,
+                        scope=scope,
+                        subject=holder.subject,
+                        authorized_by=session.subject,
+                    )
+                await w.fence.check(retirement, w.admitted)
+                assert session.expires_at > datetime.now(UTC)
             result = await asyncio.wait_for(task, 10)
         finally:
             if task is not None and not task.done():

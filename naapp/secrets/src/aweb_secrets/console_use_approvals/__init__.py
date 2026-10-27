@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
+import asyncpg
 import idna
 from aweb_naapp.console import ConsoleRoute, ConsoleSession
 from aweb_naapp.hooks.producer import RegistrationView
@@ -157,9 +158,13 @@ class ConsoleUseApprovals:
                 await self.console.fence.check(tx, admitted)
                 if current.expires_at <= datetime.now(UTC):
                     raise HTTPException(401, "console_session_required")
+        except asyncpg.LockNotAvailableError:
+            # The effect transaction has rolled back. Contention is a bounded
+            # refusal, never a reason to replay the mutation or expose SQL.
+            raise HTTPException(503, "approval_busy") from None
         except (UseAuditUnavailable, Refused) as refused:
             # The transaction has rolled back; submitted details never become
-            # an error message. Database failures propagate without conversion.
+            # an error message. Other database failures still propagate.
             raise HTTPException(503, refused.code) from None
         return {"approval_id": approval_id, "state": approved.state.value}
 

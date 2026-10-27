@@ -38,8 +38,8 @@ var (
 
 var authCmd = &cobra.Command{
 	Use:   "auth",
-	Short: "Authenticate this host aw CLI to a human aweb account",
-	Long: "Authenticate this host aw CLI to a human aweb account.\n\n" +
+	Short: "Authenticate this host aw CLI to your aweb account",
+	Long: "Authenticate this host aw CLI to your aweb account.\n\n" +
 		"Credentials are stored only in the host aw config directory, not in workspace or identity homes.",
 }
 
@@ -57,7 +57,7 @@ var authLoginCmd = &cobra.Command{
 
 var authStatusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show host CLI human-auth status without printing tokens",
+	Short: "Show host CLI account-auth status without printing tokens",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runAuthStatus(cmd.Context(), cmd)
@@ -66,7 +66,7 @@ var authStatusCmd = &cobra.Command{
 
 var authLogoutCmd = &cobra.Command{
 	Use:   "logout",
-	Short: "Revoke host CLI human-auth tokens and remove local credentials",
+	Short: "Revoke host CLI account-auth tokens and remove local credentials",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runAuthLogout(cmd.Context(), cmd)

@@ -6,11 +6,11 @@ from contextlib import asynccontextmanager
 import asyncpg
 import httpx
 import pytest
-from aweb_naapp.console import apply_console_migrations
+from aweb_naapp.console import COOKIE_NAME, apply_console_migrations
 from aweb_naapp.runtime.approvals import ApprovalState
 from aweb_naapp.runtime.origins import split_origins
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 
 from aweb_secrets.console import OwnerConsole, owner_console_router
 from aweb_secrets.console_changes import ConsoleChanges, console_changes_router
@@ -44,11 +44,13 @@ async def application(
     console = OwnerConsole(
         db=w.db,
         passkeys=w.passkeys,
+        credential_audit=w.credential_audit,
         directory=w.directory,
         fence=w.fence,
         verifier=w.owner.verifier,
         installation=installation,
     )
+    w.console = console
     human_app = FastAPI()
     human_app.include_router(owner_console_router(console))
     from aweb_secrets.console_ui import console_ui_router
@@ -94,6 +96,37 @@ async def sign_in(w, human, scope, contact="alice@acme.com"):
     )
     assert logged.status_code == 200
     return {"X-CSRF-Token": logged.json()["csrf_token"]}
+
+
+async def retire_owner(w, scope, subject):
+    logged = await w.passkeys.verify_login(
+        scope, w.devices["alice@acme.com"].get(await w.passkeys.login_options(scope))
+    )
+    issued = await w.console.sessions.open(
+        subject=logged.subject, scope=scope, evidence_ref=logged.evidence_ref
+    )
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/session",
+            "headers": [(b"cookie", (COOKIE_NAME + "=" + issued.token).encode())],
+        }
+    )
+    session = await w.console.sessions.current(request)
+    async with w.db.transaction() as tx:
+        await w.fence.check(tx, w.admitted)
+        await w.containment.authorize_console(
+            tx, admitted=w.admitted, session=session, action="revoke-approver", target=scope
+        )
+        context = await w.credential_audit.prepare_containment(
+            tx, admitted=w.admitted, session=session
+        )
+        with w.credential_audit.prepared(context):
+            await w.passkeys.retire_in(
+                tx, scope=scope, subject=subject, authorized_by=session.subject
+            )
+        await w.fence.check(tx, w.admitted)
 
 
 async def token_draft(w, human, headers):
@@ -144,6 +177,7 @@ async def approve(w, human, headers, draft, contact="alice@acme.com"):
 async def test_http_token_ingress_draft_fresh_passkey_and_confirmation_are_distinct(world):
     w = world
     scope = await enrol_owner(w, ALICE, "alice@acme.com")
+    event_count = await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}")
     cleanups = []
 
     async def cleanup(installation_id, team_id, ids):
@@ -196,7 +230,7 @@ async def test_http_token_ingress_draft_fresh_passkey_and_confirmation_are_disti
             await w.db.fetch_value(
                 "SELECT count(*) FROM {{tables.outbox_events}} WHERE kind='post-governance-hook'"
             )
-            == 1
+            == event_count + 1
         )
         repeated = await human.post(path + "/confirm", json={}, headers=headers)
         assert repeated.status_code == 409
@@ -323,7 +357,7 @@ async def test_refused_confirmation_preserves_decision_and_inert_token_without_c
             )
         if failure == "storage":
             await w.db.execute(
-                "ALTER TABLE {{tables.outbox_events}} ADD CONSTRAINT deny_effect CHECK(kind<>'post-governance-hook')"
+                "ALTER TABLE {{tables.outbox_events}} ADD CONSTRAINT deny_effect CHECK(kind<>'post-governance-hook') NOT VALID"
             )
         # A real SQL/storage failure is propagated by the service, not a mocked hook.
         if failure == "storage":
@@ -372,10 +406,7 @@ async def test_retired_exact_login_or_owner_role_cannot_confirm_an_approved_chan
         drafted = await token_draft(w, human, headers)
         path = await approve(w, human, headers, drafted)
         approver = await w.passkeys.designated_approver(scope)
-        async with w.db.transaction() as tx:
-            await w.passkeys.retire_in(
-                tx, scope=scope, subject=approver.subject, authorized_by="owner"
-            )
+        await retire_owner(w, scope, approver.subject)
         result = await human.post(path + "/confirm", json={}, headers=headers)
         assert result.status_code == 401 and "Max-Age=0" in result.headers["set-cookie"]
     assert (
@@ -482,7 +513,7 @@ async def test_token_rotation_cleanup_uses_only_committed_scoped_affected_ids(wo
     )
 
 
-async def test_unaudited_b3_record_kinds_remain_outside_this_http_slice(world):
+async def test_prepared_b3_draft_stays_inert_until_its_owner_confirms(world):
     from tests.test_change_sets import designate_approver
 
     w = world
@@ -498,9 +529,9 @@ async def test_unaudited_b3_record_kinds_remain_outside_this_http_slice(world):
             },
             headers=headers,
         )
-        assert response.status_code == 409
-        assert response.json() == {"detail": "change_kind_not_applicable"}
-    assert await w.db.fetch_value("SELECT count(*) FROM {{tables.change_sets}}") == 0
+        assert response.status_code == 201
+        assert await w.db.fetch_value("SELECT state FROM {{tables.change_sets}}") == "pending"
+    assert await w.db.fetch_value("SELECT count(*) FROM {{tables.approvers}}") == 0
 
 
 async def test_personal_locator_resolves_only_the_current_candidates_frozen_change(world):
@@ -534,10 +565,7 @@ async def test_lost_session_after_commit_returns_only_an_applied_receipt_and_rea
     holder = await w.passkeys.designated_approver(scope)
 
     async def cleanup(*args):
-        async with w.db.transaction() as tx:
-            await w.passkeys.retire_in(
-                tx, scope=scope, subject=holder.subject, authorized_by="owner"
-            )
+        await retire_owner(w, scope, holder.subject)
 
     async with clients(w, cleanup=cleanup) as (human, _):
         headers = await sign_in(w, human, scope)

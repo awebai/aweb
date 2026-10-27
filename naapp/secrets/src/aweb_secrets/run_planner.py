@@ -44,6 +44,7 @@ from aweb_secrets.run_plan import (
     PreparedRun,
     RunPlanRefused,
 )
+from aweb_secrets.run_selection import discover_sources
 
 _REFUSALS = (
     derived_lineage.LineageRefused,
@@ -173,33 +174,23 @@ class RunPlanner:
         runner_id: str,
         params: Mapping[str, Any],
         attestation: VerifiedAttestation | None = None,
+        selected_ref: str | None = None,
     ) -> PreparedRun:
-        """Prepare a fresh fixed-selector run, without admitting or enabling it.
+        """Prepare a fresh fixed-selector or ordinary-child run, without admitting or enabling it.
 
         candidate_job is inert discovery from the sole jobs.current_job in a
         prior, completed read transaction. Its exact CURRENT digest is checked
         after the forest locks. A stale discovery refuses; it cannot change
         slots or add locks after approval. No HTTP job definition is accepted.
-        Ordinary-child substitution will enter through its recorded plan after
-        the selector's request shape is settled; no agent slot override exists.
+        The optional ordinary-child ref selects exactly one durable slot through
+        recorded lineage. No caller ordinal or slot override is accepted.
         """
         installation, roles, disabled = await self._start(tx, grant, principal)
         _require(not disabled, "installation_disabled")
         _require(candidate_job.params_valid(params), "params_invalid")
         credentials = candidate_job.after["credentials"]
         _require(bool(credentials), "job_not_allowed")
-        sources = []
-        for slot in credentials:
-            source = await records.secret_by_ref(
-                tx,
-                installation.installation_id,
-                installation.team_id,
-                slot["secret_ref"],
-                lock=False,
-            )
-            if source is None:
-                raise RunPlanRefused("grant_missing")
-            sources.append(source.record.secret_id)
+        sources = await discover_sources(tx, installation, candidate_job, selected_ref=selected_ref)
         try:
             paths = await derived_lineage.lock_forest(
                 tx,
@@ -223,6 +214,21 @@ class RunPlanner:
                         key=lambda g: (g.subject_principal is None, g.grant_id),
                     )
                 )
+            if selected_ref is not None:
+                for path, group in zip(paths, candidates, strict=True):
+                    if path[-1].secret.record.ref != selected_ref or group:
+                        continue
+                    revoked = await tx.fetch_value(
+                        "SELECT EXISTS(SELECT 1 FROM {{tables.grants}} WHERE installation_id=$1"
+                        " AND team_id=$2 AND secret_id=$3 AND capability='run' AND revoked_at IS NOT NULL"
+                        " AND (subject_principal=$4 OR subject_role=ANY($5::text[])))",
+                        installation.installation_id,
+                        installation.team_id,
+                        path[-1].secret.record.secret_id,
+                        principal_key(principal).principal_did,
+                        list(roles),
+                    )
+                    raise RunPlanRefused("grant_revoked" if revoked else "grant_missing")
             forest = await derived_lineage.lock_forest_grants(
                 tx,
                 paths,

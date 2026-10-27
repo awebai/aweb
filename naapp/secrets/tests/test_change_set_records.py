@@ -229,6 +229,7 @@ async def test_an_internal_destination_drafted_while_allowed_is_refused_once_dis
             world.db,
             approvals=world.approvals,
             passkeys=world.passkeys,
+            credential_audit=world.credential_audit,
             directory=world.directory,
             custody=world.custody,
             containment=world.containment,

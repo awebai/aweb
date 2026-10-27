@@ -41,6 +41,16 @@ identity/trust vector family.
 
 ## Accepting protocols awaiting client rollout
 
+### `member-attribution-v1.json` — contract candidate
+
+The [member attribution contract](../member-attribution.md) freezes the new
+controller-signed certificate binding, private email/public team-scoped
+fingerprint, optional presentation and fetch-on-none procedure. Synthetic
+Ed25519 known answers cover exact bytes, binding/shape refusals and monotonic
+updates. This is a docs-only freeze candidate, not a shipped implementation or
+runtime pass. Go/Python consumers are added in the implementation slice; no
+existing certificate/message vector is changed.
+
 ### `awid-controller-request-v2.json`
 
 Controller HTTP envelopes bind the configured registry audience, protocol type,
