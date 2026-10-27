@@ -1115,6 +1115,50 @@
       "acceptance": "Enrolled omission in the existing stable-ID resolution; preserve its independent 60-second binding rule."
     },
     {
+      "id": "SERVER.CONTACT.REBIND",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/routes/contacts.py",
+        "server/src/aweb/messaging/contacts.py"
+      ],
+      "sites": [
+        {
+          "file": "server/src/aweb/routes/contacts.py",
+          "symbol": "bind_contact_identity_route"
+        },
+        {
+          "file": "server/src/aweb/messaging/contacts.py",
+          "symbol": "bind_contact_identity"
+        },
+        {
+          "file": "server/src/aweb/messaging/contacts.py",
+          "symbol": "has_exact_active_identity_contact"
+        }
+      ],
+      "operations": [
+        "verify",
+        "rebind"
+      ],
+      "change": "keep",
+      "slice": "S4",
+      "status": "candidate",
+      "journeys": [
+        "J6",
+        "J8",
+        "J10"
+      ],
+      "proving_tests": [
+        "server/tests/test_id_tree_contact_replacement.py::test_address_replacement_does_not_transfer_contact_trust[address-replacement-does-not-transfer-contact-trust]"
+      ],
+      "frozen_operation_cases": [
+        "address-replacement-does-not-transfer-contact-trust"
+      ],
+      "acceptance": "Contacts remain pinned to the old did:aw after address replacement; only controller-signed explicit owner acceptance rebinds trust. AWID owns the address-preservation operation.",
+      "coverage_scope": "Real AWID/aweb HTTP, Postgres and Redis contact-trust relationship; no ID-chain transport conversion is claimed.",
+      "candidate_head": "21d63621805f6bf9bce60ed7bb280b2aa205fa9b",
+      "ed25519_profile": "legacy"
+    },
+    {
       "id": "SERVER.MAIL.CHAT",
       "repo": "aweb",
       "files": [
