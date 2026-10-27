@@ -152,6 +152,42 @@ func idCertificatePrimePoint(raw []byte) bool {
 	return q.ScalarMult(inv, q).Equal(p) == 1
 }
 
+// IDTreeEnrollmentResult is a parsed location claim, not verified authority.
+// State is enrolled, not_enrolled, unknown (absent), or malformed (present).
+type IDTreeEnrollmentResult struct {
+	State  string  `json:"state"`
+	Domain *string `json:"domain"`
+}
+
+// KeyResponseIDTree parses the id_tree projection of a valid key response.
+// It performs no I/O. Malformed or absent evidence is never proven legacy.
+func KeyResponseIDTree(response map[string]any) IDTreeEnrollmentResult {
+	value, present := response["id_tree"]
+	if !present {
+		return IDTreeEnrollmentResult{State: "unknown"}
+	}
+	malformed := IDTreeEnrollmentResult{State: "malformed"}
+	tree, ok := value.(map[string]any)
+	if !ok {
+		return malformed
+	}
+	enrolled, ok := tree["enrolled"].(bool)
+	if !ok {
+		return malformed
+	}
+	if !enrolled {
+		if len(tree) == 1 {
+			return IDTreeEnrollmentResult{State: "not_enrolled"}
+		}
+		return malformed
+	}
+	domain, ok := tree["domain"].(string)
+	if len(tree) != 2 || !ok || !idCertificateDomain(domain) {
+		return malformed
+	}
+	return IDTreeEnrollmentResult{State: "enrolled", Domain: &domain}
+}
+
 func idCertificateIDValid(value any, keyOnly bool) bool {
 	id, ok := value.(string)
 	if !ok {

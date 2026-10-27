@@ -49,6 +49,10 @@ RAW_VERIFY_NAMES = frozenset({
 
 def excluded(file: str) -> bool:
     path = PurePosixPath(file)
+    if "src" in path.parts:
+        # A production module called test_foo.py is still production source.
+        # Only an explicit tests directory below src exempts its contents.
+        return "tests" in path.parts[path.parts.index("src") + 1:-1]
     return (file in EXCLUDED_SCRIPTS or path.name.startswith("test_")
             or path.name == "conftest.py" or any(p in {"test", "tests"} for p in path.parts[:-1]))
 
@@ -86,6 +90,8 @@ def scan_python_source(source: str, *, module: str = "fixture", package: bool = 
                     raise ValueError("relative import escapes its package")
                 base = ".".join(parent[:len(parent) - node.level + 1] + ([base] if base else []))
             for name in node.names:
+                if name.name == "*" and any((base + ".").startswith(prefix) for prefix in PRIMITIVE_MODULES):
+                    raise ValueError("wildcard import hides an identity primitive: " + base)
                 aliases[name.asname or name.name] = base + "." + name.name
 
     def called_name(node):

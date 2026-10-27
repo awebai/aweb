@@ -84,6 +84,31 @@ def _domain(value: Any) -> None:
         raise IDCertificateError("invalid_domain")
 
 
+def key_response_id_tree(response: dict[str, Any]) -> dict[str, Any]:
+    """Parse enrollment location, without granting identity or current authority.
+
+    The input is an otherwise valid key-resolution object. Unknown means the
+    field is absent; malformed present evidence must never become legacy.
+    """
+    result = {"state": "malformed", "domain": None}
+    if not isinstance(response, dict):
+        return result
+    if "id_tree" not in response:
+        return {"state": "unknown", "domain": None}
+    tree = response["id_tree"]
+    if not isinstance(tree, dict) or type(tree.get("enrolled")) is not bool:
+        return result
+    if tree["enrolled"] is False:
+        return {"state": "not_enrolled", "domain": None} if set(tree) == {"enrolled"} else result
+    if set(tree) != {"enrolled", "domain"}:
+        return result
+    try:
+        _domain(tree["domain"])
+    except IDCertificateError:
+        return result
+    return {"state": "enrolled", "domain": tree["domain"]}
+
+
 def _id(value: Any, *, key_only: bool = False) -> None:
     try:
         if not isinstance(value, str):
