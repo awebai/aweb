@@ -325,6 +325,18 @@ func TestIDChildResignExchangeProbes(t *testing.T) {
 			t.Fatalf("approve with another identity's chain: err=%v calls=%d", err, a.calls)
 		}
 	})
+	t.Run("a malformed parent chain is an error, not a panic", func(t *testing.T) {
+		a := x.approval(t, accepted)
+		if _, err := a.receive(); err != nil {
+			t.Fatal(err)
+		}
+		for _, chain := range [][]any{{map[string]any{"certificate": "not an object"}}, {map[string]any{}}, {"not an object"}} {
+			_, err := awid.ApproveIDResignRequest(a.store, "20000000-0000-4000-8000-000000000004", a.parentID, chain, x.evidence("alice-rotated"), "example.com", vectorSigner(t, x.v, a.signer, &a.calls), a.now)
+			if err == nil || a.calls != 0 {
+				t.Fatalf("chain %v: err=%v calls=%d", chain, err, a.calls)
+			}
+		}
+	})
 	t.Run("a refused request issues nothing and frees the old entry", func(t *testing.T) {
 		a := x.approval(t, accepted)
 		if _, err := a.receive(); err != nil {
