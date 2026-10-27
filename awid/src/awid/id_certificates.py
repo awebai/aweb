@@ -1,4 +1,4 @@
-"""Pure codecs for docs/id-certificates.md; no registry or authentication I/O.
+"""Pure codecs and ancestry for docs/id-certificates.md; no authentication I/O.
 
 A certificate signature alone establishes neither issuance authority nor current
 validity. The chain verifier must check independently supplied authority/status.
@@ -229,7 +229,7 @@ def decode_id_chain_header(value: str) -> dict[str, Any]:
 class IDChainEvidence:
     status: dict[str, Any]
     namespace_authority: dict[str, Any]
-    age_seconds: float | None = 0
+    age_seconds: float | None
     refresh_failed: bool = False
 
 
@@ -481,9 +481,9 @@ def _id_chain(bundle: dict[str, Any] | None, subject: dict[str, Any], evidence: 
         _chain_structure(certs)
         if certs[-1]['certificate']['id'] != subject['id']:
             raise IDCertificateError('subject_mismatch')
-    if subject.get('team_member_did_key') is not None and subject['team_member_did_key'] != subject['did_key']:
+    if subject.get('team_member_did_key') not in (None, '') and subject['team_member_did_key'] != subject['did_key']:
         raise IDCertificateError('subject_mismatch')
-    if subject.get('team_member_did_aw') is not None and subject['team_member_did_aw'] != subject['id']:
+    if subject.get('team_member_did_aw') not in (None, '') and subject['team_member_did_aw'] != subject['id']:
         raise IDCertificateError('subject_mismatch')
     if subject['id'].startswith('did:key:') and subject['id'] != subject['did_key']:
         raise IDCertificateError('subject_mismatch')

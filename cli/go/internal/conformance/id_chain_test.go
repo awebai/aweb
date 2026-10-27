@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	awid "github.com/awebai/aw/awid"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -35,12 +36,33 @@ type idChainVectors struct {
 	Cases    []idChainCase             `json:"verification_cases"`
 }
 
-func TestIDChainFinalVectors(t *testing.T) {
+func loadIDChainVectors(t *testing.T) idChainVectors {
+	t.Helper()
 	var v idChainVectors
 	d := json.NewDecoder(bytes.NewReader(readRootVector(t, "id-certificates-v1.json")))
 	d.UseNumber()
 	if err := d.Decode(&v); err != nil {
 		t.Fatal(err)
+	}
+	return v
+}
+
+func TestIDChainFinalVectors(t *testing.T) {
+	v := loadIDChainVectors(t)
+	if len(v.Cases) != 124 {
+		t.Fatalf("case count=%d want124", len(v.Cases))
+	}
+	names := map[string]bool{}
+	for _, c := range v.Cases {
+		if names[c.Name] {
+			t.Fatal("duplicate case", c.Name)
+		}
+		names[c.Name] = true
+	}
+	for _, name := range []string{"namespace-overlapping-replaced-successor-unavailable", "namespace-unretired-predecessor-unavailable", "root-replacement-cutoff-in-historical-human-parent", "namespace-epoch-at-retirement-unavailable"} {
+		if !names[name] {
+			t.Fatal("missing required boundary", name)
+		}
 	}
 	for _, c := range v.Cases {
 		t.Run(c.Name, func(t *testing.T) {
@@ -102,5 +124,60 @@ func TestIDChainFinalVectors(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestIDChainInvalidStatusIsUnavailable(t *testing.T) {
+	for _, mutation := range []string{"extra", "duplicate", "missing", "wrong-domain", "over-limit"} {
+		t.Run(mutation, func(t *testing.T) {
+			v := loadIDChainVectors(t)
+			c := v.Cases[0]
+			status := v.Statuses[c.Status]
+			domain := status["domain"].(string)
+			subject := awid.IDChainSubject{ID: c.Subject["id"].(string), DIDKey: c.Subject["did_key"].(string), TeamMemberDIDKey: c.Subject["team_member_did_key"].(string)}
+			certs := []any{}
+			for _, n := range c.Chain {
+				certs = append(certs, v.Certificates[n].Signed)
+			}
+			bundle := map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": certs}
+			epochs := status["namespace"].(map[string]any)["epochs"].([]any)
+			key := epochs[len(epochs)-1].(map[string]any)["did_key"]
+			age := 0.0
+			evidence := &awid.IDChainEvidence{Status: status, AgeSeconds: &age, NamespaceAuthority: map[string]any{"domain": domain, "dns_name": "_awid." + domain, "inherited": false, "controller_key": key}}
+			switch mutation {
+			case "extra":
+				status["extra"] = true
+			case "duplicate":
+				status["identities"] = append(status["identities"].([]any), status["identities"].([]any)[0])
+			case "missing":
+				delete(status, "missing")
+			case "wrong-domain":
+				status["domain"] = "attacker.example"
+			case "over-limit":
+				status["missing"] = []any{strings.Repeat("x", 131072)}
+			}
+			if got := awid.VerifyIDChain(bundle, subject, evidence, domain); got.Reason != "evidence_unavailable" || got.IdentityValid != nil {
+				t.Fatalf("got %+v", got)
+			}
+		})
+	}
+}
+func TestIDChainOmittedLocalDoesNotPlanALookup(t *testing.T) {
+	v := loadIDChainVectors(t)
+	c := v.Cases[0]
+	subject := awid.IDChainSubject{ID: c.Subject["id"].(string), DIDKey: c.Subject["did_key"].(string)}
+	request, err := awid.IDStatusRequest(nil, subject, "")
+	if err != nil || request != nil {
+		t.Fatalf("request=%v err=%v", request, err)
+	}
+	for _, candidate := range v.Cases {
+		if strings.HasPrefix(candidate.Subject["id"].(string), "did:aw:") {
+			subject.ID = candidate.Subject["id"].(string)
+			_, err = awid.IDStatusRequest(nil, subject, "")
+			if awid.IDCertificateErrorCode(err) != "evidence_unavailable" {
+				t.Fatal("missing private domain guessed")
+			}
+			break
+		}
 	}
 }

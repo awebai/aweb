@@ -50,9 +50,8 @@ revocation cutoffs, cached status and prospective adoption. Synthetic Ed25519
 known answers pin exact bytes/signatures/digests, a three-agent OATS subtree,
 negative R1–R3/rotation/presentation cases, and pending-invitation/lifecycle
 scenarios. Registry fixtures are independently supplied test authority facts;
-transaction scenarios are not runtime proof. Python/Go codec tests now consume
-this root fixture; full chain/status and transport consumers follow in reviewed
-checkpoints. Existing certificate/message fixtures are byte-identical.
+transaction scenarios are not runtime proof. Python/Go codec and pure ancestry/status tests consume this root fixture;
+transport consumers follow in reviewed checkpoints. Existing certificate/message fixtures are byte-identical.
 `expected_request` is the request decision; case names describe proof outcomes.
 `ed25519_verification.cases` pins the new ID-certificate family's canonical,
 nonidentity prime-subgroup key/R checks and cofactorless equation; every

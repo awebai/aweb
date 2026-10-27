@@ -61,3 +61,14 @@ def test_invalid_status_never_confers_authority(mutation):
     if mutation == 'wrong-domain': s['domain'] = 'attacker.example'
     if mutation == 'over-limit': s['missing'] = ['x' * 131072]
     assert verify_id_chain(bundle, subject=subject, evidence=evidence, domain=domain)['reason'] == 'evidence_unavailable'
+
+
+def test_final_vector_names_include_the_isolated_authority_boundaries():
+    names = [case['name'] for case in V['verification_cases']]
+    assert len(names) == len(set(names)) == 124
+    assert {
+        'namespace-overlapping-replaced-successor-unavailable',
+        'namespace-unretired-predecessor-unavailable',
+        'root-replacement-cutoff-in-historical-human-parent',
+        'namespace-epoch-at-retirement-unavailable',
+    } <= set(names)
