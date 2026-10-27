@@ -44,8 +44,8 @@ function evidenceOf(c: any): IdStatusEvidence | null {
 
 describe("id chain verification cases", () => {
   test("the fixture has the cases this suite was written against", () => {
-    expect(cases).toHaveLength(122);
-    expect(new Set(cases.map(c => c.name)).size).toBe(122);
+    expect(cases).toHaveLength(124);
+    expect(new Set(cases.map(c => c.name)).size).toBe(124);
   });
 
   // R1-R3, the namespace replacement cutoff and the did:key-human shape
