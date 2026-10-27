@@ -262,11 +262,13 @@ check-awid-site-docs: sync-awid-site-docs
 verify-site: check-awid-site-docs
 	cd awid/site && hugo --minify --cleanDestinationDir
 
+PYTEST_SERVER_ARGS ?= -n 4 --durations=25
+
 test-server:
 	cd server && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
 	set -eu; cd server; build_dir=$$(mktemp -d); trap 'rm -rf "$$build_dir"' EXIT; \
 		UV_CACHE_DIR=/tmp/uv-cache uv build --out-dir "$$build_dir"
-	cd server && UV_CACHE_DIR=/tmp/uv-cache UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
+	cd server && UV_CACHE_DIR=/tmp/uv-cache UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q $(PYTEST_SERVER_ARGS)
 
 # The naapp packages the candidate gate covers. Each provides `make lint` and
 # `make test`: the checks stage lints them, and the isolated unit stage runs

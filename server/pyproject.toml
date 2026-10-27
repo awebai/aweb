@@ -84,6 +84,7 @@ dev = [
     "aweb-naapp",
     "pytest>=9.0.0",
     "pytest-asyncio>=1.2.0",
+    "pytest-xdist>=3.8.0",
 ]
 
 [tool.pytest.ini_options]
