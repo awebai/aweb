@@ -57,6 +57,18 @@ checkpoints. Existing certificate/message fixtures are byte-identical.
 `ed25519_verification.cases` pins the new ID-certificate family's canonical,
 nonidentity prime-subgroup key/R checks and cofactorless equation; every
 Python/Go/TypeScript CI consumes these probes and the raw-wire negatives.
+Namespace status epochs carry `continuity`: signed rotations retain registered
+children, DNS-only replacement cuts off prior registrations (`root_replaced`).
+The cases also pin namespace epoch admission windows and sequence-only DID-key
+selection; operation cases replace live-ID deletion refusal with retained
+history and delete/re-register discontinuity.
+`namespace_rotation_requests` freezes both DIDKey signatures over the same
+covering-v2 payload, plus wrong-sequence, new-key-only, swapped-role, stale-key
+and replay operation refusals. Epoch observations never create replacement: pre-upgrade
+first enrollment uses the existing authenticated namespace POST once, and
+same-key reverify/temporary DNS failure preserves its epoch. History negatives
+isolate first-epoch continuity, an unretired predecessor and a contiguous-seq
+rotation time gap.
 
 ### `member-attribution-v1.json` — superseded, historical only
 
