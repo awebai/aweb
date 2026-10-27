@@ -45,10 +45,6 @@ CONSUMED: set[str] = set()
 # S2 cases whose effects land in a later S2 checkpoint (3 revoke, 4 status,
 # 5 races and lost-key replacement). This set must be empty when S2 closes.
 S2_LATER = {
-    "registration-after-sign-then-parent-revoke",
-    "directly-revoked-subject-cannot-reopen-head",
-    "signed-issued-at-cannot-backdate",
-    "accepted-human-invite-retry-after-inviter-revoke",
     "concurrent-registration-cas",
     "reparent-register-race",
     "root-revokes-with-compromise-cutoff",
@@ -338,6 +334,112 @@ async def test_post_lock_registration_time_is_monotone(case, tree, awid_db_infra
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["registered_at"] == case["expected"]["registered_at"]
+
+
+async def _revoked_directly(awid_db_infra, key_name, *, revoked_at, effective_from=None):
+    """Put a revocation in place without the revoke endpoint.
+
+    These tests isolate the registration gate's revocation checks; the
+    revoke endpoint's own authority and timing are tested with it.
+    """
+    db = awid_db_infra.get_manager("aweb")
+    updated = await db.fetch_value(
+        """
+        UPDATE {{tables.id_identities}}
+        SET revoked_at = $2, effective_from = $3, revoked_by = $4
+        WHERE id = $1
+        RETURNING id
+        """,
+        did_aw(key_name), revoked_at, effective_from or revoked_at, did_key("root"),
+    )
+    assert updated == did_aw(key_name)
+
+
+@consumes("registration-after-sign-then-parent-revoke")
+async def test_registration_after_sign_then_parent_revoke(case, tree, awid_db_infra):
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+    assert certificate(case["input"]["certificate"])["certificate"]["issued_at"] == "2026-10-26T00:02:00Z"
+    await _revoked_directly(awid_db_infra, "alice", revoked_at=at(case["input"]["parent_revoked_at"]))
+    before = await _revisions(awid_db_infra)
+
+    resp = await tree.register(
+        [certificate("alice"), certificate("bob")],
+        invitation_id=case["input"]["invitation_id"], when=at(case["input"]["registered_at"]),
+    )
+
+    assert (resp.status_code, _code(resp)) == (422, case["expected"]["reason"]), resp.text
+    assert await _revisions(awid_db_infra) == before
+
+
+@consumes("signed-issued-at-cannot-backdate")
+async def test_signed_issued_at_cannot_backdate(case, tree, awid_db_infra):
+    await tree.enroll("alice", when=at("2026-10-26T00:00:30Z"))
+    cutoff = at(case["input"]["parent_effective_from"])
+    await _revoked_directly(awid_db_infra, "alice", revoked_at=cutoff, effective_from=cutoff)
+    backdated = _bob_variant(issued_at=case["input"]["issued_at"])
+    before = await _revisions(awid_db_infra)
+
+    resp = await tree.register(
+        [certificate("alice"), sign(backdated, "alice")], when=at(case["input"]["registered_at"]),
+    )
+
+    assert (resp.status_code, _code(resp)) == (422, case["expected"]["reason"]), resp.text
+    assert await _revisions(awid_db_infra) == before
+
+
+@consumes("directly-revoked-subject-cannot-reopen-head")
+async def test_directly_revoked_subject_cannot_reopen_head(case, tree, awid_db_infra):
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+    await tree.enroll("alice", "bob", when=at("2026-10-26T00:02:00Z"))
+    await tree.enroll("alice", "global-agent", when=at("2026-10-26T00:04:00Z"))
+    await _revoked_directly(awid_db_infra, "global_agent", revoked_at=at("2026-10-26T00:20:00Z"))
+    before = await _revisions(awid_db_infra)
+
+    resp = await tree.register(
+        [certificate("alice"), certificate("bob"), certificate(case["input"]["certificate"])],
+        expected_head=certificate_id("global-agent"), when=at("2026-10-26T00:30:00Z"),
+    )
+
+    assert (resp.status_code, _code(resp)) == (422, case["expected"]["reason"]), resp.text
+    assert await _revisions(awid_db_infra) == before
+
+
+@consumes("accepted-human-invite-retry-after-inviter-revoke")
+async def test_accepted_human_invite_retry_after_inviter_revoke(case, tree, awid_db_infra):
+    invitation = operation_case("first-exact-invitation-registration")["input"]["invitation_id"]
+    chain = [certificate("alice"), certificate(case["input"]["certificate"])]
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+    first = await tree.register(chain, invitation_id=invitation, when=at(case["input"]["original_registered_at"]))
+    assert first.status_code == 200, first.text
+    await _revoked_directly(awid_db_infra, "alice", revoked_at=at("2026-10-26T00:20:00Z"))
+    before = await _revisions(awid_db_infra)
+
+    retry = await tree.register(chain, invitation_id=invitation, when=at(case["input"]["retry_at"]))
+
+    assert retry.status_code == 200, retry.text
+    assert retry.json() == {"certificate_id": certificate_id("bob"), "registered_at": case["expected"]["registered_at"]}
+    assert await _revisions(awid_db_infra) == before
+
+
+@pytest.mark.asyncio
+async def test_a_since_revoked_subjects_exact_retry_returns_its_receipt_and_writes_nothing(tree, awid_db_infra):
+    chain = [certificate("alice"), certificate("bob")]
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+    first = await tree.register(chain, when=at("2026-10-26T00:03:00Z"))
+    assert first.status_code == 200, first.text
+    await _revoked_directly(awid_db_infra, "bob", revoked_at=at("2026-10-26T00:20:00Z"))
+    before = await _revisions(awid_db_infra)
+
+    retry = await tree.register(chain, when=at("2026-10-26T00:30:00Z"))
+    fresh = await tree.register(
+        [certificate("alice"), sign(_bob_variant(issued_at="2026-10-26T00:25:00Z"), "alice")],
+        expected_head=certificate_id("bob"),
+    )
+
+    assert retry.status_code == 200, retry.text
+    assert retry.json() == first.json()
+    assert (fresh.status_code, _code(fresh)) == (422, "subject_revoked"), fresh.text
+    assert await _revisions(awid_db_infra) == before
 
 
 # ---------------------------------------------------------------------------
