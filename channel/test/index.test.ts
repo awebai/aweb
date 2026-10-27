@@ -1,9 +1,9 @@
-import { afterEach, describe, expect, test } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
-import { createChannelRegistryResolver, loadChannelConfig, isDirectExecution, resolveRegistryFallbackURL, handleClaudeStreamState, notifyClaudeAwakening } from "../src/index.js";
+import { createChannelRegistryResolver, loadChannelConfig, isDirectExecution, resolveRegistryFallbackURL, handleClaudeStreamState, createChannelStreamStateSink, notifyClaudeAwakening } from "../src/index.js";
 import { createShadowedPrincipalFixture } from "../../channel-core/test/helpers/config_fixture.js";
 
 describe("loadChannelConfig", () => {
@@ -62,6 +62,66 @@ describe("stream state handling", () => {
 
     await notifyClaudeAwakening(mcp, { kind: "mail", content: "hello", deliveryIntent: "wake", meta: { type: "mail", message_id: "m1" } });
     expect(notifications).toHaveLength(1);
+  });
+});
+
+describe("stream state file", () => {
+  let workdir: string;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (workdir) rmSync(workdir, { recursive: true, force: true });
+  });
+
+  test("persists disconnect and recovery as two private JSON lines", async () => {
+    workdir = mkdtempSync(join(tmpdir(), "channel-stream-"));
+    const logs: string[] = [];
+    const sink = createChannelStreamStateSink(workdir, (message) => logs.push(message));
+    const before = Date.now();
+
+    sink.onStreamState({ state: "connected" });
+    sink.onStreamState({ state: "disconnected", cause: "network unavailable", retryInMs: 1000 });
+    sink.onStreamState({ state: "reconnected" });
+    await sink.flush();
+
+    const path = join(workdir, ".aw", "channel-stream.jsonl");
+    const lines = readFileSync(path, "utf-8").trimEnd().split("\n");
+    expect(lines).toHaveLength(2);
+    const entries = lines.map((line) => JSON.parse(line));
+    expect(entries).toEqual([
+      { ts: expect.any(String), state: "disconnected", cause: "network unavailable", retry_in_ms: 1000 },
+      { ts: expect.any(String), state: "reconnected", cause: null, retry_in_ms: null },
+    ]);
+    for (const entry of entries) {
+      expect(new Date(entry.ts).toISOString()).toBe(entry.ts);
+      expect(Date.parse(entry.ts)).toBeGreaterThanOrEqual(before);
+      expect(Date.parse(entry.ts)).toBeLessThanOrEqual(Date.now());
+    }
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+    expect(logs).toHaveLength(2);
+  });
+
+  test("append failures stay outside the stream loop, report once and allow recovery", async () => {
+    workdir = mkdtempSync(join(tmpdir(), "channel-stream-failure-"));
+    const path = join(workdir, ".aw", "channel-stream.jsonl");
+    mkdirSync(path, { recursive: true }); // A directory is a real append failure.
+    const warning = vi.spyOn(console, "error").mockImplementation(() => {});
+    const logs: string[] = [];
+    const sink = createChannelStreamStateSink(workdir, (message) => logs.push(message));
+
+    expect(() => {
+      sink.onStreamState({ state: "disconnected", cause: "connection closed", retryInMs: 1000 });
+      sink.onStreamState({ state: "reconnected" });
+    }).not.toThrow();
+    await expect(sink.flush()).resolves.toBeUndefined();
+    expect(warning).toHaveBeenCalledTimes(1);
+    expect(logs).toHaveLength(2);
+
+    rmSync(path, { recursive: true });
+    sink.onStreamState({ state: "disconnected", cause: "network unavailable", retryInMs: 2000 });
+    await expect(sink.flush()).resolves.toBeUndefined();
+    expect(JSON.parse(readFileSync(path, "utf-8"))).toMatchObject({ state: "disconnected", retry_in_ms: 2000 });
+    expect(warning).toHaveBeenCalledTimes(1);
   });
 });
 
