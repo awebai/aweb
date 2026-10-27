@@ -32,6 +32,20 @@ export {
 export { certificateIdentityScope, loadTeamCertificate, encodeTeamCertificateHeader, type CertificateIdentityScope, type LegacyCertificateLifetime, type TeamCertificate } from "./identity/certificate.js";
 export { verifyMessage, verifySignedPayload, type VerificationStatus } from "./identity/signing.js";
 export {
+  decodeIdChain,
+  decodeIdChainHeader,
+  encodeIdChainHeader,
+  idCertificateId,
+  idCertificateSigningBytes,
+  parseSignedIdCertificate,
+  type IdCertificate,
+  type IdChain,
+  type IdDecodeRefusal,
+  type IdDecodeResult,
+  type IdKind,
+  type SignedIdCertificate,
+} from "./identity/id_certificates.js";
+export {
   createLocalAWDecryptProvider,
   createLocalAWPinStoreWriter,
   PinStoreCASConflictError,
