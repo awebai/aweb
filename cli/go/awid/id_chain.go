@@ -54,6 +54,18 @@ func IDStatusCacheMode(age *float64, refreshFailed bool) string {
 	}
 	return "unavailable"
 }
+
+// idEvidenceUsable refuses evidence outside the cache bounds. Expired grace
+// requires a failed refresh of last-known-good evidence.
+func idEvidenceUsable(evidence *IDChainEvidence) error {
+	if IDStatusCacheMode(evidence.AgeSeconds, evidence.RefreshFailed) != "unavailable" {
+		return nil
+	}
+	if evidence.RefreshFailed && evidence.AgeSeconds != nil && *evidence.AgeSeconds > 900 {
+		return idCertificateRefusal("status_expired")
+	}
+	return idCertificateRefusal("evidence_unavailable")
+}
 func IDRequestDisposition(r IDChainResult, subject IDChainSubject, originalAuthPassed, humanRequired bool) string {
 	if !originalAuthPassed {
 		return "refuse"
@@ -510,12 +522,8 @@ func verifyIDChain(bundle map[string]any, subject IDChainSubject, evidence *IDCh
 	if evidence == nil {
 		return bad("evidence_unavailable")
 	}
-	if IDStatusCacheMode(evidence.AgeSeconds, evidence.RefreshFailed) == "unavailable" {
-		// Expired grace requires a failed refresh of last-known-good evidence.
-		if evidence.RefreshFailed && evidence.AgeSeconds != nil && *evidence.AgeSeconds > 900 {
-			return bad("status_expired")
-		}
-		return bad("evidence_unavailable")
+	if err = idEvidenceUsable(evidence); err != nil {
+		return IDChainResult{}, err
 	}
 	status, err := parseIDStatus(evidence, domain)
 	if err != nil {
