@@ -33,7 +33,6 @@ from aweb_secrets.owners import owner_scope
 from aweb_secrets.policy import Policy
 from aweb_secrets.secret import SecretRecord
 from tests.production_authority import authority, install, install_audit_receiver, no_dns_override
-from tests.test_approval_email import contents
 from tests.test_composition import settings
 from tests.test_console_bootstrap import delivered_url
 from tests.test_jobs import after as job_after
@@ -341,9 +340,8 @@ async def approval_request(root, kind):
         headers=member.headers(aud=AUDIENCE, method="POST", path=path, body=raw)
         | {"Content-Type": "application/json"},
     )
-    assert reply.status_code == 200 and reply.json()["state"] == "awaiting_approval", reply.text
-    [notice] = [mail for mail in smtp.received if "/approvals#token=" in mail.content.decode()]
-    _, _, _, url = contents(notice)
+    assert reply.status_code == 202 and reply.json()["state"] == "awaiting_approval", reply.text
+    url = delivered_url(smtp.received, contact=body["contact"], path="/approvals")
     assert urlsplit(url).path == "/approvals"
     [token] = parse_qs(urlsplit(url).fragment)["token"]
     return token
