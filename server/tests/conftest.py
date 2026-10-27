@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import time
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,58 @@ os.environ.setdefault("APP_ENV", "testing")
 os.environ.setdefault("ENVIRONMENT", "testing")
 os.environ.setdefault("AWEB_INTERNAL_AUTH_SECRET", "test-internal-auth-secret")
 os.environ.setdefault("AWID_SERVICE_TOKEN", "aweb-server-tests-service-token-32-bytes")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def worker_test_services(worker_id):
+    if worker_id == "master":
+        yield
+        return
+    from pgdbm.fixtures.conftest import DEFAULT_TEST_CONFIG
+    from redis import Redis
+    from redis.exceptions import RedisError
+
+    previous_prefix = DEFAULT_TEST_CONFIG.test_db_prefix
+    previous_url = os.environ.get("REDIS_URL")
+    # pgdbm retains a fresh UUID database per test, with visible worker ownership.
+    DEFAULT_TEST_CONFIG.test_db_prefix = f"test_{worker_id}_"
+    # Redis pub/sub crosses logical databases, so each worker needs a process,
+    # not merely a different /db number. A short socket also fits macOS limits.
+    with tempfile.TemporaryDirectory(prefix="aw-test-redis-", dir="/tmp") as root:
+        socket = Path(root) / "redis.sock"
+        with (Path(root) / "redis.log").open("w+") as log:
+            process = subprocess.Popen(
+                ["redis-server", "--port", "0", "--unixsocket", str(socket),
+                 "--unixsocketperm", "700", "--save", "", "--appendonly", "no"],
+                stdout=log, stderr=subprocess.STDOUT,
+            )
+            try:
+                os.environ["REDIS_URL"] = f"unix://{socket}"
+                with Redis.from_url(os.environ["REDIS_URL"]) as client:
+                    deadline = time.monotonic_ns() + 5_000_000_000
+                    while True:
+                        try:
+                            client.ping()
+                            break
+                        except RedisError:
+                            if process.poll() is not None or time.monotonic_ns() >= deadline:
+                                log.seek(0)
+                                pytest.fail(f"Worker Redis did not start: {log.read()}")
+                            time.sleep(.02)
+                yield
+            finally:
+                DEFAULT_TEST_CONFIG.test_db_prefix = previous_prefix
+                if previous_url is None:
+                    os.environ.pop("REDIS_URL", None)
+                else:
+                    os.environ["REDIS_URL"] = previous_url
+                if process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=5)
 
 
 @pytest_asyncio.fixture
