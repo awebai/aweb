@@ -26,7 +26,8 @@ const (
 	IDStatusOutageGraceSeconds = 900
 )
 
-// ErrMalformedIDStatus is a successful status answer that is not a JSON object.
+// ErrMalformedIDStatus is a successful status answer that is not a JSON
+// object within the response size bound.
 var ErrMalformedIDStatus = errors.New("malformed identity-tree status answer")
 
 // IDStatusClient reads identity-tree status for the chain verifier. Evidence
@@ -94,8 +95,9 @@ func (c *IDStatusClient) FetchIDCertificateStatus(ctx context.Context, domain st
 	}
 	var raw json.RawMessage
 	if err := c.Registry.requestJSON(ctx, "POST", registryURL, idStatusPath, nil, request, &raw); err != nil {
+		// A successful answer that cannot be read is malformed, not an outage.
 		var syntax *json.SyntaxError
-		if errors.As(err, &syntax) {
+		if errors.As(err, &syntax) || errors.Is(err, ErrResponseTooLarge) {
 			return nil, ErrMalformedIDStatus
 		}
 		return nil, err
