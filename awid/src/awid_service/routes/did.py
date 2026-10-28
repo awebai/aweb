@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
 from awid_service.deps import get_db as get_db_infra
@@ -366,8 +367,13 @@ async def get_key(request: Request, did_aw: str) -> DidKeyResponse:
             """,
             did_aw,
         )
+        enrollment = await tx.fetch_one("SELECT domain FROM {{tables.id_identities}} WHERE id = $1", did_aw)
         if row is None:
-            raise HTTPException(status_code=404, detail="not found")
+            # A missing key still states enrollment: an enrolled ID never reads as legacy.
+            return JSONResponse(
+                status_code=404,
+                content={"detail": "not found", "id_tree": _id_tree_enrollment(enrollment).model_dump()},
+            )
 
         head = await tx.fetch_one(
             """
@@ -391,7 +397,6 @@ async def get_key(request: Request, did_aw: str) -> DidKeyResponse:
             current_did_key=row["current_did_key"],
             now=_now(),
         )
-        enrollment = await tx.fetch_one("SELECT domain FROM {{tables.id_identities}} WHERE id = $1", did_aw)
 
     return DidKeyResponse(
         did_aw=row["did_aw"],
@@ -409,10 +414,14 @@ async def get_key(request: Request, did_aw: str) -> DidKeyResponse:
             timestamp=head["timestamp"],
         ),
         encryption_key=_assertion_from_row(encryption_row),
-        id_tree=IdTreeEnrollment(enrolled=False) if enrollment is None else IdTreeEnrollment(
-            enrolled=True, domain=enrollment["domain"],
-        ),
+        id_tree=_id_tree_enrollment(enrollment),
     )
+
+
+def _id_tree_enrollment(enrollment) -> IdTreeEnrollment:
+    if enrollment is None:
+        return IdTreeEnrollment(enrolled=False)
+    return IdTreeEnrollment(enrolled=True, domain=enrollment["domain"])
 
 
 @router.post(

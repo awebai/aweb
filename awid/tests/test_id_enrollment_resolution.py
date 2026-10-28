@@ -15,7 +15,7 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from awid.registry import CachedRegistryClient, IDTreeEnrollment, RegistryClient
+from awid.registry import CachedRegistryClient, DIDKeyNotFoundError, IDTreeEnrollment, RegistryClient, RegistryError
 
 from awid_service.routes import did as did_routes
 
@@ -223,3 +223,84 @@ def test_every_key_response_case_is_consumed_here():
     assert {case["expected_parse"]["state"] for case in KEY_RESPONSE_CASES} == {
         "enrolled", "not_enrolled", "malformed", "unknown",
     }
+
+
+# ---------------------------------------------------------------------------
+# A missing key mapping still states enrollment (security N66)
+# ---------------------------------------------------------------------------
+
+
+async def _drop_mapping(awid_db_infra, did_aw_value: str) -> None:
+    db = awid_db_infra.get_manager("aweb")
+    await db.execute("DELETE FROM {{tables.did_aw_mappings}} WHERE did_aw = $1", did_aw_value)
+
+
+@pytest.mark.asyncio
+async def test_an_enrolled_id_without_a_key_mapping_is_still_enrolled(tree, awid_db_infra):
+    await _drop_mapping(awid_db_infra, did_aw("alice"))
+    resp = await tree.client.get(f"/v1/did/{did_aw('alice')}/key")
+    assert resp.status_code == 404
+    assert resp.json() == {"detail": "not found", "id_tree": {"enrolled": True, "domain": DOMAIN}}
+
+
+@pytest.mark.asyncio
+async def test_a_never_registered_id_is_proven_not_enrolled(tree):
+    unknown = did_aw("other_human")
+    resp = await tree.client.get(f"/v1/did/{unknown}/key")
+    assert resp.status_code == 404
+    assert resp.json() == {"detail": "not found", "id_tree": {"enrolled": False}}
+
+
+@pytest.mark.asyncio
+async def test_the_client_carries_enrollment_on_a_missing_key(tree, awid_db_infra):
+    await _drop_mapping(awid_db_infra, did_aw("alice"))
+    client = CachedRegistryClient(ORIGIN, FakeRedis(), transport=httpx.ASGITransport(app=tree.client.app))
+    try:
+        with pytest.raises(DIDKeyNotFoundError) as enrolled:
+            await client.resolve_key_fresh(did_aw("alice"))
+        with pytest.raises(DIDKeyNotFoundError) as unknown:
+            await client.resolve_key(did_aw("other_human"))
+    finally:
+        await client.aclose()
+    assert enrolled.value.id_tree == IDTreeEnrollment(enrolled=True, domain=DOMAIN)
+    assert unknown.value.id_tree == IDTreeEnrollment(enrolled=False, domain=None)
+    assert isinstance(enrolled.value, RegistryError) and enrolled.value.status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body, expected", [
+    ({"detail": "not found"}, None),
+    ({"detail": "not found", "id_tree": {"enrolled": False}}, IDTreeEnrollment(enrolled=False, domain=None)),
+    ({"detail": "not found", "id_tree": {"enrolled": True, "domain": DOMAIN}}, IDTreeEnrollment(enrolled=True, domain=DOMAIN)),
+], ids=["old-404-is-unknown", "stated-not-enrolled", "stated-enrolled"])
+async def test_a_missing_key_states_enrollment_only_when_the_registry_says(body, expected):
+    client = RegistryClient(ORIGIN, transport=httpx.MockTransport(lambda request: httpx.Response(404, json=body)))
+    try:
+        with pytest.raises(DIDKeyNotFoundError) as missing:
+            await client.resolve_key(did_aw("alice"))
+    finally:
+        await client.aclose()
+    assert missing.value.id_tree == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("id_tree", [None, {"enrolled": True}, {"enrolled": "false"}, {"enrolled": False, "domain": DOMAIN}])
+async def test_a_malformed_enrollment_on_a_missing_key_rejects(id_tree):
+    body = {"detail": "not found", "id_tree": id_tree}
+    client = RegistryClient(ORIGIN, transport=httpx.MockTransport(lambda request: httpx.Response(404, json=body)))
+    try:
+        with pytest.raises(ValueError):
+            await client.resolve_key(did_aw("alice"))
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_a_missing_key_with_an_unreadable_body_is_unknown():
+    client = RegistryClient(ORIGIN, transport=httpx.MockTransport(lambda request: httpx.Response(404, content=b"not found")))
+    try:
+        with pytest.raises(DIDKeyNotFoundError) as missing:
+            await client.resolve_key(did_aw("alice"))
+    finally:
+        await client.aclose()
+    assert missing.value.id_tree is None
