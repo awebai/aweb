@@ -135,7 +135,7 @@
         "awid/tests/test_id_certificate_signer.py::test_returned_certificate_is_the_snapshot_actually_signed"
       ],
       "acceptance": "Shape before one sync-or-awaitable callback; answered issuer and signature strictly verified; no key custody, I/O or issuance-authority grant.",
-      "candidate_head": "e64a63208bba1a02c015720677a9659b86eb5a64",
+      "candidate_head": "1b1e60a4966bdb765063a259e2a07265baebebe9",
       "ed25519_profile": "strict",
       "sites": [
         {
@@ -406,7 +406,7 @@
         "awid/tests/test_id_evidence_clock.py::test_integer_nanoseconds_preserve_a_boundary_above_float_precision"
       ],
       "acceptance": "Whole chain with independent issuer/subject keys, R1-R3, witnessed sequence, replacement cutoff, cascade and request disposition.",
-      "candidate_head": "e64a63208bba1a02c015720677a9659b86eb5a64",
+      "candidate_head": "1b1e60a4966bdb765063a259e2a07265baebebe9",
       "ed25519_profile": "strict",
       "sites": [
         {
