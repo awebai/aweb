@@ -96,6 +96,32 @@ projection requires the fresh response before deciding, as `expected_key_refetch
 pins. Malformed response handling may raise the client's typed response error;
 it must not return not_enrolled.
 
+`key_resolution_outcomes` adds the HTTP/error and refresh lifecycle around
+that same carrier. A key-route 404 keeps `detail` and has top-level `id_tree`;
+its stated enrollment is computed independently of the missing mapping, and
+the SDK preserves it as typed data on the refusal. A missing 404 field is
+unknown, never not_enrolled. `expected_parse` applies when there is a response
+object; `expected_enrollment` is the usable enrollment after the lifecycle.
+`key_response:null` with `http_status:null` means a failed refresh with NO
+response, not a successful JSON null body. Only that failure permits the
+last-known-good enrollment at its true age through 900s. A successful refetch
+that still omits the field is unknown. As in the status vectors, request
+expectations assume original authentication passed and do not extend its
+independent 60s binding bound. A presented chain's differing domain refuses
+before a tree lookup.
+
+`child_requests.requests.root-human-issue` and its matching response freeze
+the namespace-parent first-human CSR. The root operator follows the same
+typed out-of-band, one-shot human approval rules, with fingerprint entry
+BEFORE the CSR fingerprint is displayed. The new operation cases distinguish
+this exchange from same-machine `human init --as-root` (direct issuance,
+no invitation or CSR), and pin automatic registration on human import versus
+explicit `--no-register`. The earlier `csr-human-import-remains-pending` now
+sets `no_register:true`; the ordinary human-approval case explicitly records
+the required fingerprint entry/display order. All earlier signed bytes remain
+unchanged. These lifecycle cases are acceptance inputs for the owning S2/S3/S4
+checkpoints, rather than evidence those paths have already been implemented.
+
 ### `member-attribution-v1.json` — superseded, historical only
 
 The [old member attribution proposal](../member-attribution.md) is superseded
