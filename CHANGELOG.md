@@ -10,6 +10,11 @@
   readers/catalogs must land before new emission. Decision 93's scoped
   evidence and landing stop/version-bump conditions are in `docs/hook-events.md`.
 
+- **Security:** build the Go CLI and gateway with Go 1.26.10 and
+  `golang.org/x/net` 0.62.0 to fix standard-library, HTTP and HTML advisories,
+  including HTML parsing/rendering issues GO-2026-6860 and GO-2026-6866.
+  Candidate checks now run the live Go vulnerability audit and fail on refusals.
+
 - Release preparation: server 1.27.35. Update the server test fixtures for
   the shared naapp runtime's integer nanosecond freshness deadlines.
 
