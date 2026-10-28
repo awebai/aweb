@@ -120,3 +120,21 @@ test('the strict point predicate lives at exactly did.ts primeSubgroupPoint and 
  ]) assert.match(check(strict(file,symbol),file,symbol,calls),/shared strict/,`${file} ${symbol} raw`);
  assert.equal(check(legacy(did,'computeStableID'),did,'computeStableID',{'node:crypto.createHash':1}),'');
 });
+
+test('raw curve use in did.ts outside exactly primeSubgroupPoint refuses whatever its row (security R24)',()=>{
+ const did='channel-core/src/identity/did.ts';
+ const raw={'@noble/ed25519.ExtendedPoint.fromHex':1};
+ const row=(symbol,profile)=>({id:'r',repo:'aweb',files:[did],sites:[{file:did,symbol}],ed25519_profile:profile});
+ const check=(symbol,profile,calls)=>checkCatalog([row(symbol,profile)],[{row:'r',file:did,symbol,calls}],[{file:did,symbol,calls}]).join('\n');
+ for(const [symbol,calls] of [
+  ['extractPublicKey.peek',raw],
+  ['anotherFunction',raw],
+  ['anotherFunction',{'@noble/ed25519.verify':1}],
+  ['<module>',raw],
+ ]) assert.match(check(symbol,'legacy',calls),/did\.ts|downgrade|shared strict/,`${symbol} mapped legacy`);
+ assert.match(check('extractPublicKey.peek','legacy',raw),/downgrade/);
+ assert.match(check('primeSubgroupPoint.inner','strict',raw),/shared strict/);
+ assert.match(check('anotherFunction','legacy',raw),/raw curve use in did\.ts/);
+ assert.equal(check('primeSubgroupPoint','strict',raw),'');
+ assert.equal(check('computeStableID','legacy',{'node:crypto.createHash':1}),'');
+});
