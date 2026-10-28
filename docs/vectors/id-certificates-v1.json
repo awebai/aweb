@@ -8,8 +8,7 @@
     "max_decoded_bundle_bytes": 6144,
     "max_header_bytes": 8192,
     "max_status_response_bytes": 131072,
-    "fresh_seconds": 60,
-    "outage_grace_seconds": 900
+    "fresh_seconds": 60
   },
   "keys": {
     "root": {
@@ -7680,68 +7679,6 @@
         "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
       },
       "expected": {
-        "outcome": "nearest_human",
-        "human_id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
-        "identity_valid": true,
-        "kind": "agent",
-        "reason": "verified"
-      },
-      "cache": {
-        "age_seconds": 61,
-        "refresh": "failed"
-      },
-      "expected_cache_mode": "outage_grace",
-      "original_auth": "passed",
-      "expected_request": {
-        "ordinary": "continue",
-        "human_required": "continue"
-      }
-    },
-    {
-      "name": "cached-status-age-900",
-      "chain": [
-        "alice",
-        "coordinator"
-      ],
-      "status": "normal",
-      "subject": {
-        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
-        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
-        "team_member_did_aw": null,
-        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
-      },
-      "expected": {
-        "outcome": "nearest_human",
-        "human_id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
-        "identity_valid": true,
-        "kind": "agent",
-        "reason": "verified"
-      },
-      "cache": {
-        "age_seconds": 900,
-        "refresh": "failed"
-      },
-      "expected_cache_mode": "outage_grace",
-      "original_auth": "passed",
-      "expected_request": {
-        "ordinary": "continue",
-        "human_required": "continue"
-      }
-    },
-    {
-      "name": "cached-status-age-901",
-      "chain": [
-        "alice",
-        "coordinator"
-      ],
-      "status": "normal",
-      "subject": {
-        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
-        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
-        "team_member_did_aw": null,
-        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
-      },
-      "expected": {
         "outcome": "unavailable",
         "human_id": null,
         "identity_valid": null,
@@ -7749,7 +7686,7 @@
         "reason": "status_expired"
       },
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "expected_cache_mode": "unavailable",
@@ -8061,7 +7998,7 @@
       },
       "auth_lane": "team",
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "tree_lookup": false,
@@ -8128,7 +8065,7 @@
         "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
       },
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8163,7 +8100,7 @@
         "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
       },
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8196,7 +8133,7 @@
       "presented_chain": false,
       "resolve_current_head": true,
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8224,7 +8161,7 @@
       },
       "auth_lane": "identity",
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "tree_lookup": false,
@@ -8291,7 +8228,7 @@
         "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
       },
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8326,7 +8263,7 @@
         "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
       },
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8359,7 +8296,7 @@
       "presented_chain": false,
       "resolve_current_head": true,
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8387,7 +8324,7 @@
       },
       "auth_lane": "grant",
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "tree_lookup": false,
@@ -8454,7 +8391,7 @@
         "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
       },
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8489,7 +8426,7 @@
         "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
       },
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8522,7 +8459,7 @@
       "presented_chain": false,
       "resolve_current_head": true,
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8550,7 +8487,7 @@
       },
       "auth_lane": "federation",
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "tree_lookup": false,
@@ -8617,7 +8554,7 @@
         "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
       },
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8652,7 +8589,7 @@
         "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
       },
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8685,7 +8622,7 @@
       "presented_chain": false,
       "resolve_current_head": true,
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8713,7 +8650,7 @@
       },
       "auth_lane": "hook",
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "tree_lookup": false,
@@ -8780,7 +8717,7 @@
         "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
       },
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8815,7 +8752,7 @@
         "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
       },
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8848,7 +8785,7 @@
       "presented_chain": false,
       "resolve_current_head": true,
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8886,7 +8823,7 @@
       }
     },
     {
-      "name": "tree-grace-does-not-extend-original-key-binding",
+      "name": "tree-evidence-does-not-replace-original-key-binding",
       "chain": [
         "alice",
         "coordinator"
@@ -8906,8 +8843,8 @@
         "reason": "verified"
       },
       "cache": {
-        "age_seconds": 61,
-        "refresh": "failed"
+        "age_seconds": 0,
+        "refresh": "not_needed"
       },
       "original_auth": "unavailable",
       "expected_request": {
@@ -9675,68 +9612,6 @@
         "kind": null,
         "reason": "evidence_unavailable"
       },
-      "original_auth": "passed",
-      "expected_request": {
-        "ordinary": "continue",
-        "human_required": "refuse"
-      }
-    },
-    {
-      "name": "cached-status-age-61-without-failed-refresh",
-      "chain": [
-        "alice",
-        "coordinator"
-      ],
-      "status": "normal",
-      "subject": {
-        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
-        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
-        "team_member_did_aw": null,
-        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
-      },
-      "expected": {
-        "outcome": "unavailable",
-        "human_id": null,
-        "identity_valid": null,
-        "kind": null,
-        "reason": "evidence_unavailable"
-      },
-      "cache": {
-        "age_seconds": 61,
-        "refresh": "not_needed"
-      },
-      "expected_cache_mode": "unavailable",
-      "original_auth": "passed",
-      "expected_request": {
-        "ordinary": "continue",
-        "human_required": "refuse"
-      }
-    },
-    {
-      "name": "cached-status-age-901-without-failed-refresh",
-      "chain": [
-        "alice",
-        "coordinator"
-      ],
-      "status": "normal",
-      "subject": {
-        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
-        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
-        "team_member_did_aw": null,
-        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
-      },
-      "expected": {
-        "outcome": "unavailable",
-        "human_id": null,
-        "identity_valid": null,
-        "kind": null,
-        "reason": "evidence_unavailable"
-      },
-      "cache": {
-        "age_seconds": 901,
-        "refresh": "not_needed"
-      },
-      "expected_cache_mode": "unavailable",
       "original_auth": "passed",
       "expected_request": {
         "ordinary": "continue",
@@ -11230,7 +11105,7 @@
         "invitation_live": true,
         "token_possession": true,
         "interactive": true,
-        "recipient_key_confirmed": false
+        "confirmed": false
       },
       "expected": {
         "accepted": false,
@@ -11250,7 +11125,7 @@
         "recipient": "fixed privately",
         "invitation_live": true,
         "interactive": false,
-        "recipient_key_confirmed": true
+        "confirmed": true
       },
       "expected": {
         "accepted": false,
@@ -11271,7 +11146,7 @@
         "invitation_live": true,
         "interactive": true,
         "agent_run": true,
-        "recipient_key_confirmed": true
+        "confirmed": true
       },
       "expected": {
         "accepted": false,
@@ -11292,7 +11167,7 @@
         "invitation_live": true,
         "interactive": false,
         "auto_approve": "--yes",
-        "recipient_key_confirmed": true
+        "confirmed": true
       },
       "expected": {
         "accepted": false,
@@ -11302,7 +11177,7 @@
       }
     },
     {
-      "name": "csr-mismatched-confirmed-fingerprint-refuses",
+      "name": "csr-declined-fingerprint-confirmation-refuses",
       "action": "child_request_approve",
       "input": {
         "request": "human-issue",
@@ -11313,40 +11188,15 @@
         "invitation_live": true,
         "interactive": true,
         "agent_run": false,
-        "recipient_key_confirmed": true,
-        "confirmed_fingerprint": "00000000-00000000-00000000-00000000",
-        "out_of_band_channel": true
+        "confirmed": false
       },
       "expected": {
         "accepted": false,
-        "reason": "recipient_key_mismatch",
+        "reason": "human_approval_required",
         "parent_signatures": 0,
         "registration_requests": 0,
-        "invitation_void": true,
-        "request_state": "failed"
-      }
-    },
-    {
-      "name": "csr-approval-must-use-separate-trusted-channel",
-      "action": "child_request_approve",
-      "input": {
-        "request": "human-issue",
-        "mode": "self_custodial",
-        "parent": "alice",
-        "invitation_id": "10000000-0000-4000-8000-000000000001",
-        "recipient": "fixed privately",
-        "invitation_live": true,
-        "interactive": true,
-        "agent_run": false,
-        "recipient_key_confirmed": true,
-        "confirmed_fingerprint": "7599776c-3085e3f9-da0d1307-1eb0b4ab",
-        "out_of_band_channel": false
-      },
-      "expected": {
-        "accepted": false,
-        "reason": "human_approval_required",
-        "parent_signatures": 0,
-        "registration_requests": 0
+        "invitation_void": false,
+        "request_state": "pending"
       }
     },
     {
@@ -11361,11 +11211,8 @@
         "invitation_live": true,
         "interactive": true,
         "agent_run": false,
-        "recipient_key_confirmed": true,
-        "confirmed_fingerprint": "7599776c-3085e3f9-da0d1307-1eb0b4ab",
-        "out_of_band_channel": true,
         "issued_at": "2026-10-26T00:02:00Z",
-        "csr_fingerprint_shown_before_entry": false
+        "confirmed": true
       },
       "expected": {
         "accepted": true,
@@ -11390,11 +11237,9 @@
         "invitation_live": true,
         "interactive": true,
         "agent_run": false,
-        "recipient_key_confirmed": true,
-        "confirmed_fingerprint": "7599776c-3085e3f9-da0d1307-1eb0b4ab",
-        "out_of_band_channel": true,
         "prior_response": "human-issued",
-        "retry": true
+        "retry": true,
+        "confirmed": true
       },
       "expected": {
         "accepted": true,
@@ -11519,9 +11364,7 @@
         "invitation_live": false,
         "interactive": true,
         "agent_run": false,
-        "recipient_key_confirmed": true,
-        "confirmed_fingerprint": "7599776c-3085e3f9-da0d1307-1eb0b4ab",
-        "out_of_band_channel": true
+        "confirmed": true
       },
       "expected": {
         "accepted": false,
@@ -11542,10 +11385,8 @@
         "invitation_live": true,
         "interactive": true,
         "agent_run": false,
-        "recipient_key_confirmed": true,
-        "confirmed_fingerprint": "7599776c-3085e3f9-da0d1307-1eb0b4ab",
-        "out_of_band_channel": true,
-        "parent_status_after_wait": "alice-revoked-now"
+        "parent_status_after_wait": "alice-revoked-now",
+        "confirmed": true
       },
       "expected": {
         "accepted": false,
@@ -11706,12 +11547,9 @@
         "invitation_live": true,
         "interactive": true,
         "agent_run": false,
-        "recipient_key_confirmed": true,
-        "confirmed_fingerprint": "b62e867f-a2f33afe-62d5d6b1-642e1621",
-        "out_of_band_channel": true,
         "issued_at": "2026-10-26T00:00:00Z",
-        "csr_fingerprint_shown_before_entry": false,
-        "approval_role": "namespace_controller_operator"
+        "approval_role": "namespace_controller_operator",
+        "confirmed": true
       },
       "expected": {
         "accepted": true,
@@ -11736,12 +11574,9 @@
         "invitation_live": true,
         "interactive": true,
         "agent_run": true,
-        "recipient_key_confirmed": true,
-        "confirmed_fingerprint": "b62e867f-a2f33afe-62d5d6b1-642e1621",
-        "out_of_band_channel": true,
         "issued_at": "2026-10-26T00:00:00Z",
-        "csr_fingerprint_shown_before_entry": false,
-        "approval_role": "namespace_controller_operator"
+        "approval_role": "namespace_controller_operator",
+        "confirmed": true
       },
       "expected": {
         "accepted": false,
@@ -11762,12 +11597,9 @@
         "invitation_live": true,
         "interactive": false,
         "agent_run": false,
-        "recipient_key_confirmed": true,
-        "confirmed_fingerprint": "b62e867f-a2f33afe-62d5d6b1-642e1621",
-        "out_of_band_channel": true,
         "issued_at": "2026-10-26T00:00:00Z",
-        "csr_fingerprint_shown_before_entry": false,
-        "approval_role": "namespace_controller_operator"
+        "approval_role": "namespace_controller_operator",
+        "confirmed": true
       },
       "expected": {
         "accepted": false,
@@ -11777,7 +11609,7 @@
       }
     },
     {
-      "name": "csr-root-human-fingerprint-mismatch-voids",
+      "name": "csr-root-human-declined-confirmation-refuses",
       "action": "child_request_approve",
       "input": {
         "request": "root-human-issue",
@@ -11788,46 +11620,17 @@
         "invitation_live": true,
         "interactive": true,
         "agent_run": false,
-        "recipient_key_confirmed": true,
-        "confirmed_fingerprint": "00000000-00000000-00000000-00000000",
-        "out_of_band_channel": true,
         "issued_at": "2026-10-26T00:00:00Z",
-        "csr_fingerprint_shown_before_entry": false,
-        "approval_role": "namespace_controller_operator"
+        "approval_role": "namespace_controller_operator",
+        "confirmed": false
       },
       "expected": {
         "accepted": false,
-        "reason": "recipient_key_mismatch",
+        "reason": "human_approval_required",
         "parent_signatures": 0,
         "registration_requests": 0,
-        "invitation_void": true,
-        "request_state": "failed"
-      }
-    },
-    {
-      "name": "csr-fingerprint-entry-must-precede-display",
-      "action": "child_request_approve",
-      "input": {
-        "request": "root-human-issue",
-        "mode": "self_custodial",
-        "parent": "root",
-        "invitation_id": "10000000-0000-4000-8000-000000000008",
-        "recipient": "fixed privately",
-        "invitation_live": true,
-        "interactive": true,
-        "agent_run": false,
-        "recipient_key_confirmed": true,
-        "confirmed_fingerprint": "b62e867f-a2f33afe-62d5d6b1-642e1621",
-        "out_of_band_channel": true,
-        "issued_at": "2026-10-26T00:00:00Z",
-        "csr_fingerprint_shown_before_entry": true,
-        "approval_role": "namespace_controller_operator"
-      },
-      "expected": {
-        "accepted": false,
-        "reason": "human_approval_required",
-        "parent_signatures": 0,
-        "registration_requests": 0
+        "invitation_void": false,
+        "request_state": "pending"
       }
     },
     {
@@ -13035,8 +12838,7 @@
           "team_member_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2"
         },
         "status": "normal",
-        "cache_age_seconds": 0,
-        "refresh_failed": false
+        "cache_age_seconds": 0
       }
     },
     {
@@ -13318,7 +13120,7 @@
       }
     },
     {
-      "name": "key-response-id-tree-absent-past-grace",
+      "name": "key-response-id-tree-absent-after-expiry",
       "key_response": {},
       "expected_parse": {
         "state": "unknown",
@@ -13331,8 +13133,7 @@
       },
       "omission_context": {
         "original_auth": "passed",
-        "prior_evidence_age_seconds": 901,
-        "refresh_failed": true
+        "prior_evidence_age_seconds": 61
       }
     },
     {
@@ -13361,8 +13162,7 @@
           "team_member_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2"
         },
         "status": "alice-revoked-now",
-        "cache_age_seconds": 0,
-        "refresh_failed": false
+        "cache_age_seconds": 0
       }
     },
     {
@@ -13391,8 +13191,7 @@
           "team_member_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2"
         },
         "status": "root-replaced",
-        "cache_age_seconds": 0,
-        "refresh_failed": false
+        "cache_age_seconds": 0
       }
     },
     {
@@ -13421,8 +13220,7 @@
           "team_member_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2"
         },
         "status": "normal",
-        "cache_age_seconds": 0,
-        "refresh_failed": false
+        "cache_age_seconds": 0
       },
       "cached_key_response": {},
       "expected_key_refetch": true
@@ -13497,8 +13295,7 @@
         },
         "self_derived_key_matches": true,
         "status": "normal",
-        "cache_age_seconds": 0,
-        "refresh_failed": false
+        "cache_age_seconds": 0
       }
     },
     {
@@ -13535,8 +13332,7 @@
         },
         "self_derived_key_matches": true,
         "status": "alice-revoked-now",
-        "cache_age_seconds": 0,
-        "refresh_failed": false
+        "cache_age_seconds": 0
       }
     },
     {
@@ -13573,8 +13369,7 @@
         },
         "self_derived_key_matches": true,
         "status": "root-replaced",
-        "cache_age_seconds": 0,
-        "refresh_failed": false
+        "cache_age_seconds": 0
       }
     },
     {
@@ -13644,7 +13439,7 @@
       }
     },
     {
-      "name": "key-resolution-failed-refresh-age-900",
+      "name": "key-resolution-failed-refresh-age-60",
       "http_status": null,
       "key_response": null,
       "cached_key_response": {
@@ -13653,7 +13448,7 @@
           "domain": "example.com"
         }
       },
-      "cached_age_seconds": 900,
+      "cached_age_seconds": 60,
       "refresh": "failed",
       "expected_enrollment": {
         "state": "enrolled",
@@ -13673,12 +13468,11 @@
           "team_member_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2"
         },
         "status": "normal",
-        "cache_age_seconds": 900,
-        "refresh_failed": true
+        "cache_age_seconds": 60
       }
     },
     {
-      "name": "key-resolution-failed-refresh-age-901",
+      "name": "key-resolution-failed-refresh-age-61",
       "http_status": null,
       "key_response": null,
       "cached_key_response": {
@@ -13687,7 +13481,7 @@
           "domain": "example.com"
         }
       },
-      "cached_age_seconds": 901,
+      "cached_age_seconds": 61,
       "refresh": "failed",
       "expected_enrollment": {
         "state": "unknown",
@@ -13707,8 +13501,7 @@
           "team_member_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2"
         },
         "status": "normal",
-        "cache_age_seconds": 901,
-        "refresh_failed": true
+        "cache_age_seconds": 61
       }
     },
     {
