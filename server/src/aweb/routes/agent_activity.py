@@ -30,7 +30,7 @@ local count = redis.call('INCR', KEYS[1])
 if count == 1 then
   redis.call('EXPIRE', KEYS[1], ARGV[1])
 end
-return {count, redis.call('TTL', KEYS[1])}
+return {count, redis.call('PTTL', KEYS[1])}
 """
 
 class PublishActivityRequest(BaseModel):
@@ -53,10 +53,12 @@ def _unavailable() -> HTTPException:
 
 
 async def _enforce_rate(redis, agent_id: str) -> None:
-    count, ttl = await redis.eval(_RATE_SCRIPT, 1, f"agent-activity-rate:{agent_id}", RATE_WINDOW_SECONDS)
+    count, remaining_ms = await redis.eval(_RATE_SCRIPT, 1, f"agent-activity-rate:{agent_id}", RATE_WINDOW_SECONDS)
     if int(count) <= RATE_LIMIT:
         return
-    retry_after = int(ttl) if int(ttl) > 0 else RATE_WINDOW_SECONDS
+    # Ceiling seconds keep Retry-After from expiring before the Redis window.
+    remaining_ms = int(remaining_ms)
+    retry_after = (remaining_ms + 999) // 1000 if remaining_ms > 0 else RATE_WINDOW_SECONDS
     raise HTTPException(
         status_code=429,
         detail=f"rate_limited: at most {RATE_LIMIT} activity events per agent every {RATE_WINDOW_SECONDS} seconds",
