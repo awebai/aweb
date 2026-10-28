@@ -33,6 +33,9 @@ _LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 _B64URL = re.compile(r"[A-Za-z0-9_-]+")
 _BASE58 = re.compile(r"[1-9A-HJ-NP-Za-km-z]+")
 _ED25519_ORDER = 2**252 + 27742317777372353535851937790883648493
+_STATUS_FRESH_SECONDS = 60
+_STATUS_GRACE_SECONDS = 900
+_NS_PER_SECOND = 1_000_000_000
 
 
 class IDCertificateError(ValueError):
@@ -284,14 +287,43 @@ class IDChainEvidence:
     namespace_authority: dict[str, Any]
     age_seconds: float | None
     refresh_failed: bool = False
+    observed_at_ns: int | None = None
+
+    def cache_mode_at(self, now_ns: int) -> str:
+        """Recheck a producer-anchored snapshot after waiting, without I/O.
+
+        The producer samples its process-local monotonic clock no later than
+        the observation to which age_seconds applies. Consumers use that same
+        clock, after their last lock wait. Neither the anchor nor the age is
+        renewed by this check; an anchor is never serialized or shared across
+        processes. This reports freshness only, not chain validity/authority.
+        """
+        if (
+            type(self.observed_at_ns) is not int or self.observed_at_ns < 0
+            or type(now_ns) is not int or now_ns < self.observed_at_ns
+        ):
+            return 'unavailable'
+        age = self.age_seconds
+        if type(age) not in (int, float) or age < 0 or (type(age) is float and not math.isfinite(age)):
+            return 'unavailable'
+        # Round towards earlier expiry. No absolute clock/deadline passes
+        # through a float, including on hosts with very large clock values.
+        numerator, denominator = age.as_integer_ratio()
+        age_ns = (numerator * _NS_PER_SECOND + denominator - 1) // denominator
+        elapsed_ns = now_ns - self.observed_at_ns
+        return _status_cache_mode(age_ns + elapsed_ns, self.refresh_failed, unit=_NS_PER_SECOND)
+
+
+def _status_cache_mode(age: int | float, refresh_failed: bool, *, unit: int = 1) -> str:
+    if age <= _STATUS_FRESH_SECONDS * unit:
+        return 'fresh'
+    return 'outage_grace' if refresh_failed and age <= _STATUS_GRACE_SECONDS * unit else 'unavailable'
 
 
 def status_cache_mode(age_seconds: float | None, refresh_failed: bool) -> str:
     if type(age_seconds) not in (int, float) or not math.isfinite(age_seconds) or age_seconds < 0:
         return 'unavailable'
-    if age_seconds <= 60:
-        return 'fresh'
-    return 'outage_grace' if refresh_failed and age_seconds <= 900 else 'unavailable'
+    return _status_cache_mode(age_seconds, refresh_failed)
 
 
 def status_request(bundle: dict[str, Any] | None, subject: dict[str, Any], *, domain: str | None = None) -> dict[str, Any] | None:
