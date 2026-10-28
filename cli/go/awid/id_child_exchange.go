@@ -44,11 +44,11 @@ func ReceiveIDResignRequest(store IDIssuanceStore, raw []byte) (*IDIssuanceEntry
 		if entry.Resign.RequestID == requestID && entry.Resign.Request == string(raw) {
 			return entry, nil
 		}
-		if entry.Resign.RequestID == requestID || entry.Resign.State != IDResignFailed {
+		if entry.Resign.RequestID == requestID || entry.Resign.State != IDRequestFailed {
 			return nil, idCertificateRefusal("request_conflict")
 		}
 	}
-	entry.Resign = &IDResignRecord{RequestID: requestID, Request: string(raw), State: IDResignPending}
+	entry.Resign = &IDRequestRecord{RequestID: requestID, Request: string(raw), State: IDRequestPending}
 	if err := store.Put(entry); err != nil {
 		return nil, err
 	}
@@ -66,9 +66,9 @@ func ApproveIDResignRequest(store IDIssuanceStore, requestID, parentID string, p
 		return nil, err
 	}
 	switch entry.Resign.State {
-	case IDResignIssued:
+	case IDRequestIssued:
 		return idResignIssuedResponse(store, entry, now)
-	case IDResignFailed:
+	case IDRequestFailed:
 		return nil, fmt.Errorf("re-sign request %s was refused", requestID)
 	}
 	signed, err := ParseIDCertificateRequest([]byte(entry.Resign.Request))
@@ -101,7 +101,7 @@ func ApproveIDResignRequest(store IDIssuanceStore, requestID, parentID string, p
 		if err != nil {
 			return err
 		}
-		entry.Resign.State = IDResignIssued
+		entry.Resign.State = IDRequestIssued
 		entry.Resign.Response = string(encoded)
 		entry.Resign.NewCertificateID = id
 		if err := store.Put(entry); err != nil {
@@ -126,12 +126,12 @@ func RefuseIDResignRequest(store IDIssuanceStore, requestID string) error {
 		return err
 	}
 	switch entry.Resign.State {
-	case IDResignIssued:
+	case IDRequestIssued:
 		return fmt.Errorf("re-sign request %s was already issued", requestID)
-	case IDResignFailed:
+	case IDRequestFailed:
 		return nil
 	}
-	entry.Resign.State = IDResignFailed
+	entry.Resign.State = IDRequestFailed
 	return store.Put(entry)
 }
 
@@ -142,7 +142,7 @@ func IDResignResponse(store IDIssuanceStore, requestID string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if entry.Resign.State != IDResignIssued {
+	if entry.Resign.State != IDRequestIssued {
 		return nil, fmt.Errorf("re-sign request %s has no response (%s)", requestID, entry.Resign.State)
 	}
 	return []byte(entry.Resign.Response), nil

@@ -15,15 +15,16 @@ type IDCertificateSigner func(payload []byte) (didKey string, signature []byte, 
 // IDIssuanceEntry records one certificate the signer issued. A re-sign
 // request for that certificate attaches to its entry.
 type IDIssuanceEntry struct {
-	CertificateID string          `json:"certificate_id"`
-	Signed        map[string]any  `json:"signed"`
-	RecordedAt    string          `json:"recorded_at,omitempty"`
-	Resign        *IDResignRecord `json:"resign,omitempty"`
+	CertificateID string           `json:"certificate_id"`
+	Signed        map[string]any   `json:"signed"`
+	RecordedAt    string           `json:"recorded_at,omitempty"`
+	Resign        *IDRequestRecord `json:"resign,omitempty"`
 }
 
-// IDResignRecord is the one re-sign exchange of an issued certificate:
-// pending, then issued with its exact response, or failed.
-type IDResignRecord struct {
+// IDRequestRecord is one child request exchange, the re-sign of an issued
+// certificate or the issue under an invitation: pending, then issued with its
+// exact response, or failed.
+type IDRequestRecord struct {
 	RequestID        string `json:"request_id"`
 	Request          string `json:"request"`
 	State            string `json:"state"`
@@ -32,9 +33,9 @@ type IDResignRecord struct {
 }
 
 const (
-	IDResignPending = "pending"
-	IDResignIssued  = "issued"
-	IDResignFailed  = "failed"
+	IDRequestPending = "pending"
+	IDRequestIssued  = "issued"
+	IDRequestFailed  = "failed"
 )
 
 // IDIssuanceStore persists issuance entries durably. Callers hold the

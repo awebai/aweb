@@ -21,7 +21,7 @@ func testIssuanceEntry() *awid.IDIssuanceEntry {
 			"signature":   "sig",
 		},
 		RecordedAt: "2026-10-26T00:04:00Z",
-		Resign:     &awid.IDResignRecord{RequestID: "20000000-0000-4000-8000-000000000004", Request: "{}", State: awid.IDResignPending},
+		Resign:     &awid.IDRequestRecord{RequestID: "20000000-0000-4000-8000-000000000004", Request: "{}", State: awid.IDRequestPending},
 	}
 }
 
