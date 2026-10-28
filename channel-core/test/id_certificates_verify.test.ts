@@ -38,7 +38,6 @@ function evidenceOf(c: any): IdStatusEvidence | null {
     status,
     namespace_authority: c.namespace_authority ?? defaultAuthority(status),
     age_seconds: c.cache ? c.cache.age_seconds : 0,
-    refresh_failed: c.cache ? c.cache.refresh === "failed" : false,
   };
 }
 

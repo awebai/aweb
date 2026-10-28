@@ -30,7 +30,6 @@ function evidence(status: any, authority: Partial<IdStatusEvidence["namespace_au
       ...authority,
     },
     age_seconds: 0,
-    refresh_failed: false,
   };
 }
 
