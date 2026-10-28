@@ -288,3 +288,131 @@ async def test_did_key_only_requests_enforce_presented_chain(privacy_app, monkey
         finally:
             env.app.state.awid_registry_client = writer
             await cached.aclose()
+
+
+MISSING_KEY_CASES = [case for case in VECTORS['key_resolution_outcomes'] if case['http_status'] == 404]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('case', MISSING_KEY_CASES, ids=lambda case: case['name'])
+async def test_missing_key_omission_consumes_the_stated_enrollment(monkeypatch, case):
+    """Unit seam: actual SDK error parsing and S4 binding/verifier/disposition."""
+    from awid.id_certificates import IDChainEvidence, request_disposition
+    from aweb.id_chain_auth import authenticate_id_chain
+
+    subject = case['omission_context']['subject']
+    client = CachedRegistryClient('https://registry.example', _FakeRedis(),
+        transport=httpx.MockTransport(lambda req: httpx.Response(404, json=case['key_response'])))
+    lookups = []
+
+    async def evidence(self, bundle, actual_subject, *, domain):
+        assert bundle is None
+        assert actual_subject == {'id': subject['id'], 'did_key': subject['did_key']}
+        lookups.append(domain)
+        status = VECTORS['status_fixtures'][case['omission_context']['status']]
+        epoch = status['namespace']['epochs'][-1]
+        authority = {'domain': domain, 'dns_name': '_awid.' + domain,
+                     'inherited': False, 'controller_key': epoch['did_key']}
+        return IDChainEvidence(status, authority, age_seconds=0, refresh_failed=False)
+
+    async def forbidden_plain(self, did_aw):
+        pytest.fail('404 omission consulted the ordinary key cache')
+
+    monkeypatch.setattr(CachedRegistryClient, 'id_chain_evidence', evidence)
+    monkeypatch.setattr(CachedRegistryClient, 'resolve_key', forbidden_plain)
+    app = FastAPI()
+    app.state.awid_registry_client = client
+    req = request(app)
+    try:
+        if case['expected_parse']['state'] == 'malformed':
+            with pytest.raises(HTTPException) as refused:
+                await verify_identity_binding(req, did_key=subject['did_key'], did_aw=subject['id'])
+            assert refused.value.status_code == 503
+            assert refused.value.detail == 'identity_binding_unavailable'
+            assert not lookups
+            return
+        binding = await verify_identity_binding(req, did_key=subject['did_key'], did_aw=subject['id'])
+        expected = case['expected_enrollment']
+        assert binding.self_derived
+        assert binding.id_tree == (None if expected['state'] == 'unknown' else
+            IDTreeEnrollment(expected['state'] == 'enrolled', expected['domain']))
+        if case['expected_request']['ordinary'] == 'refuse':
+            with pytest.raises(HTTPException):
+                await authenticate_id_chain(req, binding)
+        else:
+            await authenticate_id_chain(req, binding)
+        assert lookups == ([expected['domain']] if case['expected_tree_lookup'] else [])
+        result = req.state.id_chain_result
+        for required, lane in [(False, 'ordinary'), (True, 'human_required')]:
+            assert request_disposition(result, subject=subject, original_auth_passed=True,
+                                       human_required=required) == case['expected_request'][lane]
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('revoked', [False, True], ids=['never-enrolled-control', 'revoked-mapping-missing'])
+async def test_missing_mapping_does_not_hide_registered_revocation(privacy_app, monkeypatch, revoked):
+    """Real services: a removed mapping must not turn revoked enrollment into legacy."""
+    from awid.did import stable_id_from_did_key
+
+    env = privacy_app
+    actor = env.actors['bob']
+    actor.sk, actor.did = bytes.fromhex(ALICE['seed_hex']), ALICE['did_key']
+    await env.db.execute('UPDATE {{tables.agents}} SET did_key=$1 WHERE agent_id=$2', actor.did, actor.id)
+    stable = stable_id_from_did_key(actor.did)
+    domain = f'awtest-missing-{uuid4().hex}.test'
+    async with registry_listener(env) as (writer, origin):
+        env.registry_app.state.awid_public_origins = (origin,)
+
+        async def exact_dns(selected):
+            assert selected == domain
+            return DomainAuthority(ROOT['did_key'], origin, '_awid.' + domain)
+
+        env.registry_app.dependency_overrides[get_domain_verifier] = lambda: exact_dns
+        monkeypatch.setenv('AWID_REGISTRY_URL', origin)
+        monkeypatch.setenv('AWEB_DATABASE_URL', 'postgresql://unused/test')
+        cached = _build_awid_registry_client(env.app, redis=env.redis)
+        object.__setattr__(cached, '_domain_verifier', exact_dns)
+        env.app.state.awid_registry_client = cached
+        lookups = []
+        production_evidence = CachedRegistryClient.id_chain_evidence
+
+        async def observed_evidence(self, bundle, subject, *, domain):
+            lookups.append(domain)
+            return await production_evidence(self, bundle, subject, domain=domain)
+
+        async def forbidden_plain(self, did_aw):
+            pytest.fail('missing mapping used plain resolve_key')
+
+        try:
+            if revoked:
+                await writer.register_namespace(domain, ROOT['did_key'], bytes.fromhex(ROOT['seed_hex']))
+                assert (await writer.register_did(actor.did, actor.sk)).did_aw == stable
+                human = _signed_fixture_certificate('alice', domain=domain, identity=stable,
+                    parent={'kind': 'namespace', 'id': domain}, issuer='root')
+                receipt = await writer.register_id_certificate(
+                    {'v': 1, 'type': 'aweb.id-chain', 'certificates': [human]},
+                    signer=_fixture_signer('alice'), expected_head=None, invitation_id=None)
+                await writer.revoke_id_certificate(domain, stable, signer=_fixture_signer('root'),
+                                                    expected_head=receipt['certificate_id'])
+                # Partial-restore fixture: enrollment and its history survive,
+                # while the key mapping is absent. No public deletion path exists.
+                await env.registry_db.execute('DELETE FROM {{tables.did_aw_mappings}} WHERE did_aw=$1', stable)
+            key_response = await writer._http_client.get(origin + f'/v1/did/{stable}/key')
+            assert key_response.status_code == 404
+            assert key_response.json()['id_tree'] == ({'enrolled': True, 'domain': domain} if revoked else {'enrolled': False})
+            monkeypatch.setattr(CachedRegistryClient, 'id_chain_evidence', observed_evidence)
+            monkeypatch.setattr(CachedRegistryClient, 'resolve_key', forbidden_plain)
+            body = json.dumps({'to_did': env.actors['carol'].did, 'subject': 'mapping absent', 'body': 'hello'}).encode()
+            before = await env.db.fetch_val('SELECT count(*) FROM {{tables.messages}}')
+            response = await env.client.post('/v1/messages', content=body, headers={
+                **_signed_identity_headers(actor.sk, actor.did, stable, body), 'Content-Type': 'application/json'})
+            assert response.status_code == (403 if revoked else 200), response.text
+            if revoked:
+                assert response.json()['detail'] == 'revoked'
+            assert lookups == ([domain] if revoked else [])
+            assert await env.db.fetch_val('SELECT count(*) FROM {{tables.messages}}') == before + (0 if revoked else 1)
+        finally:
+            env.app.state.awid_registry_client = writer
+            await cached.aclose()
