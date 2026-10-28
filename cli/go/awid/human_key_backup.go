@@ -101,10 +101,12 @@ func ImportHumanKeyBackup(backup, passphrase []byte) (ed25519.PrivateKey, error)
 
 // ValidateHumanKeyBackup checks, without the passphrase, that blob is
 // exactly one encrypted backup in the supported format: one PEM block with
-// only whitespace after it, whose PBES2 parameters this package accepts.
+// only whitespace around it, whose PBES2 parameters this package accepts.
+// pem.Decode skips anything before a block, so the start is checked here.
 func ValidateHumanKeyBackup(blob []byte) error {
+	begin := []byte("-----BEGIN " + humanKeyBackupPEMType + "-----")
 	block, rest := pem.Decode(blob)
-	if block == nil || block.Type != humanKeyBackupPEMType || len(bytes.TrimSpace(rest)) != 0 {
+	if !bytes.HasPrefix(bytes.TrimSpace(blob), begin) || block == nil || block.Type != humanKeyBackupPEMType || len(bytes.TrimSpace(rest)) != 0 {
 		return humanKeyBackupRefusal("unsupported_backup")
 	}
 	return checkHumanKeyBackupParameters(block.Bytes)

@@ -8,6 +8,7 @@ package awid
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 )
 
@@ -51,7 +52,10 @@ type IDHumanApproval struct {
 }
 
 // IDChildRequest is a listed request with the public fields of its
-// invitation. The recipient, child key and request bytes stay private.
+// invitation. The recipient, child key and request bytes stay private. A
+// did:aw id is derived from the child key, so the key's fingerprint can be
+// computed from it: human approval rests on the approver typing what the
+// recipient sent, not on the fingerprint being secret.
 type IDChildRequest struct {
 	RequestID    string         `json:"request_id"`
 	InvitationID string         `json:"invitation_id"`
@@ -74,6 +78,9 @@ func ReceiveIDChildRequest(store IDInvitationStore, issuer map[string]any, raw [
 	r := signed["request"].(map[string]any)
 	if r["operation"] != "issue" {
 		return nil, idCertificateRefusal("invalid_shape")
+	}
+	if !idNewChildIDIsSubjectKeys(r["id"].(string), r["subject_key"].(string)) {
+		return nil, idCertificateRefusal("subject_mismatch")
 	}
 	mismatch := idCertificateRefusal("request_binding_mismatch")
 	inv, err := store.Invitation(r["invitation_id"].(string))
@@ -231,16 +238,21 @@ func idIssuingKey(inv *IDInvitation, parentChain []any, evidence *IDChainEvidenc
 
 // idHumanApproved refuses unless the approving human typed, before seeing
 // it, the fingerprint the recipient sent over a separate trusted channel. A
-// typed fingerprint that differs voids the invitation.
+// well-formed typed fingerprint that differs voids the invitation.
 func idHumanApproved(invitations IDInvitationStore, inv *IDInvitation, approval IDHumanApproval, subjectKey string) error {
-	if !approval.Interactive || approval.AgentRun || approval.AutoApprove || !approval.OutOfBandChannel || approval.FingerprintShownBeforeEntry || approval.EnteredFingerprint == "" {
+	if !approval.Interactive || approval.AgentRun || approval.AutoApprove || !approval.OutOfBandChannel || approval.FingerprintShownBeforeEntry {
+		return idCertificateRefusal("human_approval_required")
+	}
+	// A malformed entry is asked again; only a well-formed one is compared.
+	entered, err := ParseIDKeyFingerprintEntry(approval.EnteredFingerprint)
+	if err != nil {
 		return idCertificateRefusal("human_approval_required")
 	}
 	fingerprint, err := IDKeyFingerprint(subjectKey)
 	if err != nil {
 		return err
 	}
-	if approval.EnteredFingerprint == fingerprint {
+	if entered == fingerprint {
 		return nil
 	}
 	inv.Void = true
@@ -249,6 +261,19 @@ func idHumanApproved(invitations IDInvitationStore, inv *IDInvitation, approval 
 		return err
 	}
 	return idCertificateRefusal("recipient_key_mismatch")
+}
+
+// idNewChildIDIsSubjectKeys checks that a new did:aw child's id is the
+// stable id of its own subject_key; the request codec already holds a did:key
+// child's id to subject_key. An existing child presented under a later key
+// (§6: "for did:aw the receiver independently resolves and checks the current
+// key and continuity") needs resolved evidence and belongs to re-parenting.
+func idNewChildIDIsSubjectKeys(id, subjectKey string) bool {
+	if !strings.HasPrefix(id, "did:aw:") {
+		return true
+	}
+	key, err := ExtractPublicKey(subjectKey)
+	return err == nil && id == ComputeStableID(key)
 }
 
 func idChainEndsIn(chain []any, id string) bool {

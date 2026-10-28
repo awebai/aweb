@@ -7,8 +7,10 @@ package awid
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 const (
@@ -42,6 +44,29 @@ func IDKeyFingerprint(didKey string) (string, error) {
 	}
 	sum := sha256.Sum256(k)
 	h := hex.EncodeToString(sum[:16])
+	return strings.Join([]string{h[0:8], h[8:16], h[16:24], h[24:32]}, "-"), nil
+}
+
+// ParseIDKeyFingerprintEntry reads a fingerprint as a person typed it, after
+// hearing or reading it: case, whitespace and hyphens are ignored, and exactly
+// 32 hex digits must remain. It returns IDKeyFingerprint's form.
+func ParseIDKeyFingerprintEntry(entry string) (string, error) {
+	var digits strings.Builder
+	for _, r := range entry {
+		switch {
+		case r == '-' || unicode.IsSpace(r):
+		case r >= '0' && r <= '9', r >= 'a' && r <= 'f':
+			digits.WriteRune(r)
+		case r >= 'A' && r <= 'F':
+			digits.WriteRune(r - 'A' + 'a')
+		default:
+			return "", fmt.Errorf("a fingerprint is 32 hex digits")
+		}
+	}
+	h := digits.String()
+	if len(h) != 32 {
+		return "", fmt.Errorf("a fingerprint is 32 hex digits")
+	}
 	return strings.Join([]string{h[0:8], h[8:16], h[16:24], h[24:32]}, "-"), nil
 }
 
