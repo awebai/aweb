@@ -17,8 +17,21 @@ from awid.dns_verify import DnsVerificationError
 from awid.pagination import encode_cursor, validate_pagination_params
 from awid_service.delivery_origin import validate_delivery_origin
 from awid.ratelimit import rate_limit_dep
-from awid.dns_auth import validate_did_key as _validate_did_key
+from awid.dns_auth import enforce_timestamp_skew, require_timestamp, validate_did_key as _validate_did_key
+from awid.id_certificates import IDCertificateError, strict_did_key
+from awid_service.id_tree_gate import strict_json_object
 from awid.controller_request import ControllerAuthRoute, verify_controller_json_request
+from awid_service.id_tree_clock import app_clock
+from awid_service.namespace_epochs import (
+    REPLACED,
+    ROTATED,
+    proves_root,
+    has_epoch_history,
+    is_exact,
+    open_epoch,
+    open_epoch_of,
+    retire_namespace_controller,
+)
 from awid_service.routes.dns_namespace_reverify import (
     is_reserved_local_domain,
     reverify_namespace_row,
@@ -30,6 +43,8 @@ logger = logging.getLogger(__name__)
 _MAX_DOMAIN_LENGTH = 256
 _PARENT_AUTH_HEADER = "X-AWEB-Parent-Authorization"
 _PARENT_TIMESTAMP_HEADER = "X-AWEB-Parent-Timestamp"
+_NEW_KEY_AUTH_HEADER = "X-AWEB-New-Key-Authorization"
+_ROTATION_FIELDS = frozenset({"domain", "operation", "from_seq", "previous_did_key", "new_did_key"})
 
 
 async def _verify_controller_signature(
@@ -122,6 +137,69 @@ async def _verify_parent_namespace_authorization(
         timestamp_header=_PARENT_TIMESTAMP_HEADER,
         signed_payload_header="X-AWEB-Parent-Signed-Payload",
     )
+
+
+async def _open_first_epoch_for_existing_namespace(tx, *, domain: str, caller_did: str, clock) -> None:
+    """Open epoch 1 for a namespace registered before epoch history existed.
+
+    Only its stored controller, proving exact DNS for that same key, may do
+    so, and only while the domain has no epoch at all; the conditions are
+    rechecked under the namespace row lock so concurrent requests open one.
+    """
+    locked = await tx.fetch_one(
+        """
+        SELECT controller_did
+        FROM {{tables.dns_namespaces}}
+        WHERE domain = $1 AND deleted_at IS NULL
+        FOR UPDATE
+        """,
+        domain,
+    )
+    if locked is None or locked["controller_did"] != caller_did:
+        return
+    if await has_epoch_history(tx, domain):
+        return
+    await open_epoch(tx, domain=domain, did_key=caller_did, continuity=REPLACED, clock=clock)
+
+
+def _coded(code: str, status: int) -> HTTPException:
+    return HTTPException(status_code=status, detail={"code": code, "message": code.replace("_", " ")})
+
+
+def _rotation_body(raw: bytes, domain: str) -> dict:
+    try:
+        body = strict_json_object(raw)
+    except IDCertificateError as exc:
+        raise _coded("invalid_shape", 400) from exc
+    if (
+        set(body) != _ROTATION_FIELDS
+        or body["domain"] != domain
+        or body["operation"] != "rotate_namespace_controller"
+        or type(body["from_seq"]) is not int
+        or body["from_seq"] < 1
+        or not strict_did_key(body["previous_did_key"])
+        or not strict_did_key(body["new_did_key"])
+        or body["previous_did_key"] == body["new_did_key"]
+    ):
+        raise _coded("invalid_shape", 400)
+    return body
+
+
+async def _verify_rotation_proofs(request: Request, body: dict) -> None:
+    """Both keys sign the same covering-v2 request; there is no legacy form."""
+    if request.headers.get("X-AWEB-Signed-Payload") is None:
+        raise _coded("invalid_signature", 401)
+    try:
+        previous = await verify_controller_json_request(request, payload_dict=body)
+        new = await verify_controller_json_request(
+            request, payload_dict=body, authorization_header=_NEW_KEY_AUTH_HEADER,
+        )
+    except HTTPException as exc:
+        if exc.status_code != 401:
+            raise
+        raise _coded("invalid_signature", 401) from exc
+    if previous != body["previous_did_key"] or new != body["new_did_key"]:
+        raise _coded("invalid_signature", 401)
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +321,7 @@ async def register_namespace(
     skip_dns = os.environ.get("AWID_SKIP_DNS_VERIFY", "").strip() == "1"
     parent_auth_present = request.headers.get(_PARENT_AUTH_HEADER) is not None
     domain_is_local = is_reserved_local_domain(domain)
+    dns_authority = None
     if not skip_dns and not parent_auth_present and not domain_is_local:
         try:
             dns_authority = await verify_domain(domain)
@@ -268,6 +347,10 @@ async def register_namespace(
         )
 
         if existing is not None:
+            if proves_root(dns_authority, caller_did):
+                await _open_first_epoch_for_existing_namespace(
+                    tx, domain=domain, caller_did=caller_did, clock=app_clock(request.app),
+                )
             return _namespace_response(existing)
 
         controller_did = requested_controller_did
@@ -299,6 +382,10 @@ async def register_namespace(
             now,
             now,
         )
+        if proves_root(dns_authority, controller_did):
+            await open_epoch(
+                tx, domain=domain, did_key=controller_did, continuity=REPLACED, clock=app_clock(request.app),
+            )
 
     return NamespaceResponse(
         namespace_id=str(ns_id),
@@ -456,6 +543,7 @@ async def rotate_namespace_controller(
     skip_dns = os.environ.get("AWID_SKIP_DNS_VERIFY", "").strip() == "1"
     parent_auth_present = request.headers.get(_PARENT_AUTH_HEADER) is not None
     domain_is_local = is_reserved_local_domain(domain)
+    dns_authority = None
     if not skip_dns and not parent_auth_present and not domain_is_local:
         try:
             dns_authority = await verify_domain(domain)
@@ -510,6 +598,15 @@ async def rotate_namespace_controller(
         )
         if row is None:
             raise HTTPException(status_code=404, detail="Namespace not found")
+        if proves_root(dns_authority, new_controller_did):
+            # Recovery compares against the open epoch, not the stored row,
+            # which reverify may already have moved to this key.
+            epoch = await open_epoch_of(tx, domain, for_update=True)
+            if epoch is None or epoch["did_key"] != new_controller_did:
+                await open_epoch(
+                    tx, domain=domain, did_key=new_controller_did, continuity=REPLACED,
+                    clock=app_clock(request.app),
+                )
     if existing["controller_did"] != new_controller_did:
         logger.warning(
             "Namespace controller rotated: domain=%s old_controller_did=%s new_controller_did=%s",
@@ -517,6 +614,79 @@ async def rotate_namespace_controller(
             existing["controller_did"],
             new_controller_did,
         )
+    return _namespace_response(row)
+
+
+@router.post(
+    "/{domain}/rotate",
+    response_model=NamespaceResponse,
+    dependencies=[Depends(rate_limit_dep("namespace_rotate"))],
+)
+async def rotate_namespace_with_previous_key(
+    request: Request,
+    domain: str,
+    db_infra=Depends(get_db),
+    verify_domain: DomainVerifier = Depends(get_domain_verifier),
+) -> NamespaceResponse:
+    """Rotate the controller with the previous key's consent, keeping the tree.
+
+    The previous and new keys both sign the request and exact DNS proves the
+    new key. Under the namespace lock the open epoch must still be the one
+    the request names, so a replayed or stale request refuses head_conflict;
+    the open epoch is retired and its `rotated` successor opened at one
+    witness time, which keeps registrations under the previous key valid.
+    """
+    db = db_infra.get_manager("aweb")
+    domain = _validate_domain(domain)
+    body = _rotation_body(await request.body(), domain)
+    await _verify_rotation_proofs(request, body)
+    try:
+        authority = await verify_domain(domain)
+    except DnsVerificationError:
+        authority = None
+    if not is_exact(authority) or authority.controller_did != body["new_did_key"]:
+        raise _coded("evidence_unavailable", 503)
+
+    async with db.transaction() as tx:
+        existing = await tx.fetch_one(
+            """
+            SELECT namespace_id
+            FROM {{tables.dns_namespaces}}
+            WHERE domain = $1 AND deleted_at IS NULL
+            FOR UPDATE
+            """,
+            domain,
+        )
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Namespace not found")
+        try:
+            enforce_timestamp_skew(require_timestamp(request))
+        except HTTPException as exc:
+            raise _coded("invalid_signature", 401) from exc
+        epoch = await open_epoch_of(tx, domain, for_update=True)
+        if epoch is None or (epoch["seq"], epoch["did_key"]) != (body["from_seq"], body["previous_did_key"]):
+            raise _coded("head_conflict", 409)
+        row = await tx.fetch_one(
+            """
+            UPDATE {{tables.dns_namespaces}}
+            SET controller_did = $2,
+                verification_status = 'verified',
+                last_verified_at = $3
+            WHERE domain = $1 AND deleted_at IS NULL
+            RETURNING namespace_id, domain, controller_did, verification_status,
+                      default_delivery_origin, last_verified_at, created_at
+            """,
+            domain,
+            body["new_did_key"],
+            datetime.now(timezone.utc),
+        )
+        await open_epoch(
+            tx, domain=domain, did_key=body["new_did_key"], continuity=ROTATED, clock=app_clock(request.app),
+        )
+    logger.warning(
+        "Namespace controller rotated with previous-key consent: domain=%s from_seq=%s new_controller_did=%s",
+        domain, body["from_seq"], body["new_did_key"],
+    )
     return _namespace_response(row)
 
 
@@ -676,6 +846,7 @@ async def delete_namespace(
             row["namespace_id"],
             now,
         )
+        await retire_namespace_controller(tx, domain=domain, clock=app_clock(request.app))
 
     return {"deleted": True, "namespace_id": str(row["namespace_id"]), "domain": domain}
 

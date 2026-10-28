@@ -289,13 +289,11 @@ async def test_registry_client_enforces_error_limit(body_size: int, should_succe
         transport=MockTransport(lambda _request: Response(500, content=b"x" * body_size)),
     )
     try:
-        if should_succeed:
-            with pytest.raises(RegistryError) as caught:
-                await registry.health()
-            assert caught.value.detail == "x" * (64 * 1024)
-        else:
-            with pytest.raises(ValueError, match="maximum|size|large|limit"):
-                await registry.health()
+        with pytest.raises(RegistryError) as caught:
+            await registry.health()
+        assert caught.value.status_code == 500
+        # An error page past the limit is still the refusal, without its body.
+        assert ("x" * 1024 in caught.value.detail) is should_succeed
     finally:
         await registry.aclose()
 

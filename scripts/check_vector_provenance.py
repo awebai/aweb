@@ -49,6 +49,42 @@ def _consumer(names: str | Iterable[str], *root_markers: str) -> ConsumerSpec:
 SERVER_CONSUMER = PurePosixPath("server/tests/test_identity_conformance_vectors.py")
 GO_CONSUMER = PurePosixPath("cli/go/internal/conformance/conformance_test.go")
 ROOT_CONSUMERS = {
+    PurePosixPath("awid/tests/id_tree_support.py"): _consumer(
+        "id-certificates-v1.json",
+        'Path(__file__).resolve().parents[2] / "docs" / "vectors"',
+    ),
+    PurePosixPath("awid/tests/test_id_key_response_vectors.py"): _consumer(
+        "id-certificates-v1.json",
+        "Path(__file__).resolve().parents[2] / 'docs/vectors/id-certificates-v1.json'",
+    ),
+    PurePosixPath("cli/go/internal/conformance/id_key_response_test.go"): _consumer(
+        "id-certificates-v1.json",
+        'readRootVector(t, "id-certificates-v1.json")',
+    ),
+    PurePosixPath("server/tests/test_id_tree_contact_replacement.py"): _consumer(
+        "id-certificates-v1.json",
+        "Path(__file__).resolve().parents[2] / 'docs/vectors/id-certificates-v1.json'",
+    ),
+    PurePosixPath("awid/tests/test_id_chain_vectors.py"): _consumer(
+        "id-certificates-v1.json",
+        "Path(__file__).resolve().parents[2] / 'docs/vectors/id-certificates-v1.json'",
+    ),
+    PurePosixPath("cli/go/internal/conformance/id_chain_test.go"): _consumer(
+        "id-certificates-v1.json",
+        'readRootVector(t, "id-certificates-v1.json")',
+    ),
+    PurePosixPath("awid/tests/test_id_certificate_vectors.py"): _consumer(
+        "id-certificates-v1.json",
+        'Path(__file__).resolve().parents[2] / "docs" / "vectors"',
+    ),
+    PurePosixPath("cli/go/internal/conformance/id_certificates_test.go"): _consumer(
+        "id-certificates-v1.json",
+        'readRootVector(t, "id-certificates-v1.json")',
+    ),
+    PurePosixPath("cli/go/internal/conformance/human_key_backup_test.go"): _consumer(
+        "id-certificates-v1.json",
+        'readRootVector(t, "id-certificates-v1.json")',
+    ),
     PurePosixPath("server/tests/test_c2_vectors.py"): _consumer(
         ("app-task-authorization-v1.json", "app-request-credential-v1.json", "task-answer-v1.json"),
         'Path(__file__).resolve().parents[2] / "docs" / "vectors"',
@@ -518,6 +554,22 @@ ROOT_CONSUMERS = {
     PurePosixPath("channel-core/test/activity_vector.test.ts"): _consumer(
         "agent-activity-v1.json",
         'new URL("../../docs/vectors/agent-activity-v1.json", import.meta.url)',
+    ),
+    PurePosixPath("channel-core/test/id_certificates_codec.test.ts"): _consumer(
+        "id-certificates-v1.json",
+        'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
+    ),
+    PurePosixPath("channel-core/test/id_certificates_disposition.test.ts"): _consumer(
+        "id-certificates-v1.json",
+        'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
+    ),
+    PurePosixPath("channel-core/test/id_certificates_verify.test.ts"): _consumer(
+        "id-certificates-v1.json",
+        'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
+    ),
+    PurePosixPath("channel-core/test/id_certificates_verify_probes.test.ts"): _consumer(
+        "id-certificates-v1.json",
+        'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
     ),
     PurePosixPath("channel-core/test/pin_store_raw_wire.test.ts"): _consumer(
         "pin-store-raw-wire-v1.json",
