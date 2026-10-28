@@ -313,7 +313,7 @@ async def test_missing_key_omission_consumes_the_stated_enrollment(monkeypatch, 
         epoch = status['namespace']['epochs'][-1]
         authority = {'domain': domain, 'dns_name': '_awid.' + domain,
                      'inherited': False, 'controller_key': epoch['did_key']}
-        return IDChainEvidence(status, authority, age_seconds=0, refresh_failed=False)
+        return IDChainEvidence(status, authority, age_seconds=0)
 
     async def forbidden_plain(self, did_aw):
         pytest.fail('404 omission consulted the ordinary key cache')

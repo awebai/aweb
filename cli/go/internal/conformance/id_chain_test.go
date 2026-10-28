@@ -19,8 +19,7 @@ type idChainCase struct {
 	OriginalAuth    string             `json:"original_auth"`
 	ExpectedRequest map[string]string  `json:"expected_request"`
 	Cache           *struct {
-		Age     *float64 `json:"age_seconds"`
-		Refresh string   `json:"refresh"`
+		Age *float64 `json:"age_seconds"`
 	} `json:"cache"`
 	ExpectedCacheMode  string         `json:"expected_cache_mode"`
 	TreeLookup         *bool          `json:"tree_lookup"`
@@ -49,8 +48,8 @@ func loadIDChainVectors(t *testing.T) idChainVectors {
 
 func TestIDChainFinalVectors(t *testing.T) {
 	v := loadIDChainVectors(t)
-	if len(v.Cases) != 126 {
-		t.Fatalf("case count=%d want126", len(v.Cases))
+	if len(v.Cases) != 122 {
+		t.Fatalf("case count=%d want122", len(v.Cases))
 	}
 	names := map[string]bool{}
 	for _, c := range v.Cases {
@@ -59,7 +58,7 @@ func TestIDChainFinalVectors(t *testing.T) {
 		}
 		names[c.Name] = true
 	}
-	for _, name := range []string{"namespace-overlapping-replaced-successor-unavailable", "namespace-unretired-predecessor-unavailable", "root-replacement-cutoff-in-historical-human-parent", "namespace-epoch-at-retirement-unavailable", "cached-status-age-61-without-failed-refresh", "cached-status-age-901-without-failed-refresh"} {
+	for _, name := range []string{"namespace-overlapping-replaced-successor-unavailable", "namespace-unretired-predecessor-unavailable", "root-replacement-cutoff-in-historical-human-parent", "namespace-epoch-at-retirement-unavailable", "cached-status-age-60", "cached-status-age-61"} {
 		if !names[name] {
 			t.Fatal("missing required boundary", name)
 		}
@@ -95,7 +94,6 @@ func TestIDChainFinalVectors(t *testing.T) {
 			evidence := &awid.IDChainEvidence{Status: status, NamespaceAuthority: authority, AgeSeconds: &age}
 			if c.Cache != nil {
 				evidence.AgeSeconds = c.Cache.Age
-				evidence.RefreshFailed = c.Cache.Refresh == "failed"
 			}
 			if c.StatusSource == "caller" {
 				evidence = nil
@@ -119,7 +117,7 @@ func TestIDChainFinalVectors(t *testing.T) {
 				}
 			}
 			if c.ExpectedCacheMode != "" {
-				if got := awid.IDStatusCacheMode(c.Cache.Age, c.Cache.Refresh == "failed"); got != c.ExpectedCacheMode {
+				if got := awid.IDStatusCacheMode(c.Cache.Age); got != c.ExpectedCacheMode {
 					t.Fatalf("cache=%s", got)
 				}
 			}
