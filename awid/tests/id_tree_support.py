@@ -167,6 +167,15 @@ class MixedOrderController:
         self._public = crypto_core_ed25519_add(crypto_scalarmult_ed25519_base_noclamp(self._scalar), torsion)
         self.did_key = did_from_public_key(self._public)
 
+    @property
+    def public_key(self) -> bytes:
+        return self._public
+
+    def sign_timed(self, payload) -> tuple[str, str]:
+        """(timestamp, signature) over ``payload(timestamp)``, for a timestamp whose challenge suits this key."""
+        timestamp, _, signature = self._sign_with_divisible_challenge(payload)
+        return timestamp, signature
+
     def signed_headers(self, *, domain: str, operation: str, **extra) -> dict:
         """Legacy DIDKey headers over {domain, operation, timestamp, **extra}."""
 

@@ -6,6 +6,7 @@ import base64
 import hashlib
 
 import base58 as b58
+from nacl.bindings import crypto_core_ed25519_is_valid_point
 from nacl.signing import SigningKey
 
 _MULTICODEC_ED25519 = b"\xed\x01"
@@ -28,6 +29,15 @@ def did_from_public_key(public_key: bytes) -> str:
     return _DID_KEY_PREFIX + b58.b58encode(multicodec_key).decode("ascii")
 
 
+def strict_ed25519_point(public_key: bytes) -> bool:
+    """Whether 32 bytes encode a canonical Ed25519 point of prime order.
+
+    Small-order, non-canonical and mixed-order points are refused: a
+    mixed-order key can make signatures that plain verification accepts.
+    """
+    return len(public_key) == _ED25519_KEY_LEN and bool(crypto_core_ed25519_is_valid_point(public_key))
+
+
 def public_key_from_did(did: str) -> bytes:
     if not did.startswith(_DID_KEY_PREFIX):
         raise ValueError(f"DID must start with '{_DID_KEY_PREFIX}', got '{did[:20]}'")
@@ -44,7 +54,10 @@ def public_key_from_did(did: str) -> bytes:
         raise ValueError(
             f"Invalid multicodec prefix: expected 0xed01, got 0x{decoded[:_MULTICODEC_LEN].hex()}"
         )
-    return decoded[_MULTICODEC_LEN:]
+    public_key = decoded[_MULTICODEC_LEN:]
+    if did_from_public_key(public_key) != did or not strict_ed25519_point(public_key):
+        raise ValueError("did:key must be a canonical Ed25519 key of prime order")
+    return public_key
 
 
 def validate_did(did: str) -> bool:
