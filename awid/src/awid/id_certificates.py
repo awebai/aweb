@@ -8,12 +8,13 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import inspect
 import json
 import re
 import math
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from nacl.bindings import crypto_core_ed25519_is_valid_point
 from nacl.exceptions import BadSignatureError
@@ -33,6 +34,7 @@ _LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 _B64URL = re.compile(r"[A-Za-z0-9_-]+")
 _BASE58 = re.compile(r"[1-9A-HJ-NP-Za-km-z]+")
 _ED25519_ORDER = 2**252 + 27742317777372353535851937790883648493
+_STATUS_FRESH_SECONDS = 60
 
 
 class IDCertificateError(ValueError):
@@ -221,6 +223,41 @@ def verify_id_certificate(signed: dict[str, Any], *, issuer_key: str) -> None:
     verify_ed25519(issuer_key, id_certificate_signing_bytes(c), signature)
 
 
+async def sign_id_certificate(
+    certificate: dict[str, Any],
+    *,
+    signer: Callable[[bytes], tuple[str, bytes] | Awaitable[tuple[str, bytes]]],
+) -> dict[str, Any]:
+    """Sign one shaped certificate through a custody-owning callback.
+
+    Shape is checked before the callback, which is invoked/resolved once. Its
+    answer must name issuer_key and pass the shared strict signature verifier.
+    Malformed answers raise IDCertificateError('invalid_signature'); callback
+    exceptions propagate. This does no I/O and grants no issuance authority:
+    the custody owner must check the intended operation and current authority
+    before decrypting/signing. Pending human keys cannot issue certificates.
+    """
+    # Isolate nested caller data across an await, so the returned artifact is
+    # exactly the certificate whose immutable bytes went to the signer.
+    snapshot = json.loads(_canonical(certificate))
+    _shape({"certificate": snapshot, "signature": ""})
+    payload = id_certificate_signing_bytes(snapshot)
+    answer = signer(payload)
+    if inspect.isawaitable(answer):
+        answer = await answer
+    if (
+        type(answer) is not tuple or len(answer) != 2
+        or type(answer[0]) is not str or answer[0] != snapshot["issuer_key"]
+    ):
+        raise IDCertificateError("invalid_signature")
+    _, signature = answer
+    verify_ed25519(snapshot["issuer_key"], payload, signature)
+    return {
+        "certificate": snapshot,
+        "signature": base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii"),
+    }
+
+
 def _bundle_shape(bundle: Any) -> None:
     if type(bundle) is not dict or set(bundle) != {"v", "type", "certificates"}:
         raise IDCertificateError("invalid_shape")
@@ -283,15 +320,15 @@ class IDChainEvidence:
     status: dict[str, Any]
     namespace_authority: dict[str, Any]
     age_seconds: float | None
-    refresh_failed: bool = False
 
 
-def status_cache_mode(age_seconds: float | None, refresh_failed: bool) -> str:
-    if type(age_seconds) not in (int, float) or not math.isfinite(age_seconds) or age_seconds < 0:
+def status_cache_mode(age_seconds: float | None) -> str:
+    """Fresh through 60 seconds at acquisition; expired evidence is unavailable."""
+    if type(age_seconds) not in (int, float) or age_seconds < 0:
         return 'unavailable'
-    if age_seconds <= 60:
-        return 'fresh'
-    return 'outage_grace' if refresh_failed and age_seconds <= 900 else 'unavailable'
+    if type(age_seconds) is float and not math.isfinite(age_seconds):
+        return 'unavailable'
+    return 'fresh' if age_seconds <= _STATUS_FRESH_SECONDS else 'unavailable'
 
 
 def status_request(bundle: dict[str, Any] | None, subject: dict[str, Any], *, domain: str | None = None) -> dict[str, Any] | None:
@@ -542,9 +579,9 @@ def _id_chain(bundle: dict[str, Any] | None, subject: dict[str, Any], evidence: 
         raise IDCertificateError('subject_mismatch')
     if evidence is None:
         raise IDCertificateError('evidence_unavailable')
-    if status_cache_mode(evidence.age_seconds, evidence.refresh_failed) == 'unavailable':
-        # Expired grace describes last-known-good evidence after a failed refresh.
-        expired = evidence.refresh_failed and evidence.age_seconds is not None and evidence.age_seconds > 900
+    if status_cache_mode(evidence.age_seconds) == 'unavailable':
+        age = evidence.age_seconds
+        expired = (type(age) is int or type(age) is float and math.isfinite(age)) and age > _STATUS_FRESH_SECONDS
         raise IDCertificateError('status_expired' if expired else 'evidence_unavailable')
     status = _IDStatus(evidence, domain)
     if subject['id'].startswith('did:aw:') and status.current_key(subject['id']) != subject['did_key']:
