@@ -8,12 +8,13 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import inspect
 import json
 import re
 import math
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from nacl.bindings import crypto_core_ed25519_is_valid_point
 from nacl.exceptions import BadSignatureError
@@ -224,6 +225,38 @@ def verify_id_certificate(signed: dict[str, Any], *, issuer_key: str) -> None:
     verify_ed25519(issuer_key, id_certificate_signing_bytes(c), signature)
 
 
+async def sign_id_certificate(
+    certificate: dict[str, Any],
+    *,
+    signer: Callable[[bytes], tuple[str, bytes] | Awaitable[tuple[str, bytes]]],
+) -> dict[str, Any]:
+    """Sign one shaped certificate through a custody-owning callback.
+
+    Shape is checked before the callback, which is invoked/resolved once. Its
+    answer must name issuer_key and pass the shared strict signature verifier.
+    Malformed answers raise IDCertificateError('invalid_signature'); callback
+    exceptions propagate. This does no I/O and grants no issuance authority:
+    the custody owner must check the intended operation and current authority
+    before decrypting/signing. Pending human keys cannot issue certificates.
+    """
+    # Isolate nested caller data across an await, so the returned artifact is
+    # exactly the certificate whose immutable bytes went to the signer.
+    snapshot = json.loads(_canonical(certificate))
+    _shape({"certificate": snapshot, "signature": ""})
+    payload = id_certificate_signing_bytes(snapshot)
+    answer = signer(payload)
+    if inspect.isawaitable(answer):
+        answer = await answer
+    if type(answer) is not tuple or len(answer) != 2 or answer[0] != snapshot["issuer_key"]:
+        raise IDCertificateError("invalid_signature")
+    did_key, signature = answer
+    verify_ed25519(did_key, payload, signature)
+    return {
+        "certificate": snapshot,
+        "signature": base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii"),
+    }
+
+
 def _bundle_shape(bundle: Any) -> None:
     if type(bundle) is not dict or set(bundle) != {"v", "type", "certificates"}:
         raise IDCertificateError("invalid_shape")
@@ -303,27 +336,32 @@ class IDChainEvidence:
             or type(now_ns) is not int or now_ns < self.observed_at_ns
         ):
             return 'unavailable'
-        age = self.age_seconds
-        if type(age) not in (int, float) or age < 0 or (type(age) is float and not math.isfinite(age)):
+        age_ns = _status_age_ns(self.age_seconds)
+        if age_ns is None:
             return 'unavailable'
-        # Round towards earlier expiry. No absolute clock/deadline passes
-        # through a float, including on hosts with very large clock values.
-        numerator, denominator = age.as_integer_ratio()
-        age_ns = (numerator * _NS_PER_SECOND + denominator - 1) // denominator
         elapsed_ns = now_ns - self.observed_at_ns
-        return _status_cache_mode(age_ns + elapsed_ns, self.refresh_failed, unit=_NS_PER_SECOND)
+        return _status_cache_mode(age_ns + elapsed_ns, self.refresh_failed)
 
 
-def _status_cache_mode(age: int | float, refresh_failed: bool, *, unit: int = 1) -> str:
-    if age <= _STATUS_FRESH_SECONDS * unit:
+def _status_age_ns(age: float | None) -> int | None:
+    if type(age) not in (int, float) or age < 0 or (type(age) is float and not math.isfinite(age)):
+        return None
+    # Round towards earlier expiry. No absolute clock/deadline passes through
+    # a float, including on hosts with very large monotonic clock values.
+    numerator, denominator = age.as_integer_ratio()
+    return (numerator * _NS_PER_SECOND + denominator - 1) // denominator
+
+
+def _status_cache_mode(age_ns: int | None, refresh_failed: bool) -> str:
+    if age_ns is None:
+        return 'unavailable'
+    if age_ns <= _STATUS_FRESH_SECONDS * _NS_PER_SECOND:
         return 'fresh'
-    return 'outage_grace' if refresh_failed and age <= _STATUS_GRACE_SECONDS * unit else 'unavailable'
+    return 'outage_grace' if refresh_failed and age_ns <= _STATUS_GRACE_SECONDS * _NS_PER_SECOND else 'unavailable'
 
 
 def status_cache_mode(age_seconds: float | None, refresh_failed: bool) -> str:
-    if type(age_seconds) not in (int, float) or not math.isfinite(age_seconds) or age_seconds < 0:
-        return 'unavailable'
-    return _status_cache_mode(age_seconds, refresh_failed)
+    return _status_cache_mode(_status_age_ns(age_seconds), refresh_failed)
 
 
 def status_request(bundle: dict[str, Any] | None, subject: dict[str, Any], *, domain: str | None = None) -> dict[str, Any] | None:
