@@ -1,6 +1,6 @@
 [project]
 name = "aweb-naapp"
-version = "0.5.1rc5"
+version = "0.5.1"
 description = "Reusable Native Agentic App (naapp) docs surface: shared chrome, the aweb design system, and manifest-driven llms.txt and reference generators."
 readme = "README.md"
 license = { text = "MIT" }
