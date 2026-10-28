@@ -68,6 +68,10 @@ ROOT_CONSUMERS = {
         "human-channels-signed-via-v1.json",
         'ROOT / "docs/vectors/human-channels-signed-via-v1.json"',
     ),
+    PurePosixPath("awid/tests/id_tree_support.py"): _consumer(
+        "id-certificates-v1.json",
+        'Path(__file__).resolve().parents[2] / "docs" / "vectors"',
+    ),
     PurePosixPath("awid/tests/test_id_key_response_vectors.py"): _consumer(
         "id-certificates-v1.json",
         "Path(__file__).resolve().parents[2] / 'docs/vectors/id-certificates-v1.json'",
@@ -93,6 +97,10 @@ ROOT_CONSUMERS = {
         'Path(__file__).resolve().parents[2] / "docs" / "vectors"',
     ),
     PurePosixPath("cli/go/internal/conformance/id_certificates_test.go"): _consumer(
+        "id-certificates-v1.json",
+        'readRootVector(t, "id-certificates-v1.json")',
+    ),
+    PurePosixPath("cli/go/internal/conformance/human_key_backup_test.go"): _consumer(
         "id-certificates-v1.json",
         'readRootVector(t, "id-certificates-v1.json")',
     ),
@@ -565,6 +573,22 @@ ROOT_CONSUMERS = {
     PurePosixPath("channel-core/test/activity_vector.test.ts"): _consumer(
         "agent-activity-v1.json",
         'new URL("../../docs/vectors/agent-activity-v1.json", import.meta.url)',
+    ),
+    PurePosixPath("channel-core/test/id_certificates_codec.test.ts"): _consumer(
+        "id-certificates-v1.json",
+        'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
+    ),
+    PurePosixPath("channel-core/test/id_certificates_disposition.test.ts"): _consumer(
+        "id-certificates-v1.json",
+        'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
+    ),
+    PurePosixPath("channel-core/test/id_certificates_verify.test.ts"): _consumer(
+        "id-certificates-v1.json",
+        'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
+    ),
+    PurePosixPath("channel-core/test/id_certificates_verify_probes.test.ts"): _consumer(
+        "id-certificates-v1.json",
+        'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
     ),
     PurePosixPath("channel-core/test/pin_store_raw_wire.test.ts"): _consumer(
         "pin-store-raw-wire-v1.json",

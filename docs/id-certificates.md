@@ -601,6 +601,39 @@ does not restart on a failed fetch or process restart; a local trusted fetch
 time measures age. Do not mix fresh and stale fragments to manufacture a valid
 chain or an uncached network dependency on every request.
 
+### Python SDK checks across custody and lock boundaries
+
+`awid.id_certificates.sign_id_certificate(certificate, *, signer)` is async.
+It validates certificate shape before calling the bytes-only signer once,
+awaits an awaitable answer once, requires `(did_key, signature_bytes)` to name
+the certificate's `issuer_key`, and verifies those exact signing bytes with
+the shared strict Ed25519 profile before returning the signed certificate.
+The returned certificate is the snapshot actually signed, including across an
+await. Shape/signature refusals raise `IDCertificateError` with its stable
+`code` (`invalid_signature` for a malformed signer answer); a callback's own
+exception propagates. This helper holds no key and performs no network I/O.
+Issuance authority and the checked intended operation remain the custody
+owner's responsibility before it decrypts or signs; a pending human key may
+prove its own enrollment but cannot issue a child certificate.
+
+`IDChainEvidence` additionally has optional `observed_at_ns`, sampled by the
+production evidence producer on its process-local monotonic nanosecond clock
+no later than the observation to which `age_seconds` applies. It is never
+serialized into a cache entry or API response, inherited from another process,
+or renewed on receipt/lock acquisition. A consumer in the same process calls
+`evidence.cache_mode_at(time.monotonic_ns())` after its final lock wait. This
+no-I/O check adds elapsed integer nanoseconds to the observed age rounded UP
+to integer nanoseconds and uses the same boundary function as the age-only
+`status_cache_mode` API. Both preserve the inclusive 60/900 bounds above;
+900 is available only with an explicitly failed refresh. Missing, malformed
+or future anchors give `unavailable` for this new check. The existing age-only
+API remains usable for immediate verification, and freshness alone never
+establishes chain validity or authority.
+
+On post-lock expiry, roll back and return the existing retryable refusal;
+the next ordinary request obtains evidence normally. No automatic
+refresh-and-retry loop or network read under the lock is introduced.
+
 ## 5. Presentation, binding and verification result
 
 The bundle is exactly `{v:1,type:"aweb.id-chain",certificates:[signed,...]}`,
@@ -878,10 +911,19 @@ and no newly issued response. Byte-identical receive/approve retries return
 that same record/response without another signature. A different request with
 the same request_id refuses `request_conflict`. A second CSR for an issue
 invitation also refuses; if it proves a DIFFERENT key, void the invitation,
-mark it failed (`invitation_conflict`) and require a new invitation. An already
-released certificate cannot be unsent: voiding blocks further signing, and
-the existing registered identity is revoked separately if appropriate. Do not
-erase issued bytes or replace the first child's key on a conflicting retry.
+refuse the competing request (`invitation_conflict`) and require a new
+invitation for any new issuance. Do not store the competing request over the
+original. If the original request was pending, mark it failed. If it was
+already issued, keep its state **issued**, certificate ID, exact response and
+issuance provenance. List/show must expose that issued certificate ID together
+with the invitation's void status so the inviter can decide on revocation.
+An exact retry of the original issued request still retrieves its stored
+response after voiding, without another signature or reactivating the
+invitation; retrieval establishes no current authority. An already released
+certificate cannot be unsent: voiding blocks further signing, and the existing
+registered identity is revoked separately if appropriate. In the operation
+vectors, `request_state` names the retained original request record, not the
+refused competing submission.
 
 Human issue requires explicit approval for EACH exact request, independent of
 whether key custody prompts. Only the inviting human's selected human signer
@@ -900,7 +942,14 @@ recipient-supplied fingerprint and the CLI compares it with the CSR's key;
 a yes/no confirmation of the displayed value is insufficient. Obtain that
 fingerprint from the recipient through a DIFFERENT trusted
 channel from the invitation/CSR delivery (in person, a call, or an already
-trusted contact). Approval is the inviter's attestation that this exact key
+trusted contact). Fingerprint entry before display is a procedural check; it
+cannot prove that the approver used that independent channel. The fingerprint
+is public, not a secret: for a fresh `did:aw` derived from this subject key,
+the first 16 bytes of its base58-decoded suffix are the same SHA-256 prefix.
+The CSR also carries the public subject key from which the fingerprint can be
+computed. An approver who skips the independent check can therefore compute
+and type the displayed identity's fingerprint; entry order does not prevent
+that. Approval is the inviter's attestation that this exact key
 belongs to that intended person. A mismatched confirmed fingerprint refuses
 `recipient_key_mismatch`, voids the invitation and fails the request: a new
 invitation is required. A name, a token or the displayed fingerprint alone is
