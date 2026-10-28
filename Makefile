@@ -134,7 +134,7 @@ build: sync-doc-copies
 #
 # These cheap committed-source controls run first on every ordinary test run.
 # The expensive complete release proof is owned by the clean local-Docker gate.
-test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-release-cli-version test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
+test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-identity-python-inventory test-identity-go-inventory test-identity-ts-inventory test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-release-cli-version test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
 
 test-shipping:
 	python3 scripts/test_shipping.py
@@ -154,6 +154,22 @@ test-python-locks:
 test-sot-source-inventories:
 	python3 scripts/check_sot_source_inventories.py
 	python3 -m unittest discover -s scripts -p "test_check_sot_source_inventories.py" -v
+
+.PHONY: test-identity-ts-inventory
+test-identity-ts-inventory:
+	cd channel-core && npm ci --ignore-scripts --no-audit --no-fund
+	node scripts/check_identity_ts_inventory.mjs
+	node --test scripts/test_check_identity_ts_inventory.mjs
+
+.PHONY: test-identity-go-inventory
+test-identity-go-inventory:
+	cd cli/go && GOTOOLCHAIN=local go run ./internal/identityinventory ../..
+	cd cli/go && GOTOOLCHAIN=local go test ./internal/identityinventory
+
+.PHONY: test-identity-python-inventory
+test-identity-python-inventory:
+	python3 scripts/check_identity_python_inventory.py
+	python3 -m unittest discover -s scripts -p "test_check_identity_python_inventory.py" -v
 
 # Public protocol vectors have one repository-root authority. The checker also
 # inventories explicitly local fixture directories and proves each failure mode.

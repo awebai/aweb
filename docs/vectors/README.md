@@ -43,15 +43,92 @@ identity/trust vector family.
 
 ## Accepting protocols awaiting client rollout
 
-### `member-attribution-v1.json` — contract candidate
+### `id-certificates-v1.json` — contract candidate
 
-The [member attribution contract](../member-attribution.md) freezes the new
-controller-signed certificate binding, private email/public team-scoped
-fingerprint, optional presentation and fetch-on-none procedure. Synthetic
-Ed25519 known answers cover exact bytes, binding/shape refusals and monotonic
-updates. This is a docs-only freeze candidate, not a shipped implementation or
-runtime pass. Go/Python consumers are added in the implementation slice; no
-existing certificate/message vector is changed.
+The [identity certificates contract](../id-certificates.md) freezes
+parent-signed human/agent certificates, their domain binding and bounded chain
+carrier, registered/historical versus local/current issuer-key selection,
+revocation cutoffs, cached status and prospective adoption. Synthetic Ed25519
+known answers pin exact bytes/signatures/digests, a three-agent OATS subtree,
+negative R1–R3/rotation/presentation cases, and pending-invitation/lifecycle
+scenarios. Registry fixtures are independently supplied test authority facts;
+transaction scenarios alone are not runtime proof. Python/Go codec and pure
+ancestry/status tests consume this root fixture. Server
+`test_id_tree_contact_replacement.py` consumes
+`address-replacement-does-not-transfer-contact-trust` through real AWID/aweb
+HTTP and databases. Server `test_id_chain_request_auth.py` uses the public
+synthetic keys/certificate to exercise the fresh enrollment carrier and real
+identity-only enroll/revoke/omit request decisions; remaining lanes follow in
+reviewed transport checkpoints.
+Existing certificate/message fixtures are byte-identical.
+`expected_request` is the request decision; case names describe proof outcomes.
+`ed25519_verification.cases` pins the new ID-certificate family's canonical,
+nonidentity prime-subgroup key/R checks and cofactorless equation; every
+Python/Go/TypeScript CI consumes these probes and the raw-wire negatives.
+Namespace status epochs carry `continuity`: signed rotations retain registered
+children, DNS-only replacement cuts off prior registrations (`root_replaced`).
+The cases also pin namespace epoch admission windows and sequence-only DID-key
+selection; operation cases replace live-ID deletion refusal with retained
+history and delete/re-register discontinuity.
+`namespace_rotation_requests` freezes both DIDKey signatures over the same
+covering-v2 payload, plus wrong-sequence, new-key-only, swapped-role, stale-key
+and replay operation refusals. Epoch observations never create replacement: pre-upgrade
+first enrollment uses the existing authenticated namespace POST once, and
+same-key reverify/temporary DNS failure preserves its epoch. History negatives
+isolate first-epoch continuity, an unretired predecessor and a contiguous-seq
+rotation time gap.
+`child_requests` freezes the child-key-signed canonical CSR bytes, recipient key
+fingerprints and matching response bundles for the explicit file exchange.
+Its operation cases pin parent-local invitation/issuance-log ownership,
+interactive human key approval over a separate trusted channel, competing-key
+invalidation, host-mode isolation, re-sign provenance and exact retry/import.
+They are S3 acceptance inputs, not evidence of an implemented transport.
+`child_requests.file_refusals` constructs raw file bytes by repeating the UTF-8
+`unit_utf8` `repeat` times; request/response caps are measured in bytes before
+JSON parsing, with exact-limit and oversized cases.
+
+`key_response_id_tree` cases freeze parsing the additive field of an otherwise
+valid key-resolution response. `key_response` and `cached_key_response` are
+projections onto that field; `{}` means the field is absent. `expected_parse`
+distinguishes enrolled, not_enrolled, unknown and malformed. For omission,
+`expected_tree_lookup` and `expected_request` apply after ordinary auth passes;
+enrolled cases supply the independent status fixture and authenticated subject
+in `omission_context`. Enrollment alone never grants authority. An old cached
+projection requires the fresh response before deciding, as `expected_key_refetch`
+pins. Malformed response handling may raise the client's typed response error;
+it must not return not_enrolled.
+
+`key_resolution_outcomes` adds the HTTP/error and refresh lifecycle around
+that same carrier. A key-route 404 keeps `detail` and has top-level `id_tree`;
+its stated enrollment is computed independently of the missing mapping, and
+the SDK preserves it as typed data on the refusal. A missing 404 field is
+unknown, never not_enrolled. `expected_parse` applies when there is a response
+object; `expected_enrollment` is the usable enrollment after the lifecycle.
+`key_response:null` with `http_status:null` means a failed refresh with NO
+response, not a successful JSON null body. Only that failure permits the
+last-known-good enrollment at its true age through 900s. A successful refetch
+that still omits the field is unknown. As in the status vectors, request
+expectations assume original authentication passed and do not extend its
+independent 60s binding bound. A presented chain's differing domain refuses
+before a tree lookup.
+
+`child_requests.requests.root-human-issue` and its matching response freeze
+the namespace-parent first-human CSR. The root operator follows the same
+typed out-of-band, one-shot human approval rules, with fingerprint entry
+BEFORE the CSR fingerprint is displayed. The new operation cases distinguish
+this exchange from same-machine `human init --as-root` (direct issuance,
+no invitation or CSR), and pin automatic registration on human import versus
+explicit `--no-register`. The earlier `csr-human-import-remains-pending` now
+sets `no_register:true`; the ordinary human-approval case explicitly records
+the required fingerprint entry/display order. All earlier signed bytes remain
+unchanged. These lifecycle cases are acceptance inputs for the owning S2/S3/S4
+checkpoints, rather than evidence those paths have already been implemented.
+
+### `member-attribution-v1.json` — superseded, historical only
+
+The [old member attribution proposal](../member-attribution.md) is superseded
+by the identity tree. Its frozen bytes remain evidence, not a new email/SMTP
+implementation contract. No new consumer should implement this record.
 
 ### `awid-controller-request-v2.json`
 
@@ -681,6 +758,7 @@ reference duplication are mutation-tested failures.
 | `e2ee-v2-cross-language.json` | Python aweb `test_e2ee_crypto_helpers.py` and pre-activation federation harness; Go AWID `e2ee_cross_language_test.go`; TypeScript channel-core `encrypted_dispatch.test.ts` |
 | `egress-address-v1.json` | naapp-lib `test_addresses.py` |
 | `egress-url-v2.json` | naapp-lib `test_url_vectors.py` |
+| `id-certificates-v1.json` | Python AWID `test_id_certificate_vectors.py`, `test_id_chain_vectors.py`, `test_id_key_response_vectors.py`; Go shared `id_certificates_test.go`, `id_chain_test.go`, `id_key_response_test.go`; Python AWID `id_tree_support.py`, read by the registry's operation-case and route tests; Python server `test_id_tree_contact_replacement.py` (contact-trust operation), `test_id_chain_request_auth.py` (enrollment carrier and identity-only requests) |
 | `identity-log-negative-v1.json` | Python AWID `test_identity_log_verify.py`; Go shared `identity_log_negative_test.go`; TypeScript channel-core `registry.test.ts` |
 | `identity-log-raw-wire-v1.json` | Python AWID `test_identity_log_verify.py`; Go shared `identity_log_raw_wire_test.go`; TypeScript channel-core `registry.test.ts` |
 | `identity-log-v1.json` | Python AWID `test_conformance_vectors.py`, `test_did.py`, `test_external_registry.py`, and `test_identity_log_verify.py`; Python aweb `test_identity_conformance_vectors.py` and pre-activation federation harness; Go AWID `registry_register_test.go`, `federation_authority_test.go`, and `federation_external_registry_test.go`; Go shared `conformance_test.go`; TypeScript channel-core `registry.test.ts`, `log_rollback.test.ts`, and `received_sender_trust.test.ts` |
