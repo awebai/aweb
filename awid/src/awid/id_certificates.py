@@ -247,10 +247,13 @@ async def sign_id_certificate(
     answer = signer(payload)
     if inspect.isawaitable(answer):
         answer = await answer
-    if type(answer) is not tuple or len(answer) != 2 or answer[0] != snapshot["issuer_key"]:
+    if (
+        type(answer) is not tuple or len(answer) != 2
+        or type(answer[0]) is not str or answer[0] != snapshot["issuer_key"]
+    ):
         raise IDCertificateError("invalid_signature")
-    did_key, signature = answer
-    verify_ed25519(did_key, payload, signature)
+    _, signature = answer
+    verify_ed25519(snapshot["issuer_key"], payload, signature)
     return {
         "certificate": snapshot,
         "signature": base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii"),
