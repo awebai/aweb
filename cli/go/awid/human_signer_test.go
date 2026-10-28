@@ -148,7 +148,7 @@ func TestTerminalPromptRefusesWithoutATerminal(t *testing.T) {
 	}
 	for name, path := range map[string]string{"no terminal device": t.TempDir() + "/missing-tty", "a regular file": regular} {
 		t.Run(name, func(t *testing.T) {
-			passphrase, err := terminalPassphrase(path, "passphrase: ")
+			passphrase, err := terminalPassphrase(path, path, "passphrase: ")
 			if !errors.Is(err, ErrNoTerminal) || passphrase != nil {
 				t.Fatalf("passphrase=%q err=%v", passphrase, err)
 			}
