@@ -189,6 +189,7 @@ async def store_run_context(
             raise UseAuditUnavailable()
     payload = {
         "op_kind": "run_job",
+        "use_ref": body["intent_id"],
         "job_id": inputs.job_id,
         "job_digest": inputs.job_digest,
         "runner_id": inputs.runner_id,

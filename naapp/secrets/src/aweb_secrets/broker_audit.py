@@ -11,6 +11,7 @@ fence AFTER all awaited transition/outbox writes, before publication commits.
 from __future__ import annotations
 
 import json
+import secrets
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Any
@@ -145,6 +146,7 @@ async def freeze_broker_audit(
     url = urlsplit(rendered.url)
     payload: dict[str, Any] = {
         "op_kind": "broker",
+        "use_ref": admission.intent_id,
         "secret_id": record.secret_id,
         "secret_version": call.secret.version,
         "secret_kind": record.kind,
@@ -388,6 +390,11 @@ async def _activity(
     )
 
 
+def mint_refusal_ref() -> str:
+    """A fresh 128-bit audit correlation, with no caller data or lookup rights."""
+    return "use_" + secrets.token_urlsafe(16)
+
+
 async def record_use_refusal(
     tx: TransactionManager,
     *,
@@ -400,6 +407,7 @@ async def record_use_refusal(
     request_id: str | None = None,
     secret_ref: str | None = None,
     job_id: str | None = None,
+    use_ref: str | None = None,
 ) -> UUID:
     """Outer admission transaction, after the failed inner savepoint rolls back.
 
@@ -410,6 +418,9 @@ async def record_use_refusal(
     are absent from the shared refusal catalog. Failure rolls back both records.
     """
     context = commitments.context
+    # Internal callers may supply a scoped original intent ref or pre-mint a
+    # fresh refusal ref for the response. HTTP input models never accept it.
+    use_ref = mint_refusal_ref() if use_ref is None else use_ref
     if context.tool not in {"request", "run"} or context.team_id != principal.team_id:
         raise ValueError("use refusal requires its authenticated team and matched tool")
     _same_producer(producer, context)
@@ -417,6 +428,7 @@ async def record_use_refusal(
         "action": "refused",
         "op_kind": {"request": "broker", "run": "run_job"}[context.tool],
         "refusal_code": code,
+        "use_ref": use_ref,
     }
     if commitments.request_mac is not None:
         payload["request_sha256"] = commitments.request_mac
@@ -442,6 +454,7 @@ async def record_use_refusal(
         correlation={
             "principal_did": principal_key(principal).principal_did,
             "request_id": request_id,
+            "request_ref": use_ref,
             "secret_ref": secret_ref,
             **({} if job_id is None else {"job_id": job_id}),
         },
@@ -460,6 +473,7 @@ async def record_broker_refusal(
     signed_trace_id: str | None = None,
     request_id: str | None = None,
     secret_ref: str | None = None,
+    use_ref: str | None = None,
 ) -> UUID:
     """Retain the broker-only public boundary over the shared use recorder."""
     if commitments.context.tool != "request":
@@ -474,4 +488,5 @@ async def record_broker_refusal(
         signed_trace_id=signed_trace_id,
         request_id=request_id,
         secret_ref=secret_ref,
+        use_ref=use_ref,
     )
