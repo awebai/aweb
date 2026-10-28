@@ -351,8 +351,9 @@ async def test_missing_key_omission_consumes_the_stated_enrollment(monkeypatch, 
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('revoked', [False, True], ids=['never-enrolled-control', 'revoked-mapping-missing'])
-async def test_missing_mapping_does_not_hide_registered_revocation(privacy_app, monkeypatch, revoked):
+@pytest.mark.parametrize('revoked, cached_proof', [(False, False), (True, True), (True, False)],
+                         ids=['never-enrolled-control', 'revoked-cached-proof', 'revoked-missing-history'])
+async def test_missing_mapping_does_not_hide_registered_revocation(privacy_app, monkeypatch, revoked, cached_proof):
     """Real services: a removed mapping must not turn revoked enrollment into legacy."""
     from awid.did import stable_id_from_did_key
 
@@ -396,8 +397,12 @@ async def test_missing_mapping_does_not_hide_registered_revocation(privacy_app, 
                     signer=_fixture_signer('alice'), expected_head=None, invitation_id=None)
                 await writer.revoke_id_certificate(domain, stable, signer=_fixture_signer('root'),
                                                     expected_head=receipt['certificate_id'])
-                # Partial-restore fixture: enrollment and its history survive,
-                # while the key mapping is absent. No public deletion path exists.
+                if cached_proof:
+                    # The coherent revoked proof remains usable in its 60s window.
+                    await cached.id_chain_evidence(None, {'id': stable, 'did_key': actor.did}, domain=domain)
+                # Partial-restore fixture: enrollment survives, while deleting
+                # the mapping cascades to its DID log. Without cached evidence
+                # the tree is unavailable; neither path may classify it legacy.
                 await env.registry_db.execute('DELETE FROM {{tables.did_aw_mappings}} WHERE did_aw=$1', stable)
             key_response = await writer._http_client.get(origin + f'/v1/did/{stable}/key')
             assert key_response.status_code == 404
@@ -408,9 +413,10 @@ async def test_missing_mapping_does_not_hide_registered_revocation(privacy_app, 
             before = await env.db.fetch_val('SELECT count(*) FROM {{tables.messages}}')
             response = await env.client.post('/v1/messages', content=body, headers={
                 **_signed_identity_headers(actor.sk, actor.did, stable, body), 'Content-Type': 'application/json'})
-            assert response.status_code == (403 if revoked else 200), response.text
+            expected_status = (403 if cached_proof else 503) if revoked else 200
+            assert response.status_code == expected_status, response.text
             if revoked:
-                assert response.json()['detail'] == 'revoked'
+                assert response.json()['detail'] == ('revoked' if cached_proof else 'evidence_unavailable')
             assert lookups == ([domain] if revoked else [])
             assert await env.db.fetch_val('SELECT count(*) FROM {{tables.messages}}') == before + (0 if revoked else 1)
         finally:
