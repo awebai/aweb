@@ -69,7 +69,7 @@ func TestIDChildRequestFrozenRequests(t *testing.T) {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	want := []string{"bad-subject-signature", "human-issue", "human-second-key", "human-second-request-same-key", "local-resign", "local-resign-substituted-parent", "local-resign-unrecorded"}
+	want := []string{"bad-subject-signature", "human-issue", "human-second-key", "human-second-request-same-key", "local-resign", "local-resign-substituted-parent", "local-resign-unrecorded", "root-human-issue"}
 	if !reflect.DeepEqual(names, want) {
 		t.Fatalf("requests=%v want %v", names, want)
 	}
@@ -107,8 +107,8 @@ func TestIDChildRequestFrozenRequests(t *testing.T) {
 
 func TestIDChildRequestFrozenResponses(t *testing.T) {
 	v := loadIDChildRequestVectors(t)
-	if len(v.ChildRequests.Responses) != 2 {
-		t.Fatalf("responses=%d want 2", len(v.ChildRequests.Responses))
+	if len(v.ChildRequests.Responses) != 3 {
+		t.Fatalf("responses=%d want 3", len(v.ChildRequests.Responses))
 	}
 	for name, c := range v.ChildRequests.Responses {
 		t.Run(name, func(t *testing.T) {
@@ -119,12 +119,17 @@ func TestIDChildRequestFrozenResponses(t *testing.T) {
 			if !reflect.DeepEqual(parsed, c.Response) {
 				t.Fatalf("parsed %v want %v", parsed, c.Response)
 			}
-			request := v.ChildRequests.Requests[c.Request].Signed["request"].(map[string]any)
-			if parsed["request_id"] != request["request_id"] {
-				t.Fatal("response does not correlate with its request")
+			var request map[string]any
+			for _, r := range v.ChildRequests.Requests {
+				if candidate := r.Signed["request"].(map[string]any); candidate["request_id"] == parsed["request_id"] {
+					request = candidate
+				}
+			}
+			if request == nil {
+				t.Fatal("response does not correlate with a frozen request")
 			}
 			certs := parsed["chain"].(map[string]any)["certificates"].([]any)
-			if !reflect.DeepEqual(certs[len(certs)-1], v.Certificates[c.LeafCertificate].Signed) {
+			if c.LeafCertificate != "" && !reflect.DeepEqual(certs[len(certs)-1], v.Certificates[c.LeafCertificate].Signed) {
 				t.Fatal("response leaf is not the frozen certificate")
 			}
 			built, err := awid.EncodeIDCertificateResponse(request["request_id"].(string), parsed["chain"].(map[string]any))
