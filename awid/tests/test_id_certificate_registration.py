@@ -118,6 +118,16 @@ OWNED_ELSEWHERE = {
         "S3 owns the child's local retry; S2 also consumes the AWID half (same certificate and invitation ID "
         "keep the original registered_at, no new revision)"
     ),
+    "csr-root-human-exact-interactive-approval": "S3 root human approval",
+    "csr-root-human-agent-run-refuses": "S3 root human approval",
+    "csr-root-human-noninteractive-refuses": "S3 root human approval",
+    "csr-root-human-fingerprint-mismatch-voids": "S3 root human approval",
+    "csr-fingerprint-entry-must-precede-display": "S3 child request approval",
+    "human-init-same-machine-root-signs-directly": "S3 human init",
+    "human-init-agent-run-root-refuses": "S3 human init",
+    "human-init-noninteractive-root-refuses": "S3 human init",
+    "csr-human-import-registers-by-default": "S3 child response import (registers through the existing AWID route)",
+    "csr-human-import-registration-failure-retains-pending": "S3 child response import",
 }
 
 # The only cases with two owners: S2 consumes their AWID half by name.

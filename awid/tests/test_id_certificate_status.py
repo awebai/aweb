@@ -531,3 +531,18 @@ async def test_observed_at_never_precedes_the_snapshot(tree):
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["observed_at"] > "2026-10-26T00:04:00.000000Z"
+
+
+async def _drop_key_history(awid_db_infra, key_name: str) -> None:
+    """Delete an identity's key mapping; its DID log goes with it (001_registry.sql)."""
+    db = awid_db_infra.get_manager("aweb")
+    await db.execute("DELETE FROM {{tables.did_aw_mappings}} WHERE did_aw = $1", did_aw(key_name))
+    assert await db.fetch_all("SELECT 1 FROM {{tables.did_aw_log}} WHERE did_aw = $1", did_aw(key_name)) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("requested", ["alice", "bob"], ids=["the-identity-itself", "its-child"])
+async def test_an_identity_without_key_history_is_unavailable_evidence(tree, awid_db_infra, requested):
+    await _drop_key_history(awid_db_infra, "alice")
+    resp = await _status(tree, _request(requested))
+    assert (resp.status_code, _code(resp)) == (503, "evidence_unavailable"), resp.text

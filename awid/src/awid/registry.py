@@ -274,15 +274,17 @@ class TeamCertificate:
 class RegistryError(Exception):
     def __init__(
         self, message: str, *, status_code: int, detail: str | None = None, code: str | None = None,
-        body: dict[str, Any] | None = None,
+        body: Any = None,
+        body_is_json: bool = False,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.detail = detail or message
         # The refusal's machine-readable code, when the registry sent one.
         self.code = code
-        # The refusal's JSON object body, when it had one.
+        # The refusal's parsed JSON body, of whatever type, when body_is_json.
         self.body = body
+        self.body_is_json = body_is_json
 
 
 class DIDKeyNotFoundError(RegistryError):
@@ -293,7 +295,8 @@ class DIDKeyNotFoundError(RegistryError):
 
     def __init__(self, refused: RegistryError, *, id_tree: IDTreeEnrollment | None) -> None:
         super().__init__(
-            str(refused), status_code=refused.status_code, detail=refused.detail, code=refused.code, body=refused.body,
+            str(refused), status_code=refused.status_code, detail=refused.detail, code=refused.code,
+            body=refused.body, body_is_json=refused.body_is_json,
         )
         self.id_tree = id_tree
 
@@ -445,8 +448,10 @@ class RegistryClient:
             detail = None
             code = None
             parsed_error = None
+            body_is_json = False
             try:
                 parsed_error = json_loads(content)
+                body_is_json = True
                 if isinstance(parsed_error, dict):
                     raw_detail = parsed_error.get("detail")
                     if raw_detail is not None:
@@ -468,7 +473,8 @@ class RegistryClient:
                 status_code=response.status_code,
                 detail=detail or response_text,
                 code=code,
-                body=parsed_error if isinstance(parsed_error, dict) else None,
+                body=parsed_error,
+                body_is_json=body_is_json,
             )
         if not content:
             return {}
@@ -700,7 +706,10 @@ class RegistryClient:
             data = await self._request_json("GET", f"/v1/did/{did_aw}/key")
         except RegistryError as refused:
             if refused.status_code == 404:
-                raise DIDKeyNotFoundError(refused, id_tree=_id_tree_enrollment(refused.body or {})) from refused
+                # Without a JSON body there is no response to state enrollment; a
+                # JSON body is parsed as a response, so a non-object is malformed.
+                id_tree = _id_tree_enrollment(refused.body) if refused.body_is_json else None
+                raise DIDKeyNotFoundError(refused, id_tree=id_tree) from refused
             raise
         return _key_resolution_from_json(data)
 
@@ -2740,7 +2749,7 @@ def _key_resolution_from_json(data: dict[str, Any]) -> KeyResolution:
     )
 
 
-def _id_tree_enrollment(data: dict[str, Any]) -> IDTreeEnrollment | None:
+def _id_tree_enrollment(data: Any) -> IDTreeEnrollment | None:
     """The key resolution's stated enrollment, None when unstated; a malformed one rejects it."""
     parsed = key_response_id_tree(data)
     if parsed["state"] == "malformed":
