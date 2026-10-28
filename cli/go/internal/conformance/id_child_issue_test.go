@@ -709,3 +709,104 @@ func TestIDChildIssueProbes(t *testing.T) {
 		}
 	})
 }
+
+// A fingerprint read over a phone or chat may arrive in another case, without
+// hyphens or with spaces. One shared parse accepts any such spelling of 32 hex
+// digits; anything else is asked again without voiding (Athena 0df721c4).
+func TestIDChildIssueFingerprintEntry(t *testing.T) {
+	x := loadIDChildExchange(t)
+	cases := loadIDChildIssueCases(t)
+	for _, name := range []string{"csr-human-exact-interactive-approval", "csr-root-human-exact-interactive-approval"} {
+		c := cases[name]
+		request := x.requests[c.Input.Request].CanonicalUTF8
+		fingerprint := c.Input.ConfirmedFingerprint
+		bare := strings.ReplaceAll(fingerprint, "-", "")
+
+		for spelling, entry := range map[string]string{
+			"upper case without hyphens": strings.ToUpper(bare),
+			"spaced groups":              " " + strings.ReplaceAll(fingerprint, "-", " ") + "\n",
+		} {
+			t.Run(name+"/"+spelling+" issues", func(t *testing.T) {
+				parsed, err := awid.ParseIDKeyFingerprintEntry(entry)
+				if err != nil || parsed != fingerprint {
+					t.Fatalf("parsed %q (%v) want %q", parsed, err, fingerprint)
+				}
+				r := x.issueRun(t, c)
+				if _, err := r.receive(request); err != nil {
+					t.Fatal(err)
+				}
+				response, err := r.approve(t, requestIDOf(t, request), fullHumanApproval(entry))
+				if err != nil || string(response) != x.responses[c.Expected.Response].CanonicalUTF8 || r.calls != 1 {
+					t.Fatalf("err=%v calls=%d", err, r.calls)
+				}
+			})
+		}
+
+		for malformed, entry := range map[string]string{
+			"31 hex digits":     bare[:31],
+			"33 hex digits":     bare + "0",
+			"32 non-hex digits": strings.Repeat("g", 32),
+			"other punctuation": strings.ReplaceAll(fingerprint, "-", ":"),
+		} {
+			t.Run(name+"/"+malformed+" is asked again without voiding", func(t *testing.T) {
+				if _, err := awid.ParseIDKeyFingerprintEntry(entry); err == nil {
+					t.Fatal("a malformed entry parsed")
+				}
+				r := x.issueRun(t, c)
+				if _, err := r.receive(request); err != nil {
+					t.Fatal(err)
+				}
+				response, err := r.approve(t, requestIDOf(t, request), fullHumanApproval(entry))
+				if got := awid.IDCertificateErrorCode(err); got != "human_approval_required" || response != nil || r.calls != 0 {
+					t.Fatalf("reason=%q (%v) calls=%d", got, err, r.calls)
+				}
+				if inv := r.invitation(t, c.Input.InvitationID); inv.Void || inv.Request.State != awid.IDRequestPending {
+					t.Fatalf("void=%v state=%s", inv.Void, inv.Request.State)
+				}
+			})
+		}
+	}
+}
+
+// A new child's id is its own key's: the stable id of subject_key for did:aw,
+// refused at receive before anything is bound; for did:key the request codec
+// already refuses an id other than subject_key.
+func TestIDChildIssueNewChildIDIsTheSubjectKeys(t *testing.T) {
+	x := loadIDChildExchange(t)
+	human := loadIDChildIssueCases(t)["csr-human-exact-interactive-approval"]
+	parsed, err := awid.ParseIDCertificateRequest([]byte(x.requests["human-issue"].CanonicalUTF8))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		change map[string]any
+		reason string
+	}{
+		"did:aw of another key":  {map[string]any{"id": x.v.Keys["other_human"].DIDAW}, "subject_mismatch"},
+		"did:key of another key": {map[string]any{"id": x.v.Keys["other_human"].DIDKey, "kind": "agent"}, "invalid_shape"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := x.issueRun(t, human)
+			request := map[string]any{}
+			for k, v := range parsed["request"].(map[string]any) {
+				request[k] = v
+			}
+			for k, v := range tc.change {
+				request[k] = v
+			}
+			inv := r.invitation(t, human.Input.InvitationID)
+			inv.Kind = request["kind"].(string)
+			if err := r.invitations.PutInvitation(inv); err != nil {
+				t.Fatal(err)
+			}
+			r.invitations.writes = 0
+			_, err := r.receive(signRequest(t, x.v, "bob", request))
+			if got := awid.IDCertificateErrorCode(err); got != tc.reason {
+				t.Fatalf("reason=%q (%v) want %q", got, err, tc.reason)
+			}
+			if r.invitations.writes != 0 {
+				t.Fatal("a request for another key's id was bound")
+			}
+		})
+	}
+}

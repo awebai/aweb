@@ -183,6 +183,9 @@ func TestValidateHumanKeyBackupIsStructural(t *testing.T) {
 	if err := ValidateHumanKeyBackup(append(append([]byte(nil), good...), "\n  \n"...)); err != nil {
 		t.Fatalf("trailing whitespace was refused: %v", err)
 	}
+	if err := ValidateHumanKeyBackup(append([]byte("\n \t\n"), good...)); err != nil {
+		t.Fatalf("leading whitespace was refused: %v", err)
+	}
 	plaintextDER, err := x509.MarshalPKCS8PrivateKey(testHumanKey())
 	if err != nil {
 		t.Fatal(err)
@@ -193,6 +196,8 @@ func TestValidateHumanKeyBackupIsStructural(t *testing.T) {
 		"plaintext DER under the ENCRYPTED label": pem.EncodeToMemory(&pem.Block{Type: "ENCRYPTED PRIVATE KEY", Bytes: plaintextDER}),
 		"plaintext PEM":                           plaintextPEM,
 		"text after the block":                    append(append([]byte(nil), good...), "note"...),
+		"plaintext PEM prepended":                 append(append([]byte(nil), plaintextPEM...), good...),
+		"text before the block":                   append([]byte("note\n"), good...),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := ValidateHumanKeyBackup(blob); err == nil {
