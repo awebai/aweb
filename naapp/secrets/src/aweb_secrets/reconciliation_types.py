@@ -73,6 +73,7 @@ class ReconciliationOriginal:
 class ReconciliationView:
     original: ReconciliationOriginal
     state: State
+    repeat_state: State | None = None
 
 
 @dataclass(frozen=True)
@@ -98,6 +99,7 @@ class ReconciliationControlStatus:
     original_state: State
     approval_state: ApprovalState
     delivery_status: DeliveryStatus
+    repeat_state: State | None = None
 
 
 @dataclass(frozen=True)
