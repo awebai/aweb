@@ -48,6 +48,28 @@ row records an existing signed family; it never exempts a new ID-family proof
 from the shared verifier. These checks help reviewers catch source drift;
 they do not prove control flow or discover arbitrary dynamic Python dispatch.
 
+### Signed-via Python sites
+
+The P1 message provenance sites use the existing signed-message family. Their
+`legacy` inventory profile records that family; it grants no identity-tree
+authority. `via` remains author-supplied message data, separate from platform,
+custody and membership authorization. The exact counts are in `python_guard`.
+
+| File and symbol | Added calls or references | Reason |
+| --- | --- | --- |
+| `server/src/aweb/e2ee_messages.py::_inner_payload_map` | `awid.signing.validate_message_via`: 1 | Validate provenance when composing authenticated inner content, while excluding it from the fixed header. |
+| `server/src/aweb/e2ee_messages.py::encrypt_e2ee_message` | `awid.signing.validate_message_via`: 1 | Refuse malformed supplied provenance before encryption. |
+| `server/src/aweb/e2ee_messages.py::decrypt_e2ee_message` | `awid.signing.validate_message_via`: 1 | Validate provenance inside authenticated decrypted content. |
+| `server/src/aweb/federation/envelope.py::_enforce_signed_payload_binding` | `awid.signing.validate_message_via`: 1 | Validate the optional signed field without reconstructing the author's bytes. |
+| `server/src/aweb/messaging/verification.py::verified_signed_via` | `awid.signing.validate_message_via`: 1 | Project valid provenance only from verified retained plaintext. |
+| `server/src/aweb/routes/chat.py::_validate_signed_chat_payload` | `awid.signing.validate_message_via`: 1 | Reject malformed signed chat provenance at ingress. |
+| `server/src/aweb/routes/messages.py::_validate_signed_mail_payload` | `awid.signing.validate_message_via`: 1 | Reject malformed signed mail provenance at ingress. |
+| `scripts/generate_signed_via_crypto_vectors.py::main` | `awid.did.did_from_public_key`: 1; `awid.did.stable_id_from_public_key`: 1; `nacl.signing.SigningKey`: 1; `reference:nacl.signing.SigningKey().verify_key`: 1 | Construct deterministic public fixture identities for the frozen cross-language crypto vectors. |
+
+The mapped rows name the existing signed-via crypto, ingress, projection and
+federation tests. These prove the message relationship; identity-tree release
+qualification remains separate.
+
 ## Go source guard
 
 `make test-identity-go-inventory` runs in the ordinary test target and candidate

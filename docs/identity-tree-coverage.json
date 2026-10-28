@@ -1981,7 +1981,9 @@
         "J1",
         "J8"
       ],
-      "proving_tests": [],
+      "proving_tests": [
+        "server/tests/test_signed_via_projection.py::test_federated_via_grammar_without_reconstructing_signed_bytes"
+      ],
       "acceptance": "Bind author, not relay; old strict wrappers remain accepted.",
       "ed25519_profile": "legacy",
       "sites": [
@@ -4192,7 +4194,10 @@
         "J1",
         "J8"
       ],
-      "proving_tests": [],
+      "proving_tests": [
+        "server/tests/test_signed_via.py::test_via_is_protected_inner_content_and_not_fixed_header",
+        "server/tests/test_signed_via.py::test_encryption_refuses_malformed_via_without_plaintext_retry"
+      ],
       "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
       "sites": [
         {
@@ -4234,6 +4239,10 @@
         {
           "file": "server/src/aweb/e2ee_messages.py",
           "symbol": "decrypt_e2ee_message"
+        },
+        {
+          "file": "server/src/aweb/e2ee_messages.py",
+          "symbol": "_inner_payload_map"
         }
       ],
       "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
@@ -4658,7 +4667,9 @@
         "J1",
         "J8"
       ],
-      "proving_tests": [],
+      "proving_tests": [
+        "server/tests/test_signed_via_projection.py::test_server_projects_only_verified_via"
+      ],
       "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
       "sites": [
         {
@@ -4668,6 +4679,10 @@
         {
           "file": "server/src/aweb/messaging/verification.py",
           "symbol": "_encrypted_message_verification_status"
+        },
+        {
+          "file": "server/src/aweb/messaging/verification.py",
+          "symbol": "verified_signed_via"
         }
       ],
       "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
@@ -4724,7 +4739,9 @@
         "J1",
         "J8"
       ],
-      "proving_tests": [],
+      "proving_tests": [
+        "server/tests/test_signed_via_projection.py::test_ingress_refuses_malformed_signed_via"
+      ],
       "acceptance": "Owning slice must classify this existing signed-family boundary as adapt or keep, and provide its chain/refusal or relationship test before release qualification.",
       "sites": [
         {
@@ -4742,6 +4759,10 @@
         {
           "file": "server/src/aweb/routes/messages.py",
           "symbol": "send_message"
+        },
+        {
+          "file": "server/src/aweb/routes/messages.py",
+          "symbol": "_validate_signed_mail_payload"
         }
       ],
       "coverage_scope": "Exact existing Python primitive call sites are inventoried; no identity-tree conversion is claimed."
@@ -13966,6 +13987,65 @@
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
+    },
+    {
+      "id": "SERVER.CHAT.INGRESS",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/routes/chat.py"
+      ],
+      "operations": [
+        "verify"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [
+        "server/tests/test_signed_via_projection.py::test_ingress_refuses_malformed_signed_via"
+      ],
+      "acceptance": "Validate optional signed chat provenance as author-supplied message data; it grants no platform, custody or membership authority.",
+      "sites": [
+        {
+          "file": "server/src/aweb/routes/chat.py",
+          "symbol": "_validate_signed_chat_payload"
+        }
+      ],
+      "coverage_scope": "Exact signed-chat payload validation call site; no identity-tree conversion is claimed."
+    },
+    {
+      "id": "PY.SOURCE.SCRIPTS.GENERATE_SIGNED_VIA_CRYPTO_VECTORS",
+      "repo": "aweb",
+      "files": [
+        "scripts/generate_signed_via_crypto_vectors.py"
+      ],
+      "operations": [
+        "create",
+        "sign"
+      ],
+      "change": "owner_to_refine",
+      "slice": "S4",
+      "status": "pending",
+      "ed25519_profile": "legacy",
+      "journeys": [
+        "J1",
+        "J8"
+      ],
+      "proving_tests": [
+        "server/tests/test_signed_via.py::test_python_reads_both_native_crypto_producers"
+      ],
+      "acceptance": "Construct deterministic public test identities for the frozen Python/Go encrypted message fixtures; the generator refuses to overwrite an existing vector file.",
+      "sites": [
+        {
+          "file": "scripts/generate_signed_via_crypto_vectors.py",
+          "symbol": "main"
+        }
+      ],
+      "coverage_scope": "Fixture-generation identity primitives only; no production identity or identity-tree conversion is claimed."
     }
   ],
   "guard_checkpoint": {
@@ -16713,6 +16793,7 @@
         "file": "server/src/aweb/e2ee_messages.py",
         "symbol": "decrypt_e2ee_message",
         "calls": {
+          "awid.signing.validate_message_via": 1,
           "verify_e2ee_message_envelope_signature": 1
         }
       },
@@ -16724,6 +16805,7 @@
           "awid.did.did_from_public_key": 1,
           "awid.signing.canonical_json_bytes": 1,
           "awid.signing.sign_message": 1,
+          "awid.signing.validate_message_via": 1,
           "nacl.signing.SigningKey": 1,
           "reference:nacl.signing.SigningKey().verify_key": 1,
           "reference:verify_key": 1
@@ -16870,6 +16952,7 @@
         "file": "server/src/aweb/federation/envelope.py",
         "symbol": "_enforce_signed_payload_binding",
         "calls": {
+          "awid.signing.validate_message_via": 1,
           "literal:did:aw": 2
         }
       },
@@ -17594,6 +17677,49 @@
         "symbol": "compact_team_auth_payload",
         "calls": {
           "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "SERVER.E2EE.MESSAGES",
+        "file": "server/src/aweb/e2ee_messages.py",
+        "symbol": "_inner_payload_map",
+        "calls": {
+          "awid.signing.validate_message_via": 1
+        }
+      },
+      {
+        "row": "SERVER.MESSAGING.VERIFICATION",
+        "file": "server/src/aweb/messaging/verification.py",
+        "symbol": "verified_signed_via",
+        "calls": {
+          "awid.signing.validate_message_via": 1
+        }
+      },
+      {
+        "row": "SERVER.CHAT.INGRESS",
+        "file": "server/src/aweb/routes/chat.py",
+        "symbol": "_validate_signed_chat_payload",
+        "calls": {
+          "awid.signing.validate_message_via": 1
+        }
+      },
+      {
+        "row": "SERVER.MAIL.INGRESS",
+        "file": "server/src/aweb/routes/messages.py",
+        "symbol": "_validate_signed_mail_payload",
+        "calls": {
+          "awid.signing.validate_message_via": 1
+        }
+      },
+      {
+        "row": "PY.SOURCE.SCRIPTS.GENERATE_SIGNED_VIA_CRYPTO_VECTORS",
+        "file": "scripts/generate_signed_via_crypto_vectors.py",
+        "symbol": "main",
+        "calls": {
+          "awid.did.did_from_public_key": 1,
+          "awid.did.stable_id_from_public_key": 1,
+          "nacl.signing.SigningKey": 1,
+          "reference:nacl.signing.SigningKey().verify_key": 1
         }
       }
     ]
