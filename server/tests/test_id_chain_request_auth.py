@@ -197,3 +197,94 @@ async def test_stale_not_enrolled_does_not_hide_enrollment_or_revocation(privacy
         finally:
             env.app.state.awid_registry_client = writer
             await cached.aclose()
+
+
+def _signed_fixture_certificate(template, *, domain, identity, parent, issuer):
+    from nacl.signing import SigningKey
+
+    fields = VECTORS['certificates'][template]['signed']['certificate'] | {
+        'domain': domain, 'id': identity, 'parent': parent}
+    seed = bytes.fromhex(VECTORS['keys'][issuer]['seed_hex'])
+    signature = SigningKey(seed).sign(id_certificate_signing_bytes(fields)).signature
+    return {'certificate': fields, 'signature': base64.urlsafe_b64encode(signature).rstrip(b'=').decode()}
+
+
+def _fixture_signer(name):
+    from nacl.signing import SigningKey
+
+    key = VECTORS['keys'][name]
+    return lambda payload: (key['did_key'], SigningKey(bytes.fromhex(key['seed_hex'])).sign(payload).signature)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('presentation, reason', [
+    ('revoked', 'revoked'),
+    ('root-replaced', 'root_replaced'),
+    ('malformed', 'invalid_encoding'),
+    ('two-headers', 'invalid_shape'),
+    ('chainless', None),
+])
+async def test_did_key_only_requests_enforce_presented_chain(privacy_app, monkeypatch, presentation, reason):
+    from awid.id_certificates import encode_id_chain_header
+
+    env = privacy_app
+    actor = env.actors['bob']
+    domain = f'awtest-local-{uuid4().hex}.test'
+    async with registry_listener(env) as (writer, origin):
+        env.registry_app.state.awid_public_origins = (origin,)
+        controller = [ROOT]
+
+        async def exact_dns(selected):
+            assert selected == domain
+            return DomainAuthority(controller[0]['did_key'], origin, '_awid.' + domain)
+
+        env.registry_app.dependency_overrides[get_domain_verifier] = lambda: exact_dns
+        monkeypatch.setenv('AWID_REGISTRY_URL', origin)
+        monkeypatch.setenv('AWEB_DATABASE_URL', 'postgresql://unused/test')
+        cached = _build_awid_registry_client(env.app, redis=env.redis)
+        object.__setattr__(cached, '_domain_verifier', exact_dns)
+        env.app.state.awid_registry_client = cached
+        try:
+            root_local = _signed_fixture_certificate('root-agent', domain=domain, identity=actor.did,
+                parent={'kind': 'namespace', 'id': domain}, issuer='root')
+            bundle = {'v': 1, 'type': 'aweb.id-chain', 'certificates': [root_local]}
+            if presentation in ('revoked', 'root-replaced'):
+                await writer.register_namespace(domain, ROOT['did_key'], bytes.fromhex(ROOT['seed_hex']))
+                await writer.register_did(ALICE['did_key'], bytes.fromhex(ALICE['seed_hex']))
+                human = _signed_fixture_certificate('alice', domain=domain, identity=ALICE['did_aw'],
+                    parent={'kind': 'namespace', 'id': domain}, issuer='root')
+                receipt = await writer.register_id_certificate(
+                    {'v': 1, 'type': 'aweb.id-chain', 'certificates': [human]},
+                    signer=_fixture_signer('alice'), expected_head=None, invitation_id=None)
+                local = _signed_fixture_certificate('coordinator', domain=domain, identity=actor.did,
+                    parent={'kind': 'identity', 'id': ALICE['did_aw']}, issuer='alice')
+                bundle['certificates'] = [human, local]
+                if presentation == 'revoked':
+                    await writer.revoke_id_certificate(domain, ALICE['did_aw'], signer=_fixture_signer('root'),
+                                                       expected_head=receipt['certificate_id'])
+                else:
+                    controller[0] = VECTORS['keys']['root_rotated']
+                    await writer.rotate_namespace_controller(domain, controller[0]['did_key'],
+                                                              bytes.fromhex(controller[0]['seed_hex']))
+            else:
+                async def no_tree_read(self, *args, **kwargs):
+                    pytest.fail('chainless or syntactically refused local request fetched a tree')
+                monkeypatch.setattr(CachedRegistryClient, 'id_chain_evidence', no_tree_read)
+
+            body = json.dumps({'to_did': env.actors['carol'].did, 'subject': 'local', 'body': 'local'}).encode()
+            headers = list(_signed_identity_headers(actor.sk, actor.did, '', body).items())
+            headers.append(('Content-Type', 'application/json'))
+            if presentation != 'chainless':
+                value = '!' if presentation == 'malformed' else encode_id_chain_header(bundle)
+                headers.append(('X-AWID-ID-Chain', value))
+                if presentation == 'two-headers':
+                    headers.append(('X-AWID-ID-Chain', value))
+            before = await env.db.fetch_val('SELECT count(*) FROM {{tables.messages}}')
+            response = await env.client.post('/v1/messages', content=body, headers=headers)
+            assert response.status_code == (200 if reason is None else 403), response.text
+            if reason:
+                assert response.json()['detail'] == reason
+            assert await env.db.fetch_val('SELECT count(*) FROM {{tables.messages}}') == before + (reason is None)
+        finally:
+            env.app.state.awid_registry_client = writer
+            await cached.aclose()

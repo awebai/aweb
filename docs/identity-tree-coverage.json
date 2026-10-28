@@ -1946,7 +1946,8 @@
       ],
       "proving_tests": [
         "server/tests/test_id_chain_request_auth.py::test_stale_not_enrolled_does_not_hide_enrollment_or_revocation",
-        "server/tests/test_id_chain_request_auth.py::test_enrollment_controls_domain_before_any_tree_fetch"
+        "server/tests/test_id_chain_request_auth.py::test_enrollment_controls_domain_before_any_tree_fetch",
+        "server/tests/test_id_chain_request_auth.py::test_did_key_only_requests_enforce_presented_chain"
       ],
       "acceptance": "Identity-only original authentication precedes the shared ID-chain verifier/disposition. Enrolled omission uses the fresh binding domain. Stored projection fallback and the other lanes remain pending.",
       "ed25519_profile": "legacy",
@@ -14165,7 +14166,8 @@
       "proving_tests": [
         "server/tests/test_id_chain_request_auth.py::test_factory_without_cached_evidence_never_fetches_a_tree",
         "server/tests/test_id_chain_request_auth.py::test_enrollment_controls_domain_before_any_tree_fetch",
-        "server/tests/test_id_chain_request_auth.py::test_stale_not_enrolled_does_not_hide_enrollment_or_revocation"
+        "server/tests/test_id_chain_request_auth.py::test_stale_not_enrolled_does_not_hide_enrollment_or_revocation",
+        "server/tests/test_id_chain_request_auth.py::test_did_key_only_requests_enforce_presented_chain"
       ],
       "acceptance": "Shared strict chain parsing, cached evidence and disposition on the identity-only lane. Chainless local does no lookup; no-Redis tree evidence is unavailable; unknown enrollment and authoritative-domain mismatch refuse. Remaining lanes and response/message carriers are pending.",
       "ed25519_profile": "strict",
