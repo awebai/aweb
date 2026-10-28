@@ -6,11 +6,11 @@ from aweb.routes.identity_grants import GrantMintRequest
 
 @pytest.mark.parametrize("ttl", ["never", None])
 def test_never_grant_request(ttl):
-    req = GrantMintRequest(grant_did_key="did:key:zSynthetic", scopes=["mail.read"], ttl_seconds=ttl)
+    req = GrantMintRequest(grant_did_key="did:key:z6Mkkpc6fEWEGWdVMMwPyrVPNcNfKMajgA5eZCTtufnQ33ug", scopes=["mail.read"], ttl_seconds=ttl)
     assert req.ttl_seconds == ttl
 
 def test_omitted_ttl_is_never():
-    assert GrantMintRequest(grant_did_key="did:key:zSynthetic", scopes=["mail.read"]).ttl_seconds is None
+    assert GrantMintRequest(grant_did_key="did:key:z6Mkkpc6fEWEGWdVMMwPyrVPNcNfKMajgA5eZCTtufnQ33ug", scopes=["mail.read"]).ttl_seconds is None
 
 def test_never_status_survives_horizon_but_revocation_wins():
     issued = datetime(2000, 1, 1, tzinfo=timezone.utc)

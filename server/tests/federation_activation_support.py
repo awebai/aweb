@@ -47,7 +47,7 @@ class TestFederationAuthority:
                 authoritative_read_completed_at, expires_at,
                 generation, revision, publishing_fence
             ) VALUES (
-                $1, 'dns', '_awid.test', 'did:key:z6Mktestcontroller',
+                $1, 'dns', '_awid.test', 'did:key:z6MksdtzGW313q4RQicECqqpSv25FBPhcJBcGAXMZ5RbRPQ7',
                 'aweb.federation-authority.dns.v1', $2, FALSE, TRUE,
                 'https://registry.test', $3, $4, 1, $5, 1, $6,
                 clock_timestamp(), clock_timestamp() + INTERVAL '59 seconds',
@@ -88,6 +88,6 @@ class TestFederationAuthority:
             canonical_address=address,
             did_aw=resolution.did_aw,
             current_did_key=resolution.current_did_key,
-            controller_did="did:key:z6Mktestcontroller",
+            controller_did="did:key:z6MksdtzGW313q4RQicECqqpSv25FBPhcJBcGAXMZ5RbRPQ7",
             delivery_origin=str(getattr(delivery, "origin", "") or ""),
         )

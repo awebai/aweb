@@ -22,7 +22,7 @@ def _create_validation_test_app():
 
     async def _messaging_auth() -> MessagingAuth:
         return MessagingAuth(
-            did_key="did:key:z6MkValidationTest",
+            did_key="did:key:z6Mkq6JrtPKy8Z3no7jQ5s5uXcZwH6AhPfinswGWwnJHFTMU",
             did_aw=None,
             address=None,
         )
@@ -161,10 +161,10 @@ def _federation_validation_payload() -> dict:
             "version": 1,
             "type": "mail",
             "sender_did_aw": "did:aw:sender",
-            "sender_current_did_key": "did:key:sender",
+            "sender_current_did_key": "did:key:z6Mku8RjwBSuKyvASdpqNoawdHyLmaD2jWSnCankL3gt4wfL",
             "target_address": "example.com/bob",
             "target_did_aw": "did:aw:bob",
-            "target_current_did_key": "did:key:bob",
+            "target_current_did_key": "did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
             "target_delivery_origin": "https://example.com",
             "body": "hello",
             "message_id": "11111111-1111-4111-8111-111111111111",

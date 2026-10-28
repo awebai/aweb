@@ -117,7 +117,7 @@ async def _insert_mcp_chat_agents(aweb_db, *, team_id: str, alice_agent_id, bob_
     await aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkTeam')
+        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkkopcdRMf2qPVBdcugyhrVQorfEfz2uUigTwZDvZ15poA')
         """,
         team_id,
     )
@@ -127,7 +127,7 @@ async def _insert_mcp_chat_agents(aweb_db, *, team_id: str, alice_agent_id, bob_
             (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode, did_aw_verified_key)
         VALUES
             ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $4 END),
-            ($2, $3, 'did:key:z6MkBob', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkBob' END)
+            ($2, $3, 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9' END)
         """,
         alice_agent_id,
         bob_agent_id,
@@ -168,7 +168,7 @@ async def test_mcp_send_mail_requires_nonempty_body(aweb_cloud_db, monkeypatch):
             team_id="ops:acme.com",
             agent_id=str(uuid4()),
             alias="alice",
-            did_key="did:key:z6MkAlice",
+            did_key="did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE",
         ),
     )
 
@@ -189,7 +189,7 @@ async def test_mcp_auth_prefers_certificate_identity_fields(aweb_cloud_db, monke
     team_id = "ops:acme.com"
     agent_id = uuid4()
     workspace_id = uuid4()
-    did_key = "did:key:z6MkAlice"
+    did_key = "did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE"
 
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -199,7 +199,7 @@ async def test_mcp_auth_prefers_certificate_identity_fields(aweb_cloud_db, monke
         team_id,
         "acme.com",
         "ops",
-        "did:key:z6MkTeam",
+        "did:key:z6MkkopcdRMf2qPVBdcugyhrVQorfEfz2uUigTwZDvZ15poA",
     )
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -237,7 +237,7 @@ async def test_mcp_auth_prefers_certificate_identity_fields(aweb_cloud_db, monke
     ctx = await middleware._resolve_auth(
         _request_with_headers(
             {
-                "Authorization": "DIDKey did:key:z6MkAlice signature",
+                "Authorization": "DIDKey did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE signature",
                 "X-AWID-Team-Certificate": "certificate",
             }
         )
@@ -254,7 +254,7 @@ async def test_mcp_auth_prefers_certificate_identity_fields(aweb_cloud_db, monke
 async def test_mcp_auth_accepts_raw_manager(aweb_cloud_db, monkeypatch):
     team_id = "ops:acme.com"
     agent_id = uuid4()
-    did_key = "did:key:z6MkAlice"
+    did_key = "did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE"
 
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -264,7 +264,7 @@ async def test_mcp_auth_accepts_raw_manager(aweb_cloud_db, monkeypatch):
         team_id,
         "acme.com",
         "ops",
-        "did:key:z6MkTeam",
+        "did:key:z6MkkopcdRMf2qPVBdcugyhrVQorfEfz2uUigTwZDvZ15poA",
     )
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -291,7 +291,7 @@ async def test_mcp_auth_accepts_raw_manager(aweb_cloud_db, monkeypatch):
     ctx = await middleware._resolve_auth(
         _request_with_headers(
             {
-                "Authorization": "DIDKey did:key:z6MkAlice signature",
+                "Authorization": "DIDKey did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE signature",
                 "X-AWID-Team-Certificate": "certificate",
             }
         )
@@ -306,12 +306,12 @@ async def test_mcp_auth_accepts_raw_manager(aweb_cloud_db, monkeypatch):
 async def test_mcp_auth_enriches_identity_auth_from_agent_row(aweb_cloud_db, monkeypatch):
     team_id = "ops:gsk.aweb.ai"
     agent_id = uuid4()
-    did_key = "did:key:z6MkGsk"
+    did_key = "did:key:z6MksfSaknohW6kh6iEBo1ef65v3k1im4Qh4ZTjy8ESeS4y3"
 
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, 'gsk.aweb.ai', 'ops', 'did:key:z6MkTeam')
+        VALUES ($1, 'gsk.aweb.ai', 'ops', 'did:key:z6MkkopcdRMf2qPVBdcugyhrVQorfEfz2uUigTwZDvZ15poA')
         """,
         team_id,
     )
@@ -354,7 +354,7 @@ async def test_mcp_auth_accepts_trusted_proxy_headers(aweb_cloud_db, monkeypatch
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkTeam')
+        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkkopcdRMf2qPVBdcugyhrVQorfEfz2uUigTwZDvZ15poA')
         """,
         team_id,
     )
@@ -362,7 +362,7 @@ async def test_mcp_auth_accepts_trusted_proxy_headers(aweb_cloud_db, monkeypatch
         """
         INSERT INTO {{tables.agents}}
             (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, did_aw_verified_key)
-        VALUES ($1, $2, 'did:key:z6MkAlice', 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN 'did:key:z6MkAlice' END)
+        VALUES ($1, $2, 'did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE', 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN 'did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE' END)
         """,
         agent_id,
         team_id,
@@ -397,7 +397,7 @@ async def test_mcp_auth_accepts_trusted_proxy_headers(aweb_cloud_db, monkeypatch
                     actor_id=str(agent_id),
                 ),
             },
-            verified_bindings=[("did:aw:alice","did:key:z6MkAlice","acme.com/alice")],
+            verified_bindings=[("did:aw:alice","did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE","acme.com/alice")],
         )
     )
 
@@ -406,7 +406,7 @@ async def test_mcp_auth_accepts_trusted_proxy_headers(aweb_cloud_db, monkeypatch
     assert ctx.agent_id == str(agent_id)
     assert ctx.workspace_id == str(workspace_id)
     assert ctx.alias == "alice"
-    assert ctx.did_key == "did:key:z6MkAlice"
+    assert ctx.did_key == "did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE"
     assert ctx.did_aw == "did:aw:alice"
     assert ctx.address == "acme.com/alice"
 
@@ -526,12 +526,12 @@ def test_canonical_signed_payload_filters_unsigned_fields():
     payload = {
         "body": "hello",
         "from": "acme.com/alice",
-        "from_did": "did:key:z6MkAlice",
+        "from_did": "did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE",
         "message_id": "message-1",
         "subject": "launch",
         "timestamp": "2026-04-25T00:00:00Z",
         "to": "acme.com/bob",
-        "to_did": "did:key:z6MkBob",
+        "to_did": "did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9",
         "type": "mail",
         "transport_only": "must not be signed",
     }
@@ -554,7 +554,7 @@ async def test_mcp_send_mail_uses_hosted_signer_for_trusted_proxy(aweb_cloud_db,
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkTeam')
+        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkkopcdRMf2qPVBdcugyhrVQorfEfz2uUigTwZDvZ15poA')
         """,
         team_id,
     )
@@ -564,7 +564,7 @@ async def test_mcp_send_mail_uses_hosted_signer_for_trusted_proxy(aweb_cloud_db,
             (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode, did_aw_verified_key)
         VALUES
             ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $4 END),
-            ($2, $3, 'did:key:z6MkBob', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkBob' END)
+            ($2, $3, 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9' END)
         """,
         alice_agent_id,
         bob_agent_id,
@@ -625,7 +625,7 @@ async def test_mcp_send_mail_uses_hosted_signer_for_trusted_proxy(aweb_cloud_db,
     assert seen[0]["payload"]["from_stable_id"] == "did:aw:alice"
     assert seen[0]["payload"]["conversation_id"] == result["conversation_id"]
     assert seen[0]["payload"]["to"] == "bob"
-    assert seen[0]["payload"]["to_did"] == "did:key:z6MkBob"
+    assert seen[0]["payload"]["to_did"] == "did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9"
     assert seen[0]["payload"]["to_stable_id"] == "did:aw:bob"
     assert seen[0]["payload"]["priority"] == "urgent"
 
@@ -651,7 +651,7 @@ async def test_mcp_send_mail_uses_hosted_encryptor_by_default_for_trusted_proxy(
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkTeam')
+        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkkopcdRMf2qPVBdcugyhrVQorfEfz2uUigTwZDvZ15poA')
         """,
         team_id,
     )
@@ -661,7 +661,7 @@ async def test_mcp_send_mail_uses_hosted_encryptor_by_default_for_trusted_proxy(
             (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode, did_aw_verified_key)
         VALUES
             ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $4 END),
-            ($2, $3, 'did:key:z6MkBob', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkBob' END)
+            ($2, $3, 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9' END)
         """,
         alice_agent_id,
         bob_agent_id,
@@ -695,7 +695,7 @@ async def test_mcp_send_mail_uses_hosted_encryptor_by_default_for_trusted_proxy(
             "encrypted_envelope": _fake_encrypted_mail_envelope(
                 payload,
                 sender_did=alice_did,
-                recipient_did="did:key:z6MkBob",
+                recipient_did="did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9",
             ),
         }
 
@@ -753,7 +753,7 @@ async def test_mcp_send_mail_continues_conversation_without_recipient_rediscover
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkTeam')
+        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkkopcdRMf2qPVBdcugyhrVQorfEfz2uUigTwZDvZ15poA')
         """,
         team_id,
     )
@@ -763,7 +763,7 @@ async def test_mcp_send_mail_continues_conversation_without_recipient_rediscover
             (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode, did_aw_verified_key)
         VALUES
             ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $4 END),
-            ($2, $3, 'did:key:z6MkBob', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkBob' END)
+            ($2, $3, 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9' END)
         """,
         alice_agent_id,
         bob_agent_id,
@@ -865,7 +865,7 @@ async def test_mcp_send_mail_continues_federated_conversation(aweb_cloud_db, mon
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkTeam')
+        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkkopcdRMf2qPVBdcugyhrVQorfEfz2uUigTwZDvZ15poA')
         """,
         team_id,
     )
@@ -896,7 +896,7 @@ async def test_mcp_send_mail_continues_federated_conversation(aweb_cloud_db, mon
         )
         VALUES
             ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', NULL, $3, 'sender', 'initiator'),
-            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://remote.example', 'did:key:bob', 'federation:https://remote.example', 'participant')
+            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://remote.example', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'federation:https://remote.example', 'participant')
         """,
         conversation_id,
         alice_agent_id,
@@ -933,7 +933,7 @@ async def test_mcp_send_mail_continues_federated_conversation(aweb_cloud_db, mon
         assert envelope["conversation_id"] == str(conversation_id)
         assert envelope["target_address"] == "otherco.com/bob"
         assert envelope["target_did_aw"] == "did:aw:bob"
-        assert envelope["target_current_did_key"] == "did:key:bob"
+        assert envelope["target_current_did_key"] == "did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH"
         assert envelope["target_delivery_origin"] == "https://remote.example"
         return httpx.Response(
             200,
@@ -989,7 +989,7 @@ async def test_mcp_send_mail_continues_federated_conversation(aweb_cloud_db, mon
     ]
     assert seen[0]["payload"]["from"] == "acme.com/alice"
     assert seen[0]["payload"]["to"] == "otherco.com/bob"
-    assert seen[0]["payload"]["to_did"] == "did:key:bob"
+    assert seen[0]["payload"]["to_did"] == "did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH"
     assert seen[0]["payload"]["to_stable_id"] == "did:aw:bob"
     row = await aweb_cloud_db.aweb_db.fetch_one(
         "SELECT conversation_id, from_did, to_did, to_agent_id, to_alias, signed_payload FROM {{tables.messages}}"
@@ -1018,7 +1018,7 @@ async def test_mcp_send_mail_continues_first_legacy_bound_conversation(aweb_clou
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkTeam')
+        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkkopcdRMf2qPVBdcugyhrVQorfEfz2uUigTwZDvZ15poA')
         """,
         team_id,
     )
@@ -1155,7 +1155,7 @@ async def test_mcp_send_mail_accepts_external_to_address_without_local_agent(awe
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkTeam')
+        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkkopcdRMf2qPVBdcugyhrVQorfEfz2uUigTwZDvZ15poA')
         """,
         team_id,
     )
@@ -1193,7 +1193,7 @@ async def test_mcp_send_mail_accepts_external_to_address_without_local_agent(awe
                 domain="otherco.com",
                 name="bob",
                 did_aw="did:aw:bob",
-                current_did_key="did:key:bob",
+                current_did_key="did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
                 reachability="public",
                 delivery=AddressDelivery(origin="https://remote.example"),
                 created_at=datetime.now(timezone.utc).isoformat(),
@@ -1331,8 +1331,8 @@ async def test_mcp_send_mail_requires_current_local_address_authority(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES
-            ('ops:acme.com', 'acme.com', 'ops', 'did:key:z6MkTeam1'),
-            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkTeam2')
+            ('ops:acme.com', 'acme.com', 'ops', 'did:key:z6MkiCjepNBfAFPiASoBnxAFuZcERqR5z1yW8Jfob8YMYmhJ'),
+            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkjDjkDkLwiaCvhbzB37J8Z9FB31zvSDYHb5aEddNr47XB')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -1341,7 +1341,7 @@ async def test_mcp_send_mail_requires_current_local_address_authority(
             (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode, did_aw_verified_key)
         VALUES
             ($1, 'ops:acme.com', $2, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $2 END),
-            ($3, 'ops:otherco.com', 'did:key:z6MkBob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkBob' END)
+            ($3, 'ops:otherco.com', 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9' END)
         """,
         alice_agent_id,
         alice_did,
@@ -1375,7 +1375,7 @@ async def test_mcp_send_mail_requires_current_local_address_authority(
                 domain=domain,
                 name=name,
                 did_aw="did:aw:bob",
-                current_did_key="did:key:z6MkBob",
+                current_did_key="did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9",
                 created_at=datetime.now(timezone.utc).isoformat(),
             )
 
@@ -1384,7 +1384,7 @@ async def test_mcp_send_mail_requires_current_local_address_authority(
             return Namespace(
                 namespace_id="namespace-otherco",
                 domain=domain,
-                controller_did="did:key:z6MkNamespaceController",
+                controller_did="did:key:z6MkrBNx4mngyX91A2pnqtnoPzXhhGvjix1cyD6m3Ae6dvux",
                 verification_status="verified",
                 last_verified_at=None,
                 created_at=datetime.now(timezone.utc).isoformat(),
@@ -1417,7 +1417,7 @@ async def test_mcp_send_mail_fails_closed_for_trusted_proxy_without_encryptor(aw
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkTeam')
+        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkkopcdRMf2qPVBdcugyhrVQorfEfz2uUigTwZDvZ15poA')
         """,
         team_id,
     )
@@ -1426,8 +1426,8 @@ async def test_mcp_send_mail_fails_closed_for_trusted_proxy_without_encryptor(aw
         INSERT INTO {{tables.agents}}
             (agent_id, team_id, did_key, alias, identity_scope, status, inbound_mode)
         VALUES
-            ($1, $3, 'did:key:z6MkAlice', 'alice', 'global', 'active', 'open'),
-            ($2, $3, 'did:key:z6MkBob', 'bob', 'global', 'active', 'open')
+            ($1, $3, 'did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE', 'alice', 'global', 'active', 'open'),
+            ($2, $3, 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9', 'bob', 'global', 'active', 'open')
         """,
         alice_agent_id,
         bob_agent_id,
@@ -1441,7 +1441,7 @@ async def test_mcp_send_mail_fails_closed_for_trusted_proxy_without_encryptor(aw
             team_id=team_id,
             agent_id=str(alice_agent_id),
             alias="alice",
-            did_key="did:key:z6MkAlice",
+            did_key="did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE",
             trusted_proxy=True,
         ),
     )
@@ -1469,7 +1469,7 @@ async def test_mcp_send_mail_fails_closed_for_trusted_proxy_without_workspace_id
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkTeam')
+        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkkopcdRMf2qPVBdcugyhrVQorfEfz2uUigTwZDvZ15poA')
         """,
         team_id,
     )
@@ -1478,8 +1478,8 @@ async def test_mcp_send_mail_fails_closed_for_trusted_proxy_without_workspace_id
         INSERT INTO {{tables.agents}}
             (agent_id, team_id, did_key, alias, identity_scope, status, inbound_mode)
         VALUES
-            ($1, $3, 'did:key:z6MkAlice', 'alice', 'global', 'active', 'open'),
-            ($2, $3, 'did:key:z6MkBob', 'bob', 'global', 'active', 'open')
+            ($1, $3, 'did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE', 'alice', 'global', 'active', 'open'),
+            ($2, $3, 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9', 'bob', 'global', 'active', 'open')
         """,
         alice_agent_id,
         bob_agent_id,
@@ -1493,7 +1493,7 @@ async def test_mcp_send_mail_fails_closed_for_trusted_proxy_without_workspace_id
             team_id=team_id,
             agent_id=str(alice_agent_id),
             alias="alice",
-            did_key="did:key:z6MkAlice",
+            did_key="did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE",
             trusted_proxy=True,
         ),
     )
@@ -1587,7 +1587,7 @@ async def test_mcp_chat_send_rejects_legacy_bound_session_continuation(aweb_clou
             team_id=team_id,
             agent_id=str(bob_agent_id),
             alias="bob",
-            did_key="did:key:z6MkBob",
+            did_key="did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9",
             did_aw="did:aw:bob",
             address="acme.com/bob",
         ),
@@ -1675,7 +1675,7 @@ async def test_mcp_chat_send_uses_hosted_signer_for_trusted_proxy(aweb_cloud_db,
     assert seen[0]["payload"]["from"] == "alice"
     assert seen[0]["payload"]["from_did"] == alice_did
     assert seen[0]["payload"]["to"] == "bob"
-    assert seen[0]["payload"]["to_did"] == "did:key:z6MkBob"
+    assert seen[0]["payload"]["to_did"] == "did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9"
     assert seen[0]["payload"]["to_stable_id"] == "did:aw:bob"
     assert seen[0]["payload"]["sender_leaving"] is True
     assert seen[0]["payload"]["hang_on"] is True
@@ -1729,7 +1729,7 @@ async def test_mcp_chat_send_uses_hosted_encryptor_by_default_for_trusted_proxy(
             "encrypted_envelope": _fake_encrypted_chat_envelope(
                 kwargs["payload"],
                 sender_did=alice_did,
-                recipient_dids=["did:key:z6MkBob"],
+                recipient_dids=["did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9"],
             ),
         }
 
@@ -1782,7 +1782,7 @@ async def test_mcp_chat_continuation_encryptor_gets_active_recipient_agent_ids(a
         """
         INSERT INTO {{tables.agents}}
             (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode, did_aw_verified_key)
-        VALUES ($1, $2, 'did:key:z6MkCarol', 'did:aw:carol', 'acme.com/carol', 'carol', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:carol', '') IS NOT NULL THEN 'did:key:z6MkCarol' END)
+        VALUES ($1, $2, 'did:key:z6MkgLqQF3gzVJENJ8JkP4xdGWodfKkBbjofB7CZ2ArS5dsj', 'did:aw:carol', 'acme.com/carol', 'carol', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:carol', '') IS NOT NULL THEN 'did:key:z6MkgLqQF3gzVJENJ8JkP4xdGWodfKkBbjofB7CZ2ArS5dsj' END)
         """,
         carol_agent_id,
         team_id,
@@ -1835,7 +1835,7 @@ async def test_mcp_chat_continuation_encryptor_gets_active_recipient_agent_ids(a
             "encrypted_envelope": _fake_encrypted_chat_envelope(
                 kwargs["payload"],
                 sender_did=alice_did,
-                recipient_dids=["did:key:z6MkBob"],
+                recipient_dids=["did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9"],
             ),
         }
 
@@ -1866,7 +1866,7 @@ async def test_mcp_chat_send_accepts_external_to_address_without_local_agent(awe
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkTeam')
+        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkkopcdRMf2qPVBdcugyhrVQorfEfz2uUigTwZDvZ15poA')
         """,
         team_id,
     )
@@ -1904,7 +1904,7 @@ async def test_mcp_chat_send_accepts_external_to_address_without_local_agent(awe
                 domain="otherco.com",
                 name="bob",
                 did_aw="did:aw:bob",
-                current_did_key="did:key:bob",
+                current_did_key="did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
                 reachability="public",
                 delivery=AddressDelivery(origin="https://remote.example"),
                 created_at=datetime.now(timezone.utc).isoformat(),
@@ -2042,8 +2042,8 @@ async def test_mcp_chat_send_requires_current_local_address_authority(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES
-            ('ops:acme.com', 'acme.com', 'ops', 'did:key:z6MkTeam1'),
-            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkTeam2')
+            ('ops:acme.com', 'acme.com', 'ops', 'did:key:z6MkiCjepNBfAFPiASoBnxAFuZcERqR5z1yW8Jfob8YMYmhJ'),
+            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkjDjkDkLwiaCvhbzB37J8Z9FB31zvSDYHb5aEddNr47XB')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -2052,7 +2052,7 @@ async def test_mcp_chat_send_requires_current_local_address_authority(
             (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode, did_aw_verified_key)
         VALUES
             ($1, 'ops:acme.com', $2, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $2 END),
-            ($3, 'ops:otherco.com', 'did:key:z6MkBob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkBob' END)
+            ($3, 'ops:otherco.com', 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'active', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9' END)
         """,
         alice_agent_id,
         alice_did,
@@ -2086,7 +2086,7 @@ async def test_mcp_chat_send_requires_current_local_address_authority(
                 domain=domain,
                 name=name,
                 did_aw="did:aw:bob",
-                current_did_key="did:key:z6MkBob",
+                current_did_key="did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9",
                 created_at=datetime.now(timezone.utc).isoformat(),
             )
 
@@ -2095,7 +2095,7 @@ async def test_mcp_chat_send_requires_current_local_address_authority(
             return Namespace(
                 namespace_id="namespace-otherco",
                 domain=domain,
-                controller_did="did:key:z6MkNamespaceController",
+                controller_did="did:key:z6MkrBNx4mngyX91A2pnqtnoPzXhhGvjix1cyD6m3Ae6dvux",
                 verification_status="verified",
                 last_verified_at=None,
                 created_at=datetime.now(timezone.utc).isoformat(),
@@ -2148,7 +2148,7 @@ async def test_mcp_chat_send_existing_session_uses_hosted_signer(aweb_cloud_db, 
         INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias)
         VALUES
             ($1, $2, $3, 'alice'),
-            ($1, 'did:key:z6MkBob', $4, 'bob')
+            ($1, 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9', $4, 'bob')
         """,
         session_id,
         alice_did,
@@ -2203,7 +2203,7 @@ async def test_mcp_chat_send_existing_session_uses_hosted_signer(aweb_cloud_db, 
     assert seen[0]["payload"]["wait_seconds"] == 7
     assert seen[0]["payload"]["hang_on"] is True
     assert seen[0]["payload"]["to"] == "bob"
-    assert seen[0]["payload"]["to_did"] == "did:key:z6MkBob"
+    assert seen[0]["payload"]["to_did"] == "did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9"
     row = await aweb_cloud_db.aweb_db.fetch_one("SELECT * FROM {{tables.chat_messages}}")
     assert row["from_did"] == alice_did
     assert row["signature"]
@@ -2222,7 +2222,7 @@ async def test_mcp_chat_send_continues_federated_session(aweb_cloud_db, monkeypa
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkTeam')
+        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkkopcdRMf2qPVBdcugyhrVQorfEfz2uUigTwZDvZ15poA')
         """,
         team_id,
     )
@@ -2251,7 +2251,7 @@ async def test_mcp_chat_send_continues_federated_session(aweb_cloud_db, monkeypa
         )
         VALUES
             ($1, $3, $2, 'alice', 'acme.com/alice', NULL, $3),
-            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://remote.example', 'did:key:bob')
+            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://remote.example', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH')
         """,
         session_id,
         alice_agent_id,
@@ -2288,7 +2288,7 @@ async def test_mcp_chat_send_continues_federated_session(aweb_cloud_db, monkeypa
         assert envelope["conversation_id"] == str(session_id)
         assert envelope["target_address"] == "otherco.com/bob"
         assert envelope["target_did_aw"] == "did:aw:bob"
-        assert envelope["target_current_did_key"] == "did:key:bob"
+        assert envelope["target_current_did_key"] == "did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH"
         assert envelope["target_delivery_origin"] == "https://remote.example"
         return httpx.Response(
             200,
@@ -2343,7 +2343,7 @@ async def test_mcp_chat_send_continues_federated_session(aweb_cloud_db, monkeypa
     ]
     assert seen[0]["payload"]["from"] == "acme.com/alice"
     assert seen[0]["payload"]["to"] == "otherco.com/bob"
-    assert seen[0]["payload"]["to_did"] == "did:key:bob"
+    assert seen[0]["payload"]["to_did"] == "did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH"
     assert seen[0]["payload"]["to_stable_id"] == "did:aw:bob"
     row = await aweb_cloud_db.aweb_db.fetch_one(
         "SELECT session_id, from_did, from_address, signed_payload FROM {{tables.chat_messages}}"
@@ -2419,7 +2419,7 @@ async def test_mcp_check_inbox_reads_both_stable_and_current_dids(aweb_cloud_db,
             (message_id, from_did, to_did, from_alias, to_alias, subject, body, priority, created_at)
         VALUES
             ($1, 'did:aw:bob', 'did:aw:alice', 'bob', 'alice', 'stable', 'hello stable', 'normal', $3),
-            ($2, 'did:aw:bob', 'did:key:z6MkAliceCurrent', 'bob', 'alice', 'current', 'hello current', 'normal', $3)
+            ($2, 'did:aw:bob', 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4', 'bob', 'alice', 'current', 'hello current', 'normal', $3)
         """,
         uuid4(),
         uuid4(),
@@ -2433,7 +2433,7 @@ async def test_mcp_check_inbox_reads_both_stable_and_current_dids(aweb_cloud_db,
             team_id="ops:acme.com",
             agent_id=str(uuid4()),
             alias="alice",
-            did_key="did:key:z6MkAliceCurrent",
+            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
             did_aw="did:aw:alice",
             address="acme.com/alice",
         ),
@@ -2471,7 +2471,7 @@ async def test_mcp_check_inbox_returns_encrypted_mail_metadata_only(aweb_cloud_d
             'encrypted_v2', 2, '{}'::jsonb, 'ciphertext-bytes',
             '[]'::jsonb, 'sha256:ciphertext', 16,
             'sha256:wraps', 'sha256:inner', 'E2EEv2-X25519-HPKE-AES256GCM-Ed25519',
-            'did:key:z6MkBob', 'sha256:envelope'
+            'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9', 'sha256:envelope'
         )
         """,
         encrypted_message_id,
@@ -2484,7 +2484,7 @@ async def test_mcp_check_inbox_returns_encrypted_mail_metadata_only(aweb_cloud_d
             team_id="ops:acme.com",
             agent_id=str(uuid4()),
             alias="alice",
-            did_key="did:key:z6MkAliceCurrent",
+            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
             did_aw="did:aw:alice",
             address="acme.com/alice",
         ),
@@ -2528,7 +2528,7 @@ async def test_mcp_check_inbox_decrypts_hosted_custodial_encrypted_mail(aweb_clo
             'encrypted_v2', 2, '{"kind":"mail"}'::jsonb, 'ciphertext-bytes',
             '[]'::jsonb, 'sha256:ciphertext', 16,
             'sha256:wraps', 'sha256:inner', 'E2EEv2-X25519-HPKE-AES256GCM-Ed25519',
-            'did:key:z6MkBob', 'sha256:envelope'
+            'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9', 'sha256:envelope'
         )
         """,
         encrypted_message_id,
@@ -2542,7 +2542,7 @@ async def test_mcp_check_inbox_decrypts_hosted_custodial_encrypted_mail(aweb_clo
             agent_id=str(uuid4()),
             workspace_id=str(workspace_id),
             alias="alice",
-            did_key="did:key:z6MkAliceCurrent",
+            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
             did_aw="did:aw:alice",
             address="acme.com/alice",
             trusted_proxy=True,
@@ -2600,7 +2600,7 @@ async def test_mcp_chat_pending_aggregates_across_actor_dids(aweb_cloud_db, monk
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
         VALUES
-            ($1, 'did:key:z6MkAliceCurrent', 'alice'),
+            ($1, 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4', 'alice'),
             ($1, 'did:aw:bob', 'bob')
         """,
         session_id,
@@ -2623,7 +2623,7 @@ async def test_mcp_chat_pending_aggregates_across_actor_dids(aweb_cloud_db, monk
             team_id=None,
             agent_id=None,
             alias="alice",
-            did_key="did:key:z6MkAliceCurrent",
+            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
             did_aw="did:aw:alice",
             address="acme.com/alice",
         ),
@@ -2656,7 +2656,7 @@ async def test_mcp_chat_history_decrypts_hosted_custodial_encrypted_chat(aweb_cl
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
         VALUES
-            ($1, 'did:key:z6MkAliceCurrent', 'alice'),
+            ($1, 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4', 'alice'),
             ($1, 'did:aw:bob', 'bob')
         """,
         session_id,
@@ -2675,7 +2675,7 @@ async def test_mcp_chat_history_decrypts_hosted_custodial_encrypted_chat(aweb_cl
             'encrypted_v2', 2, '{"kind":"chat"}'::jsonb, 'ciphertext-bytes',
             '[]'::jsonb, 'sha256:ciphertext', 16,
             'sha256:wraps', 'sha256:inner', 'E2EEv2-X25519-HPKE-AES256GCM-Ed25519',
-            'did:key:z6MkBob', 'sha256:envelope'
+            'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9', 'sha256:envelope'
         )
         """,
         message_id,
@@ -2691,7 +2691,7 @@ async def test_mcp_chat_history_decrypts_hosted_custodial_encrypted_chat(aweb_cl
             agent_id=str(uuid4()),
             workspace_id=str(workspace_id),
             alias="alice",
-            did_key="did:key:z6MkAliceCurrent",
+            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
             did_aw="did:aw:alice",
             address="acme.com/alice",
             trusted_proxy=True,
@@ -2748,7 +2748,7 @@ async def test_mcp_chat_history_and_read_accept_alternate_session_participant_di
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
         VALUES
-            ($1, 'did:key:z6MkAliceCurrent', 'alice'),
+            ($1, 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4', 'alice'),
             ($1, 'did:aw:bob', 'bob')
         """,
         session_id,
@@ -2771,7 +2771,7 @@ async def test_mcp_chat_history_and_read_accept_alternate_session_participant_di
             team_id=None,
             agent_id=None,
             alias="alice",
-            did_key="did:key:z6MkAliceCurrent",
+            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
             did_aw="did:aw:alice",
             address="acme.com/alice",
         ),
@@ -2802,7 +2802,7 @@ async def test_mcp_chat_history_and_read_accept_alternate_session_participant_di
 @pytest.mark.asyncio
 async def test_mcp_contacts_accept_equivalent_identity_owner_did(aweb_cloud_db, monkeypatch):
     contact_id = uuid4()
-    did_key = "did:key:z6MkAliceCurrent"
+    did_key = "did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4"
     did_aw = "did:aw:alice"
 
     await aweb_cloud_db.aweb_db.execute(
@@ -2893,14 +2893,14 @@ async def test_mcp_send_mail_continuation_reevaluates_recipient_inbound_policy(
     conversation_id = uuid4()
     alice_sk, alice_pub = generate_keypair()
     alice_did_key = did_from_public_key(alice_pub)
-    bob_did_key = "did:key:z6MkBobLocal"
+    bob_did_key = "did:key:z6MkoxrYncGKTtLCwvHnog6kpaMsAjq3iRhyatb9KXdjR8PK"
     bob_participant_did = recipient_did_aw or bob_did_key
 
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkTeam'),
-               ($2, 'other.example', 'ops', 'did:key:z6MkTeamOther')
+        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkkopcdRMf2qPVBdcugyhrVQorfEfz2uUigTwZDvZ15poA'),
+               ($2, 'other.example', 'ops', 'did:key:z6Mku1g5brYb8pWBh25XSNBj9GZF9n3eTKSKBYsDxhdR4hJC')
         """,
         team_id,
         recipient_team_id,
@@ -2937,7 +2937,7 @@ async def test_mcp_send_mail_continuation_reevaluates_recipient_inbound_policy(
                 binding_controller_did, binding_accepted_at, label
             ) VALUES (
                 $1, 'acme.com/alice', 'did:aw:alice',
-                'did:key:z6Mktestcontroller', clock_timestamp(), 'Alice'
+                'did:key:z6MksdtzGW313q4RQicECqqpSv25FBPhcJBcGAXMZ5RbRPQ7', clock_timestamp(), 'Alice'
             )
             """,
             bob_participant_did,
@@ -3061,7 +3061,7 @@ async def test_mcp_chat_send_accepts_a_participant_row_keyed_by_the_callers_did_
         INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias)
         VALUES
             ($1, $2, $3, 'alice'),
-            ($1, 'did:key:z6MkBob', $4, 'bob')
+            ($1, 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9', $4, 'bob')
         """,
         session_id,
         alice_did_aw,
@@ -3131,7 +3131,7 @@ async def test_mcp_same_team_contacts_only(aweb_cloud_db, monkeypatch, kind, mod
         await manager.execute("""
             INSERT INTO {{tables.contacts}} (
                 owner_did, contact_address, contact_did_aw, binding_controller_did, binding_accepted_at
-            ) VALUES ('did:aw:bob', 'acme.com/alice', 'did:aw:alice', 'did:key:z6MkTeam', clock_timestamp())
+            ) VALUES ('did:aw:bob', 'acme.com/alice', 'did:aw:alice', 'did:key:z6MkkopcdRMf2qPVBdcugyhrVQorfEfz2uUigTwZDvZ15poA', clock_timestamp())
         """)
     auth = AuthContext(team_id="ops:acme.com", agent_id=str(alice_id), workspace_id=str(uuid4()),
                        alias="alice", did_key=did, did_aw="did:aw:alice", address="acme.com/alice", trusted_proxy=True)

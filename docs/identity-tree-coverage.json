@@ -1993,10 +1993,6 @@
         {
           "file": "server/src/aweb/identity_grant_auth.py",
           "symbol": "_verify_identity_grant_row"
-        },
-        {
-          "file": "server/src/aweb/routes/identity_grants.py",
-          "symbol": "GrantMintRequest.grant_did_key_must_be_did_key"
         }
       ]
     },
@@ -2166,10 +2162,6 @@
         {
           "file": "server/src/aweb/federation/envelope.py",
           "symbol": "verify_federation_envelope"
-        },
-        {
-          "file": "server/src/aweb/federation/envelope.py",
-          "symbol": "FederationEnvelope._validate_did_key"
         },
         {
           "file": "server/src/aweb/federation/envelope.py",
@@ -17020,14 +17012,6 @@
       {
         "row": "SERVER.FEDERATION",
         "file": "server/src/aweb/federation/envelope.py",
-        "symbol": "FederationEnvelope._validate_did_key",
-        "calls": {
-          "literal:did:key": 1
-        }
-      },
-      {
-        "row": "SERVER.FEDERATION",
-        "file": "server/src/aweb/federation/envelope.py",
         "symbol": "FederationEnvelope._validate_routing_did",
         "calls": {
           "literal:did:aw": 1,
@@ -17633,14 +17617,6 @@
         "calls": {
           "aweb.federation.envelope.verify_federation_envelope": 1,
           "literal:did:aw": 1
-        }
-      },
-      {
-        "row": "SERVER.AUTH.GRANT",
-        "file": "server/src/aweb/routes/identity_grants.py",
-        "symbol": "GrantMintRequest.grant_did_key_must_be_did_key",
-        "calls": {
-          "literal:did:key": 1
         }
       },
       {

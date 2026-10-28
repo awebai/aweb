@@ -303,7 +303,7 @@ async def test_chat_to_external_address_posts_federated_chat_and_projects_locall
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     alice_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
@@ -492,7 +492,7 @@ async def test_chat_first_contact_to_external_address_requires_signed_payload(aw
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     alice_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
@@ -504,14 +504,14 @@ async def test_chat_first_contact_to_external_address_requires_signed_payload(aw
         alice_did_key,
     )
     registry = AsyncMock()
-    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key="did:key:bob"))
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key="did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH"))
     registry.resolve_address = AsyncMock(
         return_value=Address(
             address_id="addr-remote-chat",
             domain="otherco.com",
             name="bob",
             did_aw="did:aw:bob",
-            current_did_key="did:key:bob",
+            current_did_key="did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
             reachability="public",
             created_at=datetime.now(timezone.utc).isoformat(),
             delivery=AddressDelivery(origin="https://remote.example"),
@@ -594,7 +594,7 @@ async def test_chat_first_contact_to_external_address_requires_sender_attestatio
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     alice_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
@@ -606,14 +606,14 @@ async def test_chat_first_contact_to_external_address_requires_sender_attestatio
         alice_did_key,
     )
     registry = AsyncMock()
-    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key="did:key:bob"))
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key="did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH"))
     registry.resolve_address = AsyncMock(
         return_value=Address(
             address_id="addr-remote-chat",
             domain="otherco.com",
             name="bob",
             did_aw="did:aw:bob",
-            current_did_key="did:key:bob",
+            current_did_key="did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
             reachability="public",
             created_at=datetime.now(timezone.utc).isoformat(),
             delivery=AddressDelivery(origin="https://remote.example"),
@@ -653,7 +653,7 @@ async def test_chat_first_contact_to_external_address_requires_sender_attestatio
             "message_id": message_id,
             "timestamp": timestamp,
             "to": "otherco.com/bob",
-            "to_did": "did:key:bob",
+            "to_did": "did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
             "to_stable_id": "did:aw:bob",
             "type": "chat",
             "wait_seconds": 30,
@@ -691,7 +691,7 @@ async def test_chat_to_external_address_remote_failure_does_not_create_contact(a
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     alice_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
@@ -703,14 +703,14 @@ async def test_chat_to_external_address_remote_failure_does_not_create_contact(a
         alice_did_key,
     )
     registry = AsyncMock()
-    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key="did:key:bob"))
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key="did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH"))
     registry.resolve_address = AsyncMock(
         return_value=Address(
             address_id="addr-remote-chat-failure",
             domain="otherco.com",
             name="bob",
             did_aw="did:aw:bob",
-            current_did_key="did:key:bob",
+            current_did_key="did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
             reachability="public",
             created_at=datetime.now(timezone.utc).isoformat(),
             delivery=AddressDelivery(origin="https://remote.example"),
@@ -746,7 +746,7 @@ async def test_chat_to_external_address_remote_failure_does_not_create_contact(a
             "message_id": message_id,
             "timestamp": timestamp,
             "to": "otherco.com/bob",
-            "to_did": "did:key:bob",
+            "to_did": "did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
             "to_stable_id": "did:aw:bob",
             "type": "chat",
         }
@@ -785,7 +785,7 @@ async def test_chat_continuation_to_remote_participant_uses_stored_delivery_orig
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     alice_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
@@ -808,7 +808,7 @@ async def test_chat_continuation_to_remote_participant_uses_stored_delivery_orig
         INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address, delivery_origin, current_did_key)
         VALUES
             ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', NULL, $3),
-            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://remote.example', 'did:key:bob')
+            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://remote.example', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH')
         """,
         session_id,
         alice_agent_id,
@@ -827,7 +827,7 @@ async def test_chat_continuation_to_remote_participant_uses_stored_delivery_orig
             (conversation_id, did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role)
         VALUES
             ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', NULL, $3, 'chat', 'initiator'),
-            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://remote.example', 'did:key:bob', 'chat', 'participant')
+            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://remote.example', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'chat', 'participant')
         """,
         session_id,
         alice_agent_id,
@@ -841,7 +841,7 @@ async def test_chat_continuation_to_remote_participant_uses_stored_delivery_orig
             domain="otherco.com",
             name="bob",
             did_aw="did:aw:bob",
-            current_did_key="did:key:bob",
+            current_did_key="did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
             reachability="public",
             created_at=datetime.now(timezone.utc).isoformat(),
             delivery=AddressDelivery(origin="https://remote.example"),
@@ -892,7 +892,7 @@ async def test_chat_continuation_to_remote_participant_uses_stored_delivery_orig
             "message_id": message_id,
             "timestamp": timestamp,
             "to": "otherco.com/bob",
-            "to_did": "did:key:bob",
+            "to_did": "did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
             "to_stable_id": "did:aw:bob",
             "type": "chat",
         }
@@ -917,7 +917,7 @@ async def test_chat_continuation_to_remote_participant_uses_stored_delivery_orig
     envelope = json.loads(remote_requests[0].content)["envelope"]
     assert envelope["type"] == "chat"
     assert envelope["conversation_id"] == str(session_id)
-    assert envelope["target_current_did_key"] == "did:key:bob"
+    assert envelope["target_current_did_key"] == "did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH"
     assert envelope["target_delivery_origin"] == "https://remote.example"
     registry.resolve_key.assert_not_called()
 
@@ -941,7 +941,7 @@ async def test_chat_continuation_to_remote_participant_uses_stored_delivery_orig
             "message_id": second_message_id,
             "timestamp": second_timestamp,
             "to": "otherco.com/bob",
-            "to_did": "did:key:bob",
+            "to_did": "did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
             "to_stable_id": "did:aw:bob",
             "type": "chat",
         }
@@ -978,7 +978,7 @@ async def test_chat_continuation_to_remote_participant_requires_signed_payload(a
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     alice_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
@@ -1001,7 +1001,7 @@ async def test_chat_continuation_to_remote_participant_requires_signed_payload(a
         INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address, delivery_origin, current_did_key)
         VALUES
             ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', NULL, $3),
-            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://remote.example', 'did:key:bob')
+            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://remote.example', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH')
         """,
         session_id,
         alice_agent_id,
@@ -1020,7 +1020,7 @@ async def test_chat_continuation_to_remote_participant_requires_signed_payload(a
             (conversation_id, did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role)
         VALUES
             ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', NULL, $3, 'chat', 'initiator'),
-            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://remote.example', 'did:key:bob', 'chat', 'participant')
+            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://remote.example', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'chat', 'participant')
         """,
         session_id,
         alice_agent_id,
@@ -1112,7 +1112,7 @@ async def test_chat_continuation_refreshes_stale_delivery_origin_once(aweb_cloud
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     alice_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
@@ -1301,7 +1301,7 @@ async def test_chat_continuation_does_not_retry_when_refresh_keeps_same_origin(a
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     alice_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
@@ -1324,7 +1324,7 @@ async def test_chat_continuation_does_not_retry_when_refresh_keeps_same_origin(a
         INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address, delivery_origin, current_did_key)
         VALUES
             ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', NULL, $3),
-            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://old.example', 'did:key:bob')
+            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://old.example', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH')
         """,
         session_id,
         alice_agent_id,
@@ -1343,21 +1343,21 @@ async def test_chat_continuation_does_not_retry_when_refresh_keeps_same_origin(a
             (conversation_id, did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role)
         VALUES
             ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', NULL, $3, 'chat', 'initiator'),
-            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://old.example', 'did:key:bob', 'chat', 'participant')
+            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://old.example', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'chat', 'participant')
         """,
         session_id,
         alice_agent_id,
         alice_did_key,
     )
     registry = AsyncMock()
-    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key="did:key:bob"))
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key="did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH"))
     registry.resolve_address = AsyncMock(
         return_value=Address(
             address_id="addr-remote-chat",
             domain="otherco.com",
             name="bob",
             did_aw="did:aw:bob",
-            current_did_key="did:key:bob",
+            current_did_key="did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
             reachability="public",
             created_at=datetime.now(timezone.utc).isoformat(),
             delivery=AddressDelivery(origin="https://old.example"),
@@ -1396,7 +1396,7 @@ async def test_chat_continuation_does_not_retry_when_refresh_keeps_same_origin(a
             "message_id": message_id,
             "timestamp": timestamp,
             "to": "otherco.com/bob",
-            "to_did": "did:key:bob",
+            "to_did": "did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
             "to_stable_id": "did:aw:bob",
             "type": "chat",
         }
@@ -1450,7 +1450,7 @@ def _federated_chat_payload(
     sender_delivery_origin: str = "https://sender.example",
     target_address: str = "beta.example/bob",
     target_did_aw: str = "did:aw:bob",
-    target_did_key: str = "did:key:bob",
+    target_did_key: str = "did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
     target_delivery_origin: str = "https://recipient.example",
     body: str = "hello from another server",
     message_id: str | None = None,
@@ -1505,7 +1505,7 @@ async def test_receive_old_v1_federated_chat_ignores_deprecated_fields_and_deliv
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:beta.example', 'beta.example', 'backend', 'did:key:team-1')
+        VALUES ('backend:beta.example', 'beta.example', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     bob_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
@@ -1654,7 +1654,7 @@ async def test_receive_federated_chat_local_sender_omission_preserves_both_store
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:beta.example', 'beta.example', 'backend', 'did:key:team-1')
+        VALUES ('backend:beta.example', 'beta.example', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     bob_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
@@ -1854,7 +1854,7 @@ async def test_receive_federated_chat_existing_local_didkey_first_contact_fails_
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:beta.example', 'beta.example', 'backend', 'did:key:team-1')
+        VALUES ('backend:beta.example', 'beta.example', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -1894,7 +1894,7 @@ async def test_receive_federated_chat_existing_local_didkey_reply_succeeds(aweb_
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:beta.example', 'beta.example', 'backend', 'did:key:team-1')
+        VALUES ('backend:beta.example', 'beta.example', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     local_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
@@ -2072,12 +2072,12 @@ async def test_receive_federated_chat_existing_local_didkey_reply_succeeds(aweb_
 async def test_receive_federated_chat_stored_route_rejects_wrong_target_current_key(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     _, _, bob_did_key = _make_keypair()
-    wrong_bob_key = "did:key:z6MkWrongBobKey"
+    wrong_bob_key = "did:key:z6MkjxZtU9ugAzi5YfY9sP9vv6DSHMQEK8Pr9REqTMJkoWq4"
     session_id = uuid4()
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:beta.example', 'beta.example', 'backend', 'did:key:team-1')
+        VALUES ('backend:beta.example', 'beta.example', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     bob_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
@@ -2165,7 +2165,7 @@ async def test_receive_federated_chat_local_didkey_missing_session_target_fails_
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:beta.example', 'beta.example', 'backend', 'did:key:team-1')
+        VALUES ('backend:beta.example', 'beta.example', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     local_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
@@ -2250,7 +2250,7 @@ async def test_receive_federated_chat_duplicate_message_id_is_idempotent(aweb_cl
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:beta.example', 'beta.example', 'backend', 'did:key:team-1')
+        VALUES ('backend:beta.example', 'beta.example', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -2313,7 +2313,7 @@ async def test_receive_federated_chat_rejects_closed_or_mismatched_conversation(
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:beta.example', 'beta.example', 'backend', 'did:key:team-1')
+        VALUES ('backend:beta.example', 'beta.example', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -2415,13 +2415,13 @@ async def test_create_chat_session_accepts_identity_auth_and_to_did(aweb_cloud_d
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-2')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6Mksty56NE8sLwnubZAGcm16vuLQnaMnSqUcsGmGygSk8mF')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -2429,7 +2429,7 @@ async def test_create_chat_session_accepts_identity_auth_and_to_did(aweb_cloud_d
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
         VALUES
             ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END),
-            ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:bob' END)
+            ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
         """,
         alice_did_key,
     )
@@ -2480,7 +2480,7 @@ async def test_create_encrypted_group_chat_stores_opaque_metadata_only(aweb_clou
         VALUES ($1, 'acme.com', 'backend', $2)
         """,
         team_id,
-        "did:key:zTeam",
+        "did:key:z6MkfWfxh5sjjXXW4ryffsDP5jeskKNwEfwzAAMFXCqkvqYQ",
     )
     alice_agent_id = await aweb_cloud_db.aweb_db.fetch_val(
         """
@@ -2610,7 +2610,7 @@ async def test_encrypted_group_chat_excludes_left_participant_from_future_wraps(
         VALUES ($1, 'acme.com', 'backend', $2)
         """,
         team_id,
-        "did:key:zTeam",
+        "did:key:z6MkfWfxh5sjjXXW4ryffsDP5jeskKNwEfwzAAMFXCqkvqYQ",
     )
     alice_agent_id = await aweb_cloud_db.aweb_db.fetch_val(
         """
@@ -2794,13 +2794,13 @@ async def test_create_chat_session_accepts_cross_team_to_address(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-2')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6Mksty56NE8sLwnubZAGcm16vuLQnaMnSqUcsGmGygSk8mF')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -2808,7 +2808,7 @@ async def test_create_chat_session_accepts_cross_team_to_address(aweb_cloud_db):
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
         VALUES
             ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END),
-            ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:bob' END)
+            ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
         """,
         alice_did_key,
     )
@@ -2821,7 +2821,7 @@ async def test_create_chat_session_accepts_cross_team_to_address(aweb_cloud_db):
             domain="otherco.com",
             name="bob",
             did_aw="did:aw:bob",
-            current_did_key="did:key:bob",
+            current_did_key="did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
             reachability="public",
             created_at=datetime.now(timezone.utc).isoformat(),
         )
@@ -2869,8 +2869,8 @@ async def test_cross_team_same_registry_chat_creates_bound_contact_without_looku
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES
-            ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MkAliceTeam'),
-            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkBobTeam')
+            ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6Mkiaw9QJ3qz3MgcoeAW8gvs1WLbTQCE5kHERyReAFdHHFF'),
+            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkvUF1XQ9DrqRwsYYeXkwnhEATAYWWXAEcE8YNyXWnwqv5')
         """
     )
     alice_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
@@ -2911,7 +2911,7 @@ async def test_cross_team_same_registry_chat_creates_bound_contact_without_looku
         return_value=Namespace(
             namespace_id="namespace-otherco",
             domain="otherco.com",
-            controller_did="did:key:z6MkNamespaceController",
+            controller_did="did:key:z6MkrBNx4mngyX91A2pnqtnoPzXhhGvjix1cyD6m3Ae6dvux",
             verification_status="verified",
             last_verified_at=None,
             created_at=datetime.now(timezone.utc).isoformat(),
@@ -2981,7 +2981,7 @@ async def test_cross_team_same_registry_chat_creates_bound_contact_without_looku
         "owner_did": "did:aw:alice",
         "contact_address": "otherco.com/bob",
         "contact_did_aw": "did:aw:bob",
-        "binding_controller_did": "did:key:z6MkNamespaceController",
+        "binding_controller_did": "did:key:z6MkrBNx4mngyX91A2pnqtnoPzXhhGvjix1cyD6m3Ae6dvux",
         "status": "active",
     }
     registry.resolve_address_fresh.assert_awaited_once_with("otherco.com", "bob")
@@ -2994,7 +2994,7 @@ async def test_create_chat_session_external_address_without_delivery_origin_fail
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -3013,7 +3013,7 @@ async def test_create_chat_session_external_address_without_delivery_origin_fail
             domain="otherco.com",
             name="bob",
             did_aw="did:aw:bob",
-            current_did_key="did:key:bob",
+            current_did_key="did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
             reachability="public",
             created_at=datetime.now(timezone.utc).isoformat(),
         )
@@ -3053,7 +3053,7 @@ async def test_create_chat_session_hosted_handle_without_delivery_origin_fails_c
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -3072,7 +3072,7 @@ async def test_create_chat_session_hosted_handle_without_delivery_origin_fails_c
             domain="jane.aweb.ai",
             name="c3po",
             did_aw="did:aw:c3po",
-            current_did_key="did:key:c3po",
+            current_did_key="did:key:z6MkuQH5k4F9tNPXYoQzKFw9dNYkEC63FVwtpB7Mc5oqjnj5",
             reachability="public",
             created_at=datetime.now(timezone.utc).isoformat(),
         )
@@ -3114,7 +3114,7 @@ async def test_create_chat_session_rejects_signed_existing_session_without_bindi
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -3203,7 +3203,7 @@ async def test_create_chat_session_rejects_to_address_self_chat(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -3250,7 +3250,7 @@ async def test_create_chat_session_to_external_did_first_contact_fails_closed(aw
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -3296,8 +3296,8 @@ async def test_create_chat_session_resolves_tilde_alias_cross_team(aweb_cloud_db
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES
-            ('ops:acme.com', 'acme.com', 'ops', 'did:key:team-ops'),
-            ('eng:acme.com', 'acme.com', 'eng', 'did:key:team-eng')
+            ('ops:acme.com', 'acme.com', 'ops', 'did:key:z6MkiK4DciFkG7Sqj2U35cBvNezhk22uso3u8NQ6CKHQZxBb'),
+            ('eng:acme.com', 'acme.com', 'eng', 'did:key:z6MknDtoabfgEheshWvZPN7emDjz6EUyRUcYbZJUwAspDPJQ')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -3305,7 +3305,7 @@ async def test_create_chat_session_resolves_tilde_alias_cross_team(aweb_cloud_db
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
         VALUES
             ('ops:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END),
-            ('eng:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:bob' END)
+            ('eng:acme.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
         """,
         alice_did_key,
     )
@@ -3378,8 +3378,8 @@ async def test_create_chat_session_rejects_invalid_tilde_alias_targets(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES
-            ('ops:acme.com', 'acme.com', 'ops', 'did:key:team-ops'),
-            ('eng:acme.com', 'acme.com', 'eng', 'did:key:team-eng')
+            ('ops:acme.com', 'acme.com', 'ops', 'did:key:z6MkiK4DciFkG7Sqj2U35cBvNezhk22uso3u8NQ6CKHQZxBb'),
+            ('eng:acme.com', 'acme.com', 'eng', 'did:key:z6MknDtoabfgEheshWvZPN7emDjz6EUyRUcYbZJUwAspDPJQ')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -3421,13 +3421,13 @@ async def test_create_chat_session_mutation_context_includes_from_did_aw(aweb_cl
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-2')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6Mksty56NE8sLwnubZAGcm16vuLQnaMnSqUcsGmGygSk8mF')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -3435,7 +3435,7 @@ async def test_create_chat_session_mutation_context_includes_from_did_aw(aweb_cl
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
         VALUES
             ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END),
-            ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:bob' END)
+            ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
         """,
         alice_did_key,
     )
@@ -3479,13 +3479,13 @@ async def test_create_chat_session_to_did_does_not_create_unresolved_identity_co
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-2')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6Mksty56NE8sLwnubZAGcm16vuLQnaMnSqUcsGmGygSk8mF')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:bob' END)
+        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
         """
     )
 
@@ -3630,13 +3630,13 @@ async def test_create_chat_session_to_global_address_allows_explicit_inbound_mod
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-2')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6Mksty56NE8sLwnubZAGcm16vuLQnaMnSqUcsGmGygSk8mF')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:bob' END)
+        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
         """
     )
 
@@ -3648,7 +3648,7 @@ async def test_create_chat_session_to_global_address_allows_explicit_inbound_mod
             domain="otherco.com",
             name="bob",
             did_aw="did:aw:bob",
-            current_did_key="did:key:bob",
+            current_did_key="did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
             reachability="public",
             created_at=datetime.now(timezone.utc).isoformat(),
         )
@@ -3675,13 +3675,13 @@ async def test_create_chat_session_global_recipient_null_inbound_mode_fails_migr
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-2')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6Mksty56NE8sLwnubZAGcm16vuLQnaMnSqUcsGmGygSk8mF')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:bob-migration', 'did:aw:bob-migration', 'otherco.com/bob-migration', 'bob-migration', 'global', 'developer', NULL, CASE WHEN NULLIF('did:aw:bob-migration', '') IS NOT NULL THEN 'did:key:bob-migration' END)
+        VALUES ('ops:otherco.com', 'did:key:z6Mks2kyCw17zj4tBNJLsa65sw7bXG1WYbtv2mDD9PXVqQUf', 'did:aw:bob-migration', 'otherco.com/bob-migration', 'bob-migration', 'global', 'developer', NULL, CASE WHEN NULLIF('did:aw:bob-migration', '') IS NOT NULL THEN 'did:key:z6Mks2kyCw17zj4tBNJLsa65sw7bXG1WYbtv2mDD9PXVqQUf' END)
         """
     )
 
@@ -3718,13 +3718,13 @@ async def test_create_chat_session_to_address_falls_back_to_local_ephemeral_agen
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-2')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6Mksty56NE8sLwnubZAGcm16vuLQnaMnSqUcsGmGygSk8mF')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:bob', NULL, NULL, 'bob', 'local', 'developer', 'open', CASE WHEN NULLIF(NULL, '') IS NOT NULL THEN 'did:key:bob' END)
+        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', NULL, NULL, 'bob', 'local', 'developer', 'open', CASE WHEN NULLIF(NULL, '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
         """
     )
 
@@ -3754,13 +3754,13 @@ async def test_create_chat_session_to_address_does_not_fall_back_to_local_persis
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-2')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6Mksty56NE8sLwnubZAGcm16vuLQnaMnSqUcsGmGygSk8mF')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:bob' END)
+        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
         """
     )
 
@@ -3798,13 +3798,13 @@ async def test_create_chat_session_to_address_uses_same_team_local_recipient_whe
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-2')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6Mksty56NE8sLwnubZAGcm16vuLQnaMnSqUcsGmGygSk8mF')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', $1, 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:bob' END)
+        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'otherco.com/bob', 'bob', $1, 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
         """,
         recipient_identity_scope,
     )
@@ -3844,14 +3844,14 @@ async def test_create_chat_session_to_address_rejects_cross_team_local_persisten
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES
-            ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1'),
-            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-2')
+            ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo'),
+            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6Mksty56NE8sLwnubZAGcm16vuLQnaMnSqUcsGmGygSk8mF')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:bob' END)
+        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
         """
     )
 
@@ -3885,13 +3885,13 @@ async def test_create_chat_session_to_did_and_address_uses_local_persistent_when
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-2')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6Mksty56NE8sLwnubZAGcm16vuLQnaMnSqUcsGmGygSk8mF')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:bob' END)
+        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
         """
     )
 
@@ -3932,13 +3932,13 @@ async def test_create_chat_session_to_private_address_uses_client_recipient_bind
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-2')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6Mksty56NE8sLwnubZAGcm16vuLQnaMnSqUcsGmGygSk8mF')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', $1, 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:bob' END)
+        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'otherco.com/bob', 'bob', $1, 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
         """,
         recipient_identity_scope,
     )
@@ -3961,7 +3961,7 @@ async def test_create_chat_session_to_private_address_uses_client_recipient_bind
             "message_id": message_id,
             "timestamp": timestamp,
             "to": "otherco.com/bob",
-            "to_did": "did:key:bob",
+            "to_did": "did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
             "to_stable_id": "did:aw:bob",
             "type": "chat",
         }
@@ -3996,13 +3996,13 @@ async def test_create_chat_session_to_private_address_rejects_unverified_client_
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-2')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6Mksty56NE8sLwnubZAGcm16vuLQnaMnSqUcsGmGygSk8mF')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:bob', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:bob' END)
+        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
         """
     )
 
@@ -4024,7 +4024,7 @@ async def test_create_chat_session_to_private_address_rejects_unverified_client_
             "message_id": message_id,
             "timestamp": timestamp,
             "to": "otherco.com/bob",
-            "to_did": "did:key:bob",
+            "to_did": "did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
             "to_stable_id": "did:aw:bob",
             "type": "chat",
         }
@@ -4055,7 +4055,7 @@ async def _signed_local_chat_app(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:timestamp.example', 'timestamp.example', 'backend', 'did:key:team-timestamp')
+        VALUES ('backend:timestamp.example', 'timestamp.example', 'backend', 'did:key:z6MkjCcu9yhvSHSN4rzwgiyisKzVNv9a1TBA4wRD5GywJzcC')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -4063,7 +4063,7 @@ async def _signed_local_chat_app(aweb_cloud_db):
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
         VALUES
             ('backend:timestamp.example', $1, 'did:aw:alice-timestamp', 'timestamp.example/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice-timestamp', '') IS NOT NULL THEN $1 END),
-            ('backend:timestamp.example', 'did:key:bob-timestamp', 'did:aw:bob-timestamp', 'timestamp.example/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob-timestamp', '') IS NOT NULL THEN 'did:key:bob-timestamp' END)
+            ('backend:timestamp.example', 'did:key:z6Mkf88FE4YeBCXz1pSpYAnrSYKAPVowYtAXG1Ld1gSKMzKo', 'did:aw:bob-timestamp', 'timestamp.example/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob-timestamp', '') IS NOT NULL THEN 'did:key:z6Mkf88FE4YeBCXz1pSpYAnrSYKAPVowYtAXG1Ld1gSKMzKo' END)
         """,
         alice_did_key,
     )
@@ -4207,7 +4207,7 @@ async def test_create_chat_session_accepts_signed_from_did_key_for_team_context(
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -4215,7 +4215,7 @@ async def test_create_chat_session_accepts_signed_from_did_key_for_team_context(
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
         VALUES
             ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END),
-            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:bob' END)
+            ('backend:acme.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
         """,
         alice_did_key,
     )
@@ -4273,7 +4273,7 @@ async def test_create_chat_session_rejects_signed_payload_body_mismatch(aweb_clo
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -4281,7 +4281,7 @@ async def test_create_chat_session_rejects_signed_payload_body_mismatch(aweb_clo
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
         VALUES
             ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END),
-            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:bob' END)
+            ('backend:acme.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
         """,
         alice_did_key,
     )
@@ -4340,7 +4340,7 @@ async def test_create_chat_session_rejects_signed_payload_leaving_mismatch(aweb_
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -4348,7 +4348,7 @@ async def test_create_chat_session_rejects_signed_payload_leaving_mismatch(aweb_
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
         VALUES
             ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END),
-            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:bob' END)
+            ('backend:acme.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
         """,
         alice_did_key,
     )
@@ -4405,7 +4405,7 @@ async def test_create_chat_session_rejects_signed_payload_wait_seconds_mismatch(
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -4413,7 +4413,7 @@ async def test_create_chat_session_rejects_signed_payload_wait_seconds_mismatch(
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
         VALUES
             ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END),
-            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:bob' END)
+            ('backend:acme.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
         """,
         alice_did_key,
     )
@@ -4470,7 +4470,7 @@ async def test_create_chat_session_rejects_signed_payload_recipient_mismatch(awe
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -4478,7 +4478,7 @@ async def test_create_chat_session_rejects_signed_payload_recipient_mismatch(awe
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
         VALUES
             ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END),
-            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:bob' END)
+            ('backend:acme.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
         """,
         alice_did_key,
     )
@@ -4534,7 +4534,7 @@ async def test_create_chat_session_rejects_partial_signed_recipient_binding_for_
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -4542,8 +4542,8 @@ async def test_create_chat_session_rejects_partial_signed_recipient_binding_for_
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
         VALUES
             ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END),
-            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:bob' END),
-            ('backend:acme.com', 'did:key:carol', 'did:aw:carol', 'acme.com/carol', 'carol', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:carol', '') IS NOT NULL THEN 'did:key:carol' END)
+            ('backend:acme.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END),
+            ('backend:acme.com', 'did:key:z6MkurnVcC1NM4SQDkmSZANg3zjE68ESm9AcnF9fU2JbHLn4', 'did:aw:carol', 'acme.com/carol', 'carol', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:carol', '') IS NOT NULL THEN 'did:key:z6MkurnVcC1NM4SQDkmSZANg3zjE68ESm9AcnF9fU2JbHLn4' END)
         """,
         alice_did_key,
     )
@@ -4599,7 +4599,7 @@ async def test_create_chat_session_rejects_signed_payload_from_stable_id_mismatc
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -4607,7 +4607,7 @@ async def test_create_chat_session_rejects_signed_payload_from_stable_id_mismatc
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
         VALUES
             ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END),
-            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:bob' END)
+            ('backend:acme.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
         """,
         alice_did_key,
     )
@@ -4663,7 +4663,7 @@ async def test_create_chat_session_rejects_signed_payload_from_mismatch(aweb_clo
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -4671,7 +4671,7 @@ async def test_create_chat_session_rejects_signed_payload_from_mismatch(aweb_clo
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
         VALUES
             ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END),
-            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:bob' END)
+            ('backend:acme.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
         """,
         alice_did_key,
     )
@@ -4726,7 +4726,7 @@ async def test_chat_send_message_accepts_signed_from_did_key_for_team_context(aw
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     session_id = await aweb_cloud_db.aweb_db.fetch_value(
@@ -4800,7 +4800,7 @@ async def test_chat_send_message_rejects_legacy_bound_session_continuation(aweb_
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -4896,7 +4896,7 @@ async def test_chat_create_with_signed_fresh_session_bypasses_legacy_bound_sessi
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     alice_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
@@ -5041,7 +5041,7 @@ async def test_chat_send_message_rejects_signed_payload_body_mismatch(aweb_cloud
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     session_id = await aweb_cloud_db.aweb_db.fetch_value(
@@ -5119,7 +5119,7 @@ async def test_chat_send_message_rejects_signed_payload_replayed_into_another_se
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     session_ids = []
@@ -5211,7 +5211,7 @@ async def test_chat_send_message_rejects_signed_payload_hang_on_mismatch(aweb_cl
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     session_id = await aweb_cloud_db.aweb_db.fetch_value(
@@ -5282,7 +5282,7 @@ async def test_chat_send_message_rejects_signed_payload_leaving_mismatch(aweb_cl
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     session_id = await aweb_cloud_db.aweb_db.fetch_value(
@@ -5353,7 +5353,7 @@ async def test_chat_send_message_rejects_signed_payload_recipient_mismatch(aweb_
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     session_id = await aweb_cloud_db.aweb_db.fetch_value(
@@ -5422,7 +5422,7 @@ async def test_chat_send_message_rejects_partial_signed_recipient_binding_for_gr
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
         """
     )
     session_id = await aweb_cloud_db.aweb_db.fetch_value(
@@ -5447,8 +5447,8 @@ async def test_chat_send_message_rejects_partial_signed_recipient_binding_for_gr
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
         VALUES
             ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END),
-            ('backend:acme.com', 'did:key:bob', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:bob' END),
-            ('backend:acme.com', 'did:key:carol', 'did:aw:carol', 'acme.com/carol', 'carol', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:carol', '') IS NOT NULL THEN 'did:key:carol' END)
+            ('backend:acme.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END),
+            ('backend:acme.com', 'did:key:z6MkurnVcC1NM4SQDkmSZANg3zjE68ESm9AcnF9fU2JbHLn4', 'did:aw:carol', 'acme.com/carol', 'carol', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:carol', '') IS NOT NULL THEN 'did:key:z6MkurnVcC1NM4SQDkmSZANg3zjE68ESm9AcnF9fU2JbHLn4' END)
         """,
         alice_did_key,
     )
@@ -5503,7 +5503,7 @@ async def test_chat_pending_matches_unread_mail_and_sessions_across_actor_dids(a
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -5518,7 +5518,7 @@ async def test_chat_pending_matches_unread_mail_and_sessions_across_actor_dids(a
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
         VALUES
-            ($1, 'did:key:z6MkAliceCurrent', 'alice'),
+            ($1, 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4', 'alice'),
             ($1, 'did:aw:bob', 'bob')
         """,
         session_id,
@@ -5527,8 +5527,8 @@ async def test_chat_pending_matches_unread_mail_and_sessions_across_actor_dids(a
         """
         INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address, did_aw_verified_key)
         VALUES
-            ($1, 'backend:acme.com', 'did:aw:alice', 'did:key:z6MkAliceCurrent', 'alice', 'acme.com/alice', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN 'did:key:z6MkAliceCurrent' END),
-            ($2, 'backend:acme.com', 'did:aw:bob', 'did:key:z6MkBob', 'bob', 'acme.com/bob', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkBob' END)
+            ($1, 'backend:acme.com', 'did:aw:alice', 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4', 'alice', 'acme.com/alice', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' END),
+            ($2, 'backend:acme.com', 'did:aw:bob', 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9', 'bob', 'acme.com/bob', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9' END)
         """,
         uuid4(),
         uuid4(),
@@ -5546,7 +5546,7 @@ async def test_chat_pending_matches_unread_mail_and_sessions_across_actor_dids(a
         """
         INSERT INTO {{tables.messages}}
             (message_id, from_did, to_did, from_alias, to_alias, subject, body, priority, created_at)
-        VALUES ($1, 'did:aw:bob', 'did:key:z6MkAliceCurrent', 'bob', 'alice', 'hi', 'mail body', 'normal', $2)
+        VALUES ($1, 'did:aw:bob', 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4', 'bob', 'alice', 'hi', 'mail body', 'normal', $2)
         """,
         uuid4(),
         created_at + timedelta(minutes=2),
@@ -5556,7 +5556,7 @@ async def test_chat_pending_matches_unread_mail_and_sessions_across_actor_dids(a
 
     async def _auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkAliceCurrent",
+            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
             did_aw="did:aw:alice",
             address="acme.com/alice",
         )
@@ -5584,16 +5584,16 @@ async def test_chat_routes_use_team_alias_for_same_namespace_sender_without_publ
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES
-            ('ops:acme.com', 'acme.com', 'ops', 'did:key:team-ops'),
-            ('support:acme.com', 'acme.com', 'support', 'did:key:team-support')
+            ('ops:acme.com', 'acme.com', 'ops', 'did:key:z6MkiK4DciFkG7Sqj2U35cBvNezhk22uso3u8NQ6CKHQZxBb'),
+            ('support:acme.com', 'acme.com', 'support', 'did:key:z6MkhfcRfPdxNFAUvkyQqaEUbxVXPJ8chHwMiYyM2agaD3vT')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address, did_aw_verified_key)
         VALUES
-            ($1, 'ops:acme.com', 'did:aw:gsk', 'did:key:gsk', 'gsk', NULL, CASE WHEN NULLIF('did:aw:gsk', '') IS NOT NULL THEN 'did:key:gsk' END),
-            ($2, 'support:acme.com', 'did:aw:amy', 'did:key:amy', 'amy', NULL, CASE WHEN NULLIF('did:aw:amy', '') IS NOT NULL THEN 'did:key:amy' END)
+            ($1, 'ops:acme.com', 'did:aw:gsk', 'did:key:z6MknRdRNxTS9XiMUVaXK4hfoBJXiUCf1sEWWtsFvc6sPuMJ', 'gsk', NULL, CASE WHEN NULLIF('did:aw:gsk', '') IS NOT NULL THEN 'did:key:z6MknRdRNxTS9XiMUVaXK4hfoBJXiUCf1sEWWtsFvc6sPuMJ' END),
+            ($2, 'support:acme.com', 'did:aw:amy', 'did:key:z6MksPqe4mWxnUsYM45sJdppFQdyfxY5uvmzaFBTstqqYiMa', 'amy', NULL, CASE WHEN NULLIF('did:aw:amy', '') IS NOT NULL THEN 'did:key:z6MksPqe4mWxnUsYM45sJdppFQdyfxY5uvmzaFBTstqqYiMa' END)
         """,
         uuid4(),
         uuid4(),
@@ -5629,7 +5629,7 @@ async def test_chat_routes_use_team_alias_for_same_namespace_sender_without_publ
 
     async def _auth_override():
         return MessagingAuth(
-            did_key="did:key:amy",
+            did_key="did:key:z6MksPqe4mWxnUsYM45sJdppFQdyfxY5uvmzaFBTstqqYiMa",
             did_aw="did:aw:amy",
             address="",
             team_id="support:acme.com",
@@ -5658,14 +5658,14 @@ async def test_cross_org_chat_create_persists_sender_address_without_local_metad
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES
-            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-ops'),
-            ('support:juan.aweb.ai', 'juan.aweb.ai', 'support', 'did:key:team-support')
+            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkiK4DciFkG7Sqj2U35cBvNezhk22uso3u8NQ6CKHQZxBb'),
+            ('support:juan.aweb.ai', 'juan.aweb.ai', 'support', 'did:key:z6MkhfcRfPdxNFAUvkyQqaEUbxVXPJ8chHwMiYyM2agaD3vT')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('support:juan.aweb.ai', 'did:key:amy', 'did:aw:amy', 'juan.aweb.ai/amy', 'amy', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:amy', '') IS NOT NULL THEN 'did:key:amy' END)
+        VALUES ('support:juan.aweb.ai', 'did:key:z6MksPqe4mWxnUsYM45sJdppFQdyfxY5uvmzaFBTstqqYiMa', 'did:aw:amy', 'juan.aweb.ai/amy', 'amy', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:amy', '') IS NOT NULL THEN 'did:key:z6MksPqe4mWxnUsYM45sJdppFQdyfxY5uvmzaFBTstqqYiMa' END)
         """
     )
 
@@ -5673,7 +5673,7 @@ async def test_cross_org_chat_create_persists_sender_address_without_local_metad
 
     async def _sender_auth():
         return MessagingAuth(
-            did_key="did:key:gsk",
+            did_key="did:key:z6MknRdRNxTS9XiMUVaXK4hfoBJXiUCf1sEWWtsFvc6sPuMJ",
             did_aw="did:aw:gsk",
             address="otherco.com/gsk",
             team_id="ops:otherco.com",
@@ -5694,7 +5694,7 @@ async def test_cross_org_chat_create_persists_sender_address_without_local_metad
 
     async def _amy_auth():
         return MessagingAuth(
-            did_key="did:key:amy",
+            did_key="did:key:z6MksPqe4mWxnUsYM45sJdppFQdyfxY5uvmzaFBTstqqYiMa",
             did_aw="did:aw:amy",
             address="juan.aweb.ai/amy",
             team_id="support:juan.aweb.ai",
@@ -5748,15 +5748,15 @@ async def test_chat_create_derives_ephemeral_sender_address_from_team_namespace(
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:acme.com', 'acme.com', 'ops', 'did:key:team-ops')
+        VALUES ('ops:acme.com', 'acme.com', 'ops', 'did:key:z6MkiK4DciFkG7Sqj2U35cBvNezhk22uso3u8NQ6CKHQZxBb')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
         VALUES
-            ('ops:acme.com', 'did:key:alice', NULL, NULL, 'alice', 'local', 'developer', 'open', CASE WHEN NULLIF(NULL, '') IS NOT NULL THEN 'did:key:alice' END),
-            ('ops:acme.com', 'did:key:bob', NULL, NULL, 'bob', 'local', 'developer', 'open', CASE WHEN NULLIF(NULL, '') IS NOT NULL THEN 'did:key:bob' END)
+            ('ops:acme.com', 'did:key:z6MkvgkDf2saqfounfm33qaY8smkZX4XZGcXtb3sHrzxzba3', NULL, NULL, 'alice', 'local', 'developer', 'open', CASE WHEN NULLIF(NULL, '') IS NOT NULL THEN 'did:key:z6MkvgkDf2saqfounfm33qaY8smkZX4XZGcXtb3sHrzxzba3' END),
+            ('ops:acme.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', NULL, NULL, 'bob', 'local', 'developer', 'open', CASE WHEN NULLIF(NULL, '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
         """
     )
 
@@ -5764,7 +5764,7 @@ async def test_chat_create_derives_ephemeral_sender_address_from_team_namespace(
 
     async def _alice_auth():
         return MessagingAuth(
-            did_key="did:key:alice",
+            did_key="did:key:z6MkvgkDf2saqfounfm33qaY8smkZX4XZGcXtb3sHrzxzba3",
             did_aw="",
             address="",
             team_id="ops:acme.com",
@@ -5785,7 +5785,7 @@ async def test_chat_create_derives_ephemeral_sender_address_from_team_namespace(
         """
         SELECT address
         FROM {{tables.chat_participants}}
-        WHERE session_id = $1 AND did = 'did:key:alice'
+        WHERE session_id = $1 AND did = 'did:key:z6MkvgkDf2saqfounfm33qaY8smkZX4XZGcXtb3sHrzxzba3'
         """,
         UUID(created.json()["session_id"]),
     )
@@ -5799,8 +5799,8 @@ async def test_cross_org_chat_reply_persists_sender_address_without_local_metada
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES
-            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:team-ops'),
-            ('support:juan.aweb.ai', 'juan.aweb.ai', 'support', 'did:key:team-support')
+            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkiK4DciFkG7Sqj2U35cBvNezhk22uso3u8NQ6CKHQZxBb'),
+            ('support:juan.aweb.ai', 'juan.aweb.ai', 'support', 'did:key:z6MkhfcRfPdxNFAUvkyQqaEUbxVXPJ8chHwMiYyM2agaD3vT')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -5824,7 +5824,7 @@ async def test_cross_org_chat_reply_persists_sender_address_without_local_metada
 
     async def _amy_auth():
         return MessagingAuth(
-            did_key="did:key:amy",
+            did_key="did:key:z6MksPqe4mWxnUsYM45sJdppFQdyfxY5uvmzaFBTstqqYiMa",
             did_aw="did:aw:amy",
             address="juan.aweb.ai/amy",
             team_id="support:juan.aweb.ai",
@@ -5844,7 +5844,7 @@ async def test_cross_org_chat_reply_persists_sender_address_without_local_metada
 
     async def _gsk_auth():
         return MessagingAuth(
-            did_key="did:key:gsk",
+            did_key="did:key:z6MknRdRNxTS9XiMUVaXK4hfoBJXiUCf1sEWWtsFvc6sPuMJ",
             did_aw="did:aw:gsk",
             address="otherco.com/gsk",
             team_id="ops:otherco.com",
@@ -5875,7 +5875,7 @@ async def test_chat_pending_excludes_all_actor_dids_from_waiting_lookup(aweb_clo
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
         VALUES
-            ($1, 'did:key:z6MkAliceCurrent', 'alice'),
+            ($1, 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4', 'alice'),
             ($1, 'did:aw:bob', 'bob')
         """,
         session_id,
@@ -5894,7 +5894,7 @@ async def test_chat_pending_excludes_all_actor_dids_from_waiting_lookup(aweb_clo
 
     async def _auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkAliceCurrent",
+            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
             did_aw="did:aw:alice",
             address="acme.com/alice",
         )
@@ -5931,7 +5931,7 @@ async def test_chat_pending_preserves_last_from_did_without_address_mapping(aweb
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
         VALUES
-            ($1, 'did:key:z6MkAliceCurrent', 'alice'),
+            ($1, 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4', 'alice'),
             ($1, 'did:aw:bob', '')
         """,
         session_id,
@@ -5950,7 +5950,7 @@ async def test_chat_pending_preserves_last_from_did_without_address_mapping(aweb
 
     async def _auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkAliceCurrent",
+            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
             did_aw="did:aw:alice",
             address="acme.com/alice",
         )
@@ -5975,13 +5975,13 @@ async def test_chat_pending_includes_last_from_stable_id_for_current_sender_key(
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by, created_at)
-        VALUES ($1, 'backend:acme.com', 'did:key:z6MkAliceCurrent', $2)
+        VALUES ($1, 'backend:acme.com', 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4', $2)
         """,
         session_id,
         created_at,
@@ -5990,7 +5990,7 @@ async def test_chat_pending_includes_last_from_stable_id_for_current_sender_key(
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
         VALUES
-            ($1, 'did:key:z6MkAliceCurrent', 'alice'),
+            ($1, 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4', 'alice'),
             ($1, 'did:aw:bob', '')
         """,
         session_id,
@@ -5999,7 +5999,7 @@ async def test_chat_pending_includes_last_from_stable_id_for_current_sender_key(
         """
         INSERT INTO {{tables.chat_messages}}
             (session_id, from_did, from_alias, body, created_at)
-        VALUES ($1, 'did:key:z6MkAliceCurrent', '', 'ping', $2)
+        VALUES ($1, 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4', '', 'ping', $2)
         """,
         session_id,
         created_at + timedelta(minutes=1),
@@ -6007,7 +6007,7 @@ async def test_chat_pending_includes_last_from_stable_id_for_current_sender_key(
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address, did_aw_verified_key)
-        VALUES ($1, 'backend:acme.com', 'did:aw:alice', 'did:key:z6MkAliceCurrent', 'alice', 'acme.com/alice', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN 'did:key:z6MkAliceCurrent' END)
+        VALUES ($1, 'backend:acme.com', 'did:aw:alice', 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4', 'alice', 'acme.com/alice', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' END)
         """,
         uuid4(),
     )
@@ -6016,7 +6016,7 @@ async def test_chat_pending_includes_last_from_stable_id_for_current_sender_key(
 
     async def _auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkBobCurrent",
+            did_key="did:key:z6Mkvuwepf8T1V8QGe8nfLo9PdiXMX9s34EpHc8CG6A1VRuC",
             did_aw="did:aw:bob",
             address="acme.com/bob",
         )
@@ -6029,7 +6029,7 @@ async def test_chat_pending_includes_last_from_stable_id_for_current_sender_key(
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert len(body["pending"]) == 1
-    assert body["pending"][0]["last_from_did"] == "did:key:z6MkAliceCurrent"
+    assert body["pending"][0]["last_from_did"] == "did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4"
     assert body["pending"][0]["last_from_stable_id"] == "did:aw:alice"
     assert body["pending"][0]["last_from_address"] == "acme.com/alice"
 
@@ -6041,7 +6041,7 @@ async def test_chat_send_message_accepts_alternate_session_participant_did(aweb_
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -6056,7 +6056,7 @@ async def test_chat_send_message_accepts_alternate_session_participant_did(aweb_
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
         VALUES
-            ($1, 'did:key:z6MkAliceCurrent', 'alice'),
+            ($1, 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4', 'alice'),
             ($1, 'did:aw:bob', 'bob')
         """,
         session_id,
@@ -6064,7 +6064,7 @@ async def test_chat_send_message_accepts_alternate_session_participant_did(aweb_
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address, inbound_mode, did_aw_verified_key)
-        VALUES ($1, 'backend:acme.com', 'did:aw:bob', 'did:key:z6MkBob', 'bob', 'acme.com/bob', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkBob' END)
+        VALUES ($1, 'backend:acme.com', 'did:aw:bob', 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9', 'bob', 'acme.com/bob', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9' END)
         """,
         uuid4(),
     )
@@ -6073,7 +6073,7 @@ async def test_chat_send_message_accepts_alternate_session_participant_did(aweb_
 
     async def _auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkAliceCurrent",
+            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
             did_aw="did:aw:alice",
             address="acme.com/alice",
         )
@@ -6107,7 +6107,7 @@ async def test_chat_history_and_dual_read_contract_for_alternate_participant_did
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
         VALUES
-            ($1, 'did:key:z6MkAliceCurrent', 'alice'),
+            ($1, 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4', 'alice'),
             ($1, 'did:aw:bob', 'bob')
         """,
         session_id,
@@ -6135,7 +6135,7 @@ async def test_chat_history_and_dual_read_contract_for_alternate_participant_did
 
     async def _auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkAliceCurrent",
+            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
             did_aw="did:aw:alice",
             address="acme.com/alice",
         )
@@ -6210,7 +6210,7 @@ async def test_chat_history_includes_sender_stable_identity_for_current_key(aweb
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
         VALUES
-            ($1, 'did:key:z6MkAliceCurrent', 'alice'),
+            ($1, 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4', 'alice'),
             ($1, 'did:aw:bob', 'bob')
         """,
         session_id,
@@ -6218,13 +6218,13 @@ async def test_chat_history_includes_sender_stable_identity_for_current_key(aweb
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address, did_aw_verified_key)
-        VALUES ($1, 'backend:acme.com', 'did:aw:alice', 'did:key:z6MkAliceCurrent', 'alice', 'acme.com/alice', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN 'did:key:z6MkAliceCurrent' END)
+        VALUES ($1, 'backend:acme.com', 'did:aw:alice', 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4', 'alice', 'acme.com/alice', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' END)
         """,
         uuid4(),
     )
@@ -6232,7 +6232,7 @@ async def test_chat_history_includes_sender_stable_identity_for_current_key(aweb
         """
         INSERT INTO {{tables.chat_messages}}
             (message_id, session_id, from_did, from_alias, body, created_at)
-        VALUES ($1, $2, 'did:key:z6MkAliceCurrent', 'alice', 'hello', $3)
+        VALUES ($1, $2, 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4', 'alice', 'hello', $3)
         """,
         message_id,
         session_id,
@@ -6243,7 +6243,7 @@ async def test_chat_history_includes_sender_stable_identity_for_current_key(aweb
 
     async def _auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkBob",
+            did_key="did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9",
             did_aw="did:aw:bob",
             address="acme.com/bob",
         )
@@ -6256,7 +6256,7 @@ async def test_chat_history_includes_sender_stable_identity_for_current_key(aweb
     assert history.status_code == 200, history.text
     body = history.json()
     assert body["messages"][0]["conversation_id"] == str(session_id)
-    assert body["messages"][0]["from_did"] == "did:key:z6MkAliceCurrent"
+    assert body["messages"][0]["from_did"] == "did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4"
     assert body["messages"][0]["from_stable_id"] == "did:aw:alice"
     assert body["messages"][0]["from_address"] == "acme.com/alice"
 
@@ -6303,7 +6303,7 @@ async def test_chat_history_filters_by_message_id(aweb_cloud_db):
 
     async def _auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkAliceCurrent",
+            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
             did_aw="did:aw:alice",
             address="acme.com/alice",
         )
@@ -6338,7 +6338,7 @@ async def test_chat_stream_accepts_alternate_session_participant_did(aweb_cloud_
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
         VALUES
-            ($1, 'did:key:z6MkAliceCurrent', 'alice'),
+            ($1, 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4', 'alice'),
             ($1, 'did:aw:bob', 'bob')
         """,
         session_id,
@@ -6348,7 +6348,7 @@ async def test_chat_stream_accepts_alternate_session_participant_did(aweb_cloud_
 
     async def _auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkAliceCurrent",
+            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
             did_aw="did:aw:alice",
             address="acme.com/alice",
         )
@@ -6370,8 +6370,8 @@ async def test_chat_stream_accepts_alternate_session_participant_did(aweb_cloud_
     assert resp.status_code == 200, resp.text
     assert "keepalive" in resp.text
     assert seen == {
-        "viewer_did": "did:key:z6MkAliceCurrent",
-        "contact_owner_dids": ["did:aw:alice", "did:key:z6MkAliceCurrent"],
+        "viewer_did": "did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
+        "contact_owner_dids": ["did:aw:alice", "did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4"],
     }
 
 
@@ -6383,7 +6383,7 @@ async def test_chat_stream_replay_includes_sender_stable_identity_for_current_ke
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -6398,7 +6398,7 @@ async def test_chat_stream_replay_includes_sender_stable_identity_for_current_ke
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
         VALUES
-            ($1, 'did:key:z6MkAliceCurrent', 'alice'),
+            ($1, 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4', 'alice'),
             ($1, 'did:aw:bob', 'bob')
         """,
         session_id,
@@ -6406,7 +6406,7 @@ async def test_chat_stream_replay_includes_sender_stable_identity_for_current_ke
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address, did_aw_verified_key)
-        VALUES ($1, 'backend:acme.com', 'did:aw:alice', 'did:key:z6MkAliceCurrent', 'alice', 'acme.com/alice', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN 'did:key:z6MkAliceCurrent' END)
+        VALUES ($1, 'backend:acme.com', 'did:aw:alice', 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4', 'alice', 'acme.com/alice', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' END)
         """,
         uuid4(),
     )
@@ -6414,7 +6414,7 @@ async def test_chat_stream_replay_includes_sender_stable_identity_for_current_ke
         """
         INSERT INTO {{tables.chat_messages}}
             (message_id, session_id, from_did, from_alias, body, created_at)
-        VALUES ($1, $2, 'did:key:z6MkAliceCurrent', 'alice', 'hello', $3)
+        VALUES ($1, $2, 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4', 'alice', 'hello', $3)
         """,
         message_id,
         session_id,
@@ -6441,7 +6441,7 @@ async def test_chat_stream_replay_includes_sender_stable_identity_for_current_ke
 
     async def _auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkBob",
+            did_key="did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9",
             did_aw="did:aw:bob",
             address="acme.com/bob",
         )
@@ -6460,7 +6460,7 @@ async def test_chat_stream_replay_includes_sender_stable_identity_for_current_ke
         )
 
     assert resp.status_code == 200, resp.text
-    assert '"from_did": "did:key:z6MkAliceCurrent"' in resp.text
+    assert '"from_did": "did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4"' in resp.text
     assert '"from_stable_id": "did:aw:alice"' in resp.text
     assert '"from_address": "acme.com/alice"' in resp.text
 
@@ -6472,7 +6472,7 @@ async def test_chat_session_list_accepts_alternate_session_participant_did(aweb_
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -6487,7 +6487,7 @@ async def test_chat_session_list_accepts_alternate_session_participant_did(aweb_
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
         VALUES
-            ($1, 'did:key:z6MkAliceCurrent', 'alice'),
+            ($1, 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4', 'alice'),
             ($1, 'did:aw:bob', 'bob')
         """,
         session_id,
@@ -6495,7 +6495,7 @@ async def test_chat_session_list_accepts_alternate_session_participant_did(aweb_
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address, did_aw_verified_key)
-        VALUES ($1, 'backend:acme.com', 'did:aw:bob', 'did:key:z6MkBob', 'bob', 'acme.com/bob', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkBob' END)
+        VALUES ($1, 'backend:acme.com', 'did:aw:bob', 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9', 'bob', 'acme.com/bob', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9' END)
         """,
         uuid4(),
     )
@@ -6504,7 +6504,7 @@ async def test_chat_session_list_accepts_alternate_session_participant_did(aweb_
 
     async def _auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkAliceCurrent",
+            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
             did_aw="did:aw:alice",
             address="acme.com/alice",
         )
@@ -6560,7 +6560,7 @@ async def test_list_sessions_reads_page_sized_rows_not_every_session(aweb_cloud_
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
         """
     )
     for index in range(session_count):
@@ -6577,7 +6577,7 @@ async def test_list_sessions_reads_page_sized_rows_not_every_session(aweb_cloud_
             """
             INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
             VALUES
-                ($1, 'did:key:z6MkAliceCurrent', 'alice'),
+                ($1, 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4', 'alice'),
                 ($1, 'did:aw:bob', 'bob')
             """,
             session_id,
@@ -6588,7 +6588,7 @@ async def test_list_sessions_reads_page_sized_rows_not_every_session(aweb_cloud_
 
     async def _auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkAliceCurrent",
+            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
             did_aw="did:aw:alice",
             address="acme.com/alice",
         )
@@ -6615,7 +6615,7 @@ async def test_list_sessions_reports_whether_the_limit_left_sessions_out(aweb_cl
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
         """
     )
     for index in range(session_count):
@@ -6632,7 +6632,7 @@ async def test_list_sessions_reports_whether_the_limit_left_sessions_out(aweb_cl
             """
             INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
             VALUES
-                ($1, 'did:key:z6MkAliceCurrent', 'alice'),
+                ($1, 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4', 'alice'),
                 ($1, 'did:aw:bob', 'bob')
             """,
             session_id,
@@ -6642,7 +6642,7 @@ async def test_list_sessions_reports_whether_the_limit_left_sessions_out(aweb_cl
 
     async def _auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkAliceCurrent",
+            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
             did_aw="did:aw:alice",
             address="acme.com/alice",
         )

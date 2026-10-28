@@ -22,10 +22,10 @@ def _envelope() -> FederationEnvelope:
     return FederationEnvelope(
         type="mail",
         sender_did_aw="did:aw:sender",
-        sender_current_did_key="did:key:sender",
+        sender_current_did_key="did:key:z6Mku8RjwBSuKyvASdpqNoawdHyLmaD2jWSnCankL3gt4wfL",
         target_address="example.com/bob",
         target_did_aw="did:aw:target",
-        target_current_did_key="did:key:target",
+        target_current_did_key="did:key:z6Mkw4XqHyToP77ajm9jFFunhLmRWHmb4HRgfXBZMZW1H3iu",
         target_delivery_origin="https://target.example",
         body="hello",
         message_id=str(uuid4()),
