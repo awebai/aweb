@@ -19,6 +19,7 @@ from .routes.attestation_records import router as attestation_records_router
 from .routes.did import router as did_router
 from .routes.dns_addresses import router as dns_addresses_router
 from .routes.dns_namespaces import router as dns_namespaces_router
+from .routes.id_certificates import router as id_certificates_router
 from .routes.teams import router as teams_router
 from .db import AwidDatabaseInfra
 
@@ -180,6 +181,7 @@ def mount_registry(app: FastAPI) -> None:
     app.include_router(a2a_publications_router)
     app.include_router(teams_router)
     app.include_router(attestation_records_router)
+    app.include_router(id_certificates_router)
 
 
 app = create_app()
