@@ -601,6 +601,39 @@ does not restart on a failed fetch or process restart; a local trusted fetch
 time measures age. Do not mix fresh and stale fragments to manufacture a valid
 chain or an uncached network dependency on every request.
 
+### Python SDK checks across custody and lock boundaries
+
+`awid.id_certificates.sign_id_certificate(certificate, *, signer)` is async.
+It validates certificate shape before calling the bytes-only signer once,
+awaits an awaitable answer once, requires `(did_key, signature_bytes)` to name
+the certificate's `issuer_key`, and verifies those exact signing bytes with
+the shared strict Ed25519 profile before returning the signed certificate.
+The returned certificate is the snapshot actually signed, including across an
+await. Shape/signature refusals raise `IDCertificateError` with its stable
+`code` (`invalid_signature` for a malformed signer answer); a callback's own
+exception propagates. This helper holds no key and performs no network I/O.
+Issuance authority and the checked intended operation remain the custody
+owner's responsibility before it decrypts or signs; a pending human key may
+prove its own enrollment but cannot issue a child certificate.
+
+`IDChainEvidence` additionally has optional `observed_at_ns`, sampled by the
+production evidence producer on its process-local monotonic nanosecond clock
+no later than the observation to which `age_seconds` applies. It is never
+serialized into a cache entry or API response, inherited from another process,
+or renewed on receipt/lock acquisition. A consumer in the same process calls
+`evidence.cache_mode_at(time.monotonic_ns())` after its final lock wait. This
+no-I/O check adds elapsed integer nanoseconds to the observed age rounded UP
+to integer nanoseconds and uses the same boundary function as the age-only
+`status_cache_mode` API. Both preserve the inclusive 60/900 bounds above;
+900 is available only with an explicitly failed refresh. Missing, malformed
+or future anchors give `unavailable` for this new check. The existing age-only
+API remains usable for immediate verification, and freshness alone never
+establishes chain validity or authority.
+
+On post-lock expiry, roll back and return the existing retryable refusal;
+the next ordinary request obtains evidence normally. No automatic
+refresh-and-retry loop or network read under the lock is introduced.
+
 ## 5. Presentation, binding and verification result
 
 The bundle is exactly `{v:1,type:"aweb.id-chain",certificates:[signed,...]}`,
