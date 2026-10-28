@@ -67,7 +67,7 @@ func ApproveIDResignRequest(store IDIssuanceStore, requestID, parentID string, p
 	}
 	switch entry.Resign.State {
 	case IDRequestIssued:
-		return idResignIssuedResponse(store, entry, now)
+		return idIssuedResponse(store, entry.Resign, now)
 	case IDRequestFailed:
 		return nil, fmt.Errorf("re-sign request %s was refused", requestID)
 	}
@@ -159,11 +159,12 @@ func idResignEntry(store IDIssuanceStore, requestID string) (*IDIssuanceEntry, e
 	return entry, nil
 }
 
-// idResignIssuedResponse returns the stored response, first recreating the
-// new certificate's entry from it if a crash lost that write.
-func idResignIssuedResponse(store IDIssuanceStore, entry *IDIssuanceEntry, now time.Time) ([]byte, error) {
-	response := []byte(entry.Resign.Response)
-	existing, err := store.Entry(entry.Resign.NewCertificateID)
+// idIssuedResponse returns an issued request's stored response, first
+// recreating the new certificate's issuance entry from it if a crash lost
+// that write.
+func idIssuedResponse(store IDIssuanceStore, record *IDRequestRecord, now time.Time) ([]byte, error) {
+	response := []byte(record.Response)
+	existing, err := store.Entry(record.NewCertificateID)
 	if err != nil {
 		return nil, err
 	}
@@ -177,8 +178,8 @@ func idResignIssuedResponse(store IDIssuanceStore, entry *IDIssuanceEntry, now t
 	certificates := parsed["chain"].(map[string]any)["certificates"].([]any)
 	child := certificates[len(certificates)-1].(map[string]any)
 	id, err := IDCertificateID(child["certificate"].(map[string]any))
-	if err != nil || id != entry.Resign.NewCertificateID {
-		return nil, fmt.Errorf("stored response does not carry certificate %s", entry.Resign.NewCertificateID)
+	if err != nil || id != record.NewCertificateID {
+		return nil, fmt.Errorf("stored response does not carry certificate %s", record.NewCertificateID)
 	}
 	if err := recordIssued(store, now)(child, id); err != nil {
 		return nil, err

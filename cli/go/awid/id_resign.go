@@ -39,31 +39,9 @@ func resignIDCertificate(req IDResignRequest, parentID string, evidence *IDChain
 	if !reflect.DeepEqual(old["parent"], map[string]any{"kind": "identity", "id": parentID}) {
 		return nil, idCertificateRefusal("resign_binding_mismatch")
 	}
-	if evidence == nil {
-		return nil, idCertificateRefusal("evidence_unavailable")
-	}
-	if err = idEvidenceUsable(evidence); err != nil {
-		return nil, err
-	}
-	status, err := parseIDStatus(evidence, domain)
+	parent, current, _, err := idSigningParent(parentID, evidence, domain)
 	if err != nil {
 		return nil, err
-	}
-	parent, err := status.row(parentID)
-	if err != nil {
-		return nil, err
-	}
-	if parent.Revocation != nil {
-		return nil, idCertificateRefusal("parent_revoked")
-	}
-	current, err := status.currentKey(parentID)
-	if err != nil {
-		return nil, err
-	}
-	// The parent's whole current chain must be valid, as at AWID registration.
-	verdict := VerifyIDChain(nil, IDChainSubject{ID: parentID, DIDKey: current}, evidence, domain)
-	if verdict.IdentityValid == nil || !*verdict.IdentityValid {
-		return nil, idCertificateRefusal(verdict.Reason)
 	}
 	if req.SubjectKey == "" || req.SubjectKey != old["id"] {
 		return nil, idCertificateRefusal("subject_mismatch")
@@ -89,6 +67,38 @@ func resignIDCertificate(req IDResignRequest, parentID string, evidence *IDChain
 	certificate["issuer_key"] = current
 	certificate["issued_at"] = idRecordTime(now)
 	return issueIDCertificate(certificate, current, sign, commit)
+}
+
+// idSigningParent checks an identity parent about to sign a child: usable
+// evidence, not revoked, and its whole current chain valid, as at AWID
+// registration. It returns the parent's status row, current key and kind.
+func idSigningParent(parentID string, evidence *IDChainEvidence, domain string) (*idStatusIdentity, string, string, error) {
+	if evidence == nil {
+		return nil, "", "", idCertificateRefusal("evidence_unavailable")
+	}
+	if err := idEvidenceUsable(evidence); err != nil {
+		return nil, "", "", err
+	}
+	status, err := parseIDStatus(evidence, domain)
+	if err != nil {
+		return nil, "", "", err
+	}
+	parent, err := status.row(parentID)
+	if err != nil {
+		return nil, "", "", err
+	}
+	if parent.Revocation != nil {
+		return nil, "", "", idCertificateRefusal("parent_revoked")
+	}
+	current, err := status.currentKey(parentID)
+	if err != nil {
+		return nil, "", "", err
+	}
+	verdict := VerifyIDChain(nil, IDChainSubject{ID: parentID, DIDKey: current}, evidence, domain)
+	if verdict.IdentityValid == nil || !*verdict.IdentityValid || verdict.Kind == nil {
+		return nil, "", "", idCertificateRefusal(verdict.Reason)
+	}
+	return parent, current, *verdict.Kind, nil
 }
 
 func parentKeyHistoryHas(parent *idStatusIdentity, key string) bool {
