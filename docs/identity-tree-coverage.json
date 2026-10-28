@@ -1947,9 +1947,11 @@
       "proving_tests": [
         "server/tests/test_id_chain_request_auth.py::test_stale_not_enrolled_does_not_hide_enrollment_or_revocation",
         "server/tests/test_id_chain_request_auth.py::test_enrollment_controls_domain_before_any_tree_fetch",
-        "server/tests/test_id_chain_request_auth.py::test_did_key_only_requests_enforce_presented_chain"
+        "server/tests/test_id_chain_request_auth.py::test_did_key_only_requests_enforce_presented_chain",
+        "server/tests/test_id_chain_request_auth.py::test_missing_key_omission_consumes_the_stated_enrollment",
+        "server/tests/test_id_chain_request_auth.py::test_missing_mapping_does_not_hide_registered_revocation"
       ],
-      "acceptance": "Identity-only original authentication precedes the shared ID-chain verifier/disposition. Enrolled omission uses the fresh binding domain. Stored projection fallback and the other lanes remain pending.",
+      "acceptance": "Identity-only original authentication precedes the shared ID-chain verifier/disposition. Enrolled omission uses the fresh binding domain. Stored projection fallback and the other lanes remain pending. Missing-key 404 enrollment comes only from DIDKeyNotFoundError.id_tree: absent stays unknown, explicit false is legacy, and enrolled retains its domain and tree checks.",
       "ed25519_profile": "legacy",
       "sites": [
         {
@@ -2016,9 +2018,11 @@
       ],
       "proving_tests": [
         "server/tests/test_id_chain_request_auth.py::test_binding_uses_fresh_resolution_and_preserves_the_sixty_second_boundary",
-        "server/tests/test_id_chain_request_auth.py::test_stale_not_enrolled_does_not_hide_enrollment_or_revocation"
+        "server/tests/test_id_chain_request_auth.py::test_stale_not_enrolled_does_not_hide_enrollment_or_revocation",
+        "server/tests/test_id_chain_request_auth.py::test_missing_key_omission_consumes_the_stated_enrollment",
+        "server/tests/test_id_chain_request_auth.py::test_missing_mapping_does_not_hide_registered_revocation"
       ],
-      "acceptance": "Enrollment travels with resolve_key_fresh and the existing 60-second binding cache; unknown never becomes not-enrolled. Identity-only omission is covered; team, grant, federation and hook wiring remain pending.",
+      "acceptance": "Enrollment travels with resolve_key_fresh and the existing 60-second binding cache; unknown never becomes not-enrolled. Identity-only omission is covered; team, grant, federation and hook wiring remain pending. Missing-key 404 enrollment comes only from DIDKeyNotFoundError.id_tree: absent stays unknown, explicit false is legacy, and enrolled retains its domain and tree checks.",
       "ed25519_profile": "legacy",
       "sites": [
         {
@@ -14167,9 +14171,11 @@
         "server/tests/test_id_chain_request_auth.py::test_factory_without_cached_evidence_never_fetches_a_tree",
         "server/tests/test_id_chain_request_auth.py::test_enrollment_controls_domain_before_any_tree_fetch",
         "server/tests/test_id_chain_request_auth.py::test_stale_not_enrolled_does_not_hide_enrollment_or_revocation",
-        "server/tests/test_id_chain_request_auth.py::test_did_key_only_requests_enforce_presented_chain"
+        "server/tests/test_id_chain_request_auth.py::test_did_key_only_requests_enforce_presented_chain",
+        "server/tests/test_id_chain_request_auth.py::test_missing_key_omission_consumes_the_stated_enrollment",
+        "server/tests/test_id_chain_request_auth.py::test_missing_mapping_does_not_hide_registered_revocation"
       ],
-      "acceptance": "Shared strict chain parsing, cached evidence and disposition on the identity-only lane. Chainless local does no lookup; no-Redis tree evidence is unavailable; unknown enrollment and authoritative-domain mismatch refuse. Remaining lanes and response/message carriers are pending.",
+      "acceptance": "Shared strict chain parsing, cached evidence and disposition on the identity-only lane. Chainless local does no lookup; no-Redis tree evidence is unavailable; unknown enrollment and authoritative-domain mismatch refuse. Remaining lanes and response/message carriers are pending. Missing-key 404 enrollment comes only from DIDKeyNotFoundError.id_tree: absent stays unknown, explicit false is legacy, and enrolled retains its domain and tree checks.",
       "ed25519_profile": "strict",
       "sites": [
         {

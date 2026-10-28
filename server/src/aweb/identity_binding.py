@@ -8,7 +8,7 @@ from dataclasses import dataclass, replace
 from time import monotonic
 
 from awid.did import stable_id_from_did_key
-from awid.registry import IDTreeEnrollment, RegistryError
+from awid.registry import DIDKeyNotFoundError, IDTreeEnrollment, RegistryError
 from fastapi import HTTPException, Request
 
 logger = logging.getLogger(__name__)
@@ -113,7 +113,8 @@ async def observe_identity_binding(client, *, did_key: str, did_aw: str, address
                     status_code=403, detail="identity_binding_mismatch"
                 ) from exc
             self_derived = True
-            enrollment = IDTreeEnrollment(enrolled=False, domain=None)
+            # Key absence proves no enrollment only when AWID states it.
+            enrollment = exc.id_tree if isinstance(exc, DIDKeyNotFoundError) else None
         else:
             if resolution.did_aw != did_aw or resolution.current_did_key != did_key:
                 raise HTTPException(status_code=403, detail="identity_binding_mismatch")
