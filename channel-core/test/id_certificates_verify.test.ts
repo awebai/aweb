@@ -44,8 +44,8 @@ function evidenceOf(c: any): IdStatusEvidence | null {
 
 describe("id chain verification cases", () => {
   test("the fixture has the cases this suite was written against", () => {
-    expect(cases).toHaveLength(126);
-    expect(new Set(cases.map(c => c.name)).size).toBe(126);
+    expect(cases).toHaveLength(122);
+    expect(new Set(cases.map(c => c.name)).size).toBe(122);
   });
 
   // R1-R3, the namespace replacement cutoff and the did:key-human shape
@@ -83,7 +83,7 @@ describe("id chain verification cases", () => {
     }
 
     if (c.expected_cache_mode !== undefined) {
-      expect(idStatusCacheMode(c.cache.age_seconds, c.cache.refresh === "failed")).toBe(c.expected_cache_mode);
+      expect(idStatusCacheMode(c.cache.age_seconds)).toBe(c.expected_cache_mode);
     }
 
     // A chainless local subject needs no tree lookup, so no evidence can change it.
@@ -136,20 +136,16 @@ describe("id status request planning", () => {
 });
 
 describe("id status cache mode", () => {
+  // Evidence is fresh through 60 seconds inclusive; past that it is refreshed
+  // or unavailable.
   test.each([
-    [0, false, "fresh"],
-    [60, false, "fresh"],
-    [60, true, "fresh"],
-    [61, true, "outage_grace"],
-    [900, true, "outage_grace"],
-    [901, true, "unavailable"],
-    // Past 60s a successful refresh would have reset the age; an unrefreshed
-    // stale age is not evidence.
-    [61, false, "unavailable"],
-    [null, true, "unavailable"],
-    [null, false, "unavailable"],
-    [-1, false, "unavailable"],
-  ] as const)("age %s, refresh failed %s -> %s", (age, failed, mode) => {
-    expect(idStatusCacheMode(age, failed)).toBe(mode);
+    [0, "fresh"],
+    [60, "fresh"],
+    [61, "unavailable"],
+    [null, "unavailable"],
+    [-1, "unavailable"],
+    [Number.NaN, "unavailable"],
+  ] as const)("age %s -> %s", (age, mode) => {
+    expect(idStatusCacheMode(age)).toBe(mode);
   });
 });
