@@ -72,3 +72,14 @@ def test_integer_nanoseconds_preserve_a_boundary_above_float_precision():
     snapshot = evidence(60, anchor=anchor)
     assert snapshot.cache_mode_at(anchor) == "fresh"
     assert snapshot.cache_mode_at(anchor + 1) == "unavailable"
+
+
+@pytest.mark.parametrize("limit,failed", [(60.0, False), (900.0, True)])
+def test_fractional_age_above_an_inclusive_limit_is_unavailable(limit, failed):
+    age = math.nextafter(limit, math.inf)
+    assert status_cache_mode(age, failed) == "unavailable"
+    assert evidence(age, failed=failed).cache_mode_at(ANCHOR) == "unavailable"
+
+
+def test_sub_nanosecond_observed_age_is_rounded_up_before_elapsed_time():
+    assert evidence(1e-10).cache_mode_at(ANCHOR + 60 * SECOND) == "unavailable"
