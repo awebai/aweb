@@ -274,12 +274,28 @@ class TeamCertificate:
 class RegistryError(Exception):
     def __init__(
         self, message: str, *, status_code: int, detail: str | None = None, code: str | None = None,
+        body: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.detail = detail or message
         # The refusal's machine-readable code, when the registry sent one.
         self.code = code
+        # The refusal's JSON object body, when it had one.
+        self.body = body
+
+
+class DIDKeyNotFoundError(RegistryError):
+    """The registry has no key for the did:aw; id_tree says whether it is enrolled.
+
+    id_tree is None (unknown) when the registry did not state it.
+    """
+
+    def __init__(self, refused: RegistryError, *, id_tree: IDTreeEnrollment | None) -> None:
+        super().__init__(
+            str(refused), status_code=refused.status_code, detail=refused.detail, code=refused.code, body=refused.body,
+        )
+        self.id_tree = id_tree
 
 
 class AlreadyRegisteredError(RegistryError):
@@ -428,6 +444,7 @@ class RegistryClient:
         if not 200 <= response.status_code < 300:
             detail = None
             code = None
+            parsed_error = None
             try:
                 parsed_error = json_loads(content)
                 if isinstance(parsed_error, dict):
@@ -451,6 +468,7 @@ class RegistryClient:
                 status_code=response.status_code,
                 detail=detail or response_text,
                 code=code,
+                body=parsed_error if isinstance(parsed_error, dict) else None,
             )
         if not content:
             return {}
@@ -678,7 +696,13 @@ class RegistryClient:
         return await self.get_mapping(did_aw, signing_key)
 
     async def resolve_key(self, did_aw: str) -> KeyResolution:
-        return _key_resolution_from_json(await self._request_json("GET", f"/v1/did/{did_aw}/key"))
+        try:
+            data = await self._request_json("GET", f"/v1/did/{did_aw}/key")
+        except RegistryError as refused:
+            if refused.status_code == 404:
+                raise DIDKeyNotFoundError(refused, id_tree=_id_tree_enrollment(refused.body or {})) from refused
+            raise
+        return _key_resolution_from_json(data)
 
     async def resolve_key_fresh(self, did_aw: str) -> KeyResolution:
         return await self.resolve_key(did_aw)

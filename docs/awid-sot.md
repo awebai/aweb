@@ -507,7 +507,13 @@ enforcement of Principle 5.
   for every registered identity, revoked or root-replaced ones included, or
   `{"enrolled": false}`. It only locates status; it is not a verified
   identity or current authority. The key, log head, encryption key and
-  enrollment are read in one read-only `REPEATABLE READ` snapshot.
+  enrollment are read in one read-only `REPEATABLE READ` snapshot. With no
+  key mapping the answer stays 404 with its `detail`, and still carries a
+  top-level `id_tree` from the identity tree, so an enrolled ID whose mapping
+  is missing never reads as not enrolled. The client raises
+  `DIDKeyNotFoundError` (a `RegistryError`) with the typed `id_tree`: an
+  explicit not-enrolled, enrolled with its domain, or `None` (unknown) for a
+  404 that does not state it; a malformed stated value rejects.
   `KeyResolution.id_tree` in the client is the same fact: an
   `IDTreeEnrollment`, or `None` (unknown) when the registry did not state it.
   The client parses it with the shared `awid.id_certificates.key_response_id_tree`;
