@@ -138,3 +138,16 @@ test('raw curve use in did.ts outside exactly primeSubgroupPoint refuses whateve
  assert.equal(check('primeSubgroupPoint','strict',raw),'');
  assert.equal(check('computeStableID','legacy',{'node:crypto.createHash':1}),'');
 });
+
+test('in did.ts only node:crypto hashing is not raw crypto (security R25)',()=>{
+ const did='channel-core/src/identity/did.ts';
+ const check=(symbol,calls)=>checkCatalog([{id:'r',repo:'aweb',files:[did],sites:[{file:did,symbol}],ed25519_profile:'legacy'}],[{row:'r',file:did,symbol,calls}],[{file:did,symbol,calls}]).join('\n');
+ for(const calls of [
+  {'node:crypto.createPublicKey':1},
+  {'node:crypto.sign':1},
+  {'node:crypto.verify':1},
+  {'node:crypto.createPrivateKey':1},
+  {'crypto.createHash':1},
+ ]) assert.match(check('didKeyObject',calls),/raw curve use in did\.ts/,JSON.stringify(calls));
+ assert.equal(check('computeStableID',{'node:crypto.createHash':1,'node:crypto.createHash().update':1,'node:crypto.createHash().update().digest':1}),'');
+});
