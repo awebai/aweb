@@ -232,7 +232,113 @@
       ],
       "acceptance": "All frozen cases and refusal dispositions; owner supplies exact proving test paths after review.",
       "candidate_head": "63ea94aa7c1e6d84857325f3ec05fc28c40f96ab",
-      "ed25519_profile": "strict"
+      "ed25519_profile": "strict",
+      "sites": [
+        {
+          "file": "channel-core/src/identity/id_certificates.ts",
+          "symbol": "<module>"
+        },
+        {
+          "file": "channel-core/src/identity/id_certificates.ts",
+          "symbol": "idCertificateSigningBytes"
+        },
+        {
+          "file": "channel-core/src/identity/id_certificates.ts",
+          "symbol": "idCertificateId"
+        },
+        {
+          "file": "channel-core/src/identity/id_certificates.ts",
+          "symbol": "encodeIdChainHeader"
+        },
+        {
+          "file": "channel-core/src/identity/id_certificates.ts",
+          "symbol": "decodeIdChainHeader"
+        },
+        {
+          "file": "channel-core/src/identity/id_certificates.ts",
+          "symbol": "decodeIdChain"
+        },
+        {
+          "file": "channel-core/src/identity/id_certificates.ts",
+          "symbol": "idChainRefusal"
+        },
+        {
+          "file": "channel-core/src/identity/id_certificates.ts",
+          "symbol": "signedShapeRefusal"
+        },
+        {
+          "file": "channel-core/src/identity/id_certificates.ts",
+          "symbol": "certificateShapeRefusal"
+        },
+        {
+          "file": "channel-core/src/identity/id_certificates.ts",
+          "symbol": "signatureRefusal"
+        },
+        {
+          "file": "channel-core/src/identity/id_certificates.ts",
+          "symbol": "idEd25519Verify"
+        },
+        {
+          "file": "channel-core/src/identity/id_certificates.ts",
+          "symbol": "primeSubgroupPoint"
+        },
+        {
+          "file": "channel-core/src/identity/id_certificates.ts",
+          "symbol": "isCanonicalDidKey"
+        },
+        {
+          "file": "channel-core/src/identity/id_certificates.ts",
+          "symbol": "isCanonicalDidAw"
+        },
+        {
+          "file": "channel-core/src/identity/id_certificates.ts",
+          "symbol": "isCanonicalIdentityId"
+        },
+        {
+          "file": "channel-core/src/identity/id_verification.ts",
+          "symbol": "idStatusRequest"
+        },
+        {
+          "file": "channel-core/src/identity/id_verification.ts",
+          "symbol": "verifyIdChain"
+        },
+        {
+          "file": "channel-core/src/identity/id_verification.ts",
+          "symbol": "verify"
+        },
+        {
+          "file": "channel-core/src/identity/id_verification.ts",
+          "symbol": "isRegistered"
+        },
+        {
+          "file": "channel-core/src/identity/id_verification.ts",
+          "symbol": "trustedSnapshot"
+        },
+        {
+          "file": "channel-core/src/identity/id_verification.ts",
+          "symbol": "parseSnapshot"
+        },
+        {
+          "file": "channel-core/src/identity/id_verification.ts",
+          "symbol": "parseEpochs"
+        },
+        {
+          "file": "channel-core/src/identity/id_verification.ts",
+          "symbol": "parseIdentity"
+        },
+        {
+          "file": "channel-core/src/identity/id_verification.ts",
+          "symbol": "currentKey"
+        },
+        {
+          "file": "channel-core/src/identity/id_verification.ts",
+          "symbol": "idRequestDisposition"
+        },
+        {
+          "file": "channel-core/src/identity/strict_json.ts",
+          "symbol": "Reader.fail"
+        }
+      ]
     },
     {
       "id": "S1.PY.ANCESTRY",
@@ -1041,7 +1147,9 @@
     {
       "id": "CLI.KEYS.HUMAN",
       "repo": "aweb",
-      "files": [],
+      "files": [
+        "cli/go/awid/human_key_backup.go"
+      ],
       "operations": [
         "create",
         "sign"
@@ -1054,8 +1162,17 @@
         "J3",
         "J10"
       ],
-      "proving_tests": [],
-      "acceptance": "OS keychain signer, one-person ID and approved encrypted key export/import; CLI owner supplies final paths."
+      "proving_tests": [
+        "cli/go/internal/conformance/human_key_backup_test.go"
+      ],
+      "acceptance": "OS keychain signer, one-person ID and approved encrypted key export/import; CLI owner supplies final paths.",
+      "ed25519_profile": "legacy",
+      "sites": [
+        {
+          "file": "cli/go/awid/human_key_backup.go",
+          "symbol": "ImportHumanKeyBackup"
+        }
+      ]
     },
     {
       "id": "CLI.INIT.LOCAL",
@@ -18562,6 +18679,14 @@
         }
       },
       {
+        "row": "CLI.KEYS.HUMAN",
+        "file": "cli/go/awid/human_key_backup.go",
+        "symbol": "ImportHumanKeyBackup",
+        "calls": {
+          "reference:crypto/ed25519.PrivateKey": 1
+        }
+      },
+      {
         "row": "S1.GO.CODEC",
         "file": "cli/go/awid/id_certificates.go",
         "symbol": "DecodeIDChainHeader",
@@ -23584,7 +23709,17 @@
           "reference:./identity/certificate.js.loadTeamCertificate": 1,
           "reference:./identity/certificate.js.encodeTeamCertificateHeader": 1,
           "reference:./identity/signing.js.verifyMessage": 1,
-          "reference:./identity/signing.js.verifySignedPayload": 1
+          "reference:./identity/signing.js.verifySignedPayload": 1,
+          "reference:./identity/id_certificates.js.decodeIdChain": 1,
+          "reference:./identity/id_certificates.js.decodeIdChainHeader": 1,
+          "reference:./identity/id_certificates.js.encodeIdChainHeader": 1,
+          "reference:./identity/id_certificates.js.idCertificateId": 1,
+          "reference:./identity/id_certificates.js.idCertificateSigningBytes": 1,
+          "reference:./identity/id_certificates.js.parseSignedIdCertificate": 1,
+          "reference:./identity/id_verification.js.idRequestDisposition": 1,
+          "reference:./identity/id_verification.js.idStatusCacheMode": 1,
+          "reference:./identity/id_verification.js.idStatusRequest": 1,
+          "reference:./identity/id_verification.js.verifyIdChain": 1
         },
         "row": "TS.SOURCE.channel-core.src.index"
       },
@@ -24529,6 +24664,244 @@
           "reference:commit": 8
         },
         "row": "TS.SOURCE.scripts.prepare-pinned-oats"
+      },
+      {
+        "file": "channel-core/src/identity/id_certificates.ts",
+        "symbol": "<module>",
+        "calls": {
+          "reference:@noble/ed25519.etc.sha512Sync": 1,
+          "@noble/ed25519.etc.concatBytes": 1,
+          "reference:@noble/ed25519.CURVE.n": 1
+        },
+        "row": "S1.TS.VERIFIER"
+      },
+      {
+        "file": "channel-core/src/identity/id_certificates.ts",
+        "symbol": "idCertificateSigningBytes",
+        "calls": {
+          "./canonical.js.canonicalJSONValue": 1
+        },
+        "row": "S1.TS.VERIFIER"
+      },
+      {
+        "file": "channel-core/src/identity/id_certificates.ts",
+        "symbol": "idCertificateId",
+        "calls": {
+          "idCertificateSigningBytes": 1
+        },
+        "row": "S1.TS.VERIFIER"
+      },
+      {
+        "file": "channel-core/src/identity/id_certificates.ts",
+        "symbol": "encodeIdChainHeader",
+        "calls": {
+          "./canonical.js.canonicalJSONValue": 1
+        },
+        "row": "S1.TS.VERIFIER"
+      },
+      {
+        "file": "channel-core/src/identity/id_certificates.ts",
+        "symbol": "decodeIdChainHeader",
+        "calls": {
+          "decodeIdChain": 1
+        },
+        "row": "S1.TS.VERIFIER"
+      },
+      {
+        "file": "channel-core/src/identity/id_certificates.ts",
+        "symbol": "decodeIdChain",
+        "calls": {
+          "./strict_json.js.parseStrictJSON": 1,
+          "reference:./strict_json.js.StrictJSONError": 1,
+          "./canonical.js.canonicalJSONValue": 1,
+          "idChainRefusal": 1
+        },
+        "row": "S1.TS.VERIFIER"
+      },
+      {
+        "file": "channel-core/src/identity/id_certificates.ts",
+        "symbol": "idChainRefusal",
+        "calls": {
+          "isRecord": 1,
+          "hasExactKeys": 1
+        },
+        "row": "S1.TS.VERIFIER"
+      },
+      {
+        "file": "channel-core/src/identity/id_certificates.ts",
+        "symbol": "signedShapeRefusal",
+        "calls": {
+          "isRecord": 1,
+          "hasExactKeys": 1
+        },
+        "row": "S1.TS.VERIFIER"
+      },
+      {
+        "file": "channel-core/src/identity/id_certificates.ts",
+        "symbol": "certificateShapeRefusal",
+        "calls": {
+          "isRecord": 2,
+          "hasExactKeys": 2,
+          "isCanonicalDomain": 1,
+          "literal:did:aw": 1,
+          "isCanonicalDidKey": 1
+        },
+        "row": "S1.TS.VERIFIER"
+      },
+      {
+        "file": "channel-core/src/identity/id_certificates.ts",
+        "symbol": "signatureRefusal",
+        "calls": {
+          "./did.js.extractPublicKey": 1,
+          "idEd25519Verify": 1,
+          "idCertificateSigningBytes": 1
+        },
+        "row": "S1.TS.VERIFIER"
+      },
+      {
+        "file": "channel-core/src/identity/id_certificates.ts",
+        "symbol": "idEd25519Verify",
+        "calls": {
+          "reference:@noble/ed25519.CURVE.n": 2,
+          "@noble/ed25519.etc.concatBytes": 1,
+          "reference:@noble/ed25519.ExtendedPoint.ZERO": 2,
+          "@noble/ed25519.ExtendedPoint.BASE.multiply": 1
+        },
+        "row": "S1.TS.VERIFIER"
+      },
+      {
+        "file": "channel-core/src/identity/id_certificates.ts",
+        "symbol": "primeSubgroupPoint",
+        "calls": {
+          "@noble/ed25519.ExtendedPoint.fromHex": 1
+        },
+        "row": "S1.TS.VERIFIER"
+      },
+      {
+        "file": "channel-core/src/identity/id_certificates.ts",
+        "symbol": "isCanonicalDidKey",
+        "calls": {
+          "./did.js.extractPublicKey": 1,
+          "./did.js.computeDIDKey": 1
+        },
+        "row": "S1.TS.VERIFIER"
+      },
+      {
+        "file": "channel-core/src/identity/id_certificates.ts",
+        "symbol": "isCanonicalDidAw",
+        "calls": {
+          "literal:did:aw": 2
+        },
+        "row": "S1.TS.VERIFIER"
+      },
+      {
+        "file": "channel-core/src/identity/id_certificates.ts",
+        "symbol": "isCanonicalIdentityId",
+        "calls": {
+          "isCanonicalDidAw": 1,
+          "isCanonicalDidKey": 1
+        },
+        "row": "S1.TS.VERIFIER"
+      },
+      {
+        "file": "channel-core/src/identity/id_verification.ts",
+        "symbol": "idStatusRequest",
+        "calls": {
+          "literal:did:aw": 2,
+          "./id_certificates.js.idChainRefusal": 1
+        },
+        "row": "S1.TS.VERIFIER"
+      },
+      {
+        "file": "channel-core/src/identity/id_verification.ts",
+        "symbol": "verifyIdChain",
+        "calls": {
+          "verify": 1
+        },
+        "row": "S1.TS.VERIFIER"
+      },
+      {
+        "file": "channel-core/src/identity/id_verification.ts",
+        "symbol": "verify",
+        "calls": {
+          "literal:did:aw": 1,
+          "./id_certificates.js.idChainRefusal": 1,
+          "./id_certificates.js.idCertificateId": 1
+        },
+        "row": "S1.TS.VERIFIER"
+      },
+      {
+        "file": "channel-core/src/identity/id_verification.ts",
+        "symbol": "isRegistered",
+        "calls": {
+          "literal:did:aw": 1
+        },
+        "row": "S1.TS.VERIFIER"
+      },
+      {
+        "file": "channel-core/src/identity/id_verification.ts",
+        "symbol": "trustedSnapshot",
+        "calls": {
+          "idStatusCacheMode": 1
+        },
+        "row": "S1.TS.VERIFIER"
+      },
+      {
+        "file": "channel-core/src/identity/id_verification.ts",
+        "symbol": "parseSnapshot",
+        "calls": {
+          "./id_certificates.js.isRecord": 1,
+          "./id_certificates.js.hasExactKeys": 1,
+          "./id_certificates.js.isCanonicalDidAw": 1
+        },
+        "row": "S1.TS.VERIFIER"
+      },
+      {
+        "file": "channel-core/src/identity/id_verification.ts",
+        "symbol": "parseEpochs",
+        "calls": {
+          "./id_certificates.js.isRecord": 2,
+          "./id_certificates.js.hasExactKeys": 2,
+          "./id_certificates.js.isCanonicalDidKey": 1
+        },
+        "row": "S1.TS.VERIFIER"
+      },
+      {
+        "file": "channel-core/src/identity/id_verification.ts",
+        "symbol": "parseIdentity",
+        "calls": {
+          "./id_certificates.js.isRecord": 5,
+          "./id_certificates.js.hasExactKeys": 5,
+          "./id_certificates.js.isCanonicalDidAw": 1,
+          "./registry.js.verifyDidLogEntries": 1,
+          "./id_certificates.js.parseSignedIdCertificate": 1,
+          "./id_certificates.js.idCertificateId": 1
+        },
+        "row": "S1.TS.VERIFIER"
+      },
+      {
+        "file": "channel-core/src/identity/id_verification.ts",
+        "symbol": "currentKey",
+        "calls": {
+          "literal:did:aw": 1
+        },
+        "row": "S1.TS.VERIFIER"
+      },
+      {
+        "file": "channel-core/src/identity/id_verification.ts",
+        "symbol": "idRequestDisposition",
+        "calls": {
+          "literal:did:aw": 1
+        },
+        "row": "S1.TS.VERIFIER"
+      },
+      {
+        "file": "channel-core/src/identity/strict_json.ts",
+        "symbol": "Reader.fail",
+        "calls": {
+          "StrictJSONError": 1
+        },
+        "row": "S1.TS.VERIFIER"
       }
     ]
   }
