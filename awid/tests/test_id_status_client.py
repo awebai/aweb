@@ -80,6 +80,7 @@ class Registry:
         self.dns_delay = 0.0
         self.http_delay = 0.0
         self.advance_during_fetch = 0
+        self.process_ns_during_fetch = 0
         self.gate: dict[str, asyncio.Event] = {}
 
     async def handler(self, request: httpx.Request) -> httpx.Response:
@@ -90,6 +91,7 @@ class Registry:
             await self.gate[body["domain"]].wait()
         await asyncio.sleep(self.http_delay)
         self.clock[0] += self.advance_during_fetch
+        self.process_ns[0] += self.process_ns_during_fetch
         if self.http_status != 200:
             if self.error_body is not None:
                 # Streamed, as a real transport delivers it, so the body is read raw.
@@ -118,12 +120,13 @@ class Registry:
 class ClockedRedis(FakeRedis):
     """A Redis whose server clock a test sets, answering pipelined commands in order."""
 
-    def __init__(self, clock: list[int]) -> None:
+    def __init__(self, clock: list[int], micro: list[int]) -> None:
         super().__init__()
         self.clock = clock
+        self.micro = micro
 
     async def time(self) -> tuple[int, int]:
-        return self.clock[0], 0
+        return self.clock[0], self.micro[0]
 
     def pipeline(self, transaction: bool = True) -> "ClockedPipeline":
         return ClockedPipeline(self)
@@ -154,13 +157,22 @@ class ClockedPipeline:
 
 @pytest_asyncio.fixture
 async def env(monkeypatch):
-    # clock is the Redis server's; each process's own clock is offset from it.
+    # clock (with micro, its microseconds) is the Redis server's; each process's
+    # own clocks are offset from it, and its monotonic clock also advances by
+    # process_ns.
     clock = [1_000_000]
+    micro = [0]
     offset = [0]
+    process_ns = [0]
     monkeypatch.setattr(registry_module, "_cache_now", lambda: clock[0] + offset[0])
+    monkeypatch.setattr(
+        registry_module, "_monotonic_ns", lambda: (clock[0] + offset[0]) * 1_000_000_000 + process_ns[0],
+    )
     registry = Registry(clock)
     registry.offset = offset
-    redis = ClockedRedis(clock)
+    registry.micro = micro
+    registry.process_ns = process_ns
+    redis = ClockedRedis(clock, micro)
     clients = []
 
     def client(*, timeout_seconds: float = 5.0) -> CachedRegistryClient:
@@ -518,6 +530,85 @@ async def test_an_entry_stamped_ahead_of_the_redis_clock_gives_no_grace(env):
     assert _verdict(evidence)["reason"] == "evidence_unavailable"
 
 
+@pytest.mark.asyncio
+async def test_an_entry_past_60_seconds_by_a_fraction_of_a_second_is_refreshed(env):
+    env.micro[0] = 900_000  # stamped in the last part of its second
+    await _evidence(env)
+    env.clock[0] += 60
+    env.micro[0] = 500_000
+    evidence = await _evidence(env)
+    assert (evidence.age_seconds, evidence.refresh_failed) == (0, False)
+    assert len(env.requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_an_entry_exactly_60_seconds_old_on_the_redis_clock_is_fresh(env):
+    await _evidence(env)
+    env.clock[0] += 60
+    evidence = await _evidence(env)
+    assert (evidence.age_seconds, evidence.refresh_failed) == (60, False)
+    assert len(env.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_age_of_last_known_good_is_rounded_up(env):
+    await _evidence(env)
+    env.clock[0] += 61
+    env.micro[0] = 1
+    env.http_status = 503
+    evidence = await _evidence(env)
+    assert (evidence.age_seconds, evidence.refresh_failed) == (62, True)
+
+
+@pytest.mark.asyncio
+async def test_a_refresh_lasting_a_fraction_past_whole_seconds_is_aged_up(env):
+    env.advance_during_fetch = 6
+    env.process_ns_during_fetch = 500_000_000
+    evidence = await _evidence(env)
+    assert evidence.age_seconds == 7
+
+
+@pytest.mark.asyncio
+async def test_the_failed_attempts_wait_is_measured_on_the_process_monotonic_clock(env, monkeypatch):
+    await _evidence(env)
+    env.clock[0] += 61
+    env.http_status = 503
+    env.advance_during_fetch = 5
+    monkeypatch.setattr(registry_module, "_cache_now", lambda: 0)  # a wall clock that stands still
+    evidence = await _evidence(env)
+    assert (evidence.age_seconds, evidence.refresh_failed) == (66, True)
+
+
+@pytest.mark.asyncio
+async def test_real_redis_ages_an_entry_past_its_whole_second_stamp(env):
+    domain = f"{uuid.uuid4().hex}.example"
+    env.status[domain] = _fixture("normal") | {"domain": domain}
+    env.controller[domain] = env.controller[DOMAIN]
+    redis = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+    client = CachedRegistryClient(
+        REGISTRY, redis, transport=httpx.MockTransport(env.handler),
+        domain_registry_resolver=env.route, domain_verifier=env.verify_domain,
+    )
+    key = client._id_status_cache_key({"v": 1, "domain": domain, "ids": [did_aw("global_agent")]})
+    try:
+        seconds, microseconds = await redis.time()
+        while microseconds == 0:  # the stored stamp must lie a fraction of a second behind
+            seconds, microseconds = await redis.time()
+        entry = {
+            "fetched_at": int(seconds) - 60, "status": env.status[domain],
+            "namespace_authority": _authority(domain, env.controller[domain]),
+        }
+        await redis.set(key, json.dumps(entry, separators=(",", ":"), sort_keys=True), ex=3600)
+        evidence = await _evidence(env, client=client, bundle=None, subject=GLOBAL_SUBJECT, domain=domain)
+    finally:
+        await redis.delete(key)
+        await client.aclose()
+        await redis.aclose()
+    # 60 whole seconds plus the fraction: past the inclusive bound, so it is refreshed.
+    assert len(env.requests) == 1
+    assert (evidence.age_seconds, evidence.refresh_failed) == (0, False)
+
+
 class UnavailableRedis(FakeRedis):
     async def get(self, key: str):
         raise OSError("Redis unavailable")
@@ -705,7 +796,8 @@ async def test_the_cached_client_reads_the_real_status_endpoint(clocked_client, 
         await redis.delete(key)
         await client.aclose()
         await redis.aclose()
-    assert (evidence.age_seconds, evidence.refresh_failed) == (0, False)
+    # A real refresh takes some time, and its age is that time rounded up.
+    assert evidence.refresh_failed is False and 1 <= evidence.age_seconds <= 2
     verdict = verify_id_chain(bundle, subject=subject, evidence=evidence, domain=DOMAIN)
     assert verdict == {
         "outcome": "nearest_human", "human_id": did_aw("alice"), "identity_valid": True,

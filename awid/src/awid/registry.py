@@ -136,6 +136,9 @@ _ID_STATUS_FAILURE_COOLDOWN_SECONDS = _ID_STATUS_FRESH_SECONDS
 # than as never observed.
 _ID_STATUS_RETENTION_SECONDS = 2 * 15 * 60
 _ID_STATUS_PATH = "/v1/id-certificates/status"
+# Entries are stamped in whole seconds of the Redis clock and aged against its
+# microseconds.
+_MICROSECONDS = 1_000_000
 
 
 def _is_local_registry_origin(registry_url: str) -> bool:
@@ -1573,20 +1576,24 @@ class CachedRegistryClient(RegistryClient):
             # The verifier refuses this request before it reads any evidence.
             return IDChainEvidence(status={}, namespace_authority={}, age_seconds=None)
         cache_key = self._id_status_cache_key(request)
-        read_at = _cache_now()
-        redis_now, cached = await self._read_id_status_entry(cache_key)
-        if cached is not None and redis_now < cached["fetched_at"]:
+        read_at_ns = _monotonic_ns()
+        redis_now_us, cached = await self._read_id_status_entry(cache_key)
+        if cached is not None and redis_now_us < cached["fetched_at"] * _MICROSECONDS:
             # Stamped ahead of the Redis clock (it stepped back): its age is
             # unknown, so it is neither fresh nor last-known-good.
             cached = None
-        if cached is not None and redis_now - cached["fetched_at"] <= _ID_STATUS_FRESH_SECONDS:
-            return _id_status_evidence(cached, age=redis_now - cached["fetched_at"], refresh_failed=False)
+        if cached is not None:
+            # The whole-second stamp lies at or before the attempt began, so
+            # this age, rounded up, never reads younger than the evidence is.
+            stored_age_ns = (redis_now_us - cached["fetched_at"] * _MICROSECONDS) * 1_000
+            if _whole_seconds_up(stored_age_ns) <= _ID_STATUS_FRESH_SECONDS:
+                return _id_status_evidence(cached, age=_whole_seconds_up(stored_age_ns), refresh_failed=False)
         refresh = await self._coalesced_id_status_refresh(cache_key, request)
         if refresh.entry is not None:
             return _id_status_evidence(refresh.entry, age=refresh.age, refresh_failed=False)
         if refresh.failed and cached is not None:
-            # Aged through the wait for the failed attempt, on this process's clock.
-            age = redis_now - cached["fetched_at"] + (_cache_now() - read_at)
+            # Aged through the wait for the failed attempt, on this process's monotonic clock.
+            age = _whole_seconds_up(stored_age_ns + (_monotonic_ns() - read_at_ns))
             return _id_status_evidence(cached, age=age, refresh_failed=True)
         return IDChainEvidence(status={}, namespace_authority={}, age_seconds=None, refresh_failed=refresh.failed)
 
@@ -1612,7 +1619,7 @@ class CachedRegistryClient(RegistryClient):
         so no older tree outlives it.
         """
         domain = request["domain"]
-        started = _cache_now()
+        started_ns = _monotonic_ns()
         verify_domain = self._domain_verifier
         if verify_domain is None:
             from awid.dns_verify import verify_domain
@@ -1645,7 +1652,7 @@ class CachedRegistryClient(RegistryClient):
             await self._redis_set(
                 cache_key, json.dumps(entry, separators=(",", ":"), sort_keys=True), ex=_ID_STATUS_RETENTION_SECONDS,
             )
-        return _IDStatusRefresh(entry=entry, failed=False, age=_cache_now() - started)
+        return _IDStatusRefresh(entry=entry, failed=False, age=_whole_seconds_up(_monotonic_ns() - started_ns))
 
     async def _redis_time(self) -> int | None:
         """The Redis server clock in whole seconds, or None when Redis is unavailable."""
@@ -1657,16 +1664,16 @@ class CachedRegistryClient(RegistryClient):
         return int(seconds)
 
     async def _read_id_status_entry(self, cache_key: str) -> tuple[int, dict[str, Any] | None]:
-        """The Redis clock and the stored entry, read in one round trip."""
+        """The Redis clock in microseconds and the stored entry, read in one round trip."""
         try:
             async with self.redis_client.pipeline(transaction=False) as pipe:
                 pipe.time()
                 pipe.get(cache_key)
-                (seconds, _microseconds), raw = await pipe.execute()
+                (seconds, microseconds), raw = await pipe.execute()
         except (RedisError, OSError):
             logger.debug("AWID cache read skipped because Redis is unavailable", exc_info=True)
             return 0, None
-        redis_now = int(seconds)
+        redis_now = int(seconds) * _MICROSECONDS + int(microseconds)
         if raw is None:
             return redis_now, None
         if isinstance(raw, bytes):
@@ -2652,6 +2659,15 @@ def _lookup_cache_scope(caller_did_key: str | None) -> str:
 
 def _cache_now() -> int:
     return int(time.time())
+
+
+def _monotonic_ns() -> int:
+    return time.monotonic_ns()
+
+
+def _whole_seconds_up(nanoseconds: int) -> int:
+    """Whole seconds, rounded up, so an age never reads younger than it is."""
+    return -(-nanoseconds // 1_000_000_000)
 
 
 @dataclass(frozen=True)
