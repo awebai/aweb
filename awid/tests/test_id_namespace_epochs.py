@@ -148,7 +148,7 @@ def _dns_for_key(tree, key: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_mixed_order_controller_registers_but_opens_no_epoch(clocked_client, manual_clock, awid_db_infra):
+async def test_a_mixed_order_controller_is_refused_and_opens_no_epoch(clocked_client, manual_clock, awid_db_infra):
     tree = Tree(clocked_client, manual_clock)
     controller = MixedOrderController()
     _dns_for_key(tree, controller.did_key)
@@ -158,12 +158,12 @@ async def test_a_mixed_order_controller_registers_but_opens_no_epoch(clocked_cli
         headers=controller.signed_headers(domain=DOMAIN, operation="register"),
     )
 
-    assert resp.status_code == 200, resp.text
+    assert 400 <= resp.status_code < 500, resp.text
     assert await _epochs(awid_db_infra) == []
 
 
 @pytest.mark.asyncio
-async def test_a_put_to_a_mixed_order_controller_opens_no_epoch(tree, awid_db_infra):
+async def test_a_put_to_a_mixed_order_controller_is_refused_and_opens_no_epoch(tree, awid_db_infra):
     epochs = await _epochs(awid_db_infra)
     controller = MixedOrderController()
     _dns_for_key(tree, controller.did_key)
@@ -175,7 +175,7 @@ async def test_a_put_to_a_mixed_order_controller_opens_no_epoch(tree, awid_db_in
         ),
     )
 
-    assert resp.status_code == 200, resp.text
+    assert 400 <= resp.status_code < 500, resp.text
     assert await _epochs(awid_db_infra) == epochs
 
 

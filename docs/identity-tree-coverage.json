@@ -27,7 +27,8 @@
       "id": "S1.PY.CODEC",
       "repo": "aweb",
       "files": [
-        "awid/src/awid/id_certificates.py"
+        "awid/src/awid/id_certificates.py",
+        "awid/src/awid/did.py"
       ],
       "operations": [
         "signing_bytes",
@@ -58,7 +59,8 @@
         "awid/tests/test_id_certificate_vectors.py::test_public_raw_verifier_refuses_non_signature_bytes",
         "awid/tests/test_id_certificate_vectors.py::test_public_key_predicate_does_not_accept_non_keys",
         "awid/tests/test_id_certificate_vectors.py::test_public_raw_verifier_requires_exact_message_bytes",
-        "awid/tests/test_id_key_response_vectors.py::test_key_response_id_tree_frozen_parse"
+        "awid/tests/test_id_key_response_vectors.py::test_key_response_id_tree_frozen_parse",
+        "awid/tests/test_strict_did_key_decode.py"
       ],
       "acceptance": "Frozen certificate bytes, raw refusals and strict Ed25519 probes; this is not ancestry verification.",
       "candidate_head": "e8ad712bfa650d44f70dfe72aca6842e82447d5c",
@@ -107,6 +109,10 @@
         {
           "file": "awid/src/awid/id_certificates.py",
           "symbol": "key_response_id_tree"
+        },
+        {
+          "file": "awid/src/awid/did.py",
+          "symbol": "strict_ed25519_point"
         }
       ]
     },
@@ -14460,12 +14466,10 @@
         "file": "awid/src/awid/id_certificates.py",
         "symbol": "_id",
         "calls": {
-          "awid.did.did_from_public_key": 1,
-          "awid.did.public_key_from_did": 1,
-          "awid.did.validate_stable_id": 1,
-          "literal:did:aw": 1,
           "literal:did:key": 1,
-          "nacl.bindings.crypto_core_ed25519_is_valid_point": 1
+          "awid.did.public_key_from_did": 1,
+          "literal:did:aw": 1,
+          "awid.did.validate_stable_id": 1
         }
       },
       {
@@ -14718,6 +14722,7 @@
         "file": "awid/src/awid/signing.py",
         "symbol": "verify_signature_with_public_key",
         "calls": {
+          "awid.did.strict_ed25519_point": 1,
           "nacl.signing.VerifyKey": 1,
           "verify_key.verify": 1
         }
@@ -18033,6 +18038,14 @@
         "symbol": "_id_tree_enrollment",
         "calls": {
           "awid.id_certificates.key_response_id_tree": 1
+        }
+      },
+      {
+        "row": "S1.PY.CODEC",
+        "file": "awid/src/awid/did.py",
+        "symbol": "strict_ed25519_point",
+        "calls": {
+          "nacl.bindings.crypto_core_ed25519_is_valid_point": 1
         }
       }
     ]

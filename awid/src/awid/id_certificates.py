@@ -19,7 +19,7 @@ from nacl.bindings import crypto_core_ed25519_is_valid_point
 from nacl.exceptions import BadSignatureError
 from nacl.signing import VerifyKey
 
-from awid.did import did_from_public_key, public_key_from_did, validate_stable_id
+from awid.did import public_key_from_did, validate_stable_id
 from awid.utc_timestamps import parse_utc_seconds
 from awid.identity_log_verify import verify_identity_log
 from awid.federation_errors import FederationAuthorityError
@@ -114,9 +114,8 @@ def _id(value: Any, *, key_only: bool = False) -> None:
         if not isinstance(value, str):
             raise ValueError("not text")
         if value.startswith("did:key:"):
-            public = public_key_from_did(value)
-            if did_from_public_key(public) != value or not crypto_core_ed25519_is_valid_point(public):
-                raise ValueError("noncanonical or non-prime-subgroup key")
+            # Decoding refuses non-canonical and non-prime-order keys.
+            public_key_from_did(value)
         elif not key_only and value.startswith("did:aw:"):
             if not _BASE58.fullmatch(value[7:]) or validate_stable_id(value) != value:
                 raise ValueError("noncanonical stable id")
@@ -175,7 +174,8 @@ def strict_did_key(did_key: str) -> bool:
     """Whether a canonical did:key meets the ID family's strict point profile.
 
     This predicate establishes no key ownership, issuance or current authority.
-    Released generic DID decoding retains its own contract.
+    It is did:key decoding itself (awid.did.public_key_from_did), which every
+    released Python decoder shares.
     """
     try:
         _id(did_key, key_only=True)
