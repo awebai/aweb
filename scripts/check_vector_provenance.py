@@ -93,6 +93,10 @@ ROOT_CONSUMERS = {
         "id-certificates-v1.json",
         'filepath.Join("..", "..", "..", "docs", "vectors", "id-certificates-v1.json")',
     ),
+    PurePosixPath("cli/go/awid/didkey_strict_test.go"): _consumer(
+        "id-certificates-v1.json",
+        'filepath.Join("..", "..", "..", "docs", "vectors", "id-certificates-v1.json")',
+    ),
     PurePosixPath("server/tests/test_c2_vectors.py"): _consumer(
         ("app-task-authorization-v1.json", "app-request-credential-v1.json", "task-answer-v1.json"),
         'Path(__file__).resolve().parents[2] / "docs" / "vectors"',
