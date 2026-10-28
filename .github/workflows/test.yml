@@ -1,6 +1,6 @@
 name: Test suite
 
-# Every existing test target remains covered. The four isolated groups run in
+# Every existing test target remains covered. The isolated groups run in
 # parallel; the remaining source/packaging controls retain their native setup.
 # The final stable check fails if either the matrix or remaining targets fail.
 on:
@@ -23,8 +23,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - suite: server
-            targets: test-server
+          - suite: server-1
+            targets: test-server PYTEST_SERVER_SHARD=1/2
+          - suite: server-2
+            targets: test-server PYTEST_SERVER_SHARD=2/2
           - suite: awid
             targets: test-awid
           - suite: cli

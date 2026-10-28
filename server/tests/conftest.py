@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import subprocess
 import time
@@ -23,8 +24,28 @@ os.environ.setdefault("AWEB_INTERNAL_AUTH_SECRET", "test-internal-auth-secret")
 os.environ.setdefault("AWID_SERVICE_TOKEN", "aweb-server-tests-service-token-32-bytes")
 
 
+def pytest_addoption(parser):
+    parser.addoption("--server-shard", metavar="INDEX/COUNT",
+                     help="Run a stable partition of server test module paths (1-based).")
+
+
 @pytest.hookimpl(tryfirst=True)
-def pytest_collection_modifyitems(items):
+def pytest_collection_modifyitems(config, items):
+    shard = config.getoption("--server-shard")
+    if shard is not None:
+        try:
+            index, count = (int(part) for part in shard.split("/"))
+            if not 1 <= index <= count:
+                raise ValueError
+        except ValueError as error:
+            raise pytest.UsageError("--server-shard requires 1 <= INDEX <= COUNT") from error
+        selected, deselected = [], []
+        for item in items:
+            path = item.path.relative_to(config.rootpath).as_posix()
+            bucket = int(hashlib.sha256(path.encode("utf-8")).hexdigest(), 16) % count
+            (selected if bucket == index - 1 else deselected).append(item)
+        config.hook.pytest_deselected(items=deselected)
+        items[:] = selected
     for item in items:
         # These fixtures rebuild shared Node output, deleting dist and skills.
         # Keep every builder and reader on one worker, including imported fixtures.
