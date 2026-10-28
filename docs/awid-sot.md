@@ -224,9 +224,15 @@ like any other namespace.
 ```
 POST   /v1/namespaces                  Create (controller auth)
 GET    /v1/namespaces/{domain}          Read (public)
-POST   /v1/namespaces/{domain}/rotate   Rotate controller key
+PUT    /v1/namespaces/{domain}          Replace controller key (new-key proof)
 DELETE /v1/namespaces/{domain}          Delete (controller auth)
 ```
+
+The identity-tree contract adds a continuity-preserving
+[`POST /v1/namespaces/{domain}/rotate`](id-certificates.md#continuity-preserving-namespace-rotation-new-operation),
+with previous- and new-key proofs. This is new work; the released PUT remains
+key-loss recovery. Its epoch and pre-upgrade first-registration rules are fixed
+in that contract.
 
 ## Addresses
 
