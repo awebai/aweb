@@ -88,6 +88,13 @@ func ApproveIDResignRequest(store IDIssuanceStore, requestID, parentID string, p
 	if !ok {
 		return nil, fmt.Errorf("the parent chain does not end in %s", parentID)
 	}
+	_, current, _, err := idSigningParent(parentID, evidence, domain)
+	if err != nil {
+		return nil, err
+	}
+	if err := idParentChainVerified(parentChain, parentID, current, evidence, domain); err != nil {
+		return nil, err
+	}
 	req := IDResignRequest{
 		Signed:     r["old_certificate"].(map[string]any),
 		Requested:  map[string]any{"id": r["id"], "domain": r["domain"], "parent": r["parent"], "kind": r["kind"]},

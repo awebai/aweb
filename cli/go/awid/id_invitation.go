@@ -214,6 +214,9 @@ func idIssuingKey(inv *IDInvitation, parentChain []any, evidence *IDChainEvidenc
 		if !idChainEndsIn(parentChain, parentID) {
 			return "", fmt.Errorf("the parent chain does not end in %s", parentID)
 		}
+		if err := idParentChainVerified(parentChain, parentID, current, evidence, inv.Domain); err != nil {
+			return "", err
+		}
 		return current, nil
 	case "namespace":
 		// The request codec refuses a namespace parent other than its domain.
@@ -274,6 +277,19 @@ func idNewChildIDIsSubjectKeys(id, subjectKey string) bool {
 	}
 	key, err := ExtractPublicKey(subjectKey)
 	return err == nil && id == ComputeStableID(key)
+}
+
+// idParentChainVerified checks the parent chain a response will carry
+// against the same evidence the signing decision used. A response is
+// recorded as final and replayed on every retry, so a stale or wrong chain
+// must never be signed into one.
+func idParentChainVerified(parentChain []any, parentID, current string, evidence *IDChainEvidence, domain string) error {
+	bundle := map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": parentChain}
+	verdict := VerifyIDChain(bundle, IDChainSubject{ID: parentID, DIDKey: current}, evidence, domain)
+	if verdict.IdentityValid == nil || !*verdict.IdentityValid {
+		return idCertificateRefusal(verdict.Reason)
+	}
+	return nil
 }
 
 func idChainEndsIn(chain []any, id string) bool {
