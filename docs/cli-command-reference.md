@@ -264,14 +264,14 @@ Flags:
 
 ### `auth`
 
-Authenticate this host aw CLI to a human aweb account.
+Authenticate this host aw CLI to your aweb account.
 
 Credentials are stored only in the host aw config directory, not in workspace or identity homes.
 
 Subcommands:
 - `login` Start browser-based device login for this host aw CLI
-- `logout` Revoke host CLI human-auth tokens and remove local credentials
-- `status` Show host CLI human-auth status without printing tokens
+- `logout` Revoke host CLI account-auth tokens and remove local credentials
+- `status` Show host CLI account-auth status without printing tokens
 
 Flags:
 - `-h, --help help for auth`
@@ -291,7 +291,7 @@ Flags:
 
 ### `auth logout`
 
-Revoke host CLI human-auth tokens and remove local credentials
+Revoke host CLI account-auth tokens and remove local credentials
 
 Flags:
 - `-h, --help help for logout`
@@ -301,7 +301,7 @@ Flags:
 
 ### `auth status`
 
-Show host CLI human-auth status without printing tokens
+Show host CLI account-auth status without printing tokens
 
 Flags:
 - `-h, --help help for status`
@@ -1051,7 +1051,7 @@ Membership is represented by team certificates, so this identity-level
 command lists the certificate roster for the selected team. By default it
 shows active certificates; pass --include-revoked to include revoked rows.
 
-Grant homes read their bound team's service roster: agents only (no humans),
+Grant homes read their bound team's service roster: agents only (people are not included),
 without certificate IDs or issued/revoked metadata. --include-revoked and
 --registry are not supported in grant homes.
 

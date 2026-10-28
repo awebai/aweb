@@ -33,8 +33,8 @@ must not be used as a prerequisite in a shipped tutorial.
 - Full `aw team remove` teardown is not a shipped one-command lifecycle. Do not
   imply that deleting local layout files revokes membership or removes a global
   identity.
-- CLI-founded owner-authority still requires the supported human bridge; agents
-  do not independently claim human authority.
+- CLI-founded owner-authority still requires the supported account-owner bridge; agents
+  do not independently claim an account owner's authority.
 
 ## Multi-team operation
 
