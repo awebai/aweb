@@ -25,10 +25,11 @@ function strictSite(entry) {
  return strictSites.some(([file,symbol])=>entry.file===file && (entry.symbol===symbol || entry.symbol.startsWith(symbol+'.')));
 }
 // did.ts holds the one raw point decode, exactly in primeSubgroupPoint; any
-// other raw Ed25519 or curve use there refuses whatever its row's profile.
+// other primitive use there refuses whatever its row's profile. Only
+// node:crypto hashing, for the stable id, is allowed.
 function rawCurve(callee) {
  const name=callee.replace(/^reference:/,'');
- return rawVerifier(callee) || ['@noble/ed25519','@noble/curves','tweetnacl','libsodium-wrappers'].some(prefix=>name.startsWith(prefix));
+ return rawVerifier(callee) || (primitiveModule(name) && !name.startsWith('node:crypto.createHash'));
 }
 const extensions=/\.(?:[cm]?[jt]s|[jt]sx)$/;
 const nameFamily=/^(?:(?:[sS]ign|[vV]erify|[rR]egister|[rR]evoke|[rR]otate)(?=$|[_A-Z])|(?:id(?:Ed25519|Certificate|Chain|Status|Request)|[gG]enerateKey|randomPrivateKey|getPublicKey|publicKeyToDID|didKeyFromPublicKey|parseDIDKey|encodeIdChain|decodeIdChain|prepareHumanKey|createIdentity))/;
