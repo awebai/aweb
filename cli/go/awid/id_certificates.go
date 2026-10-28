@@ -162,6 +162,9 @@ type IDTreeEnrollmentResult struct {
 // KeyResponseIDTree parses the id_tree projection of a valid key response.
 // It performs no I/O. Malformed or absent evidence is never proven legacy.
 func KeyResponseIDTree(response map[string]any) IDTreeEnrollmentResult {
+	if response == nil {
+		return IDTreeEnrollmentResult{State: "malformed"}
+	}
 	value, present := response["id_tree"]
 	if !present {
 		return IDTreeEnrollmentResult{State: "unknown"}

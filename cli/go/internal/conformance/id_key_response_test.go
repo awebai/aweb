@@ -38,3 +38,21 @@ func TestIDKeyResponseTreeFrozenParse(t *testing.T) {
 		t.Fatalf("got%d carrier cases, want19", len(seen))
 	}
 }
+
+func TestIDKeyResponseTreeNilResponseIsMalformed(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		response map[string]any
+		state    string
+	}{
+		{"nil whole response", nil, "malformed"},
+		{"object with absent field", map[string]any{}, "unknown"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			want := awid.IDTreeEnrollmentResult{State: c.state}
+			if got := awid.KeyResponseIDTree(c.response); !reflect.DeepEqual(got, want) {
+				t.Fatalf("got %#v, want %#v", got, want)
+			}
+		})
+	}
+}
