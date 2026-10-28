@@ -514,6 +514,12 @@ evidence for a root→local-agent chain. The response is a coherent snapshot:
 }
 ```
 
+`observed_at` is the registry's evaluation time for this coherent snapshot,
+no earlier than its included witness times, not a completeness watermark: a
+transaction uncommitted when the snapshot was acquired may be absent even if
+its witness time is at or before `observed_at`. Cache age still uses the
+client's trusted local fetch time under R-1.
+
 This pseudocode fixes field names, not a second encoding: bodies use strict
 JSON. All fields are required; `retired_at`/`superseded_at` may be null.
 Identity rows contain registered IDs only, with nonnull registration/head
@@ -563,10 +569,11 @@ over-depth or over-limit evidence means unavailable, never a partial success.
 details, secrets and a human directory are not exposed by this endpoint.
 
 Use the existing per-caller rate limiter under the operation
-`id_certificate_status`: default 60 requests per minute for a verified caller
-key, or source IP for anonymous callers. A submitted ID is not caller identity;
-limit before expensive history/proof work and return 429 without partial
-evidence. The normal deployment rate-limit configuration may size this bucket
+`id_certificate_status`: every request charges its source-IP bucket, and an
+authenticated request additionally charges its verified caller-key bucket,
+with a default of 60 requests per minute per bucket. A submitted ID is not
+caller identity; limit before expensive history/proof work and return 429 without partial
+evidence. The normal deployment rate-limit configuration may size these buckets
 for its callers; no unlimited anonymous/trusted-service bypass is added.
 There is no list, prefix, search or pagination operation for a domain's humans.
 Only exact requested IDs and proof-necessary ancestor/key history are returned,
@@ -711,6 +718,43 @@ assumed legacy: refuse, rather than allowing a revoked enrolled ID to omit its
 chain and evade revocation. Thus an outage can also refuse a legacy GLOBAL ID
 whose enrollment state cannot be established; it never manufactures no_human
 or nearest_human. This lookup is part of existing cached identity resolution.
+The existing `GET /v1/did/{did_aw}/key` response carries this fact in an
+additive `id_tree` field. An upgraded server returns exactly
+`{"enrolled":true,"domain":"<canonical domain fixed at first enrollment>"}`
+for every registered identity, including revoked or root-replaced identities,
+or `{"enrolled":false}` when no enrollment exists. A missing field from an old
+server/cache entry means **unknown**, never proven not enrolled; malformed
+present fields are rejected, never coerced to not enrolled. Key and enrollment
+facts come from one coherent snapshot and travel in the same cached resolution.
+For an enrolled global subject, use this authoritative domain to resolve its
+current chain even on omission, and require any presented chain's domain to
+agree. Enrollment only locates status; it is not a verified identity or current
+authority result. The field ships on AWID **before** clients enforce this
+omission rule. A cached key resolution without `id_tree` is refetched fresh
+rather than served until its TTL; if the fresh response still lacks the field,
+enrollment remains unknown and follows the refusal rule above. The rollout
+never converts absent evidence to legacy success.
+
+The same carrier is required on HTTP 404 from this key route. Read the mapping
+and `id_identities` in the same coherent snapshot, including when no mapping
+row exists. Retain 404 and its existing `detail`, and add top-level `id_tree`
+with the exact shapes above: enrollment comes from `id_identities`, including
+revoked or root-replaced IDs, rather than from the mapping's existence. The
+client carries this structured enrollment on its missing-mapping refusal; a
+consumer must not parse a message string. A self-derived-key fallback proves
+not enrolled ONLY from an explicit `{"enrolled":false}`. A 404 without the
+field is unknown, and a malformed stated field rejects. An enrolled 404 keeps
+its domain and still requires independent current tree verification; neither
+404 nor a self-derived key can erase its enrollment.
+
+Distinguish a failed refresh from a successful answer lacking the field. On a
+failed refresh, last-known-good enrollment remains usable through 900 seconds
+at its true original age; after that it is unavailable, never proven legacy.
+A required refetch that succeeds but still lacks `id_tree` is unknown and
+refuses omission, rather than silently reusing the missing cached projection.
+These tree-evidence cases assume original authentication passed; they never
+extend the separate 60-second current-key binding rule below.
+
 The existing did:aw key-binding check keeps its current independent 60-second
 positive-cache/fresh-resolution rule; the new 900-second tree-status grace
 MUST NOT loosen it. `expected_request` assumes ordinary authentication has
@@ -736,13 +780,21 @@ recipient, domain, parent and kind at issue, privately; after the child key
 exists that human's signer signs the exact certificate. No portable signed
 delegation. A custodial server can perform bounded deferred signing for that
 exact pending invitation, rechecking session/invitation authorization and the
-parent after lock waits. Deferred kind=human signing additionally requires
+parent after lock waits. For host-managed invitations, deferred kind=human
+signing additionally requires
 the accepting authenticated account's VERIFIED email to equal the fixed
 recipient. Token possession alone may complete ordinary membership, but leaves
 id_registration=pending and emits NO parent signature or registration request.
-Do not switch recipient/parent or mint a new key on retry. A self-custodial
-parent receives a CSR-style pending
-request; its aw signs on next contact. Immediate init/spawn signs directly.
+Do not switch recipient/parent or mint a new key on retry. Record the invitation's
+mode privately at issue: `host_managed` or `self_custodial`. An acceptor cannot
+switch modes. A self-custodial human parent receives the pending request defined
+below; its aw presents it for the inviting human's explicit approval. Nothing
+is signed until that approval. Immediate init/spawn signs directly.
+The namespace root may use that same CSR exchange to admit its first human:
+the parent is `{kind:namespace,id:<exact domain>}`, and the root controller
+holds the fixed self-custodial invitation in its existing local invitation
+record. The approving root operator supplies the human approval described
+below; root-key custody alone never enables unattended human CSR approval.
 Agents can issue agent spawns, never human invites. An untyped new invite from
 an attributed agent is a spawn/inherits or refuses, not an unattributed escape.
 Do not guess a parent from pre-upgrade bearer tokens or local instance names.
@@ -763,6 +815,158 @@ Pending human registration cannot authorize child signing. A constructor may
 retain its exact authenticated intended-parent operation and resume issuance
 after registration with current checks and no extra login; it must not guess
 or retroactively attach unrelated legacy agents.
+
+### Self-custodial child requests and re-sign transport
+
+J1's cross-machine admission and J10's local-child re-sign use one explicit
+request/response file exchange. This extends the CLI's existing local invitation
+records and the durable issuance log required in §3. It introduces no OSS aweb
+server invitation endpoint, remote pending queue, polling loop or daemon. A
+host-managed invitation continues to use its host's existing invitation record
+and verified-account checks; presenting it on this file path refuses
+`invitation_mode_mismatch`. AWID is the registration/time witness, not the
+pending-request mailbox. Membership remains a separate operation.
+
+The child exports canonical UTF-8 JSON with exactly this wrapper:
+
+```json
+{"request":{"v":1,"type":"aweb.id-certificate-request","request_id":"<uuid>","operation":"issue","id":"did:aw:...","domain":"example.com","parent":{"kind":"identity","id":"did:aw:..."},"kind":"human","subject_key":"did:key:...","invitation_id":"<uuid>","old_certificate":null},"signature":"<base64url>"}
+```
+
+All fields are required, with no unknown fields. IDs/domain/parent/kind use §2's
+shape rules; UUIDs use lowercase canonical hyphenated spelling. `subject_key`
+is the child's current Ed25519 did:key. For a did:key child it equals `id`;
+for did:aw the receiver independently resolves and checks the current key and
+continuity. The request proves key possession, never identity admission.
+Apply §2's strict JSON, canonical encoding, signature encoding and Ed25519
+profile. Signing bytes are
+`UTF8("aweb.id-certificate-request/1\n") || canonical_json(request)`;
+the child signs those exact bytes with `subject_key`. The whole file is capped
+at 8192 bytes before parsing; a larger file refuses `bundle_too_large`, before
+any JSON/shape/signature check. The request carries no invite bearer secret,
+recipient email, private key, registry URL or callback URL. An invitation ID
+selects the parent's private record; it is not authority to sign.
+
+- `operation=issue` requires an invitation ID and null old_certificate. The
+  parent must already have that exact self-custodial invitation with privately
+  fixed recipient, domain, parent and kind. A first valid request binds its
+  exact child ID/key; no caller-supplied recipient label is used.
+- `operation=resign` requires null invitation_id, kind=agent, a did:key child
+  and the exact old signed certificate in old_certificate. All requested
+  id/domain/parent/kind fields must equal that certificate. The parent checks
+  the old signature with its verified history AND its prior issuance-log entry,
+  and checks the child's key proof. A submitted certificate never seeds the
+  issuance log. This operation cannot adopt, re-parent, rotate a child key,
+  create a human or re-sign a registered revision.
+
+The child's CLI retains its exact outstanding request before export, using the
+same key and request_id on retry. Public request state lives with the selected
+identity's metadata, with human state outside agent homes. The parent's
+`receive` verifies shape/key proof and imports the request into the existing
+invitation record (issue) or old certificate's issuance-log entry (resign).
+There is no third pending store. `pending` lists those local records; `show`
+fetches one by request_id and displays its exact fields. Another identity's
+invitation/issuance entry is never sufficient, including a team controller's
+invite when the ID parent is someone else. Private invitation fields and keys
+are not included in list/export output.
+
+The parent serializes receive/approve/refuse against that invitation or issuance
+entry and its signing-key changes. Request lifecycle is pending → issued or
+failed: pending has a stored exact request and no response; issued has the
+durably stored exact response and issuance provenance; failed has a refusal
+and no newly issued response. Byte-identical receive/approve retries return
+that same record/response without another signature. A different request with
+the same request_id refuses `request_conflict`. A second CSR for an issue
+invitation also refuses; if it proves a DIFFERENT key, void the invitation,
+mark it failed (`invitation_conflict`) and require a new invitation. An already
+released certificate cannot be unsent: voiding blocks further signing, and
+the existing registered identity is revoked separately if appropriate. Do not
+erase issued bytes or replace the first child's key on a conflicting retry.
+
+Human issue requires explicit approval for EACH exact request, independent of
+whether key custody prompts. Only the inviting human's selected human signer
+can approve, or the namespace controller's human operator for the root-issued
+first-human CSR above. Both obey the same tty, exact one-shot, out-of-band
+fingerprint and conflict/void rules; an agent-run root command cannot approve.
+The approval CLI shows the privately fixed recipient, exact child did:aw,
+parent/domain/kind and invitation ID, then requires the approver to ENTER the
+recipient-supplied fingerprint BEFORE showing the CSR's fingerprint. It compares
+the entered value and only then reveals the CSR fingerprint and comparison;
+no prefilled value or yes/no confirmation substitutes for entry. The recipient
+CLI shows its fingerprint when exporting its request:
+`lowercase_hex(SHA256(raw_32_byte_subject_public_key)[0:16])`, displayed as four
+groups of eight hex digits separated by hyphens. The inviter ENTERS the
+recipient-supplied fingerprint and the CLI compares it with the CSR's key;
+a yes/no confirmation of the displayed value is insufficient. Obtain that
+fingerprint from the recipient through a DIFFERENT trusted
+channel from the invitation/CSR delivery (in person, a call, or an already
+trusted contact). Approval is the inviter's attestation that this exact key
+belongs to that intended person. A mismatched confirmed fingerprint refuses
+`recipient_key_mismatch`, voids the invitation and fails the request: a new
+invitation is required. A name, a token or the displayed fingerprint alone is
+insufficient. Approval covers exactly invitation ID, child ID/key, parent,
+kind=human and domain, and is consumed by the single issuance. There is no
+--yes, batch, config/env auto-approval, agent approval or non-TTY approval;
+non-interactive or agent-run approval refuses `human_approval_required`, with
+no signature or registration request. A host-managed invitation can never use
+this approval as a substitute for its verified-email check.
+
+Agent issue/re-sign needs the ordinary exact invitation or recorded issuance
+and child proof, with no new human login or fingerprint ceremony. Re-sign may
+be automated on explicit receive/approve contact; 'on next contact' means this
+exchange, not every ordinary authenticated request. Immediately before signing,
+after the last wait, recheck request/record binding, unconsumed approval for a
+new human, invitation validity, current parent chain/status, R1–R3, current
+issuer key and issuance provenance. A revoked/replaced parent or missing
+current evidence refuses as in §3; no network occurs under local record locks.
+If a status refresh is needed, fetch outside locks and recheck the locked local
+facts before signing. AWID rechecks registered issuance under its own gate.
+
+The parent chooses current issuer_key and issued_at, signs one §2 certificate,
+and durably records its certificate_id and exact response BEFORE output. The
+canonical response is exactly `{v:1,request_id,chain}`, where chain is the
+ordinary §2 bundle ending in this child certificate. The whole response is
+capped at 8192 bytes before parsing, with the same `bundle_too_large` refusal;
+its bundle retains §2's independent limits. Its
+certificate signatures authenticate the result; request_id is correlation,
+not a separate authority artifact. The child accepts only an outstanding
+request with this ID and exactly matching id/domain/parent/kind and subject
+key, independently verifies the current parent chain and issuer signature,
+then atomically installs. A mismatch leaves its old identity/certificate and
+pending request unchanged (`request_binding_mismatch`). A local re-sign needs
+no registry write. For a did:aw child, import retains the signed result and
+calls §3 register by default, with the child's own current-key proof and the
+same invitation ID. `--no-register` explicitly skips that write and leaves
+registration pending. A registration failure retains the exact signed result
+and pending state for retry, without a new key or parent signature. Success
+records the receipt as registration evidence; current status must still be
+verified before claiming authority. The output distinguishes the two:
+"registered at AWID; authority is checked against the tree at each use".
+A response or receipt alone never establishes current human authority.
+
+`aw id human init --domain X --as-root` on the same machine is the immediate
+init path, not a CSR exchange: the human operator creates their own human key,
+uses the current exact-domain controller to issue the namespace-parent human
+certificate directly, and registers with the subject's key proof. It creates
+no CSR or invitation. It requires a human interactive invocation; an agent-run
+or non-TTY command cannot use it to mint a human. Human key custody and each
+human signing prompt retain their existing rules. For a human prepared on a
+different machine, the issuer fixes the invitation and parent BEFORE CSR
+export; key/DID preparation may precede that, but `--domain` alone cannot
+produce an issue CSR without its required invitation ID and parent.
+
+The CLI surfaces are `aw id parent request` (issue or --resign),
+`aw id parent import <response>`, and `aw id child receive <request>`, `pending`,
+`show <request-id>`, `approve <request-id>` and `refuse <request-id>`. Files and
+`-` for stdin/stdout are the transport; callers convey the public files over
+their chosen channel. `aw id request` retains its existing signed-HTTP meaning,
+and `aw id cert` retains its team-membership meaning. No automatic request
+fetch on ordinary mail/chat/connect is implied. Refuse/cancel/expiry creates
+no signature; a retryable transport failure retains the exact pending response.
+For registered invitations the independent registration lifecycle stays
+pending → registered | failed; an AWID-success/local-failure retry resubmits the
+SAME certificate and retains its original registered_at. Completion of this
+exchange never grants team membership, moves an address or rebinds a contact.
 
 Adoption is explicit and prospective. Retain existing global ID, key, address,
 mailbox and ordinary member certificates when their bindings do not change.
