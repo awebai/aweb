@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 from dataclasses import dataclass, replace
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from aweb_naapp.dispatch import apply_dispatch_migrations
 from aweb_naapp.egress import InternalDestinations
@@ -93,7 +93,7 @@ class RunInstallations(Installations):
         )
 
 
-async def setup(uses, *, approval_required=False):
+async def setup(uses, *, approval_required=False, producer_clock=None):
     db, scope = uses.world.db, uses.world.admitted
     for migration in (
         apply_dispatch_migrations,
@@ -174,6 +174,9 @@ async def setup(uses, *, approval_required=False):
             clock=uses.clock,
         )
     seed = secrets.token_bytes(32)
+    # S3 transition timestamps come from PostgreSQL's live clock. The frozen
+    # policy/runner clock cannot measure their age on a loaded test host.
+    producer_clock = producer_clock or (lambda: datetime.now(UTC))
 
     def producer(*, installation_id, generation):
         return HookProducer(
@@ -185,7 +188,7 @@ async def setup(uses, *, approval_required=False):
                 kid="run-dispatch-acceptance",
                 seed=seed,
             ),
-            clock=uses.clock,
+            clock=producer_clock,
         )
 
     store = PgApprovalStore(db)

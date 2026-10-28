@@ -21,6 +21,7 @@ from uuid import UUID, uuid4
 from aweb_naapp import ratelimit
 from aweb_naapp.dispatch import Dispatch, Dispatches, DispatchInFlight, ReconciliationPending, State
 from aweb_naapp.egress import InternalDestinations
+from aweb_naapp.hooks.catalog import packaged_catalog
 from aweb_naapp.hooks.commitment import CommitmentContext
 from aweb_naapp.hooks.producer import RegistrationView
 from aweb_naapp.hooks.strictjson import Refused as HookRefused
@@ -991,6 +992,11 @@ class RunDispatch:
     async def _preparation_failed(
         self, submission: RunnerSubmission, grant: Grant, original: OriginalRun, cause: str
     ) -> RunnerReply:
+        # Hook/protocol validation failures (for example invalid_value) are
+        # dependency failures, not app refusal codes. Preserve catalog reasons
+        # such as audit_target_unavailable; record other causes as unavailable.
+        if not packaged_catalog().hooks[_HOOK].fields["refusal_code"].accepts(cause):
+            cause = "runner_unavailable"
         async with self._db.transaction() as tx:
             scope = await self._fence.admit(tx, grant)
             if scope != original.installation:
