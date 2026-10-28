@@ -13,13 +13,23 @@ const require=createRequire(path.join(defaultRoot,'channel-core/package.json'));
 const ts=require('typescript'); // The existing channel-core lockfile pins the parser.
 const strictModules=new Set(['channel-core/src/identity/id_certificates.ts','channel-core/src/identity/id_verification.ts']);
 // The shared strict point predicate and the did:key decoder that applies it
-// live in did.ts, beside legacy helpers; these exact sites (and the decoder
-// as bundled into the wake runner) must stay strict.
-const strictSites=new Set([
- ['channel-core/src/identity/did.ts','primeSubgroupPoint'],
- ['channel-core/src/identity/did.ts','extractPublicKey'],
+// live in did.ts, beside legacy helpers; these sites, the functions nested in
+// them, and the decoder as bundled into the wake runner must stay strict.
+const didModule='channel-core/src/identity/did.ts';
+const strictSites=[
+ [didModule,'primeSubgroupPoint'],
+ [didModule,'extractPublicKey'],
  ['cli/go/wake/channel_core_runner_bundle.mjs','extractPublicKey'],
-].map(site=>JSON.stringify(site)));
+];
+function strictSite(entry) {
+ return strictSites.some(([file,symbol])=>entry.file===file && (entry.symbol===symbol || entry.symbol.startsWith(symbol+'.')));
+}
+// did.ts holds the one raw point decode, exactly in primeSubgroupPoint; any
+// other raw Ed25519 or curve use there refuses whatever its row's profile.
+function rawCurve(callee) {
+ const name=callee.replace(/^reference:/,'');
+ return rawVerifier(callee) || ['@noble/ed25519','@noble/curves','tweetnacl','libsodium-wrappers'].some(prefix=>name.startsWith(prefix));
+}
 const extensions=/\.(?:[cm]?[jt]s|[jt]sx)$/;
 const nameFamily=/^(?:(?:[sS]ign|[vV]erify|[rR]egister|[rR]evoke|[rR]otate)(?=$|[_A-Z])|(?:id(?:Ed25519|Certificate|Chain|Status|Request)|[gG]enerateKey|randomPrivateKey|getPublicKey|publicKeyToDID|didKeyFromPublicKey|parseDIDKey|encodeIdChain|decodeIdChain|prepareHumanKey|createIdentity))/;
 
@@ -145,7 +155,7 @@ function disallowedStrictPrimitive(entry,callee) {
  if(!primitiveModule(name))return false;
  const codec=entry.file==='channel-core/src/identity/id_certificates.ts';
  if(codec && entry.symbol==='idEd25519Verify')return false;
- if(entry.file==='channel-core/src/identity/did.ts' && entry.symbol==='primeSubgroupPoint')return false;
+ if(entry.file===didModule && entry.symbol==='primeSubgroupPoint')return false;
  // Hash wiring and the group-order constant in the reviewed codec are not a
  // second verifier. These exact uses are still pinned by the source catalog.
  if(codec && entry.symbol==='<module>' && ['reference:@noble/ed25519.etc.sha512Sync','@noble/ed25519.etc.concatBytes','reference:@noble/ed25519.CURVE.n'].includes(callee))return false;
@@ -164,7 +174,8 @@ export function checkCatalog(rows,entries,observed) {
   const row=byID.get(entry.row);
   if(row?.repo!=='aweb' || !row.files?.includes(entry.file) || !row.sites?.some(site=>site.file===entry.file && site.symbol===entry.symbol))errors.push('TS primitive needs mapped exact site '+key(entry));
   if(!['strict','legacy'].includes(row?.ed25519_profile))errors.push('TS row requires strict|legacy profile '+entry.row);
-  if((strictModules.has(entry.file) || strictSites.has(key(entry))) && row?.ed25519_profile!=='strict')errors.push('ID module cannot downgrade strict profile '+key(entry));
+  if((strictModules.has(entry.file) || strictSite(entry)) && row?.ed25519_profile!=='strict')errors.push('ID module cannot downgrade strict profile '+key(entry));
+  if(entry.file===didModule && entry.symbol!=='primeSubgroupPoint' && entry.calls && Object.keys(entry.calls).some(rawCurve))errors.push('raw curve use in did.ts outside primeSubgroupPoint '+key(entry));
   if(row?.ed25519_profile==='strict' && entry.calls && Object.keys(entry.calls).some(callee=>disallowedStrictPrimitive(entry,callee)))errors.push('raw ID crypto must use shared strict verifier '+key(entry));
  }
  for(const entry of observed){actual.set(key(entry),entry.calls);if(!declared.has(key(entry)))errors.push('unlisted TS identity primitive site '+key(entry));else if(!isDeepStrictEqual(declared.get(key(entry)),entry.calls))errors.push('TS primitive counts changed '+key(entry));}
