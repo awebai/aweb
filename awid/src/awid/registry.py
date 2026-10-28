@@ -124,17 +124,9 @@ _TEAM_CERTIFICATES_CACHE_TTL_SECONDS = 10 * 60  # 10 minutes
 # stale-while-revalidate behavior instead of taking a hard miss immediately.
 _STALE_MULTIPLIER = 2
 # Identity-tree status evidence (docs/id-certificates.md R-1) is reused through
-# this age inclusive, then refreshed synchronously. The 900-second outage grace
-# after a failed refresh is the verifier's: this client reports the age of
-# what it serves and whether a refresh failed, and the verifier decides.
+# this age inclusive, then refreshed synchronously; older evidence is never
+# presented, so an entry is kept only this long.
 _ID_STATUS_FRESH_SECONDS = 60
-# A failed attempt stands for every refresh of its domain through this many
-# seconds inclusive, so a registry that stalls costs one timeout per window
-# rather than one per request. It changes no evidence age.
-_ID_STATUS_FAILURE_COOLDOWN_SECONDS = _ID_STATUS_FRESH_SECONDS
-# Entries outlive the grace, so evidence past it is reported as expired rather
-# than as never observed.
-_ID_STATUS_RETENTION_SECONDS = 2 * 15 * 60
 _ID_STATUS_PATH = "/v1/id-certificates/status"
 # Entries are stamped in whole seconds of the Redis clock and aged against its
 # microseconds.
@@ -1527,7 +1519,6 @@ class CachedRegistryClient(RegistryClient):
     _refresh_tasks: dict[str, asyncio.Task[None]]
     _domain_verifier: DomainVerifier | None
     _id_status_refreshes: dict[str, asyncio.Task[_IDStatusRefresh]]
-    _id_status_failed_at: dict[str, int]
 
     def __init__(
         self,
@@ -1553,7 +1544,6 @@ class CachedRegistryClient(RegistryClient):
         object.__setattr__(self, "_refresh_tasks", {})
         object.__setattr__(self, "_domain_verifier", domain_verifier)
         object.__setattr__(self, "_id_status_refreshes", {})
-        object.__setattr__(self, "_id_status_failed_at", {})
 
     async def id_chain_evidence(
         self, bundle: dict[str, Any] | None, subject: dict[str, Any], *, domain: str,
@@ -1564,9 +1554,8 @@ class CachedRegistryClient(RegistryClient):
         every process sharing it reads. Evidence aged 60 seconds or less is
         served with no DNS or HTTP work. Older evidence waits for one refresh
         shared by every caller of the same request; when that attempt fails,
-        the last-known-good evidence is returned with its age and
-        refresh_failed set, and with none it is returned without an age.
-        Fetch failures never raise.
+        the evidence is returned without an age, so it is unavailable. Fetch
+        failures never raise.
         """
         try:
             request = status_request(bundle, subject, domain=domain)
@@ -1576,33 +1565,23 @@ class CachedRegistryClient(RegistryClient):
             # The verifier refuses this request before it reads any evidence.
             return IDChainEvidence(status={}, namespace_authority={}, age_seconds=None)
         cache_key = self._id_status_cache_key(request)
-        read_at_ns = _monotonic_ns()
         redis_now_us, cached = await self._read_id_status_entry(cache_key)
-        if cached is not None and redis_now_us < cached["fetched_at"] * _MICROSECONDS:
-            # Stamped ahead of the Redis clock (it stepped back): its age is
-            # unknown, so it is neither fresh nor last-known-good.
-            cached = None
-        if cached is not None:
+        # An entry stamped ahead of the Redis clock (it stepped back) has no
+        # known age, so it is never fresh.
+        if cached is not None and redis_now_us >= cached["fetched_at"] * _MICROSECONDS:
             # The whole-second stamp lies at or before the attempt began, so
             # this age, rounded up, never reads younger than the evidence is.
-            stored_age_ns = (redis_now_us - cached["fetched_at"] * _MICROSECONDS) * 1_000
-            if _whole_seconds_up(stored_age_ns) <= _ID_STATUS_FRESH_SECONDS:
-                return _id_status_evidence(cached, age=_whole_seconds_up(stored_age_ns), refresh_failed=False)
+            age = _whole_seconds_up((redis_now_us - cached["fetched_at"] * _MICROSECONDS) * 1_000)
+            if age <= _ID_STATUS_FRESH_SECONDS:
+                return _id_status_evidence(cached, age=age)
         refresh = await self._coalesced_id_status_refresh(cache_key, request)
         if refresh.entry is not None:
-            return _id_status_evidence(refresh.entry, age=refresh.age, refresh_failed=False)
-        if refresh.failed and cached is not None:
-            # Aged through the wait for the failed attempt, on this process's monotonic clock.
-            age = _whole_seconds_up(stored_age_ns + (_monotonic_ns() - read_at_ns))
-            return _id_status_evidence(cached, age=age, refresh_failed=True)
-        return IDChainEvidence(status={}, namespace_authority={}, age_seconds=None, refresh_failed=refresh.failed)
+            return _id_status_evidence(refresh.entry, age=refresh.age)
+        return IDChainEvidence(status={}, namespace_authority={}, age_seconds=None)
 
     async def _coalesced_id_status_refresh(self, cache_key: str, request: dict[str, Any]) -> _IDStatusRefresh:
         task = self._id_status_refreshes.get(cache_key)
         if task is None:
-            failed_at = self._id_status_failed_at.get(request["domain"])
-            if failed_at is not None and 0 <= _cache_now() - failed_at <= _ID_STATUS_FAILURE_COOLDOWN_SECONDS:
-                return _IDStatusRefresh(entry=None, failed=True, age=None)
             task = asyncio.create_task(self._refresh_id_status(cache_key, request))
             self._id_status_refreshes[cache_key] = task
             task.add_done_callback(lambda _task, key=cache_key: self._id_status_refreshes.pop(key, None))
@@ -1630,14 +1609,11 @@ class CachedRegistryClient(RegistryClient):
                 status = await self.fetch_id_certificate_status(domain, request)
         except MalformedIDStatusError:
             logger.warning("AWID identity-tree status for %s is malformed; no evidence is served", domain)
-            self._id_status_failed_at.pop(domain, None)
             await self._invalidate_keys(cache_key)
-            return _IDStatusRefresh(entry=None, failed=False, age=None)
+            return _IDStatusRefresh(entry=None, age=None)
         except Exception as exc:
             logger.warning("AWID identity-tree status refresh failed for %s: %r", domain, exc)
-            self._id_status_failed_at[domain] = _cache_now()
-            return _IDStatusRefresh(entry=None, failed=True, age=None)
-        self._id_status_failed_at.pop(domain, None)
+            return _IDStatusRefresh(entry=None, age=None)
         entry = {
             "fetched_at": fetched_at,
             "status": status,
@@ -1650,9 +1626,9 @@ class CachedRegistryClient(RegistryClient):
         }
         if fetched_at is not None:
             await self._redis_set(
-                cache_key, json.dumps(entry, separators=(",", ":"), sort_keys=True), ex=_ID_STATUS_RETENTION_SECONDS,
+                cache_key, json.dumps(entry, separators=(",", ":"), sort_keys=True), ex=_ID_STATUS_FRESH_SECONDS,
             )
-        return _IDStatusRefresh(entry=entry, failed=False, age=_whole_seconds_up(_monotonic_ns() - started_ns))
+        return _IDStatusRefresh(entry=entry, age=_whole_seconds_up(_monotonic_ns() - started_ns))
 
     async def _redis_time(self) -> int | None:
         """The Redis server clock in whole seconds, or None when Redis is unavailable."""
@@ -2672,10 +2648,9 @@ def _whole_seconds_up(nanoseconds: int) -> int:
 
 @dataclass(frozen=True)
 class _IDStatusRefresh:
-    """One status refresh: the entry and its age now, or why there is none."""
+    """One status refresh: the entry and its age now, or none when it failed."""
 
     entry: dict[str, Any] | None
-    failed: bool
     age: int | None
 
 
@@ -2696,13 +2671,12 @@ async def _payload_signature(signer: PayloadSigner, payload: bytes, expected_key
     return did_key, signature
 
 
-def _id_status_evidence(entry: dict[str, Any], *, age: int, refresh_failed: bool) -> IDChainEvidence:
+def _id_status_evidence(entry: dict[str, Any], *, age: int) -> IDChainEvidence:
     # The age is never clamped: a negative one is unavailable evidence to the verifier.
     return IDChainEvidence(
         status=entry["status"],
         namespace_authority=entry["namespace_authority"],
         age_seconds=age,
-        refresh_failed=refresh_failed,
     )
 
 

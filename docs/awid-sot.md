@@ -1216,12 +1216,12 @@ which raises.
   less that stamp, rounded up to whole seconds, so it never reads younger
   than the evidence is. The body's `observed_at` is never used, and the age
   survives restarts. An entry stamped ahead of the Redis clock (the clock
-  stepped back) has no known age: it is neither fresh nor last-known-good,
-  and is refreshed. Time this process spends, in a refresh attempt or
-  waiting for a failed one (which the last-known-good age includes), is
-  measured on its monotonic clock and also rounded up. Ages are never
+  stepped back) has no known age, so it is never fresh, and is refreshed.
+  The time this process spends in a refresh attempt is measured on its
+  monotonic clock and also rounded up. Ages are never
   clamped; a negative one is unavailable evidence to the verifier. An entry that is not exactly this
-  shape is dropped and refreshed. Without Redis nothing is stored, so each
+  shape is dropped and refreshed. An entry is kept for 60 seconds, since
+  nothing older is ever presented. Without Redis nothing is stored, so each
   read fetches.
 - Evidence aged 60 seconds or less is served with no DNS, routing or HTTP
   work. Older evidence waits for one refresh shared by every concurrent caller
@@ -1232,17 +1232,11 @@ which raises.
   successful answer that is not a JSON object within the response bound
   removes the entry, so no older tree outlives it.
 - A failed attempt (timeout, transport error, DNS failure, any non-2xx answer
-  including 429, whatever its body) never touches the entry. The caller gets the last-known-good
-  evidence with its true age and `refresh_failed`, or, with none, evidence
-  without an age. The verifier allows the outage grace through 900 seconds and
-  reports `status_expired` after it.
-- A failed attempt stands for every refresh of its domain for the next 60
-  seconds inclusive (and only while its recorded time is not ahead of the
-  clock), in process memory only, so a stalled registry costs one
-  timeout per window. During it callers get exactly the failed-refresh answer
-  above, with no network attempt; it never changes an age or extends the
-  grace. A successful answer ends it. Each domain's entries and cooldown are
-  independent of every other domain's.
+  including 429, whatever its body) never touches the entry. The caller gets
+  evidence without an age, which the verifier reports as unavailable: there is
+  no outage grace, and nothing older than 60 seconds is presented. The next
+  request makes its own attempt. Each domain's entries are independent of
+  every other domain's.
 
 ### Public identity-tree write client
 
