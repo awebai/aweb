@@ -209,18 +209,9 @@ regenerate-mcp-tools-reference:
 freshness:
 	bash scripts/check-freshness.sh
 
-# Both audits describe what a release SHIPS, so they hang off the release path
-# rather than `make test`. The Go audit pins itself to the toolchain in
-# cli/go/go.mod and refuses to run under any other, which would red `make test`
-# on every machine with a newer Go; and both consult an advisory database that
-# moves without any repo change, so neither belongs in a suite expected to be
-# deterministic.
-#
-# These run AT RELEASE ONLY. Nothing runs them on a schedule. An advisory
-# published between two releases is not seen until the next release, and the
-# deferral deadlines in .github/go-vulnerability-exceptions.json are only
-# checked when one of these runs. Accepted deliberately on 2026-07-26; see
-# default-aaoa.
+# The Go audit runs in candidate checks under the exact pinned toolchain and
+# consults the live advisory database. Keep it outside deterministic `make test`;
+# its fixture-based checker tests remain there. Candidate checks must run both.
 check-go-vulnerability-audit:
 	bash scripts/check-go-vulnerability-audit.sh
 
@@ -232,8 +223,7 @@ check-go-vulnerability-audit:
 # It is separate because a deferral lapses on a DATE, not on a commit. The audit
 # runs at release; if no release happens across a deadline, the deferral simply
 # stops being deferred and nothing says so. This target is what the scheduled
-# workflow runs daily. It does NOT run the audit, and the release-only decision
-# for that audit is unchanged.
+# workflow runs daily. Candidate checks additionally run the full Go audit.
 # The audit's own unit suite. It belongs in `make test` where the audit itself
 # does not: it runs against fixtures and the checked-in exceptions file, with no
 # toolchain, no scanner and no advisory database, and none of its assertions

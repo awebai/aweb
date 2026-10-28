@@ -2,13 +2,20 @@
 
 ## Unreleased
 
-- Pre-deployment hook catalog v1 re-freeze: `post-secret-use-hook` accepts optional
-  opaque `use_ref` for the public request/refusal-to-audit join. Legacy events
-  without it remain valid. The catalog in `aweb-naapp 0.5.1rc1` rejects this
-  field: third-party receivers on that RC must upgrade before receiving it.
-  The next aweb-naapp RC must include the re-frozen catalog, and updated
-  readers/catalogs must land before new emission. Decision 93's scoped
-  evidence and landing stop/version-bump conditions are in `docs/hook-events.md`.
+- **Breaking compatibility:** hook catalog v1 `post-secret-use-hook` gains
+  optional opaque `use_ref` after the `aweb-naapp 0.5.0` release, for the public
+  request/refusal-to-audit join. Receivers using the published catalogs in
+  `aweb-naapp 0.2.0`, `0.3.0`, `0.4.0`, `0.5.0rc1`, `0.5.0`,
+  `0.5.1rc1`, `0.5.1rc2`, `0.5.1rc3`, `0.5.1rc4`, `0.5.1rc5` and `0.5.1`
+  refuse events carrying this field and must upgrade before receiving them.
+  Legacy events without it remain valid. Juan explicitly accepted this
+  in-place v1 compatibility break on 2026-10-26. Updated readers/catalogs
+  must be published before new emission.
+
+- **Security:** build the Go CLI and gateway with Go 1.26.10 and
+  `golang.org/x/net` 0.62.0 to fix standard-library, HTTP and HTML advisories,
+  including HTML parsing/rendering issues GO-2026-6860 and GO-2026-6866.
+  Candidate checks now run the live Go vulnerability audit and fail on refusals.
 
 - Release preparation: server 1.27.35. Update the server test fixtures for
   the shared naapp runtime's integer nanosecond freshness deadlines.
