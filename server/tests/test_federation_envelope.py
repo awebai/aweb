@@ -13,6 +13,7 @@ from aweb.federation.envelope import (
     enforce_message_timestamp_skew,
     verify_federation_envelope,
 )
+from did_key_fixtures import named_did_key
 
 
 def _timestamp(offset_seconds: int = 0) -> str:
@@ -24,7 +25,7 @@ def _timestamp(offset_seconds: int = 0) -> str:
 
 
 def _envelope(sender_did_key: str) -> dict:
-    target_did_key = "did:key:z6MkuDhy1KLXWYcH5mX7BgCxRjyQd5bXc8tLjLa2yzqyzeK9"
+    target_did_key = named_did_key("z6Mktarget")
     message_id = str(uuid4())
     timestamp = _timestamp()
     conversation_id = str(uuid4())
@@ -95,7 +96,7 @@ def test_verify_federation_envelope_accepts_signed_mail_payload():
             "type": "mail",
             "target_address": "beta.example/bob",
             "target_did_aw": "did:aw:target",
-            "target_current_did_key": "did:key:z6MkuDhy1KLXWYcH5mX7BgCxRjyQd5bXc8tLjLa2yzqyzeK9",
+            "target_current_did_key": named_did_key("z6Mktarget"),
             "target_delivery_origin": "https://aweb.beta.example",
             "body": "hello",
             "message_id": envelope["message_id"],
@@ -168,7 +169,7 @@ def test_deprecated_sender_team_certificate_does_not_authorize_unbound_payload()
         verify_federation_envelope(envelope, signature)
 
 
-@pytest.mark.parametrize("signed_to", ["did:aw:target", "did:key:z6MkuDhy1KLXWYcH5mX7BgCxRjyQd5bXc8tLjLa2yzqyzeK9"])
+@pytest.mark.parametrize("signed_to", ["did:aw:target", named_did_key("z6Mktarget")])
 def test_verify_federation_envelope_accepts_identity_bound_continuation_to(signed_to):
     signing_key, public_key = generate_keypair()
     sender_did_key = did_from_public_key(public_key)
@@ -223,7 +224,7 @@ def test_verify_federation_envelope_accepts_stable_signed_to_did():
 
     verified = verify_federation_envelope(envelope, signature)
 
-    assert verified.target_current_did_key == "did:key:z6MkuDhy1KLXWYcH5mX7BgCxRjyQd5bXc8tLjLa2yzqyzeK9"
+    assert verified.target_current_did_key == named_did_key("z6Mktarget")
     assert verified.target_did_aw == "did:aw:target"
 
 
@@ -252,7 +253,7 @@ def test_verify_federation_envelope_accepts_stored_route_stable_binding_without_
 
     verified = verify_federation_envelope(envelope, signature)
 
-    assert verified.target_current_did_key == "did:key:z6MkuDhy1KLXWYcH5mX7BgCxRjyQd5bXc8tLjLa2yzqyzeK9"
+    assert verified.target_current_did_key == named_did_key("z6Mktarget")
     assert verified.target_did_aw == "did:aw:target"
 
 

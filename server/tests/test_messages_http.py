@@ -47,6 +47,7 @@ import aweb.routes.federation as federation_routes
 from aweb.routes.federation import router as federation_router
 from aweb.routes.messages import router as messages_router
 from federation_activation_support import TestFederationAuthority
+from did_key_fixtures import named_did_key
 
 
 def _make_keypair():
@@ -368,7 +369,7 @@ async def _insert_team(aweb_db, team_id: str):
     await aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, $2, $3, 'did:key:z6MktTJnUsVhPhJQmJrZgKFWXv7g44zYDtMN8fRBdX3KY6Jp')
+        VALUES ($1, $2, $3, 'did:key:z6MktTJnUsVhPhJQmJrZgKFWXv7g44zYDtMN8fRBdX3KY6Jp' /* z6Mkteam */)
         """,
         team_id,
         namespace,
@@ -1659,14 +1660,14 @@ async def test_send_message_to_external_address_requires_signed_payload(aweb_clo
         address="acme.com/alice",
     )
     registry = AsyncMock()
-    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key="did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH"))
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=named_did_key("bob")))
     registry.resolve_address = AsyncMock(
         return_value=Address(
             address_id="addr-2",
             domain="otherco.com",
             name="bob",
             did_aw="did:aw:bob",
-            current_did_key="did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
+            current_did_key=named_did_key("bob"),
             reachability="public",
             created_at=datetime.now(timezone.utc).isoformat(),
             delivery=AddressDelivery(origin="https://remote.example"),
@@ -1732,14 +1733,14 @@ async def test_send_encrypted_message_to_external_address_posts_ciphertext_only(
         address="acme.com/alice",
     )
     registry = AsyncMock()
-    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key="did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH"))
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=named_did_key("bob")))
     registry.resolve_address = AsyncMock(
         return_value=Address(
             address_id="addr-2",
             domain="otherco.com",
             name="bob",
             did_aw="did:aw:bob",
-            current_did_key="did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
+            current_did_key=named_did_key("bob"),
             reachability="public",
             created_at=datetime.now(timezone.utc).isoformat(),
             delivery=AddressDelivery(origin="https://remote.example"),
@@ -1789,7 +1790,7 @@ async def test_send_encrypted_message_to_external_address_posts_ciphertext_only(
         sender_sk=alice_sk,
         sender_did=alice_did_key,
         sender_stable_id="did:aw:alice",
-        recipient_did="did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
+        recipient_did=named_did_key("bob"),
         recipient_stable_id="did:aw:bob",
         recipient_address="otherco.com/bob",
         message_id=message_id,
@@ -1882,7 +1883,7 @@ async def test_send_message_from_local_didkey_to_global_did_first_contact_fails_
             "subject": "local outbound",
             "timestamp": timestamp,
             "to": "did:aw:bob",
-            "to_did": "did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
+            "to_did": named_did_key("bob"),
             "to_stable_id": "did:aw:bob",
             "type": "mail",
         }
@@ -1913,7 +1914,7 @@ async def test_send_message_from_local_didkey_to_global_did_first_contact_fails_
 @pytest.mark.asyncio
 async def test_mail_reply_to_retired_local_didkey_uses_learned_route_or_reports_unreachable(aweb_cloud_db):
     bob_sk, _, bob_did_key = _make_keypair()
-    local_did_key = "did:key:z6MkskfbSekkwq5btte2YYYcANp4eSrRiSy9mkXKPgYwsJQj"
+    local_did_key = named_did_key("z6MkLocalOnly")
     await _insert_team(aweb_cloud_db.aweb_db, "backend:remote.example")
     bob_agent_id = await _insert_agent(
         aweb_cloud_db.aweb_db,
@@ -1937,7 +1938,7 @@ async def test_mail_reply_to_retired_local_didkey_uses_learned_route_or_reports_
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.conversations}} (conversation_id, conversation_type, team_id, created_by_did)
-        VALUES ($1, 'mail', 'backend:remote.example', 'did:key:z6MkskfbSekkwq5btte2YYYcANp4eSrRiSy9mkXKPgYwsJQj')
+        VALUES ($1, 'mail', 'backend:remote.example', 'did:key:z6MkskfbSekkwq5btte2YYYcANp4eSrRiSy9mkXKPgYwsJQj' /* z6MkLocalOnly */)
         """,
         conversation_id,
     )
@@ -1946,7 +1947,7 @@ async def test_mail_reply_to_retired_local_didkey_uses_learned_route_or_reports_
         INSERT INTO {{tables.conversation_participants}}
             (conversation_id, did, agent_id, alias, address, delivery_origin, transport_hint, role)
         VALUES
-            ($1, 'did:key:z6MkskfbSekkwq5btte2YYYcANp4eSrRiSy9mkXKPgYwsJQj', $2, 'retired-routed', 'did:key:z6MkskfbSekkwq5btte2YYYcANp4eSrRiSy9mkXKPgYwsJQj', 'https://local.example', 'federation:https://local.example', 'initiator'),
+            ($1, 'did:key:z6MkskfbSekkwq5btte2YYYcANp4eSrRiSy9mkXKPgYwsJQj' /* z6MkLocalOnly */, $2, 'retired-routed', 'did:key:z6MkskfbSekkwq5btte2YYYcANp4eSrRiSy9mkXKPgYwsJQj' /* z6MkLocalOnly */, 'https://local.example', 'federation:https://local.example', 'initiator'),
             ($1, 'did:aw:bob', $3, 'bob', 'remote.example/bob', NULL, 'local', 'participant')
         """,
         conversation_id,
@@ -2030,7 +2031,7 @@ async def test_mail_reply_to_retired_local_didkey_uses_learned_route_or_reports_
         INSERT INTO {{tables.agents}}
             (team_id, did_key, alias, identity_scope, role, status, deleted_at)
         VALUES
-            ('backend:remote.example', 'did:key:z6Mkgm6L6rFHRZFt7PKhqFhJygpzWYudLHjpg88q7Kw2yqmQ', 'retired-local', 'local', 'developer', 'deleted', NOW())
+            ('backend:remote.example', 'did:key:z6Mkgm6L6rFHRZFt7PKhqFhJygpzWYudLHjpg88q7Kw2yqmQ' /* z6MkNoRoute */, 'retired-local', 'local', 'developer', 'deleted', NOW())
         RETURNING agent_id
         """
     )
@@ -2038,7 +2039,7 @@ async def test_mail_reply_to_retired_local_didkey_uses_learned_route_or_reports_
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.conversations}} (conversation_id, conversation_type, team_id, created_by_did)
-        VALUES ($1, 'mail', 'backend:remote.example', 'did:key:z6Mkgm6L6rFHRZFt7PKhqFhJygpzWYudLHjpg88q7Kw2yqmQ')
+        VALUES ($1, 'mail', 'backend:remote.example', 'did:key:z6Mkgm6L6rFHRZFt7PKhqFhJygpzWYudLHjpg88q7Kw2yqmQ' /* z6MkNoRoute */)
         """,
         blocked_conversation_id,
     )
@@ -2047,7 +2048,7 @@ async def test_mail_reply_to_retired_local_didkey_uses_learned_route_or_reports_
         INSERT INTO {{tables.conversation_participants}}
             (conversation_id, did, agent_id, alias, address, transport_hint, role)
         VALUES
-            ($1, 'did:key:z6Mkgm6L6rFHRZFt7PKhqFhJygpzWYudLHjpg88q7Kw2yqmQ', $2, 'retired-local', 'did:key:z6Mkgm6L6rFHRZFt7PKhqFhJygpzWYudLHjpg88q7Kw2yqmQ', 'local-metadata-only', 'initiator'),
+            ($1, 'did:key:z6Mkgm6L6rFHRZFt7PKhqFhJygpzWYudLHjpg88q7Kw2yqmQ' /* z6MkNoRoute */, $2, 'retired-local', 'did:key:z6Mkgm6L6rFHRZFt7PKhqFhJygpzWYudLHjpg88q7Kw2yqmQ' /* z6MkNoRoute */, 'local-metadata-only', 'initiator'),
             ($1, 'did:aw:bob', $3, 'bob', 'remote.example/bob', 'local', 'participant')
         """,
         blocked_conversation_id,
@@ -2066,9 +2067,9 @@ async def test_mail_reply_to_retired_local_didkey_uses_learned_route_or_reports_
             "message_id": blocked_message_id,
             "subject": "no route",
             "timestamp": blocked_timestamp,
-            "to": "did:key:z6Mkgm6L6rFHRZFt7PKhqFhJygpzWYudLHjpg88q7Kw2yqmQ",
-            "to_did": "did:key:z6Mkgm6L6rFHRZFt7PKhqFhJygpzWYudLHjpg88q7Kw2yqmQ",
-            "to_stable_id": "did:key:z6Mkgm6L6rFHRZFt7PKhqFhJygpzWYudLHjpg88q7Kw2yqmQ",
+            "to": named_did_key("z6MkNoRoute"),
+            "to_did": named_did_key("z6MkNoRoute"),
+            "to_stable_id": named_did_key("z6MkNoRoute"),
             "type": "mail",
         }
     ).decode()
@@ -2118,7 +2119,7 @@ async def test_send_message_to_external_address_without_delivery_origin_fails_cl
             domain="otherco.com",
             name="bob",
             did_aw="did:aw:bob",
-            current_did_key="did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
+            current_did_key=named_did_key("bob"),
             reachability="public",
             created_at=datetime.now(timezone.utc).isoformat(),
         )
@@ -2169,7 +2170,7 @@ async def test_send_message_to_external_address_remote_failure_does_not_create_l
             domain="otherco.com",
             name="bob",
             did_aw="did:aw:bob",
-            current_did_key="did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
+            current_did_key=named_did_key("bob"),
             reachability="public",
             created_at=datetime.now(timezone.utc).isoformat(),
             delivery=AddressDelivery(origin="https://remote.example"),
@@ -2205,7 +2206,7 @@ async def test_send_message_to_external_address_remote_failure_does_not_create_l
             "subject": "remote failure",
             "timestamp": timestamp,
             "to": "otherco.com/bob",
-            "to_did": "did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
+            "to_did": named_did_key("bob"),
             "to_stable_id": "did:aw:bob",
             "type": "mail",
         }
@@ -2249,7 +2250,7 @@ async def test_send_message_to_hosted_handle_alias_uses_canonical_address(aweb_c
         aweb_cloud_db.aweb_db,
         team_id="default:jane.aweb.ai",
         alias="c3po",
-        did_key="did:key:z6MkuQH5k4F9tNPXYoQzKFw9dNYkEC63FVwtpB7Mc5oqjnj5",
+        did_key=named_did_key("c3po"),
         did_aw="did:aw:c3po",
         address="jane.aweb.ai/c3po",
     )
@@ -2261,7 +2262,7 @@ async def test_send_message_to_hosted_handle_alias_uses_canonical_address(aweb_c
             domain="jane.aweb.ai",
             name="c3po",
             did_aw="did:aw:c3po",
-            current_did_key="did:key:z6MkuQH5k4F9tNPXYoQzKFw9dNYkEC63FVwtpB7Mc5oqjnj5",
+            current_did_key=named_did_key("c3po"),
             reachability="public",
             created_at=datetime.now(timezone.utc).isoformat(),
         )
@@ -3604,7 +3605,7 @@ async def test_messages_inbox_includes_sender_stable_identity_for_current_key(aw
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:acme.com', 'acme.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:acme.com', 'acme.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -3656,7 +3657,7 @@ async def test_messages_inbox_prefers_stored_sender_address_without_local_metada
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:acme.com', 'acme.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:acme.com', 'acme.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -3728,13 +3729,13 @@ async def test_send_message_mutation_context_includes_from_did_aw(aweb_cloud_db)
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo')
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo' /* team-1 */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6Mksty56NE8sLwnubZAGcm16vuLQnaMnSqUcsGmGygSk8mF')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6Mksty56NE8sLwnubZAGcm16vuLQnaMnSqUcsGmGygSk8mF' /* team-2 */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -3742,7 +3743,7 @@ async def test_send_message_mutation_context_includes_from_did_aw(aweb_cloud_db)
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
         VALUES
             ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END),
-            ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
+            ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
         """,
         alice_did_key,
     )
@@ -3818,13 +3819,13 @@ async def test_send_message_accepts_identity_auth(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'team_and_contacts', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
+        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'team_and_contacts', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -3834,7 +3835,7 @@ async def test_send_message_accepts_identity_auth(aweb_cloud_db):
             binding_controller_did, binding_accepted_at, label
         ) VALUES (
             'did:aw:bob', 'acme.com/alice', 'did:aw:alice',
-            'did:key:z6MksdtzGW313q4RQicECqqpSv25FBPhcJBcGAXMZ5RbRPQ7', clock_timestamp(), 'Alice'
+            'did:key:z6MksdtzGW313q4RQicECqqpSv25FBPhcJBcGAXMZ5RbRPQ7' /* z6Mktestcontroller */, clock_timestamp(), 'Alice'
         )
         """
     )
@@ -3881,7 +3882,7 @@ async def test_send_message_accepts_external_to_address_without_local_agent(aweb
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:acme.com', 'acme.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:acme.com', 'acme.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -3900,7 +3901,7 @@ async def test_send_message_accepts_external_to_address_without_local_agent(aweb
             domain="otherco.com",
             name="bob",
             did_aw="did:aw:bob",
-            current_did_key="did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
+            current_did_key=named_did_key("bob"),
             reachability="public",
             created_at=datetime.now(timezone.utc).isoformat(),
             delivery=AddressDelivery(origin="https://remote.example"),
@@ -3947,7 +3948,7 @@ async def test_send_message_accepts_external_to_address_without_local_agent(aweb
             "subject": "external",
             "timestamp": timestamp,
             "to": "otherco.com/bob",
-            "to_did": "did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
+            "to_did": named_did_key("bob"),
             "to_stable_id": "did:aw:bob",
             "type": "mail",
         }
@@ -3986,7 +3987,7 @@ async def test_send_message_accepts_external_to_address_without_local_agent(aweb
 
     async def _bob_auth():
         return MessagingAuth(
-            did_key="did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
+            did_key=named_did_key("bob"),
             did_aw="did:aw:bob",
             address="otherco.com/bob",
             team_id="ops:otherco.com",
@@ -4010,8 +4011,8 @@ async def test_identity_scoped_send_by_address_allows_persistent_multi_membershi
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES
-            ('ops:acme.com', 'acme.com', 'ops', 'did:key:z6MkiK4DciFkG7Sqj2U35cBvNezhk22uso3u8NQ6CKHQZxBb'),
-            ('dev:acme.com', 'acme.com', 'dev', 'did:key:z6MkjkW6jdKyexH7sPtnYBPBkGWpnrAutvuQR9nAyA5Geg1H')
+            ('ops:acme.com', 'acme.com', 'ops', 'did:key:z6MkiK4DciFkG7Sqj2U35cBvNezhk22uso3u8NQ6CKHQZxBb' /* team-ops */),
+            ('dev:acme.com', 'acme.com', 'dev', 'did:key:z6MkjkW6jdKyexH7sPtnYBPBkGWpnrAutvuQR9nAyA5Geg1H' /* team-dev */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -4032,7 +4033,7 @@ async def test_identity_scoped_send_by_address_allows_persistent_multi_membershi
             domain="otherco.com",
             name="bob",
             did_aw="did:aw:bob",
-            current_did_key="did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
+            current_did_key=named_did_key("bob"),
             reachability="public",
             created_at=datetime.now(timezone.utc).isoformat(),
             delivery=AddressDelivery(origin="https://remote.example"),
@@ -4079,7 +4080,7 @@ async def test_identity_scoped_send_by_address_allows_persistent_multi_membershi
             "subject": "multi membership external",
             "timestamp": timestamp,
             "to": "otherco.com/bob",
-            "to_did": "did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
+            "to_did": named_did_key("bob"),
             "to_stable_id": "did:aw:bob",
             "type": "mail",
         }
@@ -4131,7 +4132,7 @@ async def test_team_auth_alias_send_resolves_active_team_with_persistent_multi_m
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES
             ('ops:acme.com', 'acme.com', 'ops', $1),
-            ('dev:acme.com', 'acme.com', 'dev', 'did:key:z6MkjkW6jdKyexH7sPtnYBPBkGWpnrAutvuQR9nAyA5Geg1H')
+            ('dev:acme.com', 'acme.com', 'dev', 'did:key:z6MkjkW6jdKyexH7sPtnYBPBkGWpnrAutvuQR9nAyA5Geg1H' /* team-dev */)
         """,
         ops_team_did_key,
     )
@@ -4142,7 +4143,7 @@ async def test_team_auth_alias_send_resolves_active_team_with_persistent_multi_m
             ('ops:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END),
             ('dev:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END),
             ('ops:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN $2 END),
-            ('dev:acme.com', 'did:key:z6MktkWsbcrrt7rt7N4iwSGS5ija9qZGNE4dbezDyMAVJzfA', 'did:aw:dev-bob', 'acme.com/dev-bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:dev-bob', '') IS NOT NULL THEN 'did:key:z6MktkWsbcrrt7rt7N4iwSGS5ija9qZGNE4dbezDyMAVJzfA' END)
+            ('dev:acme.com', 'did:key:z6MktkWsbcrrt7rt7N4iwSGS5ija9qZGNE4dbezDyMAVJzfA' /* dev-bob */, 'did:aw:dev-bob', 'acme.com/dev-bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:dev-bob', '') IS NOT NULL THEN 'did:key:z6MktkWsbcrrt7rt7N4iwSGS5ija9qZGNE4dbezDyMAVJzfA' /* dev-bob */ END)
         """,
         alice_did_key,
         bob_did_key,
@@ -4210,7 +4211,7 @@ async def test_send_message_to_stable_id_transport_routes_stable_and_accepts_cur
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -4268,7 +4269,7 @@ async def test_send_message_to_current_did_remains_visible_after_recipient_rotat
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -4283,7 +4284,7 @@ async def test_send_message_to_current_did_remains_visible_after_recipient_rotat
 
     async def _send_auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
+            did_key=named_did_key("z6MkAliceCurrent"),
             did_aw="did:aw:alice",
             address="acme.com/alice",
         )
@@ -4331,7 +4332,7 @@ async def test_send_message_rejects_mismatched_to_did_and_to_stable_id(aweb_clou
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -4349,7 +4350,7 @@ async def test_send_message_rejects_mismatched_to_did_and_to_stable_id(aweb_clou
 
     async def _send_auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
+            did_key=named_did_key("z6MkAliceCurrent"),
             did_aw="did:aw:alice",
             address="acme.com/alice",
         )
@@ -4375,7 +4376,7 @@ async def test_send_message_rejects_mismatched_to_address_and_to_stable_id(aweb_
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -4393,7 +4394,7 @@ async def test_send_message_rejects_mismatched_to_address_and_to_stable_id(aweb_
             domain="otherco.com",
             name="bob",
             did_aw="did:aw:bob",
-            current_did_key="did:key:z6MkfjUWcbCLPrn5iRsHH2p3z7MTmrk9egdFFGn2t88T9GCw",
+            current_did_key=named_did_key("bob-current"),
             reachability="public",
             created_at=datetime.now(timezone.utc).isoformat(),
         )
@@ -4402,7 +4403,7 @@ async def test_send_message_rejects_mismatched_to_address_and_to_stable_id(aweb_
 
     async def _send_auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
+            did_key=named_did_key("z6MkAliceCurrent"),
             did_aw="did:aw:alice",
             address="acme.com/alice",
         )
@@ -4429,8 +4430,8 @@ async def test_send_message_rejects_unsigned_stable_id_address_binding_when_awid
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES
-            ('stable:identity.local', 'identity.local', 'stable', 'did:key:z6MkiaaDnotCpnwVHYrGYjT1pbYPxbMcPbysqfiGpJZSZtAg'),
-            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkjcDPjZawPWvfr97BGyobCr6SkdZYyrxYu8CBESNWJyZi')
+            ('stable:identity.local', 'identity.local', 'stable', 'did:key:z6MkiaaDnotCpnwVHYrGYjT1pbYPxbMcPbysqfiGpJZSZtAg' /* team-stable */),
+            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkjcDPjZawPWvfr97BGyobCr6SkdZYyrxYu8CBESNWJyZi' /* team-address */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -4449,7 +4450,7 @@ async def test_send_message_rejects_unsigned_stable_id_address_binding_when_awid
 
     async def _send_auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
+            did_key=named_did_key("z6MkAliceCurrent"),
             did_aw="did:aw:alice",
             address="acme.com/alice",
         )
@@ -4495,7 +4496,7 @@ def _federated_mail_payload(
     sender_delivery_origin: str = "https://sender.example",
     target_address: str = "beta.example/bob",
     target_did_aw: str = "did:aw:bob",
-    target_did_key: str = "did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
+    target_did_key: str = named_did_key("bob"),
     target_delivery_origin: str = "https://recipient.example",
     subject: str = "federated hello",
     body: str = "hello from another server",
@@ -4628,9 +4629,9 @@ async def test_receive_federated_mail_first_contact_to_unknown_local_didkey_fail
     payload = _federated_mail_payload(
         sender_sk=alice_sk,
         sender_did_key=alice_did_key,
-        target_address="did:key:z6MkfebQs2Mens2vTjf2d3TcneY4gS4U5eMPfVTgtUGJjuFc",
-        target_did_aw="did:key:z6MkfebQs2Mens2vTjf2d3TcneY4gS4U5eMPfVTgtUGJjuFc",
-        target_did_key="did:key:z6MkfebQs2Mens2vTjf2d3TcneY4gS4U5eMPfVTgtUGJjuFc",
+        target_address=named_did_key("z6MkUnknownLocal"),
+        target_did_aw=named_did_key("z6MkUnknownLocal"),
+        target_did_key=named_did_key("z6MkUnknownLocal"),
         target_delivery_origin="https://recipient.example",
         subject="unknown local",
         body="should fail",
@@ -5232,7 +5233,7 @@ async def test_send_message_federated_conversation_reply_requires_sender_attesta
 async def test_receive_federated_mail_stored_route_rejects_wrong_target_current_key(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     _, _, bob_did_key = _make_keypair()
-    wrong_bob_key = "did:key:z6MkjxZtU9ugAzi5YfY9sP9vv6DSHMQEK8Pr9REqTMJkoWq4"
+    wrong_bob_key = named_did_key("z6MkWrongBobKey")
     await _insert_team(aweb_cloud_db.aweb_db, "default:beta.example")
     bob_agent_id = await _insert_agent(
         aweb_cloud_db.aweb_db,
@@ -6119,7 +6120,7 @@ async def test_receive_federated_mail_rejects_sender_key_drift(aweb_cloud_db):
         address="beta.example/bob",
     )
     registry = AsyncMock()
-    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key="did:key:z6MkfYriVK8mQ7uLuZNPjSNH9DGnAXqpbGqXA51V4am2zP1Q"))
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=named_did_key("z6MkRotated")))
     registry.resolve_address = AsyncMock()
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
     app.state.public_origin = "https://recipient.example"
@@ -6221,8 +6222,8 @@ async def test_send_message_accepts_to_stable_id_did_binding_with_duplicate_iden
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES
-            ('stable:identity.local', 'identity.local', 'stable', 'did:key:z6MkiaaDnotCpnwVHYrGYjT1pbYPxbMcPbysqfiGpJZSZtAg'),
-            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkjcDPjZawPWvfr97BGyobCr6SkdZYyrxYu8CBESNWJyZi')
+            ('stable:identity.local', 'identity.local', 'stable', 'did:key:z6MkiaaDnotCpnwVHYrGYjT1pbYPxbMcPbysqfiGpJZSZtAg' /* team-stable */),
+            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkjcDPjZawPWvfr97BGyobCr6SkdZYyrxYu8CBESNWJyZi' /* team-address */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -6240,7 +6241,7 @@ async def test_send_message_accepts_to_stable_id_did_binding_with_duplicate_iden
 
     async def _send_auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
+            did_key=named_did_key("z6MkAliceCurrent"),
             did_aw="did:aw:alice",
             address="acme.com/alice",
         )
@@ -6276,8 +6277,8 @@ async def test_send_message_accepts_to_stable_id_alias_binding_with_duplicate_id
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES
-            ('stable:identity.local', 'identity.local', 'stable', 'did:key:z6MkiaaDnotCpnwVHYrGYjT1pbYPxbMcPbysqfiGpJZSZtAg'),
-            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkjcDPjZawPWvfr97BGyobCr6SkdZYyrxYu8CBESNWJyZi')
+            ('stable:identity.local', 'identity.local', 'stable', 'did:key:z6MkiaaDnotCpnwVHYrGYjT1pbYPxbMcPbysqfiGpJZSZtAg' /* team-stable */),
+            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkjcDPjZawPWvfr97BGyobCr6SkdZYyrxYu8CBESNWJyZi' /* team-address */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -6294,7 +6295,7 @@ async def test_send_message_accepts_to_stable_id_alias_binding_with_duplicate_id
 
     async def _send_auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
+            did_key=named_did_key("z6MkAliceCurrent"),
             did_aw="did:aw:alice",
             address="acme.com/alice",
             team_id="ops:otherco.com",
@@ -6331,7 +6332,7 @@ async def test_send_message_rejects_mismatched_to_agent_id_and_to_stable_id(aweb
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -6353,7 +6354,7 @@ async def test_send_message_rejects_mismatched_to_agent_id_and_to_stable_id(aweb
 
     async def _send_auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
+            did_key=named_did_key("z6MkAliceCurrent"),
             did_aw="did:aw:alice",
             address="acme.com/alice",
         )
@@ -6380,7 +6381,7 @@ async def test_send_message_rejects_mismatched_to_alias_and_to_stable_id(aweb_cl
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -6398,7 +6399,7 @@ async def test_send_message_rejects_mismatched_to_alias_and_to_stable_id(aweb_cl
 
     async def _send_auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
+            did_key=named_did_key("z6MkAliceCurrent"),
             did_aw="did:aw:alice",
             address="acme.com/alice",
             team_id="ops:otherco.com",
@@ -6425,7 +6426,7 @@ async def test_send_message_rejects_mismatched_to_address_and_to_did(aweb_cloud_
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -6443,7 +6444,7 @@ async def test_send_message_rejects_mismatched_to_address_and_to_did(aweb_cloud_
             domain="otherco.com",
             name="carol",
             did_aw="did:aw:carol",
-            current_did_key="did:key:z6MktxzJj2aE7eQYwiTKAAyMURUwaGdVjUhRvPguF4wdp67u",
+            current_did_key=named_did_key("carol-current"),
             reachability="public",
             created_at=datetime.now(timezone.utc).isoformat(),
         )
@@ -6452,7 +6453,7 @@ async def test_send_message_rejects_mismatched_to_address_and_to_did(aweb_cloud_
 
     async def _send_auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
+            did_key=named_did_key("z6MkAliceCurrent"),
             did_aw="did:aw:alice",
             address="acme.com/alice",
         )
@@ -6478,7 +6479,7 @@ async def test_send_message_accepts_local_to_address_binding_when_awid_misses(aw
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:test.local', 'test.local', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:test.local', 'test.local', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -6495,7 +6496,7 @@ async def test_send_message_accepts_local_to_address_binding_when_awid_misses(aw
 
     async def _send_auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
+            did_key=named_did_key("z6MkAliceCurrent"),
             did_aw="did:aw:alice",
             address="acme.com/alice",
         )
@@ -6553,7 +6554,7 @@ async def test_send_message_rejects_mismatched_local_to_address_binding_when_awi
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:test.local', 'test.local', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:test.local', 'test.local', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -6573,7 +6574,7 @@ async def test_send_message_rejects_mismatched_local_to_address_binding_when_awi
 
     async def _send_auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
+            did_key=named_did_key("z6MkAliceCurrent"),
             did_aw="did:aw:alice",
             address="acme.com/alice",
         )
@@ -6601,7 +6602,7 @@ async def test_send_message_rejects_mismatched_to_agent_id_and_to_did(aweb_cloud
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -6623,7 +6624,7 @@ async def test_send_message_rejects_mismatched_to_agent_id_and_to_did(aweb_cloud
 
     async def _send_auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
+            did_key=named_did_key("z6MkAliceCurrent"),
             did_aw="did:aw:alice",
             address="acme.com/alice",
         )
@@ -6650,7 +6651,7 @@ async def test_send_message_rejects_mismatched_to_alias_and_to_did(aweb_cloud_db
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -6668,7 +6669,7 @@ async def test_send_message_rejects_mismatched_to_alias_and_to_did(aweb_cloud_db
 
     async def _send_auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
+            did_key=named_did_key("z6MkAliceCurrent"),
             did_aw="did:aw:alice",
             address="acme.com/alice",
             team_id="ops:otherco.com",
@@ -6696,8 +6697,8 @@ async def test_send_message_accepts_to_did_alias_binding_with_duplicate_identity
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES
-            ('stable:identity.local', 'identity.local', 'stable', 'did:key:z6MkiaaDnotCpnwVHYrGYjT1pbYPxbMcPbysqfiGpJZSZtAg'),
-            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkjcDPjZawPWvfr97BGyobCr6SkdZYyrxYu8CBESNWJyZi')
+            ('stable:identity.local', 'identity.local', 'stable', 'did:key:z6MkiaaDnotCpnwVHYrGYjT1pbYPxbMcPbysqfiGpJZSZtAg' /* team-stable */),
+            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkjcDPjZawPWvfr97BGyobCr6SkdZYyrxYu8CBESNWJyZi' /* team-address */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -6714,7 +6715,7 @@ async def test_send_message_accepts_to_did_alias_binding_with_duplicate_identity
 
     async def _send_auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
+            did_key=named_did_key("z6MkAliceCurrent"),
             did_aw="did:aw:alice",
             address="acme.com/alice",
             team_id="ops:otherco.com",
@@ -6751,7 +6752,7 @@ async def test_send_message_rejects_mismatched_to_agent_id_and_to_address(aweb_c
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -6785,7 +6786,7 @@ async def test_send_message_rejects_mismatched_to_agent_id_and_to_address(aweb_c
 
     async def _send_auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
+            did_key=named_did_key("z6MkAliceCurrent"),
             did_aw="did:aw:alice",
             address="acme.com/alice",
         )
@@ -6812,7 +6813,7 @@ async def test_send_message_rejects_mismatched_to_alias_and_to_address(aweb_clou
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -6842,7 +6843,7 @@ async def test_send_message_rejects_mismatched_to_alias_and_to_address(aweb_clou
 
     async def _send_auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
+            did_key=named_did_key("z6MkAliceCurrent"),
             did_aw="did:aw:alice",
             address="acme.com/alice",
             team_id="ops:otherco.com",
@@ -6870,8 +6871,8 @@ async def test_send_message_accepts_to_address_alias_binding_with_duplicate_iden
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES
-            ('stable:identity.local', 'identity.local', 'stable', 'did:key:z6MkiaaDnotCpnwVHYrGYjT1pbYPxbMcPbysqfiGpJZSZtAg'),
-            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkjcDPjZawPWvfr97BGyobCr6SkdZYyrxYu8CBESNWJyZi')
+            ('stable:identity.local', 'identity.local', 'stable', 'did:key:z6MkiaaDnotCpnwVHYrGYjT1pbYPxbMcPbysqfiGpJZSZtAg' /* team-stable */),
+            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkjcDPjZawPWvfr97BGyobCr6SkdZYyrxYu8CBESNWJyZi' /* team-address */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -6900,7 +6901,7 @@ async def test_send_message_accepts_to_address_alias_binding_with_duplicate_iden
 
     async def _send_auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
+            did_key=named_did_key("z6MkAliceCurrent"),
             did_aw="did:aw:alice",
             address="acme.com/alice",
             team_id="ops:otherco.com",
@@ -6937,7 +6938,7 @@ async def test_send_message_rejects_mismatched_to_alias_and_to_agent_id(aweb_clo
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -6959,7 +6960,7 @@ async def test_send_message_rejects_mismatched_to_alias_and_to_agent_id(aweb_clo
 
     async def _send_auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
+            did_key=named_did_key("z6MkAliceCurrent"),
             did_aw="did:aw:alice",
             address="acme.com/alice",
             team_id="ops:otherco.com",
@@ -6987,7 +6988,7 @@ async def test_send_message_accepts_to_agent_id_alias_binding_with_duplicate_ide
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -7009,7 +7010,7 @@ async def test_send_message_accepts_to_agent_id_alias_binding_with_duplicate_ide
 
     async def _send_auth_override():
         return MessagingAuth(
-            did_key="did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4",
+            did_key=named_did_key("z6MkAliceCurrent"),
             did_aw="did:aw:alice",
             address="acme.com/alice",
             team_id="ops:otherco.com",
@@ -7046,7 +7047,7 @@ async def test_send_message_team_and_contacts_accepts_equivalent_owner_did(aweb_
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -7063,7 +7064,7 @@ async def test_send_message_team_and_contacts_accepts_equivalent_owner_did(aweb_
             binding_controller_did, binding_accepted_at, label
         ) VALUES (
             $1, 'acme.com/alice', 'did:aw:alice',
-            'did:key:z6MksdtzGW313q4RQicECqqpSv25FBPhcJBcGAXMZ5RbRPQ7', clock_timestamp(), 'Alice'
+            'did:key:z6MksdtzGW313q4RQicECqqpSv25FBPhcJBcGAXMZ5RbRPQ7' /* z6Mktestcontroller */, clock_timestamp(), 'Alice'
         )
         """,
         bob_did_key,
@@ -7273,8 +7274,8 @@ async def test_send_message_resolves_tilde_alias_cross_team(aweb_cloud_db):
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES
-            ('ops:acme.com', 'acme.com', 'ops', 'did:key:z6MkiK4DciFkG7Sqj2U35cBvNezhk22uso3u8NQ6CKHQZxBb'),
-            ('eng:acme.com', 'acme.com', 'eng', 'did:key:z6MknDtoabfgEheshWvZPN7emDjz6EUyRUcYbZJUwAspDPJQ')
+            ('ops:acme.com', 'acme.com', 'ops', 'did:key:z6MkiK4DciFkG7Sqj2U35cBvNezhk22uso3u8NQ6CKHQZxBb' /* team-ops */),
+            ('eng:acme.com', 'acme.com', 'eng', 'did:key:z6MknDtoabfgEheshWvZPN7emDjz6EUyRUcYbZJUwAspDPJQ' /* team-eng */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -7282,7 +7283,7 @@ async def test_send_message_resolves_tilde_alias_cross_team(aweb_cloud_db):
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
         VALUES
             ('ops:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END),
-            ('eng:acme.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
+            ('eng:acme.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
         """,
         alice_did_key,
     )
@@ -7361,8 +7362,8 @@ async def test_send_message_rejects_invalid_tilde_alias_targets(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES
-            ('ops:acme.com', 'acme.com', 'ops', 'did:key:z6MkiK4DciFkG7Sqj2U35cBvNezhk22uso3u8NQ6CKHQZxBb'),
-            ('eng:acme.com', 'acme.com', 'eng', 'did:key:z6MknDtoabfgEheshWvZPN7emDjz6EUyRUcYbZJUwAspDPJQ')
+            ('ops:acme.com', 'acme.com', 'ops', 'did:key:z6MkiK4DciFkG7Sqj2U35cBvNezhk22uso3u8NQ6CKHQZxBb' /* team-ops */),
+            ('eng:acme.com', 'acme.com', 'eng', 'did:key:z6MknDtoabfgEheshWvZPN7emDjz6EUyRUcYbZJUwAspDPJQ' /* team-eng */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -7519,7 +7520,7 @@ async def test_identity_auth_mail_derives_sender_address_from_agent_row(aweb_clo
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:gsk.aweb.ai', 'gsk.aweb.ai', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:gsk.aweb.ai', 'gsk.aweb.ai', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -7906,7 +7907,7 @@ async def test_messages_inbox_and_ack_accept_ephemeral_cert_auth(aweb_cloud_db):
         )
         VALUES (
             '44444444-4444-4444-4444-444444444444',
-            'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH',
+            'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */,
             $1,
             'bob',
             'alice',
@@ -7953,13 +7954,13 @@ async def test_send_message_requires_timestamp_when_signature_is_provided(aweb_c
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
+        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
         """
     )
 
@@ -7996,13 +7997,13 @@ async def test_send_message_rejects_signed_payload_body_mismatch(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
+        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
         """
     )
 
@@ -8057,13 +8058,13 @@ async def test_send_message_rejects_signed_payload_priority_mismatch(aweb_cloud_
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
+        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
         """
     )
 
@@ -8117,13 +8118,13 @@ async def test_send_message_rejects_signed_payload_recipient_mismatch(aweb_cloud
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
+        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
         """
     )
 
@@ -8176,13 +8177,13 @@ async def test_send_message_rejects_signed_payload_from_stable_id_mismatch(aweb_
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
+        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
         """
     )
 
@@ -8236,13 +8237,13 @@ async def test_send_message_rejects_signed_payload_from_mismatch(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
+        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
         """
     )
 
@@ -8295,13 +8296,13 @@ async def test_send_message_rejects_signed_from_did_mismatch(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
+        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
         """
     )
 
@@ -8343,8 +8344,8 @@ async def test_cross_team_same_registry_address_send_creates_bound_contact_witho
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES
-            ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6Mkiaw9QJ3qz3MgcoeAW8gvs1WLbTQCE5kHERyReAFdHHFF'),
-            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkvUF1XQ9DrqRwsYYeXkwnhEATAYWWXAEcE8YNyXWnwqv5')
+            ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6Mkiaw9QJ3qz3MgcoeAW8gvs1WLbTQCE5kHERyReAFdHHFF' /* z6MkAliceTeam */),
+            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkvUF1XQ9DrqRwsYYeXkwnhEATAYWWXAEcE8YNyXWnwqv5' /* z6MkBobTeam */)
         """
     )
     alice_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
@@ -8385,7 +8386,7 @@ async def test_cross_team_same_registry_address_send_creates_bound_contact_witho
         return_value=Namespace(
             namespace_id="namespace-otherco",
             domain="otherco.com",
-            controller_did="did:key:z6MkrBNx4mngyX91A2pnqtnoPzXhhGvjix1cyD6m3Ae6dvux",
+            controller_did=named_did_key("z6MkNamespaceController"),
             verification_status="verified",
             last_verified_at=None,
             created_at=datetime.now(timezone.utc).isoformat(),
@@ -8455,7 +8456,7 @@ async def test_cross_team_same_registry_address_send_creates_bound_contact_witho
         "owner_did": "did:aw:alice",
         "contact_address": "otherco.com/bob",
         "contact_did_aw": "did:aw:bob",
-        "binding_controller_did": "did:key:z6MkrBNx4mngyX91A2pnqtnoPzXhhGvjix1cyD6m3Ae6dvux",
+        "binding_controller_did": named_did_key("z6MkNamespaceController"),
         "status": "active",
     }
     registry.resolve_address_fresh.assert_awaited_once_with("otherco.com", "bob")
@@ -8468,13 +8469,13 @@ async def test_send_message_to_did_does_not_create_unresolved_identity_contact(a
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
+        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
         """
     )
 
@@ -8524,13 +8525,13 @@ async def test_send_message_to_global_address_team_and_contacts_rejects_non_cont
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6Mkew8S3h9YHwt6fZR2TCkNVuyLd7zJ5nkTtjsZH4FhepWa', 'did:aw:bob-contacts', 'otherco.com/bob-contacts', 'bob-contacts', 'global', 'developer', 'team_and_contacts', CASE WHEN NULLIF('did:aw:bob-contacts', '') IS NOT NULL THEN 'did:key:z6Mkew8S3h9YHwt6fZR2TCkNVuyLd7zJ5nkTtjsZH4FhepWa' END)
+        VALUES ('ops:otherco.com', 'did:key:z6Mkew8S3h9YHwt6fZR2TCkNVuyLd7zJ5nkTtjsZH4FhepWa' /* bob-contacts */, 'did:aw:bob-contacts', 'otherco.com/bob-contacts', 'bob-contacts', 'global', 'developer', 'team_and_contacts', CASE WHEN NULLIF('did:aw:bob-contacts', '') IS NOT NULL THEN 'did:key:z6Mkew8S3h9YHwt6fZR2TCkNVuyLd7zJ5nkTtjsZH4FhepWa' /* bob-contacts */ END)
         """
     )
 
@@ -8542,7 +8543,7 @@ async def test_send_message_to_global_address_team_and_contacts_rejects_non_cont
             domain="otherco.com",
             name="bob-contacts",
             did_aw="did:aw:bob-contacts",
-            current_did_key="did:key:z6Mkew8S3h9YHwt6fZR2TCkNVuyLd7zJ5nkTtjsZH4FhepWa",
+            current_did_key=named_did_key("bob-contacts"),
             reachability="public",
             created_at=datetime.now(timezone.utc).isoformat(),
         )
@@ -8577,13 +8578,13 @@ async def test_send_message_to_global_address_allows_explicit_inbound_mode_open(
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
+        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
         """
     )
 
@@ -8595,7 +8596,7 @@ async def test_send_message_to_global_address_allows_explicit_inbound_mode_open(
             domain="otherco.com",
             name="bob",
             did_aw="did:aw:bob",
-            current_did_key="did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
+            current_did_key=named_did_key("bob"),
             reachability="public",
             created_at=datetime.now(timezone.utc).isoformat(),
         )
@@ -8622,13 +8623,13 @@ async def test_send_message_global_recipient_null_inbound_mode_fails_migration_r
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6Mks2kyCw17zj4tBNJLsa65sw7bXG1WYbtv2mDD9PXVqQUf', 'did:aw:bob-migration', 'otherco.com/bob-migration', 'bob-migration', 'global', 'developer', NULL, CASE WHEN NULLIF('did:aw:bob-migration', '') IS NOT NULL THEN 'did:key:z6Mks2kyCw17zj4tBNJLsa65sw7bXG1WYbtv2mDD9PXVqQUf' END)
+        VALUES ('ops:otherco.com', 'did:key:z6Mks2kyCw17zj4tBNJLsa65sw7bXG1WYbtv2mDD9PXVqQUf' /* bob-migration */, 'did:aw:bob-migration', 'otherco.com/bob-migration', 'bob-migration', 'global', 'developer', NULL, CASE WHEN NULLIF('did:aw:bob-migration', '') IS NOT NULL THEN 'did:key:z6Mks2kyCw17zj4tBNJLsa65sw7bXG1WYbtv2mDD9PXVqQUf' /* bob-migration */ END)
         """
     )
 
@@ -8665,13 +8666,13 @@ async def test_send_message_to_address_falls_back_to_local_ephemeral_agent(aweb_
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', NULL, NULL, 'bob', 'local', 'developer', 'open', CASE WHEN NULLIF(NULL, '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
+        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, NULL, NULL, 'bob', 'local', 'developer', 'open', CASE WHEN NULLIF(NULL, '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
         """
     )
 
@@ -8701,13 +8702,13 @@ async def test_send_message_to_address_does_not_fall_back_to_local_persistent_ag
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
+        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
         """
     )
 
@@ -8745,13 +8746,13 @@ async def test_send_message_to_address_uses_same_team_local_recipient_when_awid_
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'otherco.com/bob', 'bob', $1, 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
+        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', $1, 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
         """,
         recipient_identity_scope,
     )
@@ -8793,14 +8794,14 @@ async def test_send_message_to_address_rejects_cross_team_local_persistent_when_
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES
-            ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo'),
-            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6Mksty56NE8sLwnubZAGcm16vuLQnaMnSqUcsGmGygSk8mF')
+            ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo' /* team-1 */),
+            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6Mksty56NE8sLwnubZAGcm16vuLQnaMnSqUcsGmGygSk8mF' /* team-2 */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
+        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
         """
     )
 
@@ -8834,13 +8835,13 @@ async def test_send_message_to_address_uses_local_persistent_when_registry_uncon
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
+        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
         """
     )
 
@@ -8873,13 +8874,13 @@ async def test_send_message_to_stable_id_address_binding_uses_local_persistent_w
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
+        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
         """
     )
 
@@ -8921,13 +8922,13 @@ async def test_send_message_to_private_address_uses_client_recipient_binding(
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'otherco.com/bob', 'bob', $1, 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
+        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', $1, 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
         """,
         recipient_identity_scope,
     )
@@ -8952,7 +8953,7 @@ async def test_send_message_to_private_address_uses_client_recipient_binding(
             "subject": f"private bound {recipient_identity_scope}",
             "timestamp": timestamp,
             "to": "otherco.com/bob",
-            "to_did": "did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
+            "to_did": named_did_key("bob"),
             "to_stable_id": "did:aw:bob",
             "type": "mail",
         }
@@ -8996,13 +8997,13 @@ async def test_send_message_to_private_address_rejects_unverified_client_recipie
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8')
+        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
         """
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH', 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' END)
+        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
         """
     )
 
@@ -9026,7 +9027,7 @@ async def test_send_message_to_private_address_rejects_unverified_client_recipie
             "subject": "private spoof",
             "timestamp": timestamp,
             "to": "otherco.com/bob",
-            "to_did": "did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH",
+            "to_did": named_did_key("bob"),
             "to_stable_id": "did:aw:bob",
             "type": "mail",
         }

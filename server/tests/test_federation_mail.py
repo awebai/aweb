@@ -16,16 +16,17 @@ from aweb.federation.mail import (
     FederatedMailDeliveryError,
     deliver_federated_message,
 )
+from did_key_fixtures import named_did_key
 
 
 def _envelope() -> FederationEnvelope:
     return FederationEnvelope(
         type="mail",
         sender_did_aw="did:aw:sender",
-        sender_current_did_key="did:key:z6Mku8RjwBSuKyvASdpqNoawdHyLmaD2jWSnCankL3gt4wfL",
+        sender_current_did_key=named_did_key("sender"),
         target_address="example.com/bob",
         target_did_aw="did:aw:target",
-        target_current_did_key="did:key:z6Mkw4XqHyToP77ajm9jFFunhLmRWHmb4HRgfXBZMZW1H3iu",
+        target_current_did_key=named_did_key("target"),
         target_delivery_origin="https://target.example",
         body="hello",
         message_id=str(uuid4()),
