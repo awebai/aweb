@@ -1027,7 +1027,8 @@
       "id": "AWID.ID.WRITE_CLIENT",
       "repo": "aweb",
       "files": [
-        "awid/src/awid/registry.py"
+        "awid/src/awid/registry.py",
+        "awid/src/awid/id_tree_requests.py"
       ],
       "operations": [
         "sign",
@@ -1043,9 +1044,10 @@
         "J10"
       ],
       "proving_tests": [
-        "awid/tests/test_id_registry_client.py"
+        "awid/tests/test_id_registry_client.py",
+        "awid/tests/test_id_tree_requests.py"
       ],
-      "acceptance": "Public register, revoke and signed-rotation client: exact covering-v2 bytes; a sync-or-awaitable signer whose answer is verified with the shared strict profile before anything is sent; a refusing signer sends nothing.",
+      "acceptance": "Public register, revoke and signed-rotation client: exact covering-v2 bytes built only by the public request layout (awid.id_tree_requests) that hosts rebuild before signing; a sync-or-awaitable signer whose answer is verified with the shared strict profile before anything is sent; a refusing signer sends nothing.",
       "candidate_head": "b4ccf3ed57259e3d322be797e44bc8790cdb6646",
       "ed25519_profile": "strict",
       "sites": [
@@ -1054,8 +1056,20 @@
           "symbol": "RegistryClient.register_id_certificate"
         },
         {
-          "file": "awid/src/awid/registry.py",
-          "symbol": "RegistryClient._covering_request"
+          "file": "awid/src/awid/id_tree_requests.py",
+          "symbol": "register_body"
+        },
+        {
+          "file": "awid/src/awid/id_tree_requests.py",
+          "symbol": "revoke_body"
+        },
+        {
+          "file": "awid/src/awid/id_tree_requests.py",
+          "symbol": "rotate_body"
+        },
+        {
+          "file": "awid/src/awid/id_tree_requests.py",
+          "symbol": "covering_payload"
         },
         {
           "file": "awid/src/awid/registry.py",
@@ -18015,10 +18029,34 @@
       },
       {
         "row": "AWID.ID.WRITE_CLIENT",
-        "file": "awid/src/awid/registry.py",
-        "symbol": "RegistryClient._covering_request",
+        "file": "awid/src/awid/id_tree_requests.py",
+        "symbol": "register_body",
         "calls": {
-          "awid.signing.canonical_json_bytes": 2
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "AWID.ID.WRITE_CLIENT",
+        "file": "awid/src/awid/id_tree_requests.py",
+        "symbol": "revoke_body",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "AWID.ID.WRITE_CLIENT",
+        "file": "awid/src/awid/id_tree_requests.py",
+        "symbol": "rotate_body",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
+        }
+      },
+      {
+        "row": "AWID.ID.WRITE_CLIENT",
+        "file": "awid/src/awid/id_tree_requests.py",
+        "symbol": "covering_payload",
+        "calls": {
+          "awid.signing.canonical_json_bytes": 1
         }
       },
       {

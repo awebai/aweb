@@ -1272,6 +1272,16 @@ that does not verify or the wrong role's key, sends nothing. A refusal raises
 `RegistryError` with `status_code`, `detail`, and `code` when the registry
 sent a coded refusal.
 
+The request bytes come only from `awid.id_tree_requests`, a pure module with
+no I/O: `REGISTER_PATH`, `REVOKE_PATH` and `rotate_path(domain)`; the
+operation names; `register_body`, `revoke_body`, `rotate_claims` and
+`rotate_body`; and `covering_payload(*, aud, path, domain, operation, body,
+timestamp, claims=None)`. A host that holds a signing key rebuilds the request
+it intends from these and compares the whole payload it is asked to sign, so a
+body digest is never checked alone. `RegistryClient.registry_audience(domain)`
+is the `aud` a write for that domain signs: the canonical origin of the
+registry it is routed to, resolved exactly as the write resolves it.
+
 ---
 
 ## awid database schema

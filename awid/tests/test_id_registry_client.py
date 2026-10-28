@@ -19,6 +19,19 @@ from nacl.signing import SigningKey
 
 import awid.registry as registry_module
 from awid.id_certificates import decode_id_chain_header
+from awid.id_tree_requests import (
+    REGISTER_OPERATION,
+    REGISTER_PATH,
+    REVOKE_OPERATION,
+    REVOKE_PATH,
+    ROTATE_OPERATION,
+    covering_payload,
+    register_body,
+    revoke_body,
+    rotate_body,
+    rotate_claims,
+    rotate_path,
+)
 from awid.registry import CachedRegistryClient, RegistryClient, RegistryError
 
 from id_tree_support import ORIGIN, VECTORS, Tree, at, certificate, certificate_id, did_aw, did_key, seed
@@ -247,6 +260,70 @@ async def test_an_uncoded_refusal_has_no_code(recorded):
     assert (refused.value.status_code, refused.value.code, refused.value.detail) == (
         429, None, "rate limit exceeded",
     )
+
+
+def _signed_payload(sent: httpx.Request) -> bytes:
+    header = sent.headers["X-AWEB-Signed-Payload"]
+    return base64.b64decode(header + "=" * (-len(header) % 4), altchars=b"-_", validate=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("effective_from", [None, "2026-10-26T00:05:00Z"])
+async def test_every_write_sends_exactly_the_shared_request_layout(recorded, effective_from):
+    bundle = _bundle("alice", "bob")
+    claims = rotate_claims(from_seq=1, previous_did_key=did_key("root"), new_did_key=did_key("root_rotated"))
+    await recorded.client.register_id_certificate(
+        bundle, signer=signer_for("bob"), expected_head=None, invitation_id=EXAMPLE["body"]["invitation_id"],
+    )
+    await recorded.client.revoke_id_certificate(
+        DOMAIN, did_aw("bob"), signer=signer_for("root"), expected_head=certificate_id("bob"),
+        effective_from=effective_from,
+    )
+    recorded.response = httpx.Response(200, json={
+        "namespace_id": "00000000-0000-4000-8000-000000000009", "domain": DOMAIN,
+        "controller_did": did_key("root_rotated"), "verification_status": "verified",
+        "last_verified_at": "2026-10-26T00:10:00Z", "created_at": "2026-10-26T00:00:00Z",
+    })
+    await _rotate(recorded.client)
+
+    aud = await recorded.client.registry_audience(DOMAIN)
+    expected = [
+        (REGISTER_PATH, REGISTER_OPERATION, None, register_body(
+            bundle["certificates"][-1], expected_head=None, invitation_id=EXAMPLE["body"]["invitation_id"],
+        )),
+        (REVOKE_PATH, REVOKE_OPERATION, None, revoke_body(
+            DOMAIN, did_aw("bob"), expected_head=certificate_id("bob"), effective_from=effective_from,
+        )),
+        (rotate_path(DOMAIN), ROTATE_OPERATION, claims, rotate_body(DOMAIN, claims)),
+    ]
+    assert len(recorded.requests) == len(expected)
+    for sent, (path, operation, op_claims, body) in zip(recorded.requests, expected):
+        assert (sent.url.path, sent.content) == (path, body)
+        assert _signed_payload(sent) == covering_payload(
+            aud=aud, path=path, domain=DOMAIN, operation=operation, body=body,
+            timestamp=sent.headers["X-AWEB-Timestamp"], claims=op_claims,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("routed", ["https://other-registry.example", "HTTPS://Other-Registry.example:443/"])
+async def test_the_registry_audience_is_the_audience_a_write_to_the_routed_registry_signs(routed):
+    recorder = Recorder(httpx.Response(200, json=EXAMPLE["response"]))
+
+    async def route(domain: str) -> str:
+        assert domain == DOMAIN
+        return routed
+
+    client = RegistryClient(ORIGIN, transport=httpx.MockTransport(recorder.handler), domain_registry_resolver=route)
+    try:
+        audience = await client.registry_audience(DOMAIN)
+        await client.register_id_certificate(
+            _bundle("alice", "bob"), signer=signer_for("bob"), expected_head=None, invitation_id=None,
+        )
+    finally:
+        await client.aclose()
+    [sent] = recorder.requests
+    assert audience == json.loads(_signed_payload(sent))["aud"] == "https://other-registry.example"
 
 
 # ---------------------------------------------------------------------------

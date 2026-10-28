@@ -23,7 +23,6 @@ from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from awid.contract import normalize_identity_scope
-from awid.controller_request import CONTROLLER_REQUEST_TYPE
 from awid.did import did_from_public_key, stable_id_from_did_key
 from awid.dns_verify import DomainVerifier
 from awid.id_certificates import (
@@ -33,6 +32,19 @@ from awid.id_certificates import (
     key_response_id_tree,
     status_request,
     verify_ed25519,
+)
+from awid.id_tree_requests import (
+    REGISTER_OPERATION,
+    REGISTER_PATH,
+    REVOKE_OPERATION,
+    REVOKE_PATH,
+    ROTATE_OPERATION,
+    covering_payload,
+    register_body,
+    revoke_body,
+    rotate_body,
+    rotate_claims,
+    rotate_path,
 )
 from awid.log import (
     canonical_server_origin,
@@ -371,6 +383,10 @@ class RegistryClient:
             return self.base_url.rstrip("/")
         return canonical_server_origin(target_registry_url)
 
+    async def registry_audience(self, domain: str) -> str:
+        """The audience a write for ``domain`` signs: the canonical origin of the registry it is routed to."""
+        return canonical_server_origin(await self._registry_url_for_domain(domain))
+
     async def _registry_url_for_domain(self, domain: str) -> str:
         if self.domain_registry_resolver is not None:
             return canonical_server_origin(await self.domain_registry_resolver(domain))
@@ -525,10 +541,10 @@ class RegistryClient:
         leaf = bundle["certificates"][-1]
         chain_header = encode_id_chain_header(bundle)
         return await self._covering_request(
-            "/v1/id-certificates/register",
+            REGISTER_PATH,
             domain=leaf["certificate"]["domain"],
-            operation="register_id_certificate",
-            body={"certificate": leaf, "expected_head": expected_head, "invitation_id": invitation_id},
+            operation=REGISTER_OPERATION,
+            body=register_body(leaf, expected_head=expected_head, invitation_id=invitation_id),
             signers=[("Authorization", signer, None)],
             extra_headers={"X-AWID-ID-Chain": chain_header},
         )
@@ -544,10 +560,10 @@ class RegistryClient:
     ) -> dict[str, Any]:
         """Revoke the registered ``id``; AWID decides whether the signer acts as root, self or parent."""
         return await self._covering_request(
-            "/v1/id-certificates/revoke",
+            REVOKE_PATH,
             domain=domain,
-            operation="revoke_id_certificate",
-            body={"domain": domain, "id": id, "expected_head": expected_head, "effective_from": effective_from},
+            operation=REVOKE_OPERATION,
+            body=revoke_body(domain, id, expected_head=expected_head, effective_from=effective_from),
             signers=[("Authorization", signer, None)],
         )
 
@@ -566,13 +582,13 @@ class RegistryClient:
         Both keys sign the same request, and each signer must answer with the
         key named for its role. ``from_seq`` is the open epoch being rotated.
         """
-        claims = {"from_seq": from_seq, "previous_did_key": previous_did_key, "new_did_key": new_did_key}
+        claims = rotate_claims(from_seq=from_seq, previous_did_key=previous_did_key, new_did_key=new_did_key)
         return _namespace_from_json(
             await self._covering_request(
-                f"/v1/namespaces/{domain}/rotate",
+                rotate_path(domain),
                 domain=domain,
-                operation="rotate_namespace_controller",
-                body={"domain": domain, "operation": "rotate_namespace_controller", **claims},
+                operation=ROTATE_OPERATION,
+                body=rotate_body(domain, claims),
                 claims=claims,
                 signers=[
                     ("Authorization", previous_signer, previous_did_key),
@@ -587,7 +603,7 @@ class RegistryClient:
         *,
         domain: str,
         operation: str,
-        body: dict[str, Any],
+        body: bytes,
         signers: list[tuple[str, PayloadSigner, str | None]],
         claims: dict[str, Any] | None = None,
         extra_headers: dict[str, str] | None = None,
@@ -598,20 +614,11 @@ class RegistryClient:
         anything is sent; a signer that raises or answers wrongly sends nothing.
         """
         registry_url = await self._registry_url_for_domain(domain)
-        raw_body = canonical_json_bytes(body)
         timestamp = _utc_timestamp()
-        payload = canonical_json_bytes({
-            **(claims or {}),
-            "v": 2,
-            "type": CONTROLLER_REQUEST_TYPE,
-            "aud": canonical_server_origin(registry_url),
-            "method": "POST",
-            "path": path,
-            "body_sha256": hashlib.sha256(raw_body).hexdigest(),
-            "timestamp": timestamp,
-            "domain": domain,
-            "operation": operation,
-        })
+        payload = covering_payload(
+            aud=canonical_server_origin(registry_url), path=path, domain=domain, operation=operation,
+            body=body, timestamp=timestamp, claims=claims,
+        )
         headers = {
             "Content-Type": "application/json",
             "X-AWEB-Timestamp": timestamp,
@@ -621,7 +628,7 @@ class RegistryClient:
         for header, signer, expected_key in signers:
             did_key, signature = await _payload_signature(signer, payload, expected_key)
             headers[header] = f"DIDKey {did_key} {base64.b64encode(signature).rstrip(b'=').decode('ascii')}"
-        return await self._request_json("POST", path, headers=headers, content=raw_body, registry_url=registry_url)
+        return await self._request_json("POST", path, headers=headers, content=body, registry_url=registry_url)
 
     async def fetch_id_certificate_status(self, domain: str, request: dict[str, Any]) -> dict[str, Any]:
         """POST a status request to the registry ``domain`` routes to.
