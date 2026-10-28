@@ -810,3 +810,81 @@ func TestIDChildIssueNewChildIDIsTheSubjectKeys(t *testing.T) {
 		})
 	}
 }
+
+// Security notes on H2a (7d9949f5): N81 refused and expired requests never
+// sign; N83 a parent chain that does not verify against the evidence is
+// never signed into a response that every retry would replay.
+func TestIDChildIssueApproveRefusals(t *testing.T) {
+	x := loadIDChildExchange(t)
+	human := loadIDChildIssueCases(t)["csr-human-exact-interactive-approval"]
+	request := x.requests["human-issue"].CanonicalUTF8
+	requestID := requestIDOf(t, request)
+	approved := fullHumanApproval(human.Input.ConfirmedFingerprint)
+	pending := func(t *testing.T) *issueRun {
+		t.Helper()
+		r := x.issueRun(t, human)
+		if _, err := r.receive(request); err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+
+	t.Run("N81a a refused request is never signed", func(t *testing.T) {
+		r := pending(t)
+		if err := awid.RefuseIDChildRequest(r.invitations, requestID); err != nil {
+			t.Fatal(err)
+		}
+		response, err := r.approve(t, requestID, approved)
+		if err == nil || response != nil || r.calls != 0 {
+			t.Fatalf("err=%v calls=%d", err, r.calls)
+		}
+		if state := r.invitation(t, human.Input.InvitationID).Request.State; state != awid.IDRequestFailed {
+			t.Fatalf("state=%s", state)
+		}
+	})
+
+	t.Run("N81b approval at exactly expires_at refuses", func(t *testing.T) {
+		r := pending(t)
+		inv := r.invitation(t, human.Input.InvitationID)
+		inv.ExpiresAt = r.now.UTC().Format("2006-01-02T15:04:05Z")
+		if err := r.invitations.PutInvitation(inv); err != nil {
+			t.Fatal(err)
+		}
+		response, err := r.approve(t, requestID, approved)
+		if got := awid.IDCertificateErrorCode(err); got != "invitation_conflict" || response != nil || r.calls != 0 {
+			t.Fatalf("reason=%q (%v) calls=%d", got, err, r.calls)
+		}
+	})
+
+	tampered := func(t *testing.T) []any {
+		t.Helper()
+		chain := x.parentChain(t, "normal", x.v.Keys["alice"].DIDAW)
+		signed := map[string]any{}
+		for k, v := range chain[0].(map[string]any) {
+			signed[k] = v
+		}
+		signature := []byte(signed["signature"].(string))
+		signature[0] ^= 'A' ^ 'B'
+		if signature[0] == signed["signature"].(string)[0] {
+			t.Fatal("signature unchanged")
+		}
+		signed["signature"] = string(signature)
+		return []any{signed}
+	}
+	for name, chain := range map[string]func(*testing.T) []any{
+		"N83 a superseded revision of the parent":        func(t *testing.T) []any { return []any{x.v.Certificates["alice-readmitted"].Signed} },
+		"N83 a parent certificate whose signature fails": tampered,
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := pending(t)
+			r.parentChain = chain(t)
+			response, err := r.approve(t, requestID, approved)
+			if err == nil || response != nil || r.calls != 0 {
+				t.Fatalf("err=%v calls=%d", err, r.calls)
+			}
+			if inv := r.invitation(t, human.Input.InvitationID); inv.Request.State != awid.IDRequestPending || inv.Request.Response != "" {
+				t.Fatalf("state=%s", inv.Request.State)
+			}
+		})
+	}
+}

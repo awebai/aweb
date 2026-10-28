@@ -198,6 +198,7 @@ func TestValidateHumanKeyBackupIsStructural(t *testing.T) {
 		"text after the block":                    append(append([]byte(nil), good...), "note"...),
 		"plaintext PEM prepended":                 append(append([]byte(nil), plaintextPEM...), good...),
 		"text before the block":                   append([]byte("note\n"), good...),
+		"a header inside the block":               withPEMHeader(t, good),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := ValidateHumanKeyBackup(blob); err == nil {
@@ -205,4 +206,16 @@ func TestValidateHumanKeyBackupIsStructural(t *testing.T) {
 			}
 		})
 	}
+}
+
+// withPEMHeader re-encodes backup with a PEM header, which can carry any text
+// (security N82).
+func withPEMHeader(t *testing.T, backup []byte) []byte {
+	t.Helper()
+	block, _ := pem.Decode(backup)
+	if block == nil {
+		t.Fatal("no block")
+	}
+	block.Headers = map[string]string{"Comment": "seed 00"}
+	return pem.EncodeToMemory(block)
 }

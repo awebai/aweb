@@ -579,3 +579,32 @@ func TestIDChildResignExchangeOnTheFileStore(t *testing.T) {
 		t.Fatalf("the lost entry was not recreated: %v", err)
 	}
 }
+
+// N83 on the re-sign exchange: the parent chain the response carries is
+// verified against the evidence before signing, since the response is
+// recorded as final and replayed on every retry.
+func TestIDChildResignVerifiesTheParentChain(t *testing.T) {
+	x := loadIDChildExchange(t)
+	c := x.cases["csr-local-resign-contact-no-human-login"]
+	a := x.approval(t, c)
+	if _, err := a.receive(); err != nil {
+		t.Fatal(err)
+	}
+	chain := a.x.parentChain(t, "alice-rotated", a.parentID)
+	signed := map[string]any{}
+	for k, v := range chain[0].(map[string]any) {
+		signed[k] = v
+	}
+	signature := []byte(signed["signature"].(string))
+	signature[0] ^= 'A' ^ 'B'
+	signed["signature"] = string(signature)
+	parsed, err := awid.ParseIDCertificateRequest([]byte(a.request))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestID := parsed["request"].(map[string]any)["request_id"].(string)
+	response, err := awid.ApproveIDResignRequest(a.store, requestID, a.parentID, []any{signed}, a.x.evidence(a.status), "example.com", vectorSigner(t, a.x.v, a.signer, &a.calls), a.now)
+	if err == nil || response != nil || a.calls != 0 {
+		t.Fatalf("err=%v calls=%d", err, a.calls)
+	}
+}
