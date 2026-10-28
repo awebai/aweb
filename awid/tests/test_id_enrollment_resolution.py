@@ -8,6 +8,7 @@ nothing means unknown, never not enrolled.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 
@@ -166,21 +167,50 @@ async def test_a_stated_enrollment_is_reused_from_the_cache():
     assert registry.requests == 1
 
 
+class _EnrollAfterMappingRead:
+    """A transaction that commits bob's enrollment right after the route reads the key mapping."""
+
+    def __init__(self, tx, enroll) -> None:
+        self._tx = tx
+        self._enroll = enroll
+
+    async def fetch_one(self, query, *args):
+        row = await self._tx.fetch_one(query, *args)
+        if "did_aw_mappings" in query and self._enroll is not None:
+            enroll, self._enroll = self._enroll, None
+            await enroll()
+        return row
+
+    def __getattr__(self, name):
+        return getattr(self._tx, name)
+
+
+class _ManagerEnrollingDuringKeyRead:
+    def __init__(self, manager, enroll) -> None:
+        self._manager = manager
+        self._enroll = enroll
+
+    @contextlib.asynccontextmanager
+    async def transaction(self):
+        async with self._manager.transaction() as tx:
+            yield _EnrollAfterMappingRead(tx, self._enroll)
+
+    def __getattr__(self, name):
+        return getattr(self._manager, name)
+
+
 @pytest.mark.asyncio
 async def test_key_and_enrollment_come_from_one_snapshot(tree, monkeypatch):
-    """An enrollment committed while the key is being read is not reported with that key."""
-    real = did_routes._fetch_current_encryption_assertion
+    """An enrollment committed between the key mapping and enrollment reads is not reported with that key."""
+    real_db = did_routes._db
 
-    async def enroll_bob_meanwhile(db, **kwargs):
-        resp = await tree.register(
-            [certificate("alice"), certificate("bob")], when=at("2026-10-26T00:03:00Z"),
-        )
+    async def enroll_bob():
+        resp = await tree.register([certificate("alice"), certificate("bob")], when=at("2026-10-26T00:03:00Z"))
         assert resp.status_code == 200, resp.text
-        return await real(db, **kwargs)
 
-    monkeypatch.setattr(did_routes, "_fetch_current_encryption_assertion", enroll_bob_meanwhile)
+    monkeypatch.setattr(did_routes, "_db", lambda request: _ManagerEnrollingDuringKeyRead(real_db(request), enroll_bob))
     assert await _id_tree(tree, "bob") == {"enrolled": False}
-    monkeypatch.setattr(did_routes, "_fetch_current_encryption_assertion", real)
+    monkeypatch.setattr(did_routes, "_db", real_db)
     assert await _id_tree(tree, "bob") == {"enrolled": True, "domain": DOMAIN}
 
 
@@ -304,3 +334,81 @@ async def test_a_missing_key_with_an_unreadable_body_is_unknown():
     finally:
         await client.aclose()
     assert missing.value.id_tree is None
+
+
+KEY_RESOLUTION_OUTCOMES = VECTORS["key_resolution_outcomes"]
+# Cases whose usable enrollment comes from S4's binding lifecycle rather than a
+# response the SDK parses: last-known-good enrollment after a failed refresh.
+OUTCOMES_OWNED_BY_S4_BINDING = {"key-resolution-failed-refresh-age-900", "key-resolution-failed-refresh-age-901"}
+
+
+def _outcome_answer(case: dict) -> httpx.Response:
+    if case["http_status"] == 404:
+        return httpx.Response(404, json=case["key_response"])
+    return httpx.Response(case["http_status"], json=_key_answer(**case["key_response"]))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case", [c for c in KEY_RESOLUTION_OUTCOMES if "expected_parse" in c], ids=lambda c: c["name"],
+)
+async def test_key_resolution_outcome_cases(case):
+    """The frozen HTTP and refresh outcomes the SDK parses, by name."""
+    requests = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return _outcome_answer(case)
+
+    redis = FakeRedis()
+    client = CachedRegistryClient(ORIGIN, redis, transport=httpx.MockTransport(answer))
+    if "cached_key_response" in case:
+        await redis.set(client._did_key_cache_key(did_aw("alice")), json.dumps({
+            "fetched_at": 2_000_000_000, "fresh_until": 2_000_000_000 + 300,
+            "value": _key_answer(**case["cached_key_response"]),
+        }), ex=600)
+    expected = case["expected_parse"]
+    stated = {
+        "enrolled": IDTreeEnrollment(enrolled=True, domain=expected["domain"]),
+        "not_enrolled": IDTreeEnrollment(enrolled=False, domain=None),
+        "unknown": None,
+    }
+    try:
+        if expected["state"] == "malformed":
+            with pytest.raises(ValueError):
+                await client.resolve_key(did_aw("alice"))
+        elif case["http_status"] == 404:
+            with pytest.raises(DIDKeyNotFoundError) as missing:
+                await client.resolve_key(did_aw("alice"))
+            assert missing.value.id_tree == stated[expected["state"]]
+        else:
+            assert (await client.resolve_key(did_aw("alice"))).id_tree == stated[expected["state"]]
+    finally:
+        await client.aclose()
+    if case.get("expected_key_refetch"):
+        assert len(requests) == 1
+
+
+def test_every_key_resolution_outcome_is_accounted_for():
+    names = {case["name"] for case in KEY_RESOLUTION_OUTCOMES}
+    parsed_here = {case["name"] for case in KEY_RESOLUTION_OUTCOMES if "expected_parse" in case}
+    assert len(names) == len(KEY_RESOLUTION_OUTCOMES) == 10
+    assert parsed_here | OUTCOMES_OWNED_BY_S4_BINDING == names
+    assert not parsed_here & OUTCOMES_OWNED_BY_S4_BINDING
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body", [b"[]", b'["not found"]', b"null", b'"not found"', b"404"],
+    ids=["empty-array", "array", "null", "string", "number"],
+)
+async def test_a_missing_key_whose_json_body_is_not_an_object_rejects(body):
+    """As the shared parser treats a non-object response: malformed, never unknown."""
+    client = RegistryClient(ORIGIN, transport=httpx.MockTransport(
+        lambda request: httpx.Response(404, content=body, headers={"Content-Type": "application/json"}),
+    ))
+    try:
+        with pytest.raises(ValueError):
+            await client.resolve_key(did_aw("alice"))
+    finally:
+        await client.aclose()
