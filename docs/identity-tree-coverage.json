@@ -244,7 +244,9 @@
       "files": [
         "channel-core/src/identity/id_certificates.ts",
         "channel-core/src/identity/id_verification.ts",
-        "channel-core/src/identity/strict_json.ts"
+        "channel-core/src/identity/strict_json.ts",
+        "channel-core/src/identity/did.ts",
+        "cli/go/wake/channel_core_runner_bundle.mjs"
       ],
       "operations": [
         "encode",
@@ -314,10 +316,6 @@
         },
         {
           "file": "channel-core/src/identity/id_certificates.ts",
-          "symbol": "primeSubgroupPoint"
-        },
-        {
-          "file": "channel-core/src/identity/id_certificates.ts",
           "symbol": "isCanonicalDidKey"
         },
         {
@@ -371,6 +369,18 @@
         {
           "file": "channel-core/src/identity/strict_json.ts",
           "symbol": "Reader.fail"
+        },
+        {
+          "file": "channel-core/src/identity/did.ts",
+          "symbol": "primeSubgroupPoint"
+        },
+        {
+          "file": "channel-core/src/identity/did.ts",
+          "symbol": "extractPublicKey"
+        },
+        {
+          "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+          "symbol": "extractPublicKey"
         }
       ]
     },
@@ -19016,6 +19026,7 @@
         "symbol": "ExtractPublicKey",
         "calls": {
           "crypto/ed25519.PublicKey": 1,
+          "idCertificatePrimePoint": 1,
           "reference:crypto/ed25519.PublicKeySize": 1
         }
       },
@@ -25301,6 +25312,7 @@
         "file": "channel-core/src/identity/id_certificates.ts",
         "symbol": "idEd25519Verify",
         "calls": {
+          "./did.js.primeSubgroupPoint": 2,
           "reference:@noble/ed25519.CURVE.n": 2,
           "@noble/ed25519.etc.concatBytes": 1,
           "reference:@noble/ed25519.ExtendedPoint.ZERO": 2,
@@ -25310,18 +25322,11 @@
       },
       {
         "file": "channel-core/src/identity/id_certificates.ts",
-        "symbol": "primeSubgroupPoint",
-        "calls": {
-          "@noble/ed25519.ExtendedPoint.fromHex": 1
-        },
-        "row": "S1.TS.VERIFIER"
-      },
-      {
-        "file": "channel-core/src/identity/id_certificates.ts",
         "symbol": "isCanonicalDidKey",
         "calls": {
           "./did.js.extractPublicKey": 1,
-          "./did.js.computeDIDKey": 1
+          "./did.js.computeDIDKey": 1,
+          "./did.js.primeSubgroupPoint": 1
         },
         "row": "S1.TS.VERIFIER"
       },
@@ -25439,6 +25444,30 @@
         "symbol": "Reader.fail",
         "calls": {
           "StrictJSONError": 1
+        },
+        "row": "S1.TS.VERIFIER"
+      },
+      {
+        "file": "channel-core/src/identity/did.ts",
+        "symbol": "primeSubgroupPoint",
+        "calls": {
+          "@noble/ed25519.ExtendedPoint.fromHex": 1
+        },
+        "row": "S1.TS.VERIFIER"
+      },
+      {
+        "file": "channel-core/src/identity/did.ts",
+        "symbol": "extractPublicKey",
+        "calls": {
+          "primeSubgroupPoint": 1
+        },
+        "row": "S1.TS.VERIFIER"
+      },
+      {
+        "file": "cli/go/wake/channel_core_runner_bundle.mjs",
+        "symbol": "extractPublicKey",
+        "calls": {
+          "primeSubgroupPoint": 1
         },
         "row": "S1.TS.VERIFIER"
       }

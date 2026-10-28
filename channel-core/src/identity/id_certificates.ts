@@ -5,7 +5,7 @@ import * as ed from "@noble/ed25519";
 import { sha256, sha512 } from "@noble/hashes/sha2.js";
 import bs58 from "bs58";
 import { canonicalJSONValue } from "./canonical.js";
-import { computeDIDKey, extractPublicKey } from "./did.js";
+import { computeDIDKey, extractPublicKey, primeSubgroupPoint } from "./did.js";
 import { parseStrictJSON, StrictJSONError } from "./strict_json.js";
 
 ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
@@ -196,21 +196,6 @@ export function idEd25519Verify(publicKey: Uint8Array, message: Uint8Array, sign
   const SB = S === 0n ? ed.ExtendedPoint.ZERO : ed.ExtendedPoint.BASE.multiply(S);
   const kA = k === 0n ? ed.ExtendedPoint.ZERO : A.multiply(k);
   return SB.equals(R.add(kA)) ? { accepted: true, reason: null } : { accepted: false, reason: "invalid_signature" };
-}
-
-/** A canonical, nonidentity point of the prime-order subgroup, or undefined. */
-function primeSubgroupPoint(encoded: Uint8Array): InstanceType<typeof ed.ExtendedPoint> | undefined {
-  if (encoded.length !== 32) return undefined;
-  let point: InstanceType<typeof ed.ExtendedPoint>;
-  try {
-    point = ed.ExtendedPoint.fromHex(encoded, false);
-  } catch {
-    return undefined;
-  }
-  if (point.is0() || !point.isTorsionFree()) return undefined;
-  // Re-encoding catches y >= p and the x = 0 sign-bit alias.
-  if (Buffer.compare(Buffer.from(point.toRawBytes()), Buffer.from(encoded)) !== 0) return undefined;
-  return point;
 }
 
 function littleEndian(bytes: Uint8Array): bigint {

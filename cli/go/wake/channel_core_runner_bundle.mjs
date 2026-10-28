@@ -3365,6 +3365,18 @@ function computeDIDKey(publicKey) {
   buf.set(publicKey, 2);
   return DID_KEY_PREFIX + esm_default2.encode(buf);
 }
+function primeSubgroupPoint(encoded) {
+  if (encoded.length !== 32) return void 0;
+  let point;
+  try {
+    point = Point.fromHex(encoded, false);
+  } catch {
+    return void 0;
+  }
+  if (point.is0() || !point.isTorsionFree()) return void 0;
+  if (Buffer.compare(Buffer.from(point.toRawBytes()), Buffer.from(encoded)) !== 0) return void 0;
+  return point;
+}
 function extractPublicKey(did) {
   if (!did.startsWith(DID_KEY_PREFIX)) {
     throw new Error(`invalid did:key: missing prefix "${DID_KEY_PREFIX}"`);
@@ -3380,7 +3392,11 @@ function extractPublicKey(did) {
       `invalid did:key: expected Ed25519 multicodec 0xed01, got 0x${decoded[0].toString(16).padStart(2, "0")}${decoded[1].toString(16).padStart(2, "0")}`
     );
   }
-  return decoded.slice(2);
+  const publicKey = decoded.slice(2);
+  if (!primeSubgroupPoint(publicKey)) {
+    throw new Error("invalid did:key: not a canonical prime-order Ed25519 public key");
+  }
+  return publicKey;
 }
 function computeStableID(publicKey) {
   const hash2 = createHash("sha256").update(publicKey).digest();
