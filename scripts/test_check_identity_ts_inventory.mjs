@@ -99,3 +99,24 @@ test('a listed strict consumer cannot implement independent curve arithmetic',()
  const entry={row:'r',file,symbol,calls:{'@noble/curves/abstract/edwards.Point.fromHex':1}};
  assert.match(checkCatalog([row],[entry],[entry]).join('\n'),/shared strict/);
 });
+
+test('the strict point predicate lives at exactly did.ts primeSubgroupPoint and its decoder stays strict',()=>{
+ const did='channel-core/src/identity/did.ts';const codec='channel-core/src/identity/id_certificates.ts';const bundle='cli/go/wake/channel_core_runner_bundle.mjs';
+ const raw={'@noble/ed25519.ExtendedPoint.fromHex':1};
+ const strict=(file,symbol)=>({id:'s',repo:'aweb',files:[file],sites:[{file,symbol}],ed25519_profile:'strict'});
+ const legacy=(file,symbol)=>({...strict(file,symbol),id:'l',ed25519_profile:'legacy'});
+ const check=(row,file,symbol,calls)=>checkCatalog([row],[{row:row.id,file,symbol,calls}],[{file,symbol,calls}]).join('\n');
+ assert.equal(check(strict(did,'primeSubgroupPoint'),did,'primeSubgroupPoint',raw),'');
+ assert.equal(check(strict(did,'extractPublicKey'),did,'extractPublicKey',{primeSubgroupPoint:1}),'');
+ assert.equal(check(strict(bundle,'extractPublicKey'),bundle,'extractPublicKey',{primeSubgroupPoint:1}),'');
+ for(const [file,symbol,calls] of [[did,'primeSubgroupPoint',raw],[did,'extractPublicKey',{primeSubgroupPoint:1}],[bundle,'extractPublicKey',{primeSubgroupPoint:1}]])
+  assert.match(check(legacy(file,symbol),file,symbol,calls),/downgrade/,`${file} ${symbol} downgraded`);
+ for(const [file,symbol,calls] of [
+  [did,'extractPublicKey',raw],
+  [did,'anotherFunction',raw],
+  [did,'primeSubgroupPoint',{'@noble/ed25519.verify':1}],
+  [codec,'primeSubgroupPoint',raw],
+  ['channel-core/src/identity/id_verification.ts','primeSubgroupPoint',raw],
+ ]) assert.match(check(strict(file,symbol),file,symbol,calls),/shared strict/,`${file} ${symbol} raw`);
+ assert.equal(check(legacy(did,'computeStableID'),did,'computeStableID',{'node:crypto.createHash':1}),'');
+});
