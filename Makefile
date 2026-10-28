@@ -277,7 +277,7 @@ test-server:
 			(cd ../cli/go && go build -o "$$server_test_dir/aw" ./cmd/aw); \
 			export AW_TEST_CLI_BINARY="$$server_test_dir/aw"; \
 		fi; \
-		uv run --offline --no-sync pytest -q "$$@"' server-tests $(PYTEST_SERVER_ARGS)
+		uv run --offline --no-sync pytest -q "$$@"' server-tests $(PYTEST_SERVER_ARGS) $(if $(PYTEST_SERVER_SHARD),--server-shard=$(PYTEST_SERVER_SHARD))
 
 # The naapp packages the candidate gate covers. Each provides `make lint` and
 # `make test`: the checks stage lints them, and the isolated unit stage runs
