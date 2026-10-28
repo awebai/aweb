@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from html import escape
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from uuid import UUID
 
 from aweb_naapp.console import ConsoleRoute, ConsoleSession
@@ -132,7 +132,11 @@ def _render(page: ActivityPage, limit: int) -> str:
         ):
             if value is not None:
                 parts.append(f"<dt>{escape(name)}</dt><dd>{escape(str(value))}</dd>")
-        parts.append("</dl></article>")
+        parts.append("</dl>")
+        if entry.outcome == "outcome_unknown" and entry.request_ref is not None:
+            target = "/reconciliations/" + quote(entry.request_ref, safe="")
+            parts.append(f'<a href="{escape(target, quote=True)}">Resolve uncertain outcome</a>')
+        parts.append("</article>")
     if page.next_cursor is not None:
         url = "/activity?" + urlencode({"before": _encode(page.next_cursor), "limit": limit})
         parts.append(f'<a rel="next" href="{escape(url, quote=True)}">Older activity</a>')

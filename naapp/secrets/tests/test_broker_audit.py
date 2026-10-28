@@ -50,7 +50,7 @@ def fence(db):
     return InstallationFence(db, app_id="secrets", grants=Installed())
 
 
-async def setup(db, fence, *, open_call=None, policy_changes=None):
+async def setup(db, fence, *, open_call=None, policy_changes=None, installation_grant=None):
     import hashlib
 
     operation = OperationTemplate.from_after(copy.deepcopy(REFUND))
@@ -97,7 +97,7 @@ async def setup(db, fence, *, open_call=None, policy_changes=None):
         db,
         fence,
         request=request,
-        grant=_grant_source_grant(installation_id=INSTALLATION),
+        grant=installation_grant or _grant_source_grant(installation_id=INSTALLATION),
         clock=lambda: NOW,
     )
     from aweb_naapp.dispatch import apply_dispatch_migrations
@@ -135,9 +135,15 @@ def machine(audit):
     )
 
 
-async def prepared(db, fence, *, open_call=None, policy_changes=None, signed_trace_id=None):
+async def prepared(
+    db, fence, *, open_call=None, policy_changes=None, signed_trace_id=None, installation_grant=None
+):
     _, request, admitted = await setup(
-        db, fence, open_call=open_call, policy_changes=policy_changes
+        db,
+        fence,
+        open_call=open_call,
+        policy_changes=policy_changes,
+        installation_grant=installation_grant,
     )
     await apply_outbox_migrations(db)
     await apply_use_context_migrations(db)
