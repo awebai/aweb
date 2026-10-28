@@ -103,6 +103,10 @@ async def read_snapshot(tx, *, domain: str, ids: list[str], clock: Clock) -> dic
         """,
         included,
     )
+    # An identity whose key history is gone (its key mapping was deleted)
+    # cannot be proven; the snapshot is incomplete, never partial.
+    if {row["did_aw"] for row in logs} != set(included):
+        raise IdentityTreeRefusal("evidence_unavailable", 503)
     snapshot = {
         "v": 1,
         "domain": domain,
