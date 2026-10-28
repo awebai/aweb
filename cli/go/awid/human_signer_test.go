@@ -7,6 +7,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -38,9 +39,11 @@ func testHumanKey() ed25519.PrivateKey {
 type scriptedPrompt struct {
 	answers [][]byte
 	given   [][]byte
+	texts   []string
 }
 
-func (p *scriptedPrompt) prompt(string) ([]byte, error) {
+func (p *scriptedPrompt) prompt(text string) ([]byte, error) {
+	p.texts = append(p.texts, text)
 	if len(p.answers) == 0 {
 		return nil, errors.New("no passphrase scripted")
 	}
@@ -88,7 +91,7 @@ func TestInstallHumanKeyRefusesAnEmptyPassphrase(t *testing.T) {
 func TestHumanSignerPromptsForEachSignatureAndWipesThePassphrase(t *testing.T) {
 	store := installedHumanKey(t)
 	prompt := &scriptedPrompt{answers: [][]byte{[]byte("correct horse"), []byte("correct horse")}}
-	sign := HumanSigner(store, testHumanID, prompt.prompt)
+	sign := HumanSigner(store, testHumanID, "approve human certificate for did:aw:2e2SPDJNyxg5Dt6EFJX3Tcn8Tauj in example.com", prompt.prompt)
 	want := ComputeDIDKey(testHumanKey().Public().(ed25519.PublicKey))
 	for i, payload := range [][]byte{[]byte("first"), []byte("second")} {
 		didKey, signature, err := sign(payload)
@@ -100,6 +103,11 @@ func TestHumanSignerPromptsForEachSignatureAndWipesThePassphrase(t *testing.T) {
 		}
 		if len(prompt.given) != i+1 {
 			t.Fatalf("signature %d used %d prompts", i, len(prompt.given))
+		}
+	}
+	for _, text := range prompt.texts {
+		if !strings.Contains(text, "approve human certificate for did:aw:2e2SPDJNyxg5Dt6EFJX3Tcn8Tauj in example.com") || !strings.Contains(text, testHumanID) {
+			t.Fatalf("the prompt does not say what is signed: %q", text)
 		}
 	}
 	for i, passphrase := range prompt.given {
@@ -122,7 +130,7 @@ func TestHumanSignerRefusesWithoutSigning(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			prompt := &scriptedPrompt{answers: [][]byte{tc.passphrase}}
-			didKey, signature, err := HumanSigner(tc.store, testHumanID, prompt.prompt)([]byte("payload"))
+			didKey, signature, err := HumanSigner(tc.store, testHumanID, "register", prompt.prompt)([]byte("payload"))
 			if didKey != "" || signature != nil {
 				t.Fatal("a refused signing returned a signature")
 			}
@@ -136,7 +144,7 @@ func TestHumanSignerRefusesWithoutSigning(t *testing.T) {
 func TestHumanSignerRefusesWhenThePromptFails(t *testing.T) {
 	store := installedHumanKey(t)
 	headless := func(string) ([]byte, error) { return nil, ErrNoTerminal }
-	if _, _, err := HumanSigner(store, testHumanID, headless)([]byte("payload")); !errors.Is(err, ErrNoTerminal) {
+	if _, _, err := HumanSigner(store, testHumanID, "register", headless)([]byte("payload")); !errors.Is(err, ErrNoTerminal) {
 		t.Fatalf("err=%v", err)
 	}
 }
@@ -151,6 +159,44 @@ func TestTerminalPromptRefusesWithoutATerminal(t *testing.T) {
 			passphrase, err := terminalPassphrase(path, path, "passphrase: ")
 			if !errors.Is(err, ErrNoTerminal) || passphrase != nil {
 				t.Fatalf("passphrase=%q err=%v", passphrase, err)
+			}
+		})
+	}
+}
+
+func TestInstallHumanKeyRequiresTwelveCharacters(t *testing.T) {
+	store := memoryHumanKeys{}
+	if err := InstallHumanKey(store, testHumanID, testHumanKey(), []byte("elevenchars")); HumanKeyBackupErrorCode(err) != "passphrase_too_short" || len(store) != 0 {
+		t.Fatalf("err=%v stored=%d", err, len(store))
+	}
+	if err := InstallHumanKey(store, testHumanID, testHumanKey(), []byte("twelve chars")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateHumanKeyBackupIsStructural(t *testing.T) {
+	store := installedHumanKey(t)
+	good := store[testHumanID]
+	if err := ValidateHumanKeyBackup(good); err != nil {
+		t.Fatalf("a real backup was refused: %v", err)
+	}
+	if err := ValidateHumanKeyBackup(append(append([]byte(nil), good...), "\n  \n"...)); err != nil {
+		t.Fatalf("trailing whitespace was refused: %v", err)
+	}
+	plaintextDER, err := x509.MarshalPKCS8PrivateKey(testHumanKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	plaintextPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: plaintextDER})
+	for name, blob := range map[string][]byte{
+		"plaintext PEM appended":                  append(append([]byte(nil), good...), plaintextPEM...),
+		"plaintext DER under the ENCRYPTED label": pem.EncodeToMemory(&pem.Block{Type: "ENCRYPTED PRIVATE KEY", Bytes: plaintextDER}),
+		"plaintext PEM":                           plaintextPEM,
+		"text after the block":                    append(append([]byte(nil), good...), "note"...),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := ValidateHumanKeyBackup(blob); err == nil {
+				t.Fatal("accepted")
 			}
 		})
 	}

@@ -37,6 +37,26 @@ func TestHumanKeychainHoldsTheEncryptedBackup(t *testing.T) {
 	}
 }
 
+func TestHumanKeychainRefusesAnythingButOneEncryptedBackup(t *testing.T) {
+	keyring.MockInit()
+	store := HumanKeychain{}
+	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{3}, 32))
+	backup, err := awid.ExportHumanKeyBackup(key, []byte("correct horse"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plaintext := []byte("-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIAMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMD\n-----END PRIVATE KEY-----\n")
+	underLabel := bytes.Replace(plaintext, []byte("PRIVATE KEY"), []byte("ENCRYPTED PRIVATE KEY"), 2)
+	for name, blob := range map[string][]byte{"plaintext appended": append(append([]byte(nil), backup...), plaintext...), "plaintext under the encrypted label": underLabel} {
+		if err := store.SaveHumanKey("did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w", blob); err == nil {
+			t.Fatalf("%s: stored", name)
+		}
+	}
+	if _, err := keyring.Get(humanKeychainService, "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"); !errors.Is(err, keyring.ErrNotFound) {
+		t.Fatalf("keychain holds an item: %v", err)
+	}
+}
+
 func TestHumanKeychainRefusesToStoreAPlaintextKey(t *testing.T) {
 	keyring.MockInit()
 	store := HumanKeychain{}
