@@ -16,7 +16,7 @@ def inputs(case):
     epoch = next(e for e in reversed(status['namespace']['epochs']) if e['retired_at'] is None)
     authority = case.get('namespace_authority', {'domain': status['domain'], 'dns_name': '_awid.' + status['domain'], 'inherited': False, 'controller_key': epoch['did_key']})
     cache = case.get('cache', {'age_seconds': 0, 'refresh': 'not_needed'})
-    evidence = None if case.get('status_source') == 'caller' else IDChainEvidence(status, authority, cache['age_seconds'], cache['refresh'] == 'failed')
+    evidence = None if case.get('status_source') == 'caller' else IDChainEvidence(status, authority, cache['age_seconds'])
     return bundle, subject, evidence, status['domain']
 
 @pytest.mark.parametrize('case', V['verification_cases'], ids=lambda c: c['name'])
@@ -30,7 +30,7 @@ def test_final_identity_tree_verification_and_request_decision(case):
         assert (status_request(bundle, subject, domain=domain) is not None) == case['tree_lookup']
     if 'expected_cache_mode' in case:
         c = case['cache']
-        assert status_cache_mode(c['age_seconds'], c['refresh'] == 'failed') == case['expected_cache_mode']
+        assert status_cache_mode(c['age_seconds']) == case['expected_cache_mode']
 
 def test_omitted_global_domain_requires_private_resolution_input():
     subject = V['verification_cases'][0]['subject'] | {'id': V['keys']['global_agent']['did_aw']}
@@ -70,12 +70,12 @@ def test_invalid_status_never_confers_authority(mutation):
 
 def test_final_vector_names_include_the_isolated_authority_boundaries():
     names = [case['name'] for case in V['verification_cases']]
-    assert len(names) == len(set(names)) == 126
+    assert len(names) == len(set(names)) == 122
     assert {
         'namespace-overlapping-replaced-successor-unavailable',
         'namespace-unretired-predecessor-unavailable',
         'root-replacement-cutoff-in-historical-human-parent',
         'namespace-epoch-at-retirement-unavailable',
-        'cached-status-age-61-without-failed-refresh',
-        'cached-status-age-901-without-failed-refresh',
+        'cached-status-age-60',
+        'cached-status-age-61',
     } <= set(names)
