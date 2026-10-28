@@ -30,8 +30,15 @@ type HumanKeyStore interface {
 // PassphrasePrompt asks the human for a passphrase. The caller wipes it.
 type PassphrasePrompt func(prompt string) ([]byte, error)
 
+// HumanKeyMinPassphrase is the shortest passphrase accepted when a human key
+// is installed. An imported backup keeps the passphrase it was made with.
+const HumanKeyMinPassphrase = 12
+
 // InstallHumanKey stores key for id as its encrypted backup.
 func InstallHumanKey(store HumanKeyStore, id string, key ed25519.PrivateKey, passphrase []byte) error {
+	if len(passphrase) > 0 && len([]rune(string(passphrase))) < HumanKeyMinPassphrase {
+		return humanKeyBackupRefusal("passphrase_too_short")
+	}
 	blob, err := ExportHumanKeyBackup(key, passphrase)
 	if err != nil {
 		return err
@@ -40,13 +47,15 @@ func InstallHumanKey(store HumanKeyStore, id string, key ed25519.PrivateKey, pas
 }
 
 // HumanSigner signs as the human id, asking for the passphrase each time.
-func HumanSigner(store HumanKeyStore, id string, prompt PassphrasePrompt) IDCertificateSigner {
+// description names the operation, subject and target, and is shown in the
+// prompt.
+func HumanSigner(store HumanKeyStore, id, description string, prompt PassphrasePrompt) IDCertificateSigner {
 	return func(payload []byte) (string, []byte, error) {
 		blob, err := store.LoadHumanKey(id)
 		if err != nil {
 			return "", nil, err
 		}
-		passphrase, err := prompt(fmt.Sprintf("Passphrase for the human key of %s: ", id))
+		passphrase, err := prompt(fmt.Sprintf("Sign as %s to %s.\nPassphrase for that human key: ", id, description))
 		defer wipe(passphrase)
 		if err != nil {
 			return "", nil, err

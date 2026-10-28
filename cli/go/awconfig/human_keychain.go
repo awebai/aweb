@@ -1,7 +1,6 @@
 package awconfig
 
 import (
-	"encoding/pem"
 	"errors"
 	"fmt"
 
@@ -28,8 +27,8 @@ func (HumanKeychain) LoadHumanKey(id string) ([]byte, error) {
 }
 
 func (HumanKeychain) SaveHumanKey(id string, blob []byte) error {
-	if block, _ := pem.Decode(blob); block == nil || block.Type != "ENCRYPTED PRIVATE KEY" {
-		return errors.New("only an encrypted human key backup may be stored in the keychain")
+	if err := awid.ValidateHumanKeyBackup(blob); err != nil {
+		return fmt.Errorf("only an encrypted human key backup may be stored in the keychain: %w", err)
 	}
 	if err := keyring.Set(humanKeychainService, id, string(blob)); err != nil {
 		return fmt.Errorf("store the human key in the OS keychain: %w", err)
