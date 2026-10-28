@@ -80,7 +80,7 @@ bootstrap, personal enrolment/approval delivery and browser lifecycle.
    ChangeSets/B2/B3 flow; retain its revision receipt. Do not seed or activate
    the credential through a fixture helper or database write.
 4. In that same owner tab, submit the agreed reference POST below using
-   `window.awebSecretsConsole.post`, which supplies the real S4 cookie and tab
+   `window.awebConsole.post`, which supplies the real S4 cookie and tab
    `X-CSRF-Token`. The complete secret record has backend `onepassword`, kind
    `bearer`, and a newly minted ID/ref for this journey. Use exactly
    `AWEB_SECRETS_E2E_ONEPASSWORD_VAULT_ID`,

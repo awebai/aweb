@@ -1,6 +1,6 @@
 "use strict";
 (() => {
-  const api = window.awebSecretsConsole;
+  const api = window.awebConsole;
   const panel = document.querySelector("#use-approval");
   if (!panel) return;
   const root = panel.dataset.root;
@@ -87,7 +87,7 @@
     const options = await api.post("/login/options", {scope: hint.scope});
     const assertion = await api.assertion(options);
     const logged = await api.post("/login", {scope: hint.scope, assertion});
-    sessionStorage.setItem("aweb.secrets.console.csrf", logged.csrf_token);
+    sessionStorage.setItem(api.csrfKey, logged.csrf_token);
     history.replaceState(null, "", root + "#token=" + encodeURIComponent(token));
     location.reload();
   }

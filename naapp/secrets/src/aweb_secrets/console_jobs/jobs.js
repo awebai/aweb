@@ -2,7 +2,7 @@
 (() => {
   const form = document.querySelector("#definition-draft");
   if (!form) return;
-  const api = window.awebSecretsConsole;
+  const api = window.awebConsole;
   const status = document.querySelector("#job-status");
   const button = form.querySelector("button");
   const value = name => document.getElementById(name).value.trim();
