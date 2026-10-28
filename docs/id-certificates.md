@@ -1061,9 +1061,9 @@ the object-shape check; the frozen shape_or_encoding class allows both.
 Ordered operation cases test effects and atomicity; S2 tests consume the frozen
 cases by NAME, so a dropped/renamed scenario fails CI. They are not substitutes
 for real Postgres/concurrency and released-client journeys in later slices.
-S4 acceptance includes per-domain registry isolation, bounded refresh timeouts,
-negative caching and 429 treated as refresh failure (expired evidence is
-unavailable), so an attacker-selected DNS registry cannot stall other domains.
+S4 acceptance includes bounded refresh timeouts, per-domain isolation, and 429
+treated as refresh failure (expired evidence is unavailable), so an
+attacker-selected DNS registry cannot stall other domains.
 
 Freeze docs/vectors first; then shared Python/Go/TS verification, AWID history/
 registration/cache, CLI/keychain, transport and creation adapters. Publish OSS
