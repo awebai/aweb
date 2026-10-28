@@ -111,6 +111,40 @@
       ]
     },
     {
+      "id": "S1.PY.SIGNER",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid/id_certificates.py"
+      ],
+      "operations": [
+        "sign"
+      ],
+      "change": "add",
+      "slice": "S1",
+      "status": "candidate",
+      "journeys": [
+        "J1",
+        "J4",
+        "J8"
+      ],
+      "proving_tests": [
+        "awid/tests/test_id_certificate_signer.py::test_signs_once_and_returns_a_strictly_verifiable_certificate",
+        "awid/tests/test_id_certificate_signer.py::test_shape_refusal_precedes_the_signer",
+        "awid/tests/test_id_certificate_signer.py::test_refusing_signer_exception_propagates_once",
+        "awid/tests/test_id_certificate_signer.py::test_bad_signer_result_never_becomes_a_signed_certificate",
+        "awid/tests/test_id_certificate_signer.py::test_returned_certificate_is_the_snapshot_actually_signed"
+      ],
+      "acceptance": "Shape before one sync-or-awaitable callback; answered issuer and signature strictly verified; no key custody, I/O or issuance-authority grant.",
+      "candidate_head": "e64a63208bba1a02c015720677a9659b86eb5a64",
+      "ed25519_profile": "strict",
+      "sites": [
+        {
+          "file": "awid/src/awid/id_certificates.py",
+          "symbol": "sign_id_certificate"
+        }
+      ]
+    },
+    {
       "id": "S1.GO.CODEC",
       "repo": "aweb",
       "files": [
@@ -259,10 +293,14 @@
         "awid/tests/test_id_chain_vectors.py::test_status_request_only_sends_global_ids_in_chain_order",
         "awid/tests/test_id_chain_vectors.py::test_ancestry_does_not_reuse_decode_time_claimed_issuer_verdict",
         "awid/tests/test_id_chain_vectors.py::test_invalid_status_never_confers_authority",
-        "awid/tests/test_id_chain_vectors.py::test_final_vector_names_include_the_isolated_authority_boundaries"
+        "awid/tests/test_id_chain_vectors.py::test_final_vector_names_include_the_isolated_authority_boundaries",
+        "awid/tests/test_id_evidence_clock.py::test_snapshot_ages_from_its_producer_anchor",
+        "awid/tests/test_id_evidence_clock.py::test_consumer_rechecking_does_not_restart_the_window",
+        "awid/tests/test_id_evidence_clock.py::test_unanchored_existing_evidence_keeps_its_age_only_api",
+        "awid/tests/test_id_evidence_clock.py::test_integer_nanoseconds_preserve_a_boundary_above_float_precision"
       ],
       "acceptance": "Whole chain with independent issuer/subject keys, R1-R3, witnessed sequence, replacement cutoff, cascade and request disposition.",
-      "candidate_head": "9fc3c5855c434904ab36a113baa654c2488fe6d3",
+      "candidate_head": "e64a63208bba1a02c015720677a9659b86eb5a64",
       "ed25519_profile": "strict",
       "sites": [
         {
@@ -316,6 +354,18 @@
         {
           "file": "awid/src/awid/id_certificates.py",
           "symbol": "_id_chain.evaluate"
+        },
+        {
+          "file": "awid/src/awid/id_certificates.py",
+          "symbol": "IDChainEvidence.cache_mode_at"
+        },
+        {
+          "file": "awid/src/awid/id_certificates.py",
+          "symbol": "_status_age_ns"
+        },
+        {
+          "file": "awid/src/awid/id_certificates.py",
+          "symbol": "_status_cache_mode"
         }
       ]
     },
@@ -18091,6 +18141,15 @@
           "awid.id_certificates.status_request": 1,
           "awid.id_certificates.verify_id_chain": 1,
           "reference:awid.id_certificates.IDCertificateError": 1
+        }
+      },
+      {
+        "row": "S1.PY.SIGNER",
+        "file": "awid/src/awid/id_certificates.py",
+        "symbol": "sign_id_certificate",
+        "calls": {
+          "id_certificate_signing_bytes": 1,
+          "verify_ed25519": 1
         }
       }
     ]
