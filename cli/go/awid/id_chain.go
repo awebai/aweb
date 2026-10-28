@@ -20,7 +20,6 @@ type IDChainEvidence struct {
 	Status             map[string]any
 	NamespaceAuthority map[string]any
 	AgeSeconds         *float64
-	RefreshFailed      bool
 }
 type IDChainResult struct {
 	Outcome       string  `json:"outcome"`
@@ -42,15 +41,12 @@ func idChainFailure(reason string) IDChainResult {
 	}
 	return r
 }
-func IDStatusCacheMode(age *float64, refreshFailed bool) string {
+func IDStatusCacheMode(age *float64) string {
 	if age == nil || math.IsNaN(*age) || math.IsInf(*age, 0) || *age < 0 {
 		return "unavailable"
 	}
 	if *age <= 60 {
 		return "fresh"
-	}
-	if refreshFailed && *age <= 900 {
-		return "outage_grace"
 	}
 	return "unavailable"
 }
@@ -510,9 +506,8 @@ func verifyIDChain(bundle map[string]any, subject IDChainSubject, evidence *IDCh
 	if evidence == nil {
 		return bad("evidence_unavailable")
 	}
-	if IDStatusCacheMode(evidence.AgeSeconds, evidence.RefreshFailed) == "unavailable" {
-		// Expired grace requires a failed refresh of last-known-good evidence.
-		if evidence.RefreshFailed && evidence.AgeSeconds != nil && *evidence.AgeSeconds > 900 {
+	if IDStatusCacheMode(evidence.AgeSeconds) == "unavailable" {
+		if evidence.AgeSeconds != nil && !math.IsInf(*evidence.AgeSeconds, 0) && *evidence.AgeSeconds > 60 {
 			return bad("status_expired")
 		}
 		return bad("evidence_unavailable")

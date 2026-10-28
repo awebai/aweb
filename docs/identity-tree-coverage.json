@@ -416,10 +416,7 @@
         "awid/tests/test_id_chain_vectors.py::test_ancestry_does_not_reuse_decode_time_claimed_issuer_verdict",
         "awid/tests/test_id_chain_vectors.py::test_invalid_status_never_confers_authority",
         "awid/tests/test_id_chain_vectors.py::test_final_vector_names_include_the_isolated_authority_boundaries",
-        "awid/tests/test_id_evidence_clock.py::test_snapshot_ages_from_its_producer_anchor",
-        "awid/tests/test_id_evidence_clock.py::test_consumer_rechecking_does_not_restart_the_window",
-        "awid/tests/test_id_evidence_clock.py::test_unanchored_existing_evidence_keeps_its_age_only_api",
-        "awid/tests/test_id_evidence_clock.py::test_integer_nanoseconds_preserve_a_boundary_above_float_precision"
+        "awid/tests/test_id_evidence_freshness.py::test_evidence_freshness_at_acquisition"
       ],
       "acceptance": "Whole chain with independent issuer/subject keys, R1-R3, witnessed sequence, replacement cutoff, cascade and request disposition.",
       "candidate_head": "1b1e60a4966bdb765063a259e2a07265baebebe9",
@@ -476,18 +473,6 @@
         {
           "file": "awid/src/awid/id_certificates.py",
           "symbol": "_id_chain.evaluate"
-        },
-        {
-          "file": "awid/src/awid/id_certificates.py",
-          "symbol": "IDChainEvidence.cache_mode_at"
-        },
-        {
-          "file": "awid/src/awid/id_certificates.py",
-          "symbol": "_status_age_ns"
-        },
-        {
-          "file": "awid/src/awid/id_certificates.py",
-          "symbol": "_status_cache_mode"
         }
       ]
     },
