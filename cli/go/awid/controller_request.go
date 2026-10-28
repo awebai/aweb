@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -88,7 +89,13 @@ func (c *RegistryClient) RevokeIDCertificateAt(ctx context.Context, registryURL,
 // fails or answers with anything but a valid signature by a valid key over
 // the exact payload sends nothing.
 func (c *RegistryClient) coveringRequest(ctx context.Context, registryURL, path, domain, operation string, body map[string]any, signer IDCertificateSigner, headers map[string]string) (map[string]any, error) {
-	aud, err := canonicalServerOrigin(registryURL)
+	// The audience is the registry's origin; the request goes to the routed
+	// registry URL, which may sit under a path prefix.
+	routed, err := url.Parse(strings.TrimSpace(registryURL))
+	if err != nil {
+		return nil, err
+	}
+	aud, err := canonicalServerOrigin((&url.URL{Scheme: routed.Scheme, Host: routed.Host}).String())
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +119,7 @@ func (c *RegistryClient) coveringRequest(ctx context.Context, registryURL, path,
 	if err := idStrictVerify(didKey, signature, func() ([]byte, error) { return payload, nil }); err != nil {
 		return nil, fmt.Errorf("signer answer refused: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(aud, "/")+path, bytes.NewReader([]byte(raw)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(routed.String(), "/")+path, bytes.NewReader([]byte(raw)))
 	if err != nil {
 		return nil, err
 	}
