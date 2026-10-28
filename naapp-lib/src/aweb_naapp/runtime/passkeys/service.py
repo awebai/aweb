@@ -162,8 +162,10 @@ class PasskeyEffectFence(Protocol):
     original completion association, current authority and capability expiry.
 
     Expected authority refusal raises EnrolmentRefused or ContactChangeRefused
-    for the operation. Effect/token consumption and audit roll back together;
-    enrolment's pre-effect WebAuthn challenge stays spent. No LOGIN/APPROVE or
+    for the operation; any other exception propagates unchanged. Effect/token
+    consumption and audit roll back together; enrolment's pre-effect WebAuthn
+    challenge, and a contact change's or cancellation's verified assertion,
+    stay spent. No LOGIN/APPROVE or
     fresh send authority is granted by these callbacks.
     """
 
@@ -1526,11 +1528,21 @@ class Passkeys:
         return await self._assertion_options(approver["subject"], challenge)
 
     async def change_contact(
-        self, scope: str, new_contact: str, proof: Mapping[str, Any]
+        self,
+        scope: str,
+        new_contact: str,
+        proof: Mapping[str, Any],
+        *,
+        fence: PasskeyEffectFence | None = None,
     ) -> datetime:
         """Schedule the approver's new contact, proven with its own passkey.
         It takes effect after the contact-change delay; both contacts are told.
-        Returns when it takes effect."""
+        Returns when it takes effect.
+
+        fence holds caller authority before B3 and checks it after audit in
+        the same effect tx. Refusal rolls back the pending contact, its proof
+        and audit, and tells nobody; the verified assertion stays spent, so
+        retry needs fresh options."""
         approver = await self._current_approver(scope)
         digest = contact_sha256(new_contact)
         try:
@@ -1549,6 +1561,8 @@ class Passkeys:
             approver["subject"], challenge, proof, "contact_change", issued=issued
         )
         async with self.db.transaction() as tx:
+            if fence is not None:
+                await fence.prepare(tx)
             change = await self._schedule_contact(
                 tx,
                 scope,
@@ -1557,6 +1571,8 @@ class Passkeys:
                 actor=approver["subject"],
                 details={"evidence_ref": evidence_ref},
             )
+            if fence is not None:
+                await fence.check(tx)
         await self.send_notices(change)
         return change.effective_at
 
@@ -1807,10 +1823,21 @@ class Passkeys:
         )
         return await self._assertion_options(pending["subject"], challenge)
 
-    async def cancel_pending_contact(self, scope: str, proof: Mapping[str, Any]) -> None:
+    async def cancel_pending_contact(
+        self,
+        scope: str,
+        proof: Mapping[str, Any],
+        *,
+        fence: PasskeyEffectFence | None = None,
+    ) -> None:
         """Cancel the approver's pending contact change with its own passkey,
         whether the approver or an owner scheduled it. The approver's cancel
-        wins; both contacts are told."""
+        wins; both contacts are told.
+
+        fence holds caller authority before B3 and checks it after audit in
+        the same effect tx; a cancellation only narrows, so B3 gates it on
+        nothing else. Refusal leaves the change pending and tells nobody; the
+        verified assertion stays spent, so retry needs fresh options."""
         pending = await self._pending_contact(scope)
         digest = contact_sha256(pending["pending_contact"])
         try:
@@ -1830,6 +1857,8 @@ class Passkeys:
         )
         now = self._clock()
         async with self.db.transaction() as tx:
+            if fence is not None:
+                await fence.prepare(tx)
             cancelled = await tx.fetch_value(
                 "UPDATE {{tables.passkey_approvers}} SET pending_contact = NULL, "
                 "pending_contact_at = NULL, pending_contact_proven_at = NULL "
@@ -1852,6 +1881,8 @@ class Passkeys:
                 ),
                 tx,
             )
+            if fence is not None:
+                await fence.check(tx)
         notice = Notice(NoticeKind.CONTACT_CHANGE_CANCELLED, scope, pending["pending_contact_at"])
         for contact in sorted({pending["contact"], pending["pending_contact"]}):
             await self._send(self._delivery.deliver_notice(contact, notice))

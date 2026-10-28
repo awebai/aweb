@@ -378,9 +378,11 @@ before its `active_from`, which the caller compares with an event's
 
 ## Approvals and passkeys
 
-`Passkeys.complete_enrolment(token, credential, fence=...)` and
-`Passkeys.prove_contact(token, fence=...)` accept an optional `PasskeyEffectFence`
-for the app's completion authority. Prefetch network/registration context first.
+`Passkeys.complete_enrolment(token, credential, fence=...)`,
+`Passkeys.prove_contact(token, fence=...)`,
+`Passkeys.change_contact(scope, new_contact, proof, fence=...)` and
+`Passkeys.cancel_pending_contact(scope, proof, fence=...)` accept an optional
+`PasskeyEffectFence` for the app's completion authority. Prefetch network/registration context first.
 B3 calls `await fence.prepare(tx)` before its first effect statement, then
 performs the effect and audit in that same transaction, then calls
 `await fence.check(tx)` immediately before commit. The app holds its installation
@@ -393,8 +395,13 @@ Expected fence refusals use `EnrolmentRefused` or `ContactChangeRefused` for the
 operation. Refusal rolls back link/proof-token consumption, credential/contact
 state and audit together. Enrolment's pre-effect WebAuthn challenge stays spent:
 retry requests new enrolment options and a new registration response with the
-still-valid unused link. Contact-proof retry requires fresh authority/expiry
-checks. There is no token release or automatic replay. These callbacks change
+still-valid unused link. A contact change's or cancellation's passkey assertion
+is verified and recorded before the effect and also stays spent: retry requests
+new options and a new assertion. Notices go out only after commit, so a refused
+change or cancellation tells nobody. Cancellation only narrows, and B3 gates it
+on nothing but the fence. Contact-proof retry requires fresh authority/expiry
+checks. Any other exception from a fence propagates unchanged. There is no token
+release or automatic replay. These callbacks change
 neither LOGIN/APPROVE evidence nor the current-approver API below.
 
 For a final authority read in the caller's transaction, use

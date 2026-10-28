@@ -8,7 +8,9 @@ from datetime import timedelta
 import pytest
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 
+from aweb_naapp.runtime.approvals import AuthenticationFailed
 from aweb_naapp.runtime.passkeys import ContactChangeRefused, EnrolmentRefused
+from tests.runtime.approvals.support import SCOPE
 from tests.runtime.approvals.test_passkeys import (
     ORIGIN,
     change_contact,
@@ -17,18 +19,31 @@ from tests.runtime.approvals.test_passkeys import (
     pw,  # noqa: F401
 )
 
+KINDS = ["enrolment", "contact", "change", "cancel"]
+# The kinds whose caller's own passkey assertion is verified, and committed, before the effect.
+ASSERTED = ("change", "cancel")
+NEW_CONTACT = "new@example.com"
 
-async def effect_rows(db):
+
+async def effect_rows(db, kind):
+    tables = ["passkey_approvers", "passkey_enrolments", "passkey_contact_proofs", "audit_outbox"]
+    if kind not in ASSERTED:
+        # An assertion advances its credential's counter before the effect.
+        tables.append("passkey_credentials")
     return [
-        await db.fetch_all("SELECT * FROM {{tables." + table + "}} ORDER BY 1")
-        for table in (
-            "passkey_approvers",
-            "passkey_enrolments",
-            "passkey_credentials",
-            "passkey_contact_proofs",
-            "audit_outbox",
-        )
+        await db.fetch_all("SELECT * FROM {{tables." + table + "}} ORDER BY 1") for table in tables
     ]
+
+
+def delivered(pw):
+    return (
+        {contact: list(notices) for contact, notices in pw.contacts.notices.items()},
+        {contact: list(proofs) for contact, proofs in pw.contacts.proofs.items()},
+    )
+
+
+class GovernanceUnavailable(Exception):
+    """An app's own failure, which is not a refusal of the operation."""
 
 
 class CompletionFence:
@@ -41,6 +56,8 @@ class CompletionFence:
         self.audit_tx = None
 
     def denied(self):
+        if self.refuse == "unavailable":
+            return GovernanceUnavailable()
         if self.kind == "enrolment":
             return EnrolmentRefused("completion_authority_unavailable")
         return ContactChangeRefused("completion_authority_unavailable")
@@ -69,7 +86,11 @@ class CompletionFence:
         assert tx is self.tx is self.audit_tx
         self.calls.append("check")
         row = await tx.fetch_one("SELECT * FROM {{tables.completion_authority}}")
-        if self.refuse == "check" or not row["active"] or self.pw.clock() >= row["expires_at"]:
+        if (
+            self.refuse in ("check", "unavailable")
+            or not row["active"]
+            or self.pw.clock() >= row["expires_at"]
+        ):
             raise self.denied()
 
 
@@ -99,9 +120,20 @@ async def completion(pw, kind):
     else:
         approver, device = await enrol(pw)
         subject = approver.subject
-        await change_contact(pw, device, "new@example.com")
-        token = pw.contacts.proofs["new@example.com"][-1]
+        if kind != "change":
+            await change_contact(pw, device, NEW_CONTACT)
+        token = pw.contacts.proofs.get(NEW_CONTACT, [None])[-1]
         credential = None
+
+    async def assertion():
+        if kind == "change":
+            options = await pw.passkeys.contact_change_options(SCOPE, NEW_CONTACT)
+        else:
+            options = await pw.passkeys.contact_cancel_options(SCOPE)
+        return device.get(dict(options))
+
+    if kind in ASSERTED:
+        credential = await assertion()
     db = pw.passkeys.db
     await db.execute(
         "CREATE TABLE {{tables.completion_authority}} (active boolean NOT NULL, expires_at timestamptz NOT NULL)"
@@ -119,12 +151,17 @@ async def completion(pw, kind):
                 device.create(await service.enrolment_options(token)) if fresh else credential
             )
             return await service.complete_enrolment(token, response, fence=fence)
-        return await service.prove_contact(token, fence=fence)
+        if kind == "contact":
+            return await service.prove_contact(token, fence=fence)
+        response = await assertion() if fresh else credential
+        if kind == "change":
+            return await service.change_contact(SCOPE, NEW_CONTACT, response, fence=fence)
+        return await service.cancel_pending_contact(SCOPE, response, fence=fence)
 
     return invoke, subject
 
 
-@pytest.mark.parametrize("kind", ["enrolment", "contact"])
+@pytest.mark.parametrize("kind", KINDS)
 async def test_prepare_holds_authority_before_b3_and_check_follows_audit(pw, kind):
     invoke, subject = await completion(pw, kind)
     db = pw.passkeys.db
@@ -170,20 +207,33 @@ async def test_prepare_holds_authority_before_b3_and_check_follows_audit(pw, kin
             await asyncio.gather(task, return_exceptions=True)
 
 
-@pytest.mark.parametrize("kind", ["enrolment", "contact"])
+@pytest.mark.parametrize("kind", KINDS)
 @pytest.mark.parametrize("stage", ["prepare", "check"])
 async def test_refusal_rolls_back_effect_token_and_audit_but_not_enrolment_challenge(
     pw, kind, stage
 ):
     invoke, _ = await completion(pw, kind)
     db = pw.passkeys.db
-    before = await effect_rows(db)
+    before = await effect_rows(db, kind)
+    sent = delivered(pw)
+    assertions = await db.fetch_value("SELECT count(*) FROM {{tables.passkey_assertions}}")
     fence = CompletionFence(pw, kind, refuse=stage)
     refusal = EnrolmentRefused if kind == "enrolment" else ContactChangeRefused
     with pytest.raises(refusal):
         await invoke(fence)
-    assert await effect_rows(db) == before
+    assert await effect_rows(db, kind) == before
+    assert delivered(pw) == sent
     assert fence.calls == (["prepare"] if stage == "prepare" else ["prepare", "audit", "check"])
+    if kind in ASSERTED:
+        # The verified assertion stays recorded and spent; it cannot be replayed.
+        assert (
+            await db.fetch_value("SELECT count(*) FROM {{tables.passkey_assertions}}")
+            == assertions + 1
+        )
+        replay = CompletionFence(pw, kind)
+        with pytest.raises(AuthenticationFailed):
+            await invoke(replay)
+        assert replay.calls == []
     if kind == "enrolment":
         assert await db.fetch_value(
             "SELECT used_at IS NOT NULL FROM {{tables.passkey_challenges}} WHERE purpose='enrolment'"
@@ -196,17 +246,36 @@ async def test_refusal_rolls_back_effect_token_and_audit_but_not_enrolment_chall
     retry = CompletionFence(pw, kind)
     await invoke(retry, fresh=True)
     assert retry.calls == ["prepare", "audit", "check"]
-    assert await effect_rows(db) != before
+    assert await effect_rows(db, kind) != before
+    if kind in ASSERTED:
+        # Only the committed change or cancellation tells the contacts.
+        assert delivered(pw) != sent
 
 
-@pytest.mark.parametrize("kind", ["enrolment", "contact"])
+@pytest.mark.parametrize("kind", KINDS)
 async def test_final_check_observes_live_expiry_after_effect_and_audit(pw, kind):
     invoke, _ = await completion(pw, kind)
     db = pw.passkeys.db
-    before = await effect_rows(db)
+    before = await effect_rows(db, kind)
+    sent = delivered(pw)
     fence = CompletionFence(pw, kind)
     refusal = EnrolmentRefused if kind == "enrolment" else ContactChangeRefused
     with pytest.raises(refusal):
         await invoke(fence, expire=True)
     assert fence.calls == ["prepare", "audit", "check"]
-    assert await effect_rows(db) == before
+    assert await effect_rows(db, kind) == before
+    assert delivered(pw) == sent
+
+
+@pytest.mark.parametrize("kind", KINDS)
+async def test_an_app_failure_in_the_fence_is_not_turned_into_a_refusal(pw, kind):
+    invoke, _ = await completion(pw, kind)
+    db = pw.passkeys.db
+    before = await effect_rows(db, kind)
+    sent = delivered(pw)
+    fence = CompletionFence(pw, kind, refuse="unavailable")
+    with pytest.raises(GovernanceUnavailable):
+        await invoke(fence)
+    assert fence.calls == ["prepare", "audit", "check"]
+    assert await effect_rows(db, kind) == before
+    assert delivered(pw) == sent
