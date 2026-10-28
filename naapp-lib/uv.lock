@@ -175,7 +175,7 @@ wheels = [
 
 [[package]]
 name = "aweb"
-version = "1.27.36"
+version = "1.27.37"
 source = { editable = "../server" }
 dependencies = [
     { name = "aweb-naapp", extra = ["egress", "hooks"] },
