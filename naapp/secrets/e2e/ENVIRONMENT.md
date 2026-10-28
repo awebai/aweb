@@ -18,7 +18,8 @@ repository, messages or retained evidence.
 | `ONEPASSWORD_CLI_FIELD_ID` | CLI password field ID. |
 | `API_ORIGIN` | Absolute HTTPS agent API origin. |
 | `CONSOLE_ORIGIN` | Absolute HTTPS human console origin, separate from the agent API. |
-| `LOGS_ORIGIN` | Absolute HTTPS logs origin for real audit ingestion/read proof. |
+| `LOGS_ORIGIN` | Absolute HTTPS logs manifest, ingest and agent origin; maps to `LogsSettings.public_origin` / `LOGS_PUBLIC_ORIGIN`. |
+| `LOGS_CONSOLE_ORIGIN` | Required absolute HTTPS logs reader-console origin, with a hostname distinct from `LOGS_ORIGIN` even when ports differ; maps to `LogsSettings.console_origin` / `LOGS_CONSOLE_ORIGIN`. The passkey RP ID is this hostname. |
 | `PRIVATE_DNS_NAME` | Bare DNS hostname whose HO6-controlled answer is private, for the network-refusal case. No scheme, port, URL path or IP literal; no TLS is required. |
 | `MCP_URL` | Shared absolute HTTPS root MCP endpoint URL, with no credential/query/fragment. |
 | `TEAM_ID` | Expected public team ID for both MCP clients. |
@@ -34,6 +35,15 @@ repository, messages or retained evidence.
 `AGENT_A_IDENTITY_HOME` and `AGENT_B_IDENTITY_HOME` are optional only for an
 independently selected `aw` control, if a test needs one. They are not required
 for the hosted journey and do not authenticate hosted HTTP MCP.
+
+`AWEB_SECRETS_E2E_LOGS_CONSOLE_ORIGIN` has no fallback to logs' ingest origin
+or secrets' console. S19 supplies it in its local combined runtime publication;
+the hosted provisioning controller's six outputs stay unchanged. S19 starts
+logs with both explicit origins and activates its governance production and
+registration before obtaining the pending reader slot from logs. The owner
+signs designation for that issued slot; S19 follows logs' actual enrolment
+delivery and enrols/logs in on the logs-console origin. It never derives a
+reader scope from contact data. M9 reads through that reader session.
 
 The hosted transport owner's contract is Streamable HTTP with normal OAuth
 access tokens, one separate client per agent. Use the supplied SDK recipe and
@@ -84,7 +94,13 @@ HTTPS Cloud origin and an absolute, dedicated private state directory:
 uv run --no-sync python e2e/provision_hosted.py --cloud-origin <HTTPS Cloud origin> --state-dir <absolute private directory>
 ```
 
-The controller creates a new dedicated test team, activates one test role,
+The controller first creates a dedicated organization with slug
+`awtest-secrets-<random label>` so its hosted namespace starts with `awtest-`.
+It creates the test team with that organization's explicit `owner_org_id` and
+the same name/slug. A team slug alone does not select its namespace: omitting
+`owner_org_id` would select the owner's personal organization. Completed reruns
+keep the persisted organization and team; this does not rename older teams.
+The controller activates one test role,
 creates two global custodial agents in that role, and authorizes one normal
 OAuth/PKCE connection for each. Owner login uses a separate in-memory cookie
 session. Owner cookies, the login password and returned identity API keys are

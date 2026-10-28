@@ -13,8 +13,23 @@ from provision_hosted import (
     StateStore,
     consent_code,
     identity_from_result,
+    organization_create_payload,
     provision,
+    team_create_payload,
 )
+
+
+def test_new_hosted_test_team_uses_awtest_namespace_prefix():
+    label = "0123456789abcdef"
+    organization = organization_create_payload(label)
+    assert organization["slug"].startswith("awtest-")
+    assert 3 <= len(organization["slug"]) <= 39
+    organization_id = "b501cfa1-76e0-475b-8612-b52e10c2d633"
+    payload = team_create_payload(label, organization_id)
+    assert payload["owner_org_id"] == organization_id
+    assert payload["slug"].startswith("awtest-")
+    assert payload["name"].startswith("awtest-")
+    assert payload["slug"].endswith("0123456789abcdef")
 
 
 def login_file(tmp_path: Path) -> Path:
@@ -138,16 +153,17 @@ def test_only_one_controller_can_hold_the_state(tmp_path: Path):
     assert result.stderr == "Provisioning refused: state_busy\n"
 
 
-def test_pending_intent_survives_restart_and_refuses_replay(tmp_path: Path):
+@pytest.mark.parametrize("step", ["organization_create", "team_create"])
+def test_pending_intent_survives_restart_and_refuses_replay(tmp_path: Path, step: str):
     directory = tmp_path / "state"
     with StateStore(directory) as store:
         store.begin("https://cloud.example.test")
-        store.before("team_create")
+        store.before(step)
     with StateStore(directory) as store:
         with pytest.raises(ProvisioningError, match="^provisioning_incomplete$"):
             store.begin("https://cloud.example.test")
     saved = json.loads((directory / "controller-state.json").read_text())
-    assert saved["step"] == "team_create"
+    assert saved["step"] == step
     assert saved["status"] == "in_progress"
 
 
