@@ -226,21 +226,15 @@ func TestRevokeIDCertificateSendsOneCoveringRequest(t *testing.T) {
 	}
 }
 
-func TestRegisterIDCertificatePostsUnderTheRegistrysPathPrefix(t *testing.T) {
-	sink := &registrySink{status: 200, answer: `{"certificate_id":"sha256:abc","registered_at":"2026-10-26T00:02:00.000000Z"}`}
-	mux := http.NewServeMux()
-	mux.Handle("/awid/", sink)
-	server := httptest.NewServer(mux)
+func TestRegisterIDCertificateRefusesARegistryURLWithAPath(t *testing.T) {
+	sink := &registrySink{status: 200, answer: `{}`}
+	server := httptest.NewServer(sink)
 	defer server.Close()
 	calls := 0
-	if _, err := (&RegistryClient{HTTPClient: server.Client()}).RegisterIDCertificateAt(context.Background(), server.URL+"/awid", testChainBundle(t), seedSigner(5, &calls), nil, nil); err != nil {
-		t.Fatal(err)
+	if _, err := (&RegistryClient{HTTPClient: server.Client()}).RegisterIDCertificateAt(context.Background(), server.URL+"/awid", testChainBundle(t), seedSigner(5, &calls), nil, nil); err == nil {
+		t.Fatal("a registry URL with a path was accepted")
 	}
-	if len(sink.requests) != 1 || sink.requests[0].URL.Path != "/awid/v1/id-certificates/register" {
-		t.Fatalf("requests=%d", len(sink.requests))
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(sink.requests[0].Header.Get("X-AWEB-Signed-Payload"))
-	if err != nil || !strings.Contains(string(payload), `"aud":"`+server.URL+`"`) {
-		t.Fatalf("aud is not the registry origin: %s", payload)
+	if len(sink.requests) != 0 || calls != 0 {
+		t.Fatalf("requests=%d signer calls=%d", len(sink.requests), calls)
 	}
 }
