@@ -104,6 +104,27 @@ async def test_bad_signer_result_never_becomes_a_signed_certificate(signing_case
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("same_key", [False, True])
+async def test_signer_key_subclass_cannot_override_binding(signing_case, same_key):
+    issuer, certificate = signing_case
+    answered_key = issuer if same_key else SigningKey(b"z" * 32)
+
+    class MisleadingKey(str):
+        def __ne__(self, other):
+            return False
+
+    def sign(payload):
+        return (
+            MisleadingKey(did_from_public_key(bytes(answered_key.verify_key))),
+            answered_key.sign(payload).signature,
+        )
+
+    with pytest.raises(IDCertificateError) as caught:
+        await sign_id_certificate(certificate, signer=sign)
+    assert caught.value.code == "invalid_signature"
+
+
+@pytest.mark.asyncio
 async def test_returned_certificate_is_the_snapshot_actually_signed(signing_case):
     issuer, certificate = signing_case
     original = copy.deepcopy(certificate)
