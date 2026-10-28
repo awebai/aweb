@@ -9,6 +9,7 @@
   const review = panel.querySelector("#request-review");
   let token = new URLSearchParams(location.hash.slice(1)).get("token") || "";
   if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+  panel.hidden = false;
   let busy = false;
 
   function fact(list, name, value) {

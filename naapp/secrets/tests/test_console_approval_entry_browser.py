@@ -49,7 +49,14 @@ browser = _browser
 
 
 @pytest.fixture
-async def entry_service(world, tmp_path, request):
+def script_delivery():
+    requested, release = asyncio.Event(), asyncio.Event()
+    release.set()
+    return requested, release
+
+
+@pytest.fixture
+async def entry_service(world, tmp_path, request, script_delivery):
     w = world
     await apply_console_migrations(w.db)
     await apply_idempotency_migrations(w.db)
@@ -112,7 +119,16 @@ async def entry_service(world, tmp_path, request):
     app = split_origins(
         FastAPI(), human, human_origin=origin, agent_origin=f"http://127.0.0.1:{port}"
     )
-    server = uvicorn.Server(uvicorn.Config(app, log_level="warning", lifespan="off"))
+
+    async def slow_script(scope, receive, send):
+        # Delay delivery, without replacing the production asset or browser JS.
+        if scope["type"] == "http" and scope["path"] == "/console-use-approvals/approvals.js":
+            requested, release = script_delivery
+            requested.set()
+            await release.wait()
+        await app(scope, receive, send)
+
+    server = uvicorn.Server(uvicorn.Config(slow_script, log_level="warning", lifespan="off"))
     running = asyncio.create_task(server.serve(sockets=[sock]))
     try:
         async with asyncio.timeout(10):
@@ -131,10 +147,36 @@ async def entry_service(world, tmp_path, request):
         sock.close()
 
 
+async def open_email_entry(page, url, script_delivery):
+    requested, release = script_delivery
+    requested.clear()
+    release.clear()
+    navigation = asyncio.create_task(page.goto(url))
+    try:
+        async with asyncio.timeout(10):
+            await requested.wait()
+        panel = page.locator("#use-approval")
+        await expect(panel).to_be_attached()
+        scoped = page.locator("[data-console-scope]")
+        if await scoped.count():
+            await expect(scoped).to_have_js_property("hidden", False)
+        assert bool(urlsplit(page.url).fragment)
+        # The browser has parsed the real page but has not received its script.
+        # It must not expose a ready approval panel while the locator is in URL/history.
+        if await panel.is_visible():
+            raise AssertionError("approval panel visible before personal locator removal")
+    finally:
+        release.set()
+        try:
+            await navigation
+        except BrowserError:
+            raise AssertionError("delivered approval entry failed") from None
+
+
 @pytest.mark.parametrize("width", [375, 1440])
 @pytest.mark.parametrize("signed_out", [False, True])
 async def test_broker_email_entry_reaches_the_use_page_and_keeps_fresh_ceremonies(
-    world, browser, entry_service, width, signed_out
+    world, browser, entry_service, script_delivery, width, signed_out
 ):
     uses, origin, smtp, _ = entry_service
     async with await browser.new_context(viewport={"width": width, "height": 1000}) as context:
@@ -150,10 +192,7 @@ async def test_broker_email_entry_reaches_the_use_page_and_keeps_fresh_ceremonie
             await context.clear_cookies()
         requests = []
         page.on("request", lambda request: requests.append(request.url))
-        try:
-            await page.goto(url)
-        except BrowserError:
-            raise AssertionError("delivered approval entry failed") from None
+        await open_email_entry(page, url, script_delivery)
         # The assertion deliberately precedes any typed-page request: the
         # actual email entry must select this page, rather than a test deep link.
         await expect(page.locator("#use-approval")).to_be_visible()
@@ -228,7 +267,7 @@ async def existing_owner_page(world, context, origin):
 @pytest.mark.parametrize("width", [375, 1440])
 @pytest.mark.parametrize("entry_service", ["run"], indirect=True)
 async def test_run_email_entry_selects_run_page_without_releasing_terms_to_another_candidate(
-    world, browser, entry_service, width
+    world, browser, entry_service, script_delivery, width
 ):
     uses, origin, smtp, run = entry_service
     async with await browser.new_context(viewport={"width": width, "height": 1000}) as context:
@@ -243,10 +282,8 @@ async def test_run_email_entry_selects_run_page_without_releasing_terms_to_anoth
             "SELECT approval_id FROM {{tables.run_slot_approvals}} WHERE approval_ref=$1",
             reply.body["approval_ref"],
         )
-        try:
-            await page.goto(url)
-        except BrowserError:
-            raise AssertionError("delivered run approval entry failed") from None
+        await open_email_entry(page, url, script_delivery)
+        await expect(page.locator("#use-approval")).to_be_visible()
         await expect(page.locator("#use-approval")).to_have_attribute("data-root", "/run-approvals")
         assert urlsplit(page.url).path == "/run-approvals" and not urlsplit(page.url).fragment
         assert not await page.evaluate(
