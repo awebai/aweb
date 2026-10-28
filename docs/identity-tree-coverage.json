@@ -461,7 +461,7 @@
         "awid/tests/test_id_namespace_epochs.py::test_pre_upgrade_concurrent_authenticated_posts_open_once"
       ],
       "acceptance": "Exact authority, witnessed epochs and initial/replaced continuity.",
-      "candidate_head": "3688bfe71eee1bfa2ed1b5702f3fa1be4ab3672b",
+      "candidate_head": "b4ccf3ed57259e3d322be797e44bc8790cdb6646",
       "ed25519_profile": "legacy",
       "sites": [
         {
@@ -507,7 +507,7 @@
         "awid/tests/test_id_namespace_epochs.py::test_exact_inherited_exact_observations_write_no_epoch"
       ],
       "acceptance": "Retain released reverify row behavior; observations write no epoch and unchanged live exact authority is not a replacement.",
-      "candidate_head": "3688bfe71eee1bfa2ed1b5702f3fa1be4ab3672b",
+      "candidate_head": "b4ccf3ed57259e3d322be797e44bc8790cdb6646",
       "ed25519_profile": "legacy",
       "sites": [
         {
@@ -545,7 +545,7 @@
         "awid/tests/test_id_certificate_registration.py::test_replacement_races_parent_registration"
       ],
       "acceptance": "Previous-key-authorized rotation versus DNS-only replacement; serialize against child registration.",
-      "candidate_head": "3688bfe71eee1bfa2ed1b5702f3fa1be4ab3672b",
+      "candidate_head": "b4ccf3ed57259e3d322be797e44bc8790cdb6646",
       "ed25519_profile": "strict",
       "sites": [
         {
@@ -587,7 +587,7 @@
         "awid/tests/test_id_namespace_epochs.py::test_namespace_delete_then_reregister_opens_replaced"
       ],
       "acceptance": "Retain epochs/revisions; delete/re-register cannot revive the old tree, including same-key reuse.",
-      "candidate_head": "3688bfe71eee1bfa2ed1b5702f3fa1be4ab3672b"
+      "candidate_head": "b4ccf3ed57259e3d322be797e44bc8790cdb6646"
     },
     {
       "id": "AWID.DID.GENESIS",
@@ -611,7 +611,7 @@
         "awid/tests/test_did_key_witness.py::test_registration_and_rotation_times_come_from_the_tree_clock"
       ],
       "acceptance": "Keep DID syntax and key proof; separate ID-tree enrollment from bare DID creation.",
-      "candidate_head": "3688bfe71eee1bfa2ed1b5702f3fa1be4ab3672b",
+      "candidate_head": "b4ccf3ed57259e3d322be797e44bc8790cdb6646",
       "ed25519_profile": "legacy",
       "sites": [
         {
@@ -641,7 +641,7 @@
         "awid/tests/test_id_certificate_registration.py::test_witness_times_never_precede_the_key_epochs_they_select"
       ],
       "acceptance": "Current-key CAS and monotone post-lock witnesses; no inference from pre-upgrade log timestamps.",
-      "candidate_head": "3688bfe71eee1bfa2ed1b5702f3fa1be4ab3672b",
+      "candidate_head": "b4ccf3ed57259e3d322be797e44bc8790cdb6646",
       "sites": [
         {
           "file": "awid/src/awid_service/routes/did.py",
@@ -786,7 +786,7 @@
         "awid/tests/test_id_certificate_schema.py"
       ],
       "acceptance": "Subject proof, R1-R3 and current parent/replacement state checked atomically; exact invitation retry preserves registration time.",
-      "candidate_head": "3688bfe71eee1bfa2ed1b5702f3fa1be4ab3672b",
+      "candidate_head": "b4ccf3ed57259e3d322be797e44bc8790cdb6646",
       "ed25519_profile": "strict",
       "sites": [
         {
@@ -867,7 +867,7 @@
         "awid/tests/test_id_certificate_registration.py::test_a_reparent_under_its_own_descendant_is_a_cycle"
       ],
       "acceptance": "Explicit new-parent signature and subject proof, expected-head CAS; preserve key and team certificates.",
-      "candidate_head": "3688bfe71eee1bfa2ed1b5702f3fa1be4ab3672b",
+      "candidate_head": "b4ccf3ed57259e3d322be797e44bc8790cdb6646",
       "open_items": [
         "reparent-register-race (checkpoint 5)."
       ]
@@ -908,7 +908,7 @@
         "awid/tests/test_id_certificate_registration.py::test_post_lock_revocation_time_is_not_transaction_start"
       ],
       "acceptance": "Self/current-valid-parent/root authority, root-only past cutoff, cascade and namespace replacement.",
-      "candidate_head": "3688bfe71eee1bfa2ed1b5702f3fa1be4ab3672b",
+      "candidate_head": "b4ccf3ed57259e3d322be797e44bc8790cdb6646",
       "ed25519_profile": "strict",
       "sites": [
         {
@@ -951,6 +951,7 @@
         "awid/tests/test_id_certificate_registration.py::test_an_agent_whose_human_was_revoked_cannot_issue"
       ],
       "acceptance": "Bounded exact proof closure, no enumeration, complete epoch continuity and certificate/key history. S2 owner supplies final module path and test selectors.",
+      "candidate_head": "b4ccf3ed57259e3d322be797e44bc8790cdb6646",
       "ed25519_profile": "strict",
       "sites": [
         {
@@ -997,6 +998,7 @@
         "awid/tests/test_id_enrollment_resolution.py"
       ],
       "acceptance": "Production cached client, 60/900 bounds, domain isolation, timeout/negative-cache/429 and enrolled omission; S2 checkpoint6 owns final paths.",
+      "candidate_head": "b4ccf3ed57259e3d322be797e44bc8790cdb6646",
       "ed25519_profile": "strict",
       "sites": [
         {
@@ -1044,6 +1046,7 @@
         "awid/tests/test_id_registry_client.py"
       ],
       "acceptance": "Public register, revoke and signed-rotation client: exact covering-v2 bytes; a sync-or-awaitable signer whose answer is verified with the shared strict profile before anything is sent; a refusing signer sends nothing.",
+      "candidate_head": "b4ccf3ed57259e3d322be797e44bc8790cdb6646",
       "ed25519_profile": "strict",
       "sites": [
         {
