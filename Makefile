@@ -262,11 +262,22 @@ check-awid-site-docs: sync-awid-site-docs
 verify-site: check-awid-site-docs
 	cd awid/site && hugo --minify --cleanDestinationDir
 
+PYTEST_SERVER_ARGS ?= -n 4 --dist=loadgroup --durations=25
+
 test-server:
 	cd server && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
 	set -eu; cd server; build_dir=$$(mktemp -d); trap 'rm -rf "$$build_dir"' EXIT; \
 		UV_CACHE_DIR=/tmp/uv-cache uv build --out-dir "$$build_dir"
-	cd server && UV_CACHE_DIR=/tmp/uv-cache UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
+	# Build one guarded CLI before xdist starts; workers share the immutable artifact.
+	cd server && UV_CACHE_DIR=/tmp/uv-cache UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) sh -eu -c '\
+		if [ -z "$${AW_TEST_CLI_BINARY:-}" ]; then \
+			server_test_dir=$$(mktemp -d); \
+			server_test_cleanup() { rm -rf "$$server_test_dir"; }; \
+			trap server_test_cleanup EXIT; \
+			(cd ../cli/go && go build -o "$$server_test_dir/aw" ./cmd/aw); \
+			export AW_TEST_CLI_BINARY="$$server_test_dir/aw"; \
+		fi; \
+		uv run --offline --no-sync pytest -q "$$@"' server-tests $(PYTEST_SERVER_ARGS) $(if $(PYTEST_SERVER_SHARD),--server-shard=$(PYTEST_SERVER_SHARD))
 
 # The naapp packages the candidate gate covers. Each provides `make lint` and
 # `make test`: the checks stage lints them, and the isolated unit stage runs

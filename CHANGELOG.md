@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Server 1.27.37: prepare the server test suite for isolated parallel workers
+  and a single shared CLI build.
+
 - Server 1.27.36: round activity Retry-After up to the remaining Redis window
   so a client that waits the advertised delay can retry successfully.
 

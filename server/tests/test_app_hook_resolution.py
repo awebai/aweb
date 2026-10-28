@@ -315,7 +315,7 @@ async def test_own_bindings_never_show_another_apps_binding(team):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "query",
-    ["", f"?binding_id={uuid4()}&hook={HOOK_PATH}", "?binding_id=not-a-uuid", "?hook=aweb.hooks/one/x", "?hook=x"],
+    ["", pytest.param(f"?binding_id={uuid4()}&hook={HOOK_PATH}", id="binding-and-hook"), "?binding_id=not-a-uuid", "?hook=aweb.hooks/one/x", "?hook=x"],
 )
 async def test_own_bindings_need_exactly_one_well_formed_selector(team, query):
     response = await _get(team, LOGS, "logs_key", f"/v1/apps/self/hooks/bindings{query}")
