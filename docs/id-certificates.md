@@ -735,6 +735,26 @@ rather than served until its TTL; if the fresh response still lacks the field,
 enrollment remains unknown and follows the refusal rule above. The rollout
 never converts absent evidence to legacy success.
 
+The same carrier is required on HTTP 404 from this key route. Read the mapping
+and `id_identities` in the same coherent snapshot, including when no mapping
+row exists. Retain 404 and its existing `detail`, and add top-level `id_tree`
+with the exact shapes above: enrollment comes from `id_identities`, including
+revoked or root-replaced IDs, rather than from the mapping's existence. The
+client carries this structured enrollment on its missing-mapping refusal; a
+consumer must not parse a message string. A self-derived-key fallback proves
+not enrolled ONLY from an explicit `{"enrolled":false}`. A 404 without the
+field is unknown, and a malformed stated field rejects. An enrolled 404 keeps
+its domain and still requires independent current tree verification; neither
+404 nor a self-derived key can erase its enrollment.
+
+Distinguish a failed refresh from a successful answer lacking the field. On a
+failed refresh, last-known-good enrollment remains usable through 900 seconds
+at its true original age; after that it is unavailable, never proven legacy.
+A required refetch that succeeds but still lacks `id_tree` is unknown and
+refuses omission, rather than silently reusing the missing cached projection.
+These tree-evidence cases assume original authentication passed; they never
+extend the separate 60-second current-key binding rule below.
+
 The existing did:aw key-binding check keeps its current independent 60-second
 positive-cache/fresh-resolution rule; the new 900-second tree-status grace
 MUST NOT loosen it. `expected_request` assumes ordinary authentication has
@@ -770,6 +790,11 @@ mode privately at issue: `host_managed` or `self_custodial`. An acceptor cannot
 switch modes. A self-custodial human parent receives the pending request defined
 below; its aw presents it for the inviting human's explicit approval. Nothing
 is signed until that approval. Immediate init/spawn signs directly.
+The namespace root may use that same CSR exchange to admit its first human:
+the parent is `{kind:namespace,id:<exact domain>}`, and the root controller
+holds the fixed self-custodial invitation in its existing local invitation
+record. The approving root operator supplies the human approval described
+below; root-key custody alone never enables unattended human CSR approval.
 Agents can issue agent spawns, never human invites. An untyped new invite from
 an attributed agent is a spawn/inherits or refuses, not an unattributed escape.
 Do not guess a parent from pre-upgrade bearer tokens or local instance names.
@@ -860,9 +885,15 @@ erase issued bytes or replace the first child's key on a conflicting retry.
 
 Human issue requires explicit approval for EACH exact request, independent of
 whether key custody prompts. Only the inviting human's selected human signer
-can approve. The CLI shows the privately fixed recipient, exact child did:aw,
-parent/domain/kind, invitation ID and the child's key fingerprint. The recipient
-CLI shows the same fingerprint when exporting its request:
+can approve, or the namespace controller's human operator for the root-issued
+first-human CSR above. Both obey the same tty, exact one-shot, out-of-band
+fingerprint and conflict/void rules; an agent-run root command cannot approve.
+The approval CLI shows the privately fixed recipient, exact child did:aw,
+parent/domain/kind and invitation ID, then requires the approver to ENTER the
+recipient-supplied fingerprint BEFORE showing the CSR's fingerprint. It compares
+the entered value and only then reveals the CSR fingerprint and comparison;
+no prefilled value or yes/no confirmation substitutes for entry. The recipient
+CLI shows its fingerprint when exporting its request:
 `lowercase_hex(SHA256(raw_32_byte_subject_public_key)[0:16])`, displayed as four
 groups of eight hex digits separated by hyphens. The inviter ENTERS the
 recipient-supplied fingerprint and the CLI compares it with the CSR's key;
@@ -903,10 +934,26 @@ request with this ID and exactly matching id/domain/parent/kind and subject
 key, independently verifies the current parent chain and issuer signature,
 then atomically installs. A mismatch leaves its old identity/certificate and
 pending request unchanged (`request_binding_mismatch`). A local re-sign needs
-no registry write. For a did:aw child, import retains the signed result as
-pending; the child then calls §3 register with its own current-key proof and
-the same invitation ID, and verifies current status before claiming authority.
-A response or receipt alone never establishes a registered human.
+no registry write. For a did:aw child, import retains the signed result and
+calls §3 register by default, with the child's own current-key proof and the
+same invitation ID. `--no-register` explicitly skips that write and leaves
+registration pending. A registration failure retains the exact signed result
+and pending state for retry, without a new key or parent signature. Success
+records the receipt as registration evidence; current status must still be
+verified before claiming authority. The output distinguishes the two:
+"registered at AWID; authority is checked against the tree at each use".
+A response or receipt alone never establishes current human authority.
+
+`aw id human init --domain X --as-root` on the same machine is the immediate
+init path, not a CSR exchange: the human operator creates their own human key,
+uses the current exact-domain controller to issue the namespace-parent human
+certificate directly, and registers with the subject's key proof. It creates
+no CSR or invitation. It requires a human interactive invocation; an agent-run
+or non-TTY command cannot use it to mint a human. Human key custody and each
+human signing prompt retain their existing rules. For a human prepared on a
+different machine, the issuer fixes the invitation and parent BEFORE CSR
+export; key/DID preparation may precede that, but `--domain` alone cannot
+produce an issue CSR without its required invitation ID and parent.
 
 The CLI surfaces are `aw id parent request` (issue or --resign),
 `aw id parent import <response>`, and `aw id child receive <request>`, `pending`,
