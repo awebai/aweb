@@ -155,3 +155,34 @@ func TestIDChildDirectIssueRefusals(t *testing.T) {
 		}
 	})
 }
+
+// The root admits an agent directly: a root→agent chain, which verifies as
+// no_human (§3), byte-identical to the frozen root-agent certificate.
+func TestIDChildDirectIssueRootAgentIsNoHuman(t *testing.T) {
+	x := loadIDChildExchange(t)
+	frozen := x.v.Certificates["root-agent"].Signed
+	certificate := frozen["certificate"].(map[string]any)
+	child := awid.IDChild{ID: certificate["id"].(string), Domain: "example.com", Parent: map[string]any{"kind": "namespace", "id": "example.com"}, Kind: "agent"}
+	issuance := newIssuedStore(t, x.v)
+	calls := 0
+	bundle, err := awid.IssueIDChild(issuance, child, nil, x.evidence("normal"), vectorSigner(t, x.v, "root", &calls), at(t, certificate["issued_at"].(string)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := awid.CanonicalJSONValue(bundle["certificates"].([]any)[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := awid.CanonicalJSONValue(frozen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want || calls != 1 {
+		t.Fatalf("calls=%d certificate:\n%s\nwant:\n%s", calls, got, want)
+	}
+	subject := awid.IDChainSubject{ID: child.ID, DIDKey: child.ID, TeamMemberDIDKey: child.ID}
+	verdict := awid.VerifyIDChain(bundle, subject, x.evidence("normal"), "example.com")
+	if verdict.Outcome != "no_human" || verdict.IdentityValid == nil || !*verdict.IdentityValid {
+		t.Fatalf("verdict %+v", verdict)
+	}
+}

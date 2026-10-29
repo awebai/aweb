@@ -48,8 +48,12 @@ func formatIDCreate(v any) string {
 	if strings.TrimSpace(out.RegistryError) != "" {
 		sb.WriteString(fmt.Sprintf("Registry Err: %s\n", out.RegistryError))
 	}
-	if strings.TrimSpace(out.ParentHuman) != "" {
-		sb.WriteString(fmt.Sprintf("Parent:      %s\n", out.ParentHuman))
+	if strings.TrimSpace(out.ParentHuman) != "" || out.ParentRoot {
+		parent := out.ParentHuman
+		if out.ParentRoot {
+			parent = "namespace root (no human)"
+		}
+		sb.WriteString(fmt.Sprintf("Parent:      %s\n", parent))
 		sb.WriteString("Chain:       installed; authority is checked against the tree at each use\n")
 	}
 	if strings.TrimSpace(out.ControllerDID) != "" {

@@ -163,3 +163,55 @@ func TestIDCreateParentHumanThatCannotIssueLeavesNoAgent(t *testing.T) {
 		t.Fatal("the agent's address was claimed")
 	}
 }
+
+func (r *parentCreateRun) createUnderRoot(parentHuman string, dnsController string) (idCreateOutput, error) {
+	pub, key, err := awid.GenerateKeypair()
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	if err := awconfig.SaveControllerKey("example.com", key); err != nil {
+		r.t.Fatal(err)
+	}
+	if dnsController == "" {
+		dnsController = awid.ComputeDIDKey(pub)
+	}
+	return executeIDCreate(r.workingDir, idCreateOptions{
+		Name:            "coordinator",
+		Domain:          "example.com",
+		RegistryURL:     r.registryURL,
+		SkipDNSVerify:   true,
+		TXTResolver:     staticTXTResolver{"_awid.example.com": {idCreateDNSRecordValue(dnsController, "")}},
+		Now:             time.Now,
+		ParentHuman:     parentHuman,
+		ParentRoot:      true,
+		HumanAtTerminal: func() error { return nil },
+		Keychain:        awconfig.HumanKeychain{},
+		Prompt: func(string) ([]byte, error) {
+			r.prompts++
+			return nil, errors.New("no human signature is expected under the root")
+		},
+	})
+}
+
+func TestIDCreateNamesOneParent(t *testing.T) {
+	r := newParentCreateRun(t, "https://registry.example.com")
+	if _, err := r.createUnderRoot("did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w", ""); err == nil || !strings.Contains(err.Error(), "choose one") {
+		t.Fatalf("err=%v", err)
+	}
+	r.assertNoAgent()
+}
+
+// --parent-root checks exact DNS even with --skip-dns-verify: AWID holds the
+// root's signature to the DNS controller, so a mismatch would leave the
+// agent chainless.
+func TestIDCreateParentRootRefusesADNSControllerOtherThanThisMachines(t *testing.T) {
+	r := newParentCreateRun(t, "https://registry.example.com")
+	other, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.createUnderRoot("", awid.ComputeDIDKey(other)); err == nil || !strings.Contains(err.Error(), "does not match this machine's controller") {
+		t.Fatalf("err=%v", err)
+	}
+	r.assertNoAgent()
+}

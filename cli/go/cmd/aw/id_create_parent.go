@@ -14,12 +14,26 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
-// An agent created with --parent-human carries a chain from creation
-// (docs/id-certificates.md §6, "Immediate init/spawn signs directly"): the
-// named human signs the agent's certificate, records it in its own issuance
-// log before releasing it, and the agent registers it with its own key
-// proof. The human is named explicitly; a human record found on disk is
-// never attached on its own.
+// An agent created with --parent-human or --parent-root carries a chain from
+// creation (docs/id-certificates.md §6, "Immediate init/spawn signs
+// directly"). Its parent signs the agent's certificate and records it in its
+// own issuance log before releasing it; the agent registers it with its own
+// key proof. A human parent is named explicitly, never a human record found
+// on disk; the root parent is this machine's namespace controller, and a
+// root→agent chain means no human (§3).
+
+// agentIssuer is who signs an agent's certificate at creation.
+type agentIssuer struct {
+	parent      map[string]any
+	parentChain []any
+	issuance    awconfig.IDIssuanceFileStore
+	signer      func(agentID string) awid.IDCertificateSigner
+	// evidence is current status for issuing to the agent, refused when the
+	// issuer cannot issue now.
+	evidence func(ctx context.Context, agentID, agentDIDKey string) (*awid.IDChainEvidence, error)
+	// human is the issuing human's did:aw; empty for the root.
+	human string
+}
 
 // humanParent is a registered human on this machine that may issue: its
 // record and its installed chain.
@@ -56,55 +70,97 @@ func loadHumanParent(domain, id string) (*humanParent, error) {
 	return &humanParent{record: rec, dir: dir, chain: chain}, nil
 }
 
-// humanParentEvidence verifies the human's current chain and key against
-// fresh status from registryURL before anything is signed for a child.
-func (p *humanParent) evidence(ctx context.Context, registry *awid.RegistryClient, resolver awid.TXTResolver, registryURL string) (*awid.IDChainEvidence, error) {
+// issuer signs as the human through its keychain key and terminal prompt,
+// once its chain and key verify against fresh status from registryURL.
+func (p *humanParent) issuer(opts idCreateOptions, registry *awid.RegistryClient, registryURL string) *agentIssuer {
+	return &agentIssuer{
+		parent:      map[string]any{"kind": "identity", "id": p.record.StableID},
+		parentChain: p.chain.Bundle["certificates"].([]any),
+		issuance:    awconfig.IDIssuanceFileStore{Dir: awconfig.IdentityIssuanceDir(p.dir)},
+		signer: func(agentID string) awid.IDCertificateSigner {
+			return awid.HumanSigner(opts.Keychain, p.record.StableID, "issue the certificate of agent "+agentID, opts.Prompt)
+		},
+		evidence: func(ctx context.Context, _, _ string) (*awid.IDChainEvidence, error) {
+			subject := awid.IDChainSubject{ID: p.record.StableID, DIDKey: p.record.DIDKey}
+			evidence := idStatusAt(registry, opts.TXTResolver, registryURL).IDChainEvidence(ctx, p.chain.Bundle, subject, p.record.Domain)
+			verdict := awid.VerifyIDChain(p.chain.Bundle, subject, evidence, p.record.Domain)
+			if verdict.IdentityValid == nil || !*verdict.IdentityValid || verdict.Kind == nil || *verdict.Kind != "human" {
+				return nil, fmt.Errorf("human %s cannot issue now: %s", p.record.StableID, verdict.Reason)
+			}
+			return evidence, nil
+		},
+		human: p.record.StableID,
+	}
+}
+
+// rootIssuer signs as the namespace root with this machine's controller key.
+// Status is read for the agent itself: the namespace's open epoch decides
+// the issuing key.
+func rootIssuer(domain string, controllerKey ed25519.PrivateKey, registry *awid.RegistryClient, resolver awid.TXTResolver, registryURL string) (*agentIssuer, error) {
+	dir, err := awconfig.ControllerIssuanceDir(domain)
+	if err != nil {
+		return nil, err
+	}
+	return &agentIssuer{
+		parent:   map[string]any{"kind": "namespace", "id": domain},
+		issuance: awconfig.IDIssuanceFileStore{Dir: dir},
+		signer:   func(string) awid.IDCertificateSigner { return awid.KeySigner(controllerKey) },
+		evidence: func(ctx context.Context, agentID, agentDIDKey string) (*awid.IDChainEvidence, error) {
+			return idStatusAt(registry, resolver, registryURL).IDChainEvidence(ctx, nil, awid.IDChainSubject{ID: agentID, DIDKey: agentDIDKey}, domain), nil
+		},
+	}, nil
+}
+
+// checkRootController refuses unless exact _awid DNS for domain names this
+// machine's controller, the key AWID will hold the root's signature to.
+func checkRootController(ctx context.Context, resolver awid.TXTResolver, domain string, controllerKey ed25519.PrivateKey) error {
+	authority, err := awid.VerifyExactDomainAuthority(ctx, resolver, domain)
+	if err != nil {
+		return fmt.Errorf("--parent-root: lookup %s: %w", awid.AWIDTXTName(domain), err)
+	}
+	local := awid.ComputeDIDKey(controllerKey.Public().(ed25519.PublicKey))
+	if strings.TrimSpace(authority.ControllerDID) != local {
+		return fmt.Errorf("--parent-root: DNS controller %s for %s does not match this machine's controller %s", authority.ControllerDID, domain, local)
+	}
+	return nil
+}
+
+func idStatusAt(registry *awid.RegistryClient, resolver awid.TXTResolver, registryURL string) *awid.IDStatusClient {
 	status := awid.NewIDStatusClient(registry, resolver)
 	status.Route = func(context.Context, string) (string, error) { return registryURL, nil }
-	subject := awid.IDChainSubject{ID: p.record.StableID, DIDKey: p.record.DIDKey}
-	evidence := status.IDChainEvidence(ctx, p.chain.Bundle, subject, p.record.Domain)
-	verdict := awid.VerifyIDChain(p.chain.Bundle, subject, evidence, p.record.Domain)
-	if verdict.IdentityValid == nil || !*verdict.IdentityValid || verdict.Kind == nil || *verdict.Kind != "human" {
-		return nil, fmt.Errorf("human %s cannot issue now: %s", p.record.StableID, verdict.Reason)
-	}
-	return evidence, nil
+	return status
 }
 
 type agentChainStep struct {
-	parent      *humanParent
+	issuer      *agentIssuer
 	agentID     string
+	agentDIDKey string
 	agentKey    ed25519.PrivateKey
 	domain      string
 	registryURL string
 	identityDir string
 	registry    *awid.RegistryClient
-	resolver    awid.TXTResolver
-	keychain    awid.HumanKeyStore
-	prompt      awid.PassphrasePrompt
 	now         time.Time
 }
 
 // install issues, registers and installs the agent's chain. A certificate
-// the human already issued to this agent is released again instead of a
-// second one.
+// the issuer already recorded for this agent is released again instead of
+// a second one.
 func (s agentChainStep) install(ctx context.Context) (map[string]any, error) {
-	issuance := awconfig.IDIssuanceFileStore{Dir: awconfig.IdentityIssuanceDir(s.parent.dir)}
-	entry, err := issuance.EntryForSubject(s.agentID)
+	entry, err := s.issuer.issuance.EntryForSubject(s.agentID)
 	if err != nil {
 		return nil, err
 	}
-	parentChain := s.parent.chain.Bundle["certificates"].([]any)
 	var bundle map[string]any
 	if entry != nil {
-		bundle = map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": append(append([]any{}, parentChain...), entry.Signed)}
+		bundle = map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": append(append([]any{}, s.issuer.parentChain...), entry.Signed)}
 	} else {
-		evidence, err := s.parent.evidence(ctx, s.registry, s.resolver, s.registryURL)
+		evidence, err := s.issuer.evidence(ctx, s.agentID, s.agentDIDKey)
 		if err != nil {
 			return nil, err
 		}
-		child := awid.IDChild{ID: s.agentID, Domain: s.domain, Parent: map[string]any{"kind": "identity", "id": s.parent.record.StableID}, Kind: "agent"}
-		sign := awid.HumanSigner(s.keychain, s.parent.record.StableID, "issue the certificate of agent "+s.agentID, s.prompt)
-		if bundle, err = awid.IssueIDChild(issuance, child, parentChain, evidence, sign, s.now); err != nil {
+		child := awid.IDChild{ID: s.agentID, Domain: s.domain, Parent: s.issuer.parent, Kind: "agent"}
+		if bundle, err = awid.IssueIDChild(s.issuer.issuance, child, s.issuer.parentChain, evidence, s.issuer.signer(s.agentID), s.now); err != nil {
 			return nil, fmt.Errorf("issue the certificate of %s: %w", s.agentID, err)
 		}
 	}
@@ -120,10 +176,58 @@ func (s agentChainStep) install(ctx context.Context) (map[string]any, error) {
 	return bundle, nil
 }
 
+// idCreateParent is the parent named on the command line, checked before
+// any identity exists: a human that can sign at this terminal, or the root.
+type idCreateParent struct {
+	human *humanParent
+	root  bool
+}
+
+func prepareIDCreateParent(opts idCreateOptions, domain string) (*idCreateParent, error) {
+	human := strings.TrimSpace(opts.ParentHuman)
+	switch {
+	case human != "" && opts.ParentRoot:
+		return nil, usageError("--parent-human and --parent-root name different parents; choose one")
+	case opts.ParentRoot:
+		return &idCreateParent{root: true}, nil
+	case human == "":
+		return nil, nil
+	}
+	if opts.HumanAtTerminal == nil {
+		return nil, errors.New("internal error: no terminal check for --parent-human")
+	}
+	if err := opts.HumanAtTerminal(); err != nil {
+		return nil, fmt.Errorf("--parent-human signs as %s: %w", human, err)
+	}
+	parent, err := loadHumanParent(domain, human)
+	if err != nil {
+		return nil, err
+	}
+	return &idCreateParent{human: parent}, nil
+}
+
+// issuer is the parent's agentIssuer; the root signs with controllerKey.
+func (p *idCreateParent) issuer(opts idCreateOptions, domain string, controllerKey ed25519.PrivateKey, registry *awid.RegistryClient, registryURL string) (*agentIssuer, error) {
+	if p.root {
+		return rootIssuer(domain, controllerKey, registry, opts.TXTResolver, registryURL)
+	}
+	return p.human.issuer(opts, registry, registryURL), nil
+}
+
+// preflight refuses, before the agent exists, a parent that cannot issue,
+// so a refused parent leaves no chainless agent.
+func (p *idCreateParent) preflight(ctx context.Context, opts idCreateOptions, issuer *agentIssuer, domain string, controllerKey ed25519.PrivateKey) error {
+	if p.root {
+		return checkRootController(ctx, opts.TXTResolver, domain, controllerKey)
+	}
+	_, err := issuer.evidence(ctx, "", "")
+	return err
+}
+
 // resumeIDCreateChain finishes the chain step of an agent this command
 // already created: the identity at identityPath, named address, still
 // without an installed chain.
-func resumeIDCreateChain(ctx context.Context, opts idCreateOptions, parent *humanParent, identityPath, signingKeyPath, address string) (idCreateOutput, error) {
+func resumeIDCreateChain(ctx context.Context, opts idCreateOptions, parent *idCreateParent, domain, identityPath, signingKeyPath, address string) (idCreateOutput, error) {
 	identity, err := awconfig.LoadWorktreeIdentityFrom(identityPath)
 	if err != nil {
 		return idCreateOutput{}, err
@@ -145,10 +249,22 @@ func resumeIDCreateChain(ctx context.Context, opts idCreateOptions, parent *huma
 	if err != nil {
 		return idCreateOutput{}, err
 	}
+	var controllerKey ed25519.PrivateKey
+	if parent.root {
+		if controllerKey, err = awconfig.LoadControllerKey(domain); err != nil {
+			return idCreateOutput{}, fmt.Errorf("load namespace controller key for %s: %w", domain, err)
+		}
+		if err := checkRootController(ctx, opts.TXTResolver, domain, controllerKey); err != nil {
+			return idCreateOutput{}, err
+		}
+	}
+	issuer, err := parent.issuer(opts, domain, controllerKey, registry, identity.RegistryURL)
+	if err != nil {
+		return idCreateOutput{}, err
+	}
 	step := agentChainStep{
-		parent: parent, agentID: identity.StableID, agentKey: key, domain: parent.record.Domain,
-		registryURL: identity.RegistryURL, identityDir: identityDir, registry: registry, resolver: opts.TXTResolver,
-		keychain: opts.Keychain, prompt: opts.Prompt, now: idCreateNow(opts)(),
+		issuer: issuer, agentID: identity.StableID, agentDIDKey: identity.DID, agentKey: key, domain: domain,
+		registryURL: identity.RegistryURL, identityDir: identityDir, registry: registry, now: idCreateNow(opts)(),
 	}
 	if _, err := step.install(ctx); err != nil {
 		return idCreateOutput{}, err
@@ -162,7 +278,8 @@ func resumeIDCreateChain(ctx context.Context, opts idCreateOptions, parent *huma
 		SigningKeyPath: signingKeyPath,
 		RegistryStatus: identity.RegistryStatus,
 		RegistryURL:    identity.RegistryURL,
-		ParentHuman:    parent.record.StableID,
+		ParentHuman:    issuer.human,
+		ParentRoot:     parent.root,
 	}, nil
 }
 
@@ -171,22 +288,6 @@ func idCreateNow(opts idCreateOptions) func() time.Time {
 		return opts.Now
 	}
 	return time.Now
-}
-
-// prepareIDCreateParent checks, before any identity exists, that the named
-// human can issue and that a human is at the terminal to sign as it.
-func prepareIDCreateParent(opts idCreateOptions, domain string) (*humanParent, error) {
-	id := strings.TrimSpace(opts.ParentHuman)
-	if id == "" {
-		return nil, nil
-	}
-	if opts.HumanAtTerminal == nil {
-		return nil, errors.New("internal error: no terminal check for --parent-human")
-	}
-	if err := opts.HumanAtTerminal(); err != nil {
-		return nil, fmt.Errorf("--parent-human signs as %s: %w", id, err)
-	}
-	return loadHumanParent(domain, id)
 }
 
 func fileExists(path string) bool {
