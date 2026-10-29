@@ -11461,9 +11461,12 @@
         "accepted": false,
         "reason": "invitation_conflict",
         "invitation_void": true,
-        "request_state": "failed",
+        "request_state": "issued",
         "parent_signatures": 0,
-        "previous_issued_bytes_retained": true
+        "previous_issued_bytes_retained": true,
+        "issued_certificate_id_visible": true,
+        "invitation_void_visible": true,
+        "issued_response_retrievable": true
       }
     },
     {

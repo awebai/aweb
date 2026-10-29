@@ -8,18 +8,19 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import inspect
 import json
 import re
 import math
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from nacl.bindings import crypto_core_ed25519_is_valid_point
 from nacl.exceptions import BadSignatureError
 from nacl.signing import VerifyKey
 
-from awid.did import did_from_public_key, public_key_from_did, validate_stable_id
+from awid.did import public_key_from_did, validate_stable_id
 from awid.utc_timestamps import parse_utc_seconds
 from awid.identity_log_verify import verify_identity_log
 from awid.federation_errors import FederationAuthorityError
@@ -33,6 +34,9 @@ _LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 _B64URL = re.compile(r"[A-Za-z0-9_-]+")
 _BASE58 = re.compile(r"[1-9A-HJ-NP-Za-km-z]+")
 _ED25519_ORDER = 2**252 + 27742317777372353535851937790883648493
+_STATUS_FRESH_SECONDS = 60
+_STATUS_GRACE_SECONDS = 900
+_NS_PER_SECOND = 1_000_000_000
 
 
 class IDCertificateError(ValueError):
@@ -114,9 +118,8 @@ def _id(value: Any, *, key_only: bool = False) -> None:
         if not isinstance(value, str):
             raise ValueError("not text")
         if value.startswith("did:key:"):
-            public = public_key_from_did(value)
-            if did_from_public_key(public) != value or not crypto_core_ed25519_is_valid_point(public):
-                raise ValueError("noncanonical or non-prime-subgroup key")
+            # Decoding refuses non-canonical and non-prime-order keys.
+            public_key_from_did(value)
         elif not key_only and value.startswith("did:aw:"):
             if not _BASE58.fullmatch(value[7:]) or validate_stable_id(value) != value:
                 raise ValueError("noncanonical stable id")
@@ -175,7 +178,8 @@ def strict_did_key(did_key: str) -> bool:
     """Whether a canonical did:key meets the ID family's strict point profile.
 
     This predicate establishes no key ownership, issuance or current authority.
-    Released generic DID decoding retains its own contract.
+    It is did:key decoding itself (awid.did.public_key_from_did), which every
+    released Python decoder shares.
     """
     try:
         _id(did_key, key_only=True)
@@ -219,6 +223,41 @@ def verify_id_certificate(signed: dict[str, Any], *, issuer_key: str) -> None:
     if c["issuer_key"] != issuer_key:
         raise IDCertificateError("invalid_signature")
     verify_ed25519(issuer_key, id_certificate_signing_bytes(c), signature)
+
+
+async def sign_id_certificate(
+    certificate: dict[str, Any],
+    *,
+    signer: Callable[[bytes], tuple[str, bytes] | Awaitable[tuple[str, bytes]]],
+) -> dict[str, Any]:
+    """Sign one shaped certificate through a custody-owning callback.
+
+    Shape is checked before the callback, which is invoked/resolved once. Its
+    answer must name issuer_key and pass the shared strict signature verifier.
+    Malformed answers raise IDCertificateError('invalid_signature'); callback
+    exceptions propagate. This does no I/O and grants no issuance authority:
+    the custody owner must check the intended operation and current authority
+    before decrypting/signing. Pending human keys cannot issue certificates.
+    """
+    # Isolate nested caller data across an await, so the returned artifact is
+    # exactly the certificate whose immutable bytes went to the signer.
+    snapshot = json.loads(_canonical(certificate))
+    _shape({"certificate": snapshot, "signature": ""})
+    payload = id_certificate_signing_bytes(snapshot)
+    answer = signer(payload)
+    if inspect.isawaitable(answer):
+        answer = await answer
+    if (
+        type(answer) is not tuple or len(answer) != 2
+        or type(answer[0]) is not str or answer[0] != snapshot["issuer_key"]
+    ):
+        raise IDCertificateError("invalid_signature")
+    _, signature = answer
+    verify_ed25519(snapshot["issuer_key"], payload, signature)
+    return {
+        "certificate": snapshot,
+        "signature": base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii"),
+    }
 
 
 def _bundle_shape(bundle: Any) -> None:
@@ -284,14 +323,48 @@ class IDChainEvidence:
     namespace_authority: dict[str, Any]
     age_seconds: float | None
     refresh_failed: bool = False
+    observed_at_ns: int | None = None
+
+    def cache_mode_at(self, now_ns: int) -> str:
+        """Recheck a producer-anchored snapshot after waiting, without I/O.
+
+        The producer samples its process-local monotonic clock no later than
+        the observation to which age_seconds applies. Consumers use that same
+        clock, after their last lock wait. Neither the anchor nor the age is
+        renewed by this check; an anchor is never serialized or shared across
+        processes. This reports freshness only, not chain validity/authority.
+        """
+        if (
+            type(self.observed_at_ns) is not int or self.observed_at_ns < 0
+            or type(now_ns) is not int or now_ns < self.observed_at_ns
+        ):
+            return 'unavailable'
+        age_ns = _status_age_ns(self.age_seconds)
+        if age_ns is None:
+            return 'unavailable'
+        elapsed_ns = now_ns - self.observed_at_ns
+        return _status_cache_mode(age_ns + elapsed_ns, self.refresh_failed)
+
+
+def _status_age_ns(age: float | None) -> int | None:
+    if type(age) not in (int, float) or age < 0 or (type(age) is float and not math.isfinite(age)):
+        return None
+    # Round towards earlier expiry. No absolute clock/deadline passes through
+    # a float, including on hosts with very large monotonic clock values.
+    numerator, denominator = age.as_integer_ratio()
+    return (numerator * _NS_PER_SECOND + denominator - 1) // denominator
+
+
+def _status_cache_mode(age_ns: int | None, refresh_failed: bool) -> str:
+    if age_ns is None:
+        return 'unavailable'
+    if age_ns <= _STATUS_FRESH_SECONDS * _NS_PER_SECOND:
+        return 'fresh'
+    return 'outage_grace' if refresh_failed and age_ns <= _STATUS_GRACE_SECONDS * _NS_PER_SECOND else 'unavailable'
 
 
 def status_cache_mode(age_seconds: float | None, refresh_failed: bool) -> str:
-    if type(age_seconds) not in (int, float) or not math.isfinite(age_seconds) or age_seconds < 0:
-        return 'unavailable'
-    if age_seconds <= 60:
-        return 'fresh'
-    return 'outage_grace' if refresh_failed and age_seconds <= 900 else 'unavailable'
+    return _status_cache_mode(_status_age_ns(age_seconds), refresh_failed)
 
 
 def status_request(bundle: dict[str, Any] | None, subject: dict[str, Any], *, domain: str | None = None) -> dict[str, Any] | None:

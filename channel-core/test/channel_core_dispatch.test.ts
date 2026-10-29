@@ -17,6 +17,8 @@ import {
   SenderTrustManager,
   startChannelLoop,
 } from "../src/index.js";
+import * as ed from "@noble/ed25519";
+import { computeDIDKey } from "../src/identity/did.js";
 import { canonicalJSON, signMessage, type MessageEnvelope } from "../src/identity/signing.js";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
@@ -1977,7 +1979,8 @@ describe("channel-core dispatchAgentEvent", () => {
       message_id: "mail-projected-local",
     };
     const signature = await signMessage(b64ToBytes(vectors.seed), env);
-    const rosterDID = vectors.did.slice(0, -1) + (vectors.did.endsWith("1") ? "2" : "1");
+    // The roster names alice with another real key.
+    const rosterDID = computeDIDKey(ed.getPublicKey(new Uint8Array(32).fill(7)));
     const wrongRecipientEnv: MessageEnvelope = {
       ...env,
       message_id: "mail-projected-local-wrong-recipient",
