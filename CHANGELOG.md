@@ -4,11 +4,10 @@
 
 - **Security:** did:key decoding refuses Ed25519 public keys that are small
   order, non-canonical or of mixed order, in Python (`awid.did`), Go
-  (`cli/go/awid`) and TypeScript (`channel-core`). Anyone can produce
-  signatures that verify under such a key, so every signature check, pin and
-  admission path that decodes a did:key now refuses it. AWID and the server
-  refuse such keys in request fields, and a namespace controller key of this
-  kind never opens a namespace epoch.
+  (`cli/go/awid`) and TypeScript (`channel-core`). Every signature check, pin
+  and admission path that decodes a did:key now refuses these keys. AWID and
+  the server refuse such keys in request fields, and a namespace controller
+  key of this kind never opens a namespace epoch.
 
 - Identity tree (`docs/id-certificates.md`): DNS-rooted ID certificates chain
   an agent or human ID to its namespace through its parents. Python
