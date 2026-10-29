@@ -13,10 +13,12 @@ from aweb.auth_metrics import count_legacy_request_auth
 from aweb.config import require_registered_certificates
 from aweb.deps import get_db
 from aweb.identity_binding import (
+    IdentityBinding,
     refresh_projection_binding,
     verified_projection,
     verify_identity_binding,
 )
+from aweb.id_chain_auth import authenticate_id_chain
 from aweb.team_auth_deps import (
     TeamIdentity,
     _aweb_db,
@@ -95,6 +97,7 @@ async def resolve_identity_auth(request: Request, *, db=None) -> IdentityAuth:
         raise HTTPException(status_code=401, detail="Invalid DIDKey signature") from exc
 
     if not did_aw:
+        await authenticate_id_chain(request, IdentityBinding(did_key=did_key))
         if envelope.version == 1:
             count_legacy_request_auth(request, "identity")
         return IdentityAuth(did_key=did_key, did_aw=None, address=None)
@@ -118,6 +121,7 @@ async def resolve_identity_auth(request: Request, *, db=None) -> IdentityAuth:
         address = f"{first.domain}/{first.name}"
         binding = await verify_identity_binding(request, did_key=did_key, did_aw=did_aw, address=address)
 
+    await authenticate_id_chain(request, binding)
     binding_db = db if db is not None else getattr(request.app.state, "db", None)
     if binding_db is not None:
         await refresh_projection_binding(
