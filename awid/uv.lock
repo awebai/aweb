@@ -75,7 +75,7 @@ wheels = [
 
 [[package]]
 name = "awid-service"
-version = "0.5.34rc2"
+version = "0.5.34"
 source = { editable = "." }
 dependencies = [
     { name = "base58" },
