@@ -119,7 +119,7 @@ if __name__ == "__main__":
     runtime.mkdir(mode=0o700, exist_ok=True)
     os.environ["XDG_RUNTIME_DIR"] = str(runtime)
     subprocess.run(["gnome-keyring-daemon", "--unlock", "--components=secrets"],
-                   input=b"", check=True, stdout=subprocess.DEVNULL)
+                   input=b"disposable collection password", check=True, stdout=subprocess.DEVNULL)
     subprocess.run(["gnome-keyring-daemon", "--start", "--components=secrets"],
                    check=True, stdout=subprocess.DEVNULL)
     main()
