@@ -15,28 +15,25 @@ type idChildIssueCase struct {
 	Name   string `json:"name"`
 	Action string `json:"action"`
 	Input  struct {
-		Request                string   `json:"request"`
-		Mode                   string   `json:"mode"`
-		Parent                 string   `json:"parent"`
-		InvitationID           string   `json:"invitation_id"`
-		Recipient              string   `json:"recipient"`
-		InvitationLive         bool     `json:"invitation_live"`
-		Interactive            bool     `json:"interactive"`
-		AgentRun               bool     `json:"agent_run"`
-		AutoApprove            string   `json:"auto_approve"`
-		RecipientKeyConfirmed  bool     `json:"recipient_key_confirmed"`
-		ConfirmedFingerprint   string   `json:"confirmed_fingerprint"`
-		OutOfBandChannel       bool     `json:"out_of_band_channel"`
-		FingerprintShownBefore bool     `json:"csr_fingerprint_shown_before_entry"`
-		IssuedAt               string   `json:"issued_at"`
-		SelectedParent         string   `json:"selected_parent"`
-		PriorRequest           string   `json:"prior_request"`
-		PriorState             string   `json:"prior_state"`
-		PriorResponse          string   `json:"prior_response"`
-		SameRequestID          bool     `json:"same_request_id"`
-		Changed                string   `json:"changed"`
-		ParentStatusAfterWait  string   `json:"parent_status_after_wait"`
-		StoredRequests         []string `json:"stored_requests"`
+		Request               string   `json:"request"`
+		Mode                  string   `json:"mode"`
+		Parent                string   `json:"parent"`
+		InvitationID          string   `json:"invitation_id"`
+		Recipient             string   `json:"recipient"`
+		InvitationLive        bool     `json:"invitation_live"`
+		Interactive           bool     `json:"interactive"`
+		AgentRun              bool     `json:"agent_run"`
+		AutoApprove           string   `json:"auto_approve"`
+		Confirmed             bool     `json:"confirmed"`
+		IssuedAt              string   `json:"issued_at"`
+		SelectedParent        string   `json:"selected_parent"`
+		PriorRequest          string   `json:"prior_request"`
+		PriorState            string   `json:"prior_state"`
+		PriorResponse         string   `json:"prior_response"`
+		SameRequestID         bool     `json:"same_request_id"`
+		Changed               string   `json:"changed"`
+		ParentStatusAfterWait string   `json:"parent_status_after_wait"`
+		StoredRequests        []string `json:"stored_requests"`
 	} `json:"input"`
 	Expected struct {
 		Accepted                    bool     `json:"accepted"`
@@ -50,6 +47,9 @@ type idChildIssueCase struct {
 		PreviousIssuedBytesRetained bool     `json:"previous_issued_bytes_retained"`
 		IssuanceRecordedBeforeOut   bool     `json:"issuance_recorded_before_output"`
 		RequestIDs                  []string `json:"request_ids"`
+		IssuedCertificateIDVisible  bool     `json:"issued_certificate_id_visible"`
+		InvitationVoidVisible       bool     `json:"invitation_void_visible"`
+		IssuedResponseRetrievable   bool     `json:"issued_response_retrievable"`
 	} `json:"expected"`
 }
 
@@ -65,8 +65,7 @@ var idChildIssueCaseNames = []string{
 	"csr-noninteractive-approval-refuses",
 	"csr-agent-run-approval-refuses",
 	"csr-yes-flag-cannot-approve-human",
-	"csr-mismatched-confirmed-fingerprint-refuses",
-	"csr-approval-must-use-separate-trusted-channel",
+	"csr-declined-fingerprint-confirmation-refuses",
 	"csr-human-exact-interactive-approval",
 	"csr-byte-identical-retry-returns-exact-response",
 	"csr-second-request-same-key-refuses",
@@ -79,8 +78,7 @@ var idChildIssueCaseNames = []string{
 	"csr-root-human-exact-interactive-approval",
 	"csr-root-human-agent-run-refuses",
 	"csr-root-human-noninteractive-refuses",
-	"csr-root-human-fingerprint-mismatch-voids",
-	"csr-fingerprint-entry-must-precede-display",
+	"csr-root-human-declined-confirmation-refuses",
 }
 
 // invitationStore is an in-memory invitation store. Records round-trip
@@ -236,17 +234,11 @@ func (r *issueRun) invitation(t *testing.T, id string) *awid.IDInvitation {
 }
 
 func caseApproval(c idChildIssueCase) awid.IDHumanApproval {
-	entered := ""
-	if c.Input.RecipientKeyConfirmed {
-		entered = c.Input.ConfirmedFingerprint
-	}
 	return awid.IDHumanApproval{
-		Interactive:                 c.Input.Interactive,
-		AgentRun:                    c.Input.AgentRun,
-		AutoApprove:                 c.Input.AutoApprove != "",
-		OutOfBandChannel:            c.Input.OutOfBandChannel,
-		FingerprintShownBeforeEntry: c.Input.FingerprintShownBefore,
-		EnteredFingerprint:          entered,
+		Interactive: c.Input.Interactive,
+		AgentRun:    c.Input.AgentRun,
+		AutoApprove: c.Input.AutoApprove != "",
+		Confirmed:   c.Input.Confirmed,
 	}
 }
 
@@ -412,6 +404,28 @@ func TestIDChildIssueFrozenCases(t *testing.T) {
 			if c.Expected.PreviousIssuedBytesRetained && c.Input.PriorState == awid.IDRequestIssued && inv.Request.Response != x.responses["human-issued"].CanonicalUTF8 {
 				t.Fatal("voiding dropped the issued response")
 			}
+			if c.Expected.IssuedCertificateIDVisible || c.Expected.InvitationVoidVisible {
+				listed, err := awid.IDChildRequests(r.invitations)
+				if err != nil || len(listed) != 1 {
+					t.Fatalf("listed %v (%v)", listed, err)
+				}
+				if c.Expected.IssuedCertificateIDVisible && (listed[0].CertificateID == "" || listed[0].CertificateID != inv.Request.NewCertificateID) {
+					t.Fatalf("listed certificate id %q want %q", listed[0].CertificateID, inv.Request.NewCertificateID)
+				}
+				if c.Expected.InvitationVoidVisible && !listed[0].InvitationVoid {
+					t.Fatal("the list does not show the invitation void")
+				}
+			}
+			if c.Expected.IssuedResponseRetrievable {
+				calls := r.calls
+				retried, err := r.approve(t, inv.Request.RequestID, awid.IDHumanApproval{})
+				if err != nil || string(retried) != inv.Request.Response || r.calls != calls {
+					t.Fatalf("retry after void: err=%v calls=%d", err, r.calls-calls)
+				}
+				if after := r.invitation(t, c.Input.InvitationID); !after.Void || after.Request.State != awid.IDRequestIssued {
+					t.Fatalf("retry changed the record: void=%v state=%s", after.Void, after.Request.State)
+				}
+			}
 			if c.Action == "child_request_refuse" {
 				if err != nil {
 					t.Fatal(err)
@@ -437,10 +451,8 @@ func TestIDChildIssueFrozenCases(t *testing.T) {
 	}
 }
 
-// A verified, interactive approval that would pass the human gate.
-func fullHumanApproval(fingerprint string) awid.IDHumanApproval {
-	return awid.IDHumanApproval{Interactive: true, OutOfBandChannel: true, EnteredFingerprint: fingerprint}
-}
+// An interactive, confirmed approval that passes the human gate.
+var fullHumanApproval = awid.IDHumanApproval{Interactive: true, Confirmed: true}
 
 // agentIssue is an issue invitation for an agent child, with the child's
 // request signed by its own key.
@@ -515,17 +527,13 @@ func TestIDChildIssueByChildKind(t *testing.T) {
 		if _, err := r.receive(request); err != nil {
 			t.Fatal(err)
 		}
-		fingerprint, err := awid.IDKeyFingerprint(x.v.Keys["replacement_human"].DIDKey)
-		if err != nil {
-			t.Fatal(err)
-		}
-		response, err := r.approve(t, "20000000-0000-4000-8000-0000000000a1", fullHumanApproval(fingerprint))
+		response, err := r.approve(t, "20000000-0000-4000-8000-0000000000a1", fullHumanApproval)
 		if got := awid.IDCertificateErrorCode(err); got != "human_issuer_is_agent" || response != nil || r.calls != 0 {
 			t.Fatalf("reason=%q (%v) calls=%d", got, err, r.calls)
 		}
 	})
 
-	t.Run("human-child-still-needs-the-typed-fingerprint", func(t *testing.T) {
+	t.Run("human-child-still-needs-the-confirmation", func(t *testing.T) {
 		r, request := x.agentIssue(t, []string{"alice"}, "replacement_human", "human")
 		if _, err := r.receive(request); err != nil {
 			t.Fatal(err)
@@ -547,7 +555,7 @@ func TestIDChildIssueProbes(t *testing.T) {
 	humanRequest := x.requests["human-issue"].CanonicalUTF8
 	humanID := requestIDOf(t, humanRequest)
 	rootID := requestIDOf(t, x.requests["root-human-issue"].CanonicalUTF8)
-	approved := fullHumanApproval(human.Input.ConfirmedFingerprint)
+	approved := fullHumanApproval
 
 	// variant re-signs the human request with one field changed under a new request id.
 	variant := func(t *testing.T, key string, base string, changes map[string]any) string {
@@ -609,8 +617,8 @@ func TestIDChildIssueProbes(t *testing.T) {
 	})
 
 	for name, approval := range map[string]awid.IDHumanApproval{
-		"--yes with an otherwise full approval": {Interactive: true, OutOfBandChannel: true, AutoApprove: true, EnteredFingerprint: human.Input.ConfirmedFingerprint},
-		"no fingerprint entered":                {Interactive: true, OutOfBandChannel: true},
+		"--yes with an otherwise full approval": {Interactive: true, AutoApprove: true, Confirmed: true},
+		"no confirmation":                       {Interactive: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := x.issueRun(t, human)
@@ -668,7 +676,7 @@ func TestIDChildIssueProbes(t *testing.T) {
 		}
 		return r
 	}
-	rootApproval := fullHumanApproval(root.Input.ConfirmedFingerprint)
+	rootApproval := fullHumanApproval
 
 	t.Run("a namespace parent presents no parent chain", func(t *testing.T) {
 		r := rootRun(t)
@@ -681,11 +689,14 @@ func TestIDChildIssueProbes(t *testing.T) {
 	})
 
 	stale := resignFixture{status: x.v.Statuses["normal"]}.evidence(61)
-	for name, evidence := range map[string]*awid.IDChainEvidence{"no evidence": nil, "evidence past the fresh bound": stale} {
+	for name, tc := range map[string]struct {
+		evidence *awid.IDChainEvidence
+		reason   string
+	}{"no evidence": {nil, "evidence_unavailable"}, "evidence past the fresh bound": {stale, "status_expired"}} {
 		t.Run("a namespace parent with "+name, func(t *testing.T) {
 			r := rootRun(t)
-			response, err := awid.ApproveIDChildRequest(r.invitations, r.issuance, rootID, rootApproval, nil, evidence, vectorSigner(t, x.v, "root", &r.calls), r.now)
-			refused(t, err, "evidence_unavailable")
+			response, err := awid.ApproveIDChildRequest(r.invitations, r.issuance, rootID, rootApproval, nil, tc.evidence, vectorSigner(t, x.v, "root", &r.calls), r.now)
+			refused(t, err, tc.reason)
 			if response != nil || r.calls != 0 {
 				t.Fatal("signed without fresh evidence")
 			}
@@ -708,64 +719,6 @@ func TestIDChildIssueProbes(t *testing.T) {
 			t.Fatal("a request for another namespace was bound")
 		}
 	})
-}
-
-// A fingerprint read over a phone or chat may arrive in another case, without
-// hyphens or with spaces. One shared parse accepts any such spelling of 32 hex
-// digits; anything else is asked again without voiding (Athena 0df721c4).
-func TestIDChildIssueFingerprintEntry(t *testing.T) {
-	x := loadIDChildExchange(t)
-	cases := loadIDChildIssueCases(t)
-	for _, name := range []string{"csr-human-exact-interactive-approval", "csr-root-human-exact-interactive-approval"} {
-		c := cases[name]
-		request := x.requests[c.Input.Request].CanonicalUTF8
-		fingerprint := c.Input.ConfirmedFingerprint
-		bare := strings.ReplaceAll(fingerprint, "-", "")
-
-		for spelling, entry := range map[string]string{
-			"upper case without hyphens": strings.ToUpper(bare),
-			"spaced groups":              " " + strings.ReplaceAll(fingerprint, "-", " ") + "\n",
-		} {
-			t.Run(name+"/"+spelling+" issues", func(t *testing.T) {
-				parsed, err := awid.ParseIDKeyFingerprintEntry(entry)
-				if err != nil || parsed != fingerprint {
-					t.Fatalf("parsed %q (%v) want %q", parsed, err, fingerprint)
-				}
-				r := x.issueRun(t, c)
-				if _, err := r.receive(request); err != nil {
-					t.Fatal(err)
-				}
-				response, err := r.approve(t, requestIDOf(t, request), fullHumanApproval(entry))
-				if err != nil || string(response) != x.responses[c.Expected.Response].CanonicalUTF8 || r.calls != 1 {
-					t.Fatalf("err=%v calls=%d", err, r.calls)
-				}
-			})
-		}
-
-		for malformed, entry := range map[string]string{
-			"31 hex digits":     bare[:31],
-			"33 hex digits":     bare + "0",
-			"32 non-hex digits": strings.Repeat("g", 32),
-			"other punctuation": strings.ReplaceAll(fingerprint, "-", ":"),
-		} {
-			t.Run(name+"/"+malformed+" is asked again without voiding", func(t *testing.T) {
-				if _, err := awid.ParseIDKeyFingerprintEntry(entry); err == nil {
-					t.Fatal("a malformed entry parsed")
-				}
-				r := x.issueRun(t, c)
-				if _, err := r.receive(request); err != nil {
-					t.Fatal(err)
-				}
-				response, err := r.approve(t, requestIDOf(t, request), fullHumanApproval(entry))
-				if got := awid.IDCertificateErrorCode(err); got != "human_approval_required" || response != nil || r.calls != 0 {
-					t.Fatalf("reason=%q (%v) calls=%d", got, err, r.calls)
-				}
-				if inv := r.invitation(t, c.Input.InvitationID); inv.Void || inv.Request.State != awid.IDRequestPending {
-					t.Fatalf("void=%v state=%s", inv.Void, inv.Request.State)
-				}
-			})
-		}
-	}
 }
 
 // A new child's id is its own key's: the stable id of subject_key for did:aw,
@@ -819,7 +772,7 @@ func TestIDChildIssueApproveRefusals(t *testing.T) {
 	human := loadIDChildIssueCases(t)["csr-human-exact-interactive-approval"]
 	request := x.requests["human-issue"].CanonicalUTF8
 	requestID := requestIDOf(t, request)
-	approved := fullHumanApproval(human.Input.ConfirmedFingerprint)
+	approved := fullHumanApproval
 	pending := func(t *testing.T) *issueRun {
 		t.Helper()
 		r := x.issueRun(t, human)

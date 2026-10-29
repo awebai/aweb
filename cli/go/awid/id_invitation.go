@@ -40,30 +40,33 @@ type IDInvitationStore interface {
 }
 
 // IDHumanApproval is what the approving command observed while the human
-// approved a kind=human child. The fingerprint must be entered before the
-// request's own fingerprint is shown.
+// approved a kind=human child: Confirmed is an affirmative answer, at a
+// terminal, that the shown fingerprint matches what the recipient told the
+// approver over a separate trusted channel.
 type IDHumanApproval struct {
-	Interactive                 bool
-	AgentRun                    bool
-	AutoApprove                 bool
-	OutOfBandChannel            bool
-	FingerprintShownBeforeEntry bool
-	EnteredFingerprint          string
+	Interactive bool
+	AgentRun    bool
+	AutoApprove bool
+	Confirmed   bool
 }
 
 // IDChildRequest is a listed request with the public fields of its
 // invitation. The recipient, child key and request bytes stay private. A
 // did:aw id is derived from the child key, so the key's fingerprint can be
-// computed from it: human approval rests on the approver typing what the
-// recipient sent, not on the fingerprint being secret.
+// computed from it: human approval rests on the approver comparing it with
+// what the recipient said, not on the fingerprint being secret. An issued
+// request names its certificate, so the inviter of a void invitation can
+// decide on revocation.
 type IDChildRequest struct {
-	RequestID    string         `json:"request_id"`
-	InvitationID string         `json:"invitation_id"`
-	State        string         `json:"state"`
-	ID           string         `json:"id"`
-	Domain       string         `json:"domain"`
-	Parent       map[string]any `json:"parent"`
-	Kind         string         `json:"kind"`
+	RequestID      string         `json:"request_id"`
+	InvitationID   string         `json:"invitation_id"`
+	InvitationVoid bool           `json:"invitation_void"`
+	State          string         `json:"state"`
+	CertificateID  string         `json:"certificate_id,omitempty"`
+	ID             string         `json:"id"`
+	Domain         string         `json:"domain"`
+	Parent         map[string]any `json:"parent"`
+	Kind           string         `json:"kind"`
 }
 
 // ReceiveIDChildRequest verifies an issue request's shape and key proof and
@@ -114,9 +117,12 @@ func ReceiveIDChildRequest(store IDInvitationStore, issuer map[string]any, raw [
 		if prior["request"].(map[string]any)["subject_key"] == r["subject_key"] {
 			return nil, idCertificateRefusal("request_conflict")
 		}
-		// A released response cannot be unsent; voiding blocks further signing.
+		// A released response cannot be unsent: voiding blocks further signing,
+		// and an issued request stays issued with its response.
 		inv.Void = true
-		inv.Request.State = IDRequestFailed
+		if inv.Request.State == IDRequestPending {
+			inv.Request.State = IDRequestFailed
+		}
 		if err := store.PutInvitation(inv); err != nil {
 			return nil, err
 		}
@@ -163,8 +169,8 @@ func ApproveIDChildRequest(invitations IDInvitationStore, issuance IDIssuanceSto
 		return nil, err
 	}
 	if inv.Kind == "human" {
-		if err := idHumanApproved(invitations, inv, approval, r["subject_key"].(string)); err != nil {
-			return nil, err
+		if !idHumanApproved(approval) {
+			return nil, idCertificateRefusal("human_approval_required")
 		}
 	}
 	certificate := map[string]any{
@@ -239,31 +245,11 @@ func idIssuingKey(inv *IDInvitation, parentChain []any, evidence *IDChainEvidenc
 	return "", idCertificateRefusal("invalid_shape")
 }
 
-// idHumanApproved refuses unless the approving human typed, before seeing
-// it, the fingerprint the recipient sent over a separate trusted channel. A
-// well-formed typed fingerprint that differs voids the invitation.
-func idHumanApproved(invitations IDInvitationStore, inv *IDInvitation, approval IDHumanApproval, subjectKey string) error {
-	if !approval.Interactive || approval.AgentRun || approval.AutoApprove || !approval.OutOfBandChannel || approval.FingerprintShownBeforeEntry {
-		return idCertificateRefusal("human_approval_required")
-	}
-	// A malformed entry is asked again; only a well-formed one is compared.
-	entered, err := ParseIDKeyFingerprintEntry(approval.EnteredFingerprint)
-	if err != nil {
-		return idCertificateRefusal("human_approval_required")
-	}
-	fingerprint, err := IDKeyFingerprint(subjectKey)
-	if err != nil {
-		return err
-	}
-	if entered == fingerprint {
-		return nil
-	}
-	inv.Void = true
-	inv.Request.State = IDRequestFailed
-	if err := invitations.PutInvitation(inv); err != nil {
-		return err
-	}
-	return idCertificateRefusal("recipient_key_mismatch")
+// idHumanApproved holds only for an affirmative confirmation a human gave at
+// a terminal, never for an agent run or an automatic approval. A declined
+// confirmation leaves the request pending and the invitation live.
+func idHumanApproved(approval IDHumanApproval) bool {
+	return approval.Interactive && !approval.AgentRun && !approval.AutoApprove && approval.Confirmed
 }
 
 // idNewChildIDIsSubjectKeys checks that a new did:aw child's id is the
@@ -336,7 +322,7 @@ func IDChildRequests(invitations IDInvitationStore) ([]IDChildRequest, error) {
 			return nil, err
 		}
 		r := signed["request"].(map[string]any)
-		out = append(out, IDChildRequest{RequestID: inv.Request.RequestID, InvitationID: inv.InvitationID, State: inv.Request.State, ID: r["id"].(string), Domain: inv.Domain, Parent: inv.Parent, Kind: inv.Kind})
+		out = append(out, IDChildRequest{RequestID: inv.Request.RequestID, InvitationID: inv.InvitationID, InvitationVoid: inv.Void, State: inv.Request.State, CertificateID: inv.Request.NewCertificateID, ID: r["id"].(string), Domain: inv.Domain, Parent: inv.Parent, Kind: inv.Kind})
 	}
 	return out, nil
 }
