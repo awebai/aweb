@@ -193,14 +193,14 @@ func TestHumanInitMismatchedPassphrasesCreateNothing(t *testing.T) {
 }
 
 // Against the real AWID fixture the human's did:aw registers, then the
-// certificate step stops: the fixture's domain has no _awid record AWID
-// can resolve, so status evidence is unavailable and nothing is signed. The
+// namespace step stops: the fixture's domain has no _awid record AWID can
+// resolve, so AWID admits no namespace and no certificate is issued. The
 // retry resumes the same human and never mints again. The namespace-rooted
 // registration itself runs in the shared CoreDNS journey.
 func TestHumanInitRegistersTheDIDThenResumesTheSameHuman(t *testing.T) {
 	h := newHumanInitHarness(t)
 	_, err := h.run(humanPassphrase, humanPassphrase, humanPassphrase)
-	if err == nil || !strings.Contains(err.Error(), "evidence_unavailable") {
+	if err == nil || !strings.Contains(err.Error(), "register namespace "+humanInitDomain) {
 		t.Fatalf("err=%v", err)
 	}
 	records := h.records()
@@ -230,7 +230,7 @@ func TestHumanInitRegistersTheDIDThenResumesTheSameHuman(t *testing.T) {
 	}
 
 	prompts := len(h.prompts)
-	if _, err := h.run(); err == nil || !strings.Contains(err.Error(), "evidence_unavailable") {
+	if _, err := h.run(); err == nil || !strings.Contains(err.Error(), "register namespace "+humanInitDomain) {
 		t.Fatalf("retry err=%v", err)
 	}
 	if after := h.records(); len(after) != 1 || *after[0] != *human {

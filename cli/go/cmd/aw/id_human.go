@@ -188,11 +188,17 @@ func executeIDHumanInit(ctx context.Context, opts idHumanInitOptions) (idHumanIn
 		}
 	}
 
+	call, cancel := commandAPIContext(nil, ctx)
+	err = ensureStandaloneNamespace(call, registry, &idCreatePlan{Domain: domain, ControllerDID: controllerDID, RegistryURL: rec.RegistryURL}, controllerKey)
+	cancel()
+	if err != nil {
+		return idHumanInitOutput{}, fmt.Errorf("register namespace %s at %s: %w", domain, rec.RegistryURL, err)
+	}
 	bundle, err := rootIssuedHumanChain(ctx, rec, controllerKey, registry, opts)
 	if err != nil {
 		return idHumanInitOutput{}, err
 	}
-	call, cancel := commandAPIContext(nil, ctx)
+	call, cancel = commandAPIContext(nil, ctx)
 	receipt, err := registry.RegisterIDCertificateAt(call, rec.RegistryURL, bundle, signer("register its human certificate at "+rec.RegistryURL), nil, nil)
 	cancel()
 	if err != nil {
