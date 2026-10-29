@@ -174,11 +174,12 @@ services:
       AWID_DB_SCHEMA: awid
       AWID_HOST: 0.0.0.0
       AWID_PORT: 8010
+      AWID_PUBLIC_ORIGINS: http://awid-a:8010
       AWID_RATE_LIMIT_DISABLED: "1"
       AWID_SERVICE_TOKEN: cross-registry-messaging-service-token-32-bytes
-      AWID_SKIP_DNS_VERIFY: "1"
       AWID_ALLOW_INSECURE_DELIVERY_ORIGIN: "1"
       APP_ENV: development
+    # FEDERATION_DNS_AWID_A
     depends_on:
       postgres-a: {condition: service_healthy}
       redis-a: {condition: service_healthy}
@@ -191,11 +192,12 @@ services:
       AWID_DB_SCHEMA: awid
       AWID_HOST: 0.0.0.0
       AWID_PORT: 8010
+      AWID_PUBLIC_ORIGINS: http://awid-b:8010
       AWID_RATE_LIMIT_DISABLED: "1"
       AWID_SERVICE_TOKEN: cross-registry-messaging-service-token-32-bytes
-      AWID_SKIP_DNS_VERIFY: "1"
       AWID_ALLOW_INSECURE_DELIVERY_ORIGIN: "1"
       APP_ENV: development
+    # FEDERATION_DNS_AWID_B
     depends_on:
       postgres-b: {condition: service_healthy}
       redis-b: {condition: service_healthy}
@@ -239,10 +241,11 @@ services:
       federation-dns: {condition: service_started}
   cli:
     build: {context: "$ROOT", dockerfile: scripts/federation-cli.Dockerfile}
+    # GNOME Keyring locks its memory and drops this capability after startup.
+    cap_add: [IPC_LOCK]
     environment:
       HOME: /work/home
       APP_ENV: development
-      AWID_SKIP_DNS_VERIFY: "1"
     volumes:
       - "$WORK_DIR:/work"
     # FEDERATION_DNS_CLI
@@ -253,37 +256,134 @@ EOF
 
 compose down -v --remove-orphans >/dev/null 2>&1 || true
 compose build awid-a awid-b aweb-a aweb-b cli
-compose up -d federation-dns postgres-a postgres-b redis-a redis-b awid-a awid-b
-wait_health awid-a "http://$PUBLISHED_HOST:$AWID_A_PORT" awid-a
-wait_health awid-b "http://$PUBLISHED_HOST:$AWID_B_PORT" awid-b
+compose up -d federation-dns postgres-a postgres-b redis-a redis-b
 DNS_IP="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$(compose ps -q federation-dns)")"
 [[ -n "$DNS_IP" ]]
 python3 - "$COMPOSE_FILE" "$DNS_IP" <<'PY'
 from pathlib import Path
 import ipaddress,sys
 path=Path(sys.argv[1]); ip=str(ipaddress.ip_address(sys.argv[2])); text=path.read_text()
-for marker in ("A", "B", "CLI"):
-    source=f"    # FEDERATION_DNS_{marker}"
+for marker in ("A", "B", "CLI", "AWID_A", "AWID_B"):
+    source=f"    # FEDERATION_DNS_{marker}\n"
     assert text.count(source)==1, source
-    text=text.replace(source, f'    dns:\n      - "{ip}"')
+    text=text.replace(source, f'    dns:\n      - "{ip}"\n')
 path.write_text(text)
 PY
+compose up -d awid-a awid-b
+wait_health awid-a "http://$PUBLISHED_HOST:$AWID_A_PORT" awid-a
+wait_health awid-b "http://$PUBLISHED_HOST:$AWID_B_PORT" awid-b
 compose up -d aweb-a aweb-b
 wait_health aweb-a "http://$PUBLISHED_HOST:$AWEB_A_PORT" aweb-a
 wait_health aweb-b "http://$PUBLISHED_HOST:$AWEB_B_PORT" aweb-b
 
-echo "Creating identities in disjoint registries"
-alice_create="$(run_cli alice id create --name alice --domain alpha.example.com --registry http://awid-a:8010 --skip-dns-verify --json)"
+echo "Preparing DNS controllers without creating identities"
+alice_controller="$(run_cli alice id namespace prepare-controller --domain alpha.example.com --registry http://awid-a:8010 --json)"
+bob_controller="$(run_cli bob id namespace prepare-controller --domain beta.example.net --registry http://awid-b:8010 --json)"
+ALICE_CONTROLLER="$(printf '%s' "$alice_controller" | json_field controller_did)"
+BOB_CONTROLLER="$(printf '%s' "$bob_controller" | json_field controller_did)"
+[[ -n "$ALICE_CONTROLLER" && -n "$BOB_CONTROLLER" && "$ALICE_CONTROLLER" != "$BOB_CONTROLLER" ]]
+
+# Both products consume these exact-domain records from the same authority.
+DNS_SERIAL=1
+publish_dns() {
+  local alpha_controller="$1" beta_controller="$2"
+  DNS_SERIAL=$((DNS_SERIAL + 1))
+  cat > "$DNS_DIR/example.com.zone.tmp" <<EOF
+\$ORIGIN example.com.
+\$TTL 1
+@ IN SOA ns.example.com. hostmaster.example.com. ($DNS_SERIAL 1 1 1 1)
+@ IN NS ns.example.com.
+ns IN A 127.0.0.1
+_awid IN TXT "awid=v1; controller=$ALICE_CONTROLLER; registry=http://awid-a:8010;"
+_awid.alpha IN TXT "awid=v1; controller=$alpha_controller; registry=http://awid-a:8010;"
+EOF
+  cat > "$DNS_DIR/example.net.zone.tmp" <<EOF
+\$ORIGIN example.net.
+\$TTL 1
+@ IN SOA ns.example.net. hostmaster.example.net. ($DNS_SERIAL 1 1 1 1)
+@ IN NS ns.example.net.
+ns IN A 127.0.0.1
+_awid IN TXT "awid=v1; controller=$BOB_CONTROLLER; registry=http://awid-b:8010;"
+_awid.beta IN TXT "awid=v1; controller=$beta_controller; registry=http://awid-b:8010;"
+EOF
+  mv "$DNS_DIR/example.com.zone.tmp" "$DNS_DIR/example.com.zone"
+  mv "$DNS_DIR/example.net.zone.tmp" "$DNS_DIR/example.net.zone"
+}
+
+# The namespace remains absent when the real AWID resolver sees a different key.
+# Poll on the product's 403, so CoreDNS file reload speed is not a test input.
+publish_dns "$BOB_CONTROLLER" "$BOB_CONTROLLER"
+awid_refused=0
+for _ in $(seq 1 30); do
+  if refused="$(run_cli alice id create --name alice --domain alpha.example.com --registry http://awid-a:8010 --json 2>&1)"; then
+    echo "AWID accepted a namespace whose DNS controller is another key" >&2
+    exit 1
+  fi
+  if [[ "$refused" == *"http 403"* ]]; then awid_refused=1; break; fi
+  sleep 1
+done
+[[ "$awid_refused" == 1 ]] || { printf '%s\n' "$refused" >&2; exit 1; }
+[[ "$(curl -sS -o /dev/null -w '%{http_code}' "http://$PUBLISHED_HOST:$AWID_A_PORT/v1/namespaces/alpha.example.com")" == 404 ]]
+if run_cli alice id namespace check-txt --domain alpha.example.com --json > "$RUNTIME/cli-wrong-controller.json" 2>&1; then
+  echo "CLI accepted a DNS controller that differs from its prepared key" >&2
+  exit 1
+fi
+
+publish_dns "$ALICE_CONTROLLER" "$BOB_CONTROLLER"
+for identity in alice bob; do
+  if [[ "$identity" == alice ]]; then domain=alpha.example.com; expected_controller="$ALICE_CONTROLLER";
+  else domain=beta.example.net; expected_controller="$BOB_CONTROLLER"; fi
+  matched=0
+  for _ in $(seq 1 30); do
+    if checked="$(run_cli "$identity" id namespace check-txt --domain "$domain" --json 2>/dev/null)"; then
+      [[ "$(printf '%s' "$checked" | json_field status)" == matched ]]
+      [[ "$(printf '%s' "$checked" | json_field dns_controller)" == "$expected_controller" ]]
+      matched=1
+      break
+    fi
+    sleep 1
+  done
+  [[ "$matched" == 1 ]] || { echo "CLI never verified exact DNS for $domain" >&2; exit 1; }
+done
+
+echo "Creating human and agent chains through real DNS, Secret Service and PTY"
+compose run --rm -T --no-deps --entrypoint dbus-run-session cli -- \
+  python3 /usr/local/bin/cross-registry-human-journey.py &
+human_job=$!
+# The PTY driver signals actual progress. Service changes happen only here,
+# against this journey's own Compose project, with no Docker socket in CLI.
+for _ in $(seq 1 600); do
+  if [[ -f "$WORK_DIR/stop-awid-request" && ! -f "$WORK_DIR/stop-awid-complete" ]]; then
+    compose stop awid-a
+    touch "$WORK_DIR/stop-awid-complete"
+  fi
+  if [[ -f "$WORK_DIR/start-awid-request" && ! -f "$WORK_DIR/start-awid-complete" ]]; then
+    compose start awid-a
+    wait_health awid-a "http://$PUBLISHED_HOST:$AWID_A_PORT" awid-a
+    touch "$WORK_DIR/start-awid-complete"
+  fi
+  if ! kill -0 "$human_job" 2>/dev/null; then break; fi
+  sleep 1
+done
+if kill -0 "$human_job" 2>/dev/null; then
+  kill "$human_job"
+  wait "$human_job" || true
+  echo "human constructor journey timed out" >&2
+  exit 1
+fi
+wait "$human_job"
+alice_create="$(cat "$WORK_DIR/alice-create.json")"
+bob_create="$(cat "$WORK_DIR/bob-create.json")"
 ALICE_DID_AW="$(printf '%s' "$alice_create" | json_field did_aw)"
-ALICE_CONTROLLER="$(printf '%s' "$alice_create" | json_field controller_did)"
+BOB_DID_AW="$(printf '%s' "$bob_create" | json_field did_aw)"
+compose run --rm -T --no-deps --entrypoint id-tree-verifier cli
+compose cp "$ROOT/scripts/cross-registry-python-verifier.py" awid-b:/tmp/cross-registry-python-verifier.py
+compose exec -T awid-b python /tmp/cross-registry-python-verifier.py < "$WORK_DIR/journey-public.json"
 run_cli alice id team create --name alpha --namespace alpha.example.com --registry http://awid-a:8010 --json >/dev/null
 alice_invite="$(run_cli alice id team invite --team alpha --namespace alpha.example.com --member-global --json)"
 run_cli alice id team accept-invite "$(printf '%s' "$alice_invite" | json_field token)" --name alice --global --json >/dev/null
 run_cli alice init --url http://aweb-a:8000 --name alice --do-not-touch-agents-md >/dev/null
 
-bob_create="$(run_cli bob id create --name bob --domain beta.example.net --registry http://awid-b:8010 --skip-dns-verify --json)"
-BOB_DID_AW="$(printf '%s' "$bob_create" | json_field did_aw)"
-BOB_CONTROLLER="$(printf '%s' "$bob_create" | json_field controller_did)"
 run_cli bob id team create --name beta --namespace beta.example.net --registry http://awid-b:8010 --json >/dev/null
 bob_invite="$(run_cli bob id team invite --team beta --namespace beta.example.net --member-global --json)"
 run_cli bob id team accept-invite "$(printf '%s' "$bob_invite" | json_field token)" --name bob --global --json >/dev/null
@@ -296,26 +396,6 @@ run_cli bob init --url http://aweb-b:8000 --name bob --do-not-touch-agents-md >/
 [[ "$(curl -sS -o /dev/null -w '%{http_code}' "http://$PUBLISHED_HOST:$AWID_A_PORT/v1/namespaces/alpha.example.com/addresses/alice")" == "200" ]]
 [[ "$(curl -sS -o /dev/null -w '%{http_code}' "http://$PUBLISHED_HOST:$AWID_B_PORT/v1/namespaces/beta.example.net/addresses/bob")" == "200" ]]
 
-serial="$(date -u +%Y%m%d%H)"
-cat > "$DNS_DIR/example.com.zone.tmp" <<EOF
-\$ORIGIN example.com.
-\$TTL 1
-@ IN SOA ns.example.com. hostmaster.example.com. ($serial 1 1 1 1)
-@ IN NS ns.example.com.
-ns IN A 127.0.0.1
-_awid IN TXT "awid=v1; controller=$ALICE_CONTROLLER; registry=http://awid-a:8010;"
-EOF
-cat > "$DNS_DIR/example.net.zone.tmp" <<EOF
-\$ORIGIN example.net.
-\$TTL 1
-@ IN SOA ns.example.net. hostmaster.example.net. ($serial 1 1 1 1)
-@ IN NS ns.example.net.
-ns IN A 127.0.0.1
-_awid IN TXT "awid=v1; controller=$BOB_CONTROLLER; registry=http://awid-b:8010;"
-EOF
-mv "$DNS_DIR/example.com.zone.tmp" "$DNS_DIR/example.com.zone"
-mv "$DNS_DIR/example.net.zone.tmp" "$DNS_DIR/example.net.zone"
-sleep 2
 run_cli alice id namespace set-delivery-origin --namespace alpha.example.com --origin http://aweb-a:8000 --json >/dev/null
 run_cli bob id namespace set-delivery-origin --namespace beta.example.net --origin http://aweb-b:8000 --json >/dev/null
 
@@ -337,4 +417,4 @@ run_cli bob chat send-and-leave --plaintext alpha.example.com/alice "two registr
 alice_chat="$(run_cli alice chat history beta.example.net/bob --json)"
 assert_chat_message "$alice_chat" "two registry chat reply"
 
-echo "PASS: inherited parent authorities deliver mail and chat across disjoint registries"
+echo "PASS: real DNS, Secret Service, PTY, constructor chains, unchanged resume, outsider verification, mail and chat across disjoint registries"
