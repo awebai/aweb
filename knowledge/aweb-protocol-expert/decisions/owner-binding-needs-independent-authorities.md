@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Owner binding needs independent authorities
-description: A verified responsible human is one input to owner binding; the actual human session, account association, current membership and action policy must agree in the binding transaction, with adoption available before enforcement.
+description: A verified responsible human is one input to owner binding; the actual human session, account association, current membership and action policy must agree in the binding transaction, with adoption available before enforcement. Reviewed design, not yet implemented or activated.
 tags: [decision, identity, authority, human-channels, membership, transactions]
 timestamp: 2026-10-29
 ---
@@ -12,6 +12,10 @@ responsible. It does not establish key custody, current membership or consent.
 A correct human match can coexist with accepted removal and surviving agent
 rows; an administrator or linked mailbox can exist without the subject's
 responsible human being present.
+
+**Status:** the predicate is a reviewed design contract, not yet implemented or
+activated. The recorded decision is the activation order: adoption first, then
+the human-owner binding lane.
 
 # Decision
 
