@@ -177,12 +177,12 @@ func (p *parentRun) assertOutstanding(t *testing.T, requestID string) {
 }
 
 // Import answers only an outstanding request of this requester, and verifies
-// before anything is installed. Against the real AWID fixture the domain's
-// _awid record cannot be resolved, so the root-issued response has no
-// current status: it is refused, the request stays outstanding and no chain
-// is installed.
+// before anything is installed. No registry answers at the --registry
+// origin, so the root-issued response has no current status: it is refused,
+// the request stays outstanding and no chain is installed. Nothing here
+// resolves a name.
 func TestParentImportVerifiesBeforeInstalling(t *testing.T) {
-	p := newParentRun(t, realAWIDFixture(t))
+	p := newParentRun(t, "http://127.0.0.1:1")
 	other := *p
 	response, requestID := p.frozenOutstanding(t)
 	if _, err := executeIDParentImport(context.Background(), other.opts(), response); awid.IDCertificateErrorCode(err) != "request_binding_mismatch" {
