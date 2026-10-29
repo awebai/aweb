@@ -146,6 +146,7 @@ def csr_root():
     assert {p.name: p.read_bytes() for p in issuance.glob("*.json")} == before
     pending, _ = command(["id", "child", "show", request_id, *root, "--json"])
     assert pending["state"] == "pending" and not pending.get("certificate_id"), pending
+    assert pending["invitation_void"] is False, pending
     print("PASS: declined CSR fingerprint approval signs nothing and leaves the request pending", flush=True)
     command(approve, json_output=False, confirmation="y", fingerprint=fingerprint)
     after = {p.name: p.read_bytes() for p in issuance.glob("*.json")}

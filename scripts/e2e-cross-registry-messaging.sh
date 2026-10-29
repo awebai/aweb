@@ -320,7 +320,7 @@ for _ in $(seq 1 30); do
     echo "AWID accepted a namespace whose DNS controller is another key" >&2
     exit 1
   fi
-  if [[ "$refused" == *"http 403"* ]]; then awid_refused=1; break; fi
+  if [[ "$refused" == *"Signing key does not match DNS controller"* ]]; then awid_refused=1; break; fi
   sleep 1
 done
 [[ "$awid_refused" == 1 ]] || { printf '%s\n' "$refused" >&2; exit 1; }
@@ -329,6 +329,8 @@ if run_cli alice id namespace check-txt --domain alpha.example.com --json > "$RU
   echo "CLI accepted a DNS controller that differs from its prepared key" >&2
   exit 1
 fi
+[[ "$(cat "$RUNTIME/cli-wrong-controller.json")" == *"DNS controller $BOB_CONTROLLER does not match local controller $ALICE_CONTROLLER"* ]] \
+  || { cat "$RUNTIME/cli-wrong-controller.json" >&2; exit 1; }
 
 publish_dns "$ALICE_CONTROLLER" "$BOB_CONTROLLER"
 for identity in alice bob; do
