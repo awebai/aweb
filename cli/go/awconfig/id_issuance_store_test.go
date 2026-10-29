@@ -48,6 +48,13 @@ func TestIDIssuanceFileStoreRoundTrip(t *testing.T) {
 	if none, err := store.EntryForRequest("20000000-0000-4000-8000-000000000009"); err != nil || none != nil {
 		t.Fatalf("unknown request: %+v %v", none, err)
 	}
+	bySubject, err := store.EntryForSubject("did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x")
+	if err != nil || !reflect.DeepEqual(bySubject, want) {
+		t.Fatalf("by subject: %+v %v", bySubject, err)
+	}
+	if none, err := store.EntryForSubject("did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"); err != nil || none != nil {
+		t.Fatalf("unknown subject: %+v %v", none, err)
+	}
 }
 
 func TestIDIssuanceFileStoreWritesPrivateFilesAndNoTemporaries(t *testing.T) {

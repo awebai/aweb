@@ -88,6 +88,22 @@ func (s IDIssuanceFileStore) Entry(certificateID string) (*awid.IDIssuanceEntry,
 }
 
 func (s IDIssuanceFileStore) EntryForRequest(requestID string) (*awid.IDIssuanceEntry, error) {
+	return s.find(func(entry *awid.IDIssuanceEntry) bool {
+		return entry.Resign != nil && entry.Resign.RequestID == requestID
+	})
+}
+
+// EntryForSubject is the entry of a certificate issued to subject, or nil.
+// A crash between recording a certificate and the step that follows finds it
+// here, so the same certificate is released again instead of a second one.
+func (s IDIssuanceFileStore) EntryForSubject(subject string) (*awid.IDIssuanceEntry, error) {
+	return s.find(func(entry *awid.IDIssuanceEntry) bool {
+		certificate, _ := entry.Signed["certificate"].(map[string]any)
+		return certificate != nil && certificate["id"] == subject
+	})
+}
+
+func (s IDIssuanceFileStore) find(match func(*awid.IDIssuanceEntry) bool) (*awid.IDIssuanceEntry, error) {
 	if exists, err := s.directory(false); err != nil || !exists {
 		return nil, err
 	}
@@ -104,7 +120,7 @@ func (s IDIssuanceFileStore) EntryForRequest(requestID string) (*awid.IDIssuance
 		if err != nil {
 			return nil, err
 		}
-		if entry != nil && entry.Resign != nil && entry.Resign.RequestID == requestID {
+		if entry != nil && match(entry) {
 			return entry, nil
 		}
 	}
