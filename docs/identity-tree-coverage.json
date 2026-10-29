@@ -36,8 +36,8 @@
         "cli/go/awconfig/human_record.go",
         "cli/go/cmd/aw/id_human.go"
       ],
-      "status": "candidate",
-      "reason": "aw id human init --domain D --as-root creates the human key in the OS keychain, registers its did:aw with the human's own proof and has the local namespace controller issue its certificate, recorded before release. Converted once the S4 real-DNS journey proves it on the landing head."
+      "status": "converted",
+      "reason": "aw id human init --domain D --as-root creates the human key in the OS keychain, registers its did:aw with the human's own proof and has the local namespace controller issue its certificate, recorded before release. The cross-registry real-DNS journey (scripts/cross-registry-human-journey.py) proves it through a real Secret Service and a PTY, after its wrong-controller refusals, with outsiders verifying the human as nearest_human."
     },
     {
       "id": "CLI.INIT.LOCAL",
@@ -104,8 +104,8 @@
         "cli/go/cmd/aw/id_create_parent.go",
         "cli/go/awid/id_direct_issue.go"
       ],
-      "status": "candidate",
-      "reason": "aw id create --parent-human <did:aw> or --parent-root installs the agent's chain at creation: the named human or the namespace root issues it after verifying current status, records it before release, and the agent registers it with its own key; a parent that cannot issue leaves no agent. Converted once the S4 real-DNS journey proves both parents and the resume on the landing head."
+      "status": "converted",
+      "reason": "aw id create --parent-human <did:aw> or --parent-root installs the agent's chain at creation: the named human or the namespace root issues it after verifying current status, records it before release, and the agent registers it with its own key; a parent that cannot issue leaves no agent. The cross-registry real-DNS journey proves both parents and a failed registration resuming with the same ID, key and certificate and one issuance entry; outsiders verify the human-parented agents as nearest_human and the root agent as no_human."
     },
     {
       "id": "CLI.CHILD.EXCHANGE",
