@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -281,5 +282,55 @@ func TestHumanInitRefusesToGuessBetweenUnfinishedHumans(t *testing.T) {
 	}
 	if len(h.records()) != 2 || len(h.prompts) != 0 {
 		t.Fatalf("records=%d prompts=%d", len(h.records()), len(h.prompts))
+	}
+}
+
+// The frozen human-init refusals, by name, on the real binary: an agent run
+// and a run with no controlling terminal both refuse human_approval_required
+// with no parent signature and no registration request.
+func TestHumanInitFrozenRefusals(t *testing.T) {
+	raw, err := os.ReadFile("../../../../docs/vectors/id-certificates-v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v struct {
+		Cases []struct {
+			Name  string `json:"name"`
+			Input struct {
+				Interactive bool `json:"interactive"`
+				AgentRun    bool `json:"agent_run"`
+			} `json:"input"`
+			Expected struct {
+				Accepted bool   `json:"accepted"`
+				Reason   string `json:"reason"`
+			} `json:"expected"`
+		} `json:"operation_cases"`
+	}
+	if err := json.Unmarshal(raw, &v); err != nil {
+		t.Fatal(err)
+	}
+	found := 0
+	for _, c := range v.Cases {
+		if c.Name != "human-init-agent-run-root-refuses" && c.Name != "human-init-noninteractive-root-refuses" {
+			continue
+		}
+		found++
+		t.Run(c.Name, func(t *testing.T) {
+			var env []string
+			if c.Input.AgentRun {
+				env = []string{"OATS_INSTANCE_HOME=/somewhere"}
+			}
+			out, err, home := runHumanInitBinary(t, c.Input.Interactive, env, "--domain", humanInitDomain, "--as-root")
+			if c.Expected.Accepted || err == nil || !strings.Contains(out, c.Expected.Reason) {
+				t.Fatalf("err=%v output:\n%s", err, out)
+			}
+			assertNoHumanCreated(t, home)
+			if _, err := os.Stat(filepath.Join(home, ".awid", "controllers")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("the controller's records were touched")
+			}
+		})
+	}
+	if found != 2 {
+		t.Fatalf("found %d frozen human-init refusals", found)
 	}
 }

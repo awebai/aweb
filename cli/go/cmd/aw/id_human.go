@@ -105,15 +105,17 @@ var agentRuntimeMarkers = []string{"OATS_INSTANCE_HOME", "OATS_INSTANCE"}
 
 // humanAtTerminal refuses a human-only command that no human can answer:
 // one without a controlling terminal, or one run inside an agent runtime.
-// It is a barrier against accidents, not proof that a human is present.
+// Both refuse human_approval_required. It is a barrier against accidents,
+// not proof that a human is present.
 func humanAtTerminal() error {
+	required := &awid.IDCertificateError{Code: "human_approval_required"}
 	for _, name := range agentRuntimeMarkers {
 		if strings.TrimSpace(os.Getenv(name)) != "" {
-			return fmt.Errorf("this command needs a human at a terminal; it refuses inside an agent runtime (%s is set)", name)
+			return fmt.Errorf("this command needs a human at a terminal; it refuses inside an agent runtime (%s is set): %w", name, required)
 		}
 	}
 	if !awid.ControllingTerminalAttached() {
-		return errors.New("this command needs a human at an interactive terminal")
+		return fmt.Errorf("this command needs a human at an interactive terminal: %w", required)
 	}
 	return nil
 }
