@@ -117,12 +117,12 @@ func TestWhoShowsNoChainWithoutCurrentStatus(t *testing.T) {
 	}
 }
 
-// The real AWID fixture cannot resolve the domain's _awid record, so it
-// answers that status is unavailable: aw who reports exactly that, never the
-// human the installed chain names.
-func TestWhoReportsTheRegistrysUnavailableStatus(t *testing.T) {
+// No registry answers at the --registry origin, so status is unavailable:
+// aw who reports exactly that, never the human the installed chain names.
+// Nothing here resolves a name.
+func TestWhoReportsUnavailableStatusFromItsRegistry(t *testing.T) {
 	v := loadWhoVectors(t)
-	registryURL := realAWIDFixture(t)
+	registryURL := "http://127.0.0.1:1"
 	dir := whoIdentity(t, v, true, false)
 	resolver := staticTXTResolver{"_awid.example.com": {idCreateDNSRecordValue(v.Keys["root"].DIDKey, "")}}
 	out, err := executeWho(context.Background(), whoOptions{WorkingDir: dir, RegistryURL: registryURL, TXTResolver: resolver})
