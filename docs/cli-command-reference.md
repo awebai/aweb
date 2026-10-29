@@ -674,7 +674,7 @@ Flags:
 Human identities in a namespace's identity tree
 
 Subcommands:
-- `init` Create your human ID, issued by this machine's namespace controller
+- `init` Create your human ID in a namespace
 
 Flags:
 - `-h, --help help for human`
@@ -683,8 +683,9 @@ Flags:
 
 ### `id human init`
 
-Create your human ID in --domain and have the namespace controller on this
-machine issue its certificate (--as-root).
+Create your human ID in --domain. With --as-root the namespace controller on
+this machine issues its certificate now. Without it, the human is only
+prepared: an issuer elsewhere admits it through `aw id parent request`.
 
 The human key is kept in the OS keychain, encrypted under a passphrase you
 choose; every signature asks for that passphrase on the terminal. This needs

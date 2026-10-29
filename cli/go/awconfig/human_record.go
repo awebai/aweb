@@ -30,6 +30,11 @@ const (
 	HumanRegistered = "registered"
 )
 
+const (
+	HumanPathRoot    = "root"
+	HumanPathRequest = "request"
+)
+
 // HumanRecord is a human ID's public record.
 type HumanRecord struct {
 	StableID    string `yaml:"stable_id"`
@@ -37,6 +42,10 @@ type HumanRecord struct {
 	Domain      string `yaml:"domain"`
 	RegistryURL string `yaml:"registry_url"`
 	State       string `yaml:"state"`
+	// Path is how the human is admitted: HumanPathRoot by this machine's
+	// controller, or HumanPathRequest by an issuer elsewhere through the
+	// request exchange. Each command resumes only its own path.
+	Path string `yaml:"path,omitempty"`
 	// CertificateID is the certificate the controller issued this human,
 	// recorded in the controller's issuance log before it was released.
 	CertificateID string `yaml:"certificate_id,omitempty"`
