@@ -190,7 +190,10 @@ func checkPrimitiveUses(observed map[siteKey]map[string]bool, legacy []legacyFil
 		}
 	}
 	for key := range observed {
-		shared := key.File == strictModule && (key.Symbol == "VerifyIDCertificate" || key.Symbol == "idCertificatePrimePoint")
+		// idStrictVerify is the one shared strict verifier for certificates,
+		// requests and covering envelopes; idCertificatePrimePoint is its
+		// point check.
+		shared := key.File == strictModule && (key.Symbol == "idStrictVerify" || key.Symbol == "idCertificatePrimePoint")
 		if !shared && !files[key.File] {
 			errors = append(errors, "raw Go crypto must use the shared verifier: "+fmt.Sprint(key))
 		}
