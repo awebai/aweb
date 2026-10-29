@@ -246,6 +246,7 @@ services:
     environment:
       HOME: /work/home
       APP_ENV: development
+      AWEB_CROSS_REGISTRY_CSR: "${AWEB_CROSS_REGISTRY_CSR:-0}"
     volumes:
       - "$WORK_DIR:/work"
     # FEDERATION_DNS_CLI
@@ -350,6 +351,13 @@ echo "Creating human and agent chains through real DNS, Secret Service and PTY"
 compose run --rm -T --no-deps --entrypoint dbus-run-session cli -- \
   python3 /usr/local/bin/cross-registry-human-journey.py &
 human_job=$!
+requester_job=""
+if [[ "${AWEB_CROSS_REGISTRY_CSR:-0}" == 1 ]]; then
+  mkdir -p "$WORK_DIR/csr" "$WORK_DIR/requester-home"
+  compose run --rm -T --no-deps -e HOME=/work/requester-home --entrypoint dbus-run-session cli -- \
+    python3 /usr/local/bin/cross-registry-human-journey.py --csr-requester &
+  requester_job=$!
+fi
 # The PTY driver signals actual progress. Service changes happen only here,
 # against this journey's own Compose project, with no Docker socket in CLI.
 for _ in $(seq 1 600); do
@@ -372,6 +380,7 @@ if kill -0 "$human_job" 2>/dev/null; then
   exit 1
 fi
 wait "$human_job"
+if [[ -n "$requester_job" ]]; then wait "$requester_job"; fi
 alice_create="$(cat "$WORK_DIR/alice-create.json")"
 bob_create="$(cat "$WORK_DIR/bob-create.json")"
 ALICE_DID_AW="$(printf '%s' "$alice_create" | json_field did_aw)"
