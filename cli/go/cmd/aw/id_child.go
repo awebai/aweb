@@ -325,6 +325,11 @@ func executeIDChildReceive(ctx context.Context, opts idChildOptions, raw []byte)
 	if err != nil {
 		return idChildRequestOutput{}, err
 	}
+	lock, err := lockChildIssuer(issuer)
+	if err != nil {
+		return idChildRequestOutput{}, err
+	}
+	defer lock.Close()
 	inv, err := awid.ReceiveIDChildRequest(issuer.invitations, issuer.parent, raw)
 	if err != nil {
 		return idChildRequestOutput{}, err
@@ -414,6 +419,11 @@ func runIDChildRefuse(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	lock, err := lockChildIssuer(issuer)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	if err := awid.RefuseIDChildRequest(issuer.invitations, args[0]); err != nil {
 		return err
 	}
@@ -475,7 +485,29 @@ func executeIDChildApprove(ctx context.Context, opts idChildOptions, requestID s
 			return nil, err
 		}
 	}
+	// Evidence is read and the human asked before the lock is taken; the
+	// library rereads the request under it and signs only that one.
+	lock, err := lockChildIssuer(issuer)
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Close()
 	return awid.ApproveIDChildRequest(issuer.invitations, issuer.issuance, requestID, approval, issuer.parentChain, evidence, issuer.signer(out.ID), opts.Now())
+}
+
+// childIssuerLockPath is the issuer's transaction lock, beside its
+// invitations: receive, approve and refuse hold it across their
+// read-modify-write of an invitation and the issuance log.
+func childIssuerLockPath(issuer *selectedChildIssuer) string {
+	return issuer.invitations.Dir + ".lock"
+}
+
+func lockChildIssuer(issuer *selectedChildIssuer) (io.Closer, error) {
+	lock, err := awconfig.LockExclusive(childIssuerLockPath(issuer))
+	if err != nil {
+		return nil, fmt.Errorf("lock the issuer's records: %w", err)
+	}
+	return lock, nil
 }
 
 func readExchangeFile(path string) ([]byte, error) {

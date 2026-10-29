@@ -327,3 +327,38 @@ func TestChildInviteUnderAnAgentInvitesOnlyAgents(t *testing.T) {
 		t.Fatalf("invitation %+v", out)
 	}
 }
+
+// receive, approve and refuse each hold the issuer's lock across their
+// read-modify-write, so two runs by one issuer never both write.
+func TestChildCommandsWaitForTheIssuersLock(t *testing.T) {
+	h := newChildHarness(t, "https://registry.example.com")
+	inv := h.invite("agent")
+	issuer, err := selectChildIssuer(context.Background(), h.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock, err := awconfig.LockExclusive(childIssuerLockPath(issuer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, requestID := h.request(inv)
+	done := make(chan error, 1)
+	go func() {
+		_, err := executeIDChildReceive(context.Background(), h.opts, raw)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("receive did not wait for the lock: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if h.state(requestID).Request.State != awid.IDRequestPending {
+		t.Fatal("the request was not bound")
+	}
+}
