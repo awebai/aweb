@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- AWID SDK: `RegistryClient.register_did_with_signer(did_key, *, signer,
+  timestamp=None)` registers a did:aw whose key stays behind a signer
+  callback, as the identity-tree writes do. It asks for one signature, over
+  `log_entry_payload(**awid.log.initial_registration_entry(did_key,
+  timestamp=...))`, checks the answer before sending, and returns AWID's
+  receipt without a signed follow-up read. `register_did(did_key,
+  signing_key)` is unchanged and uses the same entry.
+
 - **Security:** did:key decoding refuses Ed25519 public keys that are small
   order, non-canonical or of mixed order, in Python (`awid.did`), Go
   (`cli/go/awid`) and TypeScript (`channel-core`). Every signature check, pin

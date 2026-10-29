@@ -49,6 +49,7 @@ from awid.id_tree_requests import (
 from awid.log import (
     canonical_server_origin,
     identity_state_hash,
+    initial_registration_entry,
     log_entry_payload,
 )
 from awid.ratelimit import AWID_SERVICE_TOKEN_HEADER, normalize_service_token
@@ -659,39 +660,47 @@ class RegistryClient:
         if signer_did != did_key:
             raise ValueError("signing_key must match did_key for DID registration")
 
-        did_aw = stable_id_from_did_key(did_key)
-        timestamp = _utc_timestamp()
-        mapping_state_hash = identity_state_hash(did_aw=did_aw, current_did_key=did_key)
-        proof = sign_message(
-            signing_key,
-            log_entry_payload(
-                did_aw=did_aw,
-                seq=1,
-                operation="register_did",
-                previous_did_key=None,
-                new_did_key=did_key,
-                prev_entry_hash=None,
-                state_hash=mapping_state_hash,
-                authorized_by=did_key,
-                timestamp=timestamp,
-            ),
-        )
+        def signer(payload: bytes) -> tuple[str, bytes]:
+            return did_key, SigningKey(signing_key).sign(payload).signature
+
+        entry = initial_registration_entry(did_key, timestamp=_utc_timestamp())
+        await self._register_initial_did(entry, signer)
+        return await self.get_mapping(entry["did_aw"], signing_key)
+
+    async def register_did_with_signer(
+        self,
+        did_key: str,
+        *,
+        signer: PayloadSigner,
+        timestamp: str | None = None,
+    ) -> dict[str, Any]:
+        """Register the did:aw that ``did_key`` derives, its key signing through ``signer``.
+
+        ``signer`` is asked for exactly one signature, over
+        ``log_entry_payload(**initial_registration_entry(did_key, timestamp=...))``,
+        and its answer is checked before anything is sent. ``timestamp`` is the
+        intended operation's; None is now. Returns AWID's receipt
+        ``{registered, did_aw, current_did_key}``. A did:aw already registered
+        with another key raises AlreadyRegisteredError.
+        """
+        entry = initial_registration_entry(did_key, timestamp=timestamp or _utc_timestamp())
+        receipt = await self._register_initial_did(entry, signer)
+        if (
+            not isinstance(receipt, dict) or receipt.get("registered") is not True
+            or receipt.get("did_aw") != entry["did_aw"] or receipt.get("current_did_key") != did_key
+        ):
+            raise ValueError("registry receipt does not register this did:aw with this key")
+        return receipt
+
+    async def _register_initial_did(self, entry: dict[str, Any], signer: PayloadSigner) -> Any:
+        """POST ``entry`` signed through ``signer``; returns AWID's answer as sent."""
+        _, signature = await _payload_signature(signer, log_entry_payload(**entry), entry["new_did_key"])
+        did_aw = entry["did_aw"]
         try:
-            await self._request_json(
+            return await self._request_json(
                 "POST",
                 "/v1/did",
-                json={
-                    "did_aw": did_aw,
-                    "operation": "register_did",
-                    "previous_did_key": None,
-                    "new_did_key": did_key,
-                    "seq": 1,
-                    "prev_entry_hash": None,
-                    "state_hash": mapping_state_hash,
-                    "authorized_by": did_key,
-                    "timestamp": timestamp,
-                    "proof": proof,
-                },
+                json={**entry, "proof": base64.b64encode(signature).rstrip(b"=").decode("ascii")},
             )
         except RegistryError as exc:
             if exc.status_code != 409:
@@ -701,7 +710,6 @@ class RegistryClient:
             except RegistryError:
                 raise exc
             raise AlreadyRegisteredError(did_aw=did_aw, existing_did_key=existing.current_did_key)
-        return await self.get_mapping(did_aw, signing_key)
 
     async def resolve_key(self, did_aw: str) -> KeyResolution:
         try:
@@ -2073,16 +2081,12 @@ class CachedRegistryClient(RegistryClient):
                 self._team_public_key_cache_key(domain, name),
             )
 
-    async def register_did(
-        self,
-        did_key: str,
-        signing_key: bytes,
-    ) -> DIDMapping:
-        did_aw = stable_id_from_did_key(did_key)
-        await self._invalidate_keys(self._did_key_cache_key(did_aw))
-        mapping = await super().register_did(did_key, signing_key)
-        await self._invalidate_keys(self._did_key_cache_key(mapping.did_aw))
-        return mapping
+    async def _register_initial_did(self, entry: dict[str, Any], signer: PayloadSigner) -> Any:
+        cache_key = self._did_key_cache_key(entry["did_aw"])
+        await self._invalidate_keys(cache_key)
+        answer = await super()._register_initial_did(entry, signer)
+        await self._invalidate_keys(cache_key)
+        return answer
 
     async def rotate_key(
         self,
