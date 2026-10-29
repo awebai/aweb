@@ -195,6 +195,15 @@ func executeIDParentRequest(opts idParentOptions, invitationID, parentID string,
 	if err != nil {
 		return idParentRequestOutput{}, nil, err
 	}
+	// A first certificate only: importing one would replace the identity's
+	// working chain before AWID accepted the new certificate.
+	installed, err := awconfig.LoadInstalledIDChain(r.dir)
+	if err != nil {
+		return idParentRequestOutput{}, nil, err
+	}
+	if installed != nil {
+		return idParentRequestOutput{}, nil, usageError("%s already has an installed ID chain; a request issues only a first certificate", r.id)
+	}
 	if parent == nil {
 		parent = map[string]any{"kind": "namespace", "id": r.domain}
 	}

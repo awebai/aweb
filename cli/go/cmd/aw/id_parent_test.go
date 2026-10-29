@@ -207,3 +207,70 @@ func TestParentImportRefusesARegistryTheDomainDoesNotName(t *testing.T) {
 	}
 	p.assertOutstanding(t, requestID)
 }
+
+// An identity that already has an installed chain does not request a first
+// certificate: importing one would replace its working chain before AWID
+// accepted the new certificate.
+func TestParentRequestRefusesAnIdentityThatHasAChain(t *testing.T) {
+	p := newParentRun(t, "https://registry.example.com")
+	installChainedAgent(t, p.child.opts.WorkingDir)
+	inv := p.child.invite("agent")
+	opts := p.opts()
+	opts.Human = ""
+	if _, _, err := executeIDParentRequest(opts, inv.InvitationID, "", true); err == nil || !strings.Contains(err.Error(), "already has an installed ID chain") {
+		t.Fatalf("err=%v", err)
+	}
+	if entries, err := os.ReadDir(p.child.opts.WorkingDir + "/.aw/requests"); !errors.Is(err, os.ErrNotExist) || len(entries) != 0 {
+		t.Fatalf("a refused request was recorded: %v", entries)
+	}
+}
+
+// A request already imported takes only its own exact response again.
+func TestParentImportOfAnImportedRequestTakesOnlyItsResponse(t *testing.T) {
+	p := newParentRun(t, "https://registry.example.com")
+	response, requestID := p.frozenOutstanding(t)
+	store := p.requests(t)
+	outgoing, err := store.Request(requestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outgoing.State, outgoing.Response, outgoing.Registration = awconfig.IDRequestImported, "{}", "pending"
+	if err := store.Put(outgoing); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := executeIDParentImport(context.Background(), p.opts(), response); awid.IDCertificateErrorCode(err) != "request_binding_mismatch" {
+		t.Fatalf("a different response was taken: %v", err)
+	}
+	if p.prompts != 0 {
+		t.Fatalf("the human was asked to sign %d times", p.prompts)
+	}
+}
+
+// --human signs as the human: it needs the human at the terminal, and a human
+// prepared here for the request exchange.
+func TestParentRequestAsAHumanNeedsThatHumanPreparedForARequest(t *testing.T) {
+	p := newParentRun(t, "https://registry.example.com")
+	inv := p.child.invite("human")
+	away := p.opts()
+	away.HumanAtTerminal = func() error { return &awid.IDCertificateError{Code: "human_approval_required"} }
+	if _, _, err := executeIDParentRequest(away, inv.InvitationID, "", true); awid.IDCertificateErrorCode(err) != "human_approval_required" {
+		t.Fatalf("without the human: %v", err)
+	}
+	rec, err := awconfig.LoadHumanRecord("example.com", p.human.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.Path = awconfig.HumanPathRoot
+	if err := awconfig.SaveHumanRecord(rec); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := executeIDParentRequest(p.opts(), inv.InvitationID, "", true); err == nil || !strings.Contains(err.Error(), "prepared on this machine for a request") {
+		t.Fatalf("a root-path human: %v", err)
+	}
+	if entries, err := os.ReadDir(p.requests(t).Dir); !errors.Is(err, os.ErrNotExist) || len(entries) != 0 {
+		t.Fatalf("a refused request was recorded: %v", entries)
+	}
+	if p.prompts != 0 {
+		t.Fatalf("the human was asked to sign %d times", p.prompts)
+	}
+}

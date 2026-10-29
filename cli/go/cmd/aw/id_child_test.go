@@ -283,8 +283,10 @@ func TestChildRefuseSignsNothingAndEndsTheRequest(t *testing.T) {
 
 // The current agent identity issues only agents: it may invite an agent
 // child, never a human one.
-func TestChildInviteUnderAnAgentInvitesOnlyAgents(t *testing.T) {
-	h := newChildHarness(t, "https://registry.example.com")
+// installChainedAgent makes workingDir's identity the frozen coordinator
+// agent, with its alice -> coordinator chain installed, and returns its ID.
+func installChainedAgent(t *testing.T, workingDir string) string {
+	t.Helper()
 	raw, err := os.ReadFile("../../../../docs/vectors/id-certificates-v1.json")
 	if err != nil {
 		t.Fatal(err)
@@ -305,7 +307,7 @@ func TestChildInviteUnderAnAgentInvitesOnlyAgents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	aw := h.opts.WorkingDir + "/.aw"
+	aw := workingDir + "/.aw"
 	if err := awconfig.SaveWorktreeIdentityTo(aw+"/identity.yaml", &awconfig.WorktreeIdentity{DID: awid.ComputeDIDKey(pub), StableID: agentID, Address: "example.com/coordinator", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, RegistryURL: "https://registry.example.com", RegistryStatus: "registered", CreatedAt: "2026-10-26T00:00:00Z"}); err != nil {
 		t.Fatal(err)
 	}
@@ -315,6 +317,12 @@ func TestChildInviteUnderAnAgentInvitesOnlyAgents(t *testing.T) {
 	if err := awconfig.SaveInstalledIDChain(aw, chain); err != nil {
 		t.Fatal(err)
 	}
+	return agentID
+}
+
+func TestChildInviteUnderAnAgentInvitesOnlyAgents(t *testing.T) {
+	h := newChildHarness(t, "https://registry.example.com")
+	agentID := installChainedAgent(t, h.opts.WorkingDir)
 	h.opts.Issuer = childIssuerSelection{}
 	if _, err := executeIDChildInvite(context.Background(), h.opts, "human", childNote, time.Hour); err == nil || !strings.Contains(err.Error(), "an agent cannot invite a human") {
 		t.Fatalf("err=%v", err)
