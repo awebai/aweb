@@ -202,7 +202,7 @@ func TestParentImportRefusesARegistryTheDomainDoesNotName(t *testing.T) {
 	resolver := p.child.opts.TXTResolver.(staticTXTResolver)
 	controller := resolver["_awid.example.com"][0]
 	resolver["_awid.example.com"] = []string{strings.TrimSuffix(controller, ";") + "; registry=https://registry.other.example;"}
-	if _, err := executeIDParentImport(context.Background(), p.opts(), response); err == nil || !strings.Contains(err.Error(), "contradicts the registry") {
+	if _, err := executeIDParentImport(context.Background(), p.opts(), response); exitCode(err) != 2 {
 		t.Fatalf("err=%v", err)
 	}
 	p.assertOutstanding(t, requestID)
@@ -217,7 +217,7 @@ func TestParentRequestRefusesAnIdentityThatHasAChain(t *testing.T) {
 	inv := p.child.invite("agent")
 	opts := p.opts()
 	opts.Human = ""
-	if _, _, err := executeIDParentRequest(opts, inv.InvitationID, "", true); err == nil || !strings.Contains(err.Error(), "already has an installed ID chain") {
+	if _, _, err := executeIDParentRequest(opts, inv.InvitationID, "", true); exitCode(err) != 2 {
 		t.Fatalf("err=%v", err)
 	}
 	if entries, err := os.ReadDir(p.child.opts.WorkingDir + "/.aw/requests"); !errors.Is(err, os.ErrNotExist) || len(entries) != 0 {
@@ -264,7 +264,7 @@ func TestParentRequestAsAHumanNeedsThatHumanPreparedForARequest(t *testing.T) {
 	if err := awconfig.SaveHumanRecord(rec); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := executeIDParentRequest(p.opts(), inv.InvitationID, "", true); err == nil || !strings.Contains(err.Error(), "prepared on this machine for a request") {
+	if _, _, err := executeIDParentRequest(p.opts(), inv.InvitationID, "", true); exitCode(err) != 2 {
 		t.Fatalf("a root-path human: %v", err)
 	}
 	if entries, err := os.ReadDir(p.requests(t).Dir); !errors.Is(err, os.ErrNotExist) || len(entries) != 0 {

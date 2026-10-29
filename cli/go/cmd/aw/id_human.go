@@ -241,7 +241,7 @@ func domainRegistryURL(authority awid.DomainAuthority, override string) (string,
 		return named, nil
 	}
 	if named != "" && named != awid.DefaultAWIDRegistryURL && named != override {
-		return "", fmt.Errorf("--registry %s contradicts the registry %s that %s names", override, named, authority.DNSName)
+		return "", usageError("--registry %s contradicts the registry %s that %s names", override, named, authority.DNSName)
 	}
 	return override, nil
 }

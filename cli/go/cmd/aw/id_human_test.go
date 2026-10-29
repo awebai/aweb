@@ -261,7 +261,7 @@ func TestHumanInitRefusesARegistryThatContradictsDNS(t *testing.T) {
 	h := newHumanInitHarness(t)
 	controller := h.resolver["_awid."+humanInitDomain][0]
 	h.resolver["_awid."+humanInitDomain] = []string{strings.TrimSuffix(controller, ";") + "; registry=https://registry.other.example;"}
-	if _, err := h.run(humanPassphrase, humanPassphrase); err == nil || !strings.Contains(err.Error(), "contradicts the registry") {
+	if _, err := h.run(humanPassphrase, humanPassphrase); exitCode(err) != 2 {
 		t.Fatalf("err=%v", err)
 	}
 	if len(h.records()) != 0 || len(h.prompts) != 0 {
@@ -392,7 +392,7 @@ func TestHumanInitPrepareOnlyNeedsTheHumanAndRefusesAQuietSecond(t *testing.T) {
 	if err := awconfig.SaveHumanRecord(done); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.run(humanPassphrase, humanPassphrase); err == nil || !strings.Contains(err.Error(), "already has a registered human") {
+	if _, err := h.run(humanPassphrase, humanPassphrase); exitCode(err) != 2 {
 		t.Fatalf("a quiet second human: %v", err)
 	}
 	if len(h.records()) != 1 || len(h.prompts) != 0 {
