@@ -5,27 +5,28 @@
 - aw: identity-tree commands for a namespace you control. They are opt-in:
   `aw id create` without the new flags, and every other existing flow, works
   as before.
-  - `aw id human init --domain D --as-root` creates your human ID in D. The
-    human key stays in the OS keychain, encrypted under a passphrase you
-    choose, and every signature asks for that passphrase. The namespace
-    controller key on this machine issues the human's certificate, which is
-    registered at AWID. It needs a human at an interactive terminal, and
-    refuses without one or inside an agent runtime. A run that fails resumes
-    where it stopped without minting a new human, and a second human in the
-    same domain needs `--another`.
-  - `aw id create --parent-human <did:aw>` and `--parent-root` create an
-    agent with its ID chain installed: the named human, or the namespace root
-    for an agent with no human, issues its certificate. The parent first
-    checks its own chain's current status. The agent then registers that
-    certificate with its own key. If the parent cannot issue, no agent is
-    created.
-  - `aw id child invite`, `receive`, `pending`, `show`, `approve` and
-    `refuse` are the issuer side of certificate requests, run as
-    `--as-root --domain D` or `--human <did:aw>`, or as the current agent for
-    an agent child. You fix an invitation first; a request is received only
-    against it. To approve a human child, you confirm at a terminal that its
-    key fingerprint matches what the recipient told you through a separate
-    trusted channel.
+- aw: `aw id human init --domain D --as-root` creates your human ID in D. The
+  human key stays in the OS keychain, encrypted under a passphrase you choose,
+  and every signature asks for that passphrase. The namespace controller key
+  on this machine issues the human's certificate, which is registered at AWID.
+  It needs a human at an interactive terminal, and refuses without one or
+  inside an agent runtime. A run that fails resumes where it stopped without
+  minting a new human, and a second human in the same domain needs
+  `--another`.
+- aw: `aw id create --parent-human <did:aw>` and `--parent-root` create an
+  agent with its ID chain installed: the named human, or the namespace root
+  for an agent with no human, issues its certificate. A human parent first
+  checks its own chain's current status; the root first checks that the
+  domain's _awid record names this machine's controller. The agent then
+  registers that certificate with its own key. If the parent cannot issue, no
+  agent is created.
+- aw: `aw id child invite`, `receive`, `pending`, `show`, `approve` and
+  `refuse` are the issuer side of certificate requests, run as
+  `--as-root --domain D` or `--human <did:aw>`, or as the current agent for an
+  agent child. You fix an invitation first; a request is received only against
+  it. To approve a human child, you confirm at a terminal that its key
+  fingerprint matches what the recipient told you through a separate trusted
+  channel.
 
 - **Security:** did:key decoding refuses Ed25519 public keys that are small
   order, non-canonical or of mixed order, in Python (`awid.did`), Go
