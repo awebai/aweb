@@ -77,6 +77,18 @@ func TerminalPassphrasePrompt() PassphrasePrompt {
 	}
 }
 
+// ControllingTerminalAttached reports whether this process has a controlling
+// terminal that a human prompt can use. Without one, nothing a human must
+// approve or sign can be asked.
+func ControllingTerminalAttached() bool {
+	input, err := os.OpenFile(controllingTerminalInput, os.O_RDWR, 0)
+	if err != nil {
+		return false
+	}
+	defer input.Close()
+	return term.IsTerminal(int(input.Fd()))
+}
+
 func terminalPassphrase(inputPath, outputPath, prompt string) ([]byte, error) {
 	input, err := os.OpenFile(inputPath, os.O_RDWR, 0)
 	if err != nil {

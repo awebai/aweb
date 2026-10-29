@@ -4,6 +4,7 @@ package awid
 // §6). Every certificate a signer releases goes through issueIDCertificate,
 // which records it before returning, so a later re-sign can find it.
 import (
+	"crypto/ed25519"
 	"encoding/base64"
 	"time"
 )
@@ -11,6 +12,14 @@ import (
 // IDCertificateSigner signs exact bytes and returns the signing did:key with
 // the raw 64-byte Ed25519 signature. No private key crosses this boundary.
 type IDCertificateSigner func(payload []byte) (didKey string, signature []byte, err error)
+
+// KeySigner signs with key held in this process, such as the namespace
+// controller key.
+func KeySigner(key ed25519.PrivateKey) IDCertificateSigner {
+	return func(payload []byte) (string, []byte, error) {
+		return ComputeDIDKey(key.Public().(ed25519.PublicKey)), ed25519.Sign(key, payload), nil
+	}
+}
 
 // IDIssuanceEntry records one certificate the signer issued. A re-sign
 // request for that certificate attaches to its entry.
