@@ -50,6 +50,18 @@ func IDStatusCacheMode(age *float64) string {
 	}
 	return "unavailable"
 }
+
+// idEvidenceUsable refuses evidence that is not fresh: status_expired once it
+// is older than the fresh window, evidence_unavailable otherwise.
+func idEvidenceUsable(evidence *IDChainEvidence) error {
+	if IDStatusCacheMode(evidence.AgeSeconds) != "unavailable" {
+		return nil
+	}
+	if evidence.AgeSeconds != nil && !math.IsInf(*evidence.AgeSeconds, 0) && *evidence.AgeSeconds > 60 {
+		return idCertificateRefusal("status_expired")
+	}
+	return idCertificateRefusal("evidence_unavailable")
+}
 func IDRequestDisposition(r IDChainResult, subject IDChainSubject, originalAuthPassed, humanRequired bool) string {
 	if !originalAuthPassed {
 		return "refuse"
@@ -506,11 +518,8 @@ func verifyIDChain(bundle map[string]any, subject IDChainSubject, evidence *IDCh
 	if evidence == nil {
 		return bad("evidence_unavailable")
 	}
-	if IDStatusCacheMode(evidence.AgeSeconds) == "unavailable" {
-		if evidence.AgeSeconds != nil && !math.IsInf(*evidence.AgeSeconds, 0) && *evidence.AgeSeconds > 60 {
-			return bad("status_expired")
-		}
-		return bad("evidence_unavailable")
+	if err = idEvidenceUsable(evidence); err != nil {
+		return IDChainResult{}, err
 	}
 	status, err := parseIDStatus(evidence, domain)
 	if err != nil {

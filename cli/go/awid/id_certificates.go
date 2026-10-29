@@ -229,36 +229,8 @@ func idCertificateShape(signed map[string]any) (map[string]any, error) {
 	if !attestationVersionIsOne(c["v"]) || c["type"] != "aweb.id-certificate" {
 		return nil, invalid
 	}
-	if c["kind"] != "human" && c["kind"] != "agent" {
-		return nil, idCertificateRefusal("invalid_kind")
-	}
-	if !idCertificateIDValid(c["id"], false) {
-		return nil, invalid
-	}
-	if c["kind"] == "human" && !strings.HasPrefix(c["id"].(string), "did:aw:") {
-		return nil, invalid
-	}
-	if !idCertificateDomain(c["domain"]) {
-		return nil, idCertificateRefusal("invalid_domain")
-	}
-	p, ok := c["parent"].(map[string]any)
-	if !ok || !idCertificateExactFields(p, "kind", "id") {
-		return nil, invalid
-	}
-	switch p["kind"] {
-	case "namespace":
-		if !idCertificateDomain(p["id"]) {
-			return nil, idCertificateRefusal("invalid_domain")
-		}
-		if p["id"] != c["domain"] {
-			return nil, idCertificateRefusal("domain_mismatch")
-		}
-	case "identity":
-		if !idCertificateIDValid(p["id"], false) {
-			return nil, invalid
-		}
-	default:
-		return nil, invalid
+	if e := idCertificateBinding(c); e != nil {
+		return nil, e
 	}
 	if !idCertificateIDValid(c["issuer_key"], true) {
 		return nil, invalid
@@ -271,6 +243,44 @@ func idCertificateShape(signed map[string]any) (map[string]any, error) {
 		return nil, invalid
 	}
 	return c, nil
+}
+
+// idCertificateBinding checks the id/domain/parent/kind fields that a
+// certificate and a child request share.
+func idCertificateBinding(c map[string]any) error {
+	invalid := idCertificateRefusal("invalid_shape")
+	if c["kind"] != "human" && c["kind"] != "agent" {
+		return idCertificateRefusal("invalid_kind")
+	}
+	if !idCertificateIDValid(c["id"], false) {
+		return invalid
+	}
+	if c["kind"] == "human" && !strings.HasPrefix(c["id"].(string), "did:aw:") {
+		return invalid
+	}
+	if !idCertificateDomain(c["domain"]) {
+		return idCertificateRefusal("invalid_domain")
+	}
+	p, ok := c["parent"].(map[string]any)
+	if !ok || !idCertificateExactFields(p, "kind", "id") {
+		return invalid
+	}
+	switch p["kind"] {
+	case "namespace":
+		if !idCertificateDomain(p["id"]) {
+			return idCertificateRefusal("invalid_domain")
+		}
+		if p["id"] != c["domain"] {
+			return idCertificateRefusal("domain_mismatch")
+		}
+	case "identity":
+		if !idCertificateIDValid(p["id"], false) {
+			return invalid
+		}
+	default:
+		return invalid
+	}
+	return nil
 }
 func idCertificateDecodeB64(value string) ([]byte, error) {
 	if !idCertificateB64URL.MatchString(value) {
@@ -290,20 +300,35 @@ func VerifyIDCertificate(signed map[string]any, issuer string) error {
 	if e != nil {
 		return e
 	}
-	sig, ok := signed["signature"].(string)
-	if !ok {
-		return idCertificateRefusal("invalid_encoding")
-	}
-	b, e := idCertificateDecodeB64(sig)
+	b, e := idSignatureBytes(signed["signature"])
 	if e != nil {
 		return e
-	}
-	if len(b) != ed25519.SignatureSize {
-		return idCertificateRefusal("invalid_encoding")
 	}
 	if c["issuer_key"] != issuer {
 		return idCertificateRefusal("invalid_signature")
 	}
+	return idStrictVerify(issuer, b, func() ([]byte, error) { return IDCertificateSigningBytes(c) })
+}
+
+// idSignatureBytes decodes a strict base64url Ed25519 signature.
+func idSignatureBytes(signature any) ([]byte, error) {
+	sig, ok := signature.(string)
+	if !ok {
+		return nil, idCertificateRefusal("invalid_encoding")
+	}
+	b, e := idCertificateDecodeB64(sig)
+	if e != nil {
+		return nil, e
+	}
+	if len(b) != ed25519.SignatureSize {
+		return nil, idCertificateRefusal("invalid_encoding")
+	}
+	return b, nil
+}
+
+// idStrictVerify applies the ID Ed25519 profile to a signature by key, whose
+// own point the caller has already checked at shape time.
+func idStrictVerify(key string, b []byte, payload func() ([]byte, error)) error {
 	if !idCertificatePrimePoint(b[:32]) {
 		return idCertificateRefusal("invalid_signature")
 	}
@@ -311,15 +336,15 @@ func VerifyIDCertificate(signed map[string]any, issuer string) error {
 	if _, err := new(edwards25519.Scalar).SetCanonicalBytes(b[32:]); err != nil {
 		return idCertificateRefusal("invalid_signature")
 	}
-	k, e := ExtractPublicKey(issuer)
+	k, e := ExtractPublicKey(key)
 	if e != nil {
 		return idCertificateRefusal("invalid_signature")
 	}
-	payload, e := IDCertificateSigningBytes(c)
+	message, e := payload()
 	if e != nil {
 		return e
 	}
-	if !ed25519.Verify(k, payload, b) {
+	if !ed25519.Verify(k, message, b) {
 		return idCertificateRefusal("invalid_signature")
 	}
 	return nil
@@ -433,6 +458,18 @@ func DecodeIDChainHeader(value string) (map[string]any, error) {
 	if len(b) > IDChainMaxBytes {
 		return nil, idCertificateRefusal("bundle_too_large")
 	}
+	bundle, e := idCertificateDecodeCanonical(b)
+	if e != nil {
+		return nil, e
+	}
+	if e := idCertificateBundleShape(bundle); e != nil {
+		return nil, e
+	}
+	return bundle, nil
+}
+
+// idCertificateDecodeCanonical strictly decodes one canonical JSON object.
+func idCertificateDecodeCanonical(b []byte) (map[string]any, error) {
 	if !utf8.Valid(b) {
 		return nil, idCertificateRefusal("invalid_json")
 	}
@@ -452,12 +489,9 @@ func DecodeIDChainHeader(value string) (map[string]any, error) {
 	if !bytes.Equal(canonical, b) {
 		return nil, idCertificateRefusal("noncanonical_json")
 	}
-	bundle, ok := valueJSON.(map[string]any)
+	object, ok := valueJSON.(map[string]any)
 	if !ok {
 		return nil, idCertificateRefusal("invalid_shape")
 	}
-	if e := idCertificateBundleShape(bundle); e != nil {
-		return nil, e
-	}
-	return bundle, nil
+	return object, nil
 }

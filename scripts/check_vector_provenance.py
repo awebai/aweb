@@ -89,9 +89,37 @@ ROOT_CONSUMERS = {
         "id-certificates-v1.json",
         'readRootVector(t, "id-certificates-v1.json")',
     ),
+    PurePosixPath("cli/go/internal/conformance/id_resign_test.go"): _consumer(
+        "id-certificates-v1.json",
+        'readRootVector(t, "id-certificates-v1.json")',
+    ),
+    PurePosixPath("cli/go/internal/conformance/id_certificate_request_test.go"): _consumer(
+        "id-certificates-v1.json",
+        'readRootVector(t, "id-certificates-v1.json")',
+    ),
+    PurePosixPath("cli/go/internal/conformance/id_child_resign_test.go"): _consumer(
+        "id-certificates-v1.json",
+        'readRootVector(t, "id-certificates-v1.json")',
+    ),
+    PurePosixPath("cli/go/internal/conformance/id_child_issue_test.go"): _consumer(
+        "id-certificates-v1.json",
+        'readRootVector(t, "id-certificates-v1.json")',
+    ),
+    PurePosixPath("cli/go/awid/id_status_client_test.go"): _consumer(
+        "id-certificates-v1.json",
+        'filepath.Join("..", "..", "..", "docs", "vectors", "id-certificates-v1.json")',
+    ),
+    PurePosixPath("cli/go/awconfig/id_chain_install_test.go"): _consumer(
+        "id-certificates-v1.json",
+        'filepath.Join("..", "..", "..", "docs", "vectors", "id-certificates-v1.json")',
+    ),
     PurePosixPath("cli/go/awid/didkey_strict_test.go"): _consumer(
         "id-certificates-v1.json",
         'filepath.Join("..", "..", "..", "docs", "vectors", "id-certificates-v1.json")',
+    ),
+    PurePosixPath("cli/go/awid/controller_request_test.go"): _consumer(
+        ("awid-controller-request-v2.json", "id-certificates-v1.json"),
+        'filepath.Join("..", "..", "..", "docs", "vectors", "awid-controller-request-v2.json")',
     ),
     PurePosixPath("server/tests/test_c2_vectors.py"): _consumer(
         ("app-task-authorization-v1.json", "app-request-credential-v1.json", "task-answer-v1.json"),
@@ -580,6 +608,10 @@ ROOT_CONSUMERS = {
         'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
     ),
     PurePosixPath("channel-core/test/id_signature_non_narrowing.test.ts"): _consumer(
+        "id-certificates-v1.json",
+        'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
+    ),
+    PurePosixPath("channel-core/test/id_key_response_id_tree.test.ts"): _consumer(
         "id-certificates-v1.json",
         'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
     ),
