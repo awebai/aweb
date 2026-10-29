@@ -102,7 +102,7 @@ def csr_requester():
     # The driver conveys the requester's displayed fingerprint independently
     # of the CSR file, and compares it with the issuer's displayed value.
     publish_csr("fingerprint.txt", fingerprint)
-    wait_file("response.json")
+    wait_file("response-ready")
     imported, prompts = command(["id", "parent", "import", "/work/csr/response.json", "--human", human["id"],
                                 "--domain", "alpha.example.com", "--json"])
     assert imported["registration"] == "registered" and prompts == 2, imported
@@ -124,7 +124,7 @@ def csr_root():
     import urllib.error
     import urllib.request
     try:
-        urllib.request.urlopen("http://awid-a:8010/v1/did/" + prepared["id"] + "/full", timeout=5)
+        urllib.request.urlopen("http://awid-a:8010/v1/did/" + prepared["id"] + "/key", timeout=5)
     except urllib.error.HTTPError as exc:
         assert exc.code == 404, exc
     else:
@@ -150,6 +150,7 @@ def csr_root():
     command(approve, json_output=False, confirmation="y", fingerprint=fingerprint)
     after = {p.name: p.read_bytes() for p in issuance.glob("*.json")}
     assert len(after) == len(before) + 1
+    publish_csr("response-ready", "")
     print("PASS: root CSR approval accepts the matching fingerprint through a real PTY", flush=True)
     return json.loads(wait_file("complete.json").read_text())
 
