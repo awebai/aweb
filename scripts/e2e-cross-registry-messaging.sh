@@ -260,9 +260,9 @@ from pathlib import Path
 import ipaddress,sys
 path=Path(sys.argv[1]); ip=str(ipaddress.ip_address(sys.argv[2])); text=path.read_text()
 for marker in ("A", "B", "CLI", "AWID_A", "AWID_B"):
-    source=f"    # FEDERATION_DNS_{marker}"
+    source=f"    # FEDERATION_DNS_{marker}\n"
     assert text.count(source)==1, source
-    text=text.replace(source, f'    dns:\n      - "{ip}"')
+    text=text.replace(source, f'    dns:\n      - "{ip}"\n')
 path.write_text(text)
 PY
 compose up -d awid-a awid-b
