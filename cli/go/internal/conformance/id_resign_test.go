@@ -472,11 +472,11 @@ func TestIDResignProbes(t *testing.T) {
 		f.log.seed(t, oldID, map[string]any{"certificate": stored["certificate"], "signature": v.Certificates["coordinator-resigned"].Signed["signature"]})
 		refuses(t, f, "issuance_not_recorded")
 	})
-	t.Run("stale parent evidence is unavailable", func(t *testing.T) {
+	t.Run("stale parent evidence has expired", func(t *testing.T) {
 		f := caseFixture(t, v, accepted)
 		calls := 0
 		_, err := awid.ResignIDCertificate(f.request, f.parent, f.evidence(61), "example.com", f.log, vectorSigner(t, v, f.signer, &calls), f.now)
-		if got := awid.IDCertificateErrorCode(err); got != "evidence_unavailable" || calls != 0 || f.log.writes != 0 {
+		if got := awid.IDCertificateErrorCode(err); got != "status_expired" || calls != 0 || f.log.writes != 0 {
 			t.Fatalf("reason=%q calls=%d writes=%d", got, calls, f.log.writes)
 		}
 	})
@@ -485,7 +485,7 @@ func TestIDResignProbes(t *testing.T) {
 		f.status = v.Statuses["alice-revoked-now"]
 		calls := 0
 		_, err := awid.ResignIDCertificate(f.request, f.parent, f.evidence(61), "example.com", f.log, vectorSigner(t, v, f.signer, &calls), f.now)
-		if got := awid.IDCertificateErrorCode(err); got != "evidence_unavailable" || calls != 0 {
+		if got := awid.IDCertificateErrorCode(err); got != "status_expired" || calls != 0 {
 			t.Fatalf("reason=%q calls=%d", got, calls)
 		}
 	})

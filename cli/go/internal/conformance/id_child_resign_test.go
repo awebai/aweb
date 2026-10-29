@@ -516,7 +516,7 @@ func TestIDChildImportProbes(t *testing.T) {
 	t.Run("stale parent evidence", func(t *testing.T) {
 		f := resignFixture{status: x.v.Statuses["alice-rotated"]}
 		imported, err := awid.ImportIDCertificateResponse(request, []byte(good), f.evidence(61), "example.com")
-		if awid.IDCertificateErrorCode(err) != "evidence_unavailable" || imported != nil {
+		if awid.IDCertificateErrorCode(err) != "status_expired" || imported != nil {
 			t.Fatalf("stale evidence: %v", err)
 		}
 	})
