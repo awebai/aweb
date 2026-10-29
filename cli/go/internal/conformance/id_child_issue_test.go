@@ -596,6 +596,24 @@ func TestIDChildIssueProbes(t *testing.T) {
 		})
 	}
 
+	t.Run("a request id bound to one invitation is refused for another", func(t *testing.T) {
+		r := x.issueRun(t, human)
+		if _, err := r.receive(humanRequest); err != nil {
+			t.Fatal(err)
+		}
+		other := *r.invitation(t, human.Input.InvitationID)
+		other.InvitationID, other.Request = "10000000-0000-4000-8000-0000000000c1", nil
+		if err := r.invitations.PutInvitation(&other); err != nil {
+			t.Fatal(err)
+		}
+		r.invitations.writes = 0
+		_, err := r.receive(variant(t, "bob", "human-issue", map[string]any{"request_id": humanID, "invitation_id": other.InvitationID}))
+		refused(t, err, "request_conflict")
+		if r.invitations.writes != 0 || r.invitation(t, other.InvitationID).Request != nil {
+			t.Fatal("a second invitation took a request id already bound")
+		}
+	})
+
 	t.Run("a void invitation refuses every later request and approval", func(t *testing.T) {
 		r := x.issueRun(t, human)
 		if _, err := r.receive(humanRequest); err != nil {

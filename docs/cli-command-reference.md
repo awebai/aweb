@@ -358,9 +358,11 @@ Subcommands:
 - `address` Manage addresses for the current global identity
 - `addresses` List registry addresses for a did:aw (defaults to the current global identity)
 - `cert` Team certificate operations
+- `child` Invite, receive and approve requests from children you issue
 - `create` Create a global identity by claiming a namespace address
 - `encryption-key` Manage local E2E encryption keys for this self-custodial identity
 - `grant` Scoped, revocable session grants derived from this identity
+- `human` Human identities in a namespace's identity tree
 - `log` Show a global AWID DID log
 - `namespace` Protocol/admin namespace controller and address operations
 - `register` Register the current global identity at the configured registry
@@ -427,6 +429,111 @@ Show the current team certificate
 Flags:
 - `-h, --help help for show`
 
+## `id child`
+
+### `id child`
+
+Invite, receive and approve requests from children you issue
+
+Subcommands:
+- `approve` Sign the certificate for one received request
+- `invite` Fix an invitation for one child before it exports its request
+- `pending` List the requests bound to your invitations
+- `receive` Receive a child's request against one of your invitations
+- `refuse` Refuse one received request without signing
+- `show` Show one received request and the fingerprint of its key
+
+Flags:
+- `-h, --help help for child`
+
+## `id child approve`
+
+### `id child approve`
+
+Sign the certificate for one received request and write the response
+(--out, or stdout). A human child needs your confirmation at an interactive
+terminal that its key fingerprint matches what the recipient told you over a
+separate trusted channel; nothing else approves it.
+
+Flags:
+- `--as-root Act as the namespace root, with this machine's controller key`
+- `--domain string Namespace domain (with --as-root or --human)`
+- `-h, --help help for approve`
+- `--human string Act as this human on this machine (did:aw)`
+- `--out string Where to write the response (- for stdout) (default "-")`
+- `--registry string Registry origin for --as-root, when the domain's _awid record names none`
+
+## `id child invite`
+
+### `id child invite`
+
+Fix an invitation for one child of --kind, and print what the recipient
+needs to export its request: invitation ID, parent, domain, kind and expiry.
+--recipient is your private note of who it is for; it is never exported.
+An invitation expires after --expires (7 days by default).
+
+Flags:
+- `--as-root Act as the namespace root, with this machine's controller key`
+- `--domain string Namespace domain (with --as-root or --human)`
+- `--expires duration How long the invitation stays open (default 168h0m0s)`
+- `-h, --help help for invite`
+- `--human string Act as this human on this machine (did:aw)`
+- `--kind string Kind of the child: human or agent`
+- `--recipient string Your private note of who the invitation is for`
+- `--registry string Registry origin for --as-root, when the domain's _awid record names none`
+
+## `id child pending`
+
+### `id child pending`
+
+List the requests bound to your invitations
+
+Flags:
+- `--as-root Act as the namespace root, with this machine's controller key`
+- `--domain string Namespace domain (with --as-root or --human)`
+- `-h, --help help for pending`
+- `--human string Act as this human on this machine (did:aw)`
+- `--registry string Registry origin for --as-root, when the domain's _awid record names none`
+
+## `id child receive`
+
+### `id child receive`
+
+Receive a child's request against one of your invitations
+
+Flags:
+- `--as-root Act as the namespace root, with this machine's controller key`
+- `--domain string Namespace domain (with --as-root or --human)`
+- `-h, --help help for receive`
+- `--human string Act as this human on this machine (did:aw)`
+- `--registry string Registry origin for --as-root, when the domain's _awid record names none`
+
+## `id child refuse`
+
+### `id child refuse`
+
+Refuse one received request without signing
+
+Flags:
+- `--as-root Act as the namespace root, with this machine's controller key`
+- `--domain string Namespace domain (with --as-root or --human)`
+- `-h, --help help for refuse`
+- `--human string Act as this human on this machine (did:aw)`
+- `--registry string Registry origin for --as-root, when the domain's _awid record names none`
+
+## `id child show`
+
+### `id child show`
+
+Show one received request and the fingerprint of its key
+
+Flags:
+- `--as-root Act as the namespace root, with this machine's controller key`
+- `--domain string Namespace domain (with --as-root or --human)`
+- `-h, --help help for show`
+- `--human string Act as this human on this machine (did:aw)`
+- `--registry string Registry origin for --as-root, when the domain's _awid record names none`
+
 ## `id create`
 
 ### `id create`
@@ -454,6 +561,8 @@ Flags:
 - `--name string Global identity name (address name under --domain)`
 - `--org string Hosted organization slug or ID (human CLI login or explicit owner principal)`
 - `--owner-identity-home string Authorize --org creation with this owner's absolute native credential directory`
+- `--parent-human string did:aw of the human on this machine who issues the agent's certificate`
+- `--parent-root Have this machine's namespace controller issue the agent's certificate (an agent with no human)`
 - `--registry string Registry origin override (default: api.awid.ai)`
 - `--skip-dns-verify Skip the DNS TXT verification prompt and lookup`
 - `--team-id string Chosen hosted team service UUID or canonical name:namespace (requires --org)`
@@ -557,6 +666,37 @@ Show one session grant
 
 Flags:
 - `-h, --help help for show`
+
+## `id human`
+
+### `id human`
+
+Human identities in a namespace's identity tree
+
+Subcommands:
+- `init` Create your human ID, issued by this machine's namespace controller
+
+Flags:
+- `-h, --help help for human`
+
+## `id human init`
+
+### `id human init`
+
+Create your human ID in --domain and have the namespace controller on this
+machine issue its certificate (--as-root).
+
+The human key is kept in the OS keychain, encrypted under a passphrase you
+choose; every signature asks for that passphrase on the terminal. This needs
+a human at an interactive terminal: it refuses without one and inside an
+agent runtime. A run that fails resumes from where it stopped.
+
+Flags:
+- `--another Create another human in a domain that already has one on this machine`
+- `--as-root Issue the certificate with this machine's namespace controller key`
+- `--domain string Namespace domain`
+- `-h, --help help for init`
+- `--registry string Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)`
 
 ## `id log`
 

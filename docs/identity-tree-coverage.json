@@ -30,10 +30,14 @@
       "id": "CLI.KEYS.HUMAN",
       "repo": "aweb",
       "files": [
-        "cli/go/awid/human_key_backup.go"
+        "cli/go/awid/human_key_backup.go",
+        "cli/go/awid/human_signer.go",
+        "cli/go/awconfig/human_keychain.go",
+        "cli/go/awconfig/human_record.go",
+        "cli/go/cmd/aw/id_human.go"
       ],
-      "status": "legacy",
-      "reason": "Encrypted backup helpers are landed; the CLI human constructor and keychain wiring are not. Backup support alone does not establish an ID parent."
+      "status": "candidate",
+      "reason": "aw id human init --domain D --as-root creates the human key in the OS keychain, registers its did:aw with the human's own proof and has the local namespace controller issue its certificate, recorded before release. Converted once the S4 real-DNS journey proves it on the landing head."
     },
     {
       "id": "CLI.INIT.LOCAL",
@@ -92,6 +96,29 @@
       ],
       "status": "legacy",
       "reason": "Keep key/DID/address while explicitly enrolling; addresses do not prove parentage. This creation path has no landed per-path chain-or-refusal journey proof yet."
+    },
+    {
+      "id": "CLI.CREATE.PARENT",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/id_create_parent.go",
+        "cli/go/awid/id_direct_issue.go"
+      ],
+      "status": "candidate",
+      "reason": "aw id create --parent-human <did:aw> or --parent-root installs the agent's chain at creation: the named human or the namespace root issues it after verifying current status, records it before release, and the agent registers it with its own key; a parent that cannot issue leaves no agent. Converted once the S4 real-DNS journey proves both parents and the resume on the landing head."
+    },
+    {
+      "id": "CLI.CHILD.EXCHANGE",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/id_child.go",
+        "cli/go/awid/id_invitation.go",
+        "cli/go/awid/id_child_exchange.go",
+        "cli/go/awid/id_certificate_request.go",
+        "cli/go/awconfig/id_invitation_store.go"
+      ],
+      "status": "candidate",
+      "reason": "aw id child invite/receive/pending/show/approve/refuse: the issuer side of the request exchange under an explicitly selected issuer; a human child is approved only by a confirmed terminal answer. The recipient side (aw id parent request/import) and its journey are not landed."
     },
     {
       "id": "CLI.CREATE.HOSTED",
@@ -266,6 +293,10 @@
       {
         "file": "cli/go/awid/human_channels_presence.go",
         "reason": "Released human channels presence signing/key custody; ID-certificate verification uses the shared verifier."
+      },
+      {
+        "file": "cli/go/awid/human_signer.go",
+        "reason": "Human key custody: the human key, decrypted for one signature after its passphrase prompt, signs exactly the bytes it is given; ID-certificate verification uses the shared verifier."
       },
       {
         "file": "cli/go/awid/keys.go",

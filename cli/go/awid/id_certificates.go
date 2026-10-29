@@ -327,9 +327,10 @@ func idSignatureBytes(signature any) ([]byte, error) {
 }
 
 // idStrictVerify applies the ID Ed25519 profile to a signature by key, whose
-// own point the caller has already checked at shape time.
+// own point the caller has already checked at shape time. A signature of the
+// wrong length is refused here, whatever the caller checked.
 func idStrictVerify(key string, b []byte, payload func() ([]byte, error)) error {
-	if !idCertificatePrimePoint(b[:32]) {
+	if len(b) != ed25519.SignatureSize || !idCertificatePrimePoint(b[:32]) {
 		return idCertificateRefusal("invalid_signature")
 	}
 	// Redundant with crypto/ed25519; kept to pin the profile.

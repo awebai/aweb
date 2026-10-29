@@ -6,6 +6,7 @@ package awid
 // admits an identity or authorizes a signature.
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"regexp"
 	"strings"
@@ -27,6 +28,31 @@ func IDCertificateRequestSigningBytes(request map[string]any) ([]byte, error) {
 		return nil, err
 	}
 	return append([]byte(IDCertificateRequestPrefix), raw...), nil
+}
+
+// SignIDCertificateRequest signs request with its subject's key and returns
+// the canonical signed request file, checked as a receiver would parse it.
+// sign must answer with the request's own subject_key.
+func SignIDCertificateRequest(request map[string]any, sign IDCertificateSigner) ([]byte, error) {
+	payload, err := IDCertificateRequestSigningBytes(request)
+	if err != nil {
+		return nil, err
+	}
+	signer, signature, err := sign(payload)
+	if err != nil {
+		return nil, err
+	}
+	if signer != request["subject_key"] {
+		return nil, idCertificateRefusal("invalid_proof")
+	}
+	raw, err := idCertificateCanonical(map[string]any{"request": request, "signature": base64.RawURLEncoding.EncodeToString(signature)})
+	if err != nil {
+		return nil, err
+	}
+	if _, err := ParseIDCertificateRequest(raw); err != nil {
+		return nil, err
+	}
+	return raw, nil
 }
 
 // IDKeyFingerprint is the fingerprint both sides compare out of band: the

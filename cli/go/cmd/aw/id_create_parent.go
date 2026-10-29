@@ -22,15 +22,17 @@ import (
 // on disk; the root parent is this machine's namespace controller, and a
 // root→agent chain means no human (§3).
 
-// agentIssuer is who signs an agent's certificate at creation.
-type agentIssuer struct {
+// childIssuer is who signs a child's certificate: a human or agent on this
+// machine, or the namespace root through this machine's controller.
+type childIssuer struct {
 	parent      map[string]any
 	parentChain []any
 	issuance    awconfig.IDIssuanceFileStore
-	signer      func(agentID string) awid.IDCertificateSigner
-	// evidence is current status for issuing to the agent, refused when the
+	invitations awconfig.IDInvitationFileStore
+	signer      func(childID string) awid.IDCertificateSigner
+	// evidence is current status for issuing to the child, refused when the
 	// issuer cannot issue now.
-	evidence func(ctx context.Context, agentID, agentDIDKey string) (*awid.IDChainEvidence, error)
+	evidence func(ctx context.Context, childID, childDIDKey string) (*awid.IDChainEvidence, error)
 	// human is the issuing human's did:aw; empty for the root.
 	human string
 }
@@ -72,17 +74,18 @@ func loadHumanParent(domain, id string) (*humanParent, error) {
 
 // issuer signs as the human through its keychain key and terminal prompt,
 // once its chain and key verify against fresh status from registryURL.
-func (p *humanParent) issuer(opts idCreateOptions, registry *awid.RegistryClient, registryURL string) *agentIssuer {
-	return &agentIssuer{
+func (p *humanParent) issuer(keychain awid.HumanKeyStore, prompt awid.PassphrasePrompt, resolver awid.TXTResolver, registry *awid.RegistryClient, registryURL string) *childIssuer {
+	return &childIssuer{
 		parent:      map[string]any{"kind": "identity", "id": p.record.StableID},
 		parentChain: p.chain.Bundle["certificates"].([]any),
 		issuance:    awconfig.IDIssuanceFileStore{Dir: awconfig.IdentityIssuanceDir(p.dir)},
-		signer: func(agentID string) awid.IDCertificateSigner {
-			return awid.HumanSigner(opts.Keychain, p.record.StableID, "issue the certificate of agent "+agentID, opts.Prompt)
+		invitations: awconfig.IDInvitationFileStore{Dir: awconfig.IdentityInvitationsDir(p.dir)},
+		signer: func(childID string) awid.IDCertificateSigner {
+			return awid.HumanSigner(keychain, p.record.StableID, "issue the certificate of "+childID, prompt)
 		},
 		evidence: func(ctx context.Context, _, _ string) (*awid.IDChainEvidence, error) {
 			subject := awid.IDChainSubject{ID: p.record.StableID, DIDKey: p.record.DIDKey}
-			evidence := idStatusAt(registry, opts.TXTResolver, registryURL).IDChainEvidence(ctx, p.chain.Bundle, subject, p.record.Domain)
+			evidence := idStatusAt(registry, resolver, registryURL).IDChainEvidence(ctx, p.chain.Bundle, subject, p.record.Domain)
 			if err := humanCanIssue(p.record.StableID, awid.VerifyIDChain(p.chain.Bundle, subject, evidence, p.record.Domain)); err != nil {
 				return nil, err
 			}
@@ -107,17 +110,22 @@ func humanCanIssue(id string, verdict awid.IDChainResult) error {
 // rootIssuer signs as the namespace root with this machine's controller key.
 // Status is read for the agent itself: the namespace's open epoch decides
 // the issuing key.
-func rootIssuer(domain string, controllerKey ed25519.PrivateKey, registry *awid.RegistryClient, resolver awid.TXTResolver, registryURL string) (*agentIssuer, error) {
+func rootIssuer(domain string, controllerKey ed25519.PrivateKey, registry *awid.RegistryClient, resolver awid.TXTResolver, registryURL string) (*childIssuer, error) {
 	dir, err := awconfig.ControllerIssuanceDir(domain)
 	if err != nil {
 		return nil, err
 	}
-	return &agentIssuer{
-		parent:   map[string]any{"kind": "namespace", "id": domain},
-		issuance: awconfig.IDIssuanceFileStore{Dir: dir},
-		signer:   func(string) awid.IDCertificateSigner { return awid.KeySigner(controllerKey) },
-		evidence: func(ctx context.Context, agentID, agentDIDKey string) (*awid.IDChainEvidence, error) {
-			return idStatusAt(registry, resolver, registryURL).IDChainEvidence(ctx, nil, awid.IDChainSubject{ID: agentID, DIDKey: agentDIDKey}, domain), nil
+	invitations, err := awconfig.ControllerInvitationsDir(domain)
+	if err != nil {
+		return nil, err
+	}
+	return &childIssuer{
+		parent:      map[string]any{"kind": "namespace", "id": domain},
+		issuance:    awconfig.IDIssuanceFileStore{Dir: dir},
+		invitations: awconfig.IDInvitationFileStore{Dir: invitations},
+		signer:      func(string) awid.IDCertificateSigner { return awid.KeySigner(controllerKey) },
+		evidence: func(ctx context.Context, childID, childDIDKey string) (*awid.IDChainEvidence, error) {
+			return idStatusAt(registry, resolver, registryURL).IDChainEvidence(ctx, nil, awid.IDChainSubject{ID: childID, DIDKey: childDIDKey}, domain), nil
 		},
 	}, nil
 }
@@ -143,7 +151,7 @@ func idStatusAt(registry *awid.RegistryClient, resolver awid.TXTResolver, regist
 }
 
 type agentChainStep struct {
-	issuer      *agentIssuer
+	issuer      *childIssuer
 	agentID     string
 	agentDIDKey string
 	agentKey    ed25519.PrivateKey
@@ -217,17 +225,17 @@ func prepareIDCreateParent(opts idCreateOptions, domain string) (*idCreateParent
 	return &idCreateParent{human: parent}, nil
 }
 
-// issuer is the parent's agentIssuer; the root signs with controllerKey.
-func (p *idCreateParent) issuer(opts idCreateOptions, domain string, controllerKey ed25519.PrivateKey, registry *awid.RegistryClient, registryURL string) (*agentIssuer, error) {
+// issuer is the parent's childIssuer; the root signs with controllerKey.
+func (p *idCreateParent) issuer(opts idCreateOptions, domain string, controllerKey ed25519.PrivateKey, registry *awid.RegistryClient, registryURL string) (*childIssuer, error) {
 	if p.root {
 		return rootIssuer(domain, controllerKey, registry, opts.TXTResolver, registryURL)
 	}
-	return p.human.issuer(opts, registry, registryURL), nil
+	return p.human.issuer(opts.Keychain, opts.Prompt, opts.TXTResolver, registry, registryURL), nil
 }
 
 // preflight refuses, before the agent exists, a parent that cannot issue,
 // so a refused parent leaves no chainless agent.
-func (p *idCreateParent) preflight(ctx context.Context, opts idCreateOptions, issuer *agentIssuer, domain string, controllerKey ed25519.PrivateKey) error {
+func (p *idCreateParent) preflight(ctx context.Context, opts idCreateOptions, issuer *childIssuer, domain string, controllerKey ed25519.PrivateKey) error {
 	if p.root {
 		return checkRootController(ctx, opts.TXTResolver, domain, controllerKey)
 	}
