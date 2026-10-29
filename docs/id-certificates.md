@@ -988,8 +988,13 @@ export; key/DID preparation may precede that, but `--domain` alone cannot
 produce an issue CSR without its required invitation ID and parent.
 
 The CLI surfaces are `aw id parent request` (issue or --resign),
-`aw id parent import <response>`, and `aw id child receive <request>`, `pending`,
-`show <request-id>`, `approve <request-id>` and `refuse <request-id>`. Files and
+`aw id parent import <response>`, and `aw id child invite`, `receive <request>`,
+`pending`, `show <request-id>`, `approve <request-id>` and `refuse <request-id>`.
+`child invite` creates the issuer's local self_custodial invitation record and
+exports only its invitation ID, parent, domain, kind and expiry, never the
+private recipient note; its default expiry is a CLI default, not a protocol
+constant. The issuer is selected explicitly: `--as-root --domain D` for the
+namespace root, or the selected human or agent issuer's records. Files and
 `-` for stdin/stdout are the transport; callers convey the public files over
 their chosen channel. `aw id request` retains its existing signed-HTTP meaning,
 and `aw id cert` retains its team-membership meaning. No automatic request

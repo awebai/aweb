@@ -223,7 +223,7 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 		return idCreateOutput{}, fmt.Errorf("invalid planned registry URL: %w", err)
 	}
 
-	var issuer *agentIssuer
+	var issuer *childIssuer
 	if parent != nil {
 		if issuer, err = parent.issuer(opts, plan.Domain, prepared.ControllerKey, registry, plan.RegistryURL); err != nil {
 			return idCreateOutput{}, err
