@@ -334,15 +334,28 @@ func executeIDChildReceive(ctx context.Context, opts idChildOptions, raw []byte)
 	if err != nil {
 		return idChildRequestOutput{}, err
 	}
-	if signed["request"].(map[string]any)["operation"] == "resign" {
+	req := signed["request"].(map[string]any)
+	// A request ID names one request across both stores: each library
+	// receive checks its own store, and this checks the other.
+	existing, _, err := lookupReceivedRequest(issuer, req["request_id"].(string))
+	if err != nil {
+		return idChildRequestOutput{}, err
+	}
+	if req["operation"] == "resign" {
 		if err := issuerResigns(issuer); err != nil {
 			return idChildRequestOutput{}, err
+		}
+		if existing.invitation != nil {
+			return idChildRequestOutput{}, &awid.IDCertificateError{Code: "request_conflict"}
 		}
 		entry, err := awid.ReceiveIDResignRequest(issuer.issuance, raw)
 		if err != nil {
 			return idChildRequestOutput{}, err
 		}
 		return receivedRequest{resign: entry}.output()
+	}
+	if existing.resign != nil {
+		return idChildRequestOutput{}, &awid.IDCertificateError{Code: "request_conflict"}
 	}
 	inv, err := awid.ReceiveIDChildRequest(issuer.invitations, issuer.parent, raw)
 	if err != nil {
@@ -424,23 +437,31 @@ func (r receivedRequest) output() (idChildRequestOutput, error) {
 // findReceivedRequest finds requestID among the issuer's invitations and
 // then among its re-sign requests.
 func findReceivedRequest(issuer *selectedChildIssuer, requestID string) (receivedRequest, error) {
-	all, err := issuer.invitations.Invitations()
+	found, ok, err := lookupReceivedRequest(issuer, requestID)
 	if err != nil {
 		return receivedRequest{}, err
+	}
+	if !ok {
+		return receivedRequest{}, usageError("no received request %s", requestID)
+	}
+	return found, nil
+}
+
+func lookupReceivedRequest(issuer *selectedChildIssuer, requestID string) (receivedRequest, bool, error) {
+	all, err := issuer.invitations.Invitations()
+	if err != nil {
+		return receivedRequest{}, false, err
 	}
 	for _, inv := range all {
 		if inv.Request != nil && inv.Request.RequestID == requestID {
-			return receivedRequest{invitation: inv}, nil
+			return receivedRequest{invitation: inv}, true, nil
 		}
 	}
 	entry, err := issuer.issuance.EntryForRequest(requestID)
-	if err != nil {
-		return receivedRequest{}, err
+	if err != nil || entry == nil {
+		return receivedRequest{}, false, err
 	}
-	if entry != nil {
-		return receivedRequest{resign: entry}, nil
-	}
-	return receivedRequest{}, usageError("no received request %s", requestID)
+	return receivedRequest{resign: entry}, true, nil
 }
 
 // listIDChildRequests lists the issuer's received requests: issues, then

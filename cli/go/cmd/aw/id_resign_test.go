@@ -297,3 +297,54 @@ func TestResignRequestRefusesARegisteredAgent(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+// A request ID names one request across the issuer's invitations and its
+// re-signs, in either order of arrival.
+func TestResignAndIssueRequestsShareOneRequestIDSpace(t *testing.T) {
+	r := newResignRun(t)
+	out, resign, err := executeIDParentResign(r.childOpts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv, err := executeIDChildInvite(context.Background(), r.issuerOpts(), "agent", childNote, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, key, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue, err := awid.SignIDCertificateRequest(map[string]any{
+		"v": 1, "type": "aweb.id-certificate-request", "request_id": out.RequestID, "operation": "issue",
+		"id": awid.ComputeDIDKey(pub), "domain": inv.Domain, "parent": inv.Parent, "kind": "agent",
+		"subject_key": awid.ComputeDIDKey(pub), "invitation_id": inv.InvitationID, "old_certificate": nil,
+	}, awid.KeySigner(key))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := executeIDChildReceive(context.Background(), r.issuerOpts(), resign); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := executeIDChildReceive(context.Background(), r.issuerOpts(), issue); awid.IDCertificateErrorCode(err) != "request_conflict" {
+		t.Fatalf("issue after resign: %v", err)
+	}
+	if err := executeIDChildRefuse(context.Background(), r.issuerOpts(), out.RequestID); err != nil {
+		t.Fatal(err)
+	}
+	aliceDir, err := awconfig.HumanRecordDir(r.alice.Domain, r.alice.StableID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(awconfig.IdentityIssuanceDir(aliceDir)); err != nil {
+		t.Fatal(err)
+	}
+	if err := (awconfig.IDIssuanceFileStore{Dir: awconfig.IdentityIssuanceDir(aliceDir)}).Put(&awid.IDIssuanceEntry{CertificateID: r.oldID, Signed: r.oldSigned}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := executeIDChildReceive(context.Background(), r.issuerOpts(), issue); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := executeIDChildReceive(context.Background(), r.issuerOpts(), resign); awid.IDCertificateErrorCode(err) != "request_conflict" {
+		t.Fatalf("resign after issue: %v", err)
+	}
+}
