@@ -164,7 +164,7 @@ func ApproveIDChildRequest(invitations IDInvitationStore, issuance IDIssuanceSto
 		return nil, err
 	}
 	r := signed["request"].(map[string]any)
-	current, err := idIssuingKey(inv, parentChain, evidence)
+	current, err := idIssuingKey(inv.Parent, inv.Domain, inv.Kind, parentChain, evidence)
 	if err != nil {
 		return nil, err
 	}
@@ -203,29 +203,31 @@ func ApproveIDChildRequest(invitations IDInvitationStore, issuance IDIssuanceSto
 	return response, nil
 }
 
-// idIssuingKey is the key the invitation's parent signs with now: an
+// idIssuingKey is the key parent signs a kind child in domain with now: an
 // identity parent's current key once its chain verifies, or the namespace's
 // open epoch key. An agent parent never issues a human (R1).
-func idIssuingKey(inv *IDInvitation, parentChain []any, evidence *IDChainEvidence) (string, error) {
-	switch inv.Parent["kind"] {
+func idIssuingKey(parent map[string]any, domain, childKind string, parentChain []any, evidence *IDChainEvidence) (string, error) {
+	switch parent["kind"] {
 	case "identity":
-		parentID, _ := inv.Parent["id"].(string)
-		_, current, kind, err := idSigningParent(parentID, evidence, inv.Domain)
+		parentID, _ := parent["id"].(string)
+		_, current, kind, err := idSigningParent(parentID, evidence, domain)
 		if err != nil {
 			return "", err
 		}
-		if kind != "human" && inv.Kind == "human" {
+		if kind != "human" && childKind == "human" {
 			return "", idCertificateRefusal("human_issuer_is_agent")
 		}
 		if !idChainEndsIn(parentChain, parentID) {
 			return "", fmt.Errorf("the parent chain does not end in %s", parentID)
 		}
-		if err := idParentChainVerified(parentChain, parentID, current, evidence, inv.Domain); err != nil {
+		if err := idParentChainVerified(parentChain, parentID, current, evidence, domain); err != nil {
 			return "", err
 		}
 		return current, nil
 	case "namespace":
-		// The request codec refuses a namespace parent other than its domain.
+		if parent["id"] != domain {
+			return "", idCertificateRefusal("domain_mismatch")
+		}
 		if len(parentChain) != 0 {
 			return "", idCertificateRefusal("request_binding_mismatch")
 		}
@@ -235,7 +237,7 @@ func idIssuingKey(inv *IDInvitation, parentChain []any, evidence *IDChainEvidenc
 		if err := idEvidenceUsable(evidence); err != nil {
 			return "", err
 		}
-		status, err := parseIDStatus(evidence, inv.Domain)
+		status, err := parseIDStatus(evidence, domain)
 		if err != nil {
 			return "", err
 		}
