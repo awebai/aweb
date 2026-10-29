@@ -174,6 +174,7 @@ services:
       AWID_DB_SCHEMA: awid
       AWID_HOST: 0.0.0.0
       AWID_PORT: 8010
+      AWID_PUBLIC_ORIGINS: http://awid-a:8010
       AWID_RATE_LIMIT_DISABLED: "1"
       AWID_SERVICE_TOKEN: cross-registry-messaging-service-token-32-bytes
       AWID_ALLOW_INSECURE_DELIVERY_ORIGIN: "1"
@@ -191,6 +192,7 @@ services:
       AWID_DB_SCHEMA: awid
       AWID_HOST: 0.0.0.0
       AWID_PORT: 8010
+      AWID_PUBLIC_ORIGINS: http://awid-b:8010
       AWID_RATE_LIMIT_DISABLED: "1"
       AWID_SERVICE_TOKEN: cross-registry-messaging-service-token-32-bytes
       AWID_ALLOW_INSECURE_DELIVERY_ORIGIN: "1"
