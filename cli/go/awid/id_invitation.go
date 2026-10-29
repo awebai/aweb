@@ -106,6 +106,17 @@ func ReceiveIDChildRequest(store IDInvitationStore, issuer map[string]any, raw [
 	if !reflect.DeepEqual(r["parent"], inv.Parent) || r["domain"] != inv.Domain || r["kind"] != inv.Kind {
 		return nil, mismatch
 	}
+	// A request id names one request for the whole issuer, so approve and
+	// refuse by request id are never ambiguous.
+	all, err := store.Invitations()
+	if err != nil {
+		return nil, err
+	}
+	for _, other := range all {
+		if other.InvitationID != inv.InvitationID && other.Request != nil && other.Request.RequestID == requestID {
+			return nil, idCertificateRefusal("request_conflict")
+		}
+	}
 	if inv.Void {
 		return nil, idCertificateRefusal("invitation_conflict")
 	}
