@@ -1154,7 +1154,7 @@
         "awid/tests/test_id_status_client.py",
         "awid/tests/test_id_enrollment_resolution.py"
       ],
-      "acceptance": "Production cached client, 60-second bound with no outage grace, domain isolation, timeout/negative-cache/429 and enrolled omission; S2 checkpoint6 owns final paths.",
+      "acceptance": "Production cached client, 60-second bound with no outage grace, domain isolation, bounded refresh timeouts/429 and enrolled omission; S2 checkpoint6 owns final paths.",
       "candidate_head": "b4ccf3ed57259e3d322be797e44bc8790cdb6646",
       "ed25519_profile": "strict",
       "sites": [
