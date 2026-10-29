@@ -3,8 +3,7 @@ package awid
 // The cached identity-tree status client for aw (docs/id-certificates.md §4),
 // one policy with the Python CachedRegistryClient. Its cache is in-process
 // only: evidence is aged on this process's whole-second clock, an entry
-// stamped ahead of that clock is neither fresh nor last-known-good, and ages
-// are never clamped.
+// stamped ahead of that clock is never fresh, and ages are never clamped.
 import (
 	"bytes"
 	"context"
@@ -17,13 +16,8 @@ import (
 )
 
 const (
-	idStatusPath            = "/v1/id-certificates/status"
-	idStatusFreshSeconds    = 60
-	idStatusCooldownSeconds = idStatusFreshSeconds
-	// An entry older than this is neither fresh nor last-known-good.
-	idStatusRetentionSeconds = 2 * IDStatusOutageGraceSeconds
-	// IDStatusOutageGraceSeconds bounds last-known-good evidence after a failed refresh.
-	IDStatusOutageGraceSeconds = 900
+	idStatusPath         = "/v1/id-certificates/status"
+	idStatusFreshSeconds = 60
 )
 
 // ErrMalformedIDStatus is a successful status answer that is not a JSON
@@ -32,10 +26,9 @@ var ErrMalformedIDStatus = errors.New("malformed identity-tree status answer")
 
 // IDStatusClient reads identity-tree status for the chain verifier. Evidence
 // aged 60 seconds or less is reused with no DNS or HTTP work. Older evidence
-// waits for one refresh shared by every caller of the same request; when it
-// fails, last-known-good evidence is returned with its true age and
-// refresh_failed, and with none, without an age. After a failed attempt its
-// domain makes no attempt for 60 seconds.
+// waits for one refresh shared by every caller of the same request; when that
+// attempt fails, the evidence is returned without an age, so it is
+// unavailable.
 type IDStatusClient struct {
 	Registry *RegistryClient
 	// Authority reads the domain's exact _awid TXT authority.
@@ -50,7 +43,6 @@ type IDStatusClient struct {
 	mu       sync.Mutex
 	entries  map[string]*idStatusEntry
 	inflight map[string]*idStatusAttempt
-	failedAt map[string]int64
 }
 
 type idStatusEntry struct {
@@ -60,10 +52,9 @@ type idStatusEntry struct {
 }
 
 type idStatusAttempt struct {
-	done   chan struct{}
-	entry  *idStatusEntry
-	failed bool
-	age    int64
+	done  chan struct{}
+	entry *idStatusEntry
+	age   int64
 }
 
 // NewIDStatusClient reads status through registry and DNS authority through resolver.
@@ -134,8 +125,8 @@ func (c *IDStatusClient) IDChainEvidence(ctx context.Context, bundle map[string]
 	}
 	readAt := c.now()
 	cached := c.cachedEntry(key, readAt)
-	if cached != nil && readAt-cached.fetchedAt <= idStatusFreshSeconds {
-		return idStatusEvidence(cached, readAt-cached.fetchedAt, false)
+	if cached != nil {
+		return idStatusEvidence(cached, readAt-cached.fetchedAt)
 	}
 	attempt := c.attempt(key, request)
 	select {
@@ -144,17 +135,13 @@ func (c *IDStatusClient) IDChainEvidence(ctx context.Context, bundle map[string]
 		return &IDChainEvidence{Status: map[string]any{}, NamespaceAuthority: map[string]any{}}
 	}
 	if attempt.entry != nil {
-		return idStatusEvidence(attempt.entry, attempt.age, false)
+		return idStatusEvidence(attempt.entry, attempt.age)
 	}
-	if attempt.failed && cached != nil {
-		// Aged through the wait for the failed attempt.
-		return idStatusEvidence(cached, c.now()-cached.fetchedAt, true)
-	}
-	return &IDChainEvidence{Status: map[string]any{}, NamespaceAuthority: map[string]any{}, RefreshFailed: attempt.failed}
+	return &IDChainEvidence{Status: map[string]any{}, NamespaceAuthority: map[string]any{}}
 }
 
-// cachedEntry returns the stored entry unless it is stamped ahead of the
-// clock, whose age is then unknown, or past retention.
+// cachedEntry returns the stored entry while it is fresh. An entry stamped
+// ahead of the clock has no known age, so it is never fresh.
 func (c *IDStatusClient) cachedEntry(key string, now int64) *idStatusEntry {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -162,7 +149,7 @@ func (c *IDStatusClient) cachedEntry(key string, now int64) *idStatusEntry {
 	if entry == nil {
 		return nil
 	}
-	if now < entry.fetchedAt || now-entry.fetchedAt > idStatusRetentionSeconds {
+	if now < entry.fetchedAt || now-entry.fetchedAt > idStatusFreshSeconds {
 		delete(c.entries, key)
 		return nil
 	}
@@ -171,7 +158,7 @@ func (c *IDStatusClient) cachedEntry(key string, now int64) *idStatusEntry {
 
 // attempt joins the in-flight refresh for key or starts one. The refresh runs
 // detached from any caller, so a cancelled caller leaves it running for the
-// others. During its domain's cooldown no attempt is made.
+// others.
 func (c *IDStatusClient) attempt(key string, request map[string]any) *idStatusAttempt {
 	domain := request["domain"].(string)
 	c.mu.Lock()
@@ -180,13 +167,6 @@ func (c *IDStatusClient) attempt(key string, request map[string]any) *idStatusAt
 		return a
 	}
 	a := &idStatusAttempt{done: make(chan struct{})}
-	if failedAt, ok := c.failedAt[domain]; ok {
-		if since := c.now() - failedAt; since >= 0 && since <= idStatusCooldownSeconds {
-			a.failed = true
-			close(a.done)
-			return a
-		}
-	}
 	if c.inflight == nil {
 		c.inflight = map[string]*idStatusAttempt{}
 	}
@@ -216,16 +196,8 @@ func (c *IDStatusClient) refresh(key, domain string, request map[string]any, a *
 	}()
 	switch {
 	case errors.Is(err, ErrMalformedIDStatus):
-		delete(c.failedAt, domain)
 		delete(c.entries, key)
-	case err != nil:
-		if c.failedAt == nil {
-			c.failedAt = map[string]int64{}
-		}
-		c.failedAt[domain] = c.now()
-		a.failed = true
-	default:
-		delete(c.failedAt, domain)
+	case err == nil:
 		entry := &idStatusEntry{
 			fetchedAt: started,
 			status:    status,
@@ -251,7 +223,7 @@ func idStatusCacheKey(request map[string]any) (string, error) {
 
 // idStatusEvidence never clamps the age: a negative one is unavailable
 // evidence to the verifier.
-func idStatusEvidence(entry *idStatusEntry, age int64, refreshFailed bool) *IDChainEvidence {
+func idStatusEvidence(entry *idStatusEntry, age int64) *IDChainEvidence {
 	seconds := float64(age)
-	return &IDChainEvidence{Status: entry.status, NamespaceAuthority: entry.authority, AgeSeconds: &seconds, RefreshFailed: refreshFailed}
+	return &IDChainEvidence{Status: entry.status, NamespaceAuthority: entry.authority, AgeSeconds: &seconds}
 }

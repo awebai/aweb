@@ -30,7 +30,6 @@ function evidence(status: any, authority: Partial<IdStatusEvidence["namespace_au
       ...authority,
     },
     age_seconds: 0,
-    refresh_failed: false,
   };
 }
 
@@ -247,7 +246,7 @@ describe("cache age probes", () => {
   const local: IdSubject = { id: coordinator, did_key: coordinator, team_member_did_aw: null, team_member_did_key: null };
   const chain = chainOf(signedOf("alice"), signedOf("coordinator"));
 
-  test("a negative age after a failed refresh is unavailable, not expired", () => {
-    expect(verifyIdChain(chain, local, { ...evidence(normal()), age_seconds: -1, refresh_failed: true })).toEqual(unavailable);
+  test("a negative age is unavailable, not expired", () => {
+    expect(verifyIdChain(chain, local, { ...evidence(normal()), age_seconds: -1 })).toEqual(unavailable);
   });
 });

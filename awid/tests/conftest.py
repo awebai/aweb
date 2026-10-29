@@ -114,3 +114,30 @@ def build_signed_headers(signing_key, did_key, *, domain, operation, **extra):
         "Authorization": f"DIDKey {did_key} {sig}",
         "X-AWEB-Timestamp": ts,
     }
+
+
+class ManualClock:
+    """A settable UTC clock for the identity tree's post-lock witness times."""
+
+    def __init__(self, now: datetime) -> None:
+        self.now = now
+
+    def __call__(self) -> datetime:
+        return self.now
+
+
+@pytest.fixture
+def manual_clock() -> ManualClock:
+    return ManualClock(datetime(2026, 10, 26, 0, 0, 0, tzinfo=timezone.utc))
+
+
+@pytest_asyncio.fixture
+async def clocked_client(awid_db_infra, fake_redis, fake_domain_verifier, manual_clock):
+    app = create_app(db_infra=awid_db_infra, redis=fake_redis)
+    app.dependency_overrides[get_domain_verifier] = lambda: fake_domain_verifier
+    app.state.id_tree_clock = manual_clock
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as test_client:
+            test_client.app = app
+            yield test_client

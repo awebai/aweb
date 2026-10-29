@@ -1,9 +1,9 @@
 package awid
 
-// Mirrors awid/tests/test_id_status_client.py at 5b0391ca (S2 checkpoint 6b)
-// test by test. This client's cache is in-process only, so the shared-store
-// clock rule reduces to: an entry stamped ahead of the clock is neither fresh
-// nor last-known-good, and ages are never clamped.
+// Mirrors awid/tests/test_id_status_client.py at 062ad3a7 test by test. This
+// client's cache is in-process only, so the shared-store clock rule reduces
+// to: an entry stamped ahead of the clock is never fresh, and ages are never
+// clamped.
 import (
 	"bytes"
 	"context"
@@ -228,7 +228,7 @@ func TestStatusClientAFirstReadObservesStatusAndAuthorityTogether(t *testing.T) 
 	env := newStatusEnv(t)
 	e := env.evidence(nil)
 	want := map[string]any{"domain": "example.com", "dns_name": "_awid.example.com", "inherited": false, "controller_key": env.ctrl["example.com"]}
-	if !reflect.DeepEqual(e.NamespaceAuthority, want) || ageOf(e) != 0.0 || e.RefreshFailed {
+	if !reflect.DeepEqual(e.NamespaceAuthority, want) || ageOf(e) != 0.0 {
 		t.Fatalf("evidence %+v", e)
 	}
 	if got := env.verdict(e); got.Reason != "verified" {
@@ -244,8 +244,8 @@ func TestStatusClientEvidenceIsReusedThrough60SecondsWithoutDNSOrHTTP(t *testing
 	env.evidence(nil)
 	env.clock.Add(60)
 	e := env.evidence(nil)
-	if ageOf(e) != 60.0 || e.RefreshFailed {
-		t.Fatalf("evidence age=%v failed=%v", ageOf(e), e.RefreshFailed)
+	if ageOf(e) != 60.0 {
+		t.Fatalf("evidence age=%v", ageOf(e))
 	}
 	if r, d := env.counts(); r != 1 || d != 1 {
 		t.Fatalf("a fresh hit did network work: requests=%d dns=%d", r, d)
@@ -258,96 +258,58 @@ func TestStatusClientAfter60SecondsTheCallerAwaitsARefresh(t *testing.T) {
 	env.clock.Add(61)
 	env.set(func() { env.status["example.com"] = env.v.Statuses["alice-revoked-now"] })
 	e := env.evidence(nil)
-	if !reflect.DeepEqual(e.Status, env.v.Statuses["alice-revoked-now"]) || ageOf(e) != 0.0 || e.RefreshFailed {
-		t.Fatalf("evidence age=%v failed=%v", ageOf(e), e.RefreshFailed)
+	if !reflect.DeepEqual(e.Status, env.v.Statuses["alice-revoked-now"]) || ageOf(e) != 0.0 {
+		t.Fatalf("evidence age=%v", ageOf(e))
 	}
 	if r, d := env.counts(); r != 2 || d != 2 {
 		t.Fatalf("requests=%d dns=%d", r, d)
 	}
 }
 
-func TestStatusClientStaleEvidenceIsNeverPresentedWithoutAFailedRefresh(t *testing.T) {
-	for _, name := range []string{"cached-status-age-61-without-failed-refresh", "cached-status-age-901-without-failed-refresh"} {
-		t.Run(name, func(t *testing.T) {
-			env := newStatusEnv(t)
-			var age float64
-			var expected IDChainResult
-			for _, c := range env.v.Cases {
-				if c.Name == name {
-					age, expected = c.Cache.Age, c.Expected
-					if c.Cache.Refresh != "not_needed" {
-						t.Fatalf("case %s refresh=%s", name, c.Cache.Refresh)
-					}
-				}
-			}
-			stale := &IDChainEvidence{Status: env.status["example.com"], NamespaceAuthority: map[string]any{"domain": "example.com", "dns_name": "_awid.example.com", "inherited": false, "controller_key": env.ctrl["example.com"]}, AgeSeconds: &age}
-			if got := env.verdict(stale); !reflect.DeepEqual(got, expected) {
-				t.Fatalf("frozen verdict %+v want %+v", got, expected)
-			}
-			env.evidence(nil)
-			env.clock.Add(int64(age))
-			refreshed := env.evidence(nil)
-			if ageOf(refreshed) != 0.0 || refreshed.RefreshFailed || env.verdict(refreshed).Reason != "verified" {
-				t.Fatalf("refreshed age=%v failed=%v", ageOf(refreshed), refreshed.RefreshFailed)
-			}
-			env.clock.Add(int64(age))
-			env.set(func() { env.httpStatus = 503 })
-			failed := env.evidence(nil)
-			if ageOf(failed) != age || !failed.RefreshFailed || reflect.DeepEqual(env.verdict(failed), expected) {
-				t.Fatalf("failed age=%v failed=%v", ageOf(failed), failed.RefreshFailed)
-			}
-		})
-	}
-}
-
-func TestStatusClientAFailedRefreshReusesLastKnownGoodEvidenceThrough900Seconds(t *testing.T) {
-	for _, tc := range []struct {
-		age    int64
-		reason string
-	}{{61, "verified"}, {900, "verified"}, {901, "status_expired"}} {
-		for _, failure := range []string{"http-500", "http-429", "dns", "timeout"} {
-			t.Run(fmt.Sprintf("%d/%s", tc.age, failure), func(t *testing.T) {
-				env := newStatusEnv(t)
-				first := env.evidence(nil)
-				env.clock.Add(tc.age)
-				client := env.client
-				switch failure {
-				case "http-500":
-					env.set(func() { env.httpStatus = 500 })
-				case "http-429":
-					env.set(func() { env.httpStatus = 429 })
-				case "dns":
-					env.set(func() { env.dnsFailure = true })
-				case "timeout":
-					client.Timeout = 50 * time.Millisecond
-					env.set(func() { env.httpDelay = time.Second })
-				}
-				e := env.evidence(client)
-				if !reflect.DeepEqual(e.Status, first.Status) || !reflect.DeepEqual(e.NamespaceAuthority, first.NamespaceAuthority) || ageOf(e) != float64(tc.age) || !e.RefreshFailed {
-					t.Fatalf("evidence age=%v failed=%v", ageOf(e), e.RefreshFailed)
-				}
-				if got := env.verdict(e).Reason; got != tc.reason {
-					t.Fatalf("verdict %s want %s", got, tc.reason)
-				}
-				// A failed attempt never restarts the grace.
-				env.clock.Add(1)
-				again := env.evidence(client)
-				if ageOf(again) != float64(tc.age+1) {
-					t.Fatalf("grace restarted: age=%v", ageOf(again))
-				}
-			})
+func TestStatusClientEvidencePast60SecondsIsNeverPresented(t *testing.T) {
+	env := newStatusEnv(t)
+	var age float64
+	var expected IDChainResult
+	for _, c := range env.v.Cases {
+		if c.Name == "cached-status-age-61" {
+			age, expected = c.Cache.Age, c.Expected
 		}
 	}
+	stale := &IDChainEvidence{Status: env.status["example.com"], NamespaceAuthority: map[string]any{"domain": "example.com", "dns_name": "_awid.example.com", "inherited": false, "controller_key": env.ctrl["example.com"]}, AgeSeconds: &age}
+	if got := env.verdict(stale); !reflect.DeepEqual(got, expected) {
+		t.Fatalf("frozen verdict %+v want %+v", got, expected)
+	}
+	env.evidence(nil)
+	env.clock.Add(int64(age))
+	refreshed := env.evidence(nil)
+	if ageOf(refreshed) != 0.0 || env.verdict(refreshed).Reason != "verified" {
+		t.Fatalf("refreshed age=%v verdict=%s", ageOf(refreshed), env.verdict(refreshed).Reason)
+	}
 }
 
-func TestStatusClientLastKnownGoodIsAgedThroughTheFailedAttempt(t *testing.T) {
-	env := newStatusEnv(t)
-	env.evidence(nil)
-	env.clock.Add(61)
-	env.set(func() { env.httpStatus = 503; env.advanceDuringFetch = 5 })
-	e := env.evidence(nil)
-	if ageOf(e) != 66.0 || !e.RefreshFailed {
-		t.Fatalf("age=%v failed=%v", ageOf(e), e.RefreshFailed)
+func TestStatusClientAFailedRefreshOfStaleEvidenceLeavesNone(t *testing.T) {
+	for _, failure := range []string{"http-500", "http-429", "dns", "timeout"} {
+		t.Run(failure, func(t *testing.T) {
+			env := newStatusEnv(t)
+			env.evidence(nil)
+			env.clock.Add(61)
+			client := env.client
+			switch failure {
+			case "http-500":
+				env.set(func() { env.httpStatus = 500 })
+			case "http-429":
+				env.set(func() { env.httpStatus = 429 })
+			case "dns":
+				env.set(func() { env.dnsFailure = true })
+			case "timeout":
+				client = env.makeClient(50 * time.Millisecond)
+				env.set(func() { env.httpDelay = time.Second })
+			}
+			e := env.evidence(client)
+			if e.AgeSeconds != nil || env.verdict(e).Reason != "evidence_unavailable" {
+				t.Fatalf("age=%v verdict=%s", ageOf(e), env.verdict(e).Reason)
+			}
+		})
 	}
 }
 
@@ -355,124 +317,27 @@ func TestStatusClientAFailedFirstReadHasNoEvidence(t *testing.T) {
 	env := newStatusEnv(t)
 	env.set(func() { env.httpStatus = 429 })
 	e := env.evidence(nil)
-	if e.AgeSeconds != nil || !e.RefreshFailed || env.verdict(e).Reason != "evidence_unavailable" {
-		t.Fatalf("evidence age=%v failed=%v", ageOf(e), e.RefreshFailed)
+	if e.AgeSeconds != nil || env.verdict(e).Reason != "evidence_unavailable" {
+		t.Fatalf("evidence age=%v", ageOf(e))
 	}
 }
 
-func TestStatusClientAFailedAttemptSuppressesAttemptsFor60Seconds(t *testing.T) {
+func TestStatusClientAFailedAttemptDoesNotHoldBackTheNextOne(t *testing.T) {
 	env := newStatusEnv(t)
 	env.set(func() { env.httpStatus = 503 })
-	for _, elapsed := range []int64{0, 1, 60} {
-		env.clock.Store(1_000_000 + elapsed)
-		e := env.evidence(nil)
-		if r, d := env.counts(); e.AgeSeconds != nil || !e.RefreshFailed || r != 1 || d != 1 {
-			t.Fatalf("at %d: age=%v failed=%v requests=%d dns=%d", elapsed, ageOf(e), e.RefreshFailed, r, d)
-		}
-	}
-	env.clock.Add(1)
-	env.evidence(nil)
-	if r, _ := env.counts(); r != 2 {
-		t.Fatalf("no attempt after the cooldown: requests=%d", r)
-	}
-}
-
-func TestStatusClientDuringACooldownLastKnownGoodEvidenceKeepsItsTrueAge(t *testing.T) {
-	env := newStatusEnv(t)
-	first := env.evidence(nil)
-	env.clock.Add(61)
-	env.set(func() { env.httpStatus = 503 })
-	if e := env.evidence(nil); ageOf(e) != 61.0 {
+	if e := env.evidence(nil); e.AgeSeconds != nil {
 		t.Fatalf("age=%v", ageOf(e))
 	}
-	env.clock.Add(9)
-	e := env.evidence(nil)
-	if !reflect.DeepEqual(e.Status, first.Status) || ageOf(e) != 70.0 || !e.RefreshFailed || env.verdict(e).Reason != "verified" {
-		t.Fatalf("age=%v failed=%v verdict=%s", ageOf(e), e.RefreshFailed, env.verdict(e).Reason)
+	env.set(func() { env.httpStatus = 200 })
+	if e := env.evidence(nil); ageOf(e) != 0.0 {
+		t.Fatalf("age=%v", ageOf(e))
 	}
-	if r, _ := env.counts(); r != 2 {
-		t.Fatalf("requests=%d", r)
-	}
-}
-
-func TestStatusClientACooldownNeverExtendsTheGrace(t *testing.T) {
-	env := newStatusEnv(t)
-	env.evidence(nil)
-	env.clock.Add(850)
-	env.set(func() { env.httpStatus = 503 })
-	if e := env.evidence(nil); env.verdict(e).Reason != "verified" {
-		t.Fatalf("verdict=%s", env.verdict(e).Reason)
-	}
-	env.clock.Add(51)
-	e := env.evidence(nil)
-	if ageOf(e) != 901.0 || !e.RefreshFailed || env.verdict(e).Reason != "status_expired" {
-		t.Fatalf("age=%v failed=%v verdict=%s", ageOf(e), e.RefreshFailed, env.verdict(e).Reason)
-	}
-	if r, _ := env.counts(); r != 2 {
-		t.Fatalf("requests=%d", r)
+	if r, d := env.counts(); r != 2 || d != 2 {
+		t.Fatalf("requests=%d dns=%d", r, d)
 	}
 }
 
 var statusGlobalSubject = IDChainSubject{ID: "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp", DIDKey: "did:key:z6MkwVDfCg9LbbY6xjH3EZk8YSFQZujV5Y4y1ZWeER9tDiN3"}
-
-func TestStatusClientASuccessEndsTheDomainsCooldown(t *testing.T) {
-	env := newStatusEnv(t)
-	gate := make(chan struct{})
-	env.set(func() { env.gate["example.com"] = gate })
-	succeeding := make(chan *IDChainEvidence)
-	go func() { succeeding <- env.evidence(nil) }()
-	for r, _ := env.counts(); r != 1; r, _ = env.counts() {
-		time.Sleep(time.Millisecond)
-	}
-	env.set(func() { env.dnsFailure = true })
-	if failed := env.client.IDChainEvidence(context.Background(), nil, statusGlobalSubject, "example.com"); !failed.RefreshFailed {
-		t.Fatal("the failing attempt was not reported as failed")
-	}
-	env.set(func() { env.dnsFailure = false })
-	close(gate)
-	if e := <-succeeding; ageOf(e) != 0.0 {
-		t.Fatalf("succeeding age=%v", ageOf(e))
-	}
-	env.set(func() { delete(env.gate, "example.com") })
-	retried := env.client.IDChainEvidence(context.Background(), nil, statusGlobalSubject, "example.com")
-	if ageOf(retried) != 0.0 || retried.RefreshFailed {
-		t.Fatalf("retried age=%v failed=%v", ageOf(retried), retried.RefreshFailed)
-	}
-	if r, _ := env.counts(); r != 2 {
-		t.Fatalf("requests=%d", r)
-	}
-}
-
-func TestStatusClientACooldownIsPerDomainAndNotPersisted(t *testing.T) {
-	env := newStatusEnv(t)
-	other := map[string]any{}
-	for k, v := range env.status["example.com"] {
-		other[k] = v
-	}
-	other["domain"] = "other.example"
-	env.set(func() {
-		env.status["other.example"] = other
-		env.ctrl["other.example"] = env.ctrl["example.com"]
-		env.httpStatus = 503
-	})
-	env.evidence(nil)
-	env.set(func() { env.httpStatus = 200 })
-	if e := env.client.IDChainEvidence(context.Background(), nil, statusGlobalSubject, "other.example"); ageOf(e) != 0.0 {
-		t.Fatalf("another domain was suppressed: age=%v", ageOf(e))
-	}
-	if e := env.evidence(nil); !e.RefreshFailed {
-		t.Fatal("the failed domain's cooldown did not hold")
-	}
-	if r, _ := env.counts(); r != 2 {
-		t.Fatalf("requests=%d", r)
-	}
-	if e := env.evidence(env.makeClient(5 * time.Second)); ageOf(e) != 0.0 || e.RefreshFailed {
-		t.Fatalf("a new client inherited the cooldown: age=%v failed=%v", ageOf(e), e.RefreshFailed)
-	}
-	if r, _ := env.counts(); r != 3 {
-		t.Fatalf("requests=%d", r)
-	}
-}
 
 func TestStatusClientConcurrentStaleReadersShareOneRefresh(t *testing.T) {
 	env := newStatusEnv(t)
@@ -482,8 +347,8 @@ func TestStatusClientConcurrentStaleReadersShareOneRefresh(t *testing.T) {
 	env.set(func() { env.gate["example.com"] = gate })
 	results := concurrently(10, func() *IDChainEvidence { return env.evidence(nil) }, func() bool { r, _ := env.counts(); return r == 2 }, gate)
 	for _, e := range results {
-		if ageOf(e) != 0.0 || e.RefreshFailed {
-			t.Fatalf("age=%v failed=%v", ageOf(e), e.RefreshFailed)
+		if ageOf(e) != 0.0 {
+			t.Fatalf("age=%v", ageOf(e))
 		}
 	}
 	if r, d := env.counts(); r != 2 || d != 2 {
@@ -497,8 +362,8 @@ func TestStatusClientConcurrentReadersShareOneFailedAttempt(t *testing.T) {
 	env.set(func() { env.gate["example.com"] = gate; env.httpStatus = 503 })
 	results := concurrently(10, func() *IDChainEvidence { return env.evidence(nil) }, func() bool { r, _ := env.counts(); return r == 1 }, gate)
 	for _, e := range results {
-		if e.AgeSeconds != nil || !e.RefreshFailed {
-			t.Fatalf("age=%v failed=%v", ageOf(e), e.RefreshFailed)
+		if e.AgeSeconds != nil {
+			t.Fatalf("age=%v", ageOf(e))
 		}
 	}
 	if r, _ := env.counts(); r != 1 {
@@ -543,8 +408,8 @@ func TestStatusClientACancelledReaderDoesNotCancelTheSharedRefresh(t *testing.T)
 	time.Sleep(20 * time.Millisecond)
 	close(gate)
 	e := <-done
-	if ageOf(e) != 0.0 || e.RefreshFailed {
-		t.Fatalf("age=%v failed=%v", ageOf(e), e.RefreshFailed)
+	if ageOf(e) != 0.0 {
+		t.Fatalf("age=%v", ageOf(e))
 	}
 	if r, _ := env.counts(); r != 1 {
 		t.Fatalf("the shared refresh was restarted: requests=%d", r)
@@ -557,8 +422,8 @@ func TestStatusClientOneTimeoutBoundsDNSAndHTTPTogether(t *testing.T) {
 	env.set(func() { env.dnsDelay = 100 * time.Millisecond; env.httpDelay = 100 * time.Millisecond })
 	started := time.Now()
 	e := env.evidence(client)
-	if e.AgeSeconds != nil || !e.RefreshFailed {
-		t.Fatalf("age=%v failed=%v", ageOf(e), e.RefreshFailed)
+	if e.AgeSeconds != nil {
+		t.Fatalf("age=%v", ageOf(e))
 	}
 	if elapsed := time.Since(started); elapsed > time.Second {
 		t.Fatalf("the attempt took %v", elapsed)
@@ -587,11 +452,35 @@ func TestStatusClientAStalledDomainDoesNotDelayAnotherDomain(t *testing.T) {
 	go func() { done <- env.evidence(nil) }()
 	select {
 	case e := <-done:
-		if ageOf(e) != 0.0 || e.RefreshFailed {
-			t.Fatalf("age=%v failed=%v", ageOf(e), e.RefreshFailed)
+		if ageOf(e) != 0.0 {
+			t.Fatalf("age=%v", ageOf(e))
 		}
 	case <-time.After(time.Second):
 		t.Fatal("a stalled domain delayed another domain")
+	}
+}
+
+func TestStatusClientAStalledDomainDoesNotAgeAnotherDomainsEntry(t *testing.T) {
+	env := newStatusEnv(t)
+	other := map[string]any{}
+	for k, v := range env.status["example.com"] {
+		other[k] = v
+	}
+	other["domain"] = "other.example"
+	env.set(func() {
+		env.status["other.example"] = other
+		env.ctrl["other.example"] = env.ctrl["example.com"]
+	})
+	env.evidence(nil)
+	env.clock.Add(30)
+	env.client.IDChainEvidence(context.Background(), nil, statusGlobalSubject, "other.example")
+	env.clock.Add(31)
+	env.set(func() { env.httpStatus = 503 })
+	if e := env.evidence(nil); e.AgeSeconds != nil {
+		t.Fatalf("age=%v", ageOf(e))
+	}
+	if e := env.client.IDChainEvidence(context.Background(), nil, statusGlobalSubject, "other.example"); ageOf(e) != 31.0 {
+		t.Fatalf("other domain age=%v", ageOf(e))
 	}
 }
 
@@ -614,22 +503,11 @@ func TestStatusClientAnEntryStampedAheadOfTheClockIsRefreshed(t *testing.T) {
 	env.evidence(nil)
 	env.clock.Add(-10)
 	e := env.evidence(nil)
-	if ageOf(e) != 0.0 || e.RefreshFailed {
-		t.Fatalf("age=%v failed=%v", ageOf(e), e.RefreshFailed)
+	if ageOf(e) != 0.0 {
+		t.Fatalf("age=%v", ageOf(e))
 	}
 	if r, _ := env.counts(); r != 2 {
 		t.Fatalf("requests=%d", r)
-	}
-}
-
-func TestStatusClientAnEntryStampedAheadOfTheClockGivesNoGrace(t *testing.T) {
-	env := newStatusEnv(t)
-	env.evidence(nil)
-	env.clock.Add(-10)
-	env.set(func() { env.httpStatus = 503 })
-	e := env.evidence(nil)
-	if e.AgeSeconds != nil || !e.RefreshFailed {
-		t.Fatalf("age=%v failed=%v", ageOf(e), e.RefreshFailed)
 	}
 }
 
@@ -642,30 +520,19 @@ func TestStatusClientAClockSteppingBackDuringARefreshLeavesItsEvidenceUnavailabl
 	}
 }
 
-func TestStatusClientACooldownRecordedAheadOfThisClockDoesNotSuppressAttempts(t *testing.T) {
-	env := newStatusEnv(t)
-	env.set(func() { env.httpStatus = 503 })
-	env.evidence(nil)
-	env.clock.Add(-5)
-	env.set(func() { env.httpStatus = 200 })
-	if e := env.evidence(nil); ageOf(e) != 0.0 || e.RefreshFailed {
-		t.Fatalf("age=%v failed=%v", ageOf(e), e.RefreshFailed)
-	}
-}
-
 func TestStatusClientAnUnreadableRefusalIsAFailedRefresh(t *testing.T) {
 	env := newStatusEnv(t)
 	env.evidence(nil)
 	env.clock.Add(61)
 	env.set(func() { env.httpStatus = 502; env.rawBody = []byte("\xff not json") })
 	e := env.evidence(nil)
-	if ageOf(e) != 61.0 || !e.RefreshFailed {
-		t.Fatalf("age=%v failed=%v", ageOf(e), e.RefreshFailed)
+	if e.AgeSeconds != nil || env.verdict(e).Reason != "evidence_unavailable" {
+		t.Fatalf("age=%v verdict=%s", ageOf(e), env.verdict(e).Reason)
 	}
 }
 
-func TestStatusClientASuccessfulAnswerReplacesPriorEvidenceEvenThroughALaterOutage(t *testing.T) {
-	for _, fixture := range []string{"alice-revoked-now", "root-replaced"} {
+func TestStatusClientASuccessfulAnswerReplacesPriorEvidence(t *testing.T) {
+	for _, fixture := range []string{"human-not-registered", "alice-revoked-now", "root-replaced"} {
 		t.Run(fixture, func(t *testing.T) {
 			env := newStatusEnv(t)
 			env.evidence(nil)
@@ -674,12 +541,15 @@ func TestStatusClientASuccessfulAnswerReplacesPriorEvidenceEvenThroughALaterOuta
 				env.status["example.com"] = env.v.Statuses[fixture]
 				env.ctrl["example.com"] = openEpochKey(env.v.Statuses[fixture])
 			})
-			env.evidence(nil)
-			env.clock.Add(61)
-			env.set(func() { env.httpStatus = 503 })
-			e := env.evidence(nil)
-			if !reflect.DeepEqual(e.Status, env.v.Statuses[fixture]) || ageOf(e) != 61.0 || !e.RefreshFailed {
-				t.Fatalf("age=%v failed=%v", ageOf(e), e.RefreshFailed)
+			if e := env.evidence(nil); !reflect.DeepEqual(e.Status, env.v.Statuses[fixture]) {
+				t.Fatal("the answer did not replace the prior evidence")
+			}
+			env.clock.Add(60)
+			if e := env.evidence(nil); !reflect.DeepEqual(e.Status, env.v.Statuses[fixture]) {
+				t.Fatal("the replaced evidence was not reused")
+			}
+			if r, _ := env.counts(); r != 2 {
+				t.Fatalf("requests=%d", r)
 			}
 		})
 	}
@@ -691,7 +561,7 @@ func TestStatusClientContradictoryAuthorityIsKeptAsCurrentAndNeverVerifies(t *te
 	env.clock.Add(61)
 	env.set(func() { env.ctrl["example.com"] = "did:key:z6MkmtWtY63GQVBrpMyRJWEzsnxfsGkemu6CtMDwGTv4RYj2" })
 	e := env.evidence(nil)
-	if e.NamespaceAuthority["controller_key"] != "did:key:z6MkmtWtY63GQVBrpMyRJWEzsnxfsGkemu6CtMDwGTv4RYj2" || env.verdict(e).Reason != "evidence_unavailable" {
+	if e.NamespaceAuthority["controller_key"] != "did:key:z6MkmtWtY63GQVBrpMyRJWEzsnxfsGkemu6CtMDwGTv4RYj2" || ageOf(e) != 0.0 || env.verdict(e).Reason != "evidence_unavailable" {
 		t.Fatalf("authority=%v verdict=%s", e.NamespaceAuthority, env.verdict(e).Reason)
 	}
 	env.clock.Add(61)
@@ -713,13 +583,16 @@ func TestStatusClientAMalformedSuccessfulAnswerIsUnavailableAndEndsTheOldTree(t 
 				env.brokenBody = name == "read error"
 			})
 			e := env.evidence(nil)
-			if e.AgeSeconds != nil || e.RefreshFailed {
-				t.Fatalf("age=%v failed=%v", ageOf(e), e.RefreshFailed)
+			if e.AgeSeconds != nil || env.verdict(e).Reason != "evidence_unavailable" {
+				t.Fatalf("age=%v verdict=%s", ageOf(e), env.verdict(e).Reason)
 			}
-			env.set(func() { env.rawBody = nil; env.brokenBody = false; env.httpStatus = 503 })
+			env.set(func() { env.rawBody = nil; env.brokenBody = false })
 			env.clock.Add(1)
-			if e := env.evidence(nil); e.AgeSeconds != nil {
-				t.Fatalf("the old tree outlived a malformed answer: age=%v", ageOf(e))
+			if e := env.evidence(nil); ageOf(e) != 0.0 {
+				t.Fatalf("age=%v", ageOf(e))
+			}
+			if r, _ := env.counts(); r != 3 {
+				t.Fatalf("the old tree was reused: requests=%d", r)
 			}
 		})
 	}
@@ -728,8 +601,8 @@ func TestStatusClientAMalformedSuccessfulAnswerIsUnavailableAndEndsTheOldTree(t 
 func TestStatusClientAChainlessLocalSubjectCreatesNoRegistryDependency(t *testing.T) {
 	env := newStatusEnv(t)
 	e := env.client.IDChainEvidence(context.Background(), nil, statusSubject, "example.com")
-	if e.AgeSeconds != nil || e.RefreshFailed {
-		t.Fatalf("age=%v failed=%v", ageOf(e), e.RefreshFailed)
+	if e.AgeSeconds != nil {
+		t.Fatalf("age=%v", ageOf(e))
 	}
 	if r, d := env.counts(); r != 0 || d != 0 {
 		t.Fatalf("requests=%d dns=%d", r, d)
