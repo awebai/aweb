@@ -219,6 +219,12 @@ test-mcp-tools-reference:
 regenerate-mcp-tools-reference:
 	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen python ../scripts/regenerate_mcp_reference.py
 
+# Keep private application paths out of every candidate before it can land.
+.PHONY: check-private-boundary
+check-private-boundary:
+	python3 scripts/check-private-boundary.py
+	python3 scripts/check-private-boundary.py --self-test
+
 # Regenerate every committed generated artifact (uv locks, cli reference,
 # reserved-app-ids, resource packs, and the claude-channel + pi bundles) and
 # fail on drift. The clean local release gate runs it before publication.

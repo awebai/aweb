@@ -21,6 +21,7 @@ fi
 log_dir="${CANDIDATE_LOG_DIR:?CANDIDATE_LOG_DIR is required}"
 stages="${1:-checks unit artifacts integration}"
 checks() {
+  run check-private-boundary
   run _candidate-gate-docker-boundaries
   run test-shipping
   run check-page-renderer-bundle
