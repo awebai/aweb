@@ -106,9 +106,6 @@ func (c *RegistryClient) coveringRequest(ctx context.Context, registryURL, path,
 		return nil, err
 	}
 	// The key is decoded strictly (ExtractPublicKey refuses degenerate keys).
-	if len(signature) != 64 {
-		return nil, fmt.Errorf("signer answer refused: invalid_signature")
-	}
 	if err := idStrictVerify(didKey, signature, func() ([]byte, error) { return payload, nil }); err != nil {
 		return nil, fmt.Errorf("signer answer refused: %w", err)
 	}
