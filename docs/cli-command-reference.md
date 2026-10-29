@@ -4243,8 +4243,7 @@ Flags:
 
 Verify the current identity's installed ID chain on current status from
 its namespace's registry, and show the outcome: the nearest human, no human
-(an agent the namespace root admitted directly), unknown or unavailable,
-with the verifier's reason. The chain is shown only when it verifies.
+(no human in its chain), unknown or unavailable, with the verifier's reason. The chain is shown only when it verifies.
 
 Flags:
 - `-h, --help help for who`

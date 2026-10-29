@@ -22,8 +22,7 @@ var whoCmd = &cobra.Command{
 	Short: "Show the human behind the current identity, verified through its ID chain",
 	Long: `Verify the current identity's installed ID chain on current status from
 its namespace's registry, and show the outcome: the nearest human, no human
-(an agent the namespace root admitted directly), unknown or unavailable,
-with the verifier's reason. The chain is shown only when it verifies.`,
+(no human in its chain), unknown or unavailable, with the verifier's reason. The chain is shown only when it verifies.`,
 	Args: cobra.NoArgs,
 	RunE: runWho,
 }
@@ -125,7 +124,7 @@ func formatWho(v any) string {
 	case "nearest_human":
 		fmt.Fprintf(&b, "Nearest human: %s\n", *out.HumanID)
 	case "no_human":
-		fmt.Fprintf(&b, "No human: the namespace root admitted it directly\n")
+		fmt.Fprintf(&b, "No human: no human in its chain\n")
 	default:
 		fmt.Fprintf(&b, "Human: %s (%s)\n", out.Outcome, out.Reason)
 	}
