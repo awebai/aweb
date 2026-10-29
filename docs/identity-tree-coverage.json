@@ -132,6 +132,15 @@
       "reason": "Preserve issuing ID/purpose; exact child and pending recipient-bound human signing, never token-only human attribution. This creation path has no landed per-path chain-or-refusal journey proof yet."
     },
     {
+      "id": "CLI.TEAM.REPLACE_KEY",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/team_replace_key.go"
+      ],
+      "status": "legacy",
+      "reason": "Replacement did:key under local team-controller authority; no ID-parent chain until lost-key replacement lands, so ancestry is unknown, never inherited from the old key."
+    },
+    {
       "id": "SERVER.CONNECT",
       "repo": "aweb",
       "files": [
