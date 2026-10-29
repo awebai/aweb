@@ -256,3 +256,30 @@ func TestHumanInitDoesNotQuietlyCreateASecondHuman(t *testing.T) {
 		t.Fatalf("records=%d prompts=%d", len(records), len(h.prompts))
 	}
 }
+
+func TestHumanInitRefusesARegistryThatContradictsDNS(t *testing.T) {
+	h := newHumanInitHarness(t)
+	controller := h.resolver["_awid."+humanInitDomain][0]
+	h.resolver["_awid."+humanInitDomain] = []string{strings.TrimSuffix(controller, ";") + "; registry=https://registry.other.example;"}
+	if _, err := h.run(humanPassphrase, humanPassphrase); err == nil || !strings.Contains(err.Error(), "contradicts the registry") {
+		t.Fatalf("err=%v", err)
+	}
+	if len(h.records()) != 0 || len(h.prompts) != 0 {
+		t.Fatalf("records=%d prompts=%d", len(h.records()), len(h.prompts))
+	}
+}
+
+func TestHumanInitRefusesToGuessBetweenUnfinishedHumans(t *testing.T) {
+	h := newHumanInitHarness(t)
+	for _, id := range []string{"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w", "did:aw:2e2SPDJNyxg5Dt6EFJX3Tcn8Tauj"} {
+		if err := awconfig.SaveHumanRecord(&awconfig.HumanRecord{StableID: id, DIDKey: "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX", Domain: humanInitDomain, RegistryURL: h.registryURL, State: awconfig.HumanPrepared}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := h.run(humanPassphrase, humanPassphrase); err == nil || !strings.Contains(err.Error(), "more than one unfinished human") {
+		t.Fatalf("err=%v", err)
+	}
+	if len(h.records()) != 2 || len(h.prompts) != 0 {
+		t.Fatalf("records=%d prompts=%d", len(h.records()), len(h.prompts))
+	}
+}

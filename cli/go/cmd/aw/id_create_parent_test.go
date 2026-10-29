@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"os"
@@ -214,4 +215,102 @@ func TestIDCreateParentRootRefusesADNSControllerOtherThanThisMachines(t *testing
 		t.Fatalf("err=%v", err)
 	}
 	r.assertNoAgent()
+}
+
+func TestHumanCanIssueOnlyWithAValidHumanChain(t *testing.T) {
+	valid, invalid, human, agent := true, false, "human", "agent"
+	for name, tc := range map[string]struct {
+		verdict awid.IDChainResult
+		issues  bool
+	}{
+		"a valid human":         {awid.IDChainResult{IdentityValid: &valid, Kind: &human, Reason: "verified"}, true},
+		"a valid agent":         {awid.IDChainResult{IdentityValid: &valid, Kind: &agent, Reason: "verified"}, false},
+		"an invalid chain":      {awid.IDChainResult{IdentityValid: &invalid, Kind: &human, Reason: "revoked"}, false},
+		"unavailable evidence":  {awid.IDChainResult{Reason: "evidence_unavailable"}, false},
+		"a valid chain no kind": {awid.IDChainResult{IdentityValid: &valid, Reason: "verified"}, false},
+	} {
+		if err := humanCanIssue("did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w", tc.verdict); (err == nil) != tc.issues {
+			t.Fatalf("%s: err=%v", name, err)
+		}
+	}
+}
+
+// A rerun after a failed chain step releases the certificate its parent
+// already recorded: no evidence is read, nothing is signed again and no
+// second entry is logged. The fixture's AWID then refuses the registration
+// (it cannot resolve the domain's _awid record), which is the failure the
+// next rerun would retry.
+func TestIDCreateRerunReleasesTheRecordedCertificate(t *testing.T) {
+	registryURL := realAWIDFixture(t)
+	for _, parent := range []string{"root", "human"} {
+		t.Run(parent, func(t *testing.T) {
+			r := newParentCreateRun(t, registryURL)
+			pub, controllerKey, err := awid.GenerateKeypair()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := awconfig.SaveControllerKey("example.com", controllerKey); err != nil {
+				t.Fatal(err)
+			}
+			agentPub, agentKey, err := awid.GenerateKeypair()
+			if err != nil {
+				t.Fatal(err)
+			}
+			agentID := awid.ComputeStableID(agentPub)
+			identityPath := filepath.Join(r.workingDir, ".aw", "identity.yaml")
+			if err := awconfig.SaveWorktreeIdentityTo(identityPath, &awconfig.WorktreeIdentity{DID: awid.ComputeDIDKey(agentPub), StableID: agentID, Address: "example.com/coordinator", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, RegistryURL: registryURL, RegistryStatus: "registered", CreatedAt: "2026-10-26T00:00:00Z"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := awid.SaveSigningKey(filepath.Join(r.workingDir, ".aw", "signing.key"), agentKey); err != nil {
+				t.Fatal(err)
+			}
+			issuerParent := map[string]any{"kind": "namespace", "id": "example.com"}
+			issuanceDir, err := awconfig.ControllerIssuanceDir("example.com")
+			if err != nil {
+				t.Fatal(err)
+			}
+			parentHuman := ""
+			if parent == "human" {
+				human := frozenRootHuman(t)
+				parentHuman = human.StableID
+				issuerParent = map[string]any{"kind": "identity", "id": human.StableID}
+				dir, err := awconfig.HumanRecordDir(human.Domain, human.StableID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				issuanceDir = awconfig.IdentityIssuanceDir(dir)
+			}
+			certificate := map[string]any{"v": 1, "type": "aweb.id-certificate", "id": agentID, "domain": "example.com", "parent": issuerParent, "kind": "agent", "issuer_key": awid.ComputeDIDKey(pub), "issued_at": "2026-10-26T00:05:00Z"}
+			payload, err := awid.IDCertificateSigningBytes(certificate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			id, err := awid.IDCertificateID(certificate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, signature, _ := awid.KeySigner(controllerKey)(payload)
+			issuance := awconfig.IDIssuanceFileStore{Dir: issuanceDir}
+			if err := issuance.Put(&awid.IDIssuanceEntry{CertificateID: id, Signed: map[string]any{"certificate": certificate, "signature": base64.RawURLEncoding.EncodeToString(signature)}}); err != nil {
+				t.Fatal(err)
+			}
+			_, err = executeIDCreate(r.workingDir, idCreateOptions{
+				Name: "coordinator", Domain: "example.com", RegistryURL: registryURL, SkipDNSVerify: true,
+				TXTResolver: staticTXTResolver{"_awid.example.com": {idCreateDNSRecordValue(awid.ComputeDIDKey(pub), "")}},
+				Now:         time.Now, ParentHuman: parentHuman, ParentRoot: parent == "root",
+				HumanAtTerminal: func() error { return nil }, Keychain: awconfig.HumanKeychain{},
+				Prompt: func(string) ([]byte, error) { r.prompts++; return nil, errors.New("nothing is signed again") },
+			})
+			if err == nil || !strings.Contains(err.Error(), "register the certificate of "+agentID) {
+				t.Fatalf("err=%v", err)
+			}
+			entries, err := os.ReadDir(issuanceDir)
+			if err != nil || len(entries) != 1 || r.prompts != 0 {
+				t.Fatalf("entries=%d prompts=%d (%v)", len(entries), r.prompts, err)
+			}
+			if _, err := os.Stat(filepath.Join(r.workingDir, ".aw", "id-chain.json")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("a chain AWID refused was installed")
+			}
+		})
+	}
 }

@@ -83,14 +83,25 @@ func (p *humanParent) issuer(opts idCreateOptions, registry *awid.RegistryClient
 		evidence: func(ctx context.Context, _, _ string) (*awid.IDChainEvidence, error) {
 			subject := awid.IDChainSubject{ID: p.record.StableID, DIDKey: p.record.DIDKey}
 			evidence := idStatusAt(registry, opts.TXTResolver, registryURL).IDChainEvidence(ctx, p.chain.Bundle, subject, p.record.Domain)
-			verdict := awid.VerifyIDChain(p.chain.Bundle, subject, evidence, p.record.Domain)
-			if verdict.IdentityValid == nil || !*verdict.IdentityValid || verdict.Kind == nil || *verdict.Kind != "human" {
-				return nil, fmt.Errorf("human %s cannot issue now: %s", p.record.StableID, verdict.Reason)
+			if err := humanCanIssue(p.record.StableID, awid.VerifyIDChain(p.chain.Bundle, subject, evidence, p.record.Domain)); err != nil {
+				return nil, err
 			}
 			return evidence, nil
 		},
 		human: p.record.StableID,
 	}
+}
+
+// humanCanIssue holds when id's own chain verifies now as a human's: a
+// record under ~/.awid/humans whose chain names an agent issues nothing.
+func humanCanIssue(id string, verdict awid.IDChainResult) error {
+	if verdict.IdentityValid == nil || !*verdict.IdentityValid {
+		return fmt.Errorf("human %s cannot issue now: %s", id, verdict.Reason)
+	}
+	if verdict.Kind == nil || *verdict.Kind != "human" {
+		return fmt.Errorf("human %s cannot issue: its chain is not a human's", id)
+	}
+	return nil
 }
 
 // rootIssuer signs as the namespace root with this machine's controller key.
@@ -120,7 +131,7 @@ func checkRootController(ctx context.Context, resolver awid.TXTResolver, domain 
 	}
 	local := awid.ComputeDIDKey(controllerKey.Public().(ed25519.PublicKey))
 	if strings.TrimSpace(authority.ControllerDID) != local {
-		return fmt.Errorf("--parent-root: DNS controller %s for %s does not match this machine's controller %s", authority.ControllerDID, domain, local)
+		return fmt.Errorf("--parent-root: DNS controller %s for %s does not match this machine's controller %s (publish %s naming it first; `aw id namespace check-txt --domain %s` checks it)", authority.ControllerDID, domain, local, awid.AWIDTXTName(domain), domain)
 	}
 	return nil
 }
