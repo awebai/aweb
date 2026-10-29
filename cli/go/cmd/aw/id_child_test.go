@@ -157,10 +157,22 @@ func TestChildInviteExportsNeitherTheRecipientNoteNorAnyKey(t *testing.T) {
 func TestChildInviteRefusesAnIncompleteInvitation(t *testing.T) {
 	h := newChildHarness(t, "https://registry.example.com")
 	for name, call := range map[string]func() error{
-		"no kind":        func() error { _, err := executeIDChildInvite(context.Background(), h.opts, "", childNote, time.Hour); return err },
-		"unknown kind":   func() error { _, err := executeIDChildInvite(context.Background(), h.opts, "robot", childNote, time.Hour); return err },
-		"no recipient":   func() error { _, err := executeIDChildInvite(context.Background(), h.opts, "human", " ", time.Hour); return err },
-		"no expiry left": func() error { _, err := executeIDChildInvite(context.Background(), h.opts, "human", childNote, 0); return err },
+		"no kind": func() error {
+			_, err := executeIDChildInvite(context.Background(), h.opts, "", childNote, time.Hour)
+			return err
+		},
+		"unknown kind": func() error {
+			_, err := executeIDChildInvite(context.Background(), h.opts, "robot", childNote, time.Hour)
+			return err
+		},
+		"no recipient": func() error {
+			_, err := executeIDChildInvite(context.Background(), h.opts, "human", " ", time.Hour)
+			return err
+		},
+		"no expiry left": func() error {
+			_, err := executeIDChildInvite(context.Background(), h.opts, "human", childNote, 0)
+			return err
+		},
 	} {
 		if err := call(); err == nil {
 			t.Fatalf("%s: invited", name)
