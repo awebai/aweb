@@ -242,7 +242,10 @@ func TestResignImportVerifiesBeforeReplacingTheCarriedChain(t *testing.T) {
 		t.Fatal(err)
 	}
 	opts := r.childOpts()
-	opts.TXTResolver = staticTXTResolver{"_awid.example.com": {idCreateDNSRecordValue(r.alice.DIDKey, "https://registry.example.com")}}
+	// No registry answers at the --registry origin; nothing here resolves a
+	// name.
+	opts.TXTResolver = staticTXTResolver{"_awid.example.com": {idCreateDNSRecordValue(r.alice.DIDKey, "")}}
+	opts.RegistryURL = "http://127.0.0.1:1"
 	if _, err := executeIDParentImport(context.Background(), opts, []byte(v.ChildRequests.Responses["local-resigned"].CanonicalUTF8)); awid.IDCertificateErrorCode(err) != "evidence_unavailable" {
 		t.Fatalf("imported without current status: %v", err)
 	}
