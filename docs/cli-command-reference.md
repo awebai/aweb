@@ -885,7 +885,7 @@ Flags:
 - `-h, --help help for import`
 - `--human string Act as this human prepared on this machine (did:aw)`
 - `--no-register Install the certificate but leave its AWID registration pending`
-- `--registry string Registry origin, when the domain's _awid record names none`
+- `--registry string Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)`
 
 ## `id parent request`
 

@@ -266,7 +266,7 @@ func TestHumanInitRefusesARegistryThatContradictsDNS(t *testing.T) {
 func TestHumanInitRefusesToGuessBetweenUnfinishedHumans(t *testing.T) {
 	h := newHumanInitHarness(t)
 	for _, id := range []string{"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w", "did:aw:2e2SPDJNyxg5Dt6EFJX3Tcn8Tauj"} {
-		if err := awconfig.SaveHumanRecord(&awconfig.HumanRecord{StableID: id, DIDKey: "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX", Domain: humanInitDomain, RegistryURL: h.registryURL, State: awconfig.HumanPrepared}); err != nil {
+		if err := awconfig.SaveHumanRecord(&awconfig.HumanRecord{StableID: id, DIDKey: "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX", Domain: humanInitDomain, RegistryURL: h.registryURL, State: awconfig.HumanPrepared, Path: awconfig.HumanPathRoot}); err != nil {
 			t.Fatal(err)
 		}
 	}

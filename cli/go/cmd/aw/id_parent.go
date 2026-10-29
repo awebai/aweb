@@ -69,7 +69,7 @@ func init() {
 	idParentRequestCmd.Flags().StringVar(&idParentParent, "parent", "", "did:aw of the parent identity")
 	idParentRequestCmd.Flags().BoolVar(&idParentRoot, "parent-root", false, "The parent is the namespace root of --domain")
 	idParentRequestCmd.Flags().StringVar(&idParentOut, "out", "-", "Where to write the request (- for stdout)")
-	idParentImportCmd.Flags().StringVar(&idParentRegistry, "registry", "", "Registry origin, when the domain's _awid record names none")
+	idParentImportCmd.Flags().StringVar(&idParentRegistry, "registry", "", "Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)")
 	idParentImportCmd.Flags().BoolVar(&idParentNoRegister, "no-register", false, "Install the certificate but leave its AWID registration pending")
 	identityCmd.AddCommand(idParentCmd)
 }
@@ -270,16 +270,17 @@ func executeIDParentImport(ctx context.Context, opts idParentOptions, raw []byte
 	if outgoing == nil {
 		return idParentImportOutput{}, &awid.IDCertificateError{Code: "request_binding_mismatch"}
 	}
-	registry := awid.NewAWIDRegistryClient(nil, opts.TXTResolver)
-	registryURL := strings.TrimSpace(opts.RegistryURL)
-	if registryURL == "" {
-		call, cancel := commandAPIContext(nil, ctx)
-		registryURL, err = registry.DiscoverRegistry(call, r.domain)
-		cancel()
-		if err != nil {
-			return idParentImportOutput{}, fmt.Errorf("find the registry of %s: %w", r.domain, err)
-		}
+	call, cancel := commandAPIContext(nil, ctx)
+	authority, err := awid.VerifyExactDomainAuthority(call, opts.TXTResolver, r.domain)
+	cancel()
+	if err != nil {
+		return idParentImportOutput{}, fmt.Errorf("lookup %s: %w", awid.AWIDTXTName(r.domain), err)
 	}
+	registryURL, err := domainRegistryURL(authority, opts.RegistryURL)
+	if err != nil {
+		return idParentImportOutput{}, err
+	}
+	registry := awid.NewAWIDRegistryClient(nil, opts.TXTResolver)
 	registry.DefaultRegistryURL = registryURL
 
 	chain := response["chain"].(map[string]any)
@@ -312,7 +313,7 @@ func executeIDParentImport(ctx context.Context, opts idParentOptions, raw []byte
 	if outgoing.Registration != "pending" || opts.NoRegister {
 		return out, nil
 	}
-	call, cancel := commandAPIContext(nil, ctx)
+	call, cancel = commandAPIContext(nil, ctx)
 	err = registry.RegisterIdentitySigned(call, registryURL, r.didKey, r.id, r.signer("register its did:aw at "+registryURL))
 	cancel()
 	var already *awid.AlreadyRegisteredError

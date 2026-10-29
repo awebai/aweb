@@ -113,13 +113,10 @@ func TestParentRequestNamesItsInvitationAndOneParent(t *testing.T) {
 	}
 }
 
-// Import answers only an outstanding request of this requester, and verifies
-// before anything is installed. Against the real AWID fixture the domain's
-// _awid record cannot be resolved, so the root-issued response has no
-// current status: it is refused, the request stays outstanding and no chain
-// is installed.
-func TestParentImportVerifiesBeforeInstalling(t *testing.T) {
-	p := newParentRun(t, realAWIDFixture(t))
+// frozenOutstanding prepares here the frozen root-issued human with its frozen
+// request outstanding, and returns the frozen response to it.
+func (p *parentRun) frozenOutstanding(t *testing.T) (response []byte, requestID string) {
+	t.Helper()
 	raw, err := os.ReadFile("../../../../docs/vectors/id-certificates-v1.json")
 	if err != nil {
 		t.Fatal(err)
@@ -139,13 +136,6 @@ func TestParentImportVerifiesBeforeInstalling(t *testing.T) {
 	if err := d.Decode(&v); err != nil {
 		t.Fatal(err)
 	}
-	response := []byte(v.ChildRequests.Responses["root-human-issued"].CanonicalUTF8)
-
-	if _, err := executeIDParentImport(context.Background(), p.opts(), response); awid.IDCertificateErrorCode(err) != "request_binding_mismatch" {
-		t.Fatalf("a response to no outstanding request: %v", err)
-	}
-
-	// The frozen root-issued human, prepared here, with its frozen request outstanding.
 	request := v.ChildRequests.Requests["root-human-issue"].CanonicalUTF8
 	signed, err := awid.ParseIDCertificateRequest([]byte(request))
 	if err != nil {
@@ -157,28 +147,63 @@ func TestParentImportVerifiesBeforeInstalling(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.human.ID = frozen.StableID
-	store := p.requests(t)
-	if err := store.Put(&awconfig.IDOutgoingRequest{RequestID: r["request_id"].(string), InvitationID: r["invitation_id"].(string), Request: request, State: awconfig.IDRequestOutstanding}); err != nil {
+	if err := p.requests(t).Put(&awconfig.IDOutgoingRequest{RequestID: r["request_id"].(string), InvitationID: r["invitation_id"].(string), Request: request, State: awconfig.IDRequestOutstanding}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := executeIDParentImport(context.Background(), p.opts(), response); awid.IDCertificateErrorCode(err) != "evidence_unavailable" {
-		t.Fatalf("imported without current status: %v", err)
-	}
-	outgoing, err := store.Request(r["request_id"].(string))
+	return []byte(v.ChildRequests.Responses["root-human-issued"].CanonicalUTF8), r["request_id"].(string)
+}
+
+// assertOutstanding checks that nothing of the response was kept or installed
+// and that the human was never asked to sign.
+func (p *parentRun) assertOutstanding(t *testing.T, requestID string) {
+	t.Helper()
+	outgoing, err := p.requests(t).Request(requestID)
 	if err != nil || outgoing.State != awconfig.IDRequestOutstanding || outgoing.Response != "" {
 		t.Fatalf("outgoing %+v (%v)", outgoing, err)
 	}
-	dir, err := awconfig.HumanRecordDir("example.com", frozen.StableID)
+	dir, err := awconfig.HumanRecordDir("example.com", p.human.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if installed, err := awconfig.LoadInstalledIDChain(dir); err != nil || installed != nil {
 		t.Fatalf("a chain was installed: %v %v", installed, err)
 	}
+	if rec, err := awconfig.LoadHumanRecord("example.com", p.human.ID); err != nil || rec.State != awconfig.HumanPrepared || rec.RegisteredAt != "" {
+		t.Fatalf("human record %+v (%v)", rec, err)
+	}
 	if p.prompts != 0 {
 		t.Fatalf("the human was asked to sign %d times", p.prompts)
 	}
-	if strings.TrimSpace(frozen.RegisteredAt) != "" {
-		t.Fatal("unexpected receipt")
+}
+
+// Import answers only an outstanding request of this requester, and verifies
+// before anything is installed. Against the real AWID fixture the domain's
+// _awid record cannot be resolved, so the root-issued response has no
+// current status: it is refused, the request stays outstanding and no chain
+// is installed.
+func TestParentImportVerifiesBeforeInstalling(t *testing.T) {
+	p := newParentRun(t, realAWIDFixture(t))
+	other := *p
+	response, requestID := p.frozenOutstanding(t)
+	if _, err := executeIDParentImport(context.Background(), other.opts(), response); awid.IDCertificateErrorCode(err) != "request_binding_mismatch" {
+		t.Fatalf("a response to another requester's request: %v", err)
 	}
+	if _, err := executeIDParentImport(context.Background(), p.opts(), response); awid.IDCertificateErrorCode(err) != "evidence_unavailable" {
+		t.Fatalf("imported without current status: %v", err)
+	}
+	p.assertOutstanding(t, requestID)
+}
+
+// The requester reads status from the registry its domain's _awid record
+// names, as the issuer does; a --registry that contradicts it is refused.
+func TestParentImportRefusesARegistryTheDomainDoesNotName(t *testing.T) {
+	p := newParentRun(t, "https://registry.example.com")
+	response, requestID := p.frozenOutstanding(t)
+	resolver := p.child.opts.TXTResolver.(staticTXTResolver)
+	controller := resolver["_awid.example.com"][0]
+	resolver["_awid.example.com"] = []string{strings.TrimSuffix(controller, ";") + "; registry=https://registry.other.example;"}
+	if _, err := executeIDParentImport(context.Background(), p.opts(), response); err == nil || !strings.Contains(err.Error(), "contradicts the registry") {
+		t.Fatalf("err=%v", err)
+	}
+	p.assertOutstanding(t, requestID)
 }

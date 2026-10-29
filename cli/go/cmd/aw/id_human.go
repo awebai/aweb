@@ -154,7 +154,7 @@ func executeIDHumanInit(ctx context.Context, opts idHumanInitOptions) (idHumanIn
 	if strings.TrimSpace(authority.ControllerDID) != controllerDID {
 		return idHumanInitOutput{}, fmt.Errorf("DNS controller %s for %s does not match this machine's controller %s", authority.ControllerDID, domain, controllerDID)
 	}
-	registryURL, err := humanInitRegistryURL(authority, opts.RegistryURL)
+	registryURL, err := domainRegistryURL(authority, opts.RegistryURL)
 	if err != nil {
 		return idHumanInitOutput{}, err
 	}
@@ -230,11 +230,11 @@ func executeIDHumanInit(ctx context.Context, opts idHumanInitOptions) (idHumanIn
 	return idHumanInitOutput{Status: "registered", ID: rec.StableID, DIDKey: rec.DIDKey, Domain: domain, RegistryURL: rec.RegistryURL, RegisteredAt: rec.RegisteredAt}, nil
 }
 
-// humanInitRegistryURL is the registry the human registers at and reads
-// status from: the one the domain's _awid record names, or the --registry
-// origin when the record names none. A --registry that contradicts the
-// record is refused.
-func humanInitRegistryURL(authority awid.DomainAuthority, override string) (string, error) {
+// domainRegistryURL is the registry an identity of the domain registers at
+// and reads status from: the one the domain's _awid record names, or the
+// --registry origin when the record names none. A --registry that
+// contradicts the record is refused.
+func domainRegistryURL(authority awid.DomainAuthority, override string) (string, error) {
 	named := strings.TrimSpace(authority.RegistryURL)
 	override = strings.TrimSpace(override)
 	if override == "" {
@@ -285,8 +285,7 @@ func refuseQuietSecondHuman(domain string, opts idHumanInitOptions) error {
 }
 
 // resumableHumanRecord is the one unfinished human record of domain on path,
-// if any. Two unfinished records are refused rather than guessed between. A
-// record from before paths were recorded is a root one.
+// if any. Two unfinished records are refused rather than guessed between.
 func resumableHumanRecord(domain, path string) (*awconfig.HumanRecord, error) {
 	records, err := awconfig.HumanRecords(domain)
 	if err != nil {
@@ -294,11 +293,7 @@ func resumableHumanRecord(domain, path string) (*awconfig.HumanRecord, error) {
 	}
 	var unfinished []*awconfig.HumanRecord
 	for _, rec := range records {
-		recPath := rec.Path
-		if recPath == "" {
-			recPath = awconfig.HumanPathRoot
-		}
-		if rec.State != awconfig.HumanRegistered && recPath == path {
+		if rec.State != awconfig.HumanRegistered && rec.Path == path {
 			unfinished = append(unfinished, rec)
 		}
 	}
