@@ -108,6 +108,7 @@ type humanInitHarness struct {
 	answers       []string
 	prompts       []string
 	prepareOnly   bool
+	away          bool
 }
 
 func newHumanInitHarness(t *testing.T) *humanInitHarness {
@@ -131,11 +132,16 @@ func newHumanInitHarness(t *testing.T) *humanInitHarness {
 func (h *humanInitHarness) run(answers ...string) (idHumanInitOutput, error) {
 	h.answers = append(h.answers, answers...)
 	return executeIDHumanInit(context.Background(), idHumanInitOptions{
-		Domain:          humanInitDomain,
-		AsRoot:          !h.prepareOnly,
-		RegistryURL:     h.registryURL,
-		HumanAtTerminal: func() error { return nil },
-		Keychain:        awconfig.HumanKeychain{},
+		Domain:      humanInitDomain,
+		AsRoot:      !h.prepareOnly,
+		RegistryURL: h.registryURL,
+		HumanAtTerminal: func() error {
+			if h.away {
+				return &awid.IDCertificateError{Code: "human_approval_required"}
+			}
+			return nil
+		},
+		Keychain: awconfig.HumanKeychain{},
 		Prompt: func(prompt string) ([]byte, error) {
 			h.prompts = append(h.prompts, prompt)
 			if len(h.answers) == 0 {
@@ -367,5 +373,29 @@ func TestHumanInitWithoutAsRootOnlyPrepares(t *testing.T) {
 	}
 	if records := h.records(); len(records) != 2 {
 		t.Fatalf("the root run resumed the prepared human: %d records", len(records))
+	}
+}
+
+// Prepare-only is still the human's act, and still one human unless
+// --another asks for a second.
+func TestHumanInitPrepareOnlyNeedsTheHumanAndRefusesAQuietSecond(t *testing.T) {
+	h := newHumanInitHarness(t)
+	h.prepareOnly, h.away = true, true
+	if _, err := h.run(humanPassphrase, humanPassphrase); awid.IDCertificateErrorCode(err) != "human_approval_required" {
+		t.Fatalf("without the human: %v", err)
+	}
+	if len(h.records()) != 0 || len(h.prompts) != 0 {
+		t.Fatalf("records=%d prompts=%d", len(h.records()), len(h.prompts))
+	}
+	h.away = false
+	done := &awconfig.HumanRecord{StableID: "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w", DIDKey: "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX", Domain: humanInitDomain, RegistryURL: h.registryURL, State: awconfig.HumanRegistered, Path: awconfig.HumanPathRoot}
+	if err := awconfig.SaveHumanRecord(done); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.run(humanPassphrase, humanPassphrase); err == nil || !strings.Contains(err.Error(), "already has a registered human") {
+		t.Fatalf("a quiet second human: %v", err)
+	}
+	if len(h.records()) != 1 || len(h.prompts) != 0 {
+		t.Fatalf("records=%d prompts=%d", len(h.records()), len(h.prompts))
 	}
 }

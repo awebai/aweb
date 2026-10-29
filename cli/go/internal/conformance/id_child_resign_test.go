@@ -629,6 +629,17 @@ func TestIDChildImportRootHumanProbes(t *testing.T) {
 		refuses(t, good, resignFixture{status: x.v.Statuses["normal"]}.evidence(61), "example.com", "status_expired")
 	})
 	t.Run("another domain", func(t *testing.T) { refuses(t, good, x.evidence("normal"), "example.org", "domain_mismatch") })
+	t.Run("a request to another parent", func(t *testing.T) {
+		r := map[string]any{}
+		for k, v := range request["request"].(map[string]any) {
+			r[k] = v
+		}
+		r["parent"] = map[string]any{"kind": "identity", "id": x.v.Keys["alice"].DIDAW}
+		imported, err := awid.ImportIDCertificateResponse(map[string]any{"request": r, "signature": request["signature"]}, good, x.evidence("normal"), "example.com")
+		if got := awid.IDCertificateErrorCode(err); got != "request_binding_mismatch" || imported != nil {
+			t.Fatalf("reason=%q (%v)", got, err)
+		}
+	})
 	t.Run("a parent chain before the root certificate", func(t *testing.T) {
 		parsed, err := awid.ParseIDCertificateResponse(good)
 		if err != nil {
