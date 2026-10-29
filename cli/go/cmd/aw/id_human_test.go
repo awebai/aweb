@@ -240,3 +240,19 @@ func TestHumanInitRegistersTheDIDThenResumesTheSameHuman(t *testing.T) {
 		t.Fatalf("the retry asked %d more times", len(h.prompts)-prompts)
 	}
 }
+
+// A second human in a domain is a deliberate act: rerunning init after it
+// succeeded does not quietly mint another.
+func TestHumanInitDoesNotQuietlyCreateASecondHuman(t *testing.T) {
+	h := newHumanInitHarness(t)
+	done := &awconfig.HumanRecord{StableID: "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w", DIDKey: "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX", Domain: humanInitDomain, RegistryURL: h.registryURL, State: awconfig.HumanRegistered}
+	if err := awconfig.SaveHumanRecord(done); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.run(humanPassphrase, humanPassphrase); err == nil || !strings.Contains(err.Error(), "--another") {
+		t.Fatalf("err=%v", err)
+	}
+	if records := h.records(); len(records) != 1 || len(h.prompts) != 0 {
+		t.Fatalf("records=%d prompts=%d", len(records), len(h.prompts))
+	}
+}

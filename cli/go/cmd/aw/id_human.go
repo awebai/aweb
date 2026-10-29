@@ -26,6 +26,7 @@ var (
 	idHumanInitDomain   string
 	idHumanInitAsRoot   bool
 	idHumanInitRegistry string
+	idHumanInitAnother  bool
 
 	idHumanCmd = &cobra.Command{
 		Use:   "human",
@@ -47,7 +48,8 @@ var (
 func init() {
 	idHumanInitCmd.Flags().StringVar(&idHumanInitDomain, "domain", "", "Namespace domain")
 	idHumanInitCmd.Flags().BoolVar(&idHumanInitAsRoot, "as-root", false, "Issue the certificate with this machine's namespace controller key")
-	idHumanInitCmd.Flags().StringVar(&idHumanInitRegistry, "registry", "", "Registry origin, when the domain's _awid record names none")
+	idHumanInitCmd.Flags().StringVar(&idHumanInitRegistry, "registry", "", "Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)")
+	idHumanInitCmd.Flags().BoolVar(&idHumanInitAnother, "another", false, "Create another human in a domain that already has one on this machine")
 	idHumanCmd.AddCommand(idHumanInitCmd)
 	identityCmd.AddCommand(idHumanCmd)
 }
@@ -65,6 +67,8 @@ type idHumanInitOptions struct {
 	Domain      string
 	AsRoot      bool
 	RegistryURL string
+	// Another allows a new human beside a registered one.
+	Another bool
 	// HumanAtTerminal says whether a human can be asked: a controlling
 	// terminal is attached and the process is not an agent runtime.
 	HumanAtTerminal func() error
@@ -80,6 +84,7 @@ func runIDHumanInit(cmd *cobra.Command, args []string) error {
 		Domain:          idHumanInitDomain,
 		AsRoot:          idHumanInitAsRoot,
 		RegistryURL:     idHumanInitRegistry,
+		Another:         idHumanInitAnother,
 		HumanAtTerminal: humanAtTerminal,
 		Keychain:        awconfig.HumanKeychain{},
 		Prompt:          awid.TerminalPassphrasePrompt(),
@@ -156,6 +161,13 @@ func executeIDHumanInit(ctx context.Context, opts idHumanInitOptions) (idHumanIn
 	rec, err := resumableHumanRecord(domain)
 	if err != nil {
 		return idHumanInitOutput{}, err
+	}
+	if rec == nil && !opts.Another {
+		if existing, err := registeredHumans(domain); err != nil {
+			return idHumanInitOutput{}, err
+		} else if len(existing) > 0 {
+			return idHumanInitOutput{}, usageError("%s already has a registered human on this machine (%s); pass --another to create a different human", domain, strings.Join(existing, ", "))
+		}
 	}
 	if rec == nil {
 		if rec, err = prepareHuman(domain, registryURL, opts); err != nil {
@@ -259,6 +271,21 @@ func resumableHumanRecord(domain string) (*awconfig.HumanRecord, error) {
 		ids = append(ids, rec.StableID)
 	}
 	return nil, fmt.Errorf("more than one unfinished human in %s: %s", domain, strings.Join(ids, ", "))
+}
+
+// registeredHumans are the IDs of domain's registered humans on this machine.
+func registeredHumans(domain string) ([]string, error) {
+	records, err := awconfig.HumanRecords(domain)
+	if err != nil {
+		return nil, err
+	}
+	ids := []string{}
+	for _, rec := range records {
+		if rec.State == awconfig.HumanRegistered {
+			ids = append(ids, rec.StableID)
+		}
+	}
+	return ids, nil
 }
 
 // prepareHuman makes the human key, stores it in the keychain under a new
