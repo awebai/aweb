@@ -239,6 +239,8 @@ services:
       federation-dns: {condition: service_started}
   cli:
     build: {context: "$ROOT", dockerfile: scripts/federation-cli.Dockerfile}
+    # GNOME Keyring locks its memory and drops this capability after startup.
+    cap_add: [IPC_LOCK]
     environment:
       HOME: /work/home
       APP_ENV: development
