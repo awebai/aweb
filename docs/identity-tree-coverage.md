@@ -6,9 +6,10 @@ public-API inventories and per-function conversion bookkeeping are removed by
 Juan's cut 4. Cloud coverage belongs in the application repository.
 
 A path is `converted` only when its constructor and a real journey show the
-required chain or refusal. A `legacy` path states why it retains its existing
-behavior. The listed paths are still legacy on this head: the shared codec,
-registry and client pieces do not by themselves convert a constructor. Key
+required chain or refusal. A `candidate` path has its constructor but not yet
+that journey. A `legacy` path states why it retains its existing behavior: the
+shared codec, registry and client pieces do not by themselves convert a
+constructor. Key
 rotation, team/session/encryption keys and projection reuse do not create new
 identity ancestry. Public external runtime paths retain their repository owner.
 
