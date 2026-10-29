@@ -126,6 +126,8 @@ OWNED_ELSEWHERE = {
     "human-init-noninteractive-root-refuses": "S3 human init",
     "csr-human-import-registers-by-default": "S3 child response import (registers through the existing AWID route)",
     "csr-human-import-registration-failure-retains-pending": "S3 child response import",
+    "csr-root-human-import-registers-by-default": "S3 child response import (root-issued first human)",
+    "csr-root-human-import-stale-root-key-refuses": "S3 child response import (root-issued first human)",
 }
 
 # The only cases with two owners: S2 consumes their AWID half by name.
