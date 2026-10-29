@@ -241,6 +241,22 @@
         {
           "file": "cli/go/awid/id_certificates.go",
           "symbol": "KeyResponseIDTree"
+        },
+        {
+          "file": "cli/go/awid/id_certificates.go",
+          "symbol": "idCertificateBinding"
+        },
+        {
+          "file": "cli/go/awid/id_certificates.go",
+          "symbol": "idCertificateDecodeCanonical"
+        },
+        {
+          "file": "cli/go/awid/id_certificates.go",
+          "symbol": "idSignatureBytes"
+        },
+        {
+          "file": "cli/go/awid/id_certificates.go",
+          "symbol": "idStrictVerify"
         }
       ]
     },
@@ -564,6 +580,10 @@
         {
           "file": "cli/go/awid/id_chain.go",
           "symbol": "idWitness"
+        },
+        {
+          "file": "cli/go/awid/id_chain.go",
+          "symbol": "idEvidenceUsable"
         }
       ]
     },
@@ -1393,7 +1413,10 @@
       "id": "CLI.KEYS.HUMAN",
       "repo": "aweb",
       "files": [
-        "cli/go/awid/human_key_backup.go"
+        "cli/go/awid/human_key_backup.go",
+        "cli/go/awconfig/human_record.go",
+        "cli/go/awid/human_signer.go",
+        "cli/go/cmd/aw/id_human.go"
       ],
       "operations": [
         "create",
@@ -1408,7 +1431,11 @@
         "J10"
       ],
       "proving_tests": [
-        "cli/go/internal/conformance/human_key_backup_test.go"
+        "cli/go/internal/conformance/human_key_backup_test.go",
+        "cli/go/awid/human_signer_test.go",
+        "cli/go/awconfig/human_keychain_test.go",
+        "cli/go/awconfig/human_record_test.go",
+        "cli/go/cmd/aw/id_human_test.go"
       ],
       "acceptance": "OS keychain signer, one-person ID and approved encrypted key export/import; CLI owner supplies final paths.",
       "ed25519_profile": "legacy",
@@ -1416,6 +1443,26 @@
         {
           "file": "cli/go/awid/human_key_backup.go",
           "symbol": "ImportHumanKeyBackup"
+        },
+        {
+          "file": "cli/go/awconfig/human_record.go",
+          "symbol": "HumanRecords"
+        },
+        {
+          "file": "cli/go/awid/human_signer.go",
+          "symbol": "HumanSigner"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_human.go",
+          "symbol": "executeIDHumanInit"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_human.go",
+          "symbol": "prepareHuman"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_human.go",
+          "symbol": "rootIssuedHumanChain"
         }
       ]
     },
@@ -1582,7 +1629,8 @@
       "id": "CLI.CREATE.DOMAIN",
       "repo": "aweb",
       "files": [
-        "cli/go/cmd/aw/id_create.go"
+        "cli/go/cmd/aw/id_create.go",
+        "cli/go/cmd/aw/id_create_parent.go"
       ],
       "operations": [
         "create",
@@ -1596,8 +1644,41 @@
         "J1",
         "J6"
       ],
-      "proving_tests": [],
-      "acceptance": "Keep key/DID/address while explicitly enrolling; addresses do not prove parentage."
+      "proving_tests": [
+        "cli/go/cmd/aw/id_create_parent_test.go"
+      ],
+      "acceptance": "Keep key/DID/address while explicitly enrolling; addresses do not prove parentage.",
+      "ed25519_profile": "legacy",
+      "sites": [
+        {
+          "file": "cli/go/cmd/aw/id_create_parent.go",
+          "symbol": "(*humanParent).issuer"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_create_parent.go",
+          "symbol": "<module>"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_create_parent.go",
+          "symbol": "agentChainStep.install"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_create_parent.go",
+          "symbol": "checkRootController"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_create_parent.go",
+          "symbol": "idStatusAt"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_create_parent.go",
+          "symbol": "resumeIDCreateChain"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_create_parent.go",
+          "symbol": "rootIssuer"
+        }
+      ]
     },
     {
       "id": "CLI.CREATE.HOSTED",
@@ -2070,7 +2151,313 @@
       "proving_tests": [
         "cli/go/awid/id_status_client_test.go"
       ],
-      "acceptance": "One policy with AWID.STATUS.CLIENT (S2 6b): 60s fresh inclusive with no DNS or HTTP, one coalesced detached refresh, one timeout over DNS and HTTP, grace to 900s only after a failed refresh with last-known-good aged through the wait, 60s per-domain failed-attempt cooldown, malformed success ends the old tree, a future stamp is untrusted, unclamped ages; in-process cache on this process's clock."
+      "acceptance": "One policy with AWID.STATUS.CLIENT (S2 6b): 60s fresh inclusive with no DNS or HTTP, one coalesced detached refresh, one timeout over DNS and HTTP, grace to 900s only after a failed refresh with last-known-good aged through the wait, 60s per-domain failed-attempt cooldown, malformed success ends the old tree, a future stamp is untrusted, unclamped ages; in-process cache on this process's clock.",
+      "ed25519_profile": "strict",
+      "sites": [
+        {
+          "file": "cli/go/awid/id_status_client.go",
+          "symbol": "(*IDStatusClient).IDChainEvidence"
+        },
+        {
+          "file": "cli/go/awid/id_status_client.go",
+          "symbol": "(*IDStatusClient).refresh"
+        },
+        {
+          "file": "cli/go/awid/id_status_client.go",
+          "symbol": "NewIDStatusClient"
+        },
+        {
+          "file": "cli/go/awid/id_status_client.go",
+          "symbol": "idStatusCacheKey"
+        },
+        {
+          "file": "cli/go/awid/id_status_client.go",
+          "symbol": "idStatusEvidence"
+        }
+      ]
+    },
+    {
+      "id": "CLI.ISSUE.CHILD",
+      "repo": "aweb",
+      "files": [
+        "cli/go/awid/id_certificate_request.go",
+        "cli/go/awid/id_child_exchange.go",
+        "cli/go/awid/id_direct_issue.go",
+        "cli/go/awid/id_invitation.go",
+        "cli/go/awid/id_issuance.go",
+        "cli/go/awid/id_resign.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "verify"
+      ],
+      "change": "add",
+      "slice": "S3",
+      "status": "candidate",
+      "ed25519_profile": "legacy",
+      "journeys": [],
+      "proving_tests": [
+        "cli/go/internal/conformance/id_child_direct_test.go",
+        "cli/go/internal/conformance/id_child_issue_test.go",
+        "cli/go/internal/conformance/id_child_resign_test.go",
+        "cli/go/internal/conformance/id_resign_test.go",
+        "cli/go/internal/conformance/id_certificate_request_test.go"
+      ],
+      "sites": [
+        {
+          "file": "cli/go/awid/id_certificate_request.go",
+          "symbol": "EncodeIDCertificateResponse"
+        },
+        {
+          "file": "cli/go/awid/id_certificate_request.go",
+          "symbol": "IDCertificateRequestSigningBytes"
+        },
+        {
+          "file": "cli/go/awid/id_certificate_request.go",
+          "symbol": "IDKeyFingerprint"
+        },
+        {
+          "file": "cli/go/awid/id_certificate_request.go",
+          "symbol": "ParseIDCertificateRequest"
+        },
+        {
+          "file": "cli/go/awid/id_certificate_request.go",
+          "symbol": "ParseIDCertificateResponse"
+        },
+        {
+          "file": "cli/go/awid/id_certificate_request.go",
+          "symbol": "SignIDCertificateRequest"
+        },
+        {
+          "file": "cli/go/awid/id_certificate_request.go",
+          "symbol": "idCertificateResponseShape"
+        },
+        {
+          "file": "cli/go/awid/id_child_exchange.go",
+          "symbol": "ApproveIDResignRequest"
+        },
+        {
+          "file": "cli/go/awid/id_child_exchange.go",
+          "symbol": "IDResignResponse"
+        },
+        {
+          "file": "cli/go/awid/id_child_exchange.go",
+          "symbol": "ImportIDCertificateResponse"
+        },
+        {
+          "file": "cli/go/awid/id_child_exchange.go",
+          "symbol": "ReceiveIDResignRequest"
+        },
+        {
+          "file": "cli/go/awid/id_child_exchange.go",
+          "symbol": "RefuseIDResignRequest"
+        },
+        {
+          "file": "cli/go/awid/id_child_exchange.go",
+          "symbol": "idIssuedResponse"
+        },
+        {
+          "file": "cli/go/awid/id_direct_issue.go",
+          "symbol": "IssueIDChild"
+        },
+        {
+          "file": "cli/go/awid/id_invitation.go",
+          "symbol": "<module>"
+        },
+        {
+          "file": "cli/go/awid/id_invitation.go",
+          "symbol": "ApproveIDChildRequest"
+        },
+        {
+          "file": "cli/go/awid/id_invitation.go",
+          "symbol": "IDChildRequests"
+        },
+        {
+          "file": "cli/go/awid/id_invitation.go",
+          "symbol": "ReceiveIDChildRequest"
+        },
+        {
+          "file": "cli/go/awid/id_invitation.go",
+          "symbol": "RefuseIDChildRequest"
+        },
+        {
+          "file": "cli/go/awid/id_invitation.go",
+          "symbol": "idIssuingKey"
+        },
+        {
+          "file": "cli/go/awid/id_invitation.go",
+          "symbol": "idNewChildIDIsSubjectKeys"
+        },
+        {
+          "file": "cli/go/awid/id_invitation.go",
+          "symbol": "idParentChainVerified"
+        },
+        {
+          "file": "cli/go/awid/id_issuance.go",
+          "symbol": "KeySigner"
+        },
+        {
+          "file": "cli/go/awid/id_issuance.go",
+          "symbol": "idIssuanceRecorded"
+        },
+        {
+          "file": "cli/go/awid/id_issuance.go",
+          "symbol": "issueIDCertificate"
+        },
+        {
+          "file": "cli/go/awid/id_resign.go",
+          "symbol": "ResignIDCertificate"
+        },
+        {
+          "file": "cli/go/awid/id_resign.go",
+          "symbol": "idSigningParent"
+        },
+        {
+          "file": "cli/go/awid/id_resign.go",
+          "symbol": "parentKeyHistoryHas"
+        },
+        {
+          "file": "cli/go/awid/id_resign.go",
+          "symbol": "resignIDCertificate"
+        }
+      ],
+      "acceptance": "A parent issues a child certificate directly or over the request exchange with the same R1, verified-parent-chain and fresh-evidence checks, records it before release, and approves a human child only on a confirmed terminal answer."
+    },
+    {
+      "id": "CLI.ID.WRITE_CLIENT",
+      "repo": "aweb",
+      "files": [
+        "cli/go/awid/controller_request.go"
+      ],
+      "operations": [
+        "sign",
+        "register"
+      ],
+      "change": "add",
+      "slice": "S3",
+      "status": "candidate",
+      "ed25519_profile": "strict",
+      "journeys": [],
+      "proving_tests": [
+        "cli/go/awid/controller_request_test.go"
+      ],
+      "sites": [
+        {
+          "file": "cli/go/awid/controller_request.go",
+          "symbol": "(*RegistryClient).RegisterIDCertificate"
+        },
+        {
+          "file": "cli/go/awid/controller_request.go",
+          "symbol": "(*RegistryClient).RegisterIDCertificateAt"
+        },
+        {
+          "file": "cli/go/awid/controller_request.go",
+          "symbol": "(*RegistryClient).RevokeIDCertificate"
+        },
+        {
+          "file": "cli/go/awid/controller_request.go",
+          "symbol": "(*RegistryClient).coveringRequest"
+        },
+        {
+          "file": "cli/go/awid/controller_request.go",
+          "symbol": "ControllerRequestPayload"
+        },
+        {
+          "file": "cli/go/awid/controller_request.go",
+          "symbol": "idBundleLeafDomain"
+        }
+      ],
+      "acceptance": "Identity-tree writes carry the covering request envelope signed by the proving key; Go mirror of AWID.ID.WRITE_CLIENT."
+    },
+    {
+      "id": "CLI.CHAIN.INSTALL",
+      "repo": "aweb",
+      "files": [
+        "cli/go/awconfig/id_chain_install.go"
+      ],
+      "operations": [
+        "present",
+        "verify"
+      ],
+      "change": "add",
+      "slice": "S3",
+      "status": "candidate",
+      "ed25519_profile": "strict",
+      "journeys": [],
+      "proving_tests": [
+        "cli/go/awconfig/id_chain_install_test.go"
+      ],
+      "sites": [
+        {
+          "file": "cli/go/awconfig/id_chain_install.go",
+          "symbol": "(*InstalledIDChain).Subject"
+        },
+        {
+          "file": "cli/go/awconfig/id_chain_install.go",
+          "symbol": "LoadInstalledIDChain"
+        },
+        {
+          "file": "cli/go/awconfig/id_chain_install.go",
+          "symbol": "SaveInstalledIDChain"
+        }
+      ],
+      "acceptance": "An identity installs only a chain that decodes and self-verifies; authority is still checked against current status at each use."
+    },
+    {
+      "id": "CLI.CHILD.EXCHANGE",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/id_child.go"
+      ],
+      "operations": [
+        "create",
+        "sign",
+        "verify"
+      ],
+      "change": "add",
+      "slice": "S3",
+      "status": "candidate",
+      "ed25519_profile": "strict",
+      "journeys": [],
+      "proving_tests": [
+        "cli/go/cmd/aw/id_child_test.go"
+      ],
+      "sites": [
+        {
+          "file": "cli/go/cmd/aw/id_child.go",
+          "symbol": "childIssuerRegistry"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_child.go",
+          "symbol": "childRequestOutput"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_child.go",
+          "symbol": "currentAgentIssuer"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_child.go",
+          "symbol": "executeIDChildApprove"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_child.go",
+          "symbol": "executeIDChildReceive"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_child.go",
+          "symbol": "runIDChildPending"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_child.go",
+          "symbol": "runIDChildRefuse"
+        },
+        {
+          "file": "cli/go/cmd/aw/id_child.go",
+          "symbol": "selectChildIssuer"
+        }
+      ],
+      "acceptance": "aw id child invite/receive/pending/show/approve/refuse under an explicitly selected issuer; the private recipient note is never exported."
     },
     {
       "id": "SERVER.CONNECT",
@@ -8647,6 +9034,10 @@
         {
           "file": "cli/go/awid/registry_client.go",
           "symbol": "shouldRetryRegistryTransportError"
+        },
+        {
+          "file": "cli/go/awid/registry_client.go",
+          "symbol": "(*RegistryClient).RegisterIdentitySigned"
         }
       ],
       "acceptance": "Source-discovered identity primitive site; owner must classify its authority and supply a proving test before conversion."
@@ -18695,10 +19086,9 @@
         "symbol": "DecodeIDChainHeader",
         "calls": {
           "idCertificateBundleShape": 1,
-          "idCertificateCanonical": 1,
           "idCertificateDecodeB64": 1,
-          "idCertificateJSON": 1,
-          "idCertificateRefusal": 6
+          "idCertificateDecodeCanonical": 1,
+          "idCertificateRefusal": 2
         }
       },
       {
@@ -18740,16 +19130,9 @@
         "file": "cli/go/awid/id_certificates.go",
         "symbol": "VerifyIDCertificate",
         "calls": {
-          "ExtractPublicKey": 1,
           "IDCertificateSigningBytes": 1,
-          "crypto/ed25519.Verify": 1,
-          "filippo.io/edwards25519.Scalar().SetCanonicalBytes": 1,
-          "idCertificateDecodeB64": 1,
-          "idCertificatePrimePoint": 1,
-          "idCertificateRefusal": 7,
-          "idCertificateShape": 1,
-          "reference:crypto/ed25519.SignatureSize": 1,
-          "reference:filippo.io/edwards25519.Scalar": 1
+          "idCertificateRefusal": 1,
+          "idCertificateShape": 1
         }
       },
       {
@@ -18831,11 +19214,10 @@
         "file": "cli/go/awid/id_certificates.go",
         "symbol": "idCertificateShape",
         "calls": {
-          "idCertificateDomain": 2,
-          "idCertificateExactFields": 3,
-          "idCertificateIDValid": 3,
-          "idCertificateRefusal": 5,
-          "literal:did:aw": 1
+          "idCertificateBinding": 1,
+          "idCertificateExactFields": 2,
+          "idCertificateIDValid": 1,
+          "idCertificateRefusal": 1
         }
       },
       {
@@ -18959,7 +19341,6 @@
         "symbol": "verifyIDChain",
         "calls": {
           "IDCertificateID": 1,
-          "IDStatusCacheMode": 1,
           "IDStatusRequest": 1,
           "VerifyIDCertificate": 2,
           "idCertificateCanonical": 1,
@@ -19271,9 +19652,9 @@
         "symbol": "(*RegistryClient).RegisterIdentity",
         "calls": {
           "ComputeDIDKey": 1,
+          "KeySigner": 1,
           "c.GetDIDFull": 1,
-          "c.ResolveKeyAt": 1,
-          "crypto/ed25519.Sign": 1,
+          "c.RegisterIdentitySigned": 1,
           "literal:did:aw": 1,
           "reference:crypto/ed25519.PublicKey": 1
         }
@@ -22903,6 +23284,700 @@
         "calls": {
           "crypto/ed25519.NewKeyFromSeed": 1,
           "github.com/awebai/aw/awid.DecodeTeamCertificateHeader": 1
+        }
+      },
+      {
+        "row": "CLI.KEYS.HUMAN",
+        "file": "cli/go/awconfig/human_record.go",
+        "symbol": "HumanRecords",
+        "calls": {
+          "literal:did:aw": 1
+        }
+      },
+      {
+        "row": "CLI.CHAIN.INSTALL",
+        "file": "cli/go/awconfig/id_chain_install.go",
+        "symbol": "(*InstalledIDChain).Subject",
+        "calls": {
+          "literal:did:key": 1,
+          "reference:github.com/awebai/aw/awid.IDCertificateError": 1,
+          "reference:github.com/awebai/aw/awid.IDChainSubject": 2
+        }
+      },
+      {
+        "row": "CLI.CHAIN.INSTALL",
+        "file": "cli/go/awconfig/id_chain_install.go",
+        "symbol": "LoadInstalledIDChain",
+        "calls": {
+          "github.com/awebai/aw/awid.DecodeIDChainHeader": 1
+        }
+      },
+      {
+        "row": "CLI.CHAIN.INSTALL",
+        "file": "cli/go/awconfig/id_chain_install.go",
+        "symbol": "SaveInstalledIDChain",
+        "calls": {
+          "github.com/awebai/aw/awid.EncodeIDChainHeader": 1
+        }
+      },
+      {
+        "row": "CLI.ID.WRITE_CLIENT",
+        "file": "cli/go/awid/controller_request.go",
+        "symbol": "(*RegistryClient).RegisterIDCertificate",
+        "calls": {
+          "c.DiscoverRegistry": 1,
+          "c.RegisterIDCertificateAt": 1
+        }
+      },
+      {
+        "row": "CLI.ID.WRITE_CLIENT",
+        "file": "cli/go/awid/controller_request.go",
+        "symbol": "(*RegistryClient).RegisterIDCertificateAt",
+        "calls": {
+          "EncodeIDChainHeader": 1
+        }
+      },
+      {
+        "row": "CLI.ID.WRITE_CLIENT",
+        "file": "cli/go/awid/controller_request.go",
+        "symbol": "(*RegistryClient).RevokeIDCertificate",
+        "calls": {
+          "c.DiscoverRegistry": 1,
+          "c.RevokeIDCertificateAt": 1
+        }
+      },
+      {
+        "row": "CLI.ID.WRITE_CLIENT",
+        "file": "cli/go/awid/controller_request.go",
+        "symbol": "(*RegistryClient).coveringRequest",
+        "calls": {
+          "CanonicalJSONValue": 1
+        }
+      },
+      {
+        "row": "CLI.ID.WRITE_CLIENT",
+        "file": "cli/go/awid/controller_request.go",
+        "symbol": "ControllerRequestPayload",
+        "calls": {
+          "CanonicalJSONValue": 1
+        }
+      },
+      {
+        "row": "CLI.ID.WRITE_CLIENT",
+        "file": "cli/go/awid/controller_request.go",
+        "symbol": "idBundleLeafDomain",
+        "calls": {
+          "idCertificateBundleShape": 1
+        }
+      },
+      {
+        "row": "CLI.KEYS.HUMAN",
+        "file": "cli/go/awid/human_signer.go",
+        "symbol": "HumanSigner",
+        "calls": {
+          "ComputeDIDKey": 1,
+          "crypto/ed25519.Sign": 1,
+          "reference:crypto/ed25519.PublicKey": 1
+        }
+      },
+      {
+        "row": "CLI.ISSUE.CHILD",
+        "file": "cli/go/awid/id_certificate_request.go",
+        "symbol": "EncodeIDCertificateResponse",
+        "calls": {
+          "idCertificateCanonical": 1,
+          "idCertificateRefusal": 1,
+          "idCertificateResponseShape": 1
+        }
+      },
+      {
+        "row": "CLI.ISSUE.CHILD",
+        "file": "cli/go/awid/id_certificate_request.go",
+        "symbol": "IDCertificateRequestSigningBytes",
+        "calls": {
+          "idCertificateCanonical": 1
+        }
+      },
+      {
+        "row": "CLI.ISSUE.CHILD",
+        "file": "cli/go/awid/id_certificate_request.go",
+        "symbol": "IDKeyFingerprint",
+        "calls": {
+          "ExtractPublicKey": 1,
+          "idCertificateIDValid": 1,
+          "idCertificateRefusal": 2
+        }
+      },
+      {
+        "row": "CLI.ISSUE.CHILD",
+        "file": "cli/go/awid/id_certificate_request.go",
+        "symbol": "ParseIDCertificateRequest",
+        "calls": {
+          "IDCertificateRequestSigningBytes": 1,
+          "idCertificateBinding": 1,
+          "idCertificateDecodeCanonical": 1,
+          "idCertificateExactFields": 2,
+          "idCertificateIDValid": 1,
+          "idCertificateIsUUID": 2,
+          "idCertificateRefusal": 2,
+          "idCertificateShape": 1,
+          "literal:did:key": 2
+        }
+      },
+      {
+        "row": "CLI.ISSUE.CHILD",
+        "file": "cli/go/awid/id_certificate_request.go",
+        "symbol": "ParseIDCertificateResponse",
+        "calls": {
+          "idCertificateDecodeCanonical": 1,
+          "idCertificateRefusal": 1,
+          "idCertificateResponseShape": 1
+        }
+      },
+      {
+        "row": "CLI.ISSUE.CHILD",
+        "file": "cli/go/awid/id_certificate_request.go",
+        "symbol": "SignIDCertificateRequest",
+        "calls": {
+          "IDCertificateRequestSigningBytes": 1,
+          "ParseIDCertificateRequest": 1,
+          "idCertificateCanonical": 1,
+          "idCertificateRefusal": 1,
+          "sign": 1
+        }
+      },
+      {
+        "row": "CLI.ISSUE.CHILD",
+        "file": "cli/go/awid/id_certificate_request.go",
+        "symbol": "idCertificateResponseShape",
+        "calls": {
+          "idCertificateBundleShape": 1,
+          "idCertificateCanonical": 1,
+          "idCertificateExactFields": 1,
+          "idCertificateIsUUID": 1,
+          "idCertificateRefusal": 3,
+          "reference:IDChainMaxBytes": 1
+        }
+      },
+      {
+        "row": "S1.GO.CODEC",
+        "file": "cli/go/awid/id_certificates.go",
+        "symbol": "idCertificateBinding",
+        "calls": {
+          "idCertificateDomain": 2,
+          "idCertificateExactFields": 1,
+          "idCertificateIDValid": 2,
+          "idCertificateRefusal": 5,
+          "literal:did:aw": 1
+        }
+      },
+      {
+        "row": "S1.GO.CODEC",
+        "file": "cli/go/awid/id_certificates.go",
+        "symbol": "idCertificateDecodeCanonical",
+        "calls": {
+          "idCertificateCanonical": 1,
+          "idCertificateJSON": 1,
+          "idCertificateRefusal": 4
+        }
+      },
+      {
+        "row": "S1.GO.CODEC",
+        "file": "cli/go/awid/id_certificates.go",
+        "symbol": "idSignatureBytes",
+        "calls": {
+          "idCertificateDecodeB64": 1,
+          "idCertificateRefusal": 2,
+          "reference:crypto/ed25519.SignatureSize": 1
+        }
+      },
+      {
+        "row": "S1.GO.CODEC",
+        "file": "cli/go/awid/id_certificates.go",
+        "symbol": "idStrictVerify",
+        "calls": {
+          "ExtractPublicKey": 1,
+          "crypto/ed25519.Verify": 1,
+          "filippo.io/edwards25519.Scalar().SetCanonicalBytes": 1,
+          "idCertificatePrimePoint": 1,
+          "idCertificateRefusal": 4,
+          "reference:filippo.io/edwards25519.Scalar": 1
+        }
+      },
+      {
+        "row": "S1.GO.ANCESTRY",
+        "file": "cli/go/awid/id_chain.go",
+        "symbol": "idEvidenceUsable",
+        "calls": {
+          "IDStatusCacheMode": 1,
+          "idCertificateRefusal": 2
+        }
+      },
+      {
+        "row": "CLI.ISSUE.CHILD",
+        "file": "cli/go/awid/id_child_exchange.go",
+        "symbol": "ApproveIDResignRequest",
+        "calls": {
+          "EncodeIDCertificateResponse": 1,
+          "ParseIDCertificateRequest": 1,
+          "reference:IDChainEvidence": 1,
+          "reference:IDRequestFailed": 1,
+          "reference:IDRequestIssued": 2
+        }
+      },
+      {
+        "row": "CLI.ISSUE.CHILD",
+        "file": "cli/go/awid/id_child_exchange.go",
+        "symbol": "IDResignResponse",
+        "calls": {
+          "reference:IDRequestIssued": 1
+        }
+      },
+      {
+        "row": "CLI.ISSUE.CHILD",
+        "file": "cli/go/awid/id_child_exchange.go",
+        "symbol": "ImportIDCertificateResponse",
+        "calls": {
+          "ParseIDCertificateResponse": 1,
+          "VerifyIDChain": 1,
+          "idCertificateRefusal": 6,
+          "literal:did:aw": 1,
+          "reference:IDChainEvidence": 1,
+          "reference:IDChainSubject": 1
+        }
+      },
+      {
+        "row": "CLI.ISSUE.CHILD",
+        "file": "cli/go/awid/id_child_exchange.go",
+        "symbol": "ReceiveIDResignRequest",
+        "calls": {
+          "IDCertificateID": 1,
+          "ParseIDCertificateRequest": 1,
+          "idCertificateRefusal": 4,
+          "reference:IDRequestFailed": 1,
+          "reference:IDRequestPending": 1,
+          "reference:IDRequestRecord": 1
+        }
+      },
+      {
+        "row": "CLI.ISSUE.CHILD",
+        "file": "cli/go/awid/id_child_exchange.go",
+        "symbol": "RefuseIDResignRequest",
+        "calls": {
+          "reference:IDRequestFailed": 2,
+          "reference:IDRequestIssued": 1
+        }
+      },
+      {
+        "row": "CLI.ISSUE.CHILD",
+        "file": "cli/go/awid/id_child_exchange.go",
+        "symbol": "idIssuedResponse",
+        "calls": {
+          "IDCertificateID": 1,
+          "ParseIDCertificateResponse": 1,
+          "reference:IDRequestRecord": 1
+        }
+      },
+      {
+        "row": "CLI.ISSUE.CHILD",
+        "file": "cli/go/awid/id_direct_issue.go",
+        "symbol": "IssueIDChild",
+        "calls": {
+          "reference:IDChainEvidence": 1
+        }
+      },
+      {
+        "row": "CLI.ISSUE.CHILD",
+        "file": "cli/go/awid/id_invitation.go",
+        "symbol": "<module>",
+        "calls": {
+          "reference:IDRequestRecord": 1
+        }
+      },
+      {
+        "row": "CLI.ISSUE.CHILD",
+        "file": "cli/go/awid/id_invitation.go",
+        "symbol": "ApproveIDChildRequest",
+        "calls": {
+          "EncodeIDCertificateResponse": 1,
+          "ParseIDCertificateRequest": 1,
+          "idCertificateRefusal": 3,
+          "reference:IDChainEvidence": 1,
+          "reference:IDRequestFailed": 1,
+          "reference:IDRequestIssued": 2
+        }
+      },
+      {
+        "row": "CLI.ISSUE.CHILD",
+        "file": "cli/go/awid/id_invitation.go",
+        "symbol": "IDChildRequests",
+        "calls": {
+          "ParseIDCertificateRequest": 1
+        }
+      },
+      {
+        "row": "CLI.ISSUE.CHILD",
+        "file": "cli/go/awid/id_invitation.go",
+        "symbol": "ReceiveIDChildRequest",
+        "calls": {
+          "ParseIDCertificateRequest": 2,
+          "idCertificateRefusal": 8,
+          "reference:IDRequestFailed": 1,
+          "reference:IDRequestPending": 2,
+          "reference:IDRequestRecord": 1
+        }
+      },
+      {
+        "row": "CLI.ISSUE.CHILD",
+        "file": "cli/go/awid/id_invitation.go",
+        "symbol": "RefuseIDChildRequest",
+        "calls": {
+          "reference:IDRequestFailed": 2,
+          "reference:IDRequestIssued": 1
+        }
+      },
+      {
+        "row": "CLI.ISSUE.CHILD",
+        "file": "cli/go/awid/id_invitation.go",
+        "symbol": "idIssuingKey",
+        "calls": {
+          "idCertificateRefusal": 5,
+          "idChainEndsIn": 1,
+          "reference:IDChainEvidence": 1
+        }
+      },
+      {
+        "row": "CLI.ISSUE.CHILD",
+        "file": "cli/go/awid/id_invitation.go",
+        "symbol": "idNewChildIDIsSubjectKeys",
+        "calls": {
+          "ComputeStableID": 1,
+          "ExtractPublicKey": 1,
+          "literal:did:aw": 1
+        }
+      },
+      {
+        "row": "CLI.ISSUE.CHILD",
+        "file": "cli/go/awid/id_invitation.go",
+        "symbol": "idParentChainVerified",
+        "calls": {
+          "VerifyIDChain": 1,
+          "idCertificateRefusal": 1,
+          "reference:IDChainEvidence": 1,
+          "reference:IDChainSubject": 1
+        }
+      },
+      {
+        "row": "CLI.ISSUE.CHILD",
+        "file": "cli/go/awid/id_issuance.go",
+        "symbol": "KeySigner",
+        "calls": {
+          "ComputeDIDKey": 1,
+          "crypto/ed25519.Sign": 1,
+          "reference:crypto/ed25519.PublicKey": 1
+        }
+      },
+      {
+        "row": "CLI.ISSUE.CHILD",
+        "file": "cli/go/awid/id_issuance.go",
+        "symbol": "idIssuanceRecorded",
+        "calls": {
+          "IDCertificateID": 1,
+          "VerifyIDCertificate": 1,
+          "idCertificateRefusal": 1,
+          "idCertificateShape": 1,
+          "reference:idStatusIdentity": 1
+        }
+      },
+      {
+        "row": "CLI.ISSUE.CHILD",
+        "file": "cli/go/awid/id_issuance.go",
+        "symbol": "issueIDCertificate",
+        "calls": {
+          "IDCertificateID": 1,
+          "IDCertificateSigningBytes": 1,
+          "VerifyIDCertificate": 1,
+          "idCertificateRefusal": 1,
+          "sign": 1
+        }
+      },
+      {
+        "row": "CLI.ISSUE.CHILD",
+        "file": "cli/go/awid/id_resign.go",
+        "symbol": "ResignIDCertificate",
+        "calls": {
+          "reference:IDChainEvidence": 1
+        }
+      },
+      {
+        "row": "CLI.ISSUE.CHILD",
+        "file": "cli/go/awid/id_resign.go",
+        "symbol": "idSigningParent",
+        "calls": {
+          "VerifyIDChain": 1,
+          "idCertificateRefusal": 3,
+          "reference:IDChainEvidence": 1,
+          "reference:IDChainSubject": 1,
+          "reference:idStatusIdentity": 1
+        }
+      },
+      {
+        "row": "CLI.ISSUE.CHILD",
+        "file": "cli/go/awid/id_resign.go",
+        "symbol": "parentKeyHistoryHas",
+        "calls": {
+          "reference:idStatusIdentity": 1
+        }
+      },
+      {
+        "row": "CLI.ISSUE.CHILD",
+        "file": "cli/go/awid/id_resign.go",
+        "symbol": "resignIDCertificate",
+        "calls": {
+          "IDCertificateID": 1,
+          "VerifyIDCertificate": 1,
+          "idCertificateExactFields": 1,
+          "idCertificateRefusal": 5,
+          "idCertificateShape": 1,
+          "reference:IDChainEvidence": 1
+        }
+      },
+      {
+        "row": "CLI.STATUS.CLIENT",
+        "file": "cli/go/awid/id_status_client.go",
+        "symbol": "(*IDStatusClient).IDChainEvidence",
+        "calls": {
+          "IDStatusRequest": 1,
+          "idStatusCacheKey": 1,
+          "idStatusEvidence": 2,
+          "reference:IDChainEvidence": 5
+        }
+      },
+      {
+        "row": "CLI.STATUS.CLIENT",
+        "file": "cli/go/awid/id_status_client.go",
+        "symbol": "(*IDStatusClient).refresh",
+        "calls": {
+          "c.FetchIDCertificateStatus": 1
+        }
+      },
+      {
+        "row": "CLI.STATUS.CLIENT",
+        "file": "cli/go/awid/id_status_client.go",
+        "symbol": "NewIDStatusClient",
+        "calls": {
+          "VerifyExactDomainAuthority": 1,
+          "reference:registry.DiscoverRegistry": 1
+        }
+      },
+      {
+        "row": "CLI.STATUS.CLIENT",
+        "file": "cli/go/awid/id_status_client.go",
+        "symbol": "idStatusCacheKey",
+        "calls": {
+          "CanonicalJSONValue": 1
+        }
+      },
+      {
+        "row": "CLI.STATUS.CLIENT",
+        "file": "cli/go/awid/id_status_client.go",
+        "symbol": "idStatusEvidence",
+        "calls": {
+          "reference:IDChainEvidence": 2
+        }
+      },
+      {
+        "row": "GO.SOURCE.awid.registry-client",
+        "file": "cli/go/awid/registry_client.go",
+        "symbol": "(*RegistryClient).RegisterIdentitySigned",
+        "calls": {
+          "c.ResolveKeyAt": 1,
+          "literal:did:aw": 1,
+          "sign": 1
+        }
+      },
+      {
+        "row": "CLI.CHILD.EXCHANGE",
+        "file": "cli/go/cmd/aw/id_child.go",
+        "symbol": "childIssuerRegistry",
+        "calls": {
+          "github.com/awebai/aw/awid.AWIDTXTName": 1,
+          "github.com/awebai/aw/awid.NewAWIDRegistryClient": 1,
+          "github.com/awebai/aw/awid.VerifyExactDomainAuthority": 1
+        }
+      },
+      {
+        "row": "CLI.CHILD.EXCHANGE",
+        "file": "cli/go/cmd/aw/id_child.go",
+        "symbol": "childRequestOutput",
+        "calls": {
+          "github.com/awebai/aw/awid.IDKeyFingerprint": 1,
+          "github.com/awebai/aw/awid.ParseIDCertificateRequest": 1
+        }
+      },
+      {
+        "row": "CLI.CHILD.EXCHANGE",
+        "file": "cli/go/cmd/aw/id_child.go",
+        "symbol": "currentAgentIssuer",
+        "calls": {
+          "github.com/awebai/aw/awid.KeySigner": 1,
+          "idStatusAt": 1,
+          "idStatusAt().IDChainEvidence": 1,
+          "reference:github.com/awebai/aw/awid.IDChainEvidence": 1,
+          "reference:github.com/awebai/aw/awid.IDChainSubject": 1
+        }
+      },
+      {
+        "row": "CLI.CHILD.EXCHANGE",
+        "file": "cli/go/cmd/aw/id_child.go",
+        "symbol": "executeIDChildApprove",
+        "calls": {
+          "github.com/awebai/aw/awid.ApproveIDChildRequest": 1,
+          "github.com/awebai/aw/awid.ParseIDCertificateRequest": 1,
+          "reference:github.com/awebai/aw/awid.IDCertificateError": 1,
+          "reference:github.com/awebai/aw/awid.IDChainEvidence": 1,
+          "reference:github.com/awebai/aw/awid.IDRequestPending": 2
+        }
+      },
+      {
+        "row": "CLI.CHILD.EXCHANGE",
+        "file": "cli/go/cmd/aw/id_child.go",
+        "symbol": "executeIDChildReceive",
+        "calls": {
+          "github.com/awebai/aw/awid.ReceiveIDChildRequest": 1
+        }
+      },
+      {
+        "row": "CLI.CHILD.EXCHANGE",
+        "file": "cli/go/cmd/aw/id_child.go",
+        "symbol": "runIDChildPending",
+        "calls": {
+          "github.com/awebai/aw/awid.IDChildRequests": 1
+        }
+      },
+      {
+        "row": "CLI.CHILD.EXCHANGE",
+        "file": "cli/go/cmd/aw/id_child.go",
+        "symbol": "runIDChildRefuse",
+        "calls": {
+          "github.com/awebai/aw/awid.RefuseIDChildRequest": 1
+        }
+      },
+      {
+        "row": "CLI.CHILD.EXCHANGE",
+        "file": "cli/go/cmd/aw/id_child.go",
+        "symbol": "selectChildIssuer",
+        "calls": {
+          "github.com/awebai/aw/awid.NewAWIDRegistryClient": 1
+        }
+      },
+      {
+        "row": "CLI.CREATE.DOMAIN",
+        "file": "cli/go/cmd/aw/id_create_parent.go",
+        "symbol": "(*humanParent).issuer",
+        "calls": {
+          "github.com/awebai/aw/awid.VerifyIDChain": 1,
+          "idStatusAt": 1,
+          "idStatusAt().IDChainEvidence": 1,
+          "reference:github.com/awebai/aw/awid.IDChainEvidence": 1,
+          "reference:github.com/awebai/aw/awid.IDChainSubject": 1
+        }
+      },
+      {
+        "row": "CLI.CREATE.DOMAIN",
+        "file": "cli/go/cmd/aw/id_create_parent.go",
+        "symbol": "<module>",
+        "calls": {
+          "reference:github.com/awebai/aw/awid.IDChainEvidence": 1
+        }
+      },
+      {
+        "row": "CLI.CREATE.DOMAIN",
+        "file": "cli/go/cmd/aw/id_create_parent.go",
+        "symbol": "agentChainStep.install",
+        "calls": {
+          "github.com/awebai/aw/awid.IssueIDChild": 1,
+          "github.com/awebai/aw/awid.KeySigner": 1,
+          "s.registry.RegisterIDCertificateAt": 1
+        }
+      },
+      {
+        "row": "CLI.CREATE.DOMAIN",
+        "file": "cli/go/cmd/aw/id_create_parent.go",
+        "symbol": "checkRootController",
+        "calls": {
+          "github.com/awebai/aw/awid.AWIDTXTName": 2,
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.VerifyExactDomainAuthority": 1,
+          "reference:crypto/ed25519.PublicKey": 1
+        }
+      },
+      {
+        "row": "CLI.CREATE.DOMAIN",
+        "file": "cli/go/cmd/aw/id_create_parent.go",
+        "symbol": "idStatusAt",
+        "calls": {
+          "github.com/awebai/aw/awid.NewIDStatusClient": 1,
+          "reference:github.com/awebai/aw/awid.IDStatusClient": 1
+        }
+      },
+      {
+        "row": "CLI.CREATE.DOMAIN",
+        "file": "cli/go/cmd/aw/id_create_parent.go",
+        "symbol": "resumeIDCreateChain",
+        "calls": {
+          "github.com/awebai/aw/awid.LoadSigningKey": 1,
+          "reference:SigningKeyPath": 1,
+          "reference:crypto/ed25519.PrivateKey": 1
+        }
+      },
+      {
+        "row": "CLI.CREATE.DOMAIN",
+        "file": "cli/go/cmd/aw/id_create_parent.go",
+        "symbol": "rootIssuer",
+        "calls": {
+          "github.com/awebai/aw/awid.KeySigner": 1,
+          "idStatusAt": 1,
+          "idStatusAt().IDChainEvidence": 1,
+          "reference:github.com/awebai/aw/awid.IDChainEvidence": 1,
+          "reference:github.com/awebai/aw/awid.IDChainSubject": 1
+        }
+      },
+      {
+        "row": "CLI.KEYS.HUMAN",
+        "file": "cli/go/cmd/aw/id_human.go",
+        "symbol": "executeIDHumanInit",
+        "calls": {
+          "github.com/awebai/aw/awid.AWIDTXTName": 1,
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.NewAWIDRegistryClient": 1,
+          "github.com/awebai/aw/awid.VerifyExactDomainAuthority": 1,
+          "reference:crypto/ed25519.PublicKey": 1,
+          "registry.RegisterIDCertificateAt": 1,
+          "registry.RegisterIdentitySigned": 1
+        }
+      },
+      {
+        "row": "CLI.KEYS.HUMAN",
+        "file": "cli/go/cmd/aw/id_human.go",
+        "symbol": "prepareHuman",
+        "calls": {
+          "github.com/awebai/aw/awid.ComputeDIDKey": 1,
+          "github.com/awebai/aw/awid.ComputeStableID": 1,
+          "github.com/awebai/aw/awid.GenerateKeypair": 1
+        }
+      },
+      {
+        "row": "CLI.KEYS.HUMAN",
+        "file": "cli/go/cmd/aw/id_human.go",
+        "symbol": "rootIssuedHumanChain",
+        "calls": {
+          "github.com/awebai/aw/awid.IDCertificateID": 1,
+          "github.com/awebai/aw/awid.IssueIDChild": 1,
+          "github.com/awebai/aw/awid.KeySigner": 1,
+          "github.com/awebai/aw/awid.NewIDStatusClient": 1,
+          "reference:github.com/awebai/aw/awid.IDChainSubject": 1,
+          "status.IDChainEvidence": 1
         }
       }
     ]

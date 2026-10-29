@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -238,7 +237,7 @@ func currentAgentIssuer(opts idChildOptions) (*selectedChildIssuer, error) {
 		invitations: awconfig.IDInvitationFileStore{Dir: awconfig.IdentityInvitationsDir(dir)},
 		signer:      func(string) awid.IDCertificateSigner { return awid.KeySigner(key) },
 		evidence: func(ctx context.Context, _, _ string) (*awid.IDChainEvidence, error) {
-			subject := awid.IDChainSubject{ID: identity.StableID, DIDKey: awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))}
+			subject := awid.IDChainSubject{ID: identity.StableID, DIDKey: identity.DID}
 			return idStatusAt(registry, opts.TXTResolver, registryURL).IDChainEvidence(ctx, chain.Bundle, subject, domain), nil
 		},
 	}
