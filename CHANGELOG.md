@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- AWID SDK: `RegistryClient.register_did_with_signer(did_key, *, signer,
+  timestamp=None)` registers a did:aw whose key stays behind a signer
+  callback, as the identity-tree writes do. It asks for one signature, over
+  `log_entry_payload(**awid.log.initial_registration_entry(did_key,
+  timestamp=...))`, checks the answer before sending, and returns AWID's
+  receipt without a signed follow-up read. `register_did(did_key,
+  signing_key)` is unchanged and uses the same entry.
+
 - aw: identity-tree commands for a namespace you control. They are opt-in:
   `aw id create` without the new flags, and every other existing flow, works
   as before.
