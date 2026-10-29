@@ -330,18 +330,43 @@ func executeIDChildReceive(ctx context.Context, opts idChildOptions, raw []byte)
 		return idChildRequestOutput{}, err
 	}
 	defer lock.Close()
+	signed, err := awid.ParseIDCertificateRequest(raw)
+	if err != nil {
+		return idChildRequestOutput{}, err
+	}
+	if signed["request"].(map[string]any)["operation"] == "resign" {
+		if err := issuerResigns(issuer); err != nil {
+			return idChildRequestOutput{}, err
+		}
+		entry, err := awid.ReceiveIDResignRequest(issuer.issuance, raw)
+		if err != nil {
+			return idChildRequestOutput{}, err
+		}
+		return receivedRequest{resign: entry}.output()
+	}
 	inv, err := awid.ReceiveIDChildRequest(issuer.invitations, issuer.parent, raw)
 	if err != nil {
 		return idChildRequestOutput{}, err
 	}
-	return childRequestOutput(inv)
+	return receivedRequest{invitation: inv}.output()
+}
+
+// issuerResigns refuses a re-sign under the namespace root: the root's
+// certificates are registered, and a registered certificate keeps its
+// signature across key rotation.
+func issuerResigns(issuer *selectedChildIssuer) error {
+	if issuer.kind == "root" {
+		return usageError("the namespace root re-signs nothing: its certificates are registered and survive its key rotation")
+	}
+	return nil
 }
 
 // idChildRequestOutput is a request as the issuer reviews it. The private
 // recipient note is shown only to the issuer, never exported.
 type idChildRequestOutput struct {
 	RequestID      string         `json:"request_id"`
-	InvitationID   string         `json:"invitation_id"`
+	Operation      string         `json:"operation"`
+	InvitationID   string         `json:"invitation_id,omitempty"`
 	State          string         `json:"state"`
 	ID             string         `json:"id"`
 	Domain         string         `json:"domain"`
@@ -350,72 +375,113 @@ type idChildRequestOutput struct {
 	Fingerprint    string         `json:"fingerprint"`
 	InvitationVoid bool           `json:"invitation_void"`
 	CertificateID  string         `json:"certificate_id,omitempty"`
-	ExpiresAt      string         `json:"expires_at"`
-	Recipient      string         `json:"recipient"`
+	ExpiresAt      string         `json:"expires_at,omitempty"`
+	Recipient      string         `json:"recipient,omitempty"`
+	// OldCertificateID is the certificate a re-sign request presents.
+	OldCertificateID string `json:"old_certificate_id,omitempty"`
 }
 
-func childRequestOutput(inv *awid.IDInvitation) (idChildRequestOutput, error) {
-	signed, err := awid.ParseIDCertificateRequest([]byte(inv.Request.Request))
+// receivedRequest is one request the issuer received: an issue bound to one
+// of its invitations, or a re-sign attached to the issuance entry of the
+// certificate it presents.
+type receivedRequest struct {
+	invitation *awid.IDInvitation
+	resign     *awid.IDIssuanceEntry
+}
+
+func (r receivedRequest) record() *awid.IDRequestRecord {
+	if r.resign != nil {
+		return r.resign.Resign
+	}
+	return r.invitation.Request
+}
+
+func (r receivedRequest) output() (idChildRequestOutput, error) {
+	record := r.record()
+	signed, err := awid.ParseIDCertificateRequest([]byte(record.Request))
 	if err != nil {
 		return idChildRequestOutput{}, err
 	}
-	r := signed["request"].(map[string]any)
-	fingerprint, err := awid.IDKeyFingerprint(r["subject_key"].(string))
+	req := signed["request"].(map[string]any)
+	fingerprint, err := awid.IDKeyFingerprint(req["subject_key"].(string))
 	if err != nil {
 		return idChildRequestOutput{}, err
 	}
-	return idChildRequestOutput{
-		RequestID: inv.Request.RequestID, InvitationID: inv.InvitationID, State: inv.Request.State,
-		ID: r["id"].(string), Domain: inv.Domain, Parent: inv.Parent, Kind: inv.Kind, Fingerprint: fingerprint,
-		InvitationVoid: inv.Void, CertificateID: inv.Request.NewCertificateID, ExpiresAt: inv.ExpiresAt, Recipient: inv.Recipient,
-	}, nil
+	out := idChildRequestOutput{
+		RequestID: record.RequestID, Operation: req["operation"].(string), State: record.State,
+		ID: req["id"].(string), Domain: req["domain"].(string), Parent: req["parent"].(map[string]any), Kind: req["kind"].(string),
+		Fingerprint: fingerprint, CertificateID: record.NewCertificateID,
+	}
+	if r.resign != nil {
+		out.OldCertificateID = r.resign.CertificateID
+		return out, nil
+	}
+	inv := r.invitation
+	out.InvitationID, out.InvitationVoid, out.ExpiresAt, out.Recipient = inv.InvitationID, inv.Void, inv.ExpiresAt, inv.Recipient
+	return out, nil
 }
 
-func childRequestByID(issuer *selectedChildIssuer, requestID string) (*awid.IDInvitation, error) {
+// findReceivedRequest finds requestID among the issuer's invitations and
+// then among its re-sign requests.
+func findReceivedRequest(issuer *selectedChildIssuer, requestID string) (receivedRequest, error) {
 	all, err := issuer.invitations.Invitations()
 	if err != nil {
-		return nil, err
+		return receivedRequest{}, err
 	}
 	for _, inv := range all {
 		if inv.Request != nil && inv.Request.RequestID == requestID {
-			return inv, nil
+			return receivedRequest{invitation: inv}, nil
 		}
 	}
-	return nil, usageError("no received request %s", requestID)
+	entry, err := issuer.issuance.EntryForRequest(requestID)
+	if err != nil {
+		return receivedRequest{}, err
+	}
+	if entry != nil {
+		return receivedRequest{resign: entry}, nil
+	}
+	return receivedRequest{}, usageError("no received request %s", requestID)
 }
 
-func runIDChildPending(cmd *cobra.Command, args []string) error {
-	issuer, err := selectChildIssuer(cmd.Context(), idChildOptionsFromFlags())
+// listIDChildRequests lists the issuer's received requests: issues, then
+// re-signs. Private invitation notes are not listed.
+func listIDChildRequests(ctx context.Context, opts idChildOptions) ([]awid.IDChildRequest, error) {
+	issuer, err := selectChildIssuer(ctx, opts)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	listed, err := awid.IDChildRequests(issuer.invitations)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	printOutput(listed, formatIDChildPending)
-	return nil
+	entries, err := issuer.issuance.ResignEntries()
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		out, err := receivedRequest{resign: entry}.output()
+		if err != nil {
+			return nil, err
+		}
+		listed = append(listed, awid.IDChildRequest{RequestID: out.RequestID, Operation: out.Operation, State: out.State, CertificateID: out.CertificateID, ID: out.ID, Domain: out.Domain, Parent: out.Parent, Kind: out.Kind})
+	}
+	return listed, nil
 }
 
-func runIDChildShow(cmd *cobra.Command, args []string) error {
-	issuer, err := selectChildIssuer(cmd.Context(), idChildOptionsFromFlags())
+func showIDChildRequest(ctx context.Context, opts idChildOptions, requestID string) (idChildRequestOutput, error) {
+	issuer, err := selectChildIssuer(ctx, opts)
 	if err != nil {
-		return err
+		return idChildRequestOutput{}, err
 	}
-	inv, err := childRequestByID(issuer, args[0])
+	found, err := findReceivedRequest(issuer, requestID)
 	if err != nil {
-		return err
+		return idChildRequestOutput{}, err
 	}
-	out, err := childRequestOutput(inv)
-	if err != nil {
-		return err
-	}
-	printOutput(out, formatIDChildRequest)
-	return nil
+	return found.output()
 }
 
-func runIDChildRefuse(cmd *cobra.Command, args []string) error {
-	issuer, err := selectChildIssuer(cmd.Context(), idChildOptionsFromFlags())
+func executeIDChildRefuse(ctx context.Context, opts idChildOptions, requestID string) error {
+	issuer, err := selectChildIssuer(ctx, opts)
 	if err != nil {
 		return err
 	}
@@ -424,7 +490,36 @@ func runIDChildRefuse(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer lock.Close()
-	if err := awid.RefuseIDChildRequest(issuer.invitations, args[0]); err != nil {
+	found, err := findReceivedRequest(issuer, requestID)
+	if err != nil {
+		return err
+	}
+	if found.resign != nil {
+		return awid.RefuseIDResignRequest(issuer.issuance, requestID)
+	}
+	return awid.RefuseIDChildRequest(issuer.invitations, requestID)
+}
+
+func runIDChildPending(cmd *cobra.Command, args []string) error {
+	listed, err := listIDChildRequests(cmd.Context(), idChildOptionsFromFlags())
+	if err != nil {
+		return err
+	}
+	printOutput(listed, formatIDChildPending)
+	return nil
+}
+
+func runIDChildShow(cmd *cobra.Command, args []string) error {
+	out, err := showIDChildRequest(cmd.Context(), idChildOptionsFromFlags(), args[0])
+	if err != nil {
+		return err
+	}
+	printOutput(out, formatIDChildRequest)
+	return nil
+}
+
+func runIDChildRefuse(cmd *cobra.Command, args []string) error {
+	if err := executeIDChildRefuse(cmd.Context(), idChildOptionsFromFlags(), args[0]); err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "Refused %s; nothing was signed.\n", args[0])
@@ -449,16 +544,22 @@ func executeIDChildApprove(ctx context.Context, opts idChildOptions, requestID s
 	if err != nil {
 		return nil, err
 	}
-	inv, err := childRequestByID(issuer, requestID)
+	found, err := findReceivedRequest(issuer, requestID)
 	if err != nil {
 		return nil, err
 	}
-	out, err := childRequestOutput(inv)
+	if found.resign != nil {
+		if err := issuerResigns(issuer); err != nil {
+			return nil, err
+		}
+	}
+	out, err := found.output()
 	if err != nil {
 		return nil, err
 	}
+	pending := found.record().State == awid.IDRequestPending
 	approval := awid.IDHumanApproval{}
-	if inv.Kind == "human" && inv.Request.State == awid.IDRequestPending {
+	if out.Kind == "human" && pending {
 		if err := opts.HumanAtTerminal(); err != nil {
 			return nil, fmt.Errorf("approving a human needs its issuer at the terminal: %w", err)
 		}
@@ -475,8 +576,8 @@ func executeIDChildApprove(ctx context.Context, opts idChildOptions, requestID s
 		approval = awid.IDHumanApproval{Interactive: true, Confirmed: true}
 	}
 	var evidence *awid.IDChainEvidence
-	if inv.Request.State == awid.IDRequestPending {
-		signed, err := awid.ParseIDCertificateRequest([]byte(inv.Request.Request))
+	if pending {
+		signed, err := awid.ParseIDCertificateRequest([]byte(found.record().Request))
 		if err != nil {
 			return nil, err
 		}
@@ -492,6 +593,9 @@ func executeIDChildApprove(ctx context.Context, opts idChildOptions, requestID s
 		return nil, err
 	}
 	defer lock.Close()
+	if found.resign != nil {
+		return awid.ApproveIDResignRequest(issuer.issuance, requestID, issuer.parent["id"].(string), issuer.parentChain, evidence, issuer.domain, issuer.signer(out.ID), opts.Now())
+	}
 	return awid.ApproveIDChildRequest(issuer.invitations, issuer.issuance, requestID, approval, issuer.parentChain, evidence, issuer.signer(out.ID), opts.Now())
 }
 
@@ -540,13 +644,19 @@ func formatIDChildInvite(v any) string {
 func formatIDChildRequest(v any) string {
 	out := v.(idChildRequestOutput)
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Request:     %s (%s)\n", out.RequestID, out.State))
-	sb.WriteString(fmt.Sprintf("Recipient:   %s (your private note)\n", out.Recipient))
+	sb.WriteString(fmt.Sprintf("Request:     %s (%s, %s)\n", out.RequestID, out.Operation, out.State))
+	if out.Operation != "resign" {
+		sb.WriteString(fmt.Sprintf("Recipient:   %s (your private note)\n", out.Recipient))
+	}
 	sb.WriteString(fmt.Sprintf("Child:       %s\n", out.ID))
 	sb.WriteString(fmt.Sprintf("Kind:        %s\n", out.Kind))
 	sb.WriteString(fmt.Sprintf("Parent:      %s %v\n", out.Parent["kind"], out.Parent["id"]))
 	sb.WriteString(fmt.Sprintf("Domain:      %s\n", out.Domain))
-	sb.WriteString(fmt.Sprintf("Invitation:  %s (expires %s)\n", out.InvitationID, out.ExpiresAt))
+	if out.Operation == "resign" {
+		sb.WriteString(fmt.Sprintf("Re-signs:    %s\n", out.OldCertificateID))
+	} else {
+		sb.WriteString(fmt.Sprintf("Invitation:  %s (expires %s)\n", out.InvitationID, out.ExpiresAt))
+	}
 	sb.WriteString(fmt.Sprintf("Fingerprint: %s\n", out.Fingerprint))
 	if out.InvitationVoid {
 		sb.WriteString("Invitation:  VOID (a different key was presented)\n")
@@ -568,7 +678,7 @@ func formatIDChildPending(v any) string {
 		if r.InvitationVoid {
 			void = " invitation void"
 		}
-		sb.WriteString(fmt.Sprintf("%s  %-8s %-6s %s%s\n", r.RequestID, r.State, r.Kind, r.ID, void))
+		sb.WriteString(fmt.Sprintf("%s  %-6s %-8s %-6s %s%s\n", r.RequestID, r.Operation, r.State, r.Kind, r.ID, void))
 		if r.CertificateID != "" {
 			sb.WriteString(fmt.Sprintf("    certificate %s\n", r.CertificateID))
 		}

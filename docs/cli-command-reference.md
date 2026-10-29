@@ -896,6 +896,10 @@ Export a certificate request against the invitation your parent fixed: its
 Send the request file to the parent over your chosen channel, and tell them
 the fingerprint shown here through a different trusted channel.
 
+With --resign, a local agent (whose ID is its did:key) instead asks the parent
+of the certificate it carries to re-sign it with the parent's current key,
+after the parent rotated its key.
+
 Flags:
 - `--domain string Namespace domain of the invitation`
 - `-h, --help help for request`
@@ -904,6 +908,7 @@ Flags:
 - `--out string Where to write the request (- for stdout) (default "-")`
 - `--parent string did:aw of the parent identity`
 - `--parent-root The parent is the namespace root of --domain`
+- `--resign Ask the parent to re-sign the certificate this local agent carries`
 
 ## `id register`
 

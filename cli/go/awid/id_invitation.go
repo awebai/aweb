@@ -59,6 +59,7 @@ type IDHumanApproval struct {
 // decide on revocation.
 type IDChildRequest struct {
 	RequestID      string         `json:"request_id"`
+	Operation      string         `json:"operation"`
 	InvitationID   string         `json:"invitation_id"`
 	InvitationVoid bool           `json:"invitation_void"`
 	State          string         `json:"state"`
@@ -335,7 +336,7 @@ func IDChildRequests(invitations IDInvitationStore) ([]IDChildRequest, error) {
 			return nil, err
 		}
 		r := signed["request"].(map[string]any)
-		out = append(out, IDChildRequest{RequestID: inv.Request.RequestID, InvitationID: inv.InvitationID, InvitationVoid: inv.Void, State: inv.Request.State, CertificateID: inv.Request.NewCertificateID, ID: r["id"].(string), Domain: inv.Domain, Parent: inv.Parent, Kind: inv.Kind})
+		out = append(out, IDChildRequest{RequestID: inv.Request.RequestID, Operation: "issue", InvitationID: inv.InvitationID, InvitationVoid: inv.Void, State: inv.Request.State, CertificateID: inv.Request.NewCertificateID, ID: r["id"].(string), Domain: inv.Domain, Parent: inv.Parent, Kind: inv.Kind})
 	}
 	return out, nil
 }

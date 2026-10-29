@@ -103,7 +103,21 @@ func (s IDIssuanceFileStore) EntryForSubject(subject string) (*awid.IDIssuanceEn
 	})
 }
 
+// ResignEntries are the entries that carry a received re-sign request, in
+// the order of their certificate IDs.
+func (s IDIssuanceFileStore) ResignEntries() ([]*awid.IDIssuanceEntry, error) {
+	return s.filter(func(entry *awid.IDIssuanceEntry) bool { return entry.Resign != nil }, false)
+}
+
 func (s IDIssuanceFileStore) find(match func(*awid.IDIssuanceEntry) bool) (*awid.IDIssuanceEntry, error) {
+	found, err := s.filter(match, true)
+	if err != nil || len(found) == 0 {
+		return nil, err
+	}
+	return found[0], nil
+}
+
+func (s IDIssuanceFileStore) filter(match func(*awid.IDIssuanceEntry) bool, first bool) ([]*awid.IDIssuanceEntry, error) {
 	if exists, err := s.directory(false); err != nil || !exists {
 		return nil, err
 	}
@@ -111,6 +125,7 @@ func (s IDIssuanceFileStore) find(match func(*awid.IDIssuanceEntry) bool) (*awid
 	if err != nil {
 		return nil, err
 	}
+	var found []*awid.IDIssuanceEntry
 	for _, name := range names {
 		base, ok := strings.CutSuffix(name.Name(), ".json")
 		if !ok || name.IsDir() {
@@ -121,10 +136,13 @@ func (s IDIssuanceFileStore) find(match func(*awid.IDIssuanceEntry) bool) (*awid
 			return nil, err
 		}
 		if entry != nil && match(entry) {
-			return entry, nil
+			found = append(found, entry)
+			if first {
+				break
+			}
 		}
 	}
-	return nil, nil
+	return found, nil
 }
 
 // Put durably replaces the entry: the file and the directory that names it

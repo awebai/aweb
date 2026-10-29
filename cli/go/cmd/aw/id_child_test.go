@@ -108,11 +108,11 @@ func (h *childHarness) state(requestID string) *awid.IDInvitation {
 	if err != nil {
 		h.t.Fatal(err)
 	}
-	inv, err := childRequestByID(issuer, requestID)
-	if err != nil {
-		h.t.Fatal(err)
+	found, err := findReceivedRequest(issuer, requestID)
+	if err != nil || found.invitation == nil {
+		h.t.Fatalf("no invitation request %s: %v", requestID, err)
 	}
-	return inv
+	return found.invitation
 }
 
 func (h *childHarness) issued() int {

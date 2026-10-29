@@ -191,6 +191,10 @@ ROOT_CONSUMERS = {
         "id-certificates-v1.json",
         '"../../../../docs/vectors/id-certificates-v1.json"',
     ),
+    PurePosixPath("cli/go/cmd/aw/id_resign_test.go"): _consumer(
+        "id-certificates-v1.json",
+        '"../../../../docs/vectors/id-certificates-v1.json"',
+    ),
     PurePosixPath("cli/go/cmd/aw/agent_status_test.go"): _consumer(
         "agent-status-v1.json",
         '"../../../../docs/vectors/agent-status-v1.json"',

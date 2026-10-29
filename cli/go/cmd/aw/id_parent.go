@@ -29,6 +29,7 @@ var (
 	idParentInvitationID string
 	idParentParent       string
 	idParentRoot         bool
+	idParentResign       bool
 	idParentOut          string
 	idParentRegistry     string
 	idParentNoRegister   bool
@@ -43,7 +44,10 @@ var (
 		Long: "Export a certificate request against the invitation your parent fixed: its\n" +
 			"--invitation-id, --domain and parent (--parent <did:aw> or --parent-root).\n" +
 			"Send the request file to the parent over your chosen channel, and tell them\n" +
-			"the fingerprint shown here through a different trusted channel.",
+			"the fingerprint shown here through a different trusted channel.\n\n" +
+			"With --resign, a local agent (whose ID is its did:key) instead asks the parent\n" +
+			"of the certificate it carries to re-sign it with the parent's current key,\n" +
+			"after the parent rotated its key.",
 		Args: cobra.NoArgs,
 		RunE: runIDParentRequest,
 	}
@@ -68,6 +72,7 @@ func init() {
 	idParentRequestCmd.Flags().StringVar(&idParentInvitationID, "invitation-id", "", "Invitation ID the parent gave you")
 	idParentRequestCmd.Flags().StringVar(&idParentParent, "parent", "", "did:aw of the parent identity")
 	idParentRequestCmd.Flags().BoolVar(&idParentRoot, "parent-root", false, "The parent is the namespace root of --domain")
+	idParentRequestCmd.Flags().BoolVar(&idParentResign, "resign", false, "Ask the parent to re-sign the certificate this local agent carries")
 	idParentRequestCmd.Flags().StringVar(&idParentOut, "out", "-", "Where to write the request (- for stdout)")
 	idParentImportCmd.Flags().StringVar(&idParentRegistry, "registry", "", "Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)")
 	idParentImportCmd.Flags().BoolVar(&idParentNoRegister, "no-register", false, "Install the certificate but leave its AWID registration pending")
@@ -123,11 +128,24 @@ func selectRequester(opts idParentOptions) (*requester, error) {
 		if id == "" {
 			id = identity.DID
 		}
-		domain, err := normalizeIDCreateDomain(opts.Domain, false)
+		dir := filepath.Dir(identity.IdentityPath)
+		named := opts.Domain
+		if strings.TrimSpace(named) == "" {
+			// An agent carrying a chain belongs to its chain's namespace.
+			installed, err := awconfig.LoadInstalledIDChain(dir)
+			if err != nil {
+				return nil, err
+			}
+			if installed != nil {
+				certificates := installed.Bundle["certificates"].([]any)
+				named, _ = certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)["domain"].(string)
+			}
+		}
+		domain, err := normalizeIDCreateDomain(named, false)
 		if err != nil {
 			return nil, err
 		}
-		return &requester{id: id, didKey: identity.DID, domain: domain, kind: "agent", dir: filepath.Dir(identity.IdentityPath),
+		return &requester{id: id, didKey: identity.DID, domain: domain, kind: "agent", dir: dir,
 			signer: func(string) awid.IDCertificateSigner { return awid.KeySigner(key) }}, nil
 	}
 	domain, err := normalizeIDCreateDomain(opts.Domain, false)
@@ -163,12 +181,26 @@ type idParentRequestOutput struct {
 }
 
 func runIDParentRequest(cmd *cobra.Command, args []string) error {
-	out, raw, err := executeIDParentRequest(idParentOptionsFromFlags(), idParentInvitationID, idParentParent, idParentRoot)
+	var out idParentRequestOutput
+	var raw []byte
+	var err error
+	if idParentResign {
+		if idParentInvitationID != "" || idParentParent != "" || idParentRoot || idParentDomain != "" {
+			return usageError("--resign takes its parent, domain and certificate from the installed chain; it takes no --invitation-id, --parent, --parent-root or --domain")
+		}
+		out, raw, err = executeIDParentResign(idParentOptionsFromFlags())
+	} else {
+		out, raw, err = executeIDParentRequest(idParentOptionsFromFlags(), idParentInvitationID, idParentParent, idParentRoot)
+	}
 	if err != nil {
 		return err
 	}
 	if err := writeExchangeFile(idParentOut, raw); err != nil {
 		return err
+	}
+	if idParentResign {
+		fmt.Fprintf(os.Stderr, "Re-sign request %s for %s. Send it to your parent; import its response with `aw id parent import`.\n", out.RequestID, out.ID)
+		return nil
 	}
 	fmt.Fprintf(os.Stderr, "Request %s for %s (%s).\nTell your parent this fingerprint through a different trusted channel: %s\n", out.RequestID, out.ID, out.Kind, out.Fingerprint)
 	return nil
@@ -228,6 +260,64 @@ func executeIDParentRequest(opts idParentOptions, invitationID, parentID string,
 		return idParentRequestOutput{}, nil, err
 	}
 	return idParentRequestOutput{RequestID: requestID, InvitationID: invitationID, ID: r.id, Kind: r.kind, Fingerprint: fingerprint}, raw, nil
+}
+
+// executeIDParentResign builds, signs and records a re-sign request for the
+// current local agent: the same id, domain, parent and kind as the
+// certificate it carries, which travels with the request so its parent can
+// find it in its own issuance log. The caller writes the returned request
+// file.
+func executeIDParentResign(opts idParentOptions) (idParentRequestOutput, []byte, error) {
+	if strings.TrimSpace(opts.Human) != "" {
+		return idParentRequestOutput{}, nil, usageError("--resign is for the current local agent; a human is registered and keeps its signature")
+	}
+	identity, err := resolveIdentityForDir(opts.WorkingDir)
+	if err != nil {
+		return idParentRequestOutput{}, nil, err
+	}
+	if identity.StableID != "" && identity.StableID != identity.DID {
+		return idParentRequestOutput{}, nil, usageError("%s is registered at AWID and keeps its signature across its parent's rotation; only a local agent is re-signed", identity.StableID)
+	}
+	key, err := resolveIdentitySigningKey(identity)
+	if err != nil {
+		return idParentRequestOutput{}, nil, err
+	}
+	dir := filepath.Dir(identity.IdentityPath)
+	installed, err := awconfig.LoadInstalledIDChain(dir)
+	if err != nil {
+		return idParentRequestOutput{}, nil, err
+	}
+	if installed == nil {
+		return idParentRequestOutput{}, nil, usageError("%s has no installed certificate to re-sign", identity.DID)
+	}
+	certificates := installed.Bundle["certificates"].([]any)
+	old := certificates[len(certificates)-1].(map[string]any)
+	c := old["certificate"].(map[string]any)
+	if c["id"] != identity.DID {
+		return idParentRequestOutput{}, nil, usageError("the installed certificate names %v, not %s", c["id"], identity.DID)
+	}
+	requestID, err := newInvitationID()
+	if err != nil {
+		return idParentRequestOutput{}, nil, err
+	}
+	request := map[string]any{
+		"v": 1, "type": "aweb.id-certificate-request", "request_id": requestID, "operation": "resign",
+		"id": c["id"], "domain": c["domain"], "parent": c["parent"], "kind": c["kind"], "subject_key": identity.DID,
+		"invitation_id": nil, "old_certificate": old,
+	}
+	raw, err := awid.SignIDCertificateRequest(request, awid.KeySigner(key))
+	if err != nil {
+		return idParentRequestOutput{}, nil, err
+	}
+	store := awconfig.IDRequestFileStore{Dir: awconfig.IdentityRequestsDir(dir)}
+	if err := store.Put(&awconfig.IDOutgoingRequest{RequestID: requestID, Request: string(raw), State: awconfig.IDRequestOutstanding}); err != nil {
+		return idParentRequestOutput{}, nil, err
+	}
+	fingerprint, err := awid.IDKeyFingerprint(identity.DID)
+	if err != nil {
+		return idParentRequestOutput{}, nil, err
+	}
+	return idParentRequestOutput{RequestID: requestID, ID: identity.DID, Kind: c["kind"].(string), Fingerprint: fingerprint}, raw, nil
 }
 
 var invitationIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
