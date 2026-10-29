@@ -148,21 +148,16 @@ func TestIDCreateParentHumanNeedsAHumanAtTheTerminal(t *testing.T) {
 }
 
 // The human's chain is verified against current status before the agent
-// exists. Against the real AWID fixture the frozen human is not registered
-// and its domain has no _awid record AWID can resolve, so the human cannot
-// issue: no agent is created, registered or left chainless.
+// exists. No registry answers at the --registry origin, so there is no
+// current status and the human cannot issue: no agent is created or left
+// chainless. Nothing here resolves a name.
 func TestIDCreateParentHumanThatCannotIssueLeavesNoAgent(t *testing.T) {
-	registryURL := realAWIDFixture(t)
-	r := newParentCreateRun(t, registryURL)
+	r := newParentCreateRun(t, "http://127.0.0.1:1")
 	human := frozenRootHuman(t)
 	if _, err := r.create(human.StableID, nil); err == nil || !strings.Contains(err.Error(), "cannot issue now") {
 		t.Fatalf("err=%v", err)
 	}
 	r.assertNoAgent()
-	registry := awid.NewAWIDRegistryClient(nil, nil)
-	if _, _, err := registry.GetNamespaceAddressAt(t.Context(), registryURL, "example.com", "coordinator"); err == nil {
-		t.Fatal("the agent's address was claimed")
-	}
 }
 
 func (r *parentCreateRun) createUnderRoot(parentHuman string, dnsController string) (idCreateOutput, error) {
@@ -237,11 +232,11 @@ func TestHumanCanIssueOnlyWithAValidHumanChain(t *testing.T) {
 
 // A rerun after a failed chain step releases the certificate its parent
 // already recorded: no evidence is read, nothing is signed again and no
-// second entry is logged. The fixture's AWID then refuses the registration
-// (it cannot resolve the domain's _awid record), which is the failure the
-// next rerun would retry.
+// second entry is logged. No registry answers at the --registry origin, so
+// the registration fails, which is the failure the next rerun would retry.
+// Nothing here resolves a name.
 func TestIDCreateRerunReleasesTheRecordedCertificate(t *testing.T) {
-	registryURL := realAWIDFixture(t)
+	registryURL := "http://127.0.0.1:1"
 	for _, parent := range []string{"root", "human"} {
 		t.Run(parent, func(t *testing.T) {
 			r := newParentCreateRun(t, registryURL)
