@@ -176,9 +176,9 @@ services:
       AWID_PORT: 8010
       AWID_RATE_LIMIT_DISABLED: "1"
       AWID_SERVICE_TOKEN: cross-registry-messaging-service-token-32-bytes
-      AWID_SKIP_DNS_VERIFY: "1"
       AWID_ALLOW_INSECURE_DELIVERY_ORIGIN: "1"
       APP_ENV: development
+    # FEDERATION_DNS_AWID_A
     depends_on:
       postgres-a: {condition: service_healthy}
       redis-a: {condition: service_healthy}
@@ -193,9 +193,9 @@ services:
       AWID_PORT: 8010
       AWID_RATE_LIMIT_DISABLED: "1"
       AWID_SERVICE_TOKEN: cross-registry-messaging-service-token-32-bytes
-      AWID_SKIP_DNS_VERIFY: "1"
       AWID_ALLOW_INSECURE_DELIVERY_ORIGIN: "1"
       APP_ENV: development
+    # FEDERATION_DNS_AWID_B
     depends_on:
       postgres-b: {condition: service_healthy}
       redis-b: {condition: service_healthy}
@@ -242,7 +242,6 @@ services:
     environment:
       HOME: /work/home
       APP_ENV: development
-      AWID_SKIP_DNS_VERIFY: "1"
     volumes:
       - "$WORK_DIR:/work"
     # FEDERATION_DNS_CLI
@@ -253,21 +252,22 @@ EOF
 
 compose down -v --remove-orphans >/dev/null 2>&1 || true
 compose build awid-a awid-b aweb-a aweb-b cli
-compose up -d federation-dns postgres-a postgres-b redis-a redis-b awid-a awid-b
-wait_health awid-a "http://$PUBLISHED_HOST:$AWID_A_PORT" awid-a
-wait_health awid-b "http://$PUBLISHED_HOST:$AWID_B_PORT" awid-b
+compose up -d federation-dns postgres-a postgres-b redis-a redis-b
 DNS_IP="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$(compose ps -q federation-dns)")"
 [[ -n "$DNS_IP" ]]
 python3 - "$COMPOSE_FILE" "$DNS_IP" <<'PY'
 from pathlib import Path
 import ipaddress,sys
 path=Path(sys.argv[1]); ip=str(ipaddress.ip_address(sys.argv[2])); text=path.read_text()
-for marker in ("A", "B", "CLI"):
+for marker in ("A", "B", "CLI", "AWID_A", "AWID_B"):
     source=f"    # FEDERATION_DNS_{marker}"
     assert text.count(source)==1, source
     text=text.replace(source, f'    dns:\n      - "{ip}"')
 path.write_text(text)
 PY
+compose up -d awid-a awid-b
+wait_health awid-a "http://$PUBLISHED_HOST:$AWID_A_PORT" awid-a
+wait_health awid-b "http://$PUBLISHED_HOST:$AWID_B_PORT" awid-b
 compose up -d aweb-a aweb-b
 wait_health aweb-a "http://$PUBLISHED_HOST:$AWEB_A_PORT" aweb-a
 wait_health aweb-b "http://$PUBLISHED_HOST:$AWEB_B_PORT" aweb-b
@@ -342,18 +342,44 @@ for identity in alice bob; do
   [[ "$matched" == 1 ]] || { echo "CLI never verified exact DNS for $domain" >&2; exit 1; }
 done
 
-echo "Creating identities through verified DNS in disjoint registries"
-alice_create="$(run_cli alice id create --name alice --domain alpha.example.com --registry http://awid-a:8010 --json)"
+echo "Creating human and agent chains through real DNS, Secret Service and PTY"
+compose run --rm -T --no-deps --entrypoint dbus-run-session cli -- \
+  python3 /usr/local/bin/cross-registry-human-journey.py &
+human_job=$!
+# The PTY driver signals actual progress. Service changes happen only here,
+# against this journey's own Compose project, with no Docker socket in CLI.
+for _ in $(seq 1 600); do
+  if [[ -f "$WORK_DIR/stop-awid-request" && ! -f "$WORK_DIR/stop-awid-complete" ]]; then
+    compose stop awid-a
+    touch "$WORK_DIR/stop-awid-complete"
+  fi
+  if [[ -f "$WORK_DIR/start-awid-request" && ! -f "$WORK_DIR/start-awid-complete" ]]; then
+    compose start awid-a
+    wait_health awid-a "http://$PUBLISHED_HOST:$AWID_A_PORT" awid-a
+    touch "$WORK_DIR/start-awid-complete"
+  fi
+  if ! kill -0 "$human_job" 2>/dev/null; then break; fi
+  sleep 1
+done
+if kill -0 "$human_job" 2>/dev/null; then
+  kill "$human_job"
+  wait "$human_job" || true
+  echo "human constructor journey timed out" >&2
+  exit 1
+fi
+wait "$human_job"
+alice_create="$(cat "$WORK_DIR/alice-create.json")"
+bob_create="$(cat "$WORK_DIR/bob-create.json")"
 ALICE_DID_AW="$(printf '%s' "$alice_create" | json_field did_aw)"
-[[ "$(printf '%s' "$alice_create" | json_field controller_did)" == "$ALICE_CONTROLLER" ]]
+BOB_DID_AW="$(printf '%s' "$bob_create" | json_field did_aw)"
+compose run --rm -T --no-deps --entrypoint id-tree-verifier cli
+compose cp "$ROOT/scripts/cross-registry-python-verifier.py" awid-b:/tmp/cross-registry-python-verifier.py
+compose exec -T awid-b python /tmp/cross-registry-python-verifier.py < "$WORK_DIR/journey-public.json"
 run_cli alice id team create --name alpha --namespace alpha.example.com --registry http://awid-a:8010 --json >/dev/null
 alice_invite="$(run_cli alice id team invite --team alpha --namespace alpha.example.com --member-global --json)"
 run_cli alice id team accept-invite "$(printf '%s' "$alice_invite" | json_field token)" --name alice --global --json >/dev/null
 run_cli alice init --url http://aweb-a:8000 --name alice --do-not-touch-agents-md >/dev/null
 
-bob_create="$(run_cli bob id create --name bob --domain beta.example.net --registry http://awid-b:8010 --json)"
-BOB_DID_AW="$(printf '%s' "$bob_create" | json_field did_aw)"
-[[ "$(printf '%s' "$bob_create" | json_field controller_did)" == "$BOB_CONTROLLER" ]]
 run_cli bob id team create --name beta --namespace beta.example.net --registry http://awid-b:8010 --json >/dev/null
 bob_invite="$(run_cli bob id team invite --team beta --namespace beta.example.net --member-global --json)"
 run_cli bob id team accept-invite "$(printf '%s' "$bob_invite" | json_field token)" --name bob --global --json >/dev/null
@@ -387,4 +413,4 @@ run_cli bob chat send-and-leave --plaintext alpha.example.com/alice "two registr
 alice_chat="$(run_cli alice chat history beta.example.net/bob --json)"
 assert_chat_message "$alice_chat" "two registry chat reply"
 
-echo "PASS: real DNS rejects a wrong controller and authorizes mail and chat across disjoint registries"
+echo "PASS: real DNS, Secret Service, PTY, constructor chains, unchanged resume, outsider verification, mail and chat across disjoint registries"
