@@ -211,7 +211,9 @@ async def test_contact_add_unregistered_cross_namespace_target(aweb_cloud_db, mi
 async def test_contacts_routes_accept_equivalent_identity_owner_did(aweb_cloud_db):
     bob_sk, _, bob_did_key = _make_keypair()
     registry = AsyncMock()
-    registry.resolve_key_fresh = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=bob_did_key))
+    registry.resolve_key_fresh = AsyncMock(return_value=KeyResolution(
+        did_aw="did:aw:bob", current_did_key=bob_did_key, id_tree=IDTreeEnrollment(False, None),
+    ))
     registry.list_did_addresses = AsyncMock(return_value=[])
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
 
@@ -245,7 +247,9 @@ async def test_contacts_routes_accept_equivalent_identity_owner_did(aweb_cloud_d
 async def test_contacts_route_normalizes_hosted_handle_address(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     registry = AsyncMock()
-    registry.resolve_key_fresh = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
+    registry.resolve_key_fresh = AsyncMock(return_value=KeyResolution(
+        did_aw="did:aw:alice", current_did_key=alice_did_key, id_tree=IDTreeEnrollment(False, None),
+    ))
     registry.list_did_addresses = AsyncMock(return_value=[])
     registry.resolve_address = AsyncMock(
         return_value=Address(

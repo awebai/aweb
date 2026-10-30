@@ -20,6 +20,7 @@ from httpx import ASGITransport, AsyncClient
 from nacl.signing import SigningKey
 
 from awid.did import did_from_public_key
+from awid.registry import IDTreeEnrollment
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.api import create_app
 from aweb.auth_context import GRANT_SCOPE_ANY, GRANT_SCOPES, GrantContext
@@ -91,7 +92,10 @@ def _verified_subject_fixture(app):
     # real registry admission/refusal lives in test_identity_binding_http.
     app.state.identity_binding_cache = OrderedDict({
         ("did:aw:alice", SUBJECT_DID_KEY, "acme.com/alice"): (
-            monotonic() + 60, IdentityBinding("did:aw:alice", "acme.com/alice"),
+            monotonic() + 60, IdentityBinding(
+                "did:aw:alice", "acme.com/alice", did_key=SUBJECT_DID_KEY,
+                id_tree=IDTreeEnrollment(False, None),
+            ),
         ),
     })
 

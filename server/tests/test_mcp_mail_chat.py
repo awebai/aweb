@@ -5,6 +5,7 @@ from collections import OrderedDict
 from time import monotonic
 from types import SimpleNamespace
 from aweb.identity_binding import IdentityBinding
+from awid.registry import IDTreeEnrollment
 from aweb.team_auth_deps import TeamIdentity
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -152,7 +153,9 @@ def _request_with_headers(headers: dict[str, str], *, verified_bindings=()) -> R
             "app": SimpleNamespace(state=SimpleNamespace(
                 awid_registry_client=object(),
                 identity_binding_cache=OrderedDict({
-                    (did_aw,did_key,address): (monotonic()+60,IdentityBinding(did_aw,address))
+                    (did_aw,did_key,address): (monotonic()+60,IdentityBinding(
+                        did_aw, address, did_key=did_key, id_tree=IDTreeEnrollment(False, None),
+                    ))
                     for did_aw,did_key,address in verified_bindings
                 }),
             )),
