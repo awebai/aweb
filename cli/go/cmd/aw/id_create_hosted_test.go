@@ -290,6 +290,9 @@ func testHostedIdentityCreateWithSelector(t *testing.T, mode string, ownerMode b
 	if err != nil {
 		t.Fatalf("same-key retry: %v; %s", err, diagnostic)
 	}
+	if createCalls != 3 {
+		t.Fatalf("saved membership result repeated creation after readback failure: %d posts", createCalls)
+	}
 	var result map[string]any
 	if err := json.Unmarshal(out, &result); err != nil {
 		t.Fatal(err)

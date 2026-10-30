@@ -41,6 +41,11 @@ func TestAPIKeyGlobalRecoveryCommand(t *testing.T) {
 				mu.Lock()
 				defer mu.Unlock()
 				switch {
+				case r.Method == "GET" && r.URL.Path == "/api/v1/teams/current":
+					if r.Header.Get("Authorization") != "Bearer "+provisioningKey {
+						t.Error("team selection did not use original authority")
+					}
+					json.NewEncoder(w).Encode(map[string]any{"team_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": team})
 				case r.Method == "POST" && r.URL.Path == "/v1/did":
 					var body map[string]any
 					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -219,8 +224,16 @@ func TestAPIKeyGlobalRecoveryCommand(t *testing.T) {
 				return stdout, stderr, code
 			}
 			stdout, stderr, code := run(provisioningKey)
-			if code == 0 || stdout != "" || stderr == "" {
+			if code == 0 || stderr == "" {
 				t.Fatalf("expected captured failure, code=%d stdout=%q stderr=%q", code, stdout, stderr)
+			}
+			var failure struct {
+				Error struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal([]byte(stdout), &failure); err != nil || failure.Error.Code == "" {
+				t.Fatalf("expected one structured JSON error, stdout=%q", stdout)
 			}
 			partial, err := os.ReadFile(apiKeyPartialInitPath(target))
 			if err != nil {

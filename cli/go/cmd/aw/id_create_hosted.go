@@ -41,10 +41,11 @@ type hostedIdentityContext struct {
 }
 
 type hostedIdentityRecovery struct {
-	Version     int                   `json:"version"`
-	Context     hostedIdentityContext `json:"context"`
-	SigningSeed string                `json:"signing_seed"`
-	IDTree      *hostedIDTreeRecovery `json:"id_tree"`
+	ResponseJSON string                `json:"response_json,omitempty"`
+	Version      int                   `json:"version"`
+	Context      hostedIdentityContext `json:"context"`
+	SigningSeed  string                `json:"signing_seed"`
+	IDTree       *hostedIDTreeRecovery `json:"id_tree"`
 }
 
 type hostedIdentityResponse struct {
@@ -206,7 +207,7 @@ func runHostedIdentityCreate(cmd *cobra.Command) error {
 		return err
 	}
 	var nativeChain map[string]any
-	if selectedIssuer != nil {
+	if selectedIssuer != nil && state.ResponseJSON == "" {
 		step := agentChainStep{issuer: selectedIssuer.childIssuer, agentID: material.StableID, agentDIDKey: material.DIDKey, agentKey: material.SigningKey, domain: association.Domain, registryURL: association.RegistryURL, registry: registry, identityDir: home.Root, now: time.Now().UTC()}
 		nativeChain, err = step.issue(ctx)
 		if err != nil {
@@ -224,6 +225,11 @@ func runHostedIdentityCreate(cmd *cobra.Command) error {
 			return err
 		}
 		if _, err := finishHostedIDTree(ctx, state.IDTree, awid.IDTreeCreationResponse{IDChain: awid.ReceivedIDChain(nativeChain), RegistrationRequest: &awid.IDTreeRegistrationRequest{}}, material, home.Root, registry, nil); err != nil {
+			return err
+		}
+	} else if selectedIssuer != nil {
+		nativeChain, err = awid.DecodeIDChainHeader(state.IDTree.NativeChainHeader)
+		if err != nil {
 			return err
 		}
 	}
@@ -257,11 +263,12 @@ func runHostedIdentityCreate(cmd *cobra.Command) error {
 		request["id_tree"] = treeRequest
 	}
 	var response hostedIdentityResponse
-	if owner != nil {
-		err = postHostedOwnerIdentity(ctx, owner, request, &response)
-	} else {
-		err = postCLIAuthJSON(ctx, cfg.Issuer, cliIdentityCreatePath, cfg.AccessToken, request, &response)
-	}
+	err = readHostedCreationResponse(state.ResponseJSON, &response, func() error {
+		if owner != nil {
+			return postHostedOwnerIdentity(ctx, owner, request, &response)
+		}
+		return postCLIAuthJSON(ctx, cfg.Issuer, cliIdentityCreatePath, cfg.AccessToken, request, &response)
+	})
 	if err != nil {
 		if nativeChain != nil {
 			return fmt.Errorf("identity independently registered; hosted membership could not be confirmed: %w", err)
@@ -274,6 +281,12 @@ func runHostedIdentityCreate(cmd *cobra.Command) error {
 	}
 	if err := state.IDTree.retainResponse(response.IDTreeCreationResponse); err != nil {
 		return err
+	}
+	if state.ResponseJSON == "" {
+		state.ResponseJSON, err = canonicalHostedCreationResponse(response, response.IDTreeCreationResponse)
+		if err != nil {
+			return err
+		}
 	}
 	if err := saveHostedIdentityRecovery(statePath, state); err != nil {
 		return err

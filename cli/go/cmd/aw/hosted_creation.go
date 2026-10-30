@@ -313,3 +313,33 @@ func readAPIKeyCreationTeam(ctx context.Context, baseURL, apiKey string) (*apiKe
 	selected.Domain = domain
 	return &selected, nil
 }
+
+// readHostedCreationResponse keeps the constructor transport at the creation
+// boundary. A retained response is the membership result of that operation.
+func readHostedCreationResponse(retained string, response any, create func() error) error {
+	if retained != "" {
+		return json.Unmarshal([]byte(retained), response)
+	}
+	return create()
+}
+
+// Keep the complete membership artifact with the chain, including whether an
+// older response omitted the attribution fields. Resume must not turn omission
+// into explicit nulls, or issue a second constructor POST to recover metadata.
+func canonicalHostedCreationResponse(response any, tree awid.IDTreeCreationResponse) (string, error) {
+	raw, err := json.Marshal(response)
+	if err != nil {
+		return "", err
+	}
+	var value map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
+		return "", err
+	}
+	if !tree.FieldsPresent && tree.IDChain == nil && tree.RegistrationRequest == nil {
+		delete(value, "id_chain")
+		delete(value, "registration_request")
+	}
+	return awid.CanonicalJSONValue(value)
+}

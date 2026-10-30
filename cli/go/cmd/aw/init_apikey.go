@@ -78,6 +78,7 @@ type apiKeyBootstrapResponse struct {
 }
 
 type apiKeyPartialInitState struct {
+	ResponseJSON    string                `yaml:"response_json,omitempty"`
 	IDTree          *hostedIDTreeRecovery `yaml:"id_tree,omitempty"`
 	IdentityScope   string                `yaml:"identity_scope,omitempty"`
 	Alias           string                `yaml:"alias,omitempty"`
@@ -212,19 +213,26 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 		}
 	}
 
-	resp, err := postAPIKeyWorkspaceInit(context.Background(), strings.TrimSpace(req.AwebURL), strings.TrimSpace(req.APIKey), apiKeyBootstrapRequest{
-		IDTree:        state.IDTree.request(nil),
-		DID:           didKey,
-		PublicKey:     base64.StdEncoding.EncodeToString(pub),
-		Name:          name,
-		Alias:         alias,
-		Custody:       awid.CustodySelf,
-		RoleName:      strings.TrimSpace(req.Role),
-		HumanName:     strings.TrimSpace(req.HumanName),
-		AgentType:     strings.TrimSpace(req.AgentType),
-		IdentityScope: initIdentityScopeValue(req.Global),
-		InboundMode:   strings.TrimSpace(req.InboundMode),
-	}, signingKey)
+	resp := &apiKeyBootstrapResponse{}
+	err = readHostedCreationResponse(state.ResponseJSON, resp, func() error {
+		created, createErr := postAPIKeyWorkspaceInit(context.Background(), strings.TrimSpace(req.AwebURL), strings.TrimSpace(req.APIKey), apiKeyBootstrapRequest{
+			IDTree:        state.IDTree.request(nil),
+			DID:           didKey,
+			PublicKey:     base64.StdEncoding.EncodeToString(pub),
+			Name:          name,
+			Alias:         alias,
+			Custody:       awid.CustodySelf,
+			RoleName:      strings.TrimSpace(req.Role),
+			HumanName:     strings.TrimSpace(req.HumanName),
+			AgentType:     strings.TrimSpace(req.AgentType),
+			IdentityScope: initIdentityScopeValue(req.Global),
+			InboundMode:   strings.TrimSpace(req.InboundMode),
+		}, signingKey)
+		if createErr == nil {
+			*resp = *created
+		}
+		return createErr
+	})
 	if err != nil {
 		return connectOutput{}, err
 	}
@@ -267,6 +275,12 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 	}
 	if err := state.IDTree.retainResponse(resp.IDTreeCreationResponse); err != nil {
 		return connectOutput{}, err
+	}
+	if state.ResponseJSON == "" {
+		state.ResponseJSON, err = canonicalHostedCreationResponse(resp, resp.IDTreeCreationResponse)
+		if err != nil {
+			return connectOutput{}, err
+		}
 	}
 	if err := saveAPIKeyPartialInit(req.WorkingDir, state, req.IdentityHome); err != nil {
 		return connectOutput{}, err

@@ -1427,8 +1427,8 @@ func TestRunAPIKeyBootstrapInitGlobalRollsBackOnConnectFailureAndResumes(t *test
 	if result.TeamID != "default:ama.aweb.ai" {
 		t.Fatalf("team_id=%q", result.TeamID)
 	}
-	if len(workspaceInitDIDKeys) != 2 || workspaceInitDIDKeys[0] != workspaceInitDIDKeys[1] {
-		t.Fatalf("retry must reuse the same identity; workspace init DID keys=%v", workspaceInitDIDKeys)
+	if len(workspaceInitDIDKeys) != 1 {
+		t.Fatalf("resume repeated Cloud creation after its response was durable: DID keys=%v", workspaceInitDIDKeys)
 	}
 	signingKey, err := awid.LoadSigningKey(filepath.Join(tmp, ".aw", "signing.key"))
 	if err != nil {
