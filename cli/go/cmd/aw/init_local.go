@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
+	"crypto/ed25519"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
+	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
 
@@ -29,6 +33,42 @@ func implicitLocalTeamNameValue(value string) string {
 	return implicitLocalTeamName
 }
 
+// localNamespaceOnRemoteRegistry refuses --new-team against a registry that
+// is not on this machine: the self-hosted namespace is created only there.
+func localNamespaceOnRemoteRegistry(registryURL string) error {
+	return usageError("--new-team without --byod creates the self-hosted namespace %q, which is created only against an awid registry on this machine; %s is not on this machine. "+
+		"The first machine to create %q on a registry owns it with its controller key. "+
+		"To add this machine to a team there, run `aw team invite` on a member's machine and `aw team join <token>` here; "+
+		"to create a namespace of your own, run `aw init --new-team --byod --domain <a domain you control>`",
+		implicitLocalDomain, registryURL, implicitLocalDomain)
+}
+
+// localNamespaceHeldElsewhere refuses before this machine mints a controller
+// key for a namespace another machine's controller already holds.
+func localNamespaceHeldElsewhere(ctx context.Context, registry *awid.RegistryClient, registryURL string) error {
+	namespace, _, err := registry.GetNamespaceAt(ctx, registryURL, implicitLocalDomain)
+	if code, ok := registryStatusCode(err); ok && code == http.StatusNotFound {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if exists, err := awconfig.ControllerKeyExists(implicitLocalDomain); err != nil {
+		return err
+	} else if exists {
+		key, err := awconfig.LoadControllerKey(implicitLocalDomain)
+		if err != nil {
+			return err
+		}
+		if awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)) == strings.TrimSpace(namespace.ControllerDID) {
+			return nil
+		}
+	}
+	return usageError("the self-hosted namespace %q on %s is owned by controller %s, created on another machine. "+
+		"To add this machine to a team there, run `aw team invite` on a member's machine and `aw team join <token>` here",
+		implicitLocalDomain, registryURL, strings.TrimSpace(namespace.ControllerDID))
+}
+
 func runImplicitLocalInit(req implicitLocalInitRequest) (connectOutput, error) {
 	if strings.TrimSpace(req.WorkingDir) == "" {
 		return connectOutput{}, fmt.Errorf("working directory is required")
@@ -45,6 +85,18 @@ func runImplicitLocalInit(req implicitLocalInitRequest) (connectOutput, error) {
 	}
 	if err := ensureConnectTargetClean(req.WorkingDir); err != nil {
 		return connectOutput{}, err
+	}
+	{
+		registry, err := newConfiguredRegistryClient(nil, "")
+		if err != nil {
+			return connectOutput{}, err
+		}
+		ctx, cancel := commandAPIContext(nil)
+		err = localNamespaceHeldElsewhere(ctx, registry, req.RegistryURL)
+		cancel()
+		if err != nil {
+			return connectOutput{}, err
+		}
 	}
 
 	prepared, err := prepareIDCreatePlan(req.WorkingDir, idCreateOptions{

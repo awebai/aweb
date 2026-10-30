@@ -653,6 +653,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+		if initNewTeam && !initBYOD && strings.TrimSpace(initUsername) == "" && strings.TrimSpace(initDomain) == "" && !initGlobal && !initRegistryIsLocalhost(registryURL) {
+			return localNamespaceOnRemoteRegistry(registryURL)
+		}
 		if initShouldUseImplicitLocalFlow(registryURL) {
 			if !initNewTeam {
 				if err := requireOrPromptInitOutcome(canPrompt, "create a new self-hosted team", "--new-team"); err != nil {
