@@ -78,7 +78,8 @@ func newOwnTeamAddressFixture(t *testing.T) *ownTeamAddressFixture {
 }
 
 // A global sender reaches a local member of its own team by full address, as
-// it does by alias: the authenticated team roster binds the recipient's key
+// it does by alias. AWID is asked first and has no such address; the
+// authenticated team roster then binds the recipient's key
 // (docs/messaging-contract-matrix.md, case 2).
 func TestGlobalSenderReachesOwnTeamLocalMemberByFullAddress(t *testing.T) {
 	f := newOwnTeamAddressFixture(t)
@@ -88,8 +89,8 @@ func TestGlobalSenderReachesOwnTeamLocalMemberByFullAddress(t *testing.T) {
 	if f.sent["to_did"] != f.kestrelDID || f.sent["to_address"] != "acme.com/kestrel" {
 		t.Fatalf("sent %v", f.sent)
 	}
-	if f.addressGets != 0 {
-		t.Fatalf("own-team member was looked up at AWID %d times", f.addressGets)
+	if f.addressGets != 1 {
+		t.Fatalf("AWID was asked %d times, want once before the roster", f.addressGets)
 	}
 
 	chat := newOwnTeamAddressFixture(t)
@@ -100,7 +101,7 @@ func TestGlobalSenderReachesOwnTeamLocalMemberByFullAddress(t *testing.T) {
 	if err := json.Unmarshal([]byte(chat.sent["signed_payload"].(string)), &signed); err != nil {
 		t.Fatal(err)
 	}
-	if signed["to_did"] != chat.kestrelDID || chat.addressGets != 0 {
+	if signed["to_did"] != chat.kestrelDID || chat.addressGets != 1 {
 		t.Fatalf("chat signed %v after %d AWID reads", signed, chat.addressGets)
 	}
 }
