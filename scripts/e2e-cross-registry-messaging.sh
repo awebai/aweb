@@ -107,6 +107,28 @@ print(json.dumps(value, sort_keys=True))
 '
 }
 
+# Check the complete public who result, including the exact ordered chain.
+assert_received_who() {
+  local identity="$1" expected="$2"
+  shift 2
+  run_cli "$identity" who "$@" --json | python3 -c '
+import json,sys
+raw=sys.stdin.read(); result=json.loads(raw[raw.find("{"):])
+assert result == json.loads(sys.argv[1]), result
+' "$expected"
+}
+
+verify_ts_received() {
+  local messages="$1" human="$2" message_id="$3"
+  printf '%s' "$messages" | python3 -c '
+import json,sys
+value=json.load(sys.stdin)
+rows=[m for m in value["messages"] if m["message_id"]==sys.argv[2]]
+assert len(rows)==1, rows
+print(json.dumps({"messages":rows,"human_id":sys.argv[1] or None}))
+' "$human" "$message_id" | compose run --rm -T --no-deps --entrypoint node cli /journey/scripts/cross-registry-inbound-verifier.mjs
+}
+
 assert_inbox_message() {
   local json="$1" subject="$2" body="$3"
   printf '%s' "$json" | python3 -c '
@@ -440,17 +462,47 @@ CONVERSATION_ID="$(printf '%s' "$mail_out" | json_field conversation_id)"
 [[ -n "$(printf '%s' "$mail_out" | json_field message_id)" && -n "$CONVERSATION_ID" ]]
 bob_inbox="$(run_cli bob mail inbox --show-all --json)"
 assert_inbox_message "$bob_inbox" "two registry mail" "alice to bob"
+MAIL_ID="$(printf '%s' "$mail_out" | json_field message_id)"
+ALICE_HUMAN="$(printf '%s' "$ALICE_WHO" | json_field human_id)"
+assert_received_who bob "$ALICE_WHO" alpha.example.com/alice
+assert_received_who bob "$ALICE_WHO" "$ALICE_DID_AW"
+assert_received_who bob "$ALICE_WHO" --message-id "$MAIL_ID"
+verify_ts_received "$bob_inbox" "$ALICE_HUMAN" "$MAIL_ID"
+echo "PASS: received mail exposes the sender's verified human in Go who and the TS reader"
+
 run_cli bob mail send --plaintext --conversation-id "$CONVERSATION_ID" --subject "two registry reply" --body "bob to alice" --json >/dev/null
 alice_inbox="$(run_cli alice mail inbox --show-all --json)"
 assert_inbox_message "$alice_inbox" "two registry reply" "bob to alice"
 
 echo "Proving CLI chat delivery across two registries"
-run_cli alice chat send-and-leave --plaintext beta.example.net/bob "two registry chat" --json >/dev/null
+chat_out="$(run_cli alice chat send-and-leave --plaintext beta.example.net/bob "two registry chat" --json)"
 bob_chat="$(run_cli bob chat history alpha.example.com/alice --json)"
 assert_chat_message "$bob_chat" "two registry chat"
+CHAT_SESSION="$(printf '%s' "$chat_out" | json_field session_id)"
+CHAT_ID="$(printf '%s' "$chat_out" | json_field message_id)"
+assert_received_who bob "$ALICE_WHO" --session-id "$CHAT_SESSION" --message-id "$CHAT_ID"
+verify_ts_received "$bob_chat" "$ALICE_HUMAN" "$CHAT_ID"
+echo "PASS: received chat exposes the sender's verified human in Go who and the TS reader"
+
 run_cli bob chat send-and-leave --plaintext alpha.example.com/alice "two registry chat reply" --json >/dev/null
 alice_chat="$(run_cli alice chat history beta.example.net/bob --json)"
 assert_chat_message "$alice_chat" "two registry chat reply"
+
+# A registered global identity with authoritative no enrollment stays unknown.
+plain_invite="$(run_cli alice id team invite --team alpha --namespace alpha.example.com --member-global --json)"
+run_cli plain id team accept-invite "$(printf '%s' "$plain_invite" | json_field token)" --name plain --global --json >/dev/null
+run_cli plain init --url http://aweb-a:8000 --name plain --do-not-touch-agents-md >/dev/null
+plain_mail="$(run_cli plain mail send --plaintext --to-address beta.example.net/bob --subject 'chainless sender' --body 'no human inferred' --json)"
+PLAIN_MAIL_ID="$(printf '%s' "$plain_mail" | json_field message_id)"
+run_cli bob who --message-id "$PLAIN_MAIL_ID" --json | python3 -c '
+import json,sys
+raw=sys.stdin.read(); result=json.loads(raw[raw.find("{"):])
+assert result["outcome"]=="unknown" and result["reason"]=="unregistered_identity", result
+assert result["human_id"] is None and result["identity_valid"] is None and "chain" not in result, result
+'
+plain_inbox="$(run_cli bob mail inbox --show-all --json)"
+verify_ts_received "$plain_inbox" "" "$PLAIN_MAIL_ID"
+echo "PASS: an unenrolled received sender remains unknown with no inferred human"
 
 echo "Proving team membership removal is not ID revocation"
 removed="$(run_cli alice id team remove-member --team alpha --namespace alpha.example.com --member alpha.example.com/alice --json)"

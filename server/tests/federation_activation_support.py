@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from awid.federation_errors import FederationAuthorityError
+from awid.registry import Address, IDTreeEnrollment, KeyResolution
+from types import SimpleNamespace
 from aweb.federation.activation import AuthorizedFederationSender, ResolvedContactIdentity
 from aweb.federation.authority_state import AuthoritySecurityToken
 from did_key_fixtures import named_did_key
@@ -14,6 +18,24 @@ class TestFederationAuthority:
     def __init__(self, manager, registry) -> None:
         self.manager = manager
         self.registry = registry
+
+    @asynccontextmanager
+    async def received_registry_client(self, token, did_key, redis):
+        # This legacy fixture declares an unenrolled sender. Production ingress
+        # evidence (including an enrolled chain) uses the real TLS registry tests.
+        async def key(did_aw):
+            assert did_aw == token.did_aw
+            return KeyResolution(did_aw=did_aw, current_did_key=did_key,
+                                 id_tree=IDTreeEnrollment(enrolled=False, domain=None))
+
+        async def address(domain, name):
+            assert f"{domain}/{name}" == token.canonical_address
+            return Address(address_id="fixture-sender", domain=domain, name=name,
+                           did_aw=token.did_aw, current_did_key=did_key,
+                           reachability="public", created_at="2026-10-26T00:00:00Z")
+
+        yield SimpleNamespace(registry_url="https://registry.test", resolve_key_fresh=key,
+                              resolve_address_fresh=address)
 
     async def authorize(self, claim, *, source_ip: str):
         del source_ip

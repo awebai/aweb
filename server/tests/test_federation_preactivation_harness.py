@@ -781,7 +781,8 @@ class _TLSRegistry:
         request = await reader.readuntil(b"\r\n\r\n")
         self.requests.append(request)
         path = request.split(b" ", 2)[1].decode()
-        value = self.responses[path]
+        from urllib.parse import unquote
+        value = next(value for key, value in self.responses.items() if unquote(key) == unquote(path))
         body = json.dumps(value, separators=(",", ":")).encode()
         writer.write(
             b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
@@ -819,6 +820,7 @@ def _identity_registry_responses(domain: str, name: str, delivery_origin: str):
             "did_aw": mapping["did_aw"],
             "current_did_key": mapping["rotated_did_key"],
             "delivery": {"origin": delivery_origin},
+            "created_at": "2026-10-26T00:00:00Z",
         },
         f"/v1/did/{escaped_did}/key": {
             "did_aw": mapping["did_aw"],
@@ -831,8 +833,9 @@ def _identity_registry_responses(domain: str, name: str, delivery_origin: str):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("with_chain, authority_case", [(False, "direct"), (True, "direct"), (True, "alias"), (True, "mismatch"), (False, "timeout")])
 async def test_http_ingress_uses_production_dns_authority_not_receiver_home_registry(
-    two_receiver_databases,
+    two_receiver_databases, with_chain, authority_case,
 ) -> None:
     _, receiver_db = two_receiver_databases
     sender_domain = "alpha.test"
@@ -841,6 +844,31 @@ async def test_http_ingress_uses_production_dns_authority_not_receiver_home_regi
     mapping, sender_responses = _identity_registry_responses(
         sender_domain, sender_name, sender_delivery
     )
+    chain = None
+    if with_chain:
+        id_vectors = json.loads((_ROOT / "docs/vectors/id-certificates-v1.json").read_text())
+        case = next(c for c in id_vectors["verification_cases"] if c["name"] == "registered-agent")
+        snapshot = id_vectors["status_fixtures"][case["status"]]
+        chain = {"v": 1, "type": "aweb.id-chain", "certificates": [id_vectors["certificates"][name]["signed"] for name in case["chain"]]}
+        sender_domain = "example.com"
+        row = next(r for r in snapshot["identities"] if r["id"] == case["subject"]["id"])
+        entries = [r["entry"] for r in row["key_history"]]
+        mapping = {"did_aw": case["subject"]["id"], "rotated_did_key": case["subject"]["did_key"], "initial_did_key": snapshot["namespace"]["epochs"][-1]["did_key"]}
+        escaped = mapping["did_aw"].replace(":", "%3A")
+        sender_responses = {
+            f"/v1/namespaces/{sender_domain}": {"domain": sender_domain, "controller_did": mapping["initial_did_key"]},
+            f"/v1/namespaces/{sender_domain}/addresses/{sender_name}": {"address_id": "foreign-sender", "domain": sender_domain, "name": sender_name, "did_aw": mapping["did_aw"], "current_did_key": mapping["rotated_did_key"], "delivery": {"origin": sender_delivery}, "created_at": "2026-10-26T00:00:00Z"},
+            f"/v1/did/{escaped}/key": {"did_aw": mapping["did_aw"], "current_did_key": mapping["rotated_did_key"], "log_head": entries[-1], "id_tree": {"enrolled": True, "domain": sender_domain}},
+            f"/v1/did/{escaped}/log": entries,
+            "/v1/id-certificates/status": snapshot,
+        }
+    else:
+        next(v for k, v in sender_responses.items() if k.endswith("/key"))["id_tree"] = {"enrolled": False}
+    if authority_case in {"alias", "mismatch"}:
+        old_domain, sender_domain = sender_domain, "alias.test"
+        sender_responses = {key.replace(old_domain, sender_domain): value for key, value in sender_responses.items()}
+        sender_responses[f"/v1/namespaces/{sender_domain}"]["domain"] = sender_domain
+        sender_responses[f"/v1/namespaces/{sender_domain}/addresses/{sender_name}"]["domain"] = sender_domain
     target_key = SigningKey.generate()
     target_did_key = did_from_public_key(bytes(target_key.verify_key))
     target_did_aw = "did:aw:receiver"
@@ -884,9 +912,25 @@ async def test_http_ingress_uses_production_dns_authority_not_receiver_home_regi
         sender_dns = _RecordedDNS(
             sender_domain, mapping["initial_did_key"], sender_registry.origin
         )
+        if authority_case in {"alias", "mismatch"}:
+            class AliasDNS(_RecordedDNS):
+                async def lookup_txt(self, name):
+                    if name == "_awid.example.com":
+                        self.queries.append(name)
+                        origin = self.registry_origin if authority_case == "alias" else "https://different-registry.test"
+                        return DNSLookup("record", (f"awid=v1; controller={self.controller_did}; registry={origin};",))
+                    return await super().lookup_txt(name)
+            sender_dns = AliasDNS(sender_domain, mapping["initial_did_key"], sender_registry.origin)
+
+        class ReceiveHosts(_LoopbackHosts):
+            async def resolve_all(self, hostname):
+                if authority_case == "timeout" and self.queries:
+                    await asyncio.Event().wait()
+                return await super().resolve_all(hostname)
+
         strict_resolver = StrictExternalRegistry(
             txt_resolver=sender_dns,
-            host_resolver=_LoopbackHosts(),
+            host_resolver=ReceiveHosts(),
             origin_context=OriginContext(
                 app_env="development",
                 federation_test_enabled=True,
@@ -902,6 +946,7 @@ async def test_http_ingress_uses_production_dns_authority_not_receiver_home_regi
         )
         home_registry_client = RegistryClient(
             registry_url=home_registry.origin,
+            service_token="receiver-service-must-stay-at-home-registry-only",
             transport=httpx.AsyncHTTPTransport(verify=home_registry.client_context),
         )
 
@@ -924,6 +969,12 @@ async def test_http_ingress_uses_production_dns_authority_not_receiver_home_regi
         sender_key = SigningKey(bytes.fromhex(json.loads(
             (_ROOT / "docs" / "vectors" / "identity-log-v1.json").read_text()
         )["key_seeds"]["rotated_seed_hex"]))
+        if with_chain:
+            sender_key = SigningKey(bytes.fromhex(next(k["seed_hex"] for k in id_vectors["keys"].values() if k["did_key"] == mapping["rotated_did_key"])))
+        from redis.asyncio import Redis
+        from redis.asyncio.retry import Retry
+        from redis.backoff import NoBackoff
+        app.state.redis = Redis(host="127.0.0.1", port=1, socket_connect_timeout=0.1, socket_timeout=0.1, retry=Retry(NoBackoff(), 0))
         message_id = str(uuid4())
         conversation_id = str(uuid4())
         timestamp = datetime.now(UTC).replace(microsecond=0).isoformat().replace(
@@ -972,15 +1023,23 @@ async def test_http_ingress_uses_production_dns_authority_not_receiver_home_regi
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://receiver.test"
             ) as client:
-                response = await client.post("/v1/federation/messages", json=payload)
+                from awid.id_certificates import encode_id_chain_header
+                headers = {"X-AWID-ID-Chain": encode_id_chain_header(chain)} if chain else {}
+                response = await client.post("/v1/federation/messages", json=payload, headers=headers)
         finally:
             await activation.aclose()
+            await app.state.redis.aclose()
             await home_registry_client.aclose()
 
+    if authority_case in {"mismatch", "timeout"}:
+        assert response.status_code == 503, response.text
+        assert response.json()["detail"] == ("sender_registry_unavailable" if authority_case == "timeout" else "evidence_unavailable")
+        assert await receiver_db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}} WHERE message_id=$1", UUID(message_id)) == 0
+        return
     assert response.status_code == 200, response.text
     assert response.json()["message_id"] == message_id
-    assert sender_dns.queries == ["_awid.alpha.test"]
-    assert len(sender_registry.requests) == 4
+    assert sender_dns.queries == [f"_awid.{sender_domain}"] + (["_awid.example.com"] if authority_case == "alias" else [])
+    assert not any(b"authorization:" in request.lower() or b"x-awid-service-token:" in request.lower() for request in sender_registry.requests)
     assert [request.split(b" ", 2)[1].decode() for request in home_registry.requests] == [
         target_path
     ]
@@ -1054,6 +1113,7 @@ async def test_mcp_cross_registry_uses_production_strict_authority_not_home_regi
         )
         home_client = RegistryClient(
             registry_url=home_registry.origin,
+            service_token="receiver-service-must-stay-at-home-registry-only",
             transport=httpx.AsyncHTTPTransport(verify=home_registry.client_context),
         )
         auth = AuthContext(
@@ -1080,6 +1140,7 @@ async def test_mcp_cross_registry_uses_production_strict_authority_not_home_regi
             )
 
         def remote_response(request: httpx.Request) -> httpx.Response:
+            assert "X-AWID-ID-Chain" not in request.headers
             body = json.loads(request.content)
             envelope = body["envelope"]
             result = {

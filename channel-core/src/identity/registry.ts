@@ -1,3 +1,5 @@
+import { keyResponseIdTree, type IdTreeEnrollment } from "./id_certificates.js";
+import { IdStatusClient } from "./id_status.js";
 import * as dns from "node:dns/promises";
 import { isIP } from "node:net";
 import { sha256, sha512 } from "@noble/hashes/sha2.js";
@@ -36,6 +38,7 @@ export interface DidKeyEvidence {
 }
 
 export interface DidKeyResolution {
+  id_tree?: unknown;
   did_aw: string;
   current_did_key: string;
   log_head?: DidKeyEvidence | null;
@@ -106,6 +109,7 @@ interface RegistryResolverOptions {
 }
 
 export class RegistryResolver {
+  readonly idStatus: IdStatusClient;
   private registryCache = new Map<string, CacheEntry<DomainAuthority>>();
   private addressCache = new Map<string, CacheEntry<{ registryURL: string; response: AddressResponse }>>();
   private keyCache = new Map<string, CacheEntry<DidKeyResolution>>();
@@ -120,6 +124,7 @@ export class RegistryResolver {
     private readonly now: () => number = () => Date.now(),
     options?: RegistryResolverOptions,
   ) {
+    this.idStatus = new IdStatusClient(fetchImpl, resolveTxtImpl, now);
     this.fallbackRegistryURL = options?.fallbackRegistryURL
       ? canonicalServerOrigin(options.fallbackRegistryURL)
       : "";
@@ -175,6 +180,21 @@ export class RegistryResolver {
     } catch (error) {
       return { registryURL: "", result: { outcome: "OK_DEGRADED", error: String(error) } };
     }
+  }
+
+  /** Enrollment from the very key snapshot used to authenticate an addressless sender. */
+  async receivedIdEnrollment(teamID: string, stableID: string, did: string): Promise<IdTreeEnrollment> {
+    const unknown: IdTreeEnrollment = { state: "unknown", domain: null };
+    const separator = teamID.indexOf(":");
+    if (separator < 1 || teamID.indexOf(":", separator + 1) !== -1) return unknown;
+    try {
+      const registryURL = (await this.discoverRegistry(teamID.slice(separator + 1))).replace(/\/+$/, "");
+      const cached = this.receivedRegistries.get(registryURL)?.keyCache.get(stableID);
+      if (!cached) return unknown;
+      const age = this.now() - (cached.expiresAt - REGISTRY_KEY_TTL_MS);
+      if (age < 0 || age > 60_000 || cached.value.did_aw !== stableID || cached.value.current_did_key !== did) return unknown;
+      return keyResponseIdTree(cached.value);
+    } catch { return unknown; }
   }
 
   private async verifyStableIdentityAtRegistry(
@@ -435,6 +455,12 @@ export async function discoverAuthoritativeRegistry(
     dnsName: awidTXTName(domain),
     inherited: false,
   };
+}
+
+export async function verifyExactDomainAuthority(domain: string, resolver: ResolveTxt = dns.resolveTxt): Promise<DomainAuthority> {
+  const authority = await lookupDomainAuthority(domain, false, resolver);
+  if (!authority) throw new Error("missing exact namespace authority");
+  return authority;
 }
 
 async function lookupDomainAuthority(
