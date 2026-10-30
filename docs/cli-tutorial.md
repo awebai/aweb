@@ -129,6 +129,9 @@ export AWEB_URL=http://localhost:8000
 export AWID_REGISTRY_URL=http://localhost:8010
 ```
 
+Compose publishes aweb and AWID on `127.0.0.1` only. To reach them from
+another machine, see the [self-hosting guide](self-hosting-guide.md).
+
 Keep these exports out of the shell you run `docker compose` from.
 `server/docker-compose.yml` reads `AWID_REGISTRY_URL` from the environment, so
 re-running `docker compose up` in a shell that has exported it points the `aweb`

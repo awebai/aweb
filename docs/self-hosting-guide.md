@@ -42,6 +42,13 @@ Default host ports:
 If you want different host ports, change `AWEB_PORT` and `AWID_PORT` in
 `server/.env` before `docker compose up`.
 
+Compose publishes both ports on `127.0.0.1` only, so they are reachable from
+this machine and nowhere else. Docker's published ports bypass host firewalls
+such as ufw: a port published on every interface is open to the network even
+when the firewall says it is closed. To reach the services from other machines,
+set `AWEB_BIND_ADDRESS` in `server/.env` to `0.0.0.0` or to the address of one
+interface, and put your own firewall rule or proxy in front of it.
+
 Compose refuses to start any container when `AWID_SERVICE_TOKEN` is missing or
 empty. Generate it once as shown above; Compose passes that exact value to both
 aweb and AWID. Do not commit `server/.env`.
