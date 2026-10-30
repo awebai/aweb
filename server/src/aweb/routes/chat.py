@@ -758,6 +758,7 @@ async def _deliver_federated_chat(
             delivery_origin=route["delivery_origin"],
             envelope=envelope,
             signature=federation_signature,
+            id_chain=getattr(request.state, "id_chain", None),
             transport=_federation_transport(request),
         )
     except FederatedMailDeliveryError as exc:
@@ -2287,7 +2288,7 @@ async def _sse_events(
                     "from_did": row.get("from_did"),
                     "signature": row.get("signature"),
                     "signed_payload": row.get("signed_payload"),
-                        "id_chain": stored_id_chain(row.get("id_chain")),
+                    "id_chain": stored_id_chain(row.get("id_chain")),
                     **verified_signed_recipient_fields({**row, "conversation_id": session_id_str}),
                     "is_contact": is_address_in_contacts(from_address, contact_addrs),
                 }
@@ -2423,7 +2424,7 @@ async def _sse_events(
                         "from_did": row.get("from_did"),
                         "signature": row.get("signature"),
                         "signed_payload": row.get("signed_payload"),
-                        "id_chain": stored_id_chain(row.get("id_chain")),
+                    "id_chain": stored_id_chain(row.get("id_chain")),
                         **verified_signed_recipient_fields({**row, "conversation_id": session_id_str}),
                         "is_contact": is_address_in_contacts(from_address, contact_addrs),
                     }

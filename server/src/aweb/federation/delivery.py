@@ -626,7 +626,7 @@ async def _upsert_conversation_participants(
         raise FederationAuthorityError("federation_conversation_invalid")
 
 
-async def _store_mail(tx, envelope: FederationEnvelope, signature: str, recipient: dict):
+async def _store_mail(tx, envelope: FederationEnvelope, signature: str, recipient: dict, id_chain=None):
     metadata = (
         encrypted_message_storage_metadata(envelope.encrypted_envelope or {})
         if envelope.content_mode == "encrypted_v2"
@@ -642,11 +642,11 @@ async def _store_mail(tx, envelope: FederationEnvelope, signature: str, recipien
             encrypted_ciphertext, encrypted_key_wraps, encrypted_ciphertext_hash,
             encrypted_ciphertext_size, encrypted_key_wraps_hash,
             encrypted_inner_header_hash, encrypted_suite,
-            encrypted_signing_key_id, signed_envelope_hash
+            encrypted_signing_key_id, signed_envelope_hash, id_chain
         ) VALUES (
             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL, $11,
             $12, $13, clock_timestamp(), $14, $15, $16, $17::jsonb,
-            $18, $19::jsonb, $20, $21, $22, $23, $24, $25, $26
+            $18, $19::jsonb, $20, $21, $22, $23, $24, $25, $26, $27::jsonb
         ) RETURNING message_id, created_at
         """,
         UUID(envelope.message_id),
@@ -675,6 +675,7 @@ async def _store_mail(tx, envelope: FederationEnvelope, signature: str, recipien
         metadata.get("encrypted_suite"),
         metadata.get("encrypted_signing_key_id"),
         metadata.get("signed_envelope_hash"),
+        json.dumps(id_chain) if id_chain is not None else None,
     )
     await tx.execute(
         "UPDATE {{tables.conversations}} SET updated_at = clock_timestamp() WHERE conversation_id = $1",
@@ -683,7 +684,7 @@ async def _store_mail(tx, envelope: FederationEnvelope, signature: str, recipien
     return row
 
 
-async def _store_chat(tx, envelope: FederationEnvelope, signature: str):
+async def _store_chat(tx, envelope: FederationEnvelope, signature: str, id_chain=None):
     metadata = (
         encrypted_message_storage_metadata(envelope.encrypted_envelope or {})
         if envelope.content_mode == "encrypted_v2"
@@ -707,11 +708,11 @@ async def _store_chat(tx, envelope: FederationEnvelope, signature: str):
             encrypted_ciphertext_hash, encrypted_ciphertext_size,
             encrypted_key_wraps_hash, encrypted_inner_header_hash,
             encrypted_suite, encrypted_signing_key_id, signed_envelope_hash,
-            created_at
+            created_at, id_chain
         ) VALUES (
             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
             $11, $12, $13, $14, $15::jsonb, $16, $17::jsonb,
-            $18, $19, $20, $21, $22, $23, $24, clock_timestamp()
+            $18, $19, $20, $21, $22, $23, $24, clock_timestamp(), $25::jsonb
         ) RETURNING message_id, created_at
         """,
         UUID(envelope.message_id),
@@ -738,6 +739,7 @@ async def _store_chat(tx, envelope: FederationEnvelope, signature: str):
         metadata.get("encrypted_suite"),
         metadata.get("encrypted_signing_key_id"),
         metadata.get("signed_envelope_hash"),
+        json.dumps(id_chain) if id_chain is not None else None,
     )
     await tx.execute(
         """
@@ -816,6 +818,7 @@ async def _deliver_federated_phase_b(
     envelope: FederationEnvelope,
     signature: str,
     recipient: dict,
+    id_chain: dict | None = None,
     authority_token: AuthoritySecurityToken | None,
     stored_route_continuation: bool = False,
     stored_route_snapshot: dict | None = None,
@@ -915,7 +918,7 @@ async def _deliver_federated_phase_b(
                 recipient,
                 preserve_existing_route=stored_route_continuation,
             )
-            message = await _store_mail(tx, envelope, signature, recipient)
+            message = await _store_mail(tx, envelope, signature, recipient, id_chain)
         else:
             await _ensure_chat_session(
                 tx,
@@ -923,7 +926,7 @@ async def _deliver_federated_phase_b(
                 recipient,
                 preserve_existing_route=stored_route_continuation,
             )
-            message = await _store_chat(tx, envelope, signature)
+            message = await _store_chat(tx, envelope, signature, id_chain)
 
         created_at: datetime = message["created_at"]
         result: dict[str, object] = {
@@ -980,6 +983,7 @@ async def deliver_federated_phase_b(
     envelope: FederationEnvelope,
     signature: str,
     recipient: dict,
+    id_chain: dict | None = None,
     authority_token: AuthoritySecurityToken | None,
     stored_route_continuation: bool = False,
     stored_route_snapshot: dict | None = None,
@@ -992,6 +996,7 @@ async def deliver_federated_phase_b(
             envelope=envelope,
             signature=signature,
             recipient=recipient,
+            id_chain=id_chain,
             authority_token=authority_token,
             stored_route_continuation=stored_route_continuation,
             stored_route_snapshot=stored_route_snapshot,

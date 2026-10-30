@@ -779,6 +779,20 @@ func configureResolvedClientWithRoster(c, rosterClient *aweb.Client, sel *awconf
 		c.SetStableID(sel.StableID)
 	}
 	c.SetRequireRecipientBindingForDirectAddresses(strings.TrimSpace(sel.IdentityScope) == awid.IdentityModeGlobal || strings.TrimSpace(sel.StableID) != "")
+	// The chain belongs to the identity (or grant subject), never the team.
+	chainHome := strings.TrimSpace(sel.IdentityHome)
+	if chainHome == "" {
+		chainHome = awconfig.WorktreeIdentityHome(sel.WorkingDir)
+	}
+	installed, err := awconfig.LoadInstalledIDChain(chainHome)
+	if err != nil {
+		return fmt.Errorf("load ID chain: %w", err)
+	}
+	if installed != nil {
+		if err := c.SetIDChain(installed.Bundle); err != nil {
+			return err
+		}
+	}
 
 	pinPath, err := awconfig.DefaultKnownAgentsPath()
 	if err != nil {
