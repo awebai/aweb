@@ -1005,6 +1005,20 @@ pending → registered | failed; an AWID-success/local-failure retry resubmits t
 SAME certificate and retains its original registered_at. Completion of this
 exchange never grants team membership, moves an address or rebinds a contact.
 
+`aw id revoke <id>` revokes a registered identity under §3, using the same
+signer selection as `aw id child invite`: the current identity by default,
+`--human <did:aw> --domain D` for a human held in the keychain, or
+`--as-root --domain D` for the namespace root. An identity signer may revoke
+itself; revoking its current child requires that it remain a valid parent.
+Namespace-root authority follows §3. Team membership or team-controller
+authority alone is insufficient. Only `--as-root` accepts
+`--cutoff <time>`; without that option the request sends `effective_from=null`
+so AWID chooses its post-lock serialization time. Non-root signers always send
+null. The command uses the target's current head for `expected_head`, including
+on repeats, and preserves §3's idempotence and root-only earlier-cutoff rules.
+A human signature retains the existing keychain and terminal-passphrase rules.
+This revokes ID-tree authority, not team membership, addresses or DID key history.
+
 Adoption is explicit and prospective. Retain existing global ID, key, address,
 mailbox and ordinary member certificates when their bindings do not change.
 Require actual new-parent/root authority and the agent's key proof; do not
