@@ -33,6 +33,21 @@ func resolveIDExchangeIdentity(wd, home string) (*awconfig.ResolvedIdentity, err
 	return identity, validateResolvedIdentity(identity)
 }
 
+// identityKeyRoute reads the identity's key route at registryURL, or at its
+// own registry when registryURL is empty. Enrollment is a key-route fact,
+// independent of namespace tree status. Read it freshly: an old response
+// without id_tree is unknown, not legacy.
+func identityKeyRoute(ctx context.Context, identity *awconfig.ResolvedIdentity, registryURL string) (*awid.DidKeyResolution, error) {
+	registry, err := resolveIdentityRegistryClient(identity)
+	if err != nil {
+		return nil, err
+	}
+	if registryURL == "" {
+		registryURL = registry.DefaultRegistryURL
+	}
+	return registry.ResolveKeyAt(ctx, registryURL, identity.StableID)
+}
+
 // No chain is the legacy path only when current evidence establishes absence.
 // A team key is never an ID-parent credential.
 func prepareTeamInviteIDChild(ctx context.Context, opts idChildOptions) (*awconfig.TeamInviteIDChild, error) {
@@ -52,17 +67,7 @@ func prepareTeamInviteIDChild(ctx context.Context, opts idChildOptions) (*awconf
 		if identity.StableID == "" {
 			return nil, nil
 		}
-		// Enrollment is a key-route fact, independent of namespace tree status.
-		// Read it freshly: an old response without id_tree is unknown, not legacy.
-		registry, err := resolveIdentityRegistryClient(identity)
-		if err != nil {
-			return nil, err
-		}
-		registryURL := registry.DefaultRegistryURL
-		if opts.RegistryURL != "" {
-			registryURL = opts.RegistryURL
-		}
-		resolution, err := registry.ResolveKeyAt(ctx, registryURL, identity.StableID)
+		resolution, err := identityKeyRoute(ctx, identity, opts.RegistryURL)
 		if err != nil {
 			return nil, fmt.Errorf("inviter cannot issue: evidence_unavailable; check the inviter's identity registry connection and retry: %w", err)
 		}
