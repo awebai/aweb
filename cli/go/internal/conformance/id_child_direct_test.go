@@ -1,6 +1,13 @@
 package conformance_test
 
 import (
+	"bytes"
+	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -184,5 +191,146 @@ func TestIDChildDirectIssueRootAgentIsNoHuman(t *testing.T) {
 	verdict := awid.VerifyIDChain(bundle, subject, x.evidence("normal"), "example.com")
 	if verdict.Outcome != "no_human" || verdict.IdentityValid == nil || !*verdict.IdentityValid {
 		t.Fatalf("verdict %+v", verdict)
+	}
+}
+
+// addKey adds a deterministic key named name to the vectors' keys.
+func (x idChildExchange) addKey(name string) {
+	seed := sha256.Sum256([]byte(name))
+	public := ed25519.NewKeyFromSeed(seed[:]).Public().(ed25519.PublicKey)
+	x.v.Keys[name] = struct {
+		SeedHex string `json:"seed_hex"`
+		DIDKey  string `json:"did_key"`
+		DIDAW   string `json:"did_aw"`
+	}{hex.EncodeToString(seed[:]), awid.ComputeDIDKey(public), awid.ComputeStableID(public)}
+}
+
+// registeredLine issues a line of length did:aw agents under alice, each by
+// the one before it over IssueIDChild, and registers each in status "line",
+// a copy of "normal", as the registry records a registered identity: one
+// signed register_did entry and its certificate. It returns the key names
+// from alice down and each one's own chain.
+func (x idChildExchange) registeredLine(t *testing.T, length int) ([]string, map[string][]any) {
+	t.Helper()
+	raw, err := json.Marshal(x.v.Statuses["normal"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.UseNumber()
+	var status map[string]any
+	if err := d.Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	x.v.Statuses["line"] = status
+	names := []string{"alice"}
+	chains := map[string][]any{"alice": x.parentChain(t, "normal", x.v.Keys["alice"].DIDAW)}
+	for n := 1; n <= length; n++ {
+		parent, name := names[len(names)-1], fmt.Sprintf("line-%d", n)
+		x.addKey(name)
+		key := x.v.Keys[name]
+		calls := 0
+		child := awid.IDChild{ID: key.DIDAW, Domain: "example.com", Parent: map[string]any{"kind": "identity", "id": x.v.Keys[parent].DIDAW}, Kind: "agent"}
+		bundle, err := awid.IssueIDChild(newIssuedStore(t, x.v), child, chains[parent], x.evidence("line"), vectorSigner(t, x.v, parent, &calls), at(t, "2026-10-26T00:05:00Z"))
+		if err != nil {
+			t.Fatalf("%s issues %s: %v", parent, name, err)
+		}
+		certificates := bundle["certificates"].([]any)
+		signed := certificates[len(certificates)-1].(map[string]any)
+		certificateID, err := awid.IDCertificateID(signed["certificate"].(map[string]any))
+		if err != nil {
+			t.Fatal(err)
+		}
+		stateHash := sha256.Sum256([]byte(fmt.Sprintf(`{"current_did_key":%q,"did_aw":%q}`, key.DIDKey, key.DIDAW)))
+		entry := awid.DidKeyEvidence{Seq: 1, Operation: "register_did", NewDIDKey: key.DIDKey, StateHash: hex.EncodeToString(stateHash[:]), AuthorizedBy: key.DIDKey, Timestamp: "2026-10-26T00:05:00Z"}
+		payload := awid.CanonicalDidLogPayload(key.DIDAW, &entry)
+		entryHash := sha256.Sum256([]byte(payload))
+		seed, err := hex.DecodeString(key.SeedHex)
+		if err != nil {
+			t.Fatal(err)
+		}
+		registeredAt := fmt.Sprintf("2026-10-26T00:%02d:00.000000Z", 5+n)
+		status["identities"] = append(status["identities"].([]any), map[string]any{
+			"id": key.DIDAW, "current_certificate_id": certificateID, "current_key_seq": json.Number("1"),
+			"key_history": []any{map[string]any{"entry": map[string]any{
+				"seq": json.Number("1"), "operation": "register_did", "previous_did_key": nil, "new_did_key": key.DIDKey,
+				"prev_entry_hash": nil, "entry_hash": hex.EncodeToString(entryHash[:]), "state_hash": entry.StateHash,
+				"authorized_by": key.DIDKey, "signature": base64.RawStdEncoding.EncodeToString(ed25519.Sign(ed25519.NewKeyFromSeed(seed), []byte(payload))),
+				"timestamp": entry.Timestamp,
+			}, "registered_at": registeredAt}},
+			"certificates": []any{map[string]any{"signed": signed, "registered_at": registeredAt, "superseded_at": nil, "issuer_key_seq": json.Number("1")}},
+			"revocation":   nil,
+		})
+		names = append(names, name)
+		chains[name] = certificates
+	}
+	return names, chains
+}
+
+// A verifier accepts at most eight certificates (docs/id-certificates.md
+// §5), so a registered parent whose own chain already has eight issues
+// nothing, over either issuance path: its child's chain could never verify.
+// One level up the same line, a parent issues a child whose
+// eight-certificate chain verifies.
+func TestIDChildIssueRefusesPastTheMaximumDepth(t *testing.T) {
+	x := loadIDChildExchange(t)
+	names, chains := x.registeredLine(t, awid.IDChainMaxDepth-1)
+	for _, tc := range []struct {
+		signer, child string
+		refused       bool
+	}{
+		{names[len(names)-2], "leaf-under-seven", false},
+		{names[len(names)-1], "leaf-under-eight", true},
+	} {
+		x.addKey(tc.child)
+		parent := map[string]any{"kind": "identity", "id": x.v.Keys[tc.signer].DIDAW}
+		childID := x.v.Keys[tc.child].DIDKey
+		parentChain := chains[tc.signer]
+		issued := func(t *testing.T, bundle map[string]any, err error, calls, writes int) {
+			t.Helper()
+			if tc.refused {
+				if got := awid.IDCertificateErrorCode(err); got != "depth_exceeded" || bundle != nil || calls != 0 || writes != 0 {
+					t.Fatalf("reason=%q (%v) calls=%d writes=%d", got, err, calls, writes)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			subject := awid.IDChainSubject{ID: childID, DIDKey: childID, TeamMemberDIDKey: childID}
+			verdict := awid.VerifyIDChain(bundle, subject, x.evidence("line"), "example.com")
+			if len(bundle["certificates"].([]any)) != awid.IDChainMaxDepth || verdict.IdentityValid == nil || !*verdict.IdentityValid {
+				t.Fatalf("verdict %+v", verdict)
+			}
+		}
+		t.Run(fmt.Sprintf("direct issue under a chain of %d", len(parentChain)), func(t *testing.T) {
+			issuance := newIssuedStore(t, x.v)
+			calls := 0
+			child := awid.IDChild{ID: childID, Domain: "example.com", Parent: parent, Kind: "agent"}
+			bundle, err := awid.IssueIDChild(issuance, child, parentChain, x.evidence("line"), vectorSigner(t, x.v, tc.signer, &calls), at(t, "2026-10-26T00:20:00Z"))
+			issued(t, bundle, err, calls, issuance.writes)
+		})
+		t.Run(fmt.Sprintf("invitation approval under a chain of %d", len(parentChain)), func(t *testing.T) {
+			r, request := x.issueUnder(t, parent, parentChain, tc.signer, tc.child, childID, "agent")
+			r.status = "line"
+			if _, err := r.receive(request); err != nil {
+				t.Fatal(err)
+			}
+			response, err := r.approve(t, "20000000-0000-4000-8000-0000000000a1", awid.IDHumanApproval{})
+			var bundle map[string]any
+			if err == nil {
+				parsed, perr := awid.ParseIDCertificateResponse(response)
+				if perr != nil {
+					t.Fatal(perr)
+				}
+				bundle = parsed["chain"].(map[string]any)
+			} else if response != nil {
+				t.Fatal("a refused approval returned a response")
+			}
+			issued(t, bundle, err, r.calls, r.issuance.writes)
+			if tc.refused && r.invitation(t, "10000000-0000-4000-8000-0000000000a1").Request.State == awid.IDRequestIssued {
+				t.Fatal("a refused approval marked the request issued")
+			}
+		})
 	}
 }
