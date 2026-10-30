@@ -287,8 +287,8 @@ func (c *Client) ReceivedIDTreeEnrollment(ctx context.Context, stableID, didKey 
 		return unknown
 	}
 	key, ok := registry.loadKeyCache(stableID)
-	if !ok || key.DIDAW != stableID || key.CurrentDIDKey != didKey {
+	if !ok {
 		return unknown
 	}
-	return key.IDTreeEnrollment(registry.now())
+	return key.IDTreeEnrollmentOf(stableID, didKey, registry.now())
 }
