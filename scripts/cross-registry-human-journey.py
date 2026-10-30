@@ -185,9 +185,9 @@ def local_child_resign(human, parent):
              "--registry", "http://awid-a:8010", "--json"], cwd="fresh")
     invite, _ = command(["id", "team", "invite", "--team", "journey-local", "--namespace", domain,
                          "--member-local", "--json"], cwd="fresh")
-    command(["id", "team", "accept-invite", invite["token"], "--name", "local-child", "--local", "--json"],
-            cwd="local-child")
     home = child_dir / ".aw"
+    command(["--identity-home", str(home), "id", "team", "accept-invite", invite["token"],
+             "--name", "local-child", "--local", "--json"], cwd="local-child")
     record = yaml.safe_load((home / "identity.yaml").read_text())
     child_id = record["did"]
     assert child_id.startswith("did:key:") and not record.get("stable_id"), record
