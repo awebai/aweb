@@ -118,9 +118,9 @@ read. Read mail is durable but intentionally absent from the unread wake
 snapshot. Fetch it by id or conversation rather than expecting replay.
 
 The current raw stream has no resumable cursor or `Last-Event-ID`. A normal
-server response ends after at most five minutes, and the low-level CLI exits.
-For a long-running custom integration, reconnect with backoff. Do not interpret
-a normal end as deletion of durable state.
+server response ends after at most five minutes; `aw events stream` reconnects
+on its own, with backoff. A long-running custom integration must do the same.
+Do not interpret a normal end as deletion of durable state.
 
 The initial mail wake snapshot covers the newest 50 unread messages. A larger
 `unread_count` means the event window is incomplete; reconcile through mailbox
