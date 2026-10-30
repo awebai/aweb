@@ -98,7 +98,7 @@ func executeReconnectPath(req guidedOnboardingRequest) (*guidedOnboardingResult,
 	if err != nil {
 		return nil, err
 	}
-	printOutput(result, formatConnect)
+	printOutput(withInitNextSteps(result, &initResult{ServerName: hostFromBaseURL(result.AwebURL), ExportBaseURL: result.AwebURL, Alias: strings.TrimSpace(result.Alias), Path: initPathReconnect}, req.WorkingDir), formatConnect)
 
 	if err := runGuidedPostInitSetup(req); err != nil {
 		return nil, err
@@ -183,7 +183,7 @@ func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, er
 			return nil, err
 		}
 	}
-	printOutput(result, formatConnect)
+	printOutput(withInitNextSteps(result, &initResult{ServerName: hostFromBaseURL(result.AwebURL), ExportBaseURL: result.AwebURL, Alias: strings.TrimSpace(result.Alias), Path: initPathNewTeam}, req.WorkingDir), formatConnect)
 
 	if err := runGuidedPostInitSetup(req); err != nil {
 		return nil, err
@@ -259,7 +259,7 @@ func executeBYODPath(req guidedOnboardingRequest) (*guidedOnboardingResult, erro
 	if err != nil {
 		return nil, err
 	}
-	printOutput(result, formatConnect)
+	printOutput(withInitNextSteps(result, &initResult{ServerName: hostFromBaseURL(result.AwebURL), ExportBaseURL: result.AwebURL, Alias: strings.TrimSpace(result.Alias), Path: initPathNewTeam}, req.WorkingDir), formatConnect)
 	if err := runGuidedPostInitSetup(req); err != nil {
 		return nil, err
 	}

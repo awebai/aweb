@@ -30,6 +30,10 @@ type connectOutput struct {
 	StableID       string              `json:"stable_id,omitempty"`
 	Address        string              `json:"address,omitempty"`
 	IdentityScope  string              `json:"identity_scope,omitempty"`
+	// NextSteps are aw init's next steps for the path it took; Guide is the
+	// page that walks through them.
+	NextSteps []initNextStep `json:"next_steps,omitempty"`
+	Guide     string         `json:"guide,omitempty"`
 }
 
 // connectResponse is the server response from POST /v1/connect.
@@ -342,6 +346,12 @@ func formatConnect(v any) string {
 	sb.WriteString(fmt.Sprintf("Aweb URL:    %s\n", out.AwebURL))
 	if out.IDRegistration != "" {
 		sb.WriteString(fmt.Sprintf("ID registration: %s\n", out.IDRegistration))
+	}
+	if len(out.NextSteps) > 0 {
+		sb.WriteString("\nNext steps:\n")
+		for _, line := range initNextStepLines(out.NextSteps) {
+			sb.WriteString(line + "\n")
+		}
 	}
 	return sb.String()
 }
