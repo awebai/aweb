@@ -263,8 +263,11 @@ the requested key against the open EPOCH key, even if reverify has already
 updated the stored row: a different key opens replaced, the same epoch key is
 an epoch no-op, and no epoch yet opens epoch 1, replaced. A PUT authorized only
 by verified parent authorization establishes the same replaced epoch for the
-child. Skip-DNS or local bypass may still update the stored controller under
-its released contract but writes NO epoch; ID-tree authority is unavailable.
+child. Skip-DNS may still update the stored controller under its released
+contract but writes NO epoch; ID-tree authority is unavailable. The reserved
+`local` namespace has no DNS or parent authority, so this path refuses it with
+403 `local_rotation_requires_previous_key`: a new key alone never replaces its
+controller.
 Existing legacy envelopes and other namespace contracts remain accepted.
 No existing request is silently reinterpreted as old-key proof.
 

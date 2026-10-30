@@ -547,6 +547,16 @@ async def rotate_namespace_controller(
     """
     db = db_infra.get_manager("aweb")
     domain = _validate_domain(domain)
+    if is_reserved_local_domain(domain):
+        # The reserved local namespace has no DNS or parent authority to
+        # recover through, so a new key alone never replaces its controller.
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "local_rotation_requires_previous_key",
+                "message": "the local namespace controller can only be replaced with the previous controller key",
+            },
+        )
     new_controller_did = body.new_controller_did
     await _verify_controller_rotation_signature(
         request,
@@ -555,9 +565,8 @@ async def rotate_namespace_controller(
     )
     skip_dns = os.environ.get("AWID_SKIP_DNS_VERIFY", "").strip() == "1"
     parent_auth_present = request.headers.get(_PARENT_AUTH_HEADER) is not None
-    domain_is_local = is_reserved_local_domain(domain)
     dns_authority = None
-    if not skip_dns and not parent_auth_present and not domain_is_local:
+    if not skip_dns and not parent_auth_present:
         try:
             dns_authority = await verify_domain(domain)
         except DnsVerificationError as e:
