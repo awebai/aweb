@@ -95,7 +95,7 @@ def csr_requester():
     publish_csr("prepared.json", json.dumps(human))
     invitation = json.loads(wait_file("invitation.json").read_text())
     text, prompts = command(["id", "parent", "request", "--invitation-id", invitation["invitation_id"],
-                             "--domain", "alpha.example.com", "--parent-root", "--human", human["id"],
+                             "--domain", "alpha.example.com", "--root-parent", "--human", human["id"],
                              "--out", "/work/csr/request.json"], json_output=False)
     assert prompts == 1, text
     fingerprint, = re.findall(r"different trusted channel: ([0-9a-f-]+)", text)
@@ -179,7 +179,7 @@ def main():
     print("PASS: namespace, root human issuance and human certificate registration through real Secret Service + PTY", flush=True)
 
     args = ["id", "create", "--name", "alice", "--domain", "alpha.example.com",
-            "--parent-human", human["id"], "--json"]
+            "--human-parent", human["id"], "--json"]
     command(args, fail_registration=True)
     identity_path = ROOT / "alice/.aw/identity.yaml"
     before_identity = identity_path.read_bytes()
@@ -202,14 +202,14 @@ def main():
 
     (ROOT / "fresh").mkdir()
     fresh, prompts = command(["id", "create", "--name", "fresh", "--domain", "alpha.example.com",
-                              "--parent-human", human["id"], "--json"], cwd="fresh")
-    assert fresh["parent_human"] == human["id"] and prompts == 1
-    print("PASS: fresh --parent-human issuance and agent certificate registration", flush=True)
+                              "--human-parent", human["id"], "--json"], cwd="fresh")
+    assert fresh["human_parent"] == human["id"] and prompts == 1
+    print("PASS: fresh --human-parent issuance and agent certificate registration", flush=True)
 
     bob, prompts = command(["id", "create", "--name", "bob", "--domain", "beta.example.net",
-                            "--parent-root", "--json"], cwd="bob")
-    assert bob["parent_root"] and prompts == 0, bob
-    print("PASS: --parent-root issuance and agent certificate registration", flush=True)
+                            "--root-parent", "--json"], cwd="bob")
+    assert bob["root_parent"] and prompts == 0, bob
+    print("PASS: --root-parent issuance and agent certificate registration", flush=True)
 
     cases = [public_case(human_home, human_record, kind="human", human=human["id"])]
     for name, parent in [("alice", human["id"]), ("fresh", human["id"]), ("bob", "")]:

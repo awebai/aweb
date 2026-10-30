@@ -82,7 +82,7 @@ func newParentCreateRun(t *testing.T, registryURL string) *parentCreateRun {
 	return &parentCreateRun{t: t, workingDir: t.TempDir(), registryURL: registryURL}
 }
 
-func (r *parentCreateRun) create(parentHuman string, atTerminal error) (idCreateOutput, error) {
+func (r *parentCreateRun) create(humanParent string, atTerminal error) (idCreateOutput, error) {
 	pub, key, err := awid.GenerateKeypair()
 	if err != nil {
 		r.t.Fatal(err)
@@ -97,7 +97,7 @@ func (r *parentCreateRun) create(parentHuman string, atTerminal error) (idCreate
 		SkipDNSVerify:   true,
 		TXTResolver:     staticTXTResolver{"_awid.example.com": {idCreateDNSRecordValue(awid.ComputeDIDKey(pub), "")}},
 		Now:             time.Now,
-		ParentHuman:     parentHuman,
+		HumanParent:     humanParent,
 		HumanAtTerminal: func() error { return atTerminal },
 		Keychain:        awconfig.HumanKeychain{},
 		Prompt: func(string) ([]byte, error) {
@@ -119,7 +119,7 @@ func (r *parentCreateRun) assertNoAgent() {
 	}
 }
 
-func TestIDCreateParentHumanMustBeARegisteredHumanOnThisMachine(t *testing.T) {
+func TestIDCreateHumanParentMustBeARegisteredHumanOnThisMachine(t *testing.T) {
 	r := newParentCreateRun(t, "https://registry.example.com")
 	if _, err := r.create("did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w", nil); err == nil || !strings.Contains(err.Error(), "no human") {
 		t.Fatalf("err=%v", err)
@@ -137,7 +137,7 @@ func TestIDCreateParentHumanMustBeARegisteredHumanOnThisMachine(t *testing.T) {
 	r.assertNoAgent()
 }
 
-func TestIDCreateParentHumanNeedsAHumanAtTheTerminal(t *testing.T) {
+func TestIDCreateHumanParentNeedsAHumanAtTheTerminal(t *testing.T) {
 	r := newParentCreateRun(t, "https://registry.example.com")
 	human := frozenRootHuman(t)
 	refusal := errors.New("this command needs a human at an interactive terminal")
@@ -151,7 +151,7 @@ func TestIDCreateParentHumanNeedsAHumanAtTheTerminal(t *testing.T) {
 // exists. No registry answers at the --registry origin, so there is no
 // current status and the human cannot issue: no agent is created or left
 // chainless. Nothing here resolves a name.
-func TestIDCreateParentHumanThatCannotIssueLeavesNoAgent(t *testing.T) {
+func TestIDCreateHumanParentThatCannotIssueLeavesNoAgent(t *testing.T) {
 	r := newParentCreateRun(t, "http://127.0.0.1:1")
 	human := frozenRootHuman(t)
 	if _, err := r.create(human.StableID, nil); err == nil || !strings.Contains(err.Error(), "cannot issue now") {
@@ -160,7 +160,7 @@ func TestIDCreateParentHumanThatCannotIssueLeavesNoAgent(t *testing.T) {
 	r.assertNoAgent()
 }
 
-func (r *parentCreateRun) createUnderRoot(parentHuman string, dnsController string) (idCreateOutput, error) {
+func (r *parentCreateRun) createUnderRoot(humanParent string, dnsController string) (idCreateOutput, error) {
 	pub, key, err := awid.GenerateKeypair()
 	if err != nil {
 		r.t.Fatal(err)
@@ -178,8 +178,8 @@ func (r *parentCreateRun) createUnderRoot(parentHuman string, dnsController stri
 		SkipDNSVerify:   true,
 		TXTResolver:     staticTXTResolver{"_awid.example.com": {idCreateDNSRecordValue(dnsController, "")}},
 		Now:             time.Now,
-		ParentHuman:     parentHuman,
-		ParentRoot:      true,
+		HumanParent:     humanParent,
+		RootParent:      true,
 		HumanAtTerminal: func() error { return nil },
 		Keychain:        awconfig.HumanKeychain{},
 		Prompt: func(string) ([]byte, error) {
@@ -197,10 +197,10 @@ func TestIDCreateNamesOneParent(t *testing.T) {
 	r.assertNoAgent()
 }
 
-// --parent-root checks exact DNS even with --skip-dns-verify: AWID holds the
+// --root-parent checks exact DNS even with --skip-dns-verify: AWID holds the
 // root's signature to the DNS controller, so a mismatch would leave the
 // agent chainless.
-func TestIDCreateParentRootRefusesADNSControllerOtherThanThisMachines(t *testing.T) {
+func TestIDCreateRootParentRefusesADNSControllerOtherThanThisMachines(t *testing.T) {
 	r := newParentCreateRun(t, "https://registry.example.com")
 	other, _, err := awid.GenerateKeypair()
 	if err != nil {
@@ -264,10 +264,10 @@ func TestIDCreateRerunReleasesTheRecordedCertificate(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			parentHuman := ""
+			humanParent := ""
 			if parent == "human" {
 				human := frozenRootHuman(t)
-				parentHuman = human.StableID
+				humanParent = human.StableID
 				issuerParent = map[string]any{"kind": "identity", "id": human.StableID}
 				dir, err := awconfig.HumanRecordDir(human.Domain, human.StableID)
 				if err != nil {
@@ -292,7 +292,7 @@ func TestIDCreateRerunReleasesTheRecordedCertificate(t *testing.T) {
 			_, err = executeIDCreate(r.workingDir, idCreateOptions{
 				Name: "coordinator", Domain: "example.com", RegistryURL: registryURL, SkipDNSVerify: true,
 				TXTResolver: staticTXTResolver{"_awid.example.com": {idCreateDNSRecordValue(awid.ComputeDIDKey(pub), "")}},
-				Now:         time.Now, ParentHuman: parentHuman, ParentRoot: parent == "root",
+				Now:         time.Now, HumanParent: humanParent, RootParent: parent == "root",
 				HumanAtTerminal: func() error { return nil }, Keychain: awconfig.HumanKeychain{},
 				Prompt: func(string) ([]byte, error) { r.prompts++; return nil, errors.New("nothing is signed again") },
 			})

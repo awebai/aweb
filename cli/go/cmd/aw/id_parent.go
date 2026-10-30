@@ -21,14 +21,14 @@ import (
 // child's own proof and the same invitation ID. The requester is explicit:
 // --human <did:aw> for a human prepared on this machine, otherwise the
 // current agent identity. The parent is explicit too: --parent <did:aw> or
-// --parent-root, never inferred.
+// --root-parent, never inferred.
 
 var (
 	idParentHuman        string
 	idParentDomain       string
 	idParentInvitationID string
 	idParentParent       string
-	idParentRoot         bool
+	idParentRootParent   bool
 	idParentOut          string
 	idParentRegistry     string
 	idParentNoRegister   bool
@@ -41,7 +41,7 @@ var (
 		Use:   "request",
 		Short: "Export a certificate request against a parent's invitation",
 		Long: "Export a certificate request against the invitation your parent fixed: its\n" +
-			"--invitation-id, --domain and parent (--parent <did:aw> or --parent-root).\n" +
+			"--invitation-id, --domain and parent (--parent <did:aw> or --root-parent).\n" +
 			"Send the request file to the parent over your chosen channel, and tell them\n" +
 			"the fingerprint shown here through a different trusted channel.",
 		Args: cobra.NoArgs,
@@ -67,7 +67,7 @@ func init() {
 	}
 	idParentRequestCmd.Flags().StringVar(&idParentInvitationID, "invitation-id", "", "Invitation ID the parent gave you")
 	idParentRequestCmd.Flags().StringVar(&idParentParent, "parent", "", "did:aw of the parent identity")
-	idParentRequestCmd.Flags().BoolVar(&idParentRoot, "parent-root", false, "The parent is the namespace root of --domain")
+	idParentRequestCmd.Flags().BoolVar(&idParentRootParent, "root-parent", false, "The parent is the namespace root of --domain")
 	idParentRequestCmd.Flags().StringVar(&idParentOut, "out", "-", "Where to write the request (- for stdout)")
 	idParentImportCmd.Flags().StringVar(&idParentRegistry, "registry", "", "Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)")
 	idParentImportCmd.Flags().BoolVar(&idParentNoRegister, "no-register", false, "Install the certificate but leave its AWID registration pending")
@@ -163,7 +163,7 @@ type idParentRequestOutput struct {
 }
 
 func runIDParentRequest(cmd *cobra.Command, args []string) error {
-	out, raw, err := executeIDParentRequest(idParentOptionsFromFlags(), idParentInvitationID, idParentParent, idParentRoot)
+	out, raw, err := executeIDParentRequest(idParentOptionsFromFlags(), idParentInvitationID, idParentParent, idParentRootParent)
 	if err != nil {
 		return err
 	}
@@ -176,20 +176,20 @@ func runIDParentRequest(cmd *cobra.Command, args []string) error {
 
 // executeIDParentRequest builds, signs and records the request; the caller
 // writes the returned request file.
-func executeIDParentRequest(opts idParentOptions, invitationID, parentID string, parentRoot bool) (idParentRequestOutput, []byte, error) {
+func executeIDParentRequest(opts idParentOptions, invitationID, parentID string, rootParent bool) (idParentRequestOutput, []byte, error) {
 	if !idInvitationIDPattern(invitationID) {
 		return idParentRequestOutput{}, nil, usageError("--invitation-id is required: the ID of the invitation your parent fixed")
 	}
 	var parent map[string]any
 	switch {
-	case parentRoot && strings.TrimSpace(parentID) != "":
-		return idParentRequestOutput{}, nil, usageError("--parent and --parent-root name different parents; choose one")
-	case parentRoot:
+	case rootParent && strings.TrimSpace(parentID) != "":
+		return idParentRequestOutput{}, nil, usageError("--parent and --root-parent name different parents; choose one")
+	case rootParent:
 		parent = nil
 	case strings.HasPrefix(strings.TrimSpace(parentID), "did:aw:"):
 		parent = map[string]any{"kind": "identity", "id": strings.TrimSpace(parentID)}
 	default:
-		return idParentRequestOutput{}, nil, usageError("name the parent: --parent <did:aw> or --parent-root")
+		return idParentRequestOutput{}, nil, usageError("name the parent: --parent <did:aw> or --root-parent")
 	}
 	r, err := selectRequester(opts)
 	if err != nil {

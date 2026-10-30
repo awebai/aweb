@@ -32,8 +32,8 @@ type idCreateOutput struct {
 	RegistryStatus    string `json:"registry_status"`
 	RegistryURL       string `json:"registry_url,omitempty"`
 	RegistryError     string `json:"registry_error,omitempty"`
-	ParentHuman       string `json:"parent_human,omitempty"`
-	ParentRoot        bool   `json:"parent_root,omitempty"`
+	HumanParent       string `json:"human_parent,omitempty"`
+	RootParent        bool   `json:"root_parent,omitempty"`
 }
 
 var (
@@ -41,8 +41,8 @@ var (
 	idCreateDomain        string
 	idCreateRegistryURL   string
 	idCreateSkipDNSVerify bool
-	idCreateParentHuman   string
-	idCreateParentRoot    bool
+	idCreateHumanParent   string
+	idCreateRootParent    bool
 	idCreateCmd           = &cobra.Command{
 		Annotations: map[string]string{identityCreationTargetAnnotation: "true"},
 		Use:         "create",
@@ -74,8 +74,8 @@ func init() {
 	idCreateCmd.Flags().StringVar(&idCreateDomain, "domain", "", "Namespace domain for the global identity address")
 	idCreateCmd.Flags().StringVar(&idCreateRegistryURL, "registry", "", "Registry origin override (default: api.awid.ai)")
 	idCreateCmd.Flags().BoolVar(&idCreateSkipDNSVerify, "skip-dns-verify", false, "Skip the DNS TXT verification prompt and lookup")
-	idCreateCmd.Flags().StringVar(&idCreateParentHuman, "parent-human", "", "did:aw of the human on this machine who issues the agent's certificate")
-	idCreateCmd.Flags().BoolVar(&idCreateParentRoot, "parent-root", false, "Have this machine's namespace controller issue the agent's certificate (an agent with no human)")
+	idCreateCmd.Flags().StringVar(&idCreateHumanParent, "human-parent", "", "did:aw of the human on this machine who issues the agent's certificate")
+	idCreateCmd.Flags().BoolVar(&idCreateRootParent, "root-parent", false, "Have this machine's namespace controller issue the agent's certificate (an agent with no human)")
 	identityCmd.AddCommand(idCreateCmd)
 }
 
@@ -90,11 +90,11 @@ type idCreateOptions struct {
 	PromptOut                io.Writer
 	TXTResolver              awid.TXTResolver
 	Now                      func() time.Time
-	// ParentHuman is the human who issues the agent's certificate, signing
+	// HumanParent is the human who issues the agent's certificate, signing
 	// through its keychain key and terminal prompt.
-	ParentHuman string
-	// ParentRoot has the namespace controller issue the certificate.
-	ParentRoot      bool
+	HumanParent string
+	// RootParent has the namespace controller issue the certificate.
+	RootParent      bool
 	HumanAtTerminal func() error
 	Keychain        awid.HumanKeyStore
 	Prompt          awid.PassphrasePrompt
@@ -161,8 +161,8 @@ func runIDCreate(cmd *cobra.Command, args []string) error {
 		PromptIn:        cmd.InOrStdin(),
 		PromptOut:       cmd.ErrOrStderr(),
 		Now:             time.Now,
-		ParentHuman:     idCreateParentHuman,
-		ParentRoot:      idCreateParentRoot,
+		HumanParent:     idCreateHumanParent,
+		RootParent:      idCreateRootParent,
 		HumanAtTerminal: humanAtTerminal,
 		Keychain:        awconfig.HumanKeychain{},
 		Prompt:          awid.TerminalPassphrasePrompt(),
@@ -176,7 +176,7 @@ func runIDCreate(cmd *cobra.Command, args []string) error {
 
 func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, error) {
 	var parent *idCreateParent
-	if strings.TrimSpace(opts.ParentHuman) != "" || opts.ParentRoot {
+	if strings.TrimSpace(opts.HumanParent) != "" || opts.RootParent {
 		domain, err := normalizeIDCreateDomain(opts.Domain, opts.AllowReservedLocalDomain)
 		if err != nil {
 			return idCreateOutput{}, err
@@ -300,7 +300,7 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 		return idCreateOutput{}, err
 	}
 
-	parentHuman, parentRoot := "", false
+	humanParent, rootParent := "", false
 	if parent != nil {
 		step := agentChainStep{
 			issuer: issuer, agentID: plan.DIDAW, agentDIDKey: plan.DIDKey, agentKey: prepared.IdentityKey, domain: plan.Domain,
@@ -309,7 +309,7 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 		if _, err := step.install(ctx); err != nil {
 			return idCreateOutput{}, fmt.Errorf("created %s, but its chain is not installed: %w (run the same command again to finish)", plan.Address, err)
 		}
-		parentHuman, parentRoot = issuer.human, parent.root
+		humanParent, rootParent = issuer.human, parent.root
 	}
 
 	return idCreateOutput{
@@ -325,8 +325,8 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 		RegistryStatus:    registryStatus,
 		RegistryURL:       plan.RegistryURL,
 		RegistryError:     registryErr,
-		ParentHuman:       parentHuman,
-		ParentRoot:        parentRoot,
+		HumanParent:       humanParent,
+		RootParent:        rootParent,
 	}, nil
 }
 

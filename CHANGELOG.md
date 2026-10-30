@@ -21,7 +21,7 @@
   inside an agent runtime. A run that fails resumes where it stopped without
   minting a new human, and a second human in the same domain needs
   `--another`.
-- aw: `aw id create --parent-human <did:aw>` and `--parent-root` create an
+- aw: `aw id create --human-parent <did:aw>` and `--root-parent` create an
   agent with its ID chain installed: the named human, or the namespace root
   for an agent with no human, issues its certificate. A human parent first
   checks its own chain's current status; the root first checks that the
