@@ -52,7 +52,7 @@ func runDidLog(cmd *cobra.Command, args []string) error {
 		printJSON(out)
 		return nil
 	}
-	fmt.Print(formatIDLog(out))
+	fmt.Fprint(commandStdout, formatIDLog(out))
 	return nil
 }
 

@@ -239,7 +239,7 @@ cryptographically verified identity.`,
 		}
 
 		beadsMailAppendSendLogs(sel, resp, target.Value, beadsMailSendSubject, body)
-		fmt.Printf("sent %s (message_id=%s conversation_id=%s)\n", beadsMailResolutionNote(target), resp.MessageID, resp.ConversationID)
+		fmt.Fprintf(commandStdout, "sent %s (message_id=%s conversation_id=%s)\n", beadsMailResolutionNote(target), resp.MessageID, resp.ConversationID)
 		if mapErr != nil {
 			beadsMailRecordGap("could not read the beads mail configuration: " + mapErr.Error())
 		} else {
@@ -320,7 +320,7 @@ var beadsMailReplyCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "note: reply was sent, but the source message could not be marked read: %s\n", termtext.Line(ackErr.Error()))
 		}
 		beadsMailAppendSendLogs(sel, resp, conversationID, subject, body)
-		fmt.Printf("replied (message_id=%s conversation_id=%s)\n", resp.MessageID, resp.ConversationID)
+		fmt.Fprintf(commandStdout, "replied (message_id=%s conversation_id=%s)\n", resp.MessageID, resp.ConversationID)
 		if cwd, cwdErr := os.Getwd(); cwdErr != nil {
 			beadsMailRecordGap("could not locate the beads repository: " + cwdErr.Error())
 		} else if addressMap, mapErr := loadBeadsMailAddressMap(cwd); mapErr != nil {

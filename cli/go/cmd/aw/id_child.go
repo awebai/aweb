@@ -660,7 +660,7 @@ func readExchangeFile(path string) ([]byte, error) {
 
 func writeExchangeFile(path string, data []byte) error {
 	if path == "" || path == "-" {
-		_, err := os.Stdout.Write(append(data, '\n'))
+		_, err := commandStdout.Write(append(data, '\n'))
 		return err
 	}
 	if _, err := os.Stat(path); err == nil {

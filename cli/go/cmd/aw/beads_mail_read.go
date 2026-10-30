@@ -147,23 +147,23 @@ func beadsMailReadClient(cmd *cobra.Command, ctx context.Context) (*aweb.Client,
 
 func beadsMailPrintMessage(m beadsMailAddressMap, msg *awid.InboxMessage) {
 	body, env := splitBeadsMailEnvelope(msg.Body)
-	fmt.Printf("From: %s\n", beadsMailSenderLabel(m, msg))
-	fmt.Printf("Subject: %s\n", termtext.Line(msg.Subject))
-	fmt.Printf("Date: %s\n", msg.CreatedAt)
+	fmt.Fprintf(commandStdout, "From: %s\n", beadsMailSenderLabel(m, msg))
+	fmt.Fprintf(commandStdout, "Subject: %s\n", termtext.Line(msg.Subject))
+	fmt.Fprintf(commandStdout, "Date: %s\n", msg.CreatedAt)
 	priority := string(msg.Priority)
 	if env != nil && env.Priority != nil {
 		priority = fmt.Sprintf("%s (beads %d)", priority, *env.Priority)
 	}
-	fmt.Printf("Priority: %s\n", priority)
+	fmt.Fprintf(commandStdout, "Priority: %s\n", priority)
 	if env != nil && env.Type != "" {
-		fmt.Printf("Type: %s\n", termtext.Line(env.Type))
+		fmt.Fprintf(commandStdout, "Type: %s\n", termtext.Line(env.Type))
 	}
 	if env != nil && env.Pinned {
-		fmt.Println("Pinned: true")
+		fmt.Fprintln(commandStdout, "Pinned: true")
 	}
-	fmt.Printf("Message-Id: %s\n", msg.MessageID)
-	fmt.Printf("Thread: %s\n", msg.ConversationID)
-	fmt.Printf("\n%s\n", termtext.Body(body))
+	fmt.Fprintf(commandStdout, "Message-Id: %s\n", msg.MessageID)
+	fmt.Fprintf(commandStdout, "Thread: %s\n", msg.ConversationID)
+	fmt.Fprintf(commandStdout, "\n%s\n", termtext.Body(body))
 }
 
 var (
@@ -200,17 +200,17 @@ var beadsMailInboxCmd = &cobra.Command{
 		if beadsMailInboxJSON {
 			printJSON(resp)
 		} else if len(resp.Messages) == 0 {
-			fmt.Println("No unread mail.")
+			fmt.Fprintln(commandStdout, "No unread mail.")
 		} else {
 			for i, msg := range resp.Messages {
 				state := " "
 				if msg.ReadAt == nil {
 					state = "*"
 				}
-				fmt.Printf("%2d %s %s — %s (%s)\n", i+1, state, beadsMailSenderLabel(addressMap, &msg), termtext.Line(msg.Subject), msg.MessageID)
+				fmt.Fprintf(commandStdout, "%2d %s %s — %s (%s)\n", i+1, state, beadsMailSenderLabel(addressMap, &msg), termtext.Line(msg.Subject), msg.MessageID)
 			}
 			if resp.HasMore {
-				fmt.Printf("More messages exist; continue with: bd mail inbox --cursor %s\n", resp.NextCursor)
+				fmt.Fprintf(commandStdout, "More messages exist; continue with: bd mail inbox --cursor %s\n", resp.NextCursor)
 			}
 		}
 		// No comm-log write here: inbox is read-only and meant for polling,
@@ -286,7 +286,7 @@ var beadsMailPeekCmd = &cobra.Command{
 			return err
 		}
 		if len(resp.Messages) == 0 {
-			fmt.Println("No unread mail.")
+			fmt.Fprintln(commandStdout, "No unread mail.")
 			return nil
 		}
 		beadsMailPrintMessage(addressMap, &resp.Messages[0])
@@ -324,12 +324,12 @@ var beadsMailThreadCmd = &cobra.Command{
 		for i := range resp.Messages {
 			msg := &resp.Messages[i]
 			if i > 0 {
-				fmt.Println("---")
+				fmt.Fprintln(commandStdout, "---")
 			}
 			beadsMailPrintMessage(addressMap, msg)
 		}
 		if len(resp.Messages) == threadLimit {
-			fmt.Printf("Showing the oldest %d messages; the thread may be longer than this window.\n", threadLimit)
+			fmt.Fprintf(commandStdout, "Showing the oldest %d messages; the thread may be longer than this window.\n", threadLimit)
 		}
 		return nil
 	},
@@ -394,9 +394,9 @@ var beadsMailMarkReadCmd = &cobra.Command{
 			}
 			acked++
 		}
-		fmt.Printf("marked %d message(s) read\n", acked)
+		fmt.Fprintf(commandStdout, "marked %d message(s) read\n", acked)
 		if capped {
-			fmt.Println("More unread mail remains beyond this pass; run 'bd mail mark-read --all' again.")
+			fmt.Fprintln(commandStdout, "More unread mail remains beyond this pass; run 'bd mail mark-read --all' again.")
 		}
 		if failed > 0 {
 			return fmt.Errorf("failed to mark %d message(s) read; they remain unread", failed)
