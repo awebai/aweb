@@ -21,7 +21,7 @@ func main() {
 
 func verify() error {
 	var cases []struct {
-		Home, ID, DIDKey, Domain, Outcome, HumanID, Kind string
+		Home, ID, DIDKey, Domain, Outcome, HumanID, Kind, Reason string
 	}
 	f, err := os.Open("/work/journey-public.json")
 	if err != nil {
@@ -54,6 +54,13 @@ func verify() error {
 		human := ""
 		if r.HumanID != nil {
 			human = *r.HumanID
+		}
+		if c.Reason == "revoked" {
+			if r.IdentityValid == nil || *r.IdentityValid || r.Outcome != "unknown" || r.HumanID != nil || r.Kind != nil || r.Reason != "revoked" {
+				return fmt.Errorf("Go outsider revoked %s: %+v", c.ID, r)
+			}
+			fmt.Printf("PASS: Go outsider revoked %s %s\n", c.Kind, c.ID)
+			continue
 		}
 		if r.IdentityValid == nil || !*r.IdentityValid || r.Outcome != c.Outcome || r.Kind == nil || *r.Kind != c.Kind || human != c.HumanID || r.Reason != "verified" {
 			return fmt.Errorf("Go outsider %s: %+v", c.ID, r)

@@ -352,6 +352,78 @@ def human_issues_human(human):
     return public_case(home, record, kind="human", human=second["id"])
 
 
+def assert_revoked(cwd, expected_id):
+    """A revoked ID, or an agent whose human is revoked, traces to no one."""
+    result, prompts = command(["who", "--json"], cwd=cwd)
+    assert prompts == 0 and result["id"] == expected_id, result
+    assert result["outcome"] == "unknown" and result["reason"] == "revoked", result
+    assert result["identity_valid"] is False, result
+    assert result["human_id"] is None and result["kind"] is None, result
+
+
+def agent_under(human, name):
+    (ROOT / name).mkdir()
+    agent, prompts = command(["id", "create", "--name", name, "--domain", "alpha.example.com",
+                              "--human-parent", human, "--json"], cwd=name)
+    assert agent["human_parent"] == human and prompts == 1, agent
+    return agent
+
+
+def revoked_case(name, agent):
+    home = ROOT / name / ".aw"
+    record = yaml.safe_load((home / "identity.yaml").read_text())
+    record["did_key"] = record["did"]
+    record["domain"] = "alpha.example.com"
+    return dict(public_case(home, record, kind="agent", human=""), Reason="revoked")
+
+
+def revocations(human):
+    """aw id revoke by the identity itself, its human and the namespace root (§3)."""
+    domain = "alpha.example.com"
+    cases = []
+
+    itself = agent_under(human, "revoke-self")
+    revoked, prompts = command(["id", "revoke", itself["did_aw"], "--json"], cwd="revoke-self")
+    assert prompts == 0 and revoked["id"] == itself["did_aw"], revoked
+    assert revoked["effective_from"] == revoked["revoked_at"], revoked
+    assert_revoked("revoke-self", itself["did_aw"])
+    again, prompts = command(["id", "revoke", itself["did_aw"], "--json"], cwd="revoke-self")
+    assert prompts == 0 and again == revoked, again
+    cases.append(revoked_case("revoke-self", itself))
+    print("PASS: an agent revokes itself from AWID's time; a repeat is the same revocation", flush=True)
+
+    child = agent_under(human, "revoke-child")
+    as_human = ["--human", human, "--domain", domain]
+    command(["id", "revoke", child["did_aw"], *as_human, "--cutoff", "2026-01-01T00:00:00Z"],
+            refusal="only --as-root may set --cutoff")
+    revoked, prompts = command(["id", "revoke", child["did_aw"], *as_human, "--json"])
+    assert prompts == 1 and revoked["effective_from"] == revoked["revoked_at"], revoked
+    assert_revoked("revoke-child", child["did_aw"])
+    cases.append(revoked_case("revoke-child", child))
+    print("PASS: a human revokes its agent with one signature; it may not set a cutoff", flush=True)
+
+    # J10, scoped: the root admits a replacement and revokes the departing
+    # human now. Its agents trace to no human; nothing is re-parented.
+    departing, prompts = command(["id", "human", "init", "--domain", domain, "--as-root", "--another", "--json"])
+    assert departing["status"] == "registered" and prompts == 4, departing
+    orphan = agent_under(departing["id"], "revoke-orphan")
+    replacement, prompts = command(["id", "human", "init", "--domain", domain, "--as-root", "--another", "--json"])
+    assert replacement["status"] == "registered" and prompts == 4, replacement
+    revoked, prompts = command(["id", "revoke", departing["id"], "--as-root", "--domain", domain, "--json"])
+    assert prompts == 0 and revoked["effective_from"] == revoked["revoked_at"], revoked
+    assert_revoked("revoke-orphan", orphan["did_aw"])
+    for record_id, case_kind, reason in ((departing["id"], "human", "revoked"),
+                                         (replacement["id"], "human", "")):
+        home, = [h for h in (Path.home() / ".awid/humans" / domain).glob("*")
+                 if yaml.safe_load((h / "identity.yaml").read_text())["stable_id"] == record_id]
+        record = yaml.safe_load((home / "identity.yaml").read_text())
+        case = public_case(home, record, kind=case_kind, human=record_id)
+        cases.append(dict(case, Reason=reason) if reason else case)
+    cases.append(revoked_case("revoke-orphan", orphan))
+    print("PASS: the root admits a replacement human and revokes the departing one; its agent traces to no human", flush=True)
+    return cases
+
+
 def main():
     assert not os.environ.get("AWID_SKIP_DNS_VERIFY")
     assert os.environ.get("DBUS_SESSION_BUS_ADDRESS")
@@ -408,7 +480,9 @@ def main():
     local_case = local_child_resign(human["id"], fresh)
     unenrolled_creations("fresh")
     second_human_case = human_issues_human(human["id"])
-    cases = [public_case(human_home, human_record, kind="human", human=human["id"]), local_case, second_human_case]
+    revoked_cases = revocations(human["id"])
+    cases = [public_case(human_home, human_record, kind="human", human=human["id"]), local_case, second_human_case,
+             *revoked_cases]
     for name, parent in [("alice", human["id"]), ("fresh", human["id"]), ("bob", "")]:
         home = ROOT / name / ".aw"
         record = yaml.safe_load((home / "identity.yaml").read_text())
