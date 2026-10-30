@@ -1682,8 +1682,20 @@ func decorateTimeoutError(method string, err error) error {
 	if !errors.As(err, &netErr) || !netErr.Timeout() {
 		return err
 	}
-	return fmt.Errorf("%w\nRequest timed out before a response was received; it may have applied. Check current state before retrying.", err)
+	return &OutcomeUnknownError{err: err}
 }
+
+// OutcomeUnknownError is a mutating request that timed out before its
+// response arrived: it may or may not have applied.
+type OutcomeUnknownError struct {
+	err error
+}
+
+func (e *OutcomeUnknownError) Error() string {
+	return e.err.Error() + "\nRequest timed out before a response was received; it may have applied. Check current state before retrying."
+}
+
+func (e *OutcomeUnknownError) Unwrap() error { return e.err }
 
 // requestAuthPayload binds the final external URL and decoded body bytes.
 // Identity-only requests bind did_aw; certificate requests bind team_id.

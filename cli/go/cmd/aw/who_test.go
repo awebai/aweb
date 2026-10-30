@@ -6,7 +6,10 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -90,17 +93,82 @@ func TestWhoReportsAChainlessLocalIdentityAsUnknown(t *testing.T) {
 	}
 }
 
+type whoRecordedStatus struct{ domains *[]string }
+
+func (s whoRecordedStatus) IDChainEvidence(_ context.Context, _ map[string]any, _ awid.IDChainSubject, domain string) *awid.IDChainEvidence {
+	*s.domains = append(*s.domains, domain)
+	return nil
+}
+
 // A global ID without an installed chain is still asked about: an enrolled
-// ID cannot become a legacy one by leaving its chain out.
-func TestWhoAsksAboutAChainlessGlobalID(t *testing.T) {
-	v := loadWhoVectors(t)
-	dir := whoIdentity(t, v, false, true)
-	out, err := executeWho(context.Background(), whoOptions{WorkingDir: dir, TXTResolver: staticTXTResolver{}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out.ID != v.Keys["coordinator"].DIDAW || out.Outcome != "unavailable" || out.Reason != "evidence_unavailable" || out.HumanID != nil || out.Chain != nil {
-		t.Fatalf("out %+v", out)
+// ID cannot become a legacy one by leaving its chain out. Enrollment is read
+// fresh from the identity's key route, never from its address: here the
+// address names another domain, and that domain has no tree root.
+func TestWhoAsksTheKeyRouteAboutAChainlessGlobalID(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		tree    any
+		omit    bool
+		key     string
+		outcome string
+		reason  string
+		status  []string
+	}{
+		{name: "not enrolled", tree: map[string]any{"enrolled": false}, outcome: "unknown", reason: "unregistered_identity"},
+		{name: "enrolled", tree: map[string]any{"enrolled": true, "domain": "example.com"}, outcome: "unavailable", reason: "evidence_unavailable", status: []string{"example.com"}},
+		{name: "unknown", omit: true, outcome: "unavailable", reason: "evidence_unavailable"},
+		{name: "malformed", tree: map[string]any{"enrolled": "false"}, outcome: "unavailable", reason: "evidence_unavailable"},
+		{name: "key not current", tree: map[string]any{"enrolled": false}, key: "alice", outcome: "unavailable", reason: "evidence_unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := loadWhoVectors(t)
+			dir := whoIdentity(t, v, false, true)
+			currentKey := v.Keys["coordinator"].DIDKey
+			if tc.key != "" {
+				currentKey = v.Keys[tc.key].DIDKey
+			}
+			keyReads := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/v1/did/"+v.Keys["coordinator"].DIDAW+"/key" {
+					t.Errorf("unexpected authority request: %s %s", r.Method, r.URL.Path)
+					http.NotFound(w, r)
+					return
+				}
+				keyReads++
+				response := map[string]any{"did_aw": v.Keys["coordinator"].DIDAW, "current_did_key": currentKey}
+				if !tc.omit {
+					response["id_tree"] = tc.tree
+				}
+				_ = json.NewEncoder(w).Encode(response)
+			}))
+			defer server.Close()
+			path := filepath.Join(dir, ".aw", "identity.yaml")
+			identity, err := awconfig.LoadWorktreeIdentityFrom(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			identity.RegistryURL, identity.Address = server.URL, "signup-owner.example.com/coordinator"
+			if err := awconfig.SaveWorktreeIdentityTo(path, identity); err != nil {
+				t.Fatal(err)
+			}
+			var statusDomains []string
+			out, err := executeWho(context.Background(), whoOptions{WorkingDir: dir, Status: whoRecordedStatus{&statusDomains}, TXTResolver: staticTXTResolver{}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out.ID != v.Keys["coordinator"].DIDAW || out.Outcome != tc.outcome || out.Reason != tc.reason || out.HumanID != nil || out.Chain != nil {
+				t.Fatalf("out %+v", out)
+			}
+			if tc.reason == "unregistered_identity" && out.IdentityValid != nil {
+				t.Fatalf("an unenrolled identity is not judged: %+v", out)
+			}
+			if keyReads != 1 {
+				t.Fatalf("key reads=%d, want 1", keyReads)
+			}
+			if strings.Join(statusDomains, ",") != strings.Join(tc.status, ",") {
+				t.Fatalf("status read for %v, want %v", statusDomains, tc.status)
+			}
+		})
 	}
 }
 
