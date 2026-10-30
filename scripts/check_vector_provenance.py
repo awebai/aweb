@@ -645,6 +645,10 @@ ROOT_CONSUMERS = {
         "id-certificates-v1.json",
         'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
     ),
+    PurePosixPath("channel-core/test/id_status_delegation.test.ts"): _consumer(
+        "id-certificates-v1.json",
+        'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
+    ),
     PurePosixPath("channel-core/test/id_key_response_id_tree.test.ts"): _consumer(
         "id-certificates-v1.json",
         'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
