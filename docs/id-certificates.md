@@ -273,7 +273,9 @@ Existing rows without it require explicit parent-signed registration to reaffirm
 that child; DNS observation never backfills provenance. Same-key reaffirmation
 preserves an existing epoch and opens only a missing first epoch. Deployment
 requires the hosted operator's authorization and execution of reaffirmation,
-with delegated-row counts before and after; public clients do not do it implicitly.
+with NULL-witness counts before and after, followed by `aw who` on a hosted
+agent proving its chain is verified, not evidence_unavailable. Public clients
+do not reaffirm implicitly.
 When a parent's controller changes through an authorized recovery or rotation,
 AWID updates its directly delegated children's `parent_controller_key` in the
 same transaction. A child's ordinary rotation updates its current controller
@@ -564,7 +566,10 @@ Inherited authority requires a strict DNS-label ancestor `parent_domain`, that
 exact DNS name, the witness's `parent_controller_key` equal to the TXT key,
 and its `controller_key` equal to the child's current epoch key. Missing child
 records, unsigned parent records, missing witnesses or no DNS anchor are
-unavailable. Exact authority retains its current-epoch/own-TXT comparison;
+unavailable. The nearest registered parent must be the selected TXT ancestor;
+an intermediate registered namespace without its own TXT makes this child
+unavailable rather than silently extending delegation. Exact authority retains
+its current-epoch/own-TXT comparison;
 delegation never overrides a found exact record. All evidence shares the
 60-second bound. Child certificates still verify with the child's own epochs.
 
