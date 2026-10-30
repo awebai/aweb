@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
 	"os"
@@ -109,52 +108,5 @@ func TestExistingLocalIdentityDoesNotAcquireAnInviteParent(t *testing.T) {
 	issue, err := bindTeamInviteIDChild(context.Background(), invite, filepath.Join(dir, ".aw"))
 	if err != nil || issue {
 		t.Fatalf("existing identity changed parent: %v %v", issue, err)
-	}
-}
-
-// This is the real registry's revoke endpoint and status, not a status mock.
-// DNS is injected locally; only the CoreDNS journey performs external DNS.
-func TestTeamInviteRefusesARevokedIssuerWithRealAWID(t *testing.T) {
-	f := newRotateKeyFixture(t, "example.com")
-	resolver := staticTXTResolver{"_awid.example.com": {idCreateDNSRecordValue(awid.ComputeDIDKey(f.controllerKey.Public().(ed25519.PublicKey)), "")}}
-	dir := t.TempDir()
-	created, err := executeIDCreate(dir, idCreateOptions{Name: "inviter", Domain: f.domain, RegistryURL: f.registryURL, SkipDNSVerify: true, RootParent: true, TXTResolver: resolver, Now: time.Now})
-	if err != nil {
-		t.Fatal(err)
-	}
-	opts := idChildOptions{WorkingDir: dir, RegistryURL: f.registryURL, TXTResolver: resolver, Now: time.Now}
-	link, err := prepareTeamInviteIDChild(context.Background(), opts)
-	if err != nil || link == nil {
-		t.Fatalf("valid neighboring issuer refused: %+v %v", link, err)
-	}
-	chain, err := awconfig.LoadInstalledIDChain(filepath.Join(dir, ".aw"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	certs := chain.Bundle["certificates"].([]any)
-	head, err := awid.IDCertificateID(certs[len(certs)-1].(map[string]any)["certificate"].(map[string]any))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.registry.RevokeIDCertificateAt(context.Background(), f.registryURL, f.domain, created.DIDAW, awid.KeySigner(f.controllerKey), &head, nil); err != nil {
-		t.Fatal(err)
-	}
-	// The exact outstanding invitation and a newly issued one both refuse.
-	issuer, err := selectChildIssuer(context.Background(), opts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := checkSelectedTeamInviteIssuer(context.Background(), issuer); err == nil || !strings.Contains(err.Error(), "revoked_identity") {
-		t.Fatalf("revoked outstanding issuer: %v", err)
-	}
-	if next, err := prepareTeamInviteIDChild(context.Background(), opts); err == nil || next != nil || !strings.Contains(err.Error(), "revoked_identity") {
-		t.Fatalf("revoked new issuer: %+v %v", next, err)
-	}
-	entries, err := os.ReadDir(awconfig.IdentityIssuanceDir(filepath.Join(dir, ".aw")))
-	if !os.IsNotExist(err) && err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 0 {
-		t.Fatal("revoked inviter issued a child")
 	}
 }

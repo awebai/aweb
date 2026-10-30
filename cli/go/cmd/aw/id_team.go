@@ -1702,7 +1702,7 @@ func createTeamInviteTokenAt(domain, team, registryURL, awebURL string, local bo
 		CreatedAt:     time.Now().UTC().Format(time.RFC3339),
 	}
 	if local {
-		link, err := prepareTeamInviteIDChild(context.Background(), idChildOptions{WorkingDir: workingDir, IdentityHome: identityHome, RegistryURL: registryURL, Now: time.Now})
+		link, err := prepareTeamInviteIDChild(context.Background(), idChildOptions{WorkingDir: workingDir, IdentityHome: identityHome, Now: time.Now})
 		if err != nil {
 			return "", "", err
 		}

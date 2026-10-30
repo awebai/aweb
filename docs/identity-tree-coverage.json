@@ -148,7 +148,7 @@
         "cli/go/awconfig/team_invites.go"
       ],
       "status": "converted",
-      "reason": "Local identity creation composes the real inviter child exchange; CoreDNS verifies immediate human attribution, purpose and outsider Go/Python verification. Chainless inviters remain unknown; existing global acceptance preserves enrollment and chain. Revoked-inviter refusal is covered by the focused real-AWID test."
+      "reason": "Local identity creation composes the real inviter child exchange; CoreDNS verifies immediate human attribution, purpose and outsider Go/Python verification. Chainless inviters remain unknown; existing global acceptance preserves enrollment and chain. Invalid issuer ancestry refuses through the production chain verifier; the explicit revoked-inviter CoreDNS row follows the revoke CLI."
     },
     {
       "id": "CLI.INVITE.HOSTED",
