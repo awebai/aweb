@@ -99,7 +99,7 @@ func executeWho(ctx context.Context, opts whoOptions) (whoOutput, error) {
 		if err != nil {
 			return whoOutput{}, fmt.Errorf("lookup %s: %w", awid.AWIDTXTName(domain), err)
 		}
-		registryURL, err := humanInitRegistryURL(authority, opts.RegistryURL)
+		registryURL, err := domainRegistryURL(authority, opts.RegistryURL)
 		if err != nil {
 			return whoOutput{}, err
 		}

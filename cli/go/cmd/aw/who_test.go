@@ -141,7 +141,7 @@ func TestWhoRefusesARegistryTheDomainDoesNotName(t *testing.T) {
 	dir := whoIdentity(t, v, true, false)
 	resolver := staticTXTResolver{"_awid.example.com": {idCreateDNSRecordValue(v.Keys["root"].DIDKey, "https://registry.example.com")}}
 	out, err := executeWho(context.Background(), whoOptions{WorkingDir: dir, RegistryURL: "https://registry.other.example", TXTResolver: resolver})
-	if err == nil || out.Outcome != "" {
+	if exitCode(err) != 2 || out.Outcome != "" {
 		t.Fatalf("out %+v err %v", out, err)
 	}
 }
