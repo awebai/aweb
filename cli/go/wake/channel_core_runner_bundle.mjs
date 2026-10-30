@@ -10403,6 +10403,14 @@ function createTerminalAwakeningHandler(options) {
   }
   const handler = (async (awakening, receivingIdentityHome) => {
     throwIfAborted2(options.signal);
+    if (awakening.kind === "mail" || awakening.kind === "chat") {
+      if (awakening.meta.decrypted === "false") {
+        throw new Error("terminal delivery held: message could not be decrypted");
+      }
+      if (!isTrustedVerificationStatus(awakening.meta.trust_status)) {
+        throw new Error("terminal delivery held: sender is not verified");
+      }
+    }
     if (awakening.deliveryIntent === "ambient") {
       return new Promise((resolve2, reject) => {
         const key = ambientKey(awakening);

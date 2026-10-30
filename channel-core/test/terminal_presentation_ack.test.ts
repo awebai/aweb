@@ -27,6 +27,43 @@ function fixture(kind: "mail" | "chat", state: string | (() => string), input: (
 }
 
 describe.each(["mail", "chat"] as const)("terminal %s presentation acknowledgment", (kind) => {
+  test.each(["unverified", "unknown", "failed", "identity_mismatch", "verification_stale", "pin_conflict", "verified_legacy", undefined])("holds %s sender state without input, delivery mark or acknowledgment", async (status) => {
+    const input = vi.fn(async () => {});
+    const { client, options } = fixture(kind, "idle", input);
+    options.trust.normalizeResolvedTrust = vi.fn(async () => ({ status, stored: false })) as never;
+    const dispatched = new Set<string>();
+    await expect(dispatchAgentEvent(options, dispatched, {
+      type: kind === "mail" ? "mail_message" : "chat_message", message_id: messageID, session_id: sessionID,
+    })).rejects.toThrow("terminal delivery held");
+    expect(input).not.toHaveBeenCalled();
+    expect(client.post).not.toHaveBeenCalled();
+    expect(dispatched.size).toBe(0);
+  });
+
+  test("holds local decryption failure without typing even its diagnostic", async () => {
+    const input = vi.fn(async () => {});
+    const { client, deliver } = fixture(kind, "idle", input);
+    client.get.mockResolvedValue({ messages: [{
+      message_id: messageID, from_alias: "alice", from_agent: "alice", from_address: "acme.com/alice",
+      created_at: "2026-01-01T00:00:00Z", timestamp: "2026-01-01T00:00:00Z",
+      content_mode: "encrypted_v2", message_version: 2, encrypted_envelope: {},
+    }] } as never);
+    await expect(deliver()).rejects.toThrow("terminal delivery held");
+    expect(input).not.toHaveBeenCalled();
+    expect(client.post).not.toHaveBeenCalled();
+  });
+
+  test.each(["verified", "verified_custodial"])("accepts %s authorship", async (status) => {
+    const input = vi.fn(async () => {});
+    const { client, options } = fixture(kind, "idle", input);
+    options.trust.normalizeResolvedTrust = vi.fn(async () => ({ status, stored: false })) as never;
+    await dispatchAgentEvent(options, new Set(), {
+      type: kind === "mail" ? "mail_message" : "chat_message", message_id: messageID, session_id: sessionID,
+    });
+    expect(input).toHaveBeenCalledOnce();
+    expect(client.post).toHaveBeenCalledOnce();
+  });
+
   test.each(["idle", "working", "unknown"])("%s delivers full sanitized text and acknowledges only accepted input", async (state) => {
     let accept!: () => void;
     const accepted = new Promise<void>((resolve) => { accept = resolve; });

@@ -12,8 +12,8 @@ function awakening(overrides: Partial<ChannelAwakening> = {}): ChannelAwakening 
     kind: "chat",
     content: "hello",
     deliveryIntent: "wake",
-    meta: { type: "chat", message_id: "m1", session_id: "s1", from: "alice" },
     ...overrides,
+    meta: { type: "chat", message_id: "m1", session_id: "s1", from: "alice", trust_status: "verified", ...overrides.meta },
   };
 }
 
@@ -188,11 +188,11 @@ describe("terminal channel adapter", () => {
       input: async (_home, text) => { inputs.push(text); },
     } });
     await handler(awakening({ kind, content: "actual sender body", meta: {
-      type: kind, message_id: "123e4567-e89b-12d3-a456-426614174000", from: "alice", trust_status: "verification_stale",
+      type: kind, message_id: "123e4567-e89b-12d3-a456-426614174000", from: "alice", trust_status: "verified",
     } }));
     expect(inputs[0]).toContain("Message:\nactual sender body");
     expect(inputs[0]).toContain("from: alice");
-    expect(inputs[0]).toContain("trust_status: verification_stale");
+    expect(inputs[0]).toContain("trust_status: verified");
     expect(inputs[0]).not.toContain("waiting — run");
   });
 

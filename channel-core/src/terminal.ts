@@ -1,4 +1,5 @@
-import { formatAwakeningForAgent, type ChannelAwakening } from "./channel.js";
+import { formatAwakeningForAgent, isTrustedVerificationStatus, type ChannelAwakening } from "./channel.js";
+import type { VerificationStatus } from "./identity/signing.js";
 
 export type TerminalReadinessState = "idle" | "working" | "blocked" | "shell" | "unknown" | "stopped" | "not-launched";
 
@@ -203,6 +204,16 @@ export function createTerminalAwakeningHandler(options: TerminalAwakeningHandler
 
   const handler = (async (awakening: ChannelAwakening, receivingIdentityHome?: string): Promise<void> => {
     throwIfAborted(options.signal);
+    // Refuse the entire presentation, including diagnostics: even a notice
+    // submits terminal input. Rejection preserves channel-core's unread state.
+    if (awakening.kind === "mail" || awakening.kind === "chat") {
+      if (awakening.meta.decrypted === "false") {
+        throw new Error("terminal delivery held: message could not be decrypted");
+      }
+      if (!isTrustedVerificationStatus(awakening.meta.trust_status as VerificationStatus | undefined)) {
+        throw new Error("terminal delivery held: sender is not verified");
+      }
+    }
     if (awakening.deliveryIntent === "ambient") {
       return new Promise<void>((resolve, reject) => {
         const key = ambientKey(awakening);

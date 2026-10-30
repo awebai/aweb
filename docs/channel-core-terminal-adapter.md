@@ -11,8 +11,14 @@ Mail and chat are delivered on arrival. Readiness gating was removed pending an
 architecture rethink: working and unknown states do not delay delivery.
 There is no readiness queue, coalescing window, rate limit or readiness polling.
 
+The terminal adapter holds mail and chat unless sender trust is `verified` or
+`verified_custodial`. Decryption failures are held too, including their diagnostic
+notices: a notice would still submit terminal input. Held messages remain unread
+and are not marked delivered; the child reports the refusal through status.
+Native channel adapters retain their own presentation policy.
+
 The terminal adapter serializes input across delivery lanes. Each caller checks
-only terminal safety before input: `shell` (including `generic shell`), `stopped`,
+terminal safety before input: `shell` (including `generic shell`), `stopped`,
 `not-launched` and `present:false` refuse input, because there is no running
 harness to receive it. `blocked` also refuses input: a modal such as a permission
 prompt or AskUserQuestion can consume message text and Enter as an answer rather

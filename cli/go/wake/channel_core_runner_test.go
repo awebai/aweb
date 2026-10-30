@@ -58,15 +58,18 @@ func TestBundledGrantMailReadOnlyUsesManualAckAndDeliveryStore(t *testing.T) {
 	fetches := 0
 	fetchAuth := ""
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveWakeSender(w, r) {
+			return
+		}
 		mu.Lock()
 		defer mu.Unlock()
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/messages/inbox":
 			fetches++
 			fetchAuth = r.Header.Get("Authorization")
-			_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{{
+			_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{signedWakeMessage(t, map[string]any{
 				"message_id": "mail-1", "conversation_id": "conv-1", "from_agent_id": "agent-bob", "from_alias": "bob", "subject": "hello", "body": "grant mail", "priority": "normal", "created_at": "2026-01-01T00:00:00Z",
-			}}})
+			})}})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/messages/mail-1/ack":
 			acks++
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
@@ -287,11 +290,14 @@ func TestBundledGrantChatReadMarksReadWithGrantAuth(t *testing.T) {
 	var mu sync.Mutex
 	readAuth := ""
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveWakeSender(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/chat/sessions/sess-1/messages":
-			_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{{
+			_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{signedWakeMessage(t, map[string]any{
 				"message_id": "chat-1", "conversation_id": "conv-1", "from_agent": "bob", "body": "grant chat", "timestamp": "2026-01-01T00:00:00Z", "sender_leaving": false,
-			}}})
+			})}})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/chat/sessions/sess-1/read":
 			mu.Lock()
 			readAuth = r.Header.Get("Authorization")
@@ -408,6 +414,9 @@ func TestBundledEncryptedSecondaryRootUsesBindingIdentityForDecrypt(t *testing.T
 	oats := writeFakeOATS(t, root, inputPath)
 	awLog := filepath.Join(root, "aw.log")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveWakeSender(w, r) {
+			return
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{{
 			"message_id": "mail-enc", "conversation_id": "conv-1", "from_agent_id": "agent-bob", "from_alias": "bob", "subject": "encrypted", "body": "", "priority": "normal", "created_at": "2026-01-01T00:00:00Z", "content_mode": "encrypted_v2", "message_version": 2, "encrypted_envelope": map[string]any{},
 		}}})
@@ -421,10 +430,10 @@ func TestBundledEncryptedSecondaryRootUsesBindingIdentityForDecrypt(t *testing.T
 	defer child.Stop()
 	waitForStatus(t, child, func(st ChannelCoreStatus) bool { return st.Running && st.LastError == "" })
 	child.Offer(reg.ReceiveBindings()[0], awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "mail-enc", ConversationID: "conv-1"})
-	waitForFileContains(t, inputPath, "decrypted: false")
-	if data, _ := os.ReadFile(inputPath); !strings.Contains(string(data), "local aw") {
-		t.Fatalf("encrypted failure did not come from local aw decrypt path: %s", data)
-	}
+	waitForStatus(t, child, func(st ChannelCoreStatus) bool {
+		return st.TraceStage == "lane_job_failed" && strings.Contains(st.LastError, "message could not be decrypted")
+	})
+	assertFileNotContains(t, inputPath, "decrypted: false")
 	canonicalSecondary, _ := filepath.EvalSymlinks(secondary)
 	waitForFileContains(t, awLog, "--identity-home "+canonicalSecondary)
 	if data, _ := os.ReadFile(awLog); strings.Contains(string(data), terminalHome+"/.aw") {
@@ -442,12 +451,18 @@ func TestBundledSecondaryIdentityFullMessage(t *testing.T) {
 				messageID := "12345678-1234-1234-1234-123456789abc"
 				sessionID := "87654321-4321-4321-4321-cba987654321"
 				primaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if serveWakeSender(w, r) {
+						return
+					}
 					_ = json.NewEncoder(w).Encode(map[string]any{"messages": []any{}})
 				}))
 				defer primaryServer.Close()
 				var ackMu sync.Mutex
 				acks := 0
 				secondaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if serveWakeSender(w, r) {
+						return
+					}
 					if r.Method == http.MethodPost {
 						ackMu.Lock()
 						acks++
@@ -455,9 +470,9 @@ func TestBundledSecondaryIdentityFullMessage(t *testing.T) {
 						_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 						return
 					}
-					_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{{
+					_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{signedWakeMessage(t, map[string]any{
 						"message_id": messageID, "from_alias": "bob", "from_agent": "bob", "body": "secondary private\u001b\u0007 message", "subject": "secondary mail", "priority": "normal", "created_at": "2026-01-01T00:00:00Z", "timestamp": "2026-01-01T00:00:00Z",
-					}}})
+					})}})
 				}))
 				defer secondaryServer.Close()
 				scopes := []string{"events.read", "mail.read", "mail.send", "chat.read"}
