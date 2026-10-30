@@ -141,7 +141,7 @@ func verifyWhoPresentation(ctx context.Context, subject awid.IDChainSubject, bun
 	registry := awid.NewAWIDRegistryClient(nil, opts.TXTResolver)
 	status := awid.NewIDStatusClient(registry, opts.TXTResolver)
 	if strings.TrimSpace(opts.RegistryURL) != "" {
-		authority, err := awid.VerifyExactDomainAuthority(ctx, opts.TXTResolver, domain)
+		authority, err := awid.DiscoverAuthoritativeRegistry(ctx, opts.TXTResolver, domain)
 		if err != nil {
 			return whoOutput{}, fmt.Errorf("lookup %s: %w", awid.AWIDTXTName(domain), err)
 		}

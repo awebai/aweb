@@ -3462,9 +3462,12 @@ func loadTeamCleanupCloudNamespaceKey(ctx context.Context, domain, path string) 
 		return nil, err
 	}
 	controllerDID := awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))
-	authority, err := awid.VerifyExactDomainAuthority(ctx, teamCleanupCloudTXTResolver, domain)
+	authority, err := awid.DiscoverAuthoritativeRegistry(ctx, teamCleanupCloudTXTResolver, domain)
 	if err != nil {
 		return nil, fmt.Errorf("verify DNS authority for %s: %w", domain, err)
+	}
+	if authority.Inherited || authority.DNSName != awid.AWIDTXTName(domain) {
+		return nil, fmt.Errorf("no own-domain TXT record found at %s", awid.AWIDTXTName(domain))
 	}
 	if strings.TrimSpace(authority.ControllerDID) != controllerDID {
 		return nil, fmt.Errorf("local namespace controller key for %s does not match DNS controller (local=%s, dns=%s)", domain, controllerDID, strings.TrimSpace(authority.ControllerDID))
