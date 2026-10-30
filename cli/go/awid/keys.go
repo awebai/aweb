@@ -195,3 +195,11 @@ func addressToKeyFileBase(address string) string {
 func didToKeyFileBase(did string) string {
 	return strings.ReplaceAll(did, ":", "-")
 }
+
+// KeySigner signs with key held in this process, such as the namespace
+// controller key, as an IDCertificateSigner.
+func KeySigner(key ed25519.PrivateKey) IDCertificateSigner {
+	return func(payload []byte) (string, []byte, error) {
+		return ComputeDIDKey(key.Public().(ed25519.PublicKey)), ed25519.Sign(key, payload), nil
+	}
+}

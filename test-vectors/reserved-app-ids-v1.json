@@ -46,6 +46,7 @@
     "upgrade",
     "version",
     "wake",
+    "who",
     "whoami",
     "work",
     "workspace"

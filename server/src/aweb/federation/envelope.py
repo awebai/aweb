@@ -16,6 +16,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from awid.dns_auth import validate_did_key
 from awid.log import canonical_server_origin
 from awid.signing import verify_did_key_signature, validate_message_via
 from aweb.e2ee_messages import E2EEEnvelopeError, validate_e2ee_message_envelope
@@ -82,10 +83,7 @@ class FederationEnvelope(BaseModel):
     @field_validator("sender_current_did_key", "target_current_did_key")
     @classmethod
     def _validate_did_key(cls, value: str) -> str:
-        value = value.strip()
-        if not value.startswith("did:key:"):
-            raise ValueError("must be a did:key")
-        return value
+        return validate_did_key(value)
 
     @field_validator("target_delivery_origin")
     @classmethod

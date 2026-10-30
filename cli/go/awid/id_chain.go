@@ -20,7 +20,6 @@ type IDChainEvidence struct {
 	Status             map[string]any
 	NamespaceAuthority map[string]any
 	AgeSeconds         *float64
-	RefreshFailed      bool
 }
 type IDChainResult struct {
 	Outcome       string  `json:"outcome"`
@@ -42,17 +41,26 @@ func idChainFailure(reason string) IDChainResult {
 	}
 	return r
 }
-func IDStatusCacheMode(age *float64, refreshFailed bool) string {
+func IDStatusCacheMode(age *float64) string {
 	if age == nil || math.IsNaN(*age) || math.IsInf(*age, 0) || *age < 0 {
 		return "unavailable"
 	}
 	if *age <= 60 {
 		return "fresh"
 	}
-	if refreshFailed && *age <= 900 {
-		return "outage_grace"
-	}
 	return "unavailable"
+}
+
+// idEvidenceUsable refuses evidence that is not fresh: status_expired once it
+// is older than the fresh window, evidence_unavailable otherwise.
+func idEvidenceUsable(evidence *IDChainEvidence) error {
+	if IDStatusCacheMode(evidence.AgeSeconds) != "unavailable" {
+		return nil
+	}
+	if evidence.AgeSeconds != nil && !math.IsInf(*evidence.AgeSeconds, 0) && *evidence.AgeSeconds > 60 {
+		return idCertificateRefusal("status_expired")
+	}
+	return idCertificateRefusal("evidence_unavailable")
 }
 func IDRequestDisposition(r IDChainResult, subject IDChainSubject, originalAuthPassed, humanRequired bool) string {
 	if !originalAuthPassed {
@@ -510,12 +518,8 @@ func verifyIDChain(bundle map[string]any, subject IDChainSubject, evidence *IDCh
 	if evidence == nil {
 		return bad("evidence_unavailable")
 	}
-	if IDStatusCacheMode(evidence.AgeSeconds, evidence.RefreshFailed) == "unavailable" {
-		// Expired grace requires a failed refresh of last-known-good evidence.
-		if evidence.RefreshFailed && evidence.AgeSeconds != nil && *evidence.AgeSeconds > 900 {
-			return bad("status_expired")
-		}
-		return bad("evidence_unavailable")
+	if err = idEvidenceUsable(evidence); err != nil {
+		return IDChainResult{}, err
 	}
 	status, err := parseIDStatus(evidence, domain)
 	if err != nil {

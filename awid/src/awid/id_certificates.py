@@ -20,7 +20,7 @@ from nacl.bindings import crypto_core_ed25519_is_valid_point
 from nacl.exceptions import BadSignatureError
 from nacl.signing import VerifyKey
 
-from awid.did import did_from_public_key, public_key_from_did, validate_stable_id
+from awid.did import public_key_from_did, validate_stable_id
 from awid.utc_timestamps import parse_utc_seconds
 from awid.identity_log_verify import verify_identity_log
 from awid.federation_errors import FederationAuthorityError
@@ -35,8 +35,6 @@ _B64URL = re.compile(r"[A-Za-z0-9_-]+")
 _BASE58 = re.compile(r"[1-9A-HJ-NP-Za-km-z]+")
 _ED25519_ORDER = 2**252 + 27742317777372353535851937790883648493
 _STATUS_FRESH_SECONDS = 60
-_STATUS_GRACE_SECONDS = 900
-_NS_PER_SECOND = 1_000_000_000
 
 
 class IDCertificateError(ValueError):
@@ -118,9 +116,8 @@ def _id(value: Any, *, key_only: bool = False) -> None:
         if not isinstance(value, str):
             raise ValueError("not text")
         if value.startswith("did:key:"):
-            public = public_key_from_did(value)
-            if did_from_public_key(public) != value or not crypto_core_ed25519_is_valid_point(public):
-                raise ValueError("noncanonical or non-prime-subgroup key")
+            # Decoding refuses non-canonical and non-prime-order keys.
+            public_key_from_did(value)
         elif not key_only and value.startswith("did:aw:"):
             if not _BASE58.fullmatch(value[7:]) or validate_stable_id(value) != value:
                 raise ValueError("noncanonical stable id")
@@ -179,7 +176,8 @@ def strict_did_key(did_key: str) -> bool:
     """Whether a canonical did:key meets the ID family's strict point profile.
 
     This predicate establishes no key ownership, issuance or current authority.
-    Released generic DID decoding retains its own contract.
+    It is did:key decoding itself (awid.did.public_key_from_did), which every
+    released Python decoder shares.
     """
     try:
         _id(did_key, key_only=True)
@@ -322,49 +320,15 @@ class IDChainEvidence:
     status: dict[str, Any]
     namespace_authority: dict[str, Any]
     age_seconds: float | None
-    refresh_failed: bool = False
-    observed_at_ns: int | None = None
-
-    def cache_mode_at(self, now_ns: int) -> str:
-        """Recheck a producer-anchored snapshot after waiting, without I/O.
-
-        The producer samples its process-local monotonic clock no later than
-        the observation to which age_seconds applies. Consumers use that same
-        clock, after their last lock wait. Neither the anchor nor the age is
-        renewed by this check; an anchor is never serialized or shared across
-        processes. This reports freshness only, not chain validity/authority.
-        """
-        if (
-            type(self.observed_at_ns) is not int or self.observed_at_ns < 0
-            or type(now_ns) is not int or now_ns < self.observed_at_ns
-        ):
-            return 'unavailable'
-        age_ns = _status_age_ns(self.age_seconds)
-        if age_ns is None:
-            return 'unavailable'
-        elapsed_ns = now_ns - self.observed_at_ns
-        return _status_cache_mode(age_ns + elapsed_ns, self.refresh_failed)
 
 
-def _status_age_ns(age: float | None) -> int | None:
-    if type(age) not in (int, float) or age < 0 or (type(age) is float and not math.isfinite(age)):
-        return None
-    # Round towards earlier expiry. No absolute clock/deadline passes through
-    # a float, including on hosts with very large monotonic clock values.
-    numerator, denominator = age.as_integer_ratio()
-    return (numerator * _NS_PER_SECOND + denominator - 1) // denominator
-
-
-def _status_cache_mode(age_ns: int | None, refresh_failed: bool) -> str:
-    if age_ns is None:
+def status_cache_mode(age_seconds: float | None) -> str:
+    """Fresh through 60 seconds at acquisition; expired evidence is unavailable."""
+    if type(age_seconds) not in (int, float) or age_seconds < 0:
         return 'unavailable'
-    if age_ns <= _STATUS_FRESH_SECONDS * _NS_PER_SECOND:
-        return 'fresh'
-    return 'outage_grace' if refresh_failed and age_ns <= _STATUS_GRACE_SECONDS * _NS_PER_SECOND else 'unavailable'
-
-
-def status_cache_mode(age_seconds: float | None, refresh_failed: bool) -> str:
-    return _status_cache_mode(_status_age_ns(age_seconds), refresh_failed)
+    if type(age_seconds) is float and not math.isfinite(age_seconds):
+        return 'unavailable'
+    return 'fresh' if age_seconds <= _STATUS_FRESH_SECONDS else 'unavailable'
 
 
 def status_request(bundle: dict[str, Any] | None, subject: dict[str, Any], *, domain: str | None = None) -> dict[str, Any] | None:
@@ -615,9 +579,9 @@ def _id_chain(bundle: dict[str, Any] | None, subject: dict[str, Any], evidence: 
         raise IDCertificateError('subject_mismatch')
     if evidence is None:
         raise IDCertificateError('evidence_unavailable')
-    if status_cache_mode(evidence.age_seconds, evidence.refresh_failed) == 'unavailable':
-        # Expired grace describes last-known-good evidence after a failed refresh.
-        expired = evidence.refresh_failed and evidence.age_seconds is not None and evidence.age_seconds > 900
+    if status_cache_mode(evidence.age_seconds) == 'unavailable':
+        age = evidence.age_seconds
+        expired = (type(age) is int or type(age) is float and math.isfinite(age)) and age > _STATUS_FRESH_SECONDS
         raise IDCertificateError('status_expired' if expired else 'evidence_unavailable')
     status = _IDStatus(evidence, domain)
     if subject['id'].startswith('did:aw:') and status.current_key(subject['id']) != subject['did_key']:

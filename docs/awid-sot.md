@@ -445,6 +445,12 @@ Entry-field values specific to this op:
   authorizes its own registration
 - `proof` is signed by the private half of `new_did_key`
 
+`awid.log.initial_registration_entry(did_key, timestamp=...)` builds these
+entry fields; `log_entry_payload(**entry)` is the signed payload.
+`RegistryClient.register_did_with_signer` signs it through a caller's signer
+and returns the response below without any further signed read, so a key
+held behind a signer is asked for this one signature only.
+
 ```
 POST /v1/did
      Body: { <canonical entry payload fields>, "proof": "<base64>" }
@@ -1210,15 +1216,18 @@ which raises.
   with the namespace authority (`domain`, `dns_name`, `inherited`,
   `controller_key`) from the client's `DomainVerifier`, both fetched in one
   attempt. Every process sharing the entry ages it on one clock, the Redis
-  server's: the entry is stamped with Redis `TIME` when the attempt begins,
-  and each read takes Redis `TIME` with the entry in one pipelined round
-  trip. The body's `observed_at` is never used, and the age survives
-  restarts. An entry stamped ahead of the Redis clock (the clock stepped
-  back) has no known age: it is neither fresh nor last-known-good, and is
-  refreshed. After a failed attempt the last-known-good age includes the
-  time spent waiting for it. Ages are never clamped; a negative one is
-  unavailable evidence to the verifier. An entry that is not exactly this
-  shape is dropped and refreshed. Without Redis nothing is stored, so each
+  server's: the entry is stamped with the whole seconds of Redis `TIME` when
+  the attempt begins, and each read takes Redis `TIME` with the entry in one
+  pipelined round trip. The age is the read's `TIME`, to the microsecond,
+  less that stamp, rounded up to whole seconds, so it never reads younger
+  than the evidence is. The body's `observed_at` is never used, and the age
+  survives restarts. An entry stamped ahead of the Redis clock (the clock
+  stepped back) has no known age, so it is never fresh, and is refreshed.
+  The time this process spends in a refresh attempt is measured on its
+  monotonic clock and also rounded up. Ages are never
+  clamped; a negative one is unavailable evidence to the verifier. An entry that is not exactly this
+  shape is dropped and refreshed. An entry is kept for 60 seconds, since
+  nothing older is ever presented. Without Redis nothing is stored, so each
   read fetches.
 - Evidence aged 60 seconds or less is served with no DNS, routing or HTTP
   work. Older evidence waits for one refresh shared by every concurrent caller
@@ -1229,17 +1238,11 @@ which raises.
   successful answer that is not a JSON object within the response bound
   removes the entry, so no older tree outlives it.
 - A failed attempt (timeout, transport error, DNS failure, any non-2xx answer
-  including 429, whatever its body) never touches the entry. The caller gets the last-known-good
-  evidence with its true age and `refresh_failed`, or, with none, evidence
-  without an age. The verifier allows the outage grace through 900 seconds and
-  reports `status_expired` after it.
-- A failed attempt stands for every refresh of its domain for the next 60
-  seconds inclusive (and only while its recorded time is not ahead of the
-  clock), in process memory only, so a stalled registry costs one
-  timeout per window. During it callers get exactly the failed-refresh answer
-  above, with no network attempt; it never changes an age or extends the
-  grace. A successful answer ends it. Each domain's entries and cooldown are
-  independent of every other domain's.
+  including 429, whatever its body) never touches the entry. The caller gets
+  evidence without an age, which the verifier reports as unavailable: there is
+  no outage grace, and nothing older than 60 seconds is presented. The next
+  request makes its own attempt. Each domain's entries are independent of
+  every other domain's.
 
 ### Public identity-tree write client
 

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -31,6 +32,8 @@ type idCreateOutput struct {
 	RegistryStatus    string `json:"registry_status"`
 	RegistryURL       string `json:"registry_url,omitempty"`
 	RegistryError     string `json:"registry_error,omitempty"`
+	HumanParent       string `json:"human_parent,omitempty"`
+	RootParent        bool   `json:"root_parent,omitempty"`
 }
 
 var (
@@ -38,6 +41,8 @@ var (
 	idCreateDomain        string
 	idCreateRegistryURL   string
 	idCreateSkipDNSVerify bool
+	idCreateHumanParent   string
+	idCreateRootParent    bool
 	idCreateCmd           = &cobra.Command{
 		Annotations: map[string]string{identityCreationTargetAnnotation: "true"},
 		Use:         "create",
@@ -69,6 +74,8 @@ func init() {
 	idCreateCmd.Flags().StringVar(&idCreateDomain, "domain", "", "Namespace domain for the global identity address")
 	idCreateCmd.Flags().StringVar(&idCreateRegistryURL, "registry", "", "Registry origin override (default: api.awid.ai)")
 	idCreateCmd.Flags().BoolVar(&idCreateSkipDNSVerify, "skip-dns-verify", false, "Skip the DNS TXT verification prompt and lookup")
+	idCreateCmd.Flags().StringVar(&idCreateHumanParent, "human-parent", "", "did:aw of the human on this machine who issues the agent's certificate")
+	idCreateCmd.Flags().BoolVar(&idCreateRootParent, "root-parent", false, "Have this machine's namespace controller issue the agent's certificate (an agent with no human)")
 	identityCmd.AddCommand(idCreateCmd)
 }
 
@@ -83,6 +90,14 @@ type idCreateOptions struct {
 	PromptOut                io.Writer
 	TXTResolver              awid.TXTResolver
 	Now                      func() time.Time
+	// HumanParent is the human who issues the agent's certificate, signing
+	// through its keychain key and terminal prompt.
+	HumanParent string
+	// RootParent has the namespace controller issue the certificate.
+	RootParent      bool
+	HumanAtTerminal func() error
+	Keychain        awid.HumanKeyStore
+	Prompt          awid.PassphrasePrompt
 }
 
 type idCreatePlan struct {
@@ -138,14 +153,19 @@ func runIDCreate(cmd *cobra.Command, args []string) error {
 		return usageError("identity creation requires an explicit fresh --identity-home target; refusing to change inherited identity home %s", identityHome.Root)
 	}
 	out, err := executeIDCreate(workingDir, idCreateOptions{
-		IdentityHome:  &identityHome,
-		Name:          idCreateName,
-		Domain:        idCreateDomain,
-		RegistryURL:   idCreateRegistryURL,
-		SkipDNSVerify: idCreateSkipDNSVerify,
-		PromptIn:      cmd.InOrStdin(),
-		PromptOut:     cmd.ErrOrStderr(),
-		Now:           time.Now,
+		IdentityHome:    &identityHome,
+		Name:            idCreateName,
+		Domain:          idCreateDomain,
+		RegistryURL:     idCreateRegistryURL,
+		SkipDNSVerify:   idCreateSkipDNSVerify,
+		PromptIn:        cmd.InOrStdin(),
+		PromptOut:       cmd.ErrOrStderr(),
+		Now:             time.Now,
+		HumanParent:     idCreateHumanParent,
+		RootParent:      idCreateRootParent,
+		HumanAtTerminal: humanAtTerminal,
+		Keychain:        awconfig.HumanKeychain{},
+		Prompt:          awid.TerminalPassphrasePrompt(),
 	})
 	if err != nil {
 		return err
@@ -155,6 +175,29 @@ func runIDCreate(cmd *cobra.Command, args []string) error {
 }
 
 func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, error) {
+	var parent *idCreateParent
+	if strings.TrimSpace(opts.HumanParent) != "" || opts.RootParent {
+		domain, err := normalizeIDCreateDomain(opts.Domain, opts.AllowReservedLocalDomain)
+		if err != nil {
+			return idCreateOutput{}, err
+		}
+		if parent, err = prepareIDCreateParent(opts, domain); err != nil {
+			return idCreateOutput{}, err
+		}
+		identityPath, signingKeyPath, err := idCreateTargetPaths(workingDir, opts)
+		if err != nil {
+			return idCreateOutput{}, err
+		}
+		if fileExists(identityPath) {
+			name, err := normalizeIDCreateName(opts.Name)
+			if err != nil {
+				return idCreateOutput{}, err
+			}
+			ctx, cancel := commandAPIContext(nil)
+			defer cancel()
+			return resumeIDCreateChain(ctx, opts, parent, domain, identityPath, signingKeyPath, domain+"/"+name)
+		}
+	}
 	prepared, err := prepareIDCreatePlan(workingDir, opts)
 	if err != nil {
 		return idCreateOutput{}, err
@@ -178,6 +221,16 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 	}
 	if err := registry.SetFallbackRegistryURL(plan.RegistryURL); err != nil {
 		return idCreateOutput{}, fmt.Errorf("invalid planned registry URL: %w", err)
+	}
+
+	var issuer *childIssuer
+	if parent != nil {
+		if issuer, err = parent.issuer(opts, plan.Domain, prepared.ControllerKey, registry, plan.RegistryURL); err != nil {
+			return idCreateOutput{}, err
+		}
+		if err := parent.preflight(ctx, opts, issuer, plan.Domain, prepared.ControllerKey); err != nil {
+			return idCreateOutput{}, err
+		}
 	}
 
 	registryStatus := "registered"
@@ -247,6 +300,18 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 		return idCreateOutput{}, err
 	}
 
+	humanParent, rootParent := "", false
+	if parent != nil {
+		step := agentChainStep{
+			issuer: issuer, agentID: plan.DIDAW, agentDIDKey: plan.DIDKey, agentKey: prepared.IdentityKey, domain: plan.Domain,
+			registryURL: plan.RegistryURL, identityDir: filepath.Dir(plan.IdentityPath), registry: registry, now: idCreateNow(opts)(),
+		}
+		if _, err := step.install(ctx); err != nil {
+			return idCreateOutput{}, fmt.Errorf("created %s, but its chain is not installed: %w (run the same command again to finish)", plan.Address, err)
+		}
+		humanParent, rootParent = issuer.human, parent.root
+	}
+
 	return idCreateOutput{
 		Status:            "created",
 		Address:           plan.Address,
@@ -260,7 +325,23 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 		RegistryStatus:    registryStatus,
 		RegistryURL:       plan.RegistryURL,
 		RegistryError:     registryErr,
+		HumanParent:       humanParent,
+		RootParent:        rootParent,
 	}, nil
+}
+
+// idCreateTargetPaths are where the identity and its signing key go: the
+// identity home when one is selected, else the working directory's .aw.
+func idCreateTargetPaths(workingDir string, opts idCreateOptions) (string, string, error) {
+	if opts.IdentityHome == nil {
+		return awconfig.WorktreeIdentityPath(workingDir), awconfig.WorktreeSigningKeyPath(workingDir), nil
+	}
+	identityPath, err := awconfig.IdentityHomePath(*opts.IdentityHome, "identity.yaml")
+	if err != nil {
+		return "", "", err
+	}
+	signingKeyPath, err := awconfig.IdentityHomePath(*opts.IdentityHome, "signing.key")
+	return identityPath, signingKeyPath, err
 }
 
 func prepareIDCreatePlan(workingDir string, opts idCreateOptions) (*preparedIDCreate, error) {

@@ -487,7 +487,7 @@ after the session check; a BYOT customer's controller signs from the CLI, not
 from a dashboard-held custom-domain root. If the inviter has left, the root
 signs. Retained branches must complete re-parenting before revoke; a partial
 failure is reported and must not be advertised as completed preservation.
-ID revocation is subject to the 60s/900s status bound, not instant worldwide
+ID revocation is subject to the 60-second status bound, not instant worldwide
 delivery. Current owner policy must still recheck membership/session/removal
 in its own mutation transaction, including accepted removal with surviving
 agent rows and a human who remains a member of another org.
@@ -592,16 +592,14 @@ status client, including team, identity-only, grant, naapp and hook consumers.
 Pure verification takes already trusted facts; it never performs its own live
 HTTP read. Implementations/reviewers trace the class production builds, not
 just a test wrapper. Reuse complete evidence to age **60 seconds inclusive**;
-then synchronously refresh through that client. If refresh fails, reuse only
-last-known-good evidence to age **900 seconds inclusive**, with an explicit
-stale/outage indication. Past 900s, with no prior evidence, or with invalid
-evidence, tree authority fails closed and display reports unknown/unavailable;
-ordinary request disposition is specified in §5. Grace
-does not restart on a failed fetch or process restart; a local trusted fetch
-time measures age. Do not mix fresh and stale fragments to manufacture a valid
-chain or an uncached network dependency on every request.
+then synchronously refresh through that client. If refresh fails or evidence
+is missing or invalid, tree authority is unavailable and display reports
+unknown/unavailable; ordinary request disposition is specified in §5. Measure
+age from the successful fetch. Freshness is checked once when the evidence is
+obtained. Do not mix fragments from different observations to manufacture a
+valid chain or introduce an uncached network dependency on every request.
 
-### Python SDK checks across custody and lock boundaries
+### Python SDK certificate signing
 
 `awid.id_certificates.sign_id_certificate(certificate, *, signer)` is async.
 It validates certificate shape before calling the bytes-only signer once,
@@ -616,23 +614,12 @@ Issuance authority and the checked intended operation remain the custody
 owner's responsibility before it decrypts or signs; a pending human key may
 prove its own enrollment but cannot issue a child certificate.
 
-`IDChainEvidence` additionally has optional `observed_at_ns`, sampled by the
-production evidence producer on its process-local monotonic nanosecond clock
-no later than the observation to which `age_seconds` applies. It is never
-serialized into a cache entry or API response, inherited from another process,
-or renewed on receipt/lock acquisition. A consumer in the same process calls
-`evidence.cache_mode_at(time.monotonic_ns())` after its final lock wait. This
-no-I/O check adds elapsed integer nanoseconds to the observed age rounded UP
-to integer nanoseconds and uses the same boundary function as the age-only
-`status_cache_mode` API. Both preserve the inclusive 60/900 bounds above;
-900 is available only with an explicitly failed refresh. Missing, malformed
-or future anchors give `unavailable` for this new check. The existing age-only
-API remains usable for immediate verification, and freshness alone never
-establishes chain validity or authority.
-
-On post-lock expiry, roll back and return the existing retryable refusal;
-the next ordinary request obtains evidence normally. No automatic
-refresh-and-retry loop or network read under the lock is introduced.
+The custody owner uses a one-shot closure to compare the payload bytes with
+the intended shared builder output (`awid.id_tree_requests` for registry
+writes, `id_certificate_signing_bytes` for certificates) before decrypting or
+signing. At the decrypt point, a pending key signs only its own registration.
+Evidence freshness is checked when obtained; no post-lock clock anchor or
+second freshness check is required.
 
 ## 5. Presentation, binding and verification result
 
@@ -746,8 +733,8 @@ membership revocation is the real offboarding control for local agents. A
 policy requiring ancestor-based authority requires a valid chain.
 A legacy did:aw whose authoritative
 resolution establishes no enrollment also retains ordinary auth. If that
-stable-ID enrollment evidence cannot be established past 900s, it cannot be
-assumed legacy: refuse, rather than allowing a revoked enrolled ID to omit its
+stable-ID enrollment evidence cannot be established within the 60-second
+bound, it cannot be assumed legacy: refuse, rather than allowing a revoked enrolled ID to omit its
 chain and evade revocation. Thus an outage can also refuse a legacy GLOBAL ID
 whose enrollment state cannot be established; it never manufactures no_human
 or nearest_human. This lookup is part of existing cached identity resolution.
@@ -780,25 +767,19 @@ field is unknown, and a malformed stated field rejects. An enrolled 404 keeps
 its domain and still requires independent current tree verification; neither
 404 nor a self-derived key can erase its enrollment.
 
-Distinguish a failed refresh from a successful answer lacking the field. On a
-failed refresh, last-known-good enrollment remains usable through 900 seconds
-at its true original age; after that it is unavailable, never proven legacy.
-A required refetch that succeeds but still lacks `id_tree` is unknown and
-refuses omission, rather than silently reusing the missing cached projection.
-These tree-evidence cases assume original authentication passed; they never
-extend the separate 60-second current-key binding rule below.
+A required refetch that fails makes expired enrollment evidence unavailable,
+never proven legacy. A refetch that succeeds but still lacks `id_tree` is
+unknown and refuses omission. These tree-evidence cases assume original
+authentication passed; they do not replace its current-key binding check.
 
-The existing did:aw key-binding check keeps its current independent 60-second
-positive-cache/fresh-resolution rule; the new 900-second tree-status grace
-MUST NOT loosen it. `expected_request` assumes ordinary authentication has
-passed unless original_auth explicitly says otherwise; status-cache fixtures
-alone do not claim original authentication survives an AWID outage for 900s.
+The existing did:aw key-binding check keeps its independent 60-second
+positive-cache/fresh-resolution rule. `expected_request` assumes ordinary
+authentication has passed unless `original_auth` explicitly says otherwise.
 An enrolled ID with no presented chain resolves its current head before this
-table, including a currently revoked head. Age 60/61/900/901 has the same
-meaning on every lane; last-known-good valid evidence through 900s can still
-permit actions, and the bound is measured from that successful fetch.
-`expected_request` vectors freeze ordinary and human-required dispositions
-alongside (separately from) the shared result.
+table, including a currently revoked head. Age 60/61 has the same meaning on
+every lane: fresh through 60 seconds inclusive; beyond that, refresh or report
+unavailable. `expected_request` vectors freeze ordinary and human-required
+dispositions alongside (separately from) the shared result.
 
 Servers derive verified human/agent kind from this result, never self-declared
 agent_type. Without proof that field may be shown only as unverified legacy
@@ -931,45 +912,68 @@ can approve, or the namespace controller's human operator for the root-issued
 first-human CSR above. Both obey the same tty, exact one-shot, out-of-band
 fingerprint and conflict/void rules; an agent-run root command cannot approve.
 The approval CLI shows the privately fixed recipient, exact child did:aw,
-parent/domain/kind and invitation ID, then requires the approver to ENTER the
-recipient-supplied fingerprint BEFORE showing the CSR's fingerprint. It compares
-the entered value and only then reveals the CSR fingerprint and comparison;
-no prefilled value or yes/no confirmation substitutes for entry. The recipient
-CLI shows its fingerprint when exporting its request:
+parent/domain/kind, invitation ID and the CSR key's fingerprint, then asks:
+"Does it match what <recipient> told you? [y/N]". The recipient CLI shows the
+same fingerprint when exporting its request:
 `lowercase_hex(SHA256(raw_32_byte_subject_public_key)[0:16])`, displayed as four
-groups of eight hex digits separated by hyphens. The inviter ENTERS the
-recipient-supplied fingerprint and the CLI compares it with the CSR's key;
-a yes/no confirmation of the displayed value is insufficient. Obtain that
-fingerprint from the recipient through a DIFFERENT trusted
-channel from the invitation/CSR delivery (in person, a call, or an already
-trusted contact). Fingerprint entry before display is a procedural check; it
-cannot prove that the approver used that independent channel. The fingerprint
-is public, not a secret: for a fresh `did:aw` derived from this subject key,
-the first 16 bytes of its base58-decoded suffix are the same SHA-256 prefix.
-The CSR also carries the public subject key from which the fingerprint can be
-computed. An approver who skips the independent check can therefore compute
-and type the displayed identity's fingerprint; entry order does not prevent
-that. Approval is the inviter's attestation that this exact key
-belongs to that intended person. A mismatched confirmed fingerprint refuses
-`recipient_key_mismatch`, voids the invitation and fails the request: a new
-invitation is required. A name, a token or the displayed fingerprint alone is
-insufficient. Approval covers exactly invitation ID, child ID/key, parent,
-kind=human and domain, and is consumed by the single issuance. There is no
---yes, batch, config/env auto-approval, agent approval or non-TTY approval;
-non-interactive or agent-run approval refuses `human_approval_required`, with
-no signature or registration request. A host-managed invitation can never use
-this approval as a substitute for its verified-email check.
+groups of eight hex digits separated by hyphens. Obtain that fingerprint from
+the recipient through a DIFFERENT trusted channel from invitation/CSR delivery
+(in person, a call, or an already trusted contact), then confirm the match.
+No typed fingerprint entry or normalization is required.
+
+The fingerprint is public, not a secret: for a fresh `did:aw` derived from this
+subject key, the first 16 bytes of its base58-decoded suffix are the same
+SHA-256 prefix. The CSR also carries the public subject key. The CLI cannot
+prove that the approver used the independent channel. Approval is the inviter's
+attestation that this exact key belongs to that intended person; a name, token
+or displayed fingerprint alone is insufficient.
+
+Only an affirmative interactive confirmation approves the exact request.
+No, blank/default No or cancellation refuses `human_approval_required`, with
+no signature or registration request; the original request stays pending and
+the invitation remains live. A declined confirmation is not proof of a
+competing key; the competing-key rule above still voids the invitation.
+Approval covers exactly invitation ID, child ID/key, parent, kind=human and
+domain, and is consumed by the single issuance. There is no --yes, batch,
+config/env auto-approval, agent approval or non-TTY approval; non-interactive
+or agent-run approval refuses `human_approval_required`. A host-managed
+invitation can never use this approval as a substitute for its verified-email
+check.
 
 Agent issue/re-sign needs the ordinary exact invitation or recorded issuance
 and child proof, with no new human login or fingerprint ceremony. Re-sign may
 be automated on explicit receive/approve contact; 'on next contact' means this
 exchange, not every ordinary authenticated request. Immediately before signing,
 after the last wait, recheck request/record binding, unconsumed approval for a
-new human, invitation validity, current parent chain/status, R1–R3, current
-issuer key and issuance provenance. A revoked/replaced parent or missing
-current evidence refuses as in §3; no network occurs under local record locks.
+new human, invitation validity, R1–R3, current issuer key and issuance
+provenance. Obtain current parent chain/status evidence outside the local
+record locks and check its freshness once when obtained. A revoked/replaced
+parent or missing current evidence refuses as in §3; no network occurs under
+local record locks.
 If a status refresh is needed, fetch outside locks and recheck the locked local
-facts before signing. AWID rechecks registered issuance under its own gate.
+facts before signing; no second evidence-freshness check follows the wait.
+AWID rechecks registered issuance under its own gate.
+These issuance rules also apply to spawning from a presented chain: the
+spawner signs the child under that chain, or refuses if it cannot satisfy the
+rules. It must not discard a presented chain to create a chainless child.
+An AWID outage longer than 60 seconds stops chained spawning once the shared
+cached evidence is exhausted; spawning has no separate freshness window.
+
+A genuinely chainless legacy spawner may instead create a chainless child,
+including in a human-bound deployment. The child reports unknown, with no
+guessed human. For a global did:aw, the production cached client must establish
+authoritative no enrollment within the same 60-second bound (§4); unknown
+enrollment evidence is not proof of absence. Known enrollment with unavailable
+evidence, or a revoked, replaced or malformed chain, refuses. In a human-bound
+deployment, chainless spawning emits a warning and readiness counts chainless
+spawners. Chainless human-less deployments remain supported.
+
+A local did:key has no portable enrollment witness (§4). If its chain files
+are deleted, it can look legacy and produce unknown children. This is the
+existing advisory limit for local identities, not evidence of a responsible
+human; membership revocation remains the offboarding control. If the runtime
+already records that it issued this instance a chain, it may refuse a missing
+chain file rather than treating it as legacy; no new tracking record is needed.
 
 The parent chooses current issuer_key and issued_at, signs one §2 certificate,
 and durably records its certificate_id and exact response BEFORE output. The
@@ -1005,8 +1009,13 @@ export; key/DID preparation may precede that, but `--domain` alone cannot
 produce an issue CSR without its required invitation ID and parent.
 
 The CLI surfaces are `aw id parent request` (issue or --resign),
-`aw id parent import <response>`, and `aw id child receive <request>`, `pending`,
-`show <request-id>`, `approve <request-id>` and `refuse <request-id>`. Files and
+`aw id parent import <response>`, and `aw id child invite`, `receive <request>`,
+`pending`, `show <request-id>`, `approve <request-id>` and `refuse <request-id>`.
+`child invite` creates the issuer's local self_custodial invitation record and
+exports only its invitation ID, parent, domain, kind and expiry, never the
+private recipient note; its default expiry is a CLI default, not a protocol
+constant. The issuer is selected explicitly: `--as-root --domain D` for the
+namespace root, or the selected human or agent issuer's records. Files and
 `-` for stdin/stdout are the transport; callers convey the public files over
 their chosen channel. `aw id request` retains its existing signed-HTTP meaning,
 and `aw id cert` retains its team-membership meaning. No automatic request
@@ -1017,13 +1026,27 @@ pending → registered | failed; an AWID-success/local-failure retry resubmits t
 SAME certificate and retains its original registered_at. Completion of this
 exchange never grants team membership, moves an address or rebinds a contact.
 
+`aw id revoke <id>` revokes a registered identity under §3, using the same
+signer selection as `aw id child invite`: the current identity by default,
+`--human <did:aw> --domain D` for a human held in the keychain, or
+`--as-root --domain D` for the namespace root. An identity signer may revoke
+itself; revoking its current child requires that it remain a valid parent.
+Namespace-root authority follows §3. Team membership or team-controller
+authority alone is insufficient. Only `--as-root` accepts
+`--cutoff <time>`; without that option the request sends `effective_from=null`
+so AWID chooses its post-lock serialization time. Non-root signers always send
+null. The command uses the target's current head for `expected_head`, including
+on repeats, and preserves §3's idempotence and root-only earlier-cutoff rules.
+A human signature retains the existing keychain and terminal-passphrase rules.
+This revokes ID-tree authority, not team membership, addresses or DID key history.
+
 Adoption is explicit and prospective. Retain existing global ID, key, address,
 mailbox and ordinary member certificates when their bindings do not change.
 Require actual new-parent/root authority and the agent's key proof; do not
 infer them from API-key users, org roles, mutable owner metadata, human_name,
-an old email claim, address age or a snapshot import. Initial local adoption
-can certify the existing key; an already-certified local re-parent follows
-§2's exception. Reconnect/import restore and verify, never mint a new ancestry.
+an old email claim, address age or a snapshot import. Adoption is ordinary
+human issuance for the agent's existing key, with no special adoption path.
+An already-certified local re-parent follows §2's exception. Reconnect/import restore and verify, never mint a new ancestry.
 Old work remains unattributed; current heads are not historical action proofs.
 No per-action revision snapshots or automatic backfill is introduced.
 
@@ -1078,9 +1101,9 @@ the object-shape check; the frozen shape_or_encoding class allows both.
 Ordered operation cases test effects and atomicity; S2 tests consume the frozen
 cases by NAME, so a dropped/renamed scenario fails CI. They are not substitutes
 for real Postgres/concurrency and released-client journeys in later slices.
-S4 acceptance includes per-domain registry isolation, bounded refresh timeouts,
-negative caching and 429 treated as refresh failure (old evidence only through
-900s), so an attacker-selected DNS registry cannot stall other domains.
+S4 acceptance includes bounded refresh timeouts, per-domain isolation, and 429
+treated as refresh failure (expired evidence is unavailable), so an
+attacker-selected DNS registry cannot stall other domains.
 
 Freeze docs/vectors first; then shared Python/Go/TS verification, AWID history/
 registration/cache, CLI/keychain, transport and creation adapters. Publish OSS

@@ -21,7 +21,6 @@ import {
 import { verifyDidLogEntries, type DidKeyEvidence } from "./registry.js";
 
 export const ID_STATUS_FRESH_SECONDS = 60;
-export const ID_STATUS_OUTAGE_GRACE_SECONDS = 900;
 
 export type IdVerificationReason =
   | IdDecodeRefusal
@@ -74,10 +73,9 @@ export interface IdStatusEvidence {
   status: unknown;
   namespace_authority: IdNamespaceAuthority;
   age_seconds: number | null;
-  refresh_failed: boolean;
 }
 
-export type IdStatusCacheMode = "fresh" | "outage_grace" | "unavailable";
+export type IdStatusCacheMode = "fresh" | "unavailable";
 
 export interface IdStatusRequest {
   v: 1;
@@ -91,14 +89,12 @@ export type IdStatusPlan =
   | { lookup: "status"; request: IdStatusRequest };
 
 /**
- * The 60s/900s rule: evidence is fresh to 60 seconds inclusive; past that it
- * serves only while refreshes fail, to 900 seconds inclusive.
+ * Evidence is fresh through 60 seconds inclusive, measured from the
+ * successful fetch; past that it must be refreshed or it is unavailable.
  */
-export function idStatusCacheMode(ageSeconds: number | null, refreshFailed: boolean): IdStatusCacheMode {
+export function idStatusCacheMode(ageSeconds: number | null): IdStatusCacheMode {
   if (ageSeconds === null || !Number.isFinite(ageSeconds) || ageSeconds < 0) return "unavailable";
-  if (ageSeconds <= ID_STATUS_FRESH_SECONDS) return "fresh";
-  if (refreshFailed && ageSeconds <= ID_STATUS_OUTAGE_GRACE_SECONDS) return "outage_grace";
-  return "unavailable";
+  return ageSeconds <= ID_STATUS_FRESH_SECONDS ? "fresh" : "unavailable";
 }
 
 /**
@@ -279,13 +275,11 @@ const MICROSECOND_TIMESTAMP = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-
 /** Evidence that is trusted, current enough and internally consistent, or a refusal. */
 function trustedSnapshot(evidence: IdStatusEvidence | null, domain: string | undefined): Snapshot {
   if (evidence === null || domain === undefined) throw new Refusal("evidence_unavailable");
-  const mode = idStatusCacheMode(evidence.age_seconds, evidence.refresh_failed);
-  // Only last-known-good evidence outliving its outage grace has expired;
-  // stale evidence that was never refreshed is not evidence at all.
-  if (mode === "unavailable") {
-    const expired =
-      evidence.refresh_failed && evidence.age_seconds !== null && evidence.age_seconds > ID_STATUS_OUTAGE_GRACE_SECONDS;
-    throw new Refusal(expired ? "status_expired" : "evidence_unavailable");
+  // Evidence past its fresh age has expired; a missing or invalid age is not
+  // evidence at all.
+  if (idStatusCacheMode(evidence.age_seconds) === "unavailable") {
+    const age = evidence.age_seconds;
+    throw new Refusal(age !== null && Number.isFinite(age) && age > ID_STATUS_FRESH_SECONDS ? "status_expired" : "evidence_unavailable");
   }
   const authority = evidence.namespace_authority;
   // Only this exact domain's own _awid record is authority; never an ancestor's.

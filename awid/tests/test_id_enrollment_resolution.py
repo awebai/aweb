@@ -337,9 +337,9 @@ async def test_a_missing_key_with_an_unreadable_body_is_unknown():
 
 
 KEY_RESOLUTION_OUTCOMES = VECTORS["key_resolution_outcomes"]
-# Cases whose usable enrollment comes from S4's binding lifecycle rather than a
-# response the SDK parses: last-known-good enrollment after a failed refresh.
-OUTCOMES_OWNED_BY_S4_BINDING = {"key-resolution-failed-refresh-age-900", "key-resolution-failed-refresh-age-901"}
+# Cases whose enrollment comes from S4's binding lifecycle rather than a
+# response the SDK parses: a cached enrollment when its refresh fails.
+OUTCOMES_OWNED_BY_S4_BINDING = {"key-resolution-failed-refresh-age-60", "key-resolution-failed-refresh-age-61"}
 
 
 def _outcome_answer(case: dict) -> httpx.Response:

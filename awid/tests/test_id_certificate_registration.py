@@ -96,8 +96,7 @@ OWNED_ELSEWHERE = {
     "csr-noninteractive-approval-refuses": "S3 child request approval",
     "csr-agent-run-approval-refuses": "S3 child request approval",
     "csr-yes-flag-cannot-approve-human": "S3 child request approval",
-    "csr-mismatched-confirmed-fingerprint-refuses": "S3 child request approval",
-    "csr-approval-must-use-separate-trusted-channel": "S3 child request approval",
+    "csr-declined-fingerprint-confirmation-refuses": "S3 child request approval",
     "csr-human-exact-interactive-approval": "S3 child request approval",
     "csr-byte-identical-retry-returns-exact-response": "S3 child request exchange",
     "csr-second-request-same-key-refuses": "S3 child request exchange",
@@ -121,13 +120,14 @@ OWNED_ELSEWHERE = {
     "csr-root-human-exact-interactive-approval": "S3 root human approval",
     "csr-root-human-agent-run-refuses": "S3 root human approval",
     "csr-root-human-noninteractive-refuses": "S3 root human approval",
-    "csr-root-human-fingerprint-mismatch-voids": "S3 root human approval",
-    "csr-fingerprint-entry-must-precede-display": "S3 child request approval",
+    "csr-root-human-declined-confirmation-refuses": "S3 root human approval",
     "human-init-same-machine-root-signs-directly": "S3 human init",
     "human-init-agent-run-root-refuses": "S3 human init",
     "human-init-noninteractive-root-refuses": "S3 human init",
     "csr-human-import-registers-by-default": "S3 child response import (registers through the existing AWID route)",
     "csr-human-import-registration-failure-retains-pending": "S3 child response import",
+    "csr-root-human-import-registers-by-default": "S3 child response import (root-issued first human)",
+    "csr-root-human-import-stale-root-key-refuses": "S3 child response import (root-issued first human)",
 }
 
 # The only cases with two owners: S2 consumes their AWID half by name.

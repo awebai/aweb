@@ -4,6 +4,7 @@ package awid
 // §3, "Human key lifecycle and two machines"): an encrypted PKCS#8 export of
 // the same Ed25519 key, PBES2 with PBKDF2-HMAC-SHA256 and AES-256-CBC.
 import (
+	"bytes"
 	"crypto"
 	"crypto/ed25519"
 	"crypto/x509/pkix"
@@ -96,6 +97,20 @@ func ImportHumanKeyBackup(backup, passphrase []byte) (ed25519.PrivateKey, error)
 		return nil, humanKeyBackupRefusal("unsupported_backup")
 	}
 	return key, nil
+}
+
+// ValidateHumanKeyBackup checks, without the passphrase, that blob is
+// exactly one encrypted backup in the supported format: one PEM block with
+// no headers and only whitespace around it, whose PBES2 parameters this
+// package accepts.
+// pem.Decode skips anything before a block, so the start is checked here.
+func ValidateHumanKeyBackup(blob []byte) error {
+	begin := []byte("-----BEGIN " + humanKeyBackupPEMType + "-----")
+	block, rest := pem.Decode(blob)
+	if !bytes.HasPrefix(bytes.TrimSpace(blob), begin) || block == nil || block.Type != humanKeyBackupPEMType || len(block.Headers) != 0 || len(bytes.TrimSpace(rest)) != 0 {
+		return humanKeyBackupRefusal("unsupported_backup")
+	}
+	return checkHumanKeyBackupParameters(block.Bytes)
 }
 
 type humanKeyBackupInfo struct {

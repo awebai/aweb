@@ -20,7 +20,7 @@ to refresh it.
 | Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `wake` |
 | Coordination & Runtime | `activity`, `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `status`, `status-host`, `task`, `work` |
 | Utility | `completion`, `doctor`, `help`, `plugin`, `upgrade`, `version` |
-| Additional Commands | `blueprint`, `session` |
+| Additional Commands | `blueprint`, `session`, `who` |
 
 ## Global Flags
 
@@ -358,11 +358,14 @@ Subcommands:
 - `address` Manage addresses for the current global identity
 - `addresses` List registry addresses for a did:aw (defaults to the current global identity)
 - `cert` Team certificate operations
+- `child` Invite, receive and approve requests from children you issue
 - `create` Create a global identity by claiming a namespace address
 - `encryption-key` Manage local E2E encryption keys for this self-custodial identity
 - `grant` Scoped, revocable session grants derived from this identity
+- `human` Human identities in a namespace's identity tree
 - `log` Show a global AWID DID log
 - `namespace` Protocol/admin namespace controller and address operations
+- `parent` Request and import your own certificate from a parent
 - `register` Register the current global identity at the configured registry
 - `request` Make a DIDKey-signed HTTP request with the local identity key
 - `resolve` Resolve a did:aw to its current did:key
@@ -427,6 +430,111 @@ Show the current team certificate
 Flags:
 - `-h, --help help for show`
 
+## `id child`
+
+### `id child`
+
+Invite, receive and approve requests from children you issue
+
+Subcommands:
+- `approve` Sign the certificate for one received request
+- `invite` Fix an invitation for one child before it exports its request
+- `pending` List the requests bound to your invitations
+- `receive` Receive a child's request against one of your invitations
+- `refuse` Refuse one received request without signing
+- `show` Show one received request and the fingerprint of its key
+
+Flags:
+- `-h, --help help for child`
+
+## `id child approve`
+
+### `id child approve`
+
+Sign the certificate for one received request and write the response
+(--out, or stdout). A human child needs your confirmation at an interactive
+terminal that its key fingerprint matches what the recipient told you over a
+separate trusted channel; nothing else approves it.
+
+Flags:
+- `--as-root Act as the namespace root, with this machine's controller key`
+- `--domain string Namespace domain (with --as-root or --human)`
+- `-h, --help help for approve`
+- `--human string Act as this human on this machine (did:aw)`
+- `--out string Where to write the response (- for stdout) (default "-")`
+- `--registry string Registry origin for --as-root, when the domain's _awid record names none`
+
+## `id child invite`
+
+### `id child invite`
+
+Fix an invitation for one child of --kind, and print what the recipient
+needs to export its request: invitation ID, parent, domain, kind and expiry.
+--recipient is your private note of who it is for; it is never exported.
+An invitation expires after --expires (7 days by default).
+
+Flags:
+- `--as-root Act as the namespace root, with this machine's controller key`
+- `--domain string Namespace domain (with --as-root or --human)`
+- `--expires duration How long the invitation stays open (default 168h0m0s)`
+- `-h, --help help for invite`
+- `--human string Act as this human on this machine (did:aw)`
+- `--kind string Kind of the child: human or agent`
+- `--recipient string Your private note of who the invitation is for`
+- `--registry string Registry origin for --as-root, when the domain's _awid record names none`
+
+## `id child pending`
+
+### `id child pending`
+
+List the requests bound to your invitations
+
+Flags:
+- `--as-root Act as the namespace root, with this machine's controller key`
+- `--domain string Namespace domain (with --as-root or --human)`
+- `-h, --help help for pending`
+- `--human string Act as this human on this machine (did:aw)`
+- `--registry string Registry origin for --as-root, when the domain's _awid record names none`
+
+## `id child receive`
+
+### `id child receive`
+
+Receive a child's request against one of your invitations
+
+Flags:
+- `--as-root Act as the namespace root, with this machine's controller key`
+- `--domain string Namespace domain (with --as-root or --human)`
+- `-h, --help help for receive`
+- `--human string Act as this human on this machine (did:aw)`
+- `--registry string Registry origin for --as-root, when the domain's _awid record names none`
+
+## `id child refuse`
+
+### `id child refuse`
+
+Refuse one received request without signing
+
+Flags:
+- `--as-root Act as the namespace root, with this machine's controller key`
+- `--domain string Namespace domain (with --as-root or --human)`
+- `-h, --help help for refuse`
+- `--human string Act as this human on this machine (did:aw)`
+- `--registry string Registry origin for --as-root, when the domain's _awid record names none`
+
+## `id child show`
+
+### `id child show`
+
+Show one received request and the fingerprint of its key
+
+Flags:
+- `--as-root Act as the namespace root, with this machine's controller key`
+- `--domain string Namespace domain (with --as-root or --human)`
+- `-h, --help help for show`
+- `--human string Act as this human on this machine (did:aw)`
+- `--registry string Registry origin for --as-root, when the domain's _awid record names none`
+
 ## `id create`
 
 ### `id create`
@@ -450,11 +558,13 @@ otherwise the host's human CLI login authorizes it.
 Flags:
 - `--domain string Namespace domain for the global identity address`
 - `-h, --help help for create`
+- `--human-parent string did:aw of the human on this machine who issues the agent's certificate`
 - `--inbound-mode string Hosted inbound delivery mode (default team-and-contacts; requires --org)`
 - `--name string Global identity name (address name under --domain)`
 - `--org string Hosted organization slug or ID (human CLI login or explicit owner principal)`
 - `--owner-identity-home string Authorize --org creation with this owner's absolute native credential directory`
 - `--registry string Registry origin override (default: api.awid.ai)`
+- `--root-parent Have this machine's namespace controller issue the agent's certificate (an agent with no human)`
 - `--skip-dns-verify Skip the DNS TXT verification prompt and lookup`
 - `--team-id string Chosen hosted team service UUID or canonical name:namespace (requires --org)`
 
@@ -557,6 +667,38 @@ Show one session grant
 
 Flags:
 - `-h, --help help for show`
+
+## `id human`
+
+### `id human`
+
+Human identities in a namespace's identity tree
+
+Subcommands:
+- `init` Create your human ID in a namespace
+
+Flags:
+- `-h, --help help for human`
+
+## `id human init`
+
+### `id human init`
+
+Create your human ID in --domain. With --as-root the namespace controller on
+this machine issues its certificate now. Without it, the human is only
+prepared: an issuer elsewhere admits it through `aw id parent request`.
+
+The human key is kept in the OS keychain, encrypted under a passphrase you
+choose; every signature asks for that passphrase on the terminal. This needs
+a human at an interactive terminal: it refuses without one and inside an
+agent runtime. A run that fails resumes from where it stopped.
+
+Flags:
+- `--another Create another human in a domain that already has one on this machine`
+- `--as-root Issue the certificate with this machine's namespace controller key`
+- `--domain string Namespace domain`
+- `-h, --help help for init`
+- `--registry string Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)`
 
 ## `id log`
 
@@ -715,6 +857,58 @@ Flags:
 - `-h, --help help for set-delivery-origin`
 - `--namespace string Namespace domain (e.g. acme.com)`
 - `--origin string Canonical aweb server origin (e.g. https://aweb.acme.com)`
+
+## `id parent`
+
+### `id parent`
+
+Request and import your own certificate from a parent
+
+Subcommands:
+- `import` Import the parent's response to your request and register it
+- `request` Export a certificate request against a parent's invitation
+
+Flags:
+- `-h, --help help for parent`
+
+## `id parent import`
+
+### `id parent import`
+
+Verify the parent's response against your outstanding request, install the
+chain and register it at AWID with your own key (--no-register leaves the
+registration pending). A failed registration keeps the signed response;
+run import again to retry it.
+
+Flags:
+- `--domain string Namespace domain of the invitation`
+- `-h, --help help for import`
+- `--human string Act as this human prepared on this machine (did:aw)`
+- `--no-register Install the certificate but leave its AWID registration pending`
+- `--registry string Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)`
+
+## `id parent request`
+
+### `id parent request`
+
+Export a certificate request against the invitation your parent fixed: its
+--invitation-id, --domain and parent (--parent <did:aw> or --root-parent).
+Send the request file to the parent over your chosen channel, and tell them
+the fingerprint shown here through a different trusted channel.
+
+With --resign, a local agent (whose ID is its did:key) instead asks the parent
+of the certificate it carries to re-sign it with the parent's current key,
+after the parent rotated its key.
+
+Flags:
+- `--domain string Namespace domain of the invitation`
+- `-h, --help help for request`
+- `--human string Act as this human prepared on this machine (did:aw)`
+- `--invitation-id string Invitation ID the parent gave you`
+- `--out string Where to write the request (- for stdout) (default "-")`
+- `--parent string did:aw of the parent identity`
+- `--resign Ask the parent to re-sign the certificate this local agent carries`
+- `--root-parent The parent is the namespace root of --domain`
 
 ## `id register`
 
@@ -4096,3 +4290,15 @@ Flags:
 - `--session-id string Per-session identifier`
 - `--session-key string Per-session secret (at least 32 characters; avoid shell history)`
 - `--ttl-seconds int Lease TTL in seconds (default 300)`
+
+## `who`
+
+### `who`
+
+Verify the current identity's installed ID chain on current status from
+its namespace's registry, and show the outcome: the nearest human, no human
+(no human in its chain), unknown or unavailable, with the verifier's reason. The chain is shown only when it verifies.
+
+Flags:
+- `-h, --help help for who`
+- `--registry string Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)`

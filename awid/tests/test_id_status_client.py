@@ -1,8 +1,8 @@
 """The production cached identity-tree status client (docs/id-certificates.md R-1).
 
 Complete evidence is reused to age 60 seconds inclusive, then refreshed
-synchronously through one coalesced, bounded attempt. Only after a failed
-attempt is last-known-good evidence reused, to age 900 seconds inclusive.
+synchronously through one coalesced, bounded attempt. When that attempt fails
+there is no evidence: nothing older than 60 seconds is ever presented.
 The status and the namespace authority it is checked against are one entry on
 one clock, observed once.
 """
@@ -80,6 +80,7 @@ class Registry:
         self.dns_delay = 0.0
         self.http_delay = 0.0
         self.advance_during_fetch = 0
+        self.process_ns_during_fetch = 0
         self.gate: dict[str, asyncio.Event] = {}
 
     async def handler(self, request: httpx.Request) -> httpx.Response:
@@ -90,6 +91,7 @@ class Registry:
             await self.gate[body["domain"]].wait()
         await asyncio.sleep(self.http_delay)
         self.clock[0] += self.advance_during_fetch
+        self.process_ns[0] += self.process_ns_during_fetch
         if self.http_status != 200:
             if self.error_body is not None:
                 # Streamed, as a real transport delivers it, so the body is read raw.
@@ -118,12 +120,13 @@ class Registry:
 class ClockedRedis(FakeRedis):
     """A Redis whose server clock a test sets, answering pipelined commands in order."""
 
-    def __init__(self, clock: list[int]) -> None:
+    def __init__(self, clock: list[int], micro: list[int]) -> None:
         super().__init__()
         self.clock = clock
+        self.micro = micro
 
     async def time(self) -> tuple[int, int]:
-        return self.clock[0], 0
+        return self.clock[0], self.micro[0]
 
     def pipeline(self, transaction: bool = True) -> "ClockedPipeline":
         return ClockedPipeline(self)
@@ -154,13 +157,22 @@ class ClockedPipeline:
 
 @pytest_asyncio.fixture
 async def env(monkeypatch):
-    # clock is the Redis server's; each process's own clock is offset from it.
+    # clock (with micro, its microseconds) is the Redis server's; each process's
+    # own clocks are offset from it, and its monotonic clock also advances by
+    # process_ns.
     clock = [1_000_000]
+    micro = [0]
     offset = [0]
+    process_ns = [0]
     monkeypatch.setattr(registry_module, "_cache_now", lambda: clock[0] + offset[0])
+    monkeypatch.setattr(
+        registry_module, "_monotonic_ns", lambda: (clock[0] + offset[0]) * 1_000_000_000 + process_ns[0],
+    )
     registry = Registry(clock)
     registry.offset = offset
-    redis = ClockedRedis(clock)
+    registry.micro = micro
+    registry.process_ns = process_ns
+    redis = ClockedRedis(clock, micro)
     clients = []
 
     def client(*, timeout_seconds: float = 5.0) -> CachedRegistryClient:
@@ -207,7 +219,7 @@ async def test_a_first_read_observes_status_and_authority_together(env):
     evidence = await _evidence(env)
     assert evidence == IDChainEvidence(
         status=_fixture("normal"), namespace_authority=_authority(DOMAIN, env.controller[DOMAIN]),
-        age_seconds=0, refresh_failed=False,
+        age_seconds=0,
     )
     assert env.requests == [{"v": 1, "domain": DOMAIN, "ids": [did_aw("alice")]}]
     assert _verdict(evidence) == VERIFIED["expected"]
@@ -218,7 +230,7 @@ async def test_evidence_is_reused_through_60_seconds_without_dns_or_http(env):
     await _evidence(env)
     env.clock[0] += 60
     evidence = await _evidence(env)
-    assert evidence.age_seconds == 60 and evidence.refresh_failed is False
+    assert evidence.age_seconds == 60
     assert len(env.requests) == len(env.dns_lookups) == len(env.routings) == 1
 
 
@@ -229,44 +241,31 @@ async def test_after_60_seconds_the_caller_awaits_a_refresh(env):
     env.clock[0] += 61
     evidence = await _evidence(env)
     assert evidence.status == _fixture("alice-revoked-now")
-    assert evidence.age_seconds == 0 and evidence.refresh_failed is False
+    assert evidence.age_seconds == 0
     assert len(env.requests) == len(env.dns_lookups) == 2
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("name", [
-    "cached-status-age-61-without-failed-refresh",
-    "cached-status-age-901-without-failed-refresh",
-])
-async def test_stale_evidence_is_never_presented_without_a_failed_refresh(env, name):
-    case = _case(name)
+async def test_evidence_past_60_seconds_is_never_presented(env):
+    case = _case("cached-status-age-61")
     bundle, subject = _bundle(case["chain"]), case["subject"]
-    assert case["cache"] == {"age_seconds": case["cache"]["age_seconds"], "refresh": "not_needed"}
     stale = IDChainEvidence(
-        _fixture(case["status"]), _authority(DOMAIN, env.controller[DOMAIN]), case["cache"]["age_seconds"], False,
+        _fixture(case["status"]), _authority(DOMAIN, env.controller[DOMAIN]), case["cache"]["age_seconds"],
     )
     assert _verdict(stale, bundle=bundle, subject=subject) == case["expected"]
 
     await _evidence(env, bundle=bundle, subject=subject)
     env.clock[0] += case["cache"]["age_seconds"]
     refreshed = await _evidence(env, bundle=bundle, subject=subject)
-    assert (refreshed.age_seconds, refreshed.refresh_failed) == (0, False)
+    assert refreshed.age_seconds == 0
     assert _verdict(refreshed, bundle=bundle, subject=subject)["reason"] == "verified"
-
-    env.clock[0] += case["cache"]["age_seconds"]
-    env.http_status = 503
-    failed = await _evidence(env, bundle=bundle, subject=subject)
-    assert (failed.age_seconds, failed.refresh_failed) == (case["cache"]["age_seconds"], True)
-    assert _verdict(failed, bundle=bundle, subject=subject) != case["expected"]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("age, reason", [(61, "verified"), (900, "verified"), (901, "status_expired")])
 @pytest.mark.parametrize("failure", ["http-500", "http-429", "dns", "timeout"])
-async def test_a_failed_refresh_reuses_last_known_good_evidence_through_900_seconds(env, age, reason, failure):
-    first = await _evidence(env)
-    stored = dict(env.redis.values)
-    env.clock[0] += age
+async def test_a_failed_refresh_of_stale_evidence_leaves_none(env, failure):
+    await _evidence(env)
+    env.clock[0] += 61
     if failure == "http-500":
         env.http_status = 500
     elif failure == "http-429":
@@ -277,99 +276,26 @@ async def test_a_failed_refresh_reuses_last_known_good_evidence_through_900_seco
         env.client = env.make_client(timeout_seconds=0.05)
         env.http_delay = 1
     evidence = await _evidence(env)
-    assert evidence == IDChainEvidence(first.status, first.namespace_authority, age, True)
-    assert _verdict(evidence)["reason"] == reason
-    assert env.redis.values == stored  # a failed attempt never restarts the grace
+    assert evidence.age_seconds is None
+    assert _verdict(evidence)["reason"] == "evidence_unavailable"
 
 
 @pytest.mark.asyncio
-async def test_last_known_good_is_aged_through_the_failed_attempt(env):
-    await _evidence(env)
-    env.clock[0] += 61
+async def test_a_failed_attempt_does_not_hold_back_the_next_one(env):
     env.http_status = 503
-    env.advance_during_fetch = 5
+    assert (await _evidence(env)).age_seconds is None
+    env.http_status = 200
     evidence = await _evidence(env)
-    assert (evidence.age_seconds, evidence.refresh_failed) == (66, True)
+    assert evidence.age_seconds == 0
+    assert len(env.requests) == len(env.dns_lookups) == 2
 
 
 @pytest.mark.asyncio
 async def test_a_failed_first_read_has_no_evidence(env):
     env.http_status = 429
     evidence = await _evidence(env)
-    assert (evidence.age_seconds, evidence.refresh_failed) == (None, True)
+    assert evidence.age_seconds is None
     assert _verdict(evidence)["reason"] == "evidence_unavailable"
-
-
-@pytest.mark.asyncio
-async def test_a_failed_attempt_suppresses_attempts_for_60_seconds(env):
-    env.http_status = 503
-    for elapsed in (0, 1, 60):
-        env.clock[0] = 1_000_000 + elapsed
-        evidence = await _evidence(env)
-        assert (evidence.age_seconds, evidence.refresh_failed) == (None, True)
-        assert len(env.requests) == len(env.dns_lookups) == 1
-    env.clock[0] += 1
-    await _evidence(env)
-    assert len(env.requests) == 2
-
-
-@pytest.mark.asyncio
-async def test_during_a_cooldown_last_known_good_evidence_keeps_its_true_age(env):
-    first = await _evidence(env)
-    env.clock[0] += 61
-    env.http_status = 503
-    assert (await _evidence(env)).age_seconds == 61
-    env.clock[0] += 9
-    evidence = await _evidence(env)
-    assert evidence == IDChainEvidence(first.status, first.namespace_authority, 70, True)
-    assert _verdict(evidence)["reason"] == "verified"
-    assert len(env.requests) == 2
-
-
-@pytest.mark.asyncio
-async def test_a_cooldown_never_extends_the_grace(env):
-    await _evidence(env)
-    env.clock[0] += 850
-    env.http_status = 503
-    assert _verdict(await _evidence(env))["reason"] == "verified"
-    env.clock[0] += 51
-    evidence = await _evidence(env)
-    assert (evidence.age_seconds, evidence.refresh_failed) == (901, True)
-    assert _verdict(evidence)["reason"] == "status_expired"
-    assert len(env.requests) == 2
-
-
-@pytest.mark.asyncio
-async def test_a_success_ends_the_domains_cooldown(env):
-    env.gate[DOMAIN] = asyncio.Event()
-    succeeding = asyncio.create_task(_evidence(env))
-    await _until(lambda: len(env.requests) == 1)
-    env.dns_failure = True
-    failed = await _evidence(env, bundle=None, subject=GLOBAL_SUBJECT)
-    assert failed.refresh_failed is True
-    env.dns_failure = False
-    env.gate[DOMAIN].set()
-    assert (await succeeding).age_seconds == 0
-    del env.gate[DOMAIN]
-    retried = await _evidence(env, bundle=None, subject=GLOBAL_SUBJECT)
-    assert (retried.age_seconds, retried.refresh_failed) == (0, False)
-    assert len(env.requests) == 2
-
-
-@pytest.mark.asyncio
-async def test_a_cooldown_is_per_domain_and_not_persisted(env):
-    env.status[OTHER_DOMAIN] = _fixture("normal") | {"domain": OTHER_DOMAIN}
-    env.controller[OTHER_DOMAIN] = env.controller[DOMAIN]
-    env.http_status = 503
-    await _evidence(env)
-    env.http_status = 200
-    other = await _evidence(env, bundle=None, subject=GLOBAL_SUBJECT, domain=OTHER_DOMAIN)
-    assert other.age_seconds == 0
-    assert (await _evidence(env)).refresh_failed is True
-    assert len(env.requests) == 2
-    restarted = await _evidence(env, client=env.make_client())
-    assert (restarted.age_seconds, restarted.refresh_failed) == (0, False)
-    assert len(env.requests) == 3
 
 
 @pytest.mark.asyncio
@@ -399,7 +325,7 @@ async def test_concurrent_readers_share_one_failed_attempt(env):
     env.gate[DOMAIN].set()
     results = await asyncio.gather(*readers)
     assert len(env.requests) == 2
-    assert all((result.age_seconds, result.refresh_failed) == (61, True) for result in results)
+    assert all(result.age_seconds is None for result in results)
 
 
 @pytest.mark.asyncio
@@ -422,11 +348,10 @@ async def test_one_timeout_bounds_dns_and_http_together(env):
     env.client = env.make_client(timeout_seconds=0.3)
     env.dns_delay = env.http_delay = 0.2
     evidence = await _evidence(env)
-    assert (evidence.age_seconds, evidence.refresh_failed) == (None, True)
-    env.clock[0] += 61
+    assert evidence.age_seconds is None
     env.dns_delay = env.http_delay = 0.01  # far inside the bound, so scheduler jitter cannot reach it
     evidence = await _evidence(env)
-    assert (evidence.age_seconds, evidence.refresh_failed) == (0, False)
+    assert evidence.age_seconds == 0
 
 
 @pytest.mark.asyncio
@@ -454,9 +379,9 @@ async def test_a_stalled_domain_does_not_age_another_domains_entry(env):
     await _evidence(env, bundle=None, subject=GLOBAL_SUBJECT, domain=OTHER_DOMAIN)
     env.clock[0] += 31
     env.http_status = 503
-    assert (await _evidence(env)).refresh_failed is True
+    assert (await _evidence(env)).age_seconds is None
     other = await _evidence(env, bundle=None, subject=GLOBAL_SUBJECT, domain=OTHER_DOMAIN)
-    assert (other.age_seconds, other.refresh_failed) == (31, False)
+    assert other.age_seconds == 31
 
 
 @pytest.mark.asyncio
@@ -475,16 +400,15 @@ async def test_a_shared_entry_is_aged_on_the_redis_clock_whatever_the_process_cl
     env.status[DOMAIN] = _fixture("alice-revoked-now")
     env.clock[0] += 620  # the reader's first read, long after its clock passed the writer's stamp
     env.offset[0] = 0
-    env.http_status = 503
-    stale = await _evidence(env, client=reader)
-    assert (stale.status, stale.age_seconds, stale.refresh_failed) == (_fixture("normal"), 620, True)
-
-    env.clock[0] += 61  # past the reader's cooldown
-    env.http_status = 200
     refreshed = await _evidence(env, client=reader)
-    assert (refreshed.status, refreshed.age_seconds, refreshed.refresh_failed) == (
-        _fixture("alice-revoked-now"), 0, False,
-    )
+    assert (refreshed.status, refreshed.age_seconds) == (_fixture("alice-revoked-now"), 0)
+    assert len(env.requests) == 2
+
+    env.clock[0] += 60  # the reader's entry, read through a writer whose clock is far off
+    env.offset[0] = writer_skew
+    reused = await _evidence(env, client=writer)
+    assert (reused.status, reused.age_seconds) == (_fixture("alice-revoked-now"), 60)
+    assert len(env.requests) == 2
 
 
 @pytest.mark.asyncio
@@ -493,7 +417,7 @@ async def test_a_process_clock_far_from_the_redis_clock_still_reuses_fresh_evide
     env.clock[0] += 30
     env.offset[0] = 3600
     evidence = await _evidence(env, client=env.make_client())
-    assert (evidence.age_seconds, evidence.refresh_failed) == (30, False)
+    assert evidence.age_seconds == 30
     assert len(env.requests) == 1
 
 
@@ -504,18 +428,66 @@ async def test_an_entry_stamped_ahead_of_the_redis_clock_is_refreshed(env):
     env.clock[0] -= 1  # the Redis clock stepped back
     evidence = await _evidence(env)
     assert evidence.status == _fixture("alice-revoked-now")
-    assert (evidence.age_seconds, evidence.refresh_failed) == (0, False)
+    assert evidence.age_seconds == 0
     assert len(env.requests) == 2
 
 
 @pytest.mark.asyncio
-async def test_an_entry_stamped_ahead_of_the_redis_clock_gives_no_grace(env):
+async def test_an_entry_past_60_seconds_by_a_fraction_of_a_second_is_refreshed(env):
+    env.micro[0] = 900_000  # stamped in the last part of its second
     await _evidence(env)
-    env.clock[0] -= 1
-    env.http_status = 503
+    env.clock[0] += 60
+    env.micro[0] = 500_000
     evidence = await _evidence(env)
-    assert (evidence.age_seconds, evidence.refresh_failed) == (None, True)
-    assert _verdict(evidence)["reason"] == "evidence_unavailable"
+    assert evidence.age_seconds == 0
+    assert len(env.requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_an_entry_exactly_60_seconds_old_on_the_redis_clock_is_fresh(env):
+    await _evidence(env)
+    env.clock[0] += 60
+    evidence = await _evidence(env)
+    assert evidence.age_seconds == 60
+    assert len(env.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_refresh_lasting_a_fraction_past_whole_seconds_is_aged_up(env):
+    env.advance_during_fetch = 6
+    env.process_ns_during_fetch = 500_000_000
+    evidence = await _evidence(env)
+    assert evidence.age_seconds == 7
+
+
+@pytest.mark.asyncio
+async def test_real_redis_ages_an_entry_past_its_whole_second_stamp(env):
+    domain = f"{uuid.uuid4().hex}.example"
+    env.status[domain] = _fixture("normal") | {"domain": domain}
+    env.controller[domain] = env.controller[DOMAIN]
+    redis = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+    client = CachedRegistryClient(
+        REGISTRY, redis, transport=httpx.MockTransport(env.handler),
+        domain_registry_resolver=env.route, domain_verifier=env.verify_domain,
+    )
+    key = client._id_status_cache_key({"v": 1, "domain": domain, "ids": [did_aw("global_agent")]})
+    try:
+        seconds, microseconds = await redis.time()
+        while microseconds == 0:  # the stored stamp must lie a fraction of a second behind
+            seconds, microseconds = await redis.time()
+        entry = {
+            "fetched_at": int(seconds) - 60, "status": env.status[domain],
+            "namespace_authority": _authority(domain, env.controller[domain]),
+        }
+        await redis.set(key, json.dumps(entry, separators=(",", ":"), sort_keys=True), ex=3600)
+        evidence = await _evidence(env, client=client, bundle=None, subject=GLOBAL_SUBJECT, domain=domain)
+    finally:
+        await redis.delete(key)
+        await client.aclose()
+        await redis.aclose()
+    # 60 whole seconds plus the fraction: past the inclusive bound, so it is refreshed.
+    assert len(env.requests) == 1
+    assert evidence.age_seconds == 0
 
 
 class UnavailableRedis(FakeRedis):
@@ -544,7 +516,7 @@ async def test_without_redis_each_read_is_fetched_and_none_is_reused(env):
         second = await _evidence(env, client=client)
     finally:
         await client.aclose()
-    assert (first.age_seconds, first.refresh_failed, second.age_seconds) == (0, False, 0)
+    assert (first.age_seconds, second.age_seconds) == (0, 0)
     assert len(env.requests) == 2
 
 
@@ -557,17 +529,6 @@ async def test_a_clock_stepping_back_during_a_refresh_leaves_its_evidence_unavai
 
 
 @pytest.mark.asyncio
-async def test_a_cooldown_recorded_ahead_of_this_clock_does_not_suppress_attempts(env):
-    env.http_status = 503
-    await _evidence(env)
-    env.offset[0] -= 1  # this process's clock stepped back
-    env.http_status = 200
-    evidence = await _evidence(env)
-    assert (evidence.age_seconds, evidence.refresh_failed) == (0, False)
-    assert len(env.requests) == 2
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("fetched_at", [1_000_000.5, "1000000", True, None])
 async def test_a_corrupt_stored_entry_is_dropped_and_refreshed(env, fetched_at):
     await _evidence(env)
@@ -576,7 +537,7 @@ async def test_a_corrupt_stored_entry_is_dropped_and_refreshed(env, fetched_at):
     env.redis.values[key] = json.dumps(entry | {"fetched_at": fetched_at})
     env.clock[0] += 1
     evidence = await _evidence(env)
-    assert (evidence.age_seconds, evidence.refresh_failed) == (0, False)
+    assert evidence.age_seconds == 0
     assert len(env.requests) == 2
 
 
@@ -586,40 +547,27 @@ async def test_a_corrupt_stored_entry_is_dropped_and_refreshed(env, fetched_at):
     (b"\x1f\x8b compressed error page", {"Content-Encoding": "gzip"}),
 ], ids=["oversized-error-page", "encoded-error-page"])
 async def test_an_unreadable_refusal_is_a_failed_refresh(env, body, headers):
-    first = await _evidence(env)
+    await _evidence(env)
     env.clock[0] += 61
     env.http_status = 502
     env.error_body, env.error_headers = body, headers
     evidence = await _evidence(env)
-    assert evidence == IDChainEvidence(first.status, first.namespace_authority, 61, True)
-    env.clock[0] += 1
-    assert (await _evidence(env)).refresh_failed is True
-    assert len(env.requests) == 2  # the failure opened the cooldown
-
-
-@pytest.mark.asyncio
-async def test_a_restarted_client_keeps_the_original_observation_time(env):
-    await _evidence(env)
-    env.clock[0] += 61
-    env.http_status = 503
-    restarted = env.make_client()
-    evidence = await _evidence(env, client=restarted)
-    assert (evidence.age_seconds, evidence.refresh_failed) == (61, True)
+    assert evidence.age_seconds is None
+    assert _verdict(evidence)["reason"] == "evidence_unavailable"
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fixture", ["human-not-registered", "alice-revoked-now", "root-replaced"])
-async def test_a_successful_answer_replaces_prior_evidence_even_through_a_later_outage(env, fixture):
+async def test_a_successful_answer_replaces_prior_evidence(env, fixture):
     await _evidence(env)
     env.clock[0] += 61
     env.status[DOMAIN] = _fixture(fixture)
     env.controller[DOMAIN] = _open_epoch_key(env.status[DOMAIN])
     replaced = await _evidence(env)
     assert replaced.status == _fixture(fixture)
-    env.clock[0] += 61
-    env.http_status = 500
-    evidence = await _evidence(env)
-    assert (evidence.status, evidence.age_seconds, evidence.refresh_failed) == (_fixture(fixture), 61, True)
+    env.clock[0] += 60
+    assert (await _evidence(env)).status == _fixture(fixture)
+    assert len(env.requests) == 2
 
 
 @pytest.mark.asyncio
@@ -638,17 +586,17 @@ async def test_contradictory_authority_is_kept_as_current_and_never_verifies(env
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("body", [b"not json", b"[]", b'"status"'])
-async def test_a_malformed_successful_answer_is_unavailable_and_ends_the_old_tree(env, body):
+async def test_a_malformed_successful_answer_is_unavailable_and_drops_the_old_tree(env, body):
     await _evidence(env)
     env.clock[0] += 61
     env.raw_body = body
     evidence = await _evidence(env)
-    assert (evidence.age_seconds, evidence.refresh_failed) == (None, False)
+    assert evidence.age_seconds is None
     assert _verdict(evidence)["reason"] == "evidence_unavailable"
     env.raw_body = None
-    env.http_status = 500
-    evidence = await _evidence(env)
-    assert (evidence.age_seconds, evidence.refresh_failed) == (None, True)
+    env.clock[0] += 1
+    assert (await _evidence(env)).age_seconds == 0
+    assert len(env.requests) == 3  # the old tree was dropped, not reused
 
 
 @pytest.mark.asyncio
@@ -705,7 +653,8 @@ async def test_the_cached_client_reads_the_real_status_endpoint(clocked_client, 
         await redis.delete(key)
         await client.aclose()
         await redis.aclose()
-    assert (evidence.age_seconds, evidence.refresh_failed) == (0, False)
+    # A real refresh takes some time, and its age is that time rounded up.
+    assert 1 <= evidence.age_seconds <= 2
     verdict = verify_id_chain(bundle, subject=subject, evidence=evidence, domain=DOMAIN)
     assert verdict == {
         "outcome": "nearest_human", "human_id": did_aw("alice"), "identity_valid": True,
@@ -739,6 +688,6 @@ async def test_real_redis_ages_shared_evidence_on_its_own_clock(env, monkeypatch
         for client in clients:
             await client.aclose()
         await redis.aclose()
-    assert (written.age_seconds, written.refresh_failed) == (0, False)
-    assert read.refresh_failed is False and 0 <= read.age_seconds <= 2
+    assert written.age_seconds == 0
+    assert 0 <= read.age_seconds <= 2
     assert len(env.requests) == 1

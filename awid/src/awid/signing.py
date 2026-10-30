@@ -10,7 +10,7 @@ import re
 from nacl.exceptions import BadSignatureError
 from nacl.signing import SigningKey, VerifyKey
 
-from awid.did import public_key_from_did
+from awid.did import public_key_from_did, strict_ed25519_point
 
 SIGNED_FIELDS = frozenset(
     {
@@ -79,6 +79,8 @@ def verify_signature_with_public_key(
 ) -> VerifyResult:
     if not signature_b64:
         return VerifyResult.UNVERIFIED
+    if not strict_ed25519_point(public_key):
+        return VerifyResult.FAILED
 
     try:
         sig_bytes = _decode_signature(signature_b64)

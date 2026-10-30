@@ -1,4 +1,5 @@
-import { formatAwakeningForAgent, type ChannelAwakening } from "./channel.js";
+import { formatAwakeningForAgent, isTrustedVerificationStatus, type ChannelAwakening } from "./channel.js";
+import type { VerificationStatus } from "./identity/signing.js";
 
 export type TerminalReadinessState = "idle" | "working" | "blocked" | "shell" | "unknown" | "stopped" | "not-launched";
 
@@ -188,6 +189,7 @@ function rejectItem(item: AmbientItem, error: Error): void {
 export function createTerminalAwakeningHandler(options: TerminalAwakeningHandlerOptions): TerminalAwakeningHandler {
   const maxAmbient = options.maxAmbient ?? DEFAULT_MAX_AMBIENT;
   const ambient = new Map<string, AmbientItem>();
+  const heldNotices = new Set<string>();
   let ambientDropped = 0;
   let inputTail: Promise<void> = Promise.resolve();
 
@@ -203,7 +205,15 @@ export function createTerminalAwakeningHandler(options: TerminalAwakeningHandler
 
   const handler = (async (awakening: ChannelAwakening, receivingIdentityHome?: string): Promise<void> => {
     throwIfAborted(options.signal);
-    if (awakening.deliveryIntent === "ambient") {
+    let heldReason: string | undefined;
+    if (awakening.kind === "mail" || awakening.kind === "chat") {
+      if (awakening.meta.decrypted === "false") {
+        heldReason = "could not decrypt";
+      } else if (!isTrustedVerificationStatus(awakening.meta.trust_status as VerificationStatus | undefined)) {
+        heldReason = "unverified sender";
+      }
+    }
+    if (awakening.deliveryIntent === "ambient" && !heldReason) {
       return new Promise<void>((resolve, reject) => {
         const key = ambientKey(awakening);
         const previous = ambient.get(key);
@@ -222,16 +232,18 @@ export function createTerminalAwakeningHandler(options: TerminalAwakeningHandler
       });
     }
 
-    const delivery = inputTail.then(() => present(awakening, receivingIdentityHome));
+    const delivery = inputTail.then(() => present(awakening, receivingIdentityHome, heldReason));
     // A failed input must not poison subsequent callers. Ambient work bypasses
     // this queue because it settles only when a wake/steer input carries it.
     inputTail = delivery.catch(() => {});
     return delivery;
   }) as TerminalAwakeningHandler;
 
-  async function present(awakening: ChannelAwakening, receivingIdentityHome?: string): Promise<void> {
+  async function present(awakening: ChannelAwakening, receivingIdentityHome?: string, heldReason?: string): Promise<void> {
     throwIfAborted(options.signal);
     if (options.isPaused?.()) throw new Error("terminal delivery is paused");
+    const heldKey = JSON.stringify([receivingIdentityHome, awakening.kind, awakening.meta.message_id, heldReason]);
+    if (heldReason && heldNotices.has(heldKey)) throw new Error(`terminal delivery held: ${heldReason}`);
     const ambientBatch = [...ambient.values()];
     let inspection: TerminalInspection;
     try {
@@ -247,11 +259,21 @@ export function createTerminalAwakeningHandler(options: TerminalAwakeningHandler
       throw new TerminalInactiveError(state);
     }
     if (options.isPaused?.()) throw new Error("terminal delivery is paused");
-    const text = [...ambientBatch, { awakening, receivingIdentityHome }]
+    const quotedHome = receivingIdentityHome === undefined ? undefined : quotedIdentityHome(receivingIdentityHome);
+    const command = quotedHome ? `aw --identity-home ${quotedHome}` : "aw";
+    const text = heldReason
+      ? `[aweb] 1 message held (${heldReason}). Run: ${command} ${awakening.kind === "mail" ? "mail inbox" : "chat pending"}`
+      : [...ambientBatch, { awakening, receivingIdentityHome }]
       .map((item) => textForTerminalAwakening(item.awakening, item.receivingIdentityHome))
       .join("\n\n---\n\n");
     throwIfAborted(options.signal);
     await options.session.input(options.home, text);
+    if (heldReason) {
+      heldNotices.add(heldKey);
+      if (heldNotices.size > 1000) heldNotices.delete(heldNotices.values().next().value!);
+      // A notice presents no message content and must not mark it delivered/read.
+      throw new Error(`terminal delivery held: ${heldReason}`);
+    }
     for (const item of ambientBatch) {
       if (ambient.get(item.key) === item) ambient.delete(item.key);
       item.resolve();

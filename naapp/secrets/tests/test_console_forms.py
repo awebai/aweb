@@ -418,12 +418,13 @@ async def test_customer_browser_token_draft_and_fresh_passkey_confirmation(
 async def test_runner_confirmation_renders_code_once_in_the_deciding_document(
     world, browser, service, width
 ):
-    from aweb_secrets.runners import apply_runner_migrations, mint_runner_id
+    from aweb_secrets.runners import apply_runner_migrations
     from tests.test_change_set_runners import runner_item
 
     w = world
     await apply_runner_migrations(w.db)
-    runner_id = mint_runner_id()
+    # A valid 16-byte base64url id with wide glyphs makes mobile layout deterministic.
+    runner_id = "rnr_" + "W" * 21 + "w"
     async with await browser.new_context(viewport={"width": width, "height": 900}) as context:
         page, _, _ = await enrolled_page(w, context, service)
         csrf = await page.evaluate("sessionStorage.getItem('aweb.secrets.console.csrf')")
@@ -461,7 +462,14 @@ async def test_runner_confirmation_renders_code_once_in_the_deciding_document(
         ):
             raise AssertionError("registration material persisted in browser storage")
         assert code not in page.url
-        assert await page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+        assert await page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), (
+            await page.locator("#runner-registration-result").evaluate(
+                """section => [...section.children].map(node => ({
+                tag: node.tagName, clientWidth: node.clientWidth, scrollWidth: node.scrollWidth,
+                right: node.getBoundingClientRect().right
+            }))"""
+            )
+        )
         receipt = await context.request.get(service + ROOT + "/" + draft["change_id"])
         if code in await receipt.text():
             raise AssertionError("registration material returned by a later read")

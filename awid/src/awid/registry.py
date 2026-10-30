@@ -49,6 +49,7 @@ from awid.id_tree_requests import (
 from awid.log import (
     canonical_server_origin,
     identity_state_hash,
+    initial_registration_entry,
     log_entry_payload,
 )
 from awid.ratelimit import AWID_SERVICE_TOKEN_HEADER, normalize_service_token
@@ -124,18 +125,13 @@ _TEAM_CERTIFICATES_CACHE_TTL_SECONDS = 10 * 60  # 10 minutes
 # stale-while-revalidate behavior instead of taking a hard miss immediately.
 _STALE_MULTIPLIER = 2
 # Identity-tree status evidence (docs/id-certificates.md R-1) is reused through
-# this age inclusive, then refreshed synchronously. The 900-second outage grace
-# after a failed refresh is the verifier's: this client reports the age of
-# what it serves and whether a refresh failed, and the verifier decides.
+# this age inclusive, then refreshed synchronously; older evidence is never
+# presented, so an entry is kept only this long.
 _ID_STATUS_FRESH_SECONDS = 60
-# A failed attempt stands for every refresh of its domain through this many
-# seconds inclusive, so a registry that stalls costs one timeout per window
-# rather than one per request. It changes no evidence age.
-_ID_STATUS_FAILURE_COOLDOWN_SECONDS = _ID_STATUS_FRESH_SECONDS
-# Entries outlive the grace, so evidence past it is reported as expired rather
-# than as never observed.
-_ID_STATUS_RETENTION_SECONDS = 2 * 15 * 60
 _ID_STATUS_PATH = "/v1/id-certificates/status"
+# Entries are stamped in whole seconds of the Redis clock and aged against its
+# microseconds.
+_MICROSECONDS = 1_000_000
 
 
 def _is_local_registry_origin(registry_url: str) -> bool:
@@ -664,39 +660,47 @@ class RegistryClient:
         if signer_did != did_key:
             raise ValueError("signing_key must match did_key for DID registration")
 
-        did_aw = stable_id_from_did_key(did_key)
-        timestamp = _utc_timestamp()
-        mapping_state_hash = identity_state_hash(did_aw=did_aw, current_did_key=did_key)
-        proof = sign_message(
-            signing_key,
-            log_entry_payload(
-                did_aw=did_aw,
-                seq=1,
-                operation="register_did",
-                previous_did_key=None,
-                new_did_key=did_key,
-                prev_entry_hash=None,
-                state_hash=mapping_state_hash,
-                authorized_by=did_key,
-                timestamp=timestamp,
-            ),
-        )
+        def signer(payload: bytes) -> tuple[str, bytes]:
+            return did_key, SigningKey(signing_key).sign(payload).signature
+
+        entry = initial_registration_entry(did_key, timestamp=_utc_timestamp())
+        await self._register_initial_did(entry, signer)
+        return await self.get_mapping(entry["did_aw"], signing_key)
+
+    async def register_did_with_signer(
+        self,
+        did_key: str,
+        *,
+        signer: PayloadSigner,
+        timestamp: str | None = None,
+    ) -> dict[str, Any]:
+        """Register the did:aw that ``did_key`` derives, its key signing through ``signer``.
+
+        ``signer`` is asked for exactly one signature, over
+        ``log_entry_payload(**initial_registration_entry(did_key, timestamp=...))``,
+        and its answer is checked before anything is sent. ``timestamp`` is the
+        intended operation's; None is now. Returns AWID's receipt
+        ``{registered, did_aw, current_did_key}``. A did:aw already registered
+        with another key raises AlreadyRegisteredError.
+        """
+        entry = initial_registration_entry(did_key, timestamp=timestamp or _utc_timestamp())
+        receipt = await self._register_initial_did(entry, signer)
+        if (
+            not isinstance(receipt, dict) or receipt.get("registered") is not True
+            or receipt.get("did_aw") != entry["did_aw"] or receipt.get("current_did_key") != did_key
+        ):
+            raise ValueError("registry receipt does not register this did:aw with this key")
+        return receipt
+
+    async def _register_initial_did(self, entry: dict[str, Any], signer: PayloadSigner) -> Any:
+        """POST ``entry`` signed through ``signer``; returns AWID's answer as sent."""
+        _, signature = await _payload_signature(signer, log_entry_payload(**entry), entry["new_did_key"])
+        did_aw = entry["did_aw"]
         try:
-            await self._request_json(
+            return await self._request_json(
                 "POST",
                 "/v1/did",
-                json={
-                    "did_aw": did_aw,
-                    "operation": "register_did",
-                    "previous_did_key": None,
-                    "new_did_key": did_key,
-                    "seq": 1,
-                    "prev_entry_hash": None,
-                    "state_hash": mapping_state_hash,
-                    "authorized_by": did_key,
-                    "timestamp": timestamp,
-                    "proof": proof,
-                },
+                json={**entry, "proof": base64.b64encode(signature).rstrip(b"=").decode("ascii")},
             )
         except RegistryError as exc:
             if exc.status_code != 409:
@@ -706,7 +710,6 @@ class RegistryClient:
             except RegistryError:
                 raise exc
             raise AlreadyRegisteredError(did_aw=did_aw, existing_did_key=existing.current_did_key)
-        return await self.get_mapping(did_aw, signing_key)
 
     async def resolve_key(self, did_aw: str) -> KeyResolution:
         try:
@@ -1524,7 +1527,6 @@ class CachedRegistryClient(RegistryClient):
     _refresh_tasks: dict[str, asyncio.Task[None]]
     _domain_verifier: DomainVerifier | None
     _id_status_refreshes: dict[str, asyncio.Task[_IDStatusRefresh]]
-    _id_status_failed_at: dict[str, int]
 
     def __init__(
         self,
@@ -1550,7 +1552,6 @@ class CachedRegistryClient(RegistryClient):
         object.__setattr__(self, "_refresh_tasks", {})
         object.__setattr__(self, "_domain_verifier", domain_verifier)
         object.__setattr__(self, "_id_status_refreshes", {})
-        object.__setattr__(self, "_id_status_failed_at", {})
 
     async def id_chain_evidence(
         self, bundle: dict[str, Any] | None, subject: dict[str, Any], *, domain: str,
@@ -1561,9 +1562,8 @@ class CachedRegistryClient(RegistryClient):
         every process sharing it reads. Evidence aged 60 seconds or less is
         served with no DNS or HTTP work. Older evidence waits for one refresh
         shared by every caller of the same request; when that attempt fails,
-        the last-known-good evidence is returned with its age and
-        refresh_failed set, and with none it is returned without an age.
-        Fetch failures never raise.
+        the evidence is returned without an age, so it is unavailable. Fetch
+        failures never raise.
         """
         try:
             request = status_request(bundle, subject, domain=domain)
@@ -1573,29 +1573,23 @@ class CachedRegistryClient(RegistryClient):
             # The verifier refuses this request before it reads any evidence.
             return IDChainEvidence(status={}, namespace_authority={}, age_seconds=None)
         cache_key = self._id_status_cache_key(request)
-        read_at = _cache_now()
-        redis_now, cached = await self._read_id_status_entry(cache_key)
-        if cached is not None and redis_now < cached["fetched_at"]:
-            # Stamped ahead of the Redis clock (it stepped back): its age is
-            # unknown, so it is neither fresh nor last-known-good.
-            cached = None
-        if cached is not None and redis_now - cached["fetched_at"] <= _ID_STATUS_FRESH_SECONDS:
-            return _id_status_evidence(cached, age=redis_now - cached["fetched_at"], refresh_failed=False)
+        redis_now_us, cached = await self._read_id_status_entry(cache_key)
+        # An entry stamped ahead of the Redis clock (it stepped back) has no
+        # known age, so it is never fresh.
+        if cached is not None and redis_now_us >= cached["fetched_at"] * _MICROSECONDS:
+            # The whole-second stamp lies at or before the attempt began, so
+            # this age, rounded up, never reads younger than the evidence is.
+            age = _whole_seconds_up((redis_now_us - cached["fetched_at"] * _MICROSECONDS) * 1_000)
+            if age <= _ID_STATUS_FRESH_SECONDS:
+                return _id_status_evidence(cached, age=age)
         refresh = await self._coalesced_id_status_refresh(cache_key, request)
         if refresh.entry is not None:
-            return _id_status_evidence(refresh.entry, age=refresh.age, refresh_failed=False)
-        if refresh.failed and cached is not None:
-            # Aged through the wait for the failed attempt, on this process's clock.
-            age = redis_now - cached["fetched_at"] + (_cache_now() - read_at)
-            return _id_status_evidence(cached, age=age, refresh_failed=True)
-        return IDChainEvidence(status={}, namespace_authority={}, age_seconds=None, refresh_failed=refresh.failed)
+            return _id_status_evidence(refresh.entry, age=refresh.age)
+        return IDChainEvidence(status={}, namespace_authority={}, age_seconds=None)
 
     async def _coalesced_id_status_refresh(self, cache_key: str, request: dict[str, Any]) -> _IDStatusRefresh:
         task = self._id_status_refreshes.get(cache_key)
         if task is None:
-            failed_at = self._id_status_failed_at.get(request["domain"])
-            if failed_at is not None and 0 <= _cache_now() - failed_at <= _ID_STATUS_FAILURE_COOLDOWN_SECONDS:
-                return _IDStatusRefresh(entry=None, failed=True, age=None)
             task = asyncio.create_task(self._refresh_id_status(cache_key, request))
             self._id_status_refreshes[cache_key] = task
             task.add_done_callback(lambda _task, key=cache_key: self._id_status_refreshes.pop(key, None))
@@ -1612,7 +1606,7 @@ class CachedRegistryClient(RegistryClient):
         so no older tree outlives it.
         """
         domain = request["domain"]
-        started = _cache_now()
+        started_ns = _monotonic_ns()
         verify_domain = self._domain_verifier
         if verify_domain is None:
             from awid.dns_verify import verify_domain
@@ -1623,14 +1617,11 @@ class CachedRegistryClient(RegistryClient):
                 status = await self.fetch_id_certificate_status(domain, request)
         except MalformedIDStatusError:
             logger.warning("AWID identity-tree status for %s is malformed; no evidence is served", domain)
-            self._id_status_failed_at.pop(domain, None)
             await self._invalidate_keys(cache_key)
-            return _IDStatusRefresh(entry=None, failed=False, age=None)
+            return _IDStatusRefresh(entry=None, age=None)
         except Exception as exc:
             logger.warning("AWID identity-tree status refresh failed for %s: %r", domain, exc)
-            self._id_status_failed_at[domain] = _cache_now()
-            return _IDStatusRefresh(entry=None, failed=True, age=None)
-        self._id_status_failed_at.pop(domain, None)
+            return _IDStatusRefresh(entry=None, age=None)
         entry = {
             "fetched_at": fetched_at,
             "status": status,
@@ -1643,9 +1634,9 @@ class CachedRegistryClient(RegistryClient):
         }
         if fetched_at is not None:
             await self._redis_set(
-                cache_key, json.dumps(entry, separators=(",", ":"), sort_keys=True), ex=_ID_STATUS_RETENTION_SECONDS,
+                cache_key, json.dumps(entry, separators=(",", ":"), sort_keys=True), ex=_ID_STATUS_FRESH_SECONDS,
             )
-        return _IDStatusRefresh(entry=entry, failed=False, age=_cache_now() - started)
+        return _IDStatusRefresh(entry=entry, age=_whole_seconds_up(_monotonic_ns() - started_ns))
 
     async def _redis_time(self) -> int | None:
         """The Redis server clock in whole seconds, or None when Redis is unavailable."""
@@ -1657,16 +1648,16 @@ class CachedRegistryClient(RegistryClient):
         return int(seconds)
 
     async def _read_id_status_entry(self, cache_key: str) -> tuple[int, dict[str, Any] | None]:
-        """The Redis clock and the stored entry, read in one round trip."""
+        """The Redis clock in microseconds and the stored entry, read in one round trip."""
         try:
             async with self.redis_client.pipeline(transaction=False) as pipe:
                 pipe.time()
                 pipe.get(cache_key)
-                (seconds, _microseconds), raw = await pipe.execute()
+                (seconds, microseconds), raw = await pipe.execute()
         except (RedisError, OSError):
             logger.debug("AWID cache read skipped because Redis is unavailable", exc_info=True)
             return 0, None
-        redis_now = int(seconds)
+        redis_now = int(seconds) * _MICROSECONDS + int(microseconds)
         if raw is None:
             return redis_now, None
         if isinstance(raw, bytes):
@@ -2090,16 +2081,12 @@ class CachedRegistryClient(RegistryClient):
                 self._team_public_key_cache_key(domain, name),
             )
 
-    async def register_did(
-        self,
-        did_key: str,
-        signing_key: bytes,
-    ) -> DIDMapping:
-        did_aw = stable_id_from_did_key(did_key)
-        await self._invalidate_keys(self._did_key_cache_key(did_aw))
-        mapping = await super().register_did(did_key, signing_key)
-        await self._invalidate_keys(self._did_key_cache_key(mapping.did_aw))
-        return mapping
+    async def _register_initial_did(self, entry: dict[str, Any], signer: PayloadSigner) -> Any:
+        cache_key = self._did_key_cache_key(entry["did_aw"])
+        await self._invalidate_keys(cache_key)
+        answer = await super()._register_initial_did(entry, signer)
+        await self._invalidate_keys(cache_key)
+        return answer
 
     async def rotate_key(
         self,
@@ -2654,12 +2641,20 @@ def _cache_now() -> int:
     return int(time.time())
 
 
+def _monotonic_ns() -> int:
+    return time.monotonic_ns()
+
+
+def _whole_seconds_up(nanoseconds: int) -> int:
+    """Whole seconds, rounded up, so an age never reads younger than it is."""
+    return -(-nanoseconds // 1_000_000_000)
+
+
 @dataclass(frozen=True)
 class _IDStatusRefresh:
-    """One status refresh: the entry and its age now, or why there is none."""
+    """One status refresh: the entry and its age now, or none when it failed."""
 
     entry: dict[str, Any] | None
-    failed: bool
     age: int | None
 
 
@@ -2680,13 +2675,12 @@ async def _payload_signature(signer: PayloadSigner, payload: bytes, expected_key
     return did_key, signature
 
 
-def _id_status_evidence(entry: dict[str, Any], *, age: int, refresh_failed: bool) -> IDChainEvidence:
+def _id_status_evidence(entry: dict[str, Any], *, age: int) -> IDChainEvidence:
     # The age is never clamped: a negative one is unavailable evidence to the verifier.
     return IDChainEvidence(
         status=entry["status"],
         namespace_authority=entry["namespace_authority"],
         age_seconds=age,
-        refresh_failed=refresh_failed,
     )
 
 
