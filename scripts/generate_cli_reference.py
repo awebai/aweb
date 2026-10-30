@@ -205,6 +205,41 @@ def render_reference(binary: Path) -> str:
     for flag in root_help["flags"]:
         output.append(f"- `{flag}`")
 
+    output.extend(
+        [
+            "",
+            "## Errors under `--json`",
+            "",
+            "A failed command run with `--json` prints one JSON line on stdout:",
+            "",
+            "```json",
+            '{"error": {"code": "http_error", "message": "...", "http_status": 403, "detail": "..."}}',
+            "```",
+            "",
+            "`code` is the stable contract. `message` is the text stderr prints, which",
+            "is not stable. stderr and the exit code are the same with or without",
+            "`--json`. `http_status` and `detail` are present only for `http_error`;",
+            "`detail` is the string `detail` of the server's JSON body, never its",
+            "headers or any other text.",
+            "",
+            "| Code | Meaning |",
+            "| --- | --- |",
+            "| `error` | No stable class. |",
+            "| `http_error` | An aweb server or AWID registry refused the request. |",
+            "| `outcome_unknown` | A mutating request timed out before its response; it may have applied. Check current state before retrying. |",
+            "| `encryption_key_missing` | An encrypted message needs a local encryption private key this identity does not have. |",
+            "| `decrypt_failed` | An encrypted message could not be opened or validated. |",
+            "| `team_not_hosted` | `aw workspace delete` through an external identity home: the team is not hosted, so no cloud-held controller can release the alias. |",
+            "| `global_identity` | `aw workspace delete` through an external identity home: a global identity's alias is released by its team, not by itself. |",
+            "| `not_own_workspace` | `aw workspace delete` through an external identity home names another workspace. |",
+            "| `no_workspace_credential` | `aw workspace delete` through an external identity home has no member credential to act with. |",
+            "",
+            "`aw wake status --json` describes a receive stream's error the same way:",
+            "beside the `stream_error` text, `stream_error_detail` holds its `code`,",
+            "`http_status` and `detail`.",
+        ]
+    )
+
     def emit_tree(path: list[str]) -> None:
         parsed = parse_help(run_help(binary, path))
         title = " ".join(path)

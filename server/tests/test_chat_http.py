@@ -2285,10 +2285,30 @@ async def test_receive_federated_chat_duplicate_message_id_is_idempotent(aweb_cl
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         first = await client.post("/v1/federation/messages", json=payload)
+        assert first.status_code == 200, first.text
+        # Model a duplicate arriving after the first authority observation has
+        # aged, without sleeping or changing the valid 59-second cohort span.
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            UPDATE {{tables.federation_address_authority_cohorts}}
+            SET authoritative_read_completed_at = authoritative_read_completed_at - INTERVAL '2 seconds',
+                expires_at = expires_at - INTERVAL '2 seconds'
+            WHERE canonical_address = 'alpha.example/alice'
+            """
+        )
+        prior_read = await aweb_cloud_db.aweb_db.fetch_value(
+            "SELECT authoritative_read_completed_at FROM {{tables.federation_address_authority_cohorts}} "
+            "WHERE canonical_address = 'alpha.example/alice'"
+        )
         second = await client.post("/v1/federation/messages", json=payload)
 
-    assert first.status_code == 200, first.text
     assert second.status_code == 200, second.text
+    cohort = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT authoritative_read_completed_at, expires_at FROM {{tables.federation_address_authority_cohorts}} "
+        "WHERE canonical_address = 'alpha.example/alice'"
+    )
+    assert cohort["authoritative_read_completed_at"] > prior_read
+    assert cohort["expires_at"] - cohort["authoritative_read_completed_at"] == timedelta(seconds=59)
     assert second.json()["message_id"] == payload["envelope"]["message_id"]
     message_count = await aweb_cloud_db.aweb_db.fetch_value(
         "SELECT COUNT(*) FROM {{tables.chat_messages}} WHERE message_id = $1",

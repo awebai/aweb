@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- aw: with `--json`, a failed command prints one error envelope on stdout,
+  `{"error": {"code", "message", "http_status", "detail"}}`. `code` is the
+  stable contract; stderr wording is not. stderr and exit codes do not
+  change. The codes are listed in the CLI reference. `aw wake status --json`
+  reports a receive stream's error the same way, as `stream_error_detail`
+  beside `stream_error`.
+
 - AWID SDK: `RegistryClient.register_did_with_signer(did_key, *, signer,
   timestamp=None)` registers a did:aw whose key stays behind a signer
   callback, as the identity-tree writes do. It asks for one signature, over

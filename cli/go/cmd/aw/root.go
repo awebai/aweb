@@ -282,7 +282,7 @@ func Execute() {
 	if err != nil {
 		finishHTTPDiagnostics(err)
 		err = normalizeStatusCommandError(os.Args[1:], err)
-		writeCLIError(os.Stderr, err.Error())
+		reportCLIError(err, err.Error(), argsContainJSONFlag(os.Args[1:]))
 		os.Exit(exitCode(err))
 	}
 	defer restorePluginIdentityHome()
@@ -303,7 +303,7 @@ func Execute() {
 		if hint := checkVerificationRequired(err); hint != "" {
 			msg = hint
 		}
-		writeCLIError(os.Stderr, msg)
+		reportCLIError(err, msg, jsonFlag)
 		os.Exit(exitCode(err))
 	}
 }
@@ -419,6 +419,28 @@ func checkVersionFromHeader() {
 }
 
 // writeCLIError prints a command's error, which may carry a server's text.
+// reportCLIError prints a failed command's error on stderr and, under --json,
+// its error envelope on stdout, so stdout is always one JSON document.
+func reportCLIError(err error, msg string, asJSON bool) {
+	writeCLIError(os.Stderr, msg)
+	if asJSON {
+		writeCLIErrorEnvelope(os.Stdout, err, msg)
+	}
+}
+
+// argsContainJSONFlag reads --json before flags are parsed.
+func argsContainJSONFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "--" {
+			return false
+		}
+		if arg == "--json" {
+			return true
+		}
+	}
+	return false
+}
+
 func writeCLIError(w io.Writer, msg string) {
 	fmt.Fprintln(w, termtext.Body(msg))
 }

@@ -303,6 +303,12 @@ func loadCurrentWorkspaceAndTeamState(workingDir, identityHome string) (*awconfi
 	return awconfig.LoadWorkspaceAndTeamState(workingDir)
 }
 
+// workspaceDeleteRefusal refuses a delete through an external identity home.
+// Its alias-release reason is also its --json error code.
+func workspaceDeleteRefusal(selection *awconfig.Selection, reason string) error {
+	return withErrorCode(reason, usageError("refusing aw workspace delete through external identity home for principal %s; only own hosted local self-release is supported for an external identity home (reason: %s)", externalIdentityRef(awconfig.IdentityHome{Root: selection.IdentityHome}), reason))
+}
+
 func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 	loadDotenvBestEffort()
 
@@ -323,7 +329,7 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 			workspaceID = strings.TrimSpace(selection.WorkspaceID)
 			resolvedExternalOwnAlias = true
 		} else {
-			return usageError("refusing aw workspace delete through external identity home for principal %s; only own hosted local self-release is supported for an external identity home (reason: %s)", externalIdentityRef(awconfig.IdentityHome{Root: selection.IdentityHome}), aliasReleaseNotSelf)
+			return workspaceDeleteRefusal(selection, aliasReleaseNotSelf)
 		}
 	}
 	if !resolvedExternalOwnAlias && !workspaceIDPattern.MatchString(workspaceID) {
@@ -369,7 +375,7 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 	// happen.
 	plan := planSelfRetire(workingDir, selection, workspaceID)
 	if selection != nil && selection.ExternalIdentityHome && !plan.eligible {
-		return usageError("refusing aw workspace delete through external identity home for principal %s; only own hosted local self-release is supported for an external identity home (reason: %s)", externalIdentityRef(awconfig.IdentityHome{Root: selection.IdentityHome}), plan.reason)
+		return workspaceDeleteRefusal(selection, plan.reason)
 	}
 	if plan.eligible {
 		// Self-retirement spans registry and coordination cascades; retain its explicit one-minute workflow budget.
