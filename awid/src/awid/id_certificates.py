@@ -381,6 +381,34 @@ def _witness(value: Any) -> datetime:
         raise IDCertificateError('evidence_unavailable') from exc
 
 
+def namespace_authority_valid(domain: str, authority: dict[str, Any], controller_key: str, delegation: dict[str, Any] | None = None) -> bool:
+    """Bind a namespace controller to independently discovered DNS authority.
+
+    An inherited TXT selects the delegate; its parent-authorized child record
+    grants child authority. A found exact record always takes precedence.
+    """
+    try:
+        _fields(authority, 'domain dns_name inherited controller_key')
+        _domain(domain)
+        _id(controller_key, key_only=True)
+        if authority['domain'] != domain:
+            return False
+        if authority['inherited'] is False:
+            return authority['dns_name'] == '_awid.' + domain and authority['controller_key'] == controller_key
+        if authority['inherited'] is not True:
+            return False
+        _fields(delegation, 'parent_domain parent_controller_key controller_key')
+        parent = delegation['parent_domain']
+        _domain(parent)
+        _id(delegation['parent_controller_key'], key_only=True)
+        return (domain.endswith('.' + parent)
+                and authority['dns_name'] == '_awid.' + parent
+                and authority['controller_key'] == delegation['parent_controller_key']
+                and delegation['controller_key'] == controller_key)
+    except (IDCertificateError, ValueError, TypeError, KeyError):
+        return False
+
+
 class _IDStatus:
     def __init__(self, evidence: IDChainEvidence, domain: str):
         s, authority = evidence.status, evidence.namespace_authority
@@ -391,7 +419,7 @@ class _IDStatus:
             if type(s['v']) is not int or s['v'] != 1 or s['domain'] != domain:
                 raise IDCertificateError('evidence_unavailable')
             self.now = _witness(s['observed_at'])
-            _fields(s['namespace'], 'epochs')
+            _fields(s['namespace'], 'epochs delegation' if 'delegation' in s['namespace'] else 'epochs')
             self.epochs = s['namespace']['epochs']
             if type(self.epochs) is not list or not self.epochs:
                 raise IDCertificateError('evidence_unavailable')
@@ -414,9 +442,7 @@ class _IDStatus:
                         raise IDCertificateError('evidence_unavailable')
             if self.epochs[-1]['retired_at'] is not None:
                 raise IDCertificateError('evidence_unavailable')
-            _fields(authority, 'domain dns_name inherited controller_key')
-            if (authority['domain'] != domain or authority['dns_name'] != '_awid.' + domain
-                or authority['inherited'] is not False or authority['controller_key'] != self.epochs[-1]['did_key']):
+            if not namespace_authority_valid(domain, authority, self.epochs[-1]['did_key'], s['namespace'].get('delegation')):
                 raise IDCertificateError('evidence_unavailable')
             self.cutoff = max(_witness(e['registered_at']) for e in self.epochs if e['continuity'] == 'replaced')
             self.identities: dict[str, dict[str, Any]] = {}
