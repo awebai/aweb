@@ -33,18 +33,18 @@ func implicitLocalTeamNameValue(value string) string {
 	return implicitLocalTeamName
 }
 
-// localNamespaceOnRemoteRegistry refuses --new-team against a registry that
-// is not on this machine: the self-hosted namespace is created only there.
+// localNamespaceOnRemoteRegistry refuses --new-team against a registry URL
+// that is not loopback: the self-hosted namespace is created only through one.
 func localNamespaceOnRemoteRegistry(registryURL string) error {
-	return usageError("--new-team without --byod creates the self-hosted namespace %q, which is created only against an awid registry on this machine; %s is not on this machine. "+
-		"The first machine to create %q on a registry owns it with its controller key. "+
-		"To add this machine to a team there, run `aw team invite` on a member's machine and `aw team join <token>` here; "+
+	return usageError("--new-team without --byod creates the self-hosted namespace %q, which aw init creates only against a loopback (localhost) awid registry URL; %s is not one. "+
+		"The controller key that creates %q on a registry is the one that controls it. "+
+		"To add this workspace to a team there, run `aw team invite` in a member's workspace and `aw team join <token>` here; "+
 		"to create a namespace of your own, run `aw init --new-team --byod --domain <a domain you control>`",
 		implicitLocalDomain, registryURL, implicitLocalDomain)
 }
 
-// localNamespaceHeldElsewhere refuses before this machine mints a controller
-// key for a namespace another machine's controller already holds.
+// localNamespaceHeldElsewhere refuses before this home mints a controller key
+// for a namespace that a controller key it does not hold already controls.
 func localNamespaceHeldElsewhere(ctx context.Context, registry *awid.RegistryClient, registryURL string) error {
 	namespace, _, err := registry.GetNamespaceAt(ctx, registryURL, implicitLocalDomain)
 	if code, ok := registryStatusCode(err); ok && code == http.StatusNotFound {
@@ -64,8 +64,8 @@ func localNamespaceHeldElsewhere(ctx context.Context, registry *awid.RegistryCli
 			return nil
 		}
 	}
-	return usageError("the self-hosted namespace %q on %s is owned by controller %s, created on another machine. "+
-		"To add this machine to a team there, run `aw team invite` on a member's machine and `aw team join <token>` here",
+	return usageError("the self-hosted namespace %q on %s is controlled by %s, whose key is not among this home's controller keys. "+
+		"To add this workspace to a team there, run `aw team invite` in a member's workspace and `aw team join <token>` here",
 		implicitLocalDomain, registryURL, strings.TrimSpace(namespace.ControllerDID))
 }
 

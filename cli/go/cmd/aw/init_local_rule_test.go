@@ -13,8 +13,8 @@ import (
 )
 
 // --new-team without --byod creates the self-hosted `local` namespace, which
-// only a registry on this machine can hold. Against any other registry, init
-// refuses before minting anything and says what to do instead.
+// aw init creates only through a loopback registry URL. Against any other,
+// init refuses before minting anything and says what to do instead.
 func TestInitNewTeamAgainstARemoteRegistryStatesTheLocalRule(t *testing.T) {
 	// Cannot use t.Parallel(): needs cwd and the init globals.
 	oldLocalFlow, oldWizard, oldIsTTY := initRunImplicitLocalFlow, guidedOnboardingWizard, initIsTTY
@@ -51,7 +51,7 @@ func TestInitNewTeamAgainstARemoteRegistryStatesTheLocalRule(t *testing.T) {
 	if exitCode(err) != 2 {
 		t.Fatalf("want a usage refusal, got %v", err)
 	}
-	for _, want := range []string{"http://awid.example.test:8010", "self-hosted", "local", "this machine", "aw team invite", "--byod --domain"} {
+	for _, want := range []string{"http://awid.example.test:8010", "self-hosted", "local", "loopback", "aw team invite", "aw team join", "--byod --domain"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("refusal %q does not say %q", err.Error(), want)
 		}
@@ -59,9 +59,9 @@ func TestInitNewTeamAgainstARemoteRegistryStatesTheLocalRule(t *testing.T) {
 	assertNoControllerKeys(t)
 }
 
-// The first machine's controller key owns `local` for the whole registry. A
-// second machine is refused before it mints a controller key of its own, and
-// told who holds the namespace and how to join.
+// The controller key that created `local` on a registry controls it. A home
+// without that key is refused before it mints a controller key of its own,
+// and told who holds the namespace and how to join a team there.
 func TestImplicitLocalInitRefusesALocalNamespaceHeldByAnotherController(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	const owner = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
@@ -85,7 +85,7 @@ func TestImplicitLocalInitRefusesALocalNamespaceHeldByAnotherController(t *testi
 	if exitCode(err) != 2 {
 		t.Fatalf("want a usage refusal, got %v", err)
 	}
-	for _, want := range []string{owner, "another machine", "aw team invite"} {
+	for _, want := range []string{owner, "not among this home's controller keys", "aw team invite", "aw team join"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("refusal %q does not say %q", err.Error(), want)
 		}
