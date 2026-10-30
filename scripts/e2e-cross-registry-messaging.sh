@@ -407,6 +407,14 @@ for _ in $(seq 1 600); do
     wait_health awid-a "http://$PUBLISHED_HOST:$AWID_A_PORT" awid-a
     touch "$WORK_DIR/start-awid-complete"
   fi
+  if [[ -f "$WORK_DIR/register-delegated-child-request" && ! -f "$WORK_DIR/register-delegated-child-complete" ]]; then
+    compose cp "$ROOT/scripts/cross-registry-delegated-namespace.py" awid-a:/tmp/cross-registry-delegated-namespace.py
+    compose cp "$WORK_DIR/home/.awid/controllers/alpha.example.com.key" awid-a:/tmp/journey-parent-controller.key
+    compose cp "$WORK_DIR/home/.awid/controllers/delegated.alpha.example.com.key" awid-a:/tmp/journey-child-controller.key
+    compose exec -T --user root awid-a python /tmp/cross-registry-delegated-namespace.py
+    compose exec -T --user root awid-a rm /tmp/journey-parent-controller.key /tmp/journey-child-controller.key
+    touch "$WORK_DIR/register-delegated-child-complete"
+  fi
   if ! kill -0 "$human_job" 2>/dev/null; then break; fi
   sleep 1
 done
