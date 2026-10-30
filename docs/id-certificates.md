@@ -953,6 +953,9 @@ local record locks.
 If a status refresh is needed, fetch outside locks and recheck the locked local
 facts before signing; no second evidence-freshness check follows the wait.
 AWID rechecks registered issuance under its own gate.
+In a deployment with chains, an AWID outage longer than 60 seconds stops
+spawning once the shared cached evidence is exhausted. Chainless human-less
+deployments are unaffected; spawning has no separate freshness window.
 
 The parent chooses current issuer_key and issued_at, signs one §2 certificate,
 and durably records its certificate_id and exact response BEFORE output. The
