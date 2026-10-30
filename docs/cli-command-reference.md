@@ -17,7 +17,7 @@ to refresh it.
 | --- | --- |
 | Workspace Setup | `check`, `claim-human`, `init`, `reset`, `service`, `workspace` |
 | Identity | `auth`, `custody`, `id`, `mcp-config`, `org`, `team`, `whoami` |
-| Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `wake` |
+| Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `room`, `wake` |
 | Coordination & Runtime | `activity`, `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `status`, `status-host`, `task`, `work` |
 | Utility | `completion`, `doctor`, `help`, `plugin`, `upgrade`, `version` |
 | Additional Commands | `blueprint`, `session`, `who` |
@@ -3013,6 +3013,44 @@ Flags:
 - `--limit int For --conversation-id, max messages from the OLDEST end; exact --message-id reads are not windowed (default 200)`
 - `--message-id string Legacy mail message to inspect`
 
+## `room`
+
+### `room`
+
+Read or post signed announcements to the shared team room. Team room posts are readable by the service operator and all current and future team members. Rooms use explicit reads; posting does not wake or broadcast to teammates.
+
+Subcommands:
+- `post` Post a signed announcement to the team room
+- `read` Read retained team room history
+
+Flags:
+- `-h, --help help for room`
+
+## `room post`
+
+### `room post`
+
+Post a signed announcement. Team room posts are readable by the service operator and all current and future team members. E2E room posts are unsupported.
+
+Flags:
+- `--body string Announcement body. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples`
+- `--body-file string Read announcement body from a file; safe for Markdown or command examples`
+- `--e2ee Request E2E encryption (rooms refuse this mode)`
+- `-h, --help help for post`
+- `--subject string Announcement subject`
+
+## `room read`
+
+### `room read`
+
+Read retained team room history
+
+Flags:
+- `--after string Continue from a room history cursor`
+- `-h, --help help for read`
+- `--limit int Maximum posts per page (1-200) (default 50)`
+- `--message-id string Read one exact room post`
+
 ## `wake`
 
 ### `wake`
@@ -4366,4 +4404,5 @@ Flags:
 - `-h, --help help for who`
 - `--message-id string Inspect the sender of this received mail or chat message`
 - `--registry string Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)`
+- `--room Inspect an exact team room post (requires --message-id)`
 - `--session-id string Inspect received chat in this session`

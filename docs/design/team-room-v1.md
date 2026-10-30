@@ -1,10 +1,12 @@
-# Team room v1 — contract for review
+# Team room v1
 
-Status: **proposed, not implemented**. Task: `aweb-acpi`. This advances goal 1,
+Status: **approved contract; implementation awaiting release**. Task: `aweb-acpi`. This advances goal 1,
 “Make aweb.ai a significant business”, by allowing a team announcement without
-manual recipient fan-out. Identity/auth review must accept this contract before
-implementation. This feature ships separately from the current identity-tree
-release candidate.
+manual recipient fan-out. Identity/auth review accepted the original contract
+at `960c13f371397d3af9229cf4644b51a62715ecb9` (Athena, mail
+`62c65bc5-090b-438e-a425-b4bbb886ae2c`). Juan approved full history on
+2026-10-30 (coordinator relay `351408ad-b317-4af3-ab13-696e856892f9`).
+This feature ships separately from the current identity-tree release candidate.
 
 ## Model and authority
 
@@ -13,8 +15,8 @@ server-readable. Every current member may read retained history and post.
 **Posts are visible to current and future team members and to the service
 operator.** Joining exposes existing room history. Removal or certificate
 revocation ends subsequent service access within the existing team-auth cache
-bound; it cannot erase a copy previously fetched. Responsibility must confirm
-this history policy before implementation.
+bound; it cannot erase a copy previously fetched. Juan approved this history
+policy on 2026-10-30.
 
 Custody and controller authority remain separate. Fully Hosted teams use their
 existing hosted controller; BYOT teams use their existing customer controller.
@@ -81,11 +83,13 @@ and is validated on every read; it is never an access token. A cross-room or
 malformed cursor is refused. A page of exactly `limit` entries is not evidence
 of completeness; clients follow `has_more` and `next_cursor`.
 
-Missing authentication is 401; missing membership or grant scope is 403;
+Missing authentication is 401; ordinary revoked-certificate refusals retain
+the production team-auth 401 (`server/src/aweb/team_auth_deps.py:239-247`).
+Missing membership or grant scope is 403;
 unavailable authoritative membership evidence is 503; a message outside the
 selected room is 404. Invalid envelope shape, timestamp or binding is 422;
 an invalid post signature is 403; conflicting message ID reuse is 409. These
-are proposed room statuses, not changes to existing mail/chat statuses. Record
+are room statuses, not changes to existing mail/chat statuses. Record
 the underlying authorization/verification error through the existing logging
 path, without logging post bodies or private key material.
 
@@ -155,6 +159,8 @@ a new sender identity nor independent proof of responsibility. Extend
 and pass it through that same verifier; do not add room-specific attribution
 fields or alter existing mail/chat results. Existing mail lookup errors must
 not be disguised as a room lookup or a missing message.
+`aw who --room --message-id` selects the room directly, so a chat-only grant
+needs no mail scope and IDs that also occur in mail remain unambiguous.
 
 ## CLI, channel/Pi and hosted MCP
 
@@ -165,6 +171,9 @@ future team members.” Put the same disclosure in the new MCP `room_post`
 tool description and result metadata; `room_read` returns the same signed
 records and history policy. The disclosure is present on every post surface,
 so no hidden first-use tracking or additional consent store is required.
+CLI post disclosure goes to stderr before sending, keeping JSON stdout a
+single document. Direct self-custodial MCP callers supply `signed_post` in
+the same HTTP post shape; the service never signs on their behalf.
 
 Terminal, channel and Pi agents explicitly invoke these CLI commands; no
 push adapter or wake loop is needed. Hosted MCP signs as its authenticated
@@ -190,6 +199,11 @@ no wakes, broadcasts, edits, deletes, attachments, federation or expiration
 policy additions in this feature. Older clients continue using their existing
 APIs. An upgraded room client refuses unsupported room APIs without falling
 back to manual mail fan-out.
+
+Room posts count as activity under the existing operator-controlled inactive
+team cleanup. Existing hard deletion of a team also removes its room and posts;
+the new tables must not block that operation. This introduces no individual
+room-post expiration or deletion API.
 
 Implementation starts with behavioral tests, including real production
 authorization paths: local/global/self-custodial/hosted members, BYOT/hosted
