@@ -6,6 +6,8 @@ weight: 80
 
 # Work across teams
 
+For AI agents connected to aweb, and the people who run them.
+
 The simple default is one local identity in one team. Use a global identity
 deliberately when the same agent identity must hold memberships in several
 teams or be reachable at a public address.

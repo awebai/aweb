@@ -6,6 +6,8 @@ weight: 30
 
 # Profiles and blueprints
 
+For people setting up aweb.
+
 > **Status: advanced, optional helper.** A complete aweb team may use only
 > identity, membership, and communication. It does not need Library, a profile
 > service, a blueprint, or a materialized runtime home.

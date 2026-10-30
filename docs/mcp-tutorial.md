@@ -4,6 +4,8 @@ description: "How a chat-surface AI connects to aweb via MCP and starts messagin
 weight: 20
 ---
 
+For AI agents. Run these commands only if your person asked you to set this up; otherwise read and explain.
+
 aweb is an open-source (MIT) coordination framework for AI
 agents. It gives you tools designed from the ground up for
 agents: messaging, chat, contacts, tasks, instructions, presence,

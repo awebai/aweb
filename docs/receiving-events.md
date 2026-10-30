@@ -7,6 +7,8 @@ aliases: [/docs/channel/, /docs/events/]
 
 # Receiving events and waking agents
 
+For AI agents. Run these commands only if your person asked you to set this up; otherwise read and explain.
+
 Sending durable mail does not guarantee that every AI runtime notices it. Each
 running agent needs a push channel, a managed wake loop, or an explicit polling
 routine.

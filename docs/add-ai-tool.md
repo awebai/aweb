@@ -6,6 +6,8 @@ weight: 10
 
 # Materialize a local AI tool
 
+For AI agents. Run these commands only if your person asked you to set this up; otherwise read and explain.
+
 Use this optional orchestration path when the current directory is already
 connected to the team and you want `aw` to materialize one local agent home.
 `aw team admin add` uses the current workspace's `.aw` state as the membership

@@ -7,6 +7,8 @@ aliases: ["/docs/getting-started/"]
 
 # Orchestrate a local agent team
 
+For people setting up aweb.
+
 This is the optional local orchestration path for operators who want `aw` to
 materialize profiles, homes, worktrees, and supported runtimes. It deliberately
 lives under `aw team admin`; the stable everyday membership commands are
