@@ -19,7 +19,9 @@ command, including interactive text output.
 
 The `aw_inv_v1_…` envelope supplies the destination service URL in `a` and the
 inner invite token in `t`. Inspection sends exactly one possession-authenticated
-`POST /api/v1/spawn/invite-preview` with `{"token":"<inner token>"}`. It sends no
+`POST /api/v1/spawn/invite-preview` with `{"token":"<exact full input token>"}`,
+the same credential supplied to acceptance. The envelope is not unwrapped for
+the preview request. It sends no
 identity credentials, performs no discovery, retries or redirects, and does not
 follow any URL in the response. A base URL ending in `/api` is not double-prefixed.
 Older bare hosted tokens have no destination and are refused; obtain a shareable
@@ -43,7 +45,9 @@ Successful JSON contains only:
 }
 ```
 
-`identity_scope` is `local` or `global`; `expires_at` may be null. Status is the
+`identity_scope` is `local`, `global`, or `unknown` when the invitation does not
+bind the child's scope. Unknown never selects local or global on acceptance;
+creation chooses its scope explicitly. `expires_at` may be null. Status is the
 service's current report, not a reservation or guarantee that later acceptance
 will succeed. The envelope is unsigned: contacting its chosen service does not
 independently verify the service or team. The normalized response `server_url`

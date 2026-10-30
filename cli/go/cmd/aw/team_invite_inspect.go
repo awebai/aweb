@@ -154,7 +154,7 @@ func inspectUnavailable() *inviteInspectError {
 func inspectHostedInvite(ctx context.Context, token string, envelope hostedJoinTokenEnvelope) (*inviteInspection, *inviteInspectError) {
 	body, _ := json.Marshal(struct {
 		Token string `json:"token"`
-	}{envelope.InnerToken})
+	}{token})
 	base := strings.TrimSuffix(envelope.AwebURL, "/api")
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/api/v1/spawn/invite-preview", bytes.NewReader(body))
 	if err != nil {
@@ -202,7 +202,7 @@ func inspectHostedInvite(ctx context.Context, token string, envelope hostedJoinT
 	}
 	domain, team, err := awid.ParseTeamID(wire.CanonicalTeamID)
 	id, valid := inspectCanonicalTeam(domain, team)
-	if err != nil || !valid || id != wire.CanonicalTeamID || (wire.IdentityScope != "local" && wire.IdentityScope != "global") {
+	if err != nil || !valid || id != wire.CanonicalTeamID || (wire.IdentityScope != "local" && wire.IdentityScope != "global" && wire.IdentityScope != "unknown") {
 		return nil, inspectUnavailable()
 	}
 	server, err := inspectServiceURL(wire.ServerURL)
