@@ -21,6 +21,7 @@ from awid.registry import RegistryClient
 from aweb.config import get_awid_registry_url
 from aweb.db import DatabaseInfra
 from aweb.mcp.auth import MCPAuthMiddleware
+from aweb.mcp.notifications import append_pending_nudge
 from aweb.mcp.signing import HostedMessageDecryptor, HostedMessageEncryptor, HostedMessageSigner
 from aweb.mcp.tools.agents import heartbeat as _heartbeat_impl
 from aweb.mcp.tools.agents import list_agents as _list_agents_impl
@@ -771,6 +772,16 @@ def register_tools(
 
 
 
+class _NudgingFastMCP(FastMCP):
+    def __init__(self, *args, db_infra, **kwargs):
+        self._nudge_db = db_infra
+        super().__init__(*args, **kwargs)
+
+    async def call_tool(self, name, arguments):
+        result = await super().call_tool(name, arguments)
+        return await append_pending_nudge(result, self._nudge_db)
+
+
 def create_mcp_app(
     *,
     db_infra: DatabaseInfra,
@@ -802,8 +813,9 @@ def create_mcp_app(
     if normalized_path != "/" and normalized_path.endswith("/"):
         normalized_path = normalized_path.rstrip("/")
 
-    mcp = FastMCP(
+    mcp = _NudgingFastMCP(
         "aweb",
+        db_infra=db_infra,
         stateless_http=True,
         json_response=True,
         streamable_http_path=normalized_path,

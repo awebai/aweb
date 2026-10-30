@@ -30,6 +30,37 @@ repeated, delayed, or missed during a disconnect.
 Aweb does not launch an arbitrary runtime merely because an event exists. The
 orchestrator that owns the process decides when and how to surface the wake.
 
+### MCP next-call nudges
+
+The core MCP factory appends a text block after a completed tool result when
+the authenticated actor has unread mail or chat messages:
+
+```text
+[aweb] Unread mail: 2; unread chat messages: 1. Call check_mail / check_chats to read them.
+```
+
+This is a snapshot taken after the tool runs. It preserves existing content,
+structured results, error status and metadata. Empty, unscoped or failed count
+lookups leave the result unchanged. The lookup only reads counts; it does not
+acknowledge messages or alter chat read state. Chat counts retain the existing
+did-first participant and per-participant read semantics of `check_chats`,
+including when an actor has both stable and key DID participant records.
+
+This nudge reaches an agent only when its client calls a tool. It does not
+wake an idle conversation. Embedders with their own MCP factory must call the
+public `aweb.mcp.notifications.append_pending_nudge(result, db_infra)` helper
+after dispatch while the authenticated request context is bound, including
+their application-tool result paths.
+
+Vendor capabilities checked on 2026-10-30: [Claude's connector documentation](https://claude.com/docs/connectors/building)
+supports text tool results and excludes resource subscriptions and sampling.
+[OpenAI's result reference](https://developers.openai.com/plugins/reference#tool-results)
+exposes `content` and `structuredContent` to the model; `_meta` is hidden.
+[ChatGPT MCP Events](https://developers.openai.com/plugins/build/mcp-events)
+provides a separate webhook subscription mechanism for Work chats, requiring
+MCP 2.0. This helper does not implement that mechanism. Generic MCP list-change
+notifications do not establish that a vendor starts an idle model turn.
+
 ### The terminal wake broker: `aw wake`
 
 `aw wake run` is aweb's own implementation of the host wake service row above,

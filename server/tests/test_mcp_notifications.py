@@ -51,8 +51,8 @@ async def test_nudge_preserves_original_wire_fields(actor, shape):
     result = await append_pending_nudge(inputs[shape], infra(CountDB(
         {"unread_mail": 2, "unread_chat_messages": 1})))
     assert isinstance(result, CallToolResult)
-    expected_text = ("[aweb] You have 2 unread mail and 1 unread chat messages; "
-                     "call check_mail / check_chats to read them.")
+    expected_text = ("[aweb] Unread mail: 2; unread chat messages: 1. "
+                     "Call check_mail / check_chats to read them.")
     assert result.content[-1].text == expected_text
     if shape == "structured":
         assert result.content[0].text == json.dumps(structured, indent=2)
@@ -106,7 +106,7 @@ async def mailbox(aweb_cloud_db, actor):
         sid = uuid4()
         await db.execute("""INSERT INTO {{tables.chat_sessions}}
             (session_id, team_id, created_by) VALUES ($1,$2,$3)""",
-                         sid, actor.team_id, UUID(actor.agent_id))
+                         sid, actor.team_id, actor.did_key)
         for participant_did, agent_id in [(did, actor.agent_id), ("did:key:other", other)]:
             await db.execute("""INSERT INTO {{tables.chat_participants}}
                 (session_id, did, agent_id, alias) VALUES ($1,$2,$3,'participant')""",
@@ -148,7 +148,7 @@ async def test_counts_bound_aliases_and_chat_reads_without_consuming(actor, mail
     original = CallToolResult(content=[TextContent(type="text", text="original")])
     result = await append_pending_nudge(original, infra(ReadOnlyDB()))
     assert len(result.content) == 2
-    assert "2 unread mail and 2 unread chat messages" in result.content[-1].text
+    assert "Unread mail: 2; unread chat messages: 2" in result.content[-1].text
     assert "DO NOT EXPOSE" not in result.model_dump_json()
     assert await db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}} WHERE read_at IS NULL") == 3
     assert await db.fetch_value("SELECT COUNT(*) FROM {{tables.chat_message_reads}}") == 4
@@ -182,7 +182,7 @@ async def test_chat_counts_preserve_existing_participant_read_semantics(actor, m
         participant_did="did:aw:actor", participant_agent_id=actor.agent_id)
     assert existing[0]["unread_count"] == 2
     result = await append_pending_nudge([], infra(mailbox.db))
-    assert "0 unread mail and 2 unread chat messages" in result.content[-1].text
+    assert "Unread mail: 0; unread chat messages: 2" in result.content[-1].text
 
 
 @pytest.mark.asyncio
@@ -220,7 +220,7 @@ async def test_mounted_core_result_nudge_and_post_consumption_snapshot(actor, ma
             await mailbox.mail(actor.did_key)
             nudged = await call("whoami")
             assert nudged["content"][:-1] == baseline["content"]
-            assert "1 unread mail and 0 unread chat messages" in nudged["content"][-1]["text"]
+            assert "Unread mail: 1; unread chat messages: 0" in nudged["content"][-1]["text"]
             assert {k: v for k, v in nudged.items() if k != "content"} == {
                 k: v for k, v in baseline.items() if k != "content"}
             # The count query is AFTER the called tool, so consumed mail is not
