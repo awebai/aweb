@@ -41,6 +41,7 @@ type DidKeyEvidence struct {
 }
 
 type DidKeyResolution struct {
+	IDTree        any                     `json:"id_tree,omitempty"`
 	DIDAW         string                  `json:"did_aw"`
 	CurrentDIDKey string                  `json:"current_did_key"`
 	LogHead       *DidKeyEvidence         `json:"log_head"`

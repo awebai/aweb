@@ -52,18 +52,32 @@ func prepareTeamInviteIDChild(ctx context.Context, opts idChildOptions) (*awconf
 		if identity.StableID == "" {
 			return nil, nil
 		}
-		registry := awid.NewAWIDRegistryClient(nil, opts.TXTResolver)
-		status := awid.NewIDStatusClient(registry, opts.TXTResolver)
+		// Enrollment is a key-route fact, independent of namespace tree status.
+		// Read it freshly: an old response without id_tree is unknown, not legacy.
+		registry, err := resolveIdentityRegistryClient(identity)
+		if err != nil {
+			return nil, err
+		}
+		registryURL := registry.DefaultRegistryURL
 		if opts.RegistryURL != "" {
-			status = idStatusAt(registry, opts.TXTResolver, opts.RegistryURL)
+			registryURL = opts.RegistryURL
 		}
-		subject := awid.IDChainSubject{ID: identityID(identity), DIDKey: identity.DID}
-		evidence := status.IDChainEvidence(ctx, nil, subject, identity.Domain)
-		verdict := awid.VerifyIDChain(nil, subject, evidence, identity.Domain)
-		if verdict.Reason != "unregistered_identity" {
-			return nil, fmt.Errorf("inviter cannot issue: %s", verdict.Reason)
+		resolution, err := registry.ResolveKeyAt(ctx, registryURL, identity.StableID)
+		if err != nil {
+			return nil, fmt.Errorf("inviter cannot issue: evidence_unavailable; check the inviter's identity registry connection and retry: %w", err)
 		}
-		return nil, nil
+		if resolution.DIDAW != identity.StableID || resolution.CurrentDIDKey != identity.DID {
+			return nil, fmt.Errorf("inviter key is not current; restore the identity's current signing key before inviting")
+		}
+		enrollment := awid.KeyResponseIDTree(map[string]any{"id_tree": resolution.IDTree})
+		switch enrollment.State {
+		case "not_enrolled":
+			return nil, nil
+		case "enrolled":
+			return nil, fmt.Errorf("inviter cannot issue: install this identity's ID chain first")
+		default:
+			return nil, fmt.Errorf("inviter cannot issue: %w; check or upgrade the inviter's identity registry, then retry", &awid.IDCertificateError{Code: "evidence_unavailable"})
+		}
 	}
 	opts.IdentityHome = home
 	issuer, err := selectChildIssuer(ctx, opts)
@@ -100,6 +114,9 @@ func checkSelectedTeamInviteIssuer(ctx context.Context, issuer *selectedChildIss
 	bundle := map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": issuer.parentChain}
 	verdict := awid.VerifyIDChain(bundle, awid.IDChainSubject{ID: identityID(identity), DIDKey: identity.DID}, evidence, issuer.domain)
 	if verdict.IdentityValid == nil || !*verdict.IdentityValid || verdict.Kind == nil || *verdict.Kind != "agent" {
+		if verdict.Reason == "evidence_unavailable" {
+			return fmt.Errorf("inviter cannot issue: %w; check the inviter's namespace DNS and identity registry, then retry", &awid.IDCertificateError{Code: verdict.Reason})
+		}
 		return fmt.Errorf("inviter cannot issue: %s", verdict.Reason)
 	}
 	return nil

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -108,5 +110,60 @@ func TestExistingLocalIdentityDoesNotAcquireAnInviteParent(t *testing.T) {
 	issue, err := bindTeamInviteIDChild(context.Background(), invite, filepath.Join(dir, ".aw"))
 	if err != nil || issue {
 		t.Fatalf("existing identity changed parent: %v %v", issue, err)
+	}
+}
+
+// Enrollment is carried on key resolution even when the domain has no tree
+// root. The external registry boundary is HTTP; no TXT or status is supplied.
+func TestTeamInviteChainlessGlobalEnrollmentWithoutTreeRoot(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		tree    any
+		omit    bool
+		allowed bool
+	}{
+		{name: "not enrolled", tree: map[string]any{"enrolled": false}, allowed: true},
+		{name: "unknown", omit: true},
+		{name: "malformed", tree: map[string]any{"enrolled": "false"}},
+		{name: "enrolled", tree: map[string]any{"enrolled": true, "domain": "example.com"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := loadWhoVectors(t)
+			dir := whoIdentity(t, v, false, true)
+			keyReads := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/v1/did/"+v.Keys["coordinator"].DIDAW+"/key" {
+					t.Errorf("unexpected authority request: %s %s", r.Method, r.URL.Path)
+					http.NotFound(w, r)
+					return
+				}
+				keyReads++
+				response := map[string]any{"did_aw": v.Keys["coordinator"].DIDAW, "current_did_key": v.Keys["coordinator"].DIDKey}
+				if !tc.omit {
+					response["id_tree"] = tc.tree
+				}
+				_ = json.NewEncoder(w).Encode(response)
+			}))
+			defer server.Close()
+			path := filepath.Join(dir, ".aw", "identity.yaml")
+			identity, err := awconfig.LoadWorktreeIdentityFrom(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			identity.RegistryURL = server.URL
+			if err := awconfig.SaveWorktreeIdentityTo(path, identity); err != nil {
+				t.Fatal(err)
+			}
+			link, err := prepareTeamInviteIDChild(context.Background(), idChildOptions{WorkingDir: dir, TXTResolver: staticTXTResolver{}, Now: time.Now})
+			if (err == nil) != tc.allowed || link != nil {
+				t.Fatalf("allowed=%v: link=%+v err=%v", tc.allowed, link, err)
+			}
+			if keyReads != 1 {
+				t.Fatalf("key reads=%d, want 1", keyReads)
+			}
+			if _, err := os.Stat(awconfig.IdentityInvitationsDir(filepath.Join(dir, ".aw"))); !os.IsNotExist(err) {
+				t.Fatalf("chainless refusal or membership-only path created an ID invitation: %v", err)
+			}
+		})
 	}
 }

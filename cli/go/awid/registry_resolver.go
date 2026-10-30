@@ -61,6 +61,7 @@ type didKeyEvidenceWire struct {
 }
 
 type didKeyResolutionWire struct {
+	IDTree        any                     `json:"id_tree,omitempty"`
 	DIDAW         string                  `json:"did_aw"`
 	CurrentDIDKey string                  `json:"current_did_key"`
 	LogHead       *didKeyEvidenceWire     `json:"log_head"`
@@ -567,6 +568,7 @@ func (r *RegistryResolver) resolveKeyFresh(ctx context.Context, registryURL, did
 		return nil, err
 	}
 	res := &DidKeyResolution{
+		IDTree:        wire.IDTree,
 		DIDAW:         wire.DIDAW,
 		CurrentDIDKey: wire.CurrentDIDKey,
 		EncryptionKey: wire.EncryptionKey,
