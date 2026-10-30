@@ -13,30 +13,31 @@ from __future__ import annotations
 
 import json
 
+from awid.dns_verify import DomainAuthority
 from awid.id_certificates import IDChainEvidence, verify_id_chain
 
 from awid_service.id_tree_clock import Clock, serialization_time
 from awid_service.id_tree_gate import IdentityTreeRefusal, canonical_json, current_root, wire_time
-from awid_service.namespace_epochs import latest_domain_event
+from awid_service.namespace_epochs import latest_domain_event, delegation_of, authority_evidence
 
 MAX_RESPONSE_BYTES = 131072
 
 
-async def status_snapshot(db, *, domain: str, ids: list[str], dns_key: str | None, clock: Clock) -> dict:
+async def status_snapshot(db, *, domain: str, ids: list[str], dns_authority: DomainAuthority | None, clock: Clock) -> dict:
     """The POST /status answer, read in its own read-only REPEATABLE READ transaction."""
     async with db.transaction() as tx:
         await tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         namespace = await tx.fetch_one(
             """
-            SELECT namespace_id, controller_did
+            SELECT namespace_id, controller_did, parent_domain, parent_controller_key
             FROM {{tables.dns_namespaces}}
             WHERE domain = $1 AND deleted_at IS NULL
             """,
             domain,
         )
         # No new current status is issued while the stored controller, the
-        # open epoch and exact DNS disagree.
-        if await current_root(tx, domain, namespace, dns_key) is None:
+        # open epoch and discovered authority disagree.
+        if await current_root(tx, domain, namespace, dns_authority) is None:
             raise IdentityTreeRefusal("evidence_unavailable", 503)
         return await read_snapshot(tx, domain=domain, ids=ids, clock=clock)
 
@@ -55,6 +56,9 @@ async def read_snapshot(tx, *, domain: str, ids: list[str], clock: Clock) -> dic
         ORDER BY seq
         """,
         domain,
+    )
+    namespace = await tx.fetch_one(
+        "SELECT controller_did, parent_domain, parent_controller_key FROM {{tables.dns_namespaces}} WHERE domain = $1 AND deleted_at IS NULL", domain,
     )
     registered = {
         row["id"]
@@ -117,6 +121,9 @@ async def read_snapshot(tx, *, domain: str, ids: list[str], clock: Clock) -> dic
     }
     # The response's exact compact size, kept as identities are added, so an
     # oversized proof stops being assembled as soon as it is too big.
+    delegation = delegation_of(namespace)
+    if delegation is not None:
+        snapshot["namespace"]["delegation"] = delegation
     size = _size(snapshot)
     for id_ in included:
         identity = _identity(
@@ -131,19 +138,17 @@ async def read_snapshot(tx, *, domain: str, ids: list[str], clock: Clock) -> dic
     return snapshot
 
 
-async def verify_parent_chain(tx, *, domain: str, parent: str, parent_key: str, dns_key: str | None, clock: Clock) -> dict:
+async def verify_parent_chain(tx, *, domain: str, parent: str, parent_key: str, dns_authority: DomainAuthority | None, clock: Clock) -> dict:
     """S1's verdict on ``parent``'s whole current chain, from the state ``tx`` holds.
 
     The evidence is this transaction's own snapshot, fresh by construction,
-    with the exact DNS key the request observed before its transaction. A
+    with the DNS authority the request observed before its transaction. A
     proof too large to snapshot refuses evidence_unavailable before any
     verdict.
     """
     evidence = IDChainEvidence(
         status=await read_snapshot(tx, domain=domain, ids=[parent], clock=clock),
-        namespace_authority={
-            "domain": domain, "dns_name": f"_awid.{domain}", "inherited": False, "controller_key": dns_key,
-        },
+        namespace_authority=authority_evidence(domain, dns_authority),
         age_seconds=0,
     )
     return verify_id_chain(None, subject={"id": parent, "did_key": parent_key}, evidence=evidence, domain=domain)

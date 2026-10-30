@@ -2,7 +2,7 @@
 
 Every root key change appends to one witnessed history per domain instead of
 overwriting the only evidence of an old root key. An epoch is opened only by
-an explicit act with exact ``_awid.<domain>`` DNS proof: first registration,
+an explicit act with exact DNS or verified parent authorization: first registration,
 re-registration after deletion, a key change through the new-key recovery
 PUT (all ``replaced``), or a rotation signed by the previous key
 (``rotated``). Observations of DNS never open, replace or retire an epoch.
@@ -12,7 +12,7 @@ Callers hold the namespace row lock (or create the row) before writing.
 from __future__ import annotations
 
 from awid.dns_verify import DomainAuthority
-from awid.id_certificates import strict_did_key
+from awid.id_certificates import namespace_authority_valid
 
 from awid_service.id_tree_clock import Clock, serialization_time
 
@@ -25,13 +25,47 @@ def is_exact(authority: DomainAuthority | None) -> bool:
     return authority is not None and not authority.inherited
 
 
-def proves_root(authority: DomainAuthority | None, did_key: str) -> bool:
-    """Whether this request's DNS evidence may establish ``did_key`` as the tree root.
+def delegation_of(namespace) -> dict | None:
+    """The persisted parent authorization, bound to the current child key."""
+    if namespace is None or namespace.get("parent_domain") is None or namespace.get("parent_controller_key") is None:
+        return None
+    return {"parent_domain": namespace["parent_domain"],
+            "parent_controller_key": namespace["parent_controller_key"],
+            "controller_key": namespace["controller_did"]}
 
-    A key outside the prime-order subgroup would open an epoch every
-    verifier refuses, making the whole tree unavailable, so it never does.
-    """
-    return is_exact(authority) and strict_did_key(did_key)
+
+def authority_evidence(domain: str, authority: DomainAuthority | None) -> dict:
+    return {"domain": domain, "dns_name": authority.dns_name if authority else None,
+            "inherited": authority.inherited if authority else False,
+            "controller_key": authority.controller_did if authority else None}
+
+
+def proves_root(authority: DomainAuthority | None, did_key: str, *, domain: str | None = None, namespace=None) -> bool:
+    """Whether found DNS and the parent-authorized record establish this root."""
+    if authority is None:
+        return False
+    domain = domain or authority.dns_name.removeprefix("_awid.")
+    return namespace_authority_valid(domain, authority_evidence(domain, authority), did_key, delegation_of(namespace))
+
+
+async def record_delegation(tx, *, domain: str, parent) -> None:
+    """Only callers that verified the existing parent proof may record it."""
+    await tx.execute(
+        """UPDATE {{tables.dns_namespaces}}
+           SET parent_domain = $2, parent_controller_key = $3
+           WHERE domain = $1 AND deleted_at IS NULL""",
+        domain, parent["domain"], parent["controller_did"],
+    )
+
+
+async def advance_delegated_children(tx, *, domain: str, controller_key: str) -> None:
+    """A signed parent controller change preserves its direct delegations atomically."""
+    await tx.execute(
+        """UPDATE {{tables.dns_namespaces}}
+           SET parent_controller_key = $2
+           WHERE parent_domain = $1 AND deleted_at IS NULL""",
+        domain, controller_key,
+    )
 
 
 async def open_epoch(tx, *, domain: str, did_key: str, continuity: str, clock: Clock) -> None:

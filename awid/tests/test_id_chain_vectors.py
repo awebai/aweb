@@ -13,8 +13,8 @@ def inputs(case):
     bundle = {'v': 1, 'type': 'aweb.id-chain', 'certificates': [copy.deepcopy(V['certificates'][n]['signed']) for n in case['chain']]}
     if not case['chain'] or case.get('presented_chain') is False:
         bundle = None
-    epoch = next(e for e in reversed(status['namespace']['epochs']) if e['retired_at'] is None)
-    authority = case.get('namespace_authority', {'domain': status['domain'], 'dns_name': '_awid.' + status['domain'], 'inherited': False, 'controller_key': epoch['did_key']})
+    epoch = next((e for e in reversed(status['namespace']['epochs']) if e['retired_at'] is None), {})
+    authority = case.get('namespace_authority', {'domain': status['domain'], 'dns_name': '_awid.' + status['domain'], 'inherited': False, 'controller_key': epoch.get('did_key')})
     cache = case.get('cache', {'age_seconds': 0, 'refresh': 'not_needed'})
     evidence = None if case.get('status_source') == 'caller' else IDChainEvidence(status, authority, cache['age_seconds'])
     return bundle, subject, evidence, status['domain']
@@ -70,7 +70,7 @@ def test_invalid_status_never_confers_authority(mutation):
 
 def test_final_vector_names_include_the_isolated_authority_boundaries():
     names = [case['name'] for case in V['verification_cases']]
-    assert len(names) == len(set(names)) == 122
+    assert len(names) == len(set(names)) == 127
     assert {
         'namespace-overlapping-replaced-successor-unavailable',
         'namespace-unretired-predecessor-unavailable',
@@ -79,3 +79,17 @@ def test_final_vector_names_include_the_isolated_authority_boundaries():
         'cached-status-age-60',
         'cached-status-age-61',
     } <= set(names)
+
+
+@pytest.mark.parametrize('change', ['missing', 'unrelated-parent', 'wrong-parent-key', 'wrong-child-key', 'wrong-dns-name', 'extra'])
+def test_delegation_must_bind_the_discovered_parent_to_the_child(change):
+    case = next(c for c in V['verification_cases'] if c['name'] == 'delegated-child-authorized')
+    bundle, subject, evidence, domain = inputs(case)
+    witness = evidence.status['namespace']['delegation']
+    if change == 'missing': del evidence.status['namespace']['delegation']
+    elif change == 'unrelated-parent': witness['parent_domain'] = 'other.example'
+    elif change == 'wrong-parent-key': witness['parent_controller_key'] = V['keys']['alice']['did_key']
+    elif change == 'wrong-child-key': witness['controller_key'] = V['keys']['alice']['did_key']
+    elif change == 'wrong-dns-name': evidence.namespace_authority['dns_name'] = '_awid.other.example'
+    elif change == 'extra': witness['unrecognized'] = True
+    assert verify_id_chain(bundle, subject=subject, evidence=evidence, domain=domain)['reason'] == 'evidence_unavailable'
