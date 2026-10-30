@@ -1653,6 +1653,9 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 	)
 
 	awebServer := newRawLocalHTTPServerForTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveAPIKeyCreationTeamRead(w, r, teamID) {
+			return
+		}
 		if serveUnadvertisedHealth(w, r) {
 			return
 		}
@@ -2264,6 +2267,8 @@ func TestAwWorkspaceAddWorktreeExternalIdentityHomeUsesHostedInviteWithoutTeamKe
 				Namespace:     "acme.aweb.ai",
 				ServerURL:     "http://" + r.Host,
 			})
+		case "/api/v1/spawn/invite-preview":
+			writeLegacyHostedPreviewForTest(t, w, r, teamID, "http://"+r.Host)
 		case "/api/v1/spawn/accept-invite":
 			if didFromDIDKeyAuthorizationForTest(r.Header.Get("Authorization")) == "" {
 				t.Fatalf("accept-invite missing DIDKey auth")
@@ -2426,6 +2431,9 @@ func TestAwWorkspaceAddWorktreeExternalIdentityHomeUsesParentAPIKey(t *testing.T
 	defer cancel()
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveAPIKeyCreationTeamRead(w, r, teamID) {
+			return
+		}
 		switch r.URL.Path {
 		case "/v1/roles/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{

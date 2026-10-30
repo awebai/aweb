@@ -43,6 +43,9 @@ func formatTeamAcceptInvite(v any) string {
 	sb.WriteString(fmt.Sprintf("Team:        %s\n", out.TeamID))
 	sb.WriteString(fmt.Sprintf("Name:        %s\n", out.Alias))
 	sb.WriteString(fmt.Sprintf("Certificate: %s\n", out.CertPath))
+	if out.IDRegistration != "" {
+		sb.WriteString(fmt.Sprintf("ID registration: %s\n", out.IDRegistration))
+	}
 	if out.Connected != nil && *out.Connected {
 		sb.WriteString(fmt.Sprintf("Connected to %s as %s\n", strings.TrimSpace(out.AwebURL), strings.TrimSpace(out.Alias)))
 	} else if strings.TrimSpace(out.ConnectCommand) != "" {
