@@ -264,7 +264,7 @@ async def test_chat_page_index_populated_apply_reapply_and_invalid_recovery(priv
         await _message(env, session)
     migrations = AsyncMigrationManager(env.db, module_name="aweb-aweb", migrations_path=str(
         Path(__file__).parents[1] / "src/aweb/migrations/aweb"))
-    filename = "042_chat_history_page_index.sql"
+    filename = "043_chat_history_page_index.sql"
     index = "aweb.idx_chat_messages_history_page"
     await env.db.execute("DROP INDEX IF EXISTS " + index)
     for state in ("absent", "existing-valid", "existing-invalid"):

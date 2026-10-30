@@ -51,6 +51,7 @@ from aweb.federation.envelope import (
 from aweb.federation.mail import FederatedMailDeliveryError, deliver_federated_message
 from aweb.hooks import fire_mutation_hook
 from aweb.identity_metadata import lookup_identity_metadata_by_did, routable_chat_address
+from aweb.id_chain_auth import stored_id_chain
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, get_messaging_auth
 from aweb.messaging.sender_address import sender_address as _sender_address
 from aweb.messaging.alias_targets import (
@@ -1550,6 +1551,7 @@ async def create_or_send(
         )
         msg_row = await send_in_session(
             db,
+            id_chain=getattr(request.state, "id_chain", None),
             session_id=session_id,
             sender_did=actor_did,
             sender_agent_id=actor_agent_id,
@@ -1693,6 +1695,7 @@ async def create_or_send(
     try:
         msg_row = await send_in_session(
             db,
+            id_chain=getattr(request.state, "id_chain", None),
             session_id=session_id,
             sender_did=actor_did,
             sender_agent_id=actor_agent_id,
@@ -2047,6 +2050,7 @@ async def history(
                 "signature": msg.get("signature"),
                 "signed_payload": msg.get("signed_payload"),
                 **ingress_projection(msg),
+                "id_chain": stored_id_chain(msg.get("id_chain")),
                 **verified_signed_recipient_fields({**msg, "conversation_id": str(session_uuid)}),
                 **verified_signed_via({**msg, "conversation_id": str(session_uuid)}),
                 "is_contact": is_address_in_contacts(from_address, contact_addrs),
@@ -2294,7 +2298,7 @@ async def _sse_events(
                 SELECT message_id, from_agent_id, from_alias, from_address,
                        CASE WHEN content_mode = 'encrypted_v2' THEN '' ELSE body END AS body,
                        content_mode, message_version, encrypted_envelope, created_at,
-                       sender_leaving, hang_on, reply_to, from_did, signature, signed_payload, ingress
+                       sender_leaving, hang_on, reply_to, from_did, signature, signed_payload, ingress, id_chain
                 FROM {{tables.chat_messages}}
                 WHERE session_id = $1 AND created_at > $2
                 ORDER BY created_at ASC
@@ -2346,6 +2350,7 @@ async def _sse_events(
                     "signature": row.get("signature"),
                     "signed_payload": row.get("signed_payload"),
                     **ingress_projection(row),
+                    "id_chain": stored_id_chain(row.get("id_chain")),
                     **verified_signed_recipient_fields({**row, "conversation_id": session_id_str}),
                     **verified_signed_via({**row, "conversation_id": session_id_str}),
                     "is_contact": is_address_in_contacts(from_address, contact_addrs),
@@ -2433,7 +2438,7 @@ async def _sse_events(
                     SELECT message_id, from_agent_id, from_alias, from_address,
                            CASE WHEN content_mode = 'encrypted_v2' THEN '' ELSE body END AS body,
                            content_mode, message_version, encrypted_envelope, created_at,
-                           sender_leaving, hang_on, reply_to, from_did, signature, signed_payload, ingress
+                           sender_leaving, hang_on, reply_to, from_did, signature, signed_payload, ingress, id_chain
                     FROM {{tables.chat_messages}}
                     WHERE session_id = $1 AND created_at > $2
                     ORDER BY created_at ASC
@@ -2483,6 +2488,7 @@ async def _sse_events(
                         "signature": row.get("signature"),
                         "signed_payload": row.get("signed_payload"),
                         **ingress_projection(row),
+                        "id_chain": stored_id_chain(row.get("id_chain")),
                         **verified_signed_recipient_fields({**row, "conversation_id": session_id_str}),
                         **verified_signed_via({**row, "conversation_id": session_id_str}),
                         "is_contact": is_address_in_contacts(from_address, contact_addrs),
@@ -2851,6 +2857,7 @@ async def send_message(
         try:
             msg_row = await send_in_session(
                 db,
+                id_chain=getattr(request.state, "id_chain", None),
                 session_id=session_uuid,
                 sender_did=actor_did,
                 sender_agent_id=actor_agent_id,
@@ -2910,6 +2917,7 @@ async def send_message(
     try:
         msg_row = await send_in_session(
             db,
+            id_chain=getattr(request.state, "id_chain", None),
             session_id=session_uuid,
             sender_did=actor_did,
             sender_agent_id=actor_agent_id,

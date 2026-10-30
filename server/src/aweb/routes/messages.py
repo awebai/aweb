@@ -37,6 +37,7 @@ from aweb.federation.envelope import (
 from aweb.federation.mail import FederatedMailDeliveryError, deliver_federated_mail
 from aweb.hooks import fire_mutation_hook
 from aweb.identity_binding import verify_identity_binding
+from aweb.id_chain_auth import stored_id_chain
 from aweb.identity_metadata import lookup_identity_metadata_by_did
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, get_messaging_auth
 from aweb.messaging.sender_address import sender_address as _sender_address
@@ -225,6 +226,7 @@ class SendMessageResponse(BaseModel):
 
 
 class InboxMessage(BaseModel):
+    id_chain: dict | None = None
     attachment_refs: list[dict] = Field(default_factory=list)
     sender_membership: SenderMembership | None = None
     message_id: str
@@ -332,6 +334,7 @@ async def _inbox_response_from_rows(
                 to_address=(identity_map.get(to_did, {}).get("address") or None),
                 signature=r.get("signature"),
                 signed_payload=r.get("signed_payload"),
+                id_chain=stored_id_chain(r.get("id_chain")),
                 verification_status=message_verification_status(dict(r)),
                 **verified_signed_via(dict(r)),
                 **ingress_projection(r),
@@ -434,7 +437,7 @@ async def get_mail_conversation(
             f"""
             SELECT m.team_id, m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
                    m.subject, m.body, m.priority, m.read_at, m.created_at,
-                   m.from_did, m.to_did, m.signature, m.signed_payload, m.ingress, m.conversation_id,
+                   m.from_did, m.to_did, m.signature, m.signed_payload, m.ingress, m.id_chain, m.conversation_id,
                    m.content_mode, m.message_version, m.encrypted_envelope
             FROM {{{{tables.messages}}}} m
             {where}
@@ -463,7 +466,7 @@ async def get_mail_conversation(
         """
         SELECT m.team_id, m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
                m.subject, m.body, m.priority, m.read_at, m.created_at,
-               m.from_did, m.to_did, m.signature, m.signed_payload, m.ingress, m.conversation_id,
+               m.from_did, m.to_did, m.signature, m.signed_payload, m.ingress, m.id_chain, m.conversation_id,
                m.content_mode, m.message_version, m.encrypted_envelope
         FROM {{tables.messages}} m
         WHERE m.message_id = $1
@@ -1028,6 +1031,7 @@ async def _deliver_remote_mail_and_project_locally(
             )
         local_message_id, local_created_at = await deliver_message(
             db,
+            id_chain=getattr(request.state, "id_chain", None),
             registry_client=registry_client,
             recipient_agent=recipient,
             team_id=auth.team_id,
@@ -1287,6 +1291,7 @@ async def _send_mail_conversation_continuation(
         )
         message_id, server_received_at = await deliver_message(
             db,
+            id_chain=getattr(request.state, "id_chain", None),
             registry_client=registry_client,
             recipient_agent=recipient,
             team_id=continuation.conversation.get("team_id") or auth.team_id,
@@ -1925,6 +1930,7 @@ async def send_message(
         )
         message_id, server_received_at = await deliver_message(
             db,
+            id_chain=getattr(request.state, "id_chain", None),
             registry_client=registry_client,
             recipient_agent=recipient,
             team_id=auth.team_id,
@@ -2042,7 +2048,7 @@ async def get_inbox(
         f"""
         SELECT m.team_id, m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
                m.subject, m.body, m.priority, m.read_at, m.created_at,
-               m.from_did, m.to_did, m.signature, m.signed_payload, m.ingress, m.conversation_id,
+               m.from_did, m.to_did, m.signature, m.signed_payload, m.ingress, m.id_chain, m.conversation_id,
                m.content_mode, m.message_version, m.encrypted_envelope
         FROM {{{{tables.messages}}}} m
         {where_clause}
@@ -2091,7 +2097,7 @@ async def get_message(
         """
         SELECT m.team_id, m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
                m.subject, m.body, m.priority, m.read_at, m.created_at,
-               m.from_did, m.to_did, m.signature, m.signed_payload, m.ingress, m.conversation_id,
+               m.from_did, m.to_did, m.signature, m.signed_payload, m.ingress, m.id_chain, m.conversation_id,
                m.content_mode, m.message_version, m.encrypted_envelope
         FROM {{tables.messages}} m
         WHERE m.message_id = $1

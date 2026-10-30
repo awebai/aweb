@@ -68,6 +68,10 @@ ROOT_CONSUMERS = {
         "human-channels-signed-via-v1.json",
         'ROOT / "docs/vectors/human-channels-signed-via-v1.json"',
     ),
+    PurePosixPath("server/tests/test_id_chain_request_auth.py"): _consumer(
+        "id-certificates-v1.json",
+        "Path(__file__).resolve().parents[2] / 'docs/vectors/id-certificates-v1.json'",
+    ),
     PurePosixPath("awid/tests/id_tree_support.py"): _consumer(
         "id-certificates-v1.json",
         'Path(__file__).resolve().parents[2] / "docs" / "vectors"',

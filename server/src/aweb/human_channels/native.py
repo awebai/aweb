@@ -885,6 +885,7 @@ class NativeMessagingUnitOfWork:
             "message_version": payload.message_version,
             "encrypted_envelope": payload.encrypted_envelope,
             "encrypted_metadata": payload.encrypted_metadata,
+            "id_chain": self.auth.id_chain,
             "message_id": UUID(value["message_id"]),
         }
         request = SimpleNamespace(

@@ -86,6 +86,37 @@ async def test_channel_ingress_rest_projection(ingress_app, view):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+async def test_channel_ingress_and_author_chain_round_trip(ingress_app, kind):
+    from dataclasses import replace
+    from test_id_chain_message_metadata import _bundle
+
+    app, env = ingress_app, ingress_app.env
+    native = app.native
+    chain = _bundle(env.actors["alice"].did)
+    native["auth"] = replace(native["auth"], id_chain=chain)
+    native["key"] = dto("IngressKey", dict(
+        issuer=native["auth"].did_key, namespace="verified-events", key=str(uuid4()),
+        input_hash="sha256:" + "11" * 32))
+    prepared = await _prepare(native, kind, via="telegram")
+    await _bind(native, prepared)
+    await complete(native, prepared)
+
+    mid, cid = prepared.value["message_id"], prepared.value["conversation_id"]
+    path = (f"/v1/messages/{mid}" if kind == "mail" else
+            f"/v1/chat/sessions/{cid}/messages?order=desc&limit=1")
+    response = await _request(env, "bob", "GET", path)
+    assert response.status_code == 200, response.text
+    item = response.json() if kind == "mail" else response.json()["messages"][0]
+    assert_ingress(item)
+    assert item["id_chain"] == chain
+    assert item["via"] == "telegram"
+    signed = json.loads(item["signed_payload"])
+    assert "id_chain" not in signed
+    assert "ingress" not in signed
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("view", ["inbox", "mail-contact", "history", "wait", "chat-contact"])
 async def test_channel_ingress_mcp_projection(ingress_app, view):
     app, env = ingress_app, ingress_app.env

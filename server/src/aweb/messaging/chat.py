@@ -457,6 +457,7 @@ async def send_in_session(
     hang_on: bool = False,
     signature: str | None = None,
     signed_payload: str | None = None,
+    id_chain: dict[str, Any] | None = None,
     content_mode: str = "legacy_plaintext_v1",
     message_version: int = 1,
     encrypted_envelope: dict[str, Any] | None = None,
@@ -493,10 +494,10 @@ async def send_in_session(
              content_mode, message_version, encrypted_envelope, encrypted_ciphertext,
              encrypted_key_wraps, encrypted_ciphertext_hash, encrypted_ciphertext_size,
              encrypted_key_wraps_hash, encrypted_inner_header_hash, encrypted_suite,
-             encrypted_signing_key_id, signed_envelope_hash, created_at, ingress)
+             encrypted_signing_key_id, signed_envelope_hash, created_at, ingress, id_chain)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
                 $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-                $21, $22, $23, $24, $25, $26::jsonb)
+                $21, $22, $23, $24, $25, $26::jsonb, $27::jsonb)
         RETURNING message_id, created_at
         """,
         effective_message_id,
@@ -525,6 +526,7 @@ async def send_in_session(
         encrypted_metadata.get("signed_envelope_hash"),
         effective_created_at,
         json.dumps(validate_ingress(_server_ingress)) if _server_ingress is not None else None,
+        json.dumps(id_chain) if id_chain is not None else None,
     )
 
     await aweb_db.execute(
@@ -716,7 +718,7 @@ async def get_message_history(
             SELECT message_id, from_alias, from_address,
                    CASE WHEN content_mode = 'encrypted_v2' THEN '' ELSE body END AS body,
                    created_at, sender_leaving, from_agent_id, reply_to, from_did,
-                   signature, signed_payload, ingress, content_mode, message_version,
+                   signature, signed_payload, ingress, id_chain, content_mode, message_version,
                    encrypted_envelope
             FROM {{tables.chat_messages}}
             WHERE session_id = $1
@@ -739,7 +741,7 @@ async def get_message_history(
             SELECT message_id, from_alias, from_address,
                    CASE WHEN content_mode = 'encrypted_v2' THEN '' ELSE body END AS body,
                    created_at, sender_leaving, from_agent_id, reply_to, from_did,
-                   signature, signed_payload, ingress, content_mode, message_version,
+                   signature, signed_payload, ingress, id_chain, content_mode, message_version,
                    encrypted_envelope
             FROM {{{{tables.chat_messages}}}}
             WHERE session_id = $1
@@ -781,6 +783,7 @@ async def get_message_history(
             "signature": row.get("signature"),
             "signed_payload": row.get("signed_payload"),
             **ingress_projection(row),
+            "id_chain": _json_object(row.get("id_chain")),
             "content_mode": row.get("content_mode") or "legacy_plaintext_v1",
             "message_version": int(row.get("message_version") or 1),
             "encrypted_envelope": _json_object(row.get("encrypted_envelope")),

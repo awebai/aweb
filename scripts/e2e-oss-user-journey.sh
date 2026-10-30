@@ -417,6 +417,20 @@ run_success() {
   return 0
 }
 
+# assert_who_legacy_local checks `aw who --json` for a local did:key identity
+# made without an id-tree chain: its own did:key, unknown/legacy_no_chain,
+# human_id, identity_valid and kind null, and no chain.
+assert_who_legacy_local() {
+  local label="$1" workdir="$2"
+  local who_out whoami_out did
+  capture_success whoami_out "$label whoami" run_aw_in "$workdir" whoami --json
+  did="$(echo "$whoami_out" | jq_field did)"
+  assert_not_empty "$label did" "$did"
+  capture_success who_out "$label who" run_aw_in "$workdir" who --json
+  assert_eq "$label who result" "$did|unknown|legacy_no_chain|null|null|null|no-chain" \
+    "$(echo "$who_out" | python3 -c 'import sys,json; d=json.load(sys.stdin); n=lambda k: "null" if k in d and d[k] is None else "set"; print("|".join([d.get("id",""), d.get("outcome",""), d.get("reason",""), n("human_id"), n("identity_valid"), n("kind"), "chain" if "chain" in d else "no-chain"]))' 2>/dev/null || echo unparsed)"
+}
+
 # Like run_aw_in but strips AWID_REGISTRY_URL from the env so the CLI must
 # fall back to identity.yaml's registry_url. Used by the aako-pattern
 # reproducer to exercise the env-unset-with-identity-fallback code path
@@ -929,6 +943,7 @@ assert_eq "fresh local join used invite service URL" "$AWEB_URL" "$GSK_JOIN_AWEB
 capture_success gsk_check "gsk_check" run_aw_in "$GSK_DIR" check --online --json
 GSK_CHECK_STATUS="$(echo "$gsk_check" | jq_field status)"
 assert_eq "fresh local check after join" "ok" "$GSK_CHECK_STATUS"
+assert_who_legacy_local "gsk" "$GSK_DIR"
 
 run_success "fresh local mail lands after join without setup commands" run_aw_in "$GSK_DIR" mail send --plaintext \
   --to alice \
@@ -953,6 +968,7 @@ capture_success nokey_accept "nokey_accept" run_aw_in "$NO_KEY_DIR" id team acce
 NOKEY_ACCEPT_STATUS="$(echo "$nokey_accept" | jq_field status)"
 assert_eq "nokey accepted" "accepted" "$NOKEY_ACCEPT_STATUS"
 run_success "nokey init" run_aw_in "$NO_KEY_DIR" init --url "$AWEB_URL"
+assert_who_legacy_local "nokey" "$NO_KEY_DIR"
 psql_exec "DELETE FROM aweb.agent_encryption_keys e USING aweb.agents a WHERE e.agent_id = a.agent_id AND a.team_id = 'devteam:test.local' AND a.alias = 'nokey';"
 echo ""
 
@@ -2940,6 +2956,7 @@ phase_aw_init_local_quickstart() {
     fail=$((fail + 1))
   fi
   assert_file_exists "wizard signing.key written" "$WIZARD_BYOD_DIR/.aw/signing.key"
+  assert_who_legacy_local "wizard" "$WIZARD_BYOD_DIR"
   assert_file_exists "wizard workspace.yaml written" "$WIZARD_BYOD_DIR/.aw/workspace.yaml"
   assert_file_exists "wizard teams.yaml written" "$WIZARD_BYOD_DIR/.aw/teams.yaml"
   assert_file_mode "wizard signing.key mode" "$WIZARD_BYOD_DIR/.aw/signing.key" "600"
