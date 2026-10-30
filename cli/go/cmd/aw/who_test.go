@@ -28,6 +28,7 @@ type whoVectors struct {
 	Certificates map[string]struct {
 		Signed map[string]any `json:"signed"`
 	} `json:"certificates"`
+	Statuses map[string]map[string]any `json:"status_fixtures"`
 }
 
 func loadWhoVectors(t *testing.T) whoVectors {
@@ -212,6 +213,66 @@ func TestWhoRefusesARegistryTheDomainDoesNotName(t *testing.T) {
 	out, err := executeWho(context.Background(), whoOptions{WorkingDir: dir, RegistryURL: "https://registry.other.example", TXTResolver: resolver})
 	if exitCode(err) != 2 || out.Outcome != "" {
 		t.Fatalf("out %+v err %v", out, err)
+	}
+}
+
+func TestWhoInstalledGlobalChainIsIndependentOfAddressDomain(t *testing.T) {
+	v := loadWhoVectors(t)
+	for _, tc := range []struct {
+		name, address, status, outcome, reason string
+		certificates                           []string
+	}{
+		{"same-domain", "example.com/child", "normal", "nearest_human", "verified", []string{"alice", "global-agent"}},
+		{"alias-nearest-human", "signup-owner.example.com/child", "normal", "nearest_human", "verified", []string{"alice", "global-agent"}},
+		{"alias-no-human", "signup-owner.example.com/child", "registered-root-agent-rotated", "no_human", "verified", []string{"registered-root-agent"}},
+		{"alias-revoked", "signup-owner.example.com/child", "alice-revoked-now", "unknown", "revoked", []string{"alice", "global-agent"}},
+		{"alias-unavailable", "signup-owner.example.com/child", "", "unavailable", "evidence_unavailable", []string{"alice", "global-agent"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := whoIdentity(t, v, false, false)
+			key := v.Keys["global_agent"]
+			seed, err := hex.DecodeString(key.SeedHex)
+			if err != nil {
+				t.Fatal(err)
+			}
+			home := dir + "/.aw"
+			identity := &awconfig.WorktreeIdentity{DID: key.DIDKey, StableID: key.DIDAW, Address: tc.address, Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal}
+			if err := awconfig.SaveWorktreeIdentityTo(home+"/identity.yaml", identity); err != nil {
+				t.Fatal(err)
+			}
+			if err := awid.SaveSigningKey(home+"/signing.key", ed25519.NewKeyFromSeed(seed)); err != nil {
+				t.Fatal(err)
+			}
+			certificates := []any{}
+			for _, name := range tc.certificates {
+				certificates = append(certificates, v.Certificates[name].Signed)
+			}
+			if err := awconfig.SaveInstalledIDChain(home, map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": certificates}); err != nil {
+				t.Fatal(err)
+			}
+			evidence := &awid.IDChainEvidence{}
+			if tc.status != "" {
+				status := v.Statuses[tc.status]
+				epochs := status["namespace"].(map[string]any)["epochs"].([]any)
+				epoch := epochs[len(epochs)-1].(map[string]any)
+				age := float64(0)
+				evidence = &awid.IDChainEvidence{Status: status, NamespaceAuthority: map[string]any{"domain": "example.com", "dns_name": "_awid.example.com", "inherited": false, "controller_key": epoch["did_key"]}, AgeSeconds: &age}
+			}
+			out, err := executeWho(t.Context(), whoOptions{WorkingDir: dir, Status: whoFixedStatus{evidence}, TXTResolver: staticTXTResolver{}})
+			if err != nil || out.ID != key.DIDAW || out.Domain != "example.com" || out.Outcome != tc.outcome || out.Reason != tc.reason {
+				t.Fatalf("address %s: out %+v err %v", tc.address, out, err)
+			}
+			if tc.reason == "verified" {
+				if out.IdentityValid == nil || !*out.IdentityValid || len(out.Chain) != len(tc.certificates) {
+					t.Fatalf("verified chain missing: %+v", out)
+				}
+			} else if out.HumanID != nil || out.Chain != nil {
+				t.Fatalf("unverified ancestry displayed: %+v", out)
+			}
+			if tc.outcome == "nearest_human" && (out.HumanID == nil || *out.HumanID != v.Keys["alice"].DIDAW) {
+				t.Fatalf("wrong human: %+v", out)
+			}
+		})
 	}
 }
 

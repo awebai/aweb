@@ -120,13 +120,10 @@ func executeWho(ctx context.Context, opts whoOptions) (whoOutput, error) {
 	var bundle map[string]any
 	if installed != nil {
 		bundle = installed.Bundle
-		if domain == "" {
-			// A local identity has no address: its namespace is the one its
-			// chain claims, which the verifier checks against that domain's
-			// DNS root.
-			certificates := bundle["certificates"].([]any)
-			domain, _ = certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)["domain"].(string)
-		}
+		// An address is an alias, independent of the signed ancestry domain.
+		// The shared verifier checks this claim against current DNS/status.
+		certificates := bundle["certificates"].([]any)
+		domain, _ = certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)["domain"].(string)
 	} else if strings.HasPrefix(id, "did:aw:") {
 		// A chainless did:aw is judged where its key route says it is
 		// enrolled, never in its address's domain.
