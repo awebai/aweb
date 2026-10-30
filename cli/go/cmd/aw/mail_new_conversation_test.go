@@ -178,8 +178,17 @@ func TestAwMailSendNewConversation(t *testing.T) {
 				if result.MessageID != req.MessageID || result.ConversationID != req.ConversationID {
 					t.Fatalf("wrong returned IDs: %+v", result)
 				}
-			} else if stdout.Len() != 0 {
-				t.Fatalf("failure reported success: %s", &stdout)
+			} else {
+				// A --json failure's stdout is its error envelope alone,
+				// never a send result.
+				assertOneJSONDocument(t, stdout.Bytes())
+				var envelope struct {
+					Error     *struct{ Code string } `json:"error"`
+					MessageID string                 `json:"message_id"`
+				}
+				if e := json.Unmarshal(stdout.Bytes(), &envelope); e != nil || envelope.Error == nil || envelope.Error.Code == "" || envelope.MessageID != "" {
+					t.Fatalf("failure reported success: %s", &stdout)
+				}
 			}
 		})
 	}
