@@ -94,6 +94,19 @@ run_cli() {
   compose run --rm -T --no-deps -w "/work/$identity" cli "$@"
 }
 
+# who_json prints the identity's verified `aw who` result in a stable form,
+# so later observations compare byte for byte.
+who_json() {
+  run_cli "$1" who --json | python3 -c '
+import json,sys
+text=sys.stdin.read(); start=text.find("{")
+if start < 0: raise SystemExit("missing JSON object")
+value=json.loads(text[start:])
+assert value["identity_valid"] is True and value["reason"] == "verified", value
+print(json.dumps(value, sort_keys=True))
+'
+}
+
 assert_inbox_message() {
   local json="$1" subject="$2" body="$3"
   printf '%s' "$json" | python3 -c '
@@ -390,15 +403,26 @@ BOB_DID_AW="$(printf '%s' "$bob_create" | json_field did_aw)"
 compose run --rm -T --no-deps --entrypoint id-tree-verifier cli
 compose cp "$ROOT/scripts/cross-registry-python-verifier.py" awid-b:/tmp/cross-registry-python-verifier.py
 compose exec -T awid-b python /tmp/cross-registry-python-verifier.py < "$WORK_DIR/journey-public.json"
+# Membership and connection are not ancestry: joining a team, connecting to
+# aweb and later leaving the team keep each identity and its exact chain.
+ALICE_WHO="$(who_json alice)"
+BOB_WHO="$(who_json bob)"
+[[ "$(printf '%s' "$ALICE_WHO" | json_field outcome)" == nearest_human && "$(printf '%s' "$ALICE_WHO" | json_field id)" == "$ALICE_DID_AW" ]]
+[[ "$(printf '%s' "$BOB_WHO" | json_field outcome)" == no_human && "$(printf '%s' "$BOB_WHO" | json_field id)" == "$BOB_DID_AW" ]]
 run_cli alice id team create --name alpha --namespace alpha.example.com --registry http://awid-a:8010 --json >/dev/null
 alice_invite="$(run_cli alice id team invite --team alpha --namespace alpha.example.com --member-global --json)"
 run_cli alice id team accept-invite "$(printf '%s' "$alice_invite" | json_field token)" --name alice --global --json >/dev/null
+[[ "$(who_json alice)" == "$ALICE_WHO" ]]
 run_cli alice init --url http://aweb-a:8000 --name alice --do-not-touch-agents-md >/dev/null
+[[ "$(who_json alice)" == "$ALICE_WHO" ]]
 
 run_cli bob id team create --name beta --namespace beta.example.net --registry http://awid-b:8010 --json >/dev/null
 bob_invite="$(run_cli bob id team invite --team beta --namespace beta.example.net --member-global --json)"
 run_cli bob id team accept-invite "$(printf '%s' "$bob_invite" | json_field token)" --name bob --global --json >/dev/null
+[[ "$(who_json bob)" == "$BOB_WHO" ]]
 run_cli bob init --url http://aweb-b:8000 --name bob --do-not-touch-agents-md >/dev/null
+[[ "$(who_json bob)" == "$BOB_WHO" ]]
+echo "PASS: team join and aweb connection keep each identity's exact aw who chain"
 
 [[ -n "$ALICE_DID_AW" && -n "$BOB_DID_AW" && -n "$ALICE_CONTROLLER" && -n "$BOB_CONTROLLER" ]]
 # Control: each home registry lacks the foreign address.
@@ -427,5 +451,13 @@ assert_chat_message "$bob_chat" "two registry chat"
 run_cli bob chat send-and-leave --plaintext alpha.example.com/alice "two registry chat reply" --json >/dev/null
 alice_chat="$(run_cli alice chat history beta.example.net/bob --json)"
 assert_chat_message "$alice_chat" "two registry chat reply"
+
+echo "Proving team membership removal is not ID revocation"
+removed="$(run_cli alice id team remove-member --team alpha --namespace alpha.example.com --member alpha.example.com/alice --json)"
+removed_certificate="$(printf '%s' "$removed" | json_field certificate_id)"
+[[ -n "$removed_certificate" ]]
+[[ "$(curl -sS "http://$PUBLISHED_HOST:$AWID_A_PORT/v1/namespaces/alpha.example.com/teams/alpha/certificates/$removed_certificate/status" | json_field status)" == revoked ]]
+[[ "$(who_json alice)" == "$ALICE_WHO" ]]
+echo "PASS: removing alice from team alpha revokes her team certificate and leaves her ID chain verified"
 
 echo "PASS: real DNS, Secret Service, PTY, constructor chains, unchanged resume, outsider verification, mail and chat across disjoint registries"
