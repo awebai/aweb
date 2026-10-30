@@ -29,7 +29,9 @@ type childIssuer struct {
 	parentChain []any
 	issuance    awconfig.IDIssuanceFileStore
 	invitations awconfig.IDInvitationFileStore
-	signer      func(childID string) awid.IDCertificateSigner
+	// signer signs for the issuer; description names the act a human's
+	// passphrase prompt approves.
+	signer func(description string) awid.IDCertificateSigner
 	// evidence is current status for issuing to the child, refused when the
 	// issuer cannot issue now.
 	evidence func(ctx context.Context, childID, childDIDKey string) (*awid.IDChainEvidence, error)
@@ -80,8 +82,8 @@ func (p *humanParent) issuer(keychain awid.HumanKeyStore, prompt awid.Passphrase
 		parentChain: p.chain.Bundle["certificates"].([]any),
 		issuance:    awconfig.IDIssuanceFileStore{Dir: awconfig.IdentityIssuanceDir(p.dir)},
 		invitations: awconfig.IDInvitationFileStore{Dir: awconfig.IdentityInvitationsDir(p.dir)},
-		signer: func(childID string) awid.IDCertificateSigner {
-			return awid.HumanSigner(keychain, p.record.StableID, "issue the certificate of "+childID, prompt)
+		signer: func(description string) awid.IDCertificateSigner {
+			return awid.HumanSigner(keychain, p.record.StableID, description, prompt)
 		},
 		evidence: func(ctx context.Context, _, _ string) (*awid.IDChainEvidence, error) {
 			subject := awid.IDChainSubject{ID: p.record.StableID, DIDKey: p.record.DIDKey}
@@ -179,7 +181,7 @@ func (s agentChainStep) install(ctx context.Context) (map[string]any, error) {
 			return nil, err
 		}
 		child := awid.IDChild{ID: s.agentID, Domain: s.domain, Parent: s.issuer.parent, Kind: "agent"}
-		if bundle, err = awid.IssueIDChild(s.issuer.issuance, child, s.issuer.parentChain, evidence, s.issuer.signer(s.agentID), s.now); err != nil {
+		if bundle, err = awid.IssueIDChild(s.issuer.issuance, child, s.issuer.parentChain, evidence, s.issuer.signer("issue the certificate of "+s.agentID), s.now); err != nil {
 			return nil, fmt.Errorf("issue the certificate of %s: %w", s.agentID, err)
 		}
 	}

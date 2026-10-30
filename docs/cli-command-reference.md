@@ -369,6 +369,7 @@ Subcommands:
 - `register` Register the current global identity at the configured registry
 - `request` Make a DIDKey-signed HTTP request with the local identity key
 - `resolve` Resolve a did:aw to its current did:key
+- `revoke` Revoke a registered identity's ID-tree authority
 - `rotate-key` Rotate the current global identity signing key at the registry
 - `show` Show the current identity and registry status
 - `sign` Sign user data with a domain-separated local identity signature
@@ -943,6 +944,26 @@ Resolve a did:aw to its current did:key
 
 Flags:
 - `-h, --help help for resolve`
+
+## `id revoke`
+
+### `id revoke`
+
+Revoke a registered identity under docs/id-certificates.md §3, signed by
+the current identity (itself, or its current child), by --human <did:aw>
+--domain D for a human on this machine, or by --as-root --domain D for the
+namespace root. AWID decides whether the signer may revoke the identity.
+The revocation takes effect at AWID's serialization time; only --as-root
+may set an earlier --cutoff. This revokes ID-tree authority, not team
+membership, addresses or DID key history.
+
+Flags:
+- `--as-root Revoke as the namespace root, with this machine's controller key`
+- `--cutoff string With --as-root: the earlier time (RFC 3339) the revocation takes effect from`
+- `--domain string Namespace domain (with --as-root or --human)`
+- `-h, --help help for revoke`
+- `--human string Revoke as this human on this machine (did:aw)`
+- `--registry string Registry origin for --as-root, when the domain's _awid record names none`
 
 ## `id rotate-key`
 

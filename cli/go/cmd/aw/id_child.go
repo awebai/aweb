@@ -615,9 +615,9 @@ func executeIDChildApprove(ctx context.Context, opts idChildOptions, requestID s
 	}
 	defer lock.Close()
 	if found.resign != nil {
-		return awid.ApproveIDResignRequest(issuer.issuance, requestID, issuer.parent["id"].(string), issuer.parentChain, evidence, issuer.domain, issuer.signer(out.ID), opts.Now())
+		return awid.ApproveIDResignRequest(issuer.issuance, requestID, issuer.parent["id"].(string), issuer.parentChain, evidence, issuer.domain, issuer.signer("issue the certificate of "+out.ID), opts.Now())
 	}
-	return awid.ApproveIDChildRequest(issuer.invitations, issuer.issuance, requestID, approval, issuer.parentChain, evidence, issuer.signer(out.ID), opts.Now())
+	return awid.ApproveIDChildRequest(issuer.invitations, issuer.issuance, requestID, approval, issuer.parentChain, evidence, issuer.signer("issue the certificate of "+out.ID), opts.Now())
 }
 
 // childIssuerLockPath is the issuer's transaction lock, beside its
