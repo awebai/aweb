@@ -279,6 +279,75 @@ def local_child_resign(human, parent):
     return public_case(home, record, kind="agent", human=human)
 
 
+def assert_unenrolled(cwd, expected_id):
+    """A global ID registered at AWID without an ID certificate: unknown, never a guess."""
+    result, prompts = command(["who", "--json"], cwd=cwd)
+    assert prompts == 0 and result["id"] == expected_id, result
+    assert result["outcome"] == "unknown" and result["reason"] == "unregistered_identity", result
+    for field in ("human_id", "identity_valid", "kind"):
+        assert field in result and result[field] is None, result
+    assert "chain" not in result, result
+
+
+def unenrolled_creations(team_dir):
+    """Creation commands that issue no ID certificate report exactly that."""
+    domain = "alpha.example.com"
+    (ROOT / "plain").mkdir()
+    plain, prompts = command(["id", "create", "--name", "plain", "--domain", domain, "--json"], cwd="plain")
+    assert prompts == 0 and plain["did_aw"].startswith("did:aw:"), plain
+    assert not (ROOT / "plain/.aw/id-chain.json").exists()
+    assert_unenrolled("plain", plain["did_aw"])
+    print("PASS: plain global id create is an unenrolled ID that aw who reports as unregistered_identity", flush=True)
+
+    # accept-invite --global reuses the workspace's existing global identity:
+    # joining a team neither enrolls it nor attributes it to the inviter.
+    before = {name: (ROOT / "plain/.aw" / name).read_bytes() for name in ("identity.yaml", "signing.key")}
+    invite, _ = command(["id", "team", "invite", "--team", "journey-local", "--namespace", domain,
+                         "--member-global", "--json"], cwd=team_dir)
+    command(["id", "team", "accept-invite", invite["token"], "--name", "plain", "--global", "--no-address",
+             "--json"], cwd="plain")
+    assert {name: (ROOT / "plain/.aw" / name).read_bytes() for name in before} == before
+    assert not (ROOT / "plain/.aw/id-chain.json").exists()
+    assert_unenrolled("plain", plain["did_aw"])
+    print("PASS: accept-invite --global keeps an unenrolled ID unenrolled, not attributed to its inviter", flush=True)
+
+
+def human_issues_human(human):
+    """J1: a registered human admits a second human through the request exchange."""
+    domain = "alpha.example.com"
+    issuer = ["--human", human, "--domain", domain]
+    second, prompts = command(["id", "human", "init", "--domain", domain, "--another", "--json"])
+    assert second["status"] == "prepared" and prompts == 2, second
+    invitation, prompts = command(["id", "child", "invite", *issuer, "--kind", "human",
+                                   "--recipient", "second human", "--json"])
+    assert prompts == 0 and invitation["parent"] == dict(kind="identity", id=human), invitation
+    request_file = str(ROOT / "human-request.json")
+    response_file = str(ROOT / "human-response.json")
+    text, prompts = command(["id", "parent", "request", "--invitation-id", invitation["invitation_id"],
+                             "--domain", domain, "--parent", human, "--human", second["id"],
+                             "--out", request_file], json_output=False)
+    assert prompts == 1, text
+    fingerprint, = re.findall(r"different trusted channel: ([0-9a-f-]+)", text)
+    request_id = json.loads(Path(request_file).read_text())["request"]["request_id"]
+    received, _ = command(["id", "child", "receive", request_file, *issuer, "--json"])
+    assert received["state"] == "pending" and received["fingerprint"] == fingerprint, received
+    _, prompts = command(["id", "child", "approve", request_id, *issuer, "--out", response_file],
+                         json_output=False, confirmation="y", fingerprint=fingerprint)
+    assert prompts == 1
+    imported, prompts = command(["id", "parent", "import", response_file, "--human", second["id"],
+                                 "--domain", domain, "--json"])
+    assert imported["registration"] == "registered" and prompts == 2, imported
+    home, = [h for h in (Path.home() / ".awid/humans" / domain).glob("*")
+             if yaml.safe_load((h / "identity.yaml").read_text())["stable_id"] == second["id"]]
+    record = yaml.safe_load((home / "identity.yaml").read_text())
+    assert record["state"] == "registered", record
+    leaf = json.loads((home / "id-chain.json").read_text())["certificates"][-1]["certificate"]
+    assert leaf["id"] == second["id"] and leaf["kind"] == "human", leaf
+    assert leaf["parent"] == dict(kind="identity", id=human), leaf
+    print("PASS: a registered human admits a second human through invite, request, y-approval over a PTY and import", flush=True)
+    return public_case(home, record, kind="human", human=second["id"])
+
+
 def main():
     assert not os.environ.get("AWID_SKIP_DNS_VERIFY")
     assert os.environ.get("DBUS_SESSION_BUS_ADDRESS")
@@ -333,7 +402,9 @@ def main():
         assert_who(name, human["id"], [dict(id=human["id"], kind="human"), dict(id=identity["did_aw"], kind="agent")])
     assert_who("bob", "", [dict(id=bob["did_aw"], kind="agent")])
     local_case = local_child_resign(human["id"], fresh)
-    cases = [public_case(human_home, human_record, kind="human", human=human["id"]), local_case]
+    unenrolled_creations("fresh")
+    second_human_case = human_issues_human(human["id"])
+    cases = [public_case(human_home, human_record, kind="human", human=human["id"]), local_case, second_human_case]
     for name, parent in [("alice", human["id"]), ("fresh", human["id"]), ("bob", "")]:
         home = ROOT / name / ".aw"
         record = yaml.safe_load((home / "identity.yaml").read_text())
