@@ -445,3 +445,51 @@ func TestWhoAddresslessGlobalUsesVerifiedDeliveryRegistryEnrollment(t *testing.T
 		t.Fatal("unverified sender must not read enrollment")
 	}
 }
+
+func TestWhoChainlessReceivedGlobalUsesEnrollmentBeforeAddress(t *testing.T) {
+	v := loadWhoVectors(t)
+	domain := "example.com"
+	age := float64(0)
+	evidence := &awid.IDChainEvidence{
+		Status: v.Statuses["normal"], AgeSeconds: &age,
+		NamespaceAuthority: map[string]any{"domain": domain, "dns_name": "_awid." + domain, "inherited": false, "controller_key": v.Keys["root"].DIDKey},
+	}
+	key := v.Keys["global_agent"]
+	for _, tc := range []struct {
+		state, outcome, reason string
+	}{
+		{"enrolled", "nearest_human", "verified"},
+		{"not_enrolled", "unknown", "unregistered_identity"},
+		{"unknown", "unavailable", "evidence_unavailable"},
+		{"malformed", "unavailable", "evidence_unavailable"},
+	} {
+		t.Run(tc.state, func(t *testing.T) {
+			calls := 0
+			message := awid.InboxMessage{FromDID: key.DIDKey, FromStableID: key.DIDAW, FromAddress: "signup-owner.example.com/child", VerificationStatus: awid.Verified}
+			out, err := executeWhoReceived(t.Context(), message, whoOptions{
+				TXTResolver: staticTXTResolver{}, Status: whoFixedStatus{evidence},
+				ReceivedEnrollment: func(_ context.Context, id, didKey string) awid.IDTreeEnrollmentResult {
+					calls++
+					if id != key.DIDAW || didKey != key.DIDKey {
+						t.Fatal("enrollment queried for a different sender")
+					}
+					result := awid.IDTreeEnrollmentResult{State: tc.state}
+					if tc.state == "enrolled" {
+						result.Domain = &domain
+					}
+					return result
+				},
+			})
+			if err != nil || calls != 1 || out.Outcome != tc.outcome || out.Reason != tc.reason {
+				t.Fatalf("out %+v err %v enrollment calls %d", out, err, calls)
+			}
+			if tc.state == "enrolled" {
+				if out.Domain != domain || out.IdentityValid == nil || !*out.IdentityValid || out.HumanID == nil || *out.HumanID != v.Keys["alice"].DIDAW {
+					t.Fatalf("current enrolled ancestry missing: %+v", out)
+				}
+			} else if out.Domain != "" || out.HumanID != nil {
+				t.Fatalf("address supplied ancestry: %+v", out)
+			}
+		})
+	}
+}

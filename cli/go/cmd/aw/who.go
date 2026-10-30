@@ -92,6 +92,11 @@ func runWho(cmd *cobra.Command, args []string) error {
 		if readErr != nil {
 			return readErr
 		}
+		if message.FromAddress != "" {
+			opts.ReceivedEnrollment = func(ctx context.Context, id, key string) awid.IDTreeEnrollmentResult {
+				return c.Client.ReceivedAddressIDTreeEnrollment(ctx, message.FromAddress, id, key)
+			}
+		}
 		out, err = executeWhoReceived(ctx, message, opts)
 	} else {
 		out, err = executeWho(cmd.Context(), opts)
