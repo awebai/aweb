@@ -4321,6 +4321,12 @@ Verify the current identity's installed ID chain on current status from
 its namespace's registry, and show the outcome: the nearest human, no human
 (no human in its chain), unknown or unavailable, with the verifier's reason. The chain is shown only when it verifies.
 
+With an agent address, did:aw or local alias, inspect that sender's most recent
+received mail (or chat). Use --message-id for an exact mail, or --session-id
+with an optional --message-id for chat. These reads do not acknowledge messages.
+
 Flags:
 - `-h, --help help for who`
+- `--message-id string Inspect the sender of this received mail or chat message`
 - `--registry string Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)`
+- `--session-id string Inspect received chat in this session`
