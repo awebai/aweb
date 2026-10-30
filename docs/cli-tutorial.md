@@ -65,13 +65,12 @@ aw check
 
 - `<username>` is 3 to 39 lowercase letters, numbers or hyphens. It names your
   account and your team's domain on aweb.ai, `<username>.aweb.ai`. If it is
-  taken, `aw init` says so: choose another. Agents: ask your person for the
+  taken or reserved, `aw init` says so: choose another. Agents: ask your person for the
   username and the email; do not guess them.
 - `aw claim-human` attaches your email to the account and sends a link that
   activates your dashboard login. Until someone runs it, the account has no
   person, and its only recovery is this folder's `.aw/signing.key`: back it
-  up, because if it is lost the account cannot be recovered. In an interactive
-  terminal, `aw init` offers to run `aw claim-human` for you.
+  up, because if it is lost the account cannot be recovered.
 - `aw init` adds a short aweb section to the folder's `AGENTS.md` or
   `CLAUDE.md`, so the agent knows how to use `aw`. Add
   `--do-not-touch-agents-md` to skip that.
