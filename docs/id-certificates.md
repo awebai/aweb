@@ -953,6 +953,9 @@ local record locks.
 If a status refresh is needed, fetch outside locks and recheck the locked local
 facts before signing; no second evidence-freshness check follows the wait.
 AWID rechecks registered issuance under its own gate.
+In a deployment with chains, an AWID outage longer than 60 seconds stops
+spawning once the shared cached evidence is exhausted. Chainless human-less
+deployments are unaffected; spawning has no separate freshness window.
 
 The parent chooses current issuer_key and issued_at, signs one §2 certificate,
 and durably records its certificate_id and exact response BEFORE output. The
@@ -1004,6 +1007,20 @@ For registered invitations the independent registration lifecycle stays
 pending → registered | failed; an AWID-success/local-failure retry resubmits the
 SAME certificate and retains its original registered_at. Completion of this
 exchange never grants team membership, moves an address or rebinds a contact.
+
+`aw id revoke <id>` revokes a registered identity under §3, using the same
+signer selection as `aw id child invite`: the current identity by default,
+`--human <did:aw> --domain D` for a human held in the keychain, or
+`--as-root --domain D` for the namespace root. An identity signer may revoke
+itself; revoking its current child requires that it remain a valid parent.
+Namespace-root authority follows §3. Team membership or team-controller
+authority alone is insufficient. Only `--as-root` accepts
+`--cutoff <time>`; without that option the request sends `effective_from=null`
+so AWID chooses its post-lock serialization time. Non-root signers always send
+null. The command uses the target's current head for `expected_head`, including
+on repeats, and preserves §3's idempotence and root-only earlier-cutoff rules.
+A human signature retains the existing keychain and terminal-passphrase rules.
+This revokes ID-tree authority, not team membership, addresses or DID key history.
 
 Adoption is explicit and prospective. Retain existing global ID, key, address,
 mailbox and ordinary member certificates when their bindings do not change.
