@@ -73,13 +73,14 @@ class TestFederationAuthority:
                 $1, 'dns', '_awid.test', 'did:key:z6MksdtzGW313q4RQicECqqpSv25FBPhcJBcGAXMZ5RbRPQ7' /* z6Mktestcontroller */,
                 'aweb.federation-authority.dns.v1', $2, FALSE, TRUE,
                 'https://registry.test', $3, $4, 1, $5, 1, $6,
-                clock_timestamp(), clock_timestamp() + INTERVAL '59 seconds',
+                statement_timestamp(), statement_timestamp() + INTERVAL '59 seconds',
                 1, 1, 1
             )
             ON CONFLICT (canonical_address) DO UPDATE SET
                 bound_did_aw = EXCLUDED.bound_did_aw,
                 bound_current_did_key = EXCLUDED.bound_current_did_key,
                 authoritative_delivery_origin = EXCLUDED.authoritative_delivery_origin,
+                authoritative_read_completed_at = EXCLUDED.authoritative_read_completed_at,
                 expires_at = EXCLUDED.expires_at,
                 updated_at = clock_timestamp()
             """,
