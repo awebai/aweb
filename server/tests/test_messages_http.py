@@ -24,7 +24,7 @@ from awid.e2ee_keys import (
     canonical_encryption_assertion,
     encryption_key_id,
 )
-from awid.registry import Address, AddressDelivery, KeyResolution, Namespace
+from awid.registry import IDTreeEnrollment, Address, AddressDelivery, KeyResolution, Namespace
 from awid.signing import canonical_json_bytes, sign_message
 from pgdbm.errors import ConnectionError as DatabaseConnectionError
 from aweb.e2ee_messages import (
@@ -343,7 +343,7 @@ def _build_test_app(aweb_db, registry, *, verified_bindings=()):
     # Routing/signature unit cases supply established authority facts explicitly.
     # Fresh registry admission and refusals use test_identity_binding_http.
     app.state.identity_binding_cache = OrderedDict({
-        (did_aw, did_key, selected_address): (monotonic() + 60, IdentityBinding(did_aw, selected_address))
+        (did_aw, did_key, selected_address): (monotonic() + 60, IdentityBinding(did_aw, selected_address, id_tree=IDTreeEnrollment(enrolled=False, domain=None)))
         for did_aw, did_key, address in verified_bindings
         for selected_address in {"", address}
     })

@@ -69,7 +69,7 @@ func prepareTeamInviteIDChild(ctx context.Context, opts idChildOptions) (*awconf
 		if resolution.DIDAW != identity.StableID || resolution.CurrentDIDKey != identity.DID {
 			return nil, fmt.Errorf("inviter key is not current; restore the identity's current signing key before inviting")
 		}
-		enrollment := awid.KeyResponseIDTree(map[string]any{"id_tree": resolution.IDTree})
+		enrollment := resolution.IDTreeEnrollment(time.Now())
 		switch enrollment.State {
 		case "not_enrolled":
 			return nil, nil

@@ -93,3 +93,6 @@ export {
   type RegistryIdentityConfig,
   type SelfIdentity,
 } from "./channel.js";
+
+export { IdStatusClient } from "./identity/id_status.js";
+export { readReceivedIdChain, type ReceivedIdChain } from "./identity/received_id_chain.js";

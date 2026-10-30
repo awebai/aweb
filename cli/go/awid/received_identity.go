@@ -273,3 +273,22 @@ func (c *Client) receivedLocalSenderTrust(status VerificationStatus, address, di
 	}
 	return Verified, true
 }
+
+// ReceivedIDTreeEnrollment reuses the selected delivery registry's coherent
+// key snapshot after ordinary sender verification, without inventing an address.
+func (c *Client) ReceivedIDTreeEnrollment(ctx context.Context, stableID, didKey string) IDTreeEnrollmentResult {
+	unknown := IDTreeEnrollmentResult{State: "unknown"}
+	chain, ok := c.resolver.(*ChainResolver)
+	if !ok || chain.Team == nil || chain.DeliveryTeamRegistry == nil {
+		return unknown
+	}
+	_, registry, err := chain.DeliveryTeamRegistry.receivedRegistry(ctx, chain.Team.TeamID)
+	if err != nil {
+		return unknown
+	}
+	key, ok := registry.loadKeyCache(stableID)
+	if !ok || key.DIDAW != stableID || key.CurrentDIDKey != didKey {
+		return unknown
+	}
+	return key.IDTreeEnrollment(registry.now())
+}

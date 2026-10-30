@@ -786,7 +786,7 @@ func configureResolvedClientWithRoster(c, rosterClient *aweb.Client, sel *awconf
 	}
 	installed, err := awconfig.LoadInstalledIDChain(chainHome)
 	if err != nil {
-		return fmt.Errorf("load ID chain: %w", err)
+		return fmt.Errorf("load ID chain %s: %w", filepath.Join(chainHome, "id-chain.json"), err)
 	}
 	if installed != nil {
 		if err := c.SetIDChain(installed.Bundle); err != nil {

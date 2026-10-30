@@ -20,7 +20,7 @@ from nacl.signing import SigningKey
 
 from awid.did import did_from_public_key
 from awid.federation_errors import FederationAuthorityError
-from awid.registry import Address, AddressDelivery, KeyResolution, Namespace
+from awid.registry import IDTreeEnrollment, Address, AddressDelivery, KeyResolution, Namespace
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.e2ee_messages import E2EE_SUITE, _envelope_map, _hash_canonical, _key_wrap_map
 from aweb.federation.envelope import verify_federation_envelope
@@ -254,7 +254,7 @@ def _build_test_app(aweb_db, registry, *, verified_bindings=()):
     # Routing/signature unit cases supply established authority facts explicitly.
     # Fresh registry admission and refusals use test_identity_binding_http.
     app.state.identity_binding_cache = OrderedDict({
-        (did_aw, did_key, selected_address): (monotonic() + 60, IdentityBinding(did_aw, selected_address))
+        (did_aw, did_key, selected_address): (monotonic() + 60, IdentityBinding(did_aw, selected_address, id_tree=IDTreeEnrollment(enrolled=False, domain=None)))
         for did_aw, did_key, address in verified_bindings
         for selected_address in {"", address}
     })

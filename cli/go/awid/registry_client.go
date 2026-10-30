@@ -174,10 +174,11 @@ func (c *RegistryClient) ResolveKeyAt(ctx context.Context, registryURL, didAW st
 		return nil, err
 	}
 	res := &DidKeyResolution{
-		IDTree:        wire.IDTree,
-		DIDAW:         wire.DIDAW,
-		CurrentDIDKey: wire.CurrentDIDKey,
-		EncryptionKey: wire.EncryptionKey,
+		idTree:          wire.idTreeEnrollment(),
+		idTreeFetchedAt: c.now(),
+		DIDAW:           wire.DIDAW,
+		CurrentDIDKey:   wire.CurrentDIDKey,
+		EncryptionKey:   wire.EncryptionKey,
 	}
 	if wire.LogHead != nil {
 		res.LogHead = &DidKeyEvidence{
