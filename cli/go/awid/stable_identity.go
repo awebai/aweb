@@ -64,6 +64,16 @@ func (r *DidKeyResolution) IDTreeEnrollment(now time.Time) IDTreeEnrollmentResul
 	return r.idTree
 }
 
+// IDTreeEnrollmentOf is the enrollment of stableID under its current key
+// didKey. A key fetch for another ID, or whose current key is not didKey, is
+// unknown: its enrollment says nothing about this subject.
+func (r *DidKeyResolution) IDTreeEnrollmentOf(stableID, didKey string, now time.Time) IDTreeEnrollmentResult {
+	if r == nil || r.DIDAW != stableID || r.CurrentDIDKey != didKey {
+		return IDTreeEnrollmentResult{State: "unknown"}
+	}
+	return r.IDTreeEnrollment(now)
+}
+
 type StableIdentityVerification struct {
 	Outcome       StableIdentityOutcome
 	CurrentDIDKey string
