@@ -317,8 +317,8 @@ func (c *Client) ReceivedAddressIDTreeEnrollment(ctx context.Context, address, s
 	reader := NewAWIDRegistryClient(registry.HTTPClient, registry.DNSResolver)
 	reader.Now = registry.Now
 	key, err := reader.ResolveKeyAt(ctx, resolved.authority.RegistryURL, stableID)
-	if err != nil || key.DIDAW != stableID || key.CurrentDIDKey != didKey {
+	if err != nil {
 		return unknown
 	}
-	return key.IDTreeEnrollment(registry.now())
+	return key.IDTreeEnrollmentOf(stableID, didKey, registry.now())
 }
