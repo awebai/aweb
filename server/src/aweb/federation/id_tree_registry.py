@@ -1,6 +1,7 @@
 """ID-tree reads scoped to the authority already admitted by Phase A."""
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
 
@@ -9,6 +10,8 @@ from awid.dns_verify import DomainAuthority
 from awid.external_authority import RegistryAuthority, isolated_registry_test_enabled, validate_resolved_addresses
 from awid.federation_errors import FederationAuthorityError
 from awid.registry import CachedRegistryClient
+
+logger = logging.getLogger(__name__)
 
 
 class _PinnedTransport(httpx.AsyncBaseTransport):
@@ -62,8 +65,12 @@ async def received_registry_client(activation, token, did_key, redis):
         registry_explicit=row["registry_explicit"], registry_origin=row["registry_origin"],
     )
     # Reuse strict resolver address admission, including its isolated-test policy.
-    async with asyncio.timeout(5):
-        answers = await activation.resolver.host_resolver.resolve_all(urlsplit(authority.registry_origin).hostname)
+    try:
+        async with asyncio.timeout(5):
+            answers = await activation.resolver.host_resolver.resolve_all(urlsplit(authority.registry_origin).hostname)
+    except TimeoutError as exc:
+        logger.warning("Federation ID-tree registry host lookup timed out", exc_info=True)
+        raise FederationAuthorityError("sender_registry_unavailable") from exc
     approved_ips = validate_resolved_addresses(
         answers, allow_nonpublic_test=isolated_registry_test_enabled(
             authority.registry_origin, activation.resolver.origin_context,
@@ -72,12 +79,16 @@ async def received_registry_client(activation, token, did_key, redis):
     domain = token.canonical_address.split("/", 1)[0]
 
     async def verify_domain(requested):
-        if requested != domain or authority.selection != "dns" or not authority.controller_did:
+        # ID-tree namespace is independent of the sender's address alias. Its
+        # authority must be discovered independently, without another HTTP client.
+        tree_authority = authority if requested == domain else await activation._discover_registry_authority(requested)
+        if (tree_authority.selection != "dns" or not tree_authority.controller_did
+                or tree_authority.registry_origin != authority.registry_origin):
             raise FederationAuthorityError("sender_registry_unavailable")
         return DomainAuthority(
-            controller_did=authority.controller_did, registry_url=authority.registry_origin,
-            dns_name=authority.authority_name, inherited=authority.inherited,
-            registry_explicit=authority.registry_explicit,
+            controller_did=tree_authority.controller_did, registry_url=tree_authority.registry_origin,
+            dns_name=tree_authority.authority_name, inherited=tree_authority.inherited,
+            registry_explicit=tree_authority.registry_explicit,
         )
 
     client = _ScopedRegistry(

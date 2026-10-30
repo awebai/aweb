@@ -833,9 +833,9 @@ def _identity_registry_responses(domain: str, name: str, delivery_origin: str):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("with_chain", [False, True])
+@pytest.mark.parametrize("with_chain, authority_case", [(False, "direct"), (True, "direct"), (True, "alias"), (True, "mismatch"), (False, "timeout")])
 async def test_http_ingress_uses_production_dns_authority_not_receiver_home_registry(
-    two_receiver_databases, with_chain,
+    two_receiver_databases, with_chain, authority_case,
 ) -> None:
     _, receiver_db = two_receiver_databases
     sender_domain = "alpha.test"
@@ -864,6 +864,11 @@ async def test_http_ingress_uses_production_dns_authority_not_receiver_home_regi
         }
     else:
         next(v for k, v in sender_responses.items() if k.endswith("/key"))["id_tree"] = {"enrolled": False}
+    if authority_case in {"alias", "mismatch"}:
+        old_domain, sender_domain = sender_domain, "alias.test"
+        sender_responses = {key.replace(old_domain, sender_domain): value for key, value in sender_responses.items()}
+        sender_responses[f"/v1/namespaces/{sender_domain}"]["domain"] = sender_domain
+        sender_responses[f"/v1/namespaces/{sender_domain}/addresses/{sender_name}"]["domain"] = sender_domain
     target_key = SigningKey.generate()
     target_did_key = did_from_public_key(bytes(target_key.verify_key))
     target_did_aw = "did:aw:receiver"
@@ -907,9 +912,25 @@ async def test_http_ingress_uses_production_dns_authority_not_receiver_home_regi
         sender_dns = _RecordedDNS(
             sender_domain, mapping["initial_did_key"], sender_registry.origin
         )
+        if authority_case in {"alias", "mismatch"}:
+            class AliasDNS(_RecordedDNS):
+                async def lookup_txt(self, name):
+                    if name == "_awid.example.com":
+                        self.queries.append(name)
+                        origin = self.registry_origin if authority_case == "alias" else "https://different-registry.test"
+                        return DNSLookup("record", (f"awid=v1; controller={self.controller_did}; registry={origin};",))
+                    return await super().lookup_txt(name)
+            sender_dns = AliasDNS(sender_domain, mapping["initial_did_key"], sender_registry.origin)
+
+        class ReceiveHosts(_LoopbackHosts):
+            async def resolve_all(self, hostname):
+                if authority_case == "timeout" and self.queries:
+                    await asyncio.Event().wait()
+                return await super().resolve_all(hostname)
+
         strict_resolver = StrictExternalRegistry(
             txt_resolver=sender_dns,
-            host_resolver=_LoopbackHosts(),
+            host_resolver=ReceiveHosts(),
             origin_context=OriginContext(
                 app_env="development",
                 federation_test_enabled=True,
@@ -1010,9 +1031,14 @@ async def test_http_ingress_uses_production_dns_authority_not_receiver_home_regi
             await app.state.redis.aclose()
             await home_registry_client.aclose()
 
+    if authority_case in {"mismatch", "timeout"}:
+        assert response.status_code == 503, response.text
+        assert response.json()["detail"] == ("sender_registry_unavailable" if authority_case == "timeout" else "evidence_unavailable")
+        assert await receiver_db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}} WHERE message_id=$1", UUID(message_id)) == 0
+        return
     assert response.status_code == 200, response.text
     assert response.json()["message_id"] == message_id
-    assert sender_dns.queries == [f"_awid.{sender_domain}"]
+    assert sender_dns.queries == [f"_awid.{sender_domain}"] + (["_awid.example.com"] if authority_case == "alias" else [])
     assert not any(b"authorization:" in request.lower() or b"x-awid-service-token:" in request.lower() for request in sender_registry.requests)
     assert [request.split(b" ", 2)[1].decode() for request in home_registry.requests] == [
         target_path

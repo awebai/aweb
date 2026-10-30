@@ -251,6 +251,23 @@ func TestWhoReceivedUsesSharedCurrentStatus(t *testing.T) {
 			if c.Subject.ID != c.Subject.DIDKey {
 				msg.FromStableID = c.Subject.ID
 			}
+			// Exercise the HTTP JSON representation, rather than handing the
+			// verifier the vector loader's integer-preserving in-memory map.
+			wire, err := json.Marshal(msg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(wire, &msg); err != nil {
+				t.Fatal(err)
+			}
+			var chat awid.ChatMessage
+			if err := json.Unmarshal(wire, &chat); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := awid.IDStatusRequest(chat.IDChain, awid.IDChainSubject{ID: c.Subject.ID, DIDKey: c.Subject.DIDKey}, ""); err != nil {
+				t.Fatalf("chat wire chain refused: %v", err)
+			}
+
 			out, err := executeWhoReceived(context.Background(), msg, whoOptions{Status: whoFixedStatus{evidence}, TXTResolver: staticTXTResolver{}})
 			if err != nil || out.Outcome != c.Expected.Outcome || out.Reason != c.Expected.Reason {
 				t.Fatalf("out %+v expected %+v err %v", out, c.Expected, err)

@@ -697,7 +697,7 @@ type ChatHistoryResponse struct {
 }
 
 type ChatMessage struct {
-	IDChain                 map[string]any           `json:"id_chain,omitempty"`
+	IDChain                 ReceivedIDChain          `json:"id_chain,omitempty"`
 	Attachments             []AttachmentDescriptor   `json:"attachments,omitempty"`
 	AttachmentsAvailable    bool                     `json:"attachments_available"`
 	SenderMembership        *SenderMembership        `json:"sender_membership,omitempty"`
