@@ -58,6 +58,7 @@ type streamRunner struct {
 	mu              sync.Mutex
 	phase           StreamPhase
 	lastError       string
+	lastErrorDetail *awid.ErrorDetail
 	unread          int
 	connectedAt     time.Time
 	streamCancel    context.CancelFunc
@@ -124,20 +125,27 @@ func (s *streamRunner) snapshot() StreamStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return StreamStatus{
-		IdentityHome: s.identityHome,
-		TeamID:       s.teamID,
-		Phase:        string(s.phase),
-		LastError:    s.lastError,
-		UnreadCount:  s.unread,
-		ConnectedAt:  s.connectedAt,
-		Admitted:     true,
+		IdentityHome:    s.identityHome,
+		TeamID:          s.teamID,
+		Phase:           string(s.phase),
+		LastError:       s.lastError,
+		LastErrorDetail: s.lastErrorDetail,
+		UnreadCount:     s.unread,
+		ConnectedAt:     s.connectedAt,
+		Admitted:        true,
 	}
 }
 
-func (s *streamRunner) setPhase(p StreamPhase, errText string) {
+// setPhase records the stream's phase and the error that put it there, as
+// text and as its stable detail; a nil err clears both.
+func (s *streamRunner) setPhase(p StreamPhase, err error) {
 	s.mu.Lock()
 	s.phase = p
-	s.lastError = errText
+	s.lastError, s.lastErrorDetail = "", nil
+	if err != nil {
+		detail := awid.DescribeError(err)
+		s.lastError, s.lastErrorDetail = err.Error(), &detail
+	}
 	if p == StreamLive && s.connectedAt.IsZero() {
 		s.connectedAt = s.now()
 	}
@@ -269,14 +277,14 @@ func (s *streamRunner) run(ctx context.Context) {
 			if code, ok := awid.HTTPStatusCode(err); ok && (code == 401 || code == 403 || code == 404 || code == 422) {
 				// One identity is quarantined and reported; the daemon and
 				// every other stream keep running (§4).
-				s.setPhase(StreamQuarantined, err.Error())
+				s.setPhase(StreamQuarantined, err)
 				s.log("stream quarantined identity_home=%s status=%d err=%v", s.identityHome, code, err)
 				return
 			}
 			recoveryPending = true
 			if !outageReported {
 				outageReported = true
-				s.setPhase(StreamRetrying, err.Error())
+				s.setPhase(StreamRetrying, err)
 				s.log("stream outage identity_home=%s err=%v", s.identityHome, err)
 			}
 			if !sleepCtx(ctx, s.jittered(delay)) {
@@ -293,7 +301,7 @@ func (s *streamRunner) run(ctx context.Context) {
 			}
 			confirmed = true
 			delay = s.backoffMin
-			s.setPhase(StreamLive, "")
+			s.setPhase(StreamLive, nil)
 			if recoveryPending {
 				recoveryPending = false
 				outageReported = false
@@ -323,7 +331,7 @@ func (s *streamRunner) run(ctx context.Context) {
 			recoveryPending = true
 			if !outageReported {
 				outageReported = true
-				s.setPhase(StreamRetrying, consumeErr.Error())
+				s.setPhase(StreamRetrying, consumeErr)
 				s.log("stream outage identity_home=%s err=%v", s.identityHome, consumeErr)
 			}
 			if !sleepCtx(ctx, s.jittered(delay)) {

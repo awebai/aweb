@@ -2,6 +2,7 @@ package awid
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -126,12 +127,16 @@ func TestMutatingRequestTimeoutErrorSaysMayHaveApplied(t *testing.T) {
 	if !strings.Contains(err.Error(), "may have applied") || !strings.Contains(err.Error(), "before retrying") {
 		t.Fatalf("mutating timeout error must warn the write may have applied; got: %v", err)
 	}
+	var unknown *OutcomeUnknownError
+	if !errors.As(err, &unknown) {
+		t.Fatalf("mutating timeout must be an OutcomeUnknownError; got %T", err)
+	}
 
 	getErr := c.Do(context.Background(), http.MethodGet, "/v1/tasks/x", nil, nil)
 	if getErr == nil {
 		t.Fatal("expected timeout error on GET")
 	}
-	if strings.Contains(getErr.Error(), "may have applied") {
+	if strings.Contains(getErr.Error(), "may have applied") || errors.As(getErr, &unknown) {
 		t.Fatalf("read timeout must not carry the mutation warning; got: %v", getErr)
 	}
 }
