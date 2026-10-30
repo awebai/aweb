@@ -14,7 +14,7 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
-// An agent created with --parent-human or --parent-root carries a chain from
+// An agent created with --human-parent or --root-parent carries a chain from
 // creation (docs/id-certificates.md §6, "Immediate init/spawn signs
 // directly"). Its parent signs the agent's certificate and records it in its
 // own issuance log before releasing it; the agent registers it with its own
@@ -135,11 +135,11 @@ func rootIssuer(domain string, controllerKey ed25519.PrivateKey, registry *awid.
 func checkRootController(ctx context.Context, resolver awid.TXTResolver, domain string, controllerKey ed25519.PrivateKey) error {
 	authority, err := awid.VerifyExactDomainAuthority(ctx, resolver, domain)
 	if err != nil {
-		return fmt.Errorf("--parent-root: lookup %s: %w", awid.AWIDTXTName(domain), err)
+		return fmt.Errorf("--root-parent: lookup %s: %w", awid.AWIDTXTName(domain), err)
 	}
 	local := awid.ComputeDIDKey(controllerKey.Public().(ed25519.PublicKey))
 	if strings.TrimSpace(authority.ControllerDID) != local {
-		return fmt.Errorf("--parent-root: DNS controller %s for %s does not match this machine's controller %s (publish %s naming it first; `aw id namespace check-txt --domain %s` checks it)", authority.ControllerDID, domain, local, awid.AWIDTXTName(domain), domain)
+		return fmt.Errorf("--root-parent: DNS controller %s for %s does not match this machine's controller %s (publish %s naming it first; `aw id namespace check-txt --domain %s` checks it)", authority.ControllerDID, domain, local, awid.AWIDTXTName(domain), domain)
 	}
 	return nil
 }
@@ -203,20 +203,20 @@ type idCreateParent struct {
 }
 
 func prepareIDCreateParent(opts idCreateOptions, domain string) (*idCreateParent, error) {
-	human := strings.TrimSpace(opts.ParentHuman)
+	human := strings.TrimSpace(opts.HumanParent)
 	switch {
-	case human != "" && opts.ParentRoot:
-		return nil, usageError("--parent-human and --parent-root name different parents; choose one")
-	case opts.ParentRoot:
+	case human != "" && opts.RootParent:
+		return nil, usageError("--human-parent and --root-parent name different parents; choose one")
+	case opts.RootParent:
 		return &idCreateParent{root: true}, nil
 	case human == "":
 		return nil, nil
 	}
 	if opts.HumanAtTerminal == nil {
-		return nil, errors.New("internal error: no terminal check for --parent-human")
+		return nil, errors.New("internal error: no terminal check for --human-parent")
 	}
 	if err := opts.HumanAtTerminal(); err != nil {
-		return nil, fmt.Errorf("--parent-human signs as %s: %w", human, err)
+		return nil, fmt.Errorf("--human-parent signs as %s: %w", human, err)
 	}
 	parent, err := loadHumanParent(domain, human)
 	if err != nil {
@@ -297,8 +297,8 @@ func resumeIDCreateChain(ctx context.Context, opts idCreateOptions, parent *idCr
 		SigningKeyPath: signingKeyPath,
 		RegistryStatus: identity.RegistryStatus,
 		RegistryURL:    identity.RegistryURL,
-		ParentHuman:    issuer.human,
-		ParentRoot:     parent.root,
+		HumanParent:    issuer.human,
+		RootParent:     parent.root,
 	}, nil
 }
 

@@ -48,9 +48,9 @@ func formatIDCreate(v any) string {
 	if strings.TrimSpace(out.RegistryError) != "" {
 		sb.WriteString(fmt.Sprintf("Registry Err: %s\n", out.RegistryError))
 	}
-	if strings.TrimSpace(out.ParentHuman) != "" || out.ParentRoot {
-		parent := out.ParentHuman
-		if out.ParentRoot {
+	if strings.TrimSpace(out.HumanParent) != "" || out.RootParent {
+		parent := out.HumanParent
+		if out.RootParent {
 			parent = "namespace root (no human)"
 		}
 		sb.WriteString(fmt.Sprintf("Parent:      %s\n", parent))

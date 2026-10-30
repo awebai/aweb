@@ -248,7 +248,9 @@ func TestChildApproveOfAHumanNeedsItsIssuerAtTheTerminal(t *testing.T) {
 // real AWID fixture the domain's _awid record cannot be resolved, so the
 // root has no open epoch: nothing is signed and the request stays pending.
 func TestChildApproveSignsNothingWithoutCurrentStatus(t *testing.T) {
-	h := newChildHarness(t, realAWIDFixture(t))
+	// No registry answers at the --registry origin; nothing here resolves a
+	// name.
+	h := newChildHarness(t, "http://127.0.0.1:1")
 	_, requestID := h.received("human")
 	h.answer = true
 	response, err := executeIDChildApprove(context.Background(), h.opts, requestID)

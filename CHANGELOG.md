@@ -2,6 +2,53 @@
 
 ## Unreleased
 
+- AWID SDK: `RegistryClient.register_did_with_signer(did_key, *, signer,
+  timestamp=None)` registers a did:aw whose key stays behind a signer
+  callback, as the identity-tree writes do. It asks for one signature, over
+  `log_entry_payload(**awid.log.initial_registration_entry(did_key,
+  timestamp=...))`, checks the answer before sending, and returns AWID's
+  receipt without a signed follow-up read. `register_did(did_key,
+  signing_key)` is unchanged and uses the same entry.
+
+- aw: identity-tree commands for a namespace you control. They are opt-in:
+  `aw id create` without the new flags, and every other existing flow, works
+  as before.
+- aw: `aw id human init --domain D --as-root` creates your human ID in D. The
+  human key stays in the OS keychain, encrypted under a passphrase you choose,
+  and every signature asks for that passphrase. The namespace controller key
+  on this machine issues the human's certificate, which is registered at AWID.
+  It needs a human at an interactive terminal, and refuses without one or
+  inside an agent runtime. A run that fails resumes where it stopped without
+  minting a new human, and a second human in the same domain needs
+  `--another`.
+- aw: `aw id create --human-parent <did:aw>` and `--root-parent` create an
+  agent with its ID chain installed: the named human, or the namespace root
+  for an agent with no human, issues its certificate. A human parent first
+  checks its own chain's current status; the root first checks that the
+  domain's _awid record names this machine's controller. The agent then
+  registers that certificate with its own key. If the parent cannot issue, no
+  agent is created.
+- aw: `aw id child invite`, `receive`, `pending`, `show`, `approve` and
+  `refuse` are the issuer side of certificate requests, run as
+  `--as-root --domain D` or `--human <did:aw>`, or as the current agent for an
+  agent child. You fix an invitation first; a request is received only against
+  it. To approve a human child, you confirm at a terminal that its key
+  fingerprint matches what the recipient told you through a separate trusted
+  channel.
+- aw: `aw id parent request` and `import` are the child side. `request`
+  exports a request against the invitation your parent fixed
+  (`--invitation-id`, `--domain`, and `--parent <did:aw>` or `--root-parent`),
+  as `--human <did:aw>` or as the current agent, and shows a fingerprint for
+  you to tell the parent through a separate trusted channel. An identity that
+  already has an ID chain cannot request. `import` verifies the parent's
+  response against your outstanding request, installs the chain and registers
+  it at AWID with your own key, at the registry the domain's _awid record
+  names. A failed registration keeps the response so `import` can retry it,
+  and `--no-register` leaves the registration pending.
+- aw: `aw id human init --domain D` without `--as-root` only prepares the
+  human: an issuer elsewhere, the namespace root or another human, admits it
+  through `aw id parent request` and `import`.
+
 - **Security:** did:key decoding refuses Ed25519 public keys that are small
   order, non-canonical or of mixed order, in Python (`awid.did`), Go
   (`cli/go/awid`) and TypeScript (`channel-core`). Every signature check, pin

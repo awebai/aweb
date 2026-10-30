@@ -558,13 +558,13 @@ otherwise the host's human CLI login authorizes it.
 Flags:
 - `--domain string Namespace domain for the global identity address`
 - `-h, --help help for create`
+- `--human-parent string did:aw of the human on this machine who issues the agent's certificate`
 - `--inbound-mode string Hosted inbound delivery mode (default team-and-contacts; requires --org)`
 - `--name string Global identity name (address name under --domain)`
 - `--org string Hosted organization slug or ID (human CLI login or explicit owner principal)`
 - `--owner-identity-home string Authorize --org creation with this owner's absolute native credential directory`
-- `--parent-human string did:aw of the human on this machine who issues the agent's certificate`
-- `--parent-root Have this machine's namespace controller issue the agent's certificate (an agent with no human)`
 - `--registry string Registry origin override (default: api.awid.ai)`
+- `--root-parent Have this machine's namespace controller issue the agent's certificate (an agent with no human)`
 - `--skip-dns-verify Skip the DNS TXT verification prompt and lookup`
 - `--team-id string Chosen hosted team service UUID or canonical name:namespace (requires --org)`
 
@@ -892,7 +892,7 @@ Flags:
 ### `id parent request`
 
 Export a certificate request against the invitation your parent fixed: its
---invitation-id, --domain and parent (--parent <did:aw> or --parent-root).
+--invitation-id, --domain and parent (--parent <did:aw> or --root-parent).
 Send the request file to the parent over your chosen channel, and tell them
 the fingerprint shown here through a different trusted channel.
 
@@ -907,8 +907,8 @@ Flags:
 - `--invitation-id string Invitation ID the parent gave you`
 - `--out string Where to write the request (- for stdout) (default "-")`
 - `--parent string did:aw of the parent identity`
-- `--parent-root The parent is the namespace root of --domain`
 - `--resign Ask the parent to re-sign the certificate this local agent carries`
+- `--root-parent The parent is the namespace root of --domain`
 
 ## `id register`
 
