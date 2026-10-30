@@ -953,9 +953,27 @@ local record locks.
 If a status refresh is needed, fetch outside locks and recheck the locked local
 facts before signing; no second evidence-freshness check follows the wait.
 AWID rechecks registered issuance under its own gate.
-In a deployment with chains, an AWID outage longer than 60 seconds stops
-spawning once the shared cached evidence is exhausted. Chainless human-less
-deployments are unaffected; spawning has no separate freshness window.
+These issuance rules also apply to spawning from a presented chain: the
+spawner signs the child under that chain, or refuses if it cannot satisfy the
+rules. It must not discard a presented chain to create a chainless child.
+An AWID outage longer than 60 seconds stops chained spawning once the shared
+cached evidence is exhausted; spawning has no separate freshness window.
+
+A genuinely chainless legacy spawner may instead create a chainless child,
+including in a human-bound deployment. The child reports unknown, with no
+guessed human. For a global did:aw, the production cached client must establish
+authoritative no enrollment within the same 60-second bound (§4); unknown
+enrollment evidence is not proof of absence. Known enrollment with unavailable
+evidence, or a revoked, replaced or malformed chain, refuses. In a human-bound
+deployment, chainless spawning emits a warning and readiness counts chainless
+spawners. Chainless human-less deployments remain supported.
+
+A local did:key has no portable enrollment witness (§4). If its chain files
+are deleted, it can look legacy and produce unknown children. This is the
+existing advisory limit for local identities, not evidence of a responsible
+human; membership revocation remains the offboarding control. If the runtime
+already records that it issued this instance a chain, it may refuse a missing
+chain file rather than treating it as legacy; no new tracking record is needed.
 
 The parent chooses current issuer_key and issued_at, signs one §2 certificate,
 and durably records its certificate_id and exact response BEFORE output. The
