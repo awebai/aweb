@@ -44,7 +44,7 @@ var custodyStatusCmd = &cobra.Command{
 			return err
 		}
 		b, _ := json.MarshalIndent(status, "", "  ")
-		fmt.Println(string(b))
+		fmt.Fprintln(commandStdout, string(b))
 		return nil
 	},
 }

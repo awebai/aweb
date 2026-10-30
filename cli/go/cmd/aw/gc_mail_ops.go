@@ -437,7 +437,7 @@ inspectable here instead.`,
 			if target.Mapped {
 				source = addressMap.path
 			}
-			fmt.Printf("%s (%s, %s)\n", delegateMailResolutionNote(target), target.Kind, source)
+			fmt.Fprintf(commandStdout, "%s (%s, %s)\n", delegateMailResolutionNote(target), target.Kind, source)
 			return nil
 		}())
 	},

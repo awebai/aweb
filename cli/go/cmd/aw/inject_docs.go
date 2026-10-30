@@ -229,10 +229,10 @@ func printInjectDocsResult(result *injectDocsResult) {
 		return
 	}
 	for _, name := range result.Created {
-		fmt.Printf("Created %s with aw team instructions\n", name)
+		fmt.Fprintf(commandStdout, "Created %s with aw team instructions\n", name)
 	}
 	for _, name := range result.Injected {
-		fmt.Printf("Injected aw team instructions into %s\n", name)
+		fmt.Fprintf(commandStdout, "Injected aw team instructions into %s\n", name)
 	}
 	for _, msg := range result.Errors {
 		fmt.Fprintf(os.Stderr, "Warning: could not inject docs: %s\n", msg)

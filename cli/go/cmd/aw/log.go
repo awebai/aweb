@@ -33,7 +33,7 @@ var logCmd = &cobra.Command{
 		entries, err := readCommLog(path, logLimit)
 		if err != nil {
 			if os.IsNotExist(err) {
-				fmt.Println("No log entries yet.")
+				fmt.Fprintln(commandStdout, "No log entries yet.")
 				return nil
 			}
 			return err
@@ -44,18 +44,18 @@ var logCmd = &cobra.Command{
 		if jsonFlag {
 			for _, e := range entries {
 				data, _ := json.Marshal(e)
-				fmt.Println(string(data))
+				fmt.Fprintln(commandStdout, string(data))
 			}
 			return nil
 		}
 
 		if len(entries) == 0 {
-			fmt.Println("No matching log entries.")
+			fmt.Fprintln(commandStdout, "No matching log entries.")
 			return nil
 		}
 
 		for _, e := range entries {
-			fmt.Print(formatLogLine(&e))
+			fmt.Fprint(commandStdout, formatLogLine(&e))
 		}
 		return nil
 	},

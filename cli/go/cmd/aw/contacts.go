@@ -97,7 +97,7 @@ var contactsRemoveCmd = &cobra.Command{
 		if jsonFlag {
 			printJSON(resp)
 		} else {
-			fmt.Printf("Removed contact %s\n", address)
+			fmt.Fprintf(commandStdout, "Removed contact %s\n", address)
 		}
 		return nil
 	},

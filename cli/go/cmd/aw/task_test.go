@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -1452,5 +1454,71 @@ func TestAwTaskCommentListFallsBackToAuthorAgentID(t *testing.T) {
 	}
 	if strings.Contains(text, "(unknown)") {
 		t.Fatalf("output should not show unknown author:\n%s", text)
+	}
+}
+
+// Under --json stdout is one document. A partial close prints its own result
+// and exits non-zero; the error is not added as a second document.
+func TestAwTaskClosePartialFailureJSONIsOneDocument(t *testing.T) {
+	t.Parallel()
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tasks/PROJ-001":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"task_id": "tid-1", "task_ref": "PROJ-001", "task_number": 1, "title": "Task 1",
+				"status": "closed", "priority": 2, "task_type": "task",
+				"created_at": "2026-03-21T10:00:00Z", "updated_at": "2026-03-21T11:00:00Z",
+			})
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tasks/PROJ-002":
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{"detail": "task is blocked"})
+		case r.URL.Path == "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
+
+	run := exec.CommandContext(ctx, bin, "task", "close", "PROJ-001", "PROJ-002", "--json")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	var stdout, stderr bytes.Buffer
+	run.Stdout, run.Stderr = &stdout, &stderr
+	err := run.Run()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 || !strings.Contains(stderr.String(), "failed to close 1 of 2 tasks") {
+		t.Fatalf("err %v stderr %q", err, stderr.String())
+	}
+	assertOneJSONDocument(t, stdout.Bytes())
+	if !strings.Contains(stdout.String(), "PROJ-001") {
+		t.Fatalf("stdout lost the command's own result: %s", stdout.String())
+	}
+}
+
+// assertOneJSONDocument fails unless out holds exactly one JSON value.
+func assertOneJSONDocument(t *testing.T, out []byte) {
+	t.Helper()
+	decoder := json.NewDecoder(bytes.NewReader(out))
+	documents := 0
+	for {
+		var value any
+		if err := decoder.Decode(&value); err == io.EOF {
+			break
+		} else if err != nil {
+			t.Fatalf("stdout is not JSON: %v\n%s", err, out)
+		}
+		documents++
+	}
+	if documents != 1 {
+		t.Fatalf("stdout holds %d JSON documents, want 1:\n%s", documents, out)
 	}
 }
