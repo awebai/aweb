@@ -3,7 +3,7 @@ import { readBoundedJSON } from "../api/response.js";
 import { canonicalJSONValue } from "./canonical.js";
 import { isRecord, keyResponseIdTree, type IdChain } from "./id_certificates.js";
 import { idStatusRequest, type IdStatusEvidence, type IdSubject } from "./id_verification.js";
-import { discoverAuthoritativeRegistry, verifyExactDomainAuthority, type ResolveTxt } from "./registry.js";
+import { discoverAuthoritativeRegistry, type ResolveTxt } from "./registry.js";
 
 /** Production status reader: one coherent DNS/status observation, fresh through 60s. */
 export class IdStatusClient {
@@ -57,7 +57,8 @@ export class IdStatusClient {
     this.cache.delete(key);
     try {
       const evidence = await this.bounded(async signal => {
-        const authority = await verifyExactDomainAuthority(request.domain, this.resolveTxt);
+        const authority = await discoverAuthoritativeRegistry(request.domain, this.resolveTxt);
+        if (!authority.controllerDid) throw Error("identity namespace authority unavailable");
         const response = await this.fetchImpl(`${authority.registryURL}/v1/id-certificates/status`, {
           method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request), redirect: "error", signal,
         });
