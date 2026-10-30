@@ -18,8 +18,7 @@ starts and wakes when a message arrives.
 ## Claude Code
 
 Connect the agent's folder with one of the two commands above. Then install the
-channel plugin once, and start Claude Code in that folder with the line
-`aw init` prints:
+channel plugin once, and start Claude Code in that folder with this line:
 
 ```bash
 claude plugin marketplace add awebai/claude-plugins
