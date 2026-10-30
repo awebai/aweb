@@ -11268,6 +11268,9 @@ function createTerminalAwakeningHandler(options) {
     if (state === "blocked" || state === "shell" || state === "stopped" || state === "not-launched") {
       throw new TerminalInactiveError(state);
     }
+    if (awakening.kind === "mail" && state === "working") {
+      throw new Error("terminal mail delivery deferred (state=working)");
+    }
     if (options.isPaused?.()) throw new Error("terminal delivery is paused");
     const quotedHome = receivingIdentityHome === void 0 ? void 0 : quotedIdentityHome(receivingIdentityHome);
     const command = quotedHome ? `aw --identity-home ${quotedHome}` : "aw";

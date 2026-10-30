@@ -7,9 +7,13 @@ durable delivered IDs, mail acknowledgment and chat read marking. Go implements
 
 ## Immediate presentation
 
-Mail and chat are delivered on arrival. Readiness gating was removed pending an
-architecture rethink: working and unknown states do not delay delivery.
-There is no readiness queue, coalescing window, rate limit or readiness polling.
+Mail defers on known working readiness (`working`, `busy` or `running`),
+before terminal input, delivery marks or acknowledgement. The existing retry
+re-fetches unread content and inspects again on each attempt. Chat, including
+waiting-sender steer, still delivers while working. Unknown readiness still
+delivers for compatibility with backends that cannot identify an idle prompt;
+submission there remains no proof of consumption. There is no readiness queue,
+coalescing window, rate limit or readiness polling.
 
 The terminal adapter holds mail and chat unless sender trust is `verified` or
 `verified_custodial`. Decryption failures are held too. It submits a fixed notice
@@ -17,7 +21,8 @@ with no sender-controlled content and a command to check mail/chat, selecting
 the registered receiving identity when needed. Accepted notices are suppressed
 on retries by a bounded in-memory cache (1000 entries); restart or eviction can
 repeat a notice. Held messages remain unread and are not marked delivered.
-The notice still submits terminal input and Enter; prompt safety remains subject
+Mail notices also defer while known working. The notice otherwise still
+submits terminal input and Enter; prompt safety remains subject
 to the transport limitation below.
 Native channel adapters retain their own presentation policy.
 
@@ -44,7 +49,8 @@ created. Legacy `--coalesce` and `--rate-limit` flags remain accepted but ignore
 
 1. Channel-core fetches the exact unread message and decrypts/verifies it.
 2. The terminal adapter serializes the safety check and input, then resolves
-   after OATS reports `submitted:true`.
+   after OATS reports `submitted:true`. Known-working mail refuses before input;
+   the retry must inspect again after a fresh unread fetch.
 3. Only after submission does channel-core record durable delivered IDs and
    acknowledge mail or mark chat read, where the identity's capabilities permit.
 4. Rejected input retries the event after 100 ms, 250 ms and 500 ms, including a
@@ -52,6 +58,8 @@ created. Legacy `--coalesce` and `--rate-limit` flags remain accepted but ignore
    attempts, the child requests a stream re-open after five seconds. Requests
    coalesce into one timer per admitted binding stream, and a natural reconnect
    or resume replaces that timer. Repeated refusals get another bounded window.
+   The per-instance `channel_core.last_error` and `binding_errors` expose the
+   refusal or input error while the message remains unread.
    A later unrelated exact-ID event cannot recover a refused message; the fresh
    unread snapshot does. No message IDs or bodies are held for replay.
 

@@ -2944,9 +2944,12 @@ Flags:
 
 List inbox messages, newest first and unread only by default. Messages shown by this command are acknowledged as read.
 
+Use --count-only to count all unread mail without acknowledging or displaying messages. This read-only count walks inbox pages and does not decrypt message content.
+
 The response is one bounded page. Text output reports when more messages exist and prints a continuation command; JSON output carries has_more and next_cursor. Pass the returned value to --cursor to continue without overlap.
 
 Flags:
+- `--count-only Count all unread mail without acknowledging or displaying messages`
 - `--cursor string Continue from next_cursor in a previous inbox response`
 - `-h, --help help for inbox`
 - `--limit int Max messages per page (default 50)`

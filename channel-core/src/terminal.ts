@@ -130,7 +130,7 @@ function textForTerminalAwakening(awakening: ChannelAwakening, receivingIdentity
   const quotedHome = receivingIdentityHome === undefined ? undefined : quotedIdentityHome(receivingIdentityHome);
   const richText = terminalInputSafeText(formatAwakeningForAgent(awakening));
   // Mail/chat present actual content before their accepted-input receipt
-  // can mark them read, regardless of harness readiness.
+  // can mark them read, after the readiness guard permits input.
   if (awakening.kind === "mail" || awakening.kind === "chat") {
     const recovery = quotedHome ? messageRecoveryCommand(awakening, `aw --identity-home ${quotedHome}`) : undefined;
     return recovery ? `${richText}\n\nRecovery: ${recovery}` : richText;
@@ -179,9 +179,9 @@ function rejectItem(item: AmbientItem, error: Error): void {
 }
 
 /**
- * Terminal presentation adapter. Presentation is immediate and serialized
- * across delivery lanes; inspect guards against typing into a bare shell or
- * a blocked harness whose modal could consume the text as an answer.
+ * Terminal presentation adapter. Presentation is serialized across delivery
+ * lanes. Mail defers while known working; inspect also guards against a bare
+ * shell or blocked harness whose modal could consume the text as an answer.
  * Wake/steer awakenings reject on input failure so channel-core
  * can re-dispatch and re-fetch unread state. Ambient awakenings are bounded and
  * piggyback on the next wake/steer input.
@@ -257,6 +257,13 @@ export function createTerminalAwakeningHandler(options: TerminalAwakeningHandler
     const state = normalizeTerminalReadiness(inspection.state ?? inspection.rawState, inspection.present ?? true);
     if (state === "blocked" || state === "shell" || state === "stopped" || state === "not-launched") {
       throw new TerminalInactiveError(state);
+    }
+    // A busy terminal can accept paste/Enter without the harness consuming it.
+    // Reject before input so no delivery mark or ack suppresses an idle re-fetch.
+    // Unknown readiness retains its released behavior: some backends never
+    // identify an idle prompt, and refusing them would strand existing mail.
+    if (awakening.kind === "mail" && state === "working") {
+      throw new Error("terminal mail delivery deferred (state=working)");
     }
     if (options.isPaused?.()) throw new Error("terminal delivery is paused");
     const quotedHome = receivingIdentityHome === undefined ? undefined : quotedIdentityHome(receivingIdentityHome);
