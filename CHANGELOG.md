@@ -48,6 +48,25 @@
 - aw: `aw id human init --domain D` without `--as-root` only prepares the
   human: an issuer elsewhere, the namespace root or another human, admits it
   through `aw id parent request` and `import`.
+- aw: `aw id parent request --resign` lets a local agent, whose ID is its
+  did:key, ask the parent of the certificate it carries to re-sign it after
+  the parent rotated its key. The parent, domain and old certificate come
+  from the installed chain. The issuer receives and approves it with the
+  same `aw id child` commands, and approves it only for a certificate its own
+  issuance record shows it issued. `import` installs the re-signed chain
+  with the same ID and key, and writes nothing to AWID. A request ID names
+  one request per issuer, whether it is a first issue or a re-sign.
+- aw: `aw who` verifies the current identity's ID chain against current
+  status from its namespace's registry, and shows the nearest human, no
+  human (none in its chain), unknown or unavailable, with the verifier's
+  reason. It shows the chain only when the chain verifies.
+- **The app id `who` is reserved** for `aw who`, a stated narrowing: the
+  server refuses it at app registration, in app event types and on lookup,
+  and `aw plugin install` refuses an `aw-who` binary. The hosted Cloud had
+  zero uses of `who` in apps, registry entries, installs, event types,
+  emitted events, subscriptions and hooks when measured on 2026-10-30.
+  Self-hosted servers were not measured: one with an app `who` would no
+  longer be able to read it.
 
 - **Security:** did:key decoding refuses Ed25519 public keys that are small
   order, non-canonical or of mixed order, in Python (`awid.did`), Go
