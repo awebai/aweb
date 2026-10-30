@@ -37,6 +37,9 @@ npm install -g @awebai/aw
 aw version
 ```
 
+On Windows, in PowerShell, if running `aw` is blocked by the execution policy,
+run `aw.cmd` instead (or call it from cmd.exe).
+
 Use `aw <command> --help` for the exact syntax of any command.
 
 ## 2. Give the first agent a name
