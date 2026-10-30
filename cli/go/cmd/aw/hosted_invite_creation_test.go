@@ -64,6 +64,9 @@ func TestHostedInviteRequiresPinnedPreviewBeforeAccept(t *testing.T) {
 			origin = server.URL
 			t.Setenv("AWEB_URL", origin)
 			_, err := acceptHostedTeamInviteWithDetails(dir, "aw_inv_preview_fixture", teamAcceptInviteOptions{Name: "child", Scope: "local"})
+			if tc.status == 404 && errorEnvelope(err, err.Error()).Error.Code != "unknown_or_invalid" {
+				t.Fatal("accept lost the preview refusal code")
+			}
 			if err == nil || previews != 1 || accepts != 0 {
 				t.Fatalf("err=%v previews=%d accepts=%d", err, previews, accepts)
 			}

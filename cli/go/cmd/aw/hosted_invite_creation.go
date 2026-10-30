@@ -73,7 +73,7 @@ func prepareHostedInviteCreation(ctx context.Context, prior *hostedInviteCreatio
 	// child's later signed acceptance and of any response-selected ancestry.
 	_, wire, previewErr := readHostedInvitePreview(ctx, token, hostedJoinTokenEnvelope{AwebURL: origin})
 	if previewErr != nil {
-		return nil, previewErr
+		return nil, withErrorCode(previewErr.Code, previewErr)
 	}
 	if !wire.IDTreePresent || !hostedIdentityTeamUUID.MatchString(wire.InviteID) {
 		return nil, errors.New("hosted invite preview omitted its invitation ID or explicit ID-tree metadata")
