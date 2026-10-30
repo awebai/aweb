@@ -143,7 +143,7 @@ var teamHumanInviteCmd = &cobra.Command{
 
 var teamHumanJoinCmd = &cobra.Command{
 	Annotations: map[string]string{identityCreationTargetAnnotation: "true"},
-	Use:         "join [invite-token]",
+	Use:         "join [invite-token | --token-file <path> | --token-stdin]",
 	Short:       "Join a team from an invite token",
 	Long: "Join a team from an invite token.\n\n" +
 		"Run this in a clean target directory. It refuses to overwrite an existing\n" +
@@ -316,6 +316,8 @@ func init() {
 	teamHumanJoinCmd.Flags().StringVar(&teamHumanJoinHarness, "harness", "", "Install team docs; prepare delivery for claude/pi (omitted: no harness changes)")
 	teamHumanJoinCmd.Flags().BoolVar(&teamHumanJoinSetupOnly, "setup-only", false, "Retry harness setup for the connected identity without accepting an invite")
 	teamHumanJoinCmd.Flags().BoolVar(&teamHumanJoinNoConnect, "no-connect", false, "Install identity and membership without connecting this workspace")
+	teamHumanJoinCmd.Flags().String("token-file", "", "Read the invite token from this file instead of an argument")
+	teamHumanJoinCmd.Flags().Bool("token-stdin", false, "Read the invite token from stdin instead of an argument")
 	teamHumanJoinCmd.GroupID = teamGroupMembership
 	teamHumanCmd.AddCommand(teamHumanJoinCmd)
 

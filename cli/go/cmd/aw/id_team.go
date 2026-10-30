@@ -795,6 +795,7 @@ func runTeamInviteWithOutput(cmd *cobra.Command, args []string, porcelainJoin bo
 			return err
 		}
 	}
+	fmt.Fprintln(cmd.ErrOrStderr(), teamInviteTokenWarning)
 	printOutput(teamInviteOutput{
 		Status:        "created",
 		InviteID:      inviteID,
@@ -803,6 +804,9 @@ func runTeamInviteWithOutput(cmd *cobra.Command, args []string, porcelainJoin bo
 	}, formatTeamInvite)
 	return nil
 }
+
+// teamInviteTokenWarning goes to stderr, so the invite's output is unchanged.
+const teamInviteTokenWarning = "Warning: the invite token below is a credential: whoever holds it can join the team until it is used or expires. Share it privately, and on the joining side prefer `aw team join --token-file <path>` or `--token-stdin` so it stays out of shell history."
 
 var errTeamInviteTargetHasNoActiveTeam = errors.New("team invite target has no active team")
 
@@ -1001,39 +1005,79 @@ func awebURLForTeamInviteAt(workingDir, identityHome, teamID string) string {
 const inviteTokenStdinLimit = 64 * 1024
 
 func readInviteTokenStdin(reader io.Reader) (string, error) {
+	return readInviteToken(reader, "stdin")
+}
+
+// readInviteToken reads one invite token from source. Its refusals never
+// repeat what was read, which may be a credential.
+func readInviteToken(reader io.Reader, source string) (string, error) {
 	data, err := io.ReadAll(io.LimitReader(reader, inviteTokenStdinLimit+1))
 	if err != nil {
-		return "", usageError("cannot read invite token from stdin")
+		return "", usageError("cannot read invite token from %s", source)
 	}
 	if len(data) > inviteTokenStdinLimit {
-		return "", usageError("invite token stdin exceeds 65536 bytes")
+		return "", usageError("invite token %s exceeds 65536 bytes", source)
 	}
 	token := strings.TrimSpace(string(data))
 	if token == "" {
-		return "", usageError("invite token stdin is empty")
+		return "", usageError("invite token %s is empty", source)
 	}
 	if strings.ContainsAny(token, "\r\n") {
-		return "", usageError("stdin must contain one token line")
+		return "", usageError("%s must contain one token line", source)
 	}
 	// All supported wire formats are unpadded base64url or aw_inv_ tokens.
 	// Validate before the acceptance path can write identity state. Never expose
 	// decoder errors, which can include bytes from the supplied secret.
 	for _, c := range token {
 		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
-			return "", usageError("invalid invite token on stdin")
+			return "", usageError("invalid invite token on %s", source)
 		}
 	}
 	if awid.IsHostedSpawnInviteToken(token) {
 		if len(token) <= len("aw_inv_") {
-			return "", usageError("invalid invite token on stdin")
+			return "", usageError("invalid invite token on %s", source)
 		}
 	} else if _, err := awconfig.DecodeInviteToken(token); err != nil {
-		return "", usageError("invalid invite token on stdin")
+		return "", usageError("invalid invite token on %s", source)
 	}
 	if _, _, err := decodeJoinToken(token); err != nil {
-		return "", usageError("invalid invite token on stdin")
+		return "", usageError("invalid invite token on %s", source)
 	}
 	return token, nil
+}
+
+// teamJoinTokenArgs returns the invite token argument for aw team join: the
+// positional token, or one read from --token-file or --token-stdin.
+func teamJoinTokenArgs(cmd *cobra.Command, args []string) ([]string, error) {
+	path, _ := cmd.Flags().GetString("token-file")
+	fromStdin, _ := cmd.Flags().GetBool("token-stdin")
+	path = strings.TrimSpace(path)
+	if path == "" && !fromStdin {
+		return args, nil
+	}
+	if path != "" && fromStdin {
+		return nil, usageError("--token-file and --token-stdin cannot be used together")
+	}
+	if len(args) != 0 {
+		return nil, usageError("give the invite token as an argument or through --token-file or --token-stdin, not both")
+	}
+	if fromStdin {
+		token, err := readInviteToken(cmd.InOrStdin(), "stdin")
+		if err != nil {
+			return nil, err
+		}
+		return []string{token}, nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, usageError("cannot open --token-file %s", path)
+	}
+	defer file.Close()
+	token, err := readInviteToken(file, "--token-file")
+	if err != nil {
+		return nil, err
+	}
+	return []string{token}, nil
 }
 
 func runTeamAcceptInvite(cmd *cobra.Command, args []string) error {
@@ -1050,6 +1094,10 @@ func runTeamAcceptInvite(cmd *cobra.Command, args []string) error {
 }
 
 func runTeamHumanJoin(cmd *cobra.Command, args []string) error {
+	args, err := teamJoinTokenArgs(cmd, args)
+	if err != nil {
+		return err
+	}
 	if err := validateTeamJoinArgs(cmd, args); err != nil {
 		return err
 	}

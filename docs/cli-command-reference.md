@@ -1671,6 +1671,8 @@ Flags:
 - `--no-address For --global, join with did:aw continuity but no member address`
 - `--no-connect Install identity and membership without connecting this workspace`
 - `--setup-only Retry harness setup for the connected identity without accepting an invite`
+- `--token-file string Read the invite token from this file instead of an argument`
+- `--token-stdin Read the invite token from stdin instead of an argument`
 
 ## `team leave`
 
