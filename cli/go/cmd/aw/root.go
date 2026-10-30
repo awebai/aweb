@@ -441,7 +441,7 @@ func (t *trackedStdout) Write(p []byte) (int, error) {
 	if len(p) > 0 {
 		t.written = true
 	}
-	return commandStdout.Write(p)
+	return os.Stdout.Write(p)
 }
 
 // Fd is stdout's file descriptor, for terminal checks.
