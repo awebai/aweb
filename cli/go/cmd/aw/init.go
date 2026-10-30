@@ -926,12 +926,12 @@ func printGuidedOnboardingReadyMessage(result *guidedOnboardingResult) {
 	if result == nil {
 		return
 	}
-	fmt.Println()
-	fmt.Println("Workspace ready.")
-	fmt.Println()
-	fmt.Println("Tell your agent: please read https://aweb.ai/docs/cli-tutorial.md")
-	fmt.Println()
-	printChannelLaunchInstructions(os.Stdout)
+	fmt.Fprintln(commandStdout)
+	fmt.Fprintln(commandStdout, "Workspace ready.")
+	fmt.Fprintln(commandStdout)
+	fmt.Fprintln(commandStdout, "Tell your agent: please read https://aweb.ai/docs/cli-tutorial.md")
+	fmt.Fprintln(commandStdout)
+	printChannelLaunchInstructions(commandStdout)
 }
 
 func printChannelLaunchInstructions(out io.Writer) {
@@ -1086,14 +1086,14 @@ func runDefaultInitDocsInjection(workingDir string) bool {
 
 func printPostInitActions(result *initResult, workingDir string, didDefaultInjectDocs bool) {
 	if !jsonFlag && result.ServerAssignedName && strings.TrimSpace(result.Alias) != "" {
-		fmt.Printf("\nYour agent is named %s.\n", strings.TrimSpace(result.Alias))
+		fmt.Fprintf(commandStdout, "\nYour agent is named %s.\n", strings.TrimSpace(result.Alias))
 	}
 	if initPrintExports {
-		fmt.Println("")
-		fmt.Println("# Copy/paste to configure your shell:")
-		fmt.Println("export AWEB_URL=" + result.ExportBaseURL)
+		fmt.Fprintln(commandStdout, "")
+		fmt.Fprintln(commandStdout, "# Copy/paste to configure your shell:")
+		fmt.Fprintln(commandStdout, "export AWEB_URL="+result.ExportBaseURL)
 		if strings.TrimSpace(result.Alias) != "" {
-			fmt.Println("export AWEB_ALIAS=" + result.Alias)
+			fmt.Fprintln(commandStdout, "export AWEB_ALIAS="+result.Alias)
 		}
 	}
 	repoRoot := resolveRepoRoot(workingDir)
@@ -1118,10 +1118,10 @@ func printInitNextSteps(result *initResult, workingDir string, didInjectDocs, di
 	if len(lines) == 0 {
 		return
 	}
-	fmt.Println()
-	fmt.Println("Next steps:")
+	fmt.Fprintln(commandStdout)
+	fmt.Fprintln(commandStdout, "Next steps:")
 	for _, line := range lines {
-		fmt.Println(line)
+		fmt.Fprintln(commandStdout, line)
 	}
 }
 

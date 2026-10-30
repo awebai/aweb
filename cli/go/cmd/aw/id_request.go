@@ -232,11 +232,11 @@ func printIDRequestExecutionResult(result *idRequestExecutionResult, raw bool) e
 		return fmt.Errorf("missing response")
 	}
 	if raw {
-		if _, err := os.Stdout.Write(result.Body); err != nil {
+		if _, err := commandStdout.Write(result.Body); err != nil {
 			return err
 		}
 		if len(result.Body) > 0 && result.Body[len(result.Body)-1] != '\n' {
-			fmt.Fprintln(os.Stdout)
+			fmt.Fprintln(commandStdout)
 		}
 		fmt.Fprintf(os.Stderr, "HTTP %d\n", result.Status)
 	} else {
