@@ -227,13 +227,21 @@ func TestAPIKeyGlobalRecoveryCommand(t *testing.T) {
 			if code == 0 || stderr == "" {
 				t.Fatalf("expected captured failure, code=%d stdout=%q stderr=%q", code, stdout, stderr)
 			}
-			var failure struct {
+			// Under --json a failure's stdout is its error envelope alone. It
+			// carries the same redacted diagnostic as stderr, never the key or
+			// the hosted body.
+			assertOneJSONDocument(t, []byte(stdout))
+			var envelope struct {
 				Error struct {
-					Code string `json:"code"`
+					Code    string `json:"code"`
+					Message string `json:"message"`
 				} `json:"error"`
 			}
-			if err := json.Unmarshal([]byte(stdout), &failure); err != nil || failure.Error.Code == "" {
-				t.Fatalf("expected one structured JSON error, stdout=%q", stdout)
+			if err := json.Unmarshal([]byte(stdout), &envelope); err != nil || envelope.Error.Code == "" || !strings.Contains(stderr, envelope.Error.Message) {
+				t.Fatalf("failure envelope %q for stderr %q: %v", stdout, stderr, err)
+			}
+			if strings.Contains(stdout, provisioningKey) || strings.Contains(stdout, "sensitive arbitrary") {
+				t.Fatal("hosted body or key exposed in the error envelope")
 			}
 			partial, err := os.ReadFile(apiKeyPartialInitPath(target))
 			if err != nil {

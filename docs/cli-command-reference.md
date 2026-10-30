@@ -33,7 +33,8 @@ to refresh it.
 
 ## Errors under `--json`
 
-A failed command run with `--json` prints one JSON line on stdout:
+A failed command run with `--json` that printed nothing else prints one
+JSON line on stdout:
 
 ```json
 {"error": {"code": "http_error", "message": "...", "http_status": 403, "detail": "..."}}
@@ -44,6 +45,12 @@ is not stable. stderr and the exit code are the same with or without
 `--json`. `http_status` and `detail` are present only for `http_error`;
 `detail` is the string `detail` of the server's JSON body, never its
 headers or any other text.
+
+Under `--json`, stdout carries one document. A command that already
+printed its own output, such as a partial result, and then failed keeps
+that output and prints no envelope. The exit code is therefore the
+failure signal: check it first, then read `error.code` when stdout is an
+envelope.
 
 | Code | Meaning |
 | --- | --- |

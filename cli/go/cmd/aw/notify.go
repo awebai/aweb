@@ -71,7 +71,7 @@ func runNotify(cmd *cobra.Command, args []string) error {
 	if output == "" {
 		return nil
 	}
-	fmt.Print(formatHookOutput(output))
+	fmt.Fprint(commandStdout, formatHookOutput(output))
 	return nil
 }
 

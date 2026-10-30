@@ -99,7 +99,7 @@ var versionCmd = &cobra.Command{
 		// No-op: version command doesn't require command initialization side-effects.
 	},
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Print(versionReport())
+		fmt.Fprint(commandStdout, versionReport())
 		if automaticUpdateCheckEnabled() {
 			checkLatestVersion(os.Stderr, "")
 		}
@@ -294,6 +294,7 @@ func Execute() {
 		}
 		os.Exit(code)
 	}
+	rootCmd.SetOut(commandStdout)
 	err = rootCmd.Execute()
 	checkVersionFromHeader()
 	finishHTTPDiagnostics(err)
@@ -418,14 +419,34 @@ func checkVersionFromHeader() {
 	}
 }
 
-// writeCLIError prints a command's error, which may carry a server's text.
 // reportCLIError prints a failed command's error on stderr and, under --json,
-// its error envelope on stdout, so stdout is always one JSON document.
+// its error envelope on stdout. stdout carries one document: a command that
+// already printed its own output keeps it, without a second document.
 func reportCLIError(err error, msg string, asJSON bool) {
 	writeCLIError(os.Stderr, msg)
-	if asJSON {
-		writeCLIErrorEnvelope(os.Stdout, err, msg)
+	if asJSON && !commandStdout.written {
+		writeCLIErrorEnvelope(commandStdout, err, msg)
 	}
+}
+
+// commandStdout is the stdout every command writes through, so the error
+// report knows whether the command already printed its own output.
+var commandStdout = &trackedStdout{}
+
+type trackedStdout struct {
+	written bool
+}
+
+func (t *trackedStdout) Write(p []byte) (int, error) {
+	if len(p) > 0 {
+		t.written = true
+	}
+	return os.Stdout.Write(p)
+}
+
+// Fd is stdout's file descriptor, for terminal checks.
+func (t *trackedStdout) Fd() uintptr {
+	return os.Stdout.Fd()
 }
 
 // argsContainJSONFlag reads --json before flags are parsed.
@@ -441,6 +462,7 @@ func argsContainJSONFlag(args []string) bool {
 	return false
 }
 
+// writeCLIError prints a command's error, which may carry a server's text.
 func writeCLIError(w io.Writer, msg string) {
 	fmt.Fprintln(w, termtext.Body(msg))
 }
