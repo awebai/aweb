@@ -47,7 +47,7 @@ async def test_message_chain_round_trips_without_altering_signed_message(privacy
     env = privacy_app
     sender, recipient = env.actors['alice'], env.actors['bob']
     chain = _bundle(sender.did)
-    message_id, timestamp = str(uuid4()), datetime.now(timezone.utc).isoformat()
+    message_id, timestamp = str(uuid4()), datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     signed = dict(type=kind, message_id=message_id, timestamp=timestamp,
                   from_did=sender.did, to=recipient.did, body='real signed message')
     # 'from' is a signed label only; author binding uses from_did.
