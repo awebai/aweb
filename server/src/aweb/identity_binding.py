@@ -47,13 +47,14 @@ async def verify_identity_binding(
     did_aw: str = "",
     address: str = "",
     fresh: bool = False,
+    registry_client=None,
 ) -> IdentityBinding:
     did_aw, address = (did_aw or "").strip(), (address or "").strip()
     if not did_aw and not address:
         return IdentityBinding(did_key=did_key)
     if not did_aw or not did_aw.startswith("did:aw:"):
         raise HTTPException(status_code=403, detail="identity_binding_mismatch")
-    client = getattr(request.app.state, "awid_registry_client", None)
+    client = registry_client if registry_client is not None else getattr(request.app.state, "awid_registry_client", None)
     if client is None:
         raise HTTPException(status_code=503, detail="identity_binding_unavailable")
     cache = getattr(request.app.state, "identity_binding_cache", None)
@@ -61,6 +62,8 @@ async def verify_identity_binding(
         cache = OrderedDict()
         request.app.state.identity_binding_cache = cache
     key = (did_aw, did_key, address)
+    if registry_client is not None:
+        key += (getattr(registry_client, "registry_url", "federation"),)
     observations = getattr(request.state, "identity_binding_observations", None)
     if observations is None:
         observations = {}

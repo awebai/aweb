@@ -758,7 +758,7 @@ async def _deliver_federated_chat(
             delivery_origin=route["delivery_origin"],
             envelope=envelope,
             signature=federation_signature,
-            id_chain=getattr(request.state, "id_chain", None),
+            id_chain=getattr(getattr(request, "state", None), "id_chain", None),
             transport=_federation_transport(request),
         )
     except FederatedMailDeliveryError as exc:
@@ -1543,7 +1543,7 @@ async def create_or_send(
         )
         msg_row = await send_in_session(
             db,
-            id_chain=getattr(request.state, "id_chain", None),
+            id_chain=getattr(getattr(request, "state", None), "id_chain", None),
             session_id=session_id,
             sender_did=actor_did,
             sender_agent_id=actor_agent_id,
@@ -1687,7 +1687,7 @@ async def create_or_send(
     try:
         msg_row = await send_in_session(
             db,
-            id_chain=getattr(request.state, "id_chain", None),
+            id_chain=getattr(getattr(request, "state", None), "id_chain", None),
             session_id=session_id,
             sender_did=actor_did,
             sender_agent_id=actor_agent_id,
@@ -2792,7 +2792,7 @@ async def send_message(
         try:
             msg_row = await send_in_session(
                 db,
-                id_chain=getattr(request.state, "id_chain", None),
+                id_chain=getattr(getattr(request, "state", None), "id_chain", None),
                 session_id=session_uuid,
                 sender_did=actor_did,
                 sender_agent_id=actor_agent_id,
@@ -2852,7 +2852,7 @@ async def send_message(
     try:
         msg_row = await send_in_session(
             db,
-            id_chain=getattr(request.state, "id_chain", None),
+            id_chain=getattr(getattr(request, "state", None), "id_chain", None),
             session_id=session_uuid,
             sender_did=actor_did,
             sender_agent_id=actor_agent_id,

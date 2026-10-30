@@ -27,7 +27,7 @@ def _unverified(reason: str) -> dict[str, Any]:
             'kind': None, 'reason': reason}
 
 
-async def authenticate_id_chain(request: Request, binding: IdentityBinding) -> dict[str, Any]:
+async def authenticate_id_chain(request: Request, binding: IdentityBinding, *, registry_client=None) -> dict[str, Any]:
     """Use only the already-verified subject and its fresh enrollment carrier.
 
     The caller must finish its original authentication first. No address/team
@@ -51,7 +51,7 @@ async def authenticate_id_chain(request: Request, binding: IdentityBinding) -> d
             plan = status_request(bundle, subject, domain=domain)
             evidence = None
             if plan is not None:
-                client = getattr(request.app.state, 'awid_registry_client', None)
+                client = registry_client if registry_client is not None else getattr(request.app.state, 'awid_registry_client', None)
                 cached_evidence = getattr(client, 'id_chain_evidence', None)
                 if callable(cached_evidence):
                     try:

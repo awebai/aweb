@@ -939,7 +939,7 @@ async def _deliver_remote_mail_and_project_locally(
             delivery_origin=delivery_origin,
             envelope=envelope,
             signature=federation_signature,
-            id_chain=getattr(request.state, "id_chain", None),
+            id_chain=getattr(getattr(request, "state", None), "id_chain", None),
             transport=getattr(request.app.state, "federation_mail_transport", None),
         )
     except FederatedMailDeliveryError as exc:
@@ -1015,7 +1015,7 @@ async def _deliver_remote_mail_and_project_locally(
             )
         local_message_id, local_created_at = await deliver_message(
             db,
-            id_chain=getattr(request.state, "id_chain", None),
+            id_chain=getattr(getattr(request, "state", None), "id_chain", None),
             registry_client=registry_client,
             recipient_agent=recipient,
             team_id=auth.team_id,
@@ -1275,7 +1275,7 @@ async def _send_mail_conversation_continuation(
         )
         message_id, server_received_at = await deliver_message(
             db,
-            id_chain=getattr(request.state, "id_chain", None),
+            id_chain=getattr(getattr(request, "state", None), "id_chain", None),
             registry_client=registry_client,
             recipient_agent=recipient,
             team_id=continuation.conversation.get("team_id") or auth.team_id,
@@ -1914,7 +1914,7 @@ async def send_message(
         )
         message_id, server_received_at = await deliver_message(
             db,
-            id_chain=getattr(request.state, "id_chain", None),
+            id_chain=getattr(getattr(request, "state", None), "id_chain", None),
             registry_client=registry_client,
             recipient_agent=recipient,
             team_id=auth.team_id,

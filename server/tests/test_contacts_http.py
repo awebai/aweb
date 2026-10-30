@@ -16,7 +16,7 @@ from awid.did import did_from_public_key
 from awid.external_authority import OriginContext
 from awid.external_registry import StrictExternalRegistry
 from awid.federation_errors import FederationAuthorityError
-from awid.registry import Address, AddressDelivery, KeyResolution
+from awid.registry import Address, AddressDelivery, IDTreeEnrollment, KeyResolution
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.api import create_app
 from aweb.federation.activation import FederationAuthorityActivation
@@ -284,7 +284,7 @@ async def test_contact_reassignment_requires_signed_explicit_acceptance(aweb_clo
     controller_sk, _, controller_did = _make_keypair()
     registry = AsyncMock()
     registry.resolve_key_fresh = AsyncMock(
-        return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=bob_did_key)
+        return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=bob_did_key, id_tree=IDTreeEnrollment(enrolled=False, domain=None))
     )
     registry.list_did_addresses = AsyncMock(return_value=[])
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)

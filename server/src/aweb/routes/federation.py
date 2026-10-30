@@ -439,12 +439,20 @@ async def receive_federated_message(
 
         # The preserved sender signature and Phase-A authority above establish
         # the author. Bind the adjacent proof to that author, not this server.
-        binding = await verify_identity_binding(
-            request, did_key=envelope.sender_current_did_key,
-            did_aw="" if _is_local_did_key(envelope.sender_did_aw) else envelope.sender_did_aw,
-            address="" if _is_local_did_key(envelope.sender_did_aw) else (envelope.sender_address or ""),
-        )
-        await authenticate_id_chain(request, binding)
+        if _is_local_did_key(envelope.sender_did_aw):
+            binding = await verify_identity_binding(request, did_key=envelope.sender_current_did_key)
+            await authenticate_id_chain(request, binding)
+        else:
+            async with authority.received_registry_client(
+                authority_token, envelope.sender_current_did_key,
+                getattr(request.app.state, "redis", None),
+            ) as foreign_registry:
+                binding = await verify_identity_binding(
+                    request, did_key=envelope.sender_current_did_key,
+                    did_aw=envelope.sender_did_aw, address=envelope.sender_address or "",
+                    fresh=True, registry_client=foreign_registry,
+                )
+                await authenticate_id_chain(request, binding, registry_client=foreign_registry)
 
         if established_replay is not None:
             result = await deliver_federated_phase_b(
