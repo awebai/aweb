@@ -41,10 +41,13 @@ type DidKeyEvidence struct {
 }
 
 type DidKeyResolution struct {
-	DIDAW         string                  `json:"did_aw"`
-	CurrentDIDKey string                  `json:"current_did_key"`
-	LogHead       *DidKeyEvidence         `json:"log_head"`
-	EncryptionKey *EncryptionKeyAssertion `json:"encryption_key,omitempty"`
+	// Private coherent enrollment evidence from this process's key fetch.
+	idTree          IDTreeEnrollmentResult
+	idTreeFetchedAt time.Time
+	DIDAW           string                  `json:"did_aw"`
+	CurrentDIDKey   string                  `json:"current_did_key"`
+	LogHead         *DidKeyEvidence         `json:"log_head"`
+	EncryptionKey   *EncryptionKeyAssertion `json:"encryption_key,omitempty"`
 }
 
 type StableIdentityVerification struct {

@@ -1,3 +1,4 @@
+import { keyResponseIdTree, type IdTreeEnrollment } from "./id_certificates.js";
 import { IdStatusClient } from "./id_status.js";
 import * as dns from "node:dns/promises";
 import { isIP } from "node:net";
@@ -37,6 +38,7 @@ export interface DidKeyEvidence {
 }
 
 export interface DidKeyResolution {
+  id_tree?: unknown;
   did_aw: string;
   current_did_key: string;
   log_head?: DidKeyEvidence | null;
@@ -178,6 +180,21 @@ export class RegistryResolver {
     } catch (error) {
       return { registryURL: "", result: { outcome: "OK_DEGRADED", error: String(error) } };
     }
+  }
+
+  /** Enrollment from the very key snapshot used to authenticate an addressless sender. */
+  async receivedIdEnrollment(teamID: string, stableID: string, did: string): Promise<IdTreeEnrollment> {
+    const unknown: IdTreeEnrollment = { state: "unknown", domain: null };
+    const separator = teamID.indexOf(":");
+    if (separator < 1 || teamID.indexOf(":", separator + 1) !== -1) return unknown;
+    try {
+      const registryURL = (await this.discoverRegistry(teamID.slice(separator + 1))).replace(/\/+$/, "");
+      const cached = this.receivedRegistries.get(registryURL)?.keyCache.get(stableID);
+      if (!cached) return unknown;
+      const age = this.now() - (cached.expiresAt - REGISTRY_KEY_TTL_MS);
+      if (age < 0 || age > 60_000 || cached.value.did_aw !== stableID || cached.value.current_did_key !== did) return unknown;
+      return keyResponseIdTree(cached.value);
+    } catch { return unknown; }
   }
 
   private async verifyStableIdentityAtRegistry(

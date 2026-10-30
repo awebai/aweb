@@ -277,3 +277,25 @@ func TestWhoStoredBogusParentSignatureNeverNamesHuman(t *testing.T) {
 		t.Fatalf("out %+v err %v", out, err)
 	}
 }
+
+func TestWhoAddresslessGlobalUsesVerifiedDeliveryRegistryEnrollment(t *testing.T) {
+	v := loadWhoVectors(t)
+	msg := awid.InboxMessage{FromDID: v.Keys["alice"].DIDKey, FromStableID: v.Keys["alice"].DIDAW, VerificationStatus: awid.Verified}
+	calls := 0
+	options := whoOptions{TXTResolver: staticTXTResolver{}, ReceivedEnrollment: func(_ context.Context, id, key string) awid.IDTreeEnrollmentResult {
+		calls++
+		if id != msg.FromStableID || key != msg.FromDID {
+			t.Fatal("wrong independently verified subject")
+		}
+		return awid.IDTreeEnrollmentResult{State: "not_enrolled"}
+	}}
+	out, err := executeWhoReceived(context.Background(), msg, options)
+	if err != nil || out.Reason != "unregistered_identity" || out.Outcome != "unknown" || out.HumanID != nil || calls != 1 {
+		t.Fatalf("out %+v err %v calls %d", out, err, calls)
+	}
+	msg.VerificationStatus = awid.Failed
+	_, _ = executeWhoReceived(context.Background(), msg, options)
+	if calls != 1 {
+		t.Fatal("unverified sender must not read enrollment")
+	}
+}

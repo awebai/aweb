@@ -161,7 +161,12 @@ export class SenderTrustManager {
   ) {}
 
   verifyResponsibility(message: ReceivedIdChain, authenticated: boolean) {
-    return readReceivedIdChain(message, authenticated, this.registry.idStatus);
+    return readReceivedIdChain(message, authenticated, {
+      evidence: (chain, subject, domain) => this.registry.idStatus.evidence(chain, subject, domain),
+      enrollmentFor: (id, address) => address.includes("/")
+        ? this.registry.idStatus.enrollmentFor(id, address)
+        : this.registry.receivedIdEnrollment(this.teamID, id, message.from_did || ""),
+    });
   }
 
   async resolveTrustMetadata(

@@ -45,10 +45,11 @@ type whoStatus interface {
 }
 
 type whoOptions struct {
-	Status      whoStatus
-	WorkingDir  string
-	RegistryURL string
-	TXTResolver awid.TXTResolver
+	ReceivedEnrollment func(context.Context, string, string) awid.IDTreeEnrollmentResult
+	Status             whoStatus
+	WorkingDir         string
+	RegistryURL        string
+	TXTResolver        awid.TXTResolver
 }
 
 // whoLink is one verified certificate of the chain, root side first.
@@ -85,6 +86,7 @@ func runWho(cmd *cobra.Command, args []string) error {
 		if len(args) > 0 {
 			target = strings.TrimSpace(args[0])
 		}
+		opts.ReceivedEnrollment = c.Client.ReceivedIDTreeEnrollment
 		message, readErr := findWhoSender(ctx, c.Client, target, whoMessageID, whoSessionID)
 		if readErr != nil {
 			return readErr
