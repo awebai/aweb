@@ -192,27 +192,14 @@ def local_child_resign(human, parent):
     child_id = record["did"]
     assert child_id.startswith("did:key:") and not record.get("stable_id"), record
     unchanged = {name: (home / name).read_bytes() for name in ("identity.yaml", "signing.key")}
-    chainless, _ = command(["who", "--json"], cwd="local-child")
-    assert chainless["id"] == child_id and chainless["outcome"] == "unknown", chainless
-    assert chainless["reason"] == "legacy_no_chain" and chainless["human_id"] is None, chainless
-    assert "chain" not in chainless, chainless
-
-    invitation, _ = command(["id", "child", "invite", "--kind", "agent", "--recipient", "local child", "--json"], cwd="fresh")
-    request_file = str(ROOT / "local-issue-request.json")
-    response_file = str(ROOT / "local-issue-response.json")
-    command(["id", "parent", "request", "--invitation-id", invitation["invitation_id"],
-             "--domain", domain, "--parent", parent["did_aw"], "--out", request_file],
-            cwd="local-child", json_output=False)
-    request = json.loads(Path(request_file).read_text())["request"]
-    received, _ = command(["id", "child", "receive", request_file, "--json"], cwd="fresh")
-    assert received["operation"] == "issue" and received["state"] == "pending", received
-    _, prompts = command(["id", "child", "approve", request["request_id"], "--out", response_file],
-                          cwd="fresh", json_output=False)
-    assert prompts == 0
-    imported, _ = command(["id", "parent", "import", response_file, "--domain", domain, "--json"], cwd="local-child")
-    assert imported["id"] == child_id and imported["registration"] == "", imported
     links = [dict(id=human, kind="human"), dict(id=parent["did_aw"], kind="agent"), dict(id=child_id, kind="agent")]
     assert_who("local-child", human, links)
+    invitations = list((ROOT / "fresh/.aw/invitations").glob("*.json"))
+    issued = [json.loads(p.read_text()) for p in invitations]
+    spawn, = [inv for inv in issued if inv.get("purpose") == "agent spawn"
+              and json.loads(inv["request"]["request"])["request"]["id"] == child_id]
+    assert spawn["parent"] == dict(kind="identity", id=parent["did_aw"]), spawn
+    print("PASS: invite-created local child immediately shows its issuer and the issuer's human", flush=True)
     old_bundle = (home / "id-chain.json").read_bytes()
     old_leaf = json.loads(old_bundle)["certificates"][-1]
     parent_home = ROOT / "fresh/.aw"
@@ -311,6 +298,27 @@ def unenrolled_creations(team_dir):
     assert not (ROOT / "plain/.aw/id-chain.json").exists()
     assert_unenrolled("plain", plain["did_aw"])
     print("PASS: accept-invite --global keeps an unenrolled ID unenrolled, not attributed to its inviter", flush=True)
+
+    # An already-attributed global identity retains its complete original chain.
+    home = ROOT / "alice/.aw"
+    before = {name: (home / name).read_bytes() for name in ("identity.yaml", "signing.key", "id-chain.json")}
+    invite, _ = command(["id", "team", "invite", "--team", "journey-local", "--namespace", domain,
+                         "--member-global", "--json"], cwd=team_dir)
+    command(["id", "team", "accept-invite", invite["token"], "--name", "alice", "--global", "--no-address",
+             "--json"], cwd="alice")
+    assert {name: (home / name).read_bytes() for name in before} == before
+    print("PASS: existing chained global acceptance preserves its parent and exact chain", flush=True)
+
+    # A genuinely unenrolled inviter gives no invented human to its local child.
+    (ROOT / "legacy-child").mkdir()
+    invite, _ = command(["id", "team", "invite", "--team", "journey-local", "--namespace", domain,
+                         "--member-local", "--json"], cwd="plain")
+    command(["id", "team", "accept-invite", invite["token"], "--name", "legacy-child", "--local", "--json"],
+            cwd="legacy-child")
+    unknown, _ = command(["who", "--json"], cwd="legacy-child")
+    assert unknown["outcome"] == "unknown" and unknown["reason"] == "legacy_no_chain", unknown
+    assert unknown["human_id"] is None and "chain" not in unknown, unknown
+    print("PASS: chainless inviter keeps its local child honestly unknown", flush=True)
 
 
 def human_issues_human(human):

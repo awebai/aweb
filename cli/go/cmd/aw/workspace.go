@@ -608,7 +608,7 @@ func addWorktreeViaLocalTeamKey(
 		return connectOutput{}, err
 	}
 
-	_, inviteToken, err := createTeamInviteToken(teamDomain, teamName, registryURL, sourceServerURL, true)
+	_, inviteToken, err := createTeamInviteTokenAt(teamDomain, teamName, registryURL, sourceServerURL, true, "", workingDir, sourceIdentityHome)
 	if err != nil {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
 		return connectOutput{}, fmt.Errorf("create local team invite for %s: %w", teamID, err)

@@ -80,6 +80,7 @@ func init() {
 }
 
 type idParentOptions struct {
+	IdentityHome    string
 	Human           string
 	Domain          string
 	WorkingDir      string
@@ -116,7 +117,7 @@ func (r *requester) requests() awconfig.IDRequestFileStore {
 
 func selectRequester(opts idParentOptions) (*requester, error) {
 	if strings.TrimSpace(opts.Human) == "" {
-		identity, err := resolveIdentityForDir(opts.WorkingDir)
+		identity, err := resolveIDExchangeIdentity(opts.WorkingDir, opts.IdentityHome)
 		if err != nil {
 			return nil, err
 		}
@@ -218,10 +219,10 @@ func executeIDParentRequest(opts idParentOptions, invitationID, parentID string,
 		return idParentRequestOutput{}, nil, usageError("--parent and --root-parent name different parents; choose one")
 	case rootParent:
 		parent = nil
-	case strings.HasPrefix(strings.TrimSpace(parentID), "did:aw:"):
+	case strings.HasPrefix(strings.TrimSpace(parentID), "did:aw:"), strings.HasPrefix(strings.TrimSpace(parentID), "did:key:"):
 		parent = map[string]any{"kind": "identity", "id": strings.TrimSpace(parentID)}
 	default:
-		return idParentRequestOutput{}, nil, usageError("name the parent: --parent <did:aw> or --root-parent")
+		return idParentRequestOutput{}, nil, usageError("name the parent: --parent <identity-id> or --root-parent")
 	}
 	r, err := selectRequester(opts)
 	if err != nil {
@@ -271,7 +272,7 @@ func executeIDParentResign(opts idParentOptions) (idParentRequestOutput, []byte,
 	if strings.TrimSpace(opts.Human) != "" {
 		return idParentRequestOutput{}, nil, usageError("--resign is for the current local agent; a human is registered and keeps its signature")
 	}
-	identity, err := resolveIdentityForDir(opts.WorkingDir)
+	identity, err := resolveIDExchangeIdentity(opts.WorkingDir, opts.IdentityHome)
 	if err != nil {
 		return idParentRequestOutput{}, nil, err
 	}

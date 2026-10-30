@@ -16,6 +16,7 @@ import (
 // issue: the fixed recipient, domain, parent and kind, and the one request
 // bound to it. A void invitation signs nothing more.
 type IDInvitation struct {
+	Purpose      string           `json:"purpose,omitempty"`
 	InvitationID string           `json:"invitation_id"`
 	Mode         string           `json:"mode"`
 	Parent       map[string]any   `json:"parent"`

@@ -14,7 +14,20 @@ import (
 )
 
 // TeamInvite is a pending team invite stored locally by the team controller.
+// TeamInviteIDChild links membership to the actual inviter's private exchange.
+// It is never included in TeamInviteToken.
+type TeamInviteIDChild struct {
+	InvitationID string `json:"invitation_id"`
+	Parent       string `json:"parent"`
+	Domain       string `json:"domain"`
+	IssuerHome   string `json:"issuer_home"`
+	ChildHome    string `json:"child_home,omitempty"`
+	ChildDIDKey  string `json:"child_did_key,omitempty"`
+}
+
 type TeamInvite struct {
+	IDChild *TeamInviteIDChild `json:"id_child,omitempty"`
+
 	InviteID      string `json:"invite_id" yaml:"invite_id"`
 	Domain        string `json:"domain" yaml:"domain"`
 	TeamName      string `json:"team_name" yaml:"team_name"`

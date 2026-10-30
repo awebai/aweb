@@ -147,8 +147,8 @@
         "cli/go/cmd/aw/id_team.go",
         "cli/go/awconfig/team_invites.go"
       ],
-      "status": "legacy",
-      "reason": "Membership team key stays distinct from ID parent; spawn inherits issuing identity. This creation path has no landed per-path chain-or-refusal journey proof yet."
+      "status": "converted",
+      "reason": "Local identity creation composes the real inviter child exchange; CoreDNS verifies immediate human attribution, purpose and outsider Go/Python verification. Chainless inviters remain unknown; existing global acceptance preserves enrollment and chain. Revoked-inviter refusal is covered by the focused real-AWID test."
     },
     {
       "id": "CLI.INVITE.HOSTED",
