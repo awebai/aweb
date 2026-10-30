@@ -523,7 +523,8 @@ async def send_in_session(
         encrypted_metadata.get("encrypted_signing_key_id"),
         encrypted_metadata.get("signed_envelope_hash"),
         effective_created_at,
-        json.dumps(id_chain) if id_chain is not None else None,    )
+        json.dumps(id_chain) if id_chain is not None else None,
+    )
 
     await aweb_db.execute(
         """
