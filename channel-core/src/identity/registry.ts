@@ -1,3 +1,4 @@
+import { IdStatusClient } from "./id_status.js";
 import * as dns from "node:dns/promises";
 import { isIP } from "node:net";
 import { sha256, sha512 } from "@noble/hashes/sha2.js";
@@ -106,6 +107,7 @@ interface RegistryResolverOptions {
 }
 
 export class RegistryResolver {
+  readonly idStatus: IdStatusClient;
   private registryCache = new Map<string, CacheEntry<DomainAuthority>>();
   private addressCache = new Map<string, CacheEntry<{ registryURL: string; response: AddressResponse }>>();
   private keyCache = new Map<string, CacheEntry<DidKeyResolution>>();
@@ -120,6 +122,7 @@ export class RegistryResolver {
     private readonly now: () => number = () => Date.now(),
     options?: RegistryResolverOptions,
   ) {
+    this.idStatus = new IdStatusClient(fetchImpl, resolveTxtImpl, now);
     this.fallbackRegistryURL = options?.fallbackRegistryURL
       ? canonicalServerOrigin(options.fallbackRegistryURL)
       : "";
@@ -435,6 +438,12 @@ export async function discoverAuthoritativeRegistry(
     dnsName: awidTXTName(domain),
     inherited: false,
   };
+}
+
+export async function verifyExactDomainAuthority(domain: string, resolver: ResolveTxt = dns.resolveTxt): Promise<DomainAuthority> {
+  const authority = await lookupDomainAuthority(domain, false, resolver);
+  if (!authority) throw new Error("missing exact namespace authority");
+  return authority;
 }
 
 async function lookupDomainAuthority(

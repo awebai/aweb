@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/awebai/aw/awconfig"
@@ -161,5 +162,118 @@ func TestWhoShowsTheVerifiedChainRootFirst(t *testing.T) {
 	out.Chain = nil
 	if got := formatWho(out); got != "did:aw:2bLT57MhWjqFm6m4r43K3i8wPZb4\nHuman: unknown (revoked)\n" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestWhoReceivedChainBindsTheAuthenticatedSender(t *testing.T) {
+	v := loadWhoVectors(t)
+	chain := map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": []any{v.Certificates["alice"].Signed, v.Certificates["coordinator"].Signed}}
+	msg := awid.InboxMessage{FromDID: v.Keys["bob"].DIDKey, IDChain: chain, VerificationStatus: awid.Verified}
+	out, err := executeWhoReceived(context.Background(), msg, whoOptions{TXTResolver: staticTXTResolver{}})
+	if err != nil || out.Reason != "subject_mismatch" || out.HumanID != nil {
+		t.Fatalf("out %+v err %v", out, err)
+	}
+	msg.FromDID = v.Keys["coordinator"].DIDKey
+	msg.IDChain = nil
+	out, err = executeWhoReceived(context.Background(), msg, whoOptions{TXTResolver: staticTXTResolver{}})
+	if err != nil || out.Reason != "legacy_no_chain" {
+		t.Fatalf("out %+v err %v", out, err)
+	}
+	msg.IDChain = chain
+	msg.VerificationStatus = awid.Failed
+	out, err = executeWhoReceived(context.Background(), msg, whoOptions{TXTResolver: staticTXTResolver{}})
+	if err != nil || out.HumanID != nil || out.Reason != "subject_mismatch" {
+		t.Fatalf("out %+v err %v", out, err)
+	}
+}
+
+func TestWhoSenderMatchesOnlyTheSenderAndDIDsAreCaseSensitive(t *testing.T) {
+	msg := awid.InboxMessage{FromAlias: "sender", FromAddress: "example.com/sender", FromStableID: "did:aw:AbC", ToAlias: "receiver", ToStableID: "did:aw:abc"}
+	for _, tc := range []struct {
+		target string
+		want   bool
+	}{{"sender", true}, {"example.com/sender", true}, {"did:aw:AbC", true}, {"receiver", false}, {"did:aw:abc", false}} {
+		if got := whoSenderMatches(msg, tc.target); got != tc.want {
+			t.Fatalf("%s: %v", tc.target, got)
+		}
+	}
+}
+
+type whoFixedStatus struct{ evidence *awid.IDChainEvidence }
+
+func (s whoFixedStatus) IDChainEvidence(context.Context, map[string]any, awid.IDChainSubject, string) *awid.IDChainEvidence {
+	return s.evidence
+}
+
+func TestWhoReceivedUsesSharedCurrentStatus(t *testing.T) {
+	raw, err := os.ReadFile("../../../../docs/vectors/id-certificates-v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v struct {
+		Cases []struct {
+			Name    string   `json:"name"`
+			Chain   []string `json:"chain"`
+			Status  string   `json:"status"`
+			Subject struct {
+				ID     string `json:"id"`
+				DIDKey string `json:"did_key"`
+			} `json:"subject"`
+			Expected awid.IDChainResult `json:"expected"`
+		} `json:"verification_cases"`
+		Status map[string]map[string]any `json:"status_fixtures"`
+	}
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.UseNumber()
+	if err := d.Decode(&v); err != nil {
+		t.Fatal(err)
+	}
+	fixtures := loadWhoVectors(t)
+	selected := map[string]bool{"local-child-nearest-human": true, "registered-agent": true, "humanless-root-agent": true, "human-revocation-cascades-to-registered-agent": true, "root-replacement-registered-agent-refuses": true, "root-local-old-key-after-rotation": true}
+	count := 0
+	for _, c := range v.Cases {
+		if !selected[c.Name] {
+			continue
+		}
+		count++
+		t.Run(c.Name, func(t *testing.T) {
+			certs := []any{}
+			for _, name := range c.Chain {
+				certs = append(certs, fixtures.Certificates[name].Signed)
+			}
+			status := v.Status[c.Status]
+			ns := status["namespace"].(map[string]any)
+			epochs := ns["epochs"].([]any)
+			epoch := epochs[len(epochs)-1].(map[string]any)
+			age := float64(0)
+			evidence := &awid.IDChainEvidence{Status: status, NamespaceAuthority: map[string]any{"domain": status["domain"], "dns_name": "_awid.example.com", "inherited": false, "controller_key": epoch["did_key"]}, AgeSeconds: &age}
+			msg := awid.InboxMessage{FromDID: c.Subject.DIDKey, IDChain: map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": certs}, VerificationStatus: awid.Verified}
+			if c.Subject.ID != c.Subject.DIDKey {
+				msg.FromStableID = c.Subject.ID
+			}
+			out, err := executeWhoReceived(context.Background(), msg, whoOptions{Status: whoFixedStatus{evidence}, TXTResolver: staticTXTResolver{}})
+			if err != nil || out.Outcome != c.Expected.Outcome || out.Reason != c.Expected.Reason {
+				t.Fatalf("out %+v expected %+v err %v", out, c.Expected, err)
+			}
+			if c.Expected.HumanID != nil && (out.HumanID == nil || *out.HumanID != *c.Expected.HumanID) {
+				t.Fatalf("wrong human %+v", out)
+			}
+			if c.Expected.HumanID == nil && out.HumanID != nil {
+				t.Fatalf("unexpected human %+v", out)
+			}
+		})
+	}
+	if count != len(selected) {
+		t.Fatalf("missing fixture: found %d of %d", count, len(selected))
+	}
+}
+
+func TestWhoStoredBogusParentSignatureNeverNamesHuman(t *testing.T) {
+	v := loadWhoVectors(t)
+	v.Certificates["alice"].Signed["signature"] = strings.Repeat("A", 86)
+	chain := map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": []any{v.Certificates["alice"].Signed, v.Certificates["coordinator"].Signed}}
+	out, err := executeWhoReceived(context.Background(), awid.InboxMessage{FromDID: v.Keys["coordinator"].DIDKey, IDChain: chain, VerificationStatus: awid.Verified}, whoOptions{TXTResolver: staticTXTResolver{}})
+	if err != nil || out.Reason != "invalid_signature" || out.HumanID != nil || len(out.Chain) != 0 {
+		t.Fatalf("out %+v err %v", out, err)
 	}
 }

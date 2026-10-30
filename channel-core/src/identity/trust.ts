@@ -1,3 +1,4 @@
+import { readReceivedIdChain, type ReceivedIdChain } from "./received_id_chain.js";
 import * as ed from "@noble/ed25519";
 import { sha512 } from "@noble/hashes/sha2.js";
 import type { APIClient } from "../api/client.js";
@@ -158,6 +159,10 @@ export class SenderTrustManager {
     private readonly now: () => number = () => Date.now(),
     private readonly random: () => number = () => Math.random(),
   ) {}
+
+  verifyResponsibility(message: ReceivedIdChain, authenticated: boolean) {
+    return readReceivedIdChain(message, authenticated, this.registry.idStatus);
+  }
 
   async resolveTrustMetadata(
     verificationStatus: VerificationStatus | undefined,
