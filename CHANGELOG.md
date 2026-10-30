@@ -60,6 +60,13 @@
   status from its namespace's registry, and shows the nearest human, no
   human (none in its chain), unknown or unavailable, with the verifier's
   reason. It shows the chain only when the chain verifies.
+- **The app id `who` is reserved** for `aw who`, a stated narrowing: the
+  server refuses it at app registration, in app event types and on lookup,
+  and `aw plugin install` refuses an `aw-who` binary. The hosted Cloud had
+  zero uses of `who` in apps, registry entries, installs, event types,
+  emitted events, subscriptions and hooks when measured on 2026-10-30.
+  Self-hosted servers were not measured: one with an app `who` would no
+  longer be able to read it.
 
 - **Security:** did:key decoding refuses Ed25519 public keys that are small
   order, non-canonical or of mixed order, in Python (`awid.did`), Go
