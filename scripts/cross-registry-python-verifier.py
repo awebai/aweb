@@ -16,6 +16,11 @@ async def main():
             subject = {"id": case["ID"], "did_key": case["DIDKey"]}
             evidence = await client.id_chain_evidence(case["Bundle"], subject, domain=case["Domain"])
             result = verify_id_chain(case["Bundle"], subject=subject, evidence=evidence, domain=case["Domain"])
+            if case.get("Reason") == "revoked":
+                assert result == {"outcome": "unknown", "human_id": None, "identity_valid": False,
+                                  "kind": None, "reason": "revoked"}, result
+                print(f"PASS: Python outsider revoked {case['Kind']} {case['ID']}", flush=True)
+                continue
             assert result["identity_valid"] is True, result
             assert result["outcome"] == case["Outcome"], result
             assert result["human_id"] == (case["HumanID"] or None), result
