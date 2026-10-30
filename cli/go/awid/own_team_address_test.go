@@ -49,8 +49,11 @@ func newOwnTeamAddressFixture(t *testing.T) *ownTeamAddressFixture {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"message_id": "m1", "conversation_id": "c1", "session_id": "s1"})
+		case "/health":
+			http.NotFound(w, r)
 		default:
-			t.Fatalf("unexpected server path %s", r.URL.Path)
+			t.Errorf("unexpected server path %s", r.URL.Path)
+			http.NotFound(w, r)
 		}
 	}))
 	t.Cleanup(server.Close)
