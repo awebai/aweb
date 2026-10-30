@@ -16,6 +16,15 @@ def requires_registry_address_binding(row: Mapping[str, Any] | None) -> bool:
     return str((row or {}).get("identity_scope") or "").strip().lower() == "global"
 
 
+def local_identity_address_refusal(address: str) -> str:
+    """Why a full address does not reach a local identity outside its team."""
+    return (
+        f"{address} is a local identity: it has no registered address and is "
+        "reachable only from inside its own team, by alias. A global identity is "
+        "reachable by address once one is assigned."
+    )
+
+
 def verified_signed_payload_json(
     *,
     signed_payload: str | None,

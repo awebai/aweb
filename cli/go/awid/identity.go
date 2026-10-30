@@ -132,7 +132,14 @@ type ChainResolver struct {
 	Team                 *TeamRosterResolver
 }
 
+// Resolve answers identifier. An address in the selected team's own namespace
+// names a team member: the authenticated team roster answers it before AWID,
+// as it answers that member's alias.
 func (r *ChainResolver) Resolve(ctx context.Context, identifier string) (*ResolvedIdentity, error) {
+	return r.resolveTeamFirst(ctx, identifier, false)
+}
+
+func (r *ChainResolver) resolveIdentifier(ctx context.Context, identifier string) (*ResolvedIdentity, error) {
 	if _, _, ok := splitTeamMemberReference(identifier); ok && r.Team != nil {
 		return r.Team.Resolve(ctx, identifier)
 	}
@@ -189,9 +196,16 @@ func (r *ChainResolver) Resolve(ctx context.Context, identifier string) (*Resolv
 }
 
 func (r *ChainResolver) ResolveFresh(ctx context.Context, identifier string) (*ResolvedIdentity, error) {
+	return r.resolveTeamFirst(ctx, identifier, true)
+}
+
+// resolveTeamFirst answers a reference to a member of the selected team from
+// its authenticated roster. An own-namespace address the roster does not hold
+// is asked of AWID; every other identifier resolves as usual.
+func (r *ChainResolver) resolveTeamFirst(ctx context.Context, identifier string, forceRefresh bool) (*ResolvedIdentity, error) {
 	if r.Team != nil {
 		if _, _, ok := r.Team.reference(identifier); ok {
-			identity, err := r.Team.ResolveFresh(ctx, identifier)
+			identity, err := r.Team.resolve(ctx, identifier, forceRefresh)
 			if err == nil {
 				return identity, nil
 			}
@@ -199,12 +213,15 @@ func (r *ChainResolver) ResolveFresh(ctx context.Context, identifier string) (*R
 			_, _, projectedAddress := splitRegistryAddress(identifier)
 			statusCode, hasStatus := HTTPStatusCode(err)
 			if !qualifiedTeamMember && projectedAddress && hasStatus && statusCode == http.StatusNotFound && r.Registry != nil {
-				return r.Registry.ResolveFresh(ctx, identifier)
+				if forceRefresh {
+					return r.Registry.ResolveFresh(ctx, identifier)
+				}
+				return r.resolveIdentifier(ctx, identifier)
 			}
 			return nil, err
 		}
 	}
-	return r.Resolve(ctx, identifier)
+	return r.resolveIdentifier(ctx, identifier)
 }
 
 func registryMissAllowsPinFallback(err error) bool {
