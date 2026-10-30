@@ -79,3 +79,17 @@ def test_final_vector_names_include_the_isolated_authority_boundaries():
         'cached-status-age-60',
         'cached-status-age-61',
     } <= set(names)
+
+
+@pytest.mark.parametrize('change', ['missing', 'unrelated-parent', 'wrong-parent-key', 'wrong-child-key', 'wrong-dns-name', 'extra'])
+def test_delegation_must_bind_the_discovered_parent_to_the_child(change):
+    case = next(c for c in V['verification_cases'] if c['name'] == 'delegated-child-authorized')
+    bundle, subject, evidence, domain = inputs(case)
+    witness = evidence.status['namespace']['delegation']
+    if change == 'missing': del evidence.status['namespace']['delegation']
+    elif change == 'unrelated-parent': witness['parent_domain'] = 'other.example'
+    elif change == 'wrong-parent-key': witness['parent_controller_key'] = V['keys']['alice']['did_key']
+    elif change == 'wrong-child-key': witness['controller_key'] = V['keys']['alice']['did_key']
+    elif change == 'wrong-dns-name': evidence.namespace_authority['dns_name'] = '_awid.other.example'
+    elif change == 'extra': witness['unrecognized'] = True
+    assert verify_id_chain(bundle, subject=subject, evidence=evidence, domain=domain)['reason'] == 'evidence_unavailable'
