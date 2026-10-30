@@ -352,6 +352,39 @@ def human_issues_human(human):
     return public_case(home, record, kind="human", human=second["id"])
 
 
+def delegated_namespace():
+    """The child's own root is witnessed under alpha's inherited TXT."""
+    domain = "delegated.alpha.example.com"
+    cwd = "delegated-child"
+    (ROOT / cwd).mkdir()
+    command(["id", "namespace", "prepare-controller", "--domain", domain,
+             "--registry", "http://awid-a:8010", "--json"], cwd=cwd)
+    # Alpha exists by this point. The host registers this child with its
+    # parent's signature, without adding any child TXT record.
+    barrier("register-delegated-child")
+    created, prompts = command(["id", "create", "--name", "delegated-child", "--domain", domain,
+                                "--registry", "http://awid-a:8010", "--root-parent", "--json"], cwd=cwd)
+    assert created["root_parent"] and prompts == 0, created
+    assert_who(cwd, "", [dict(id=created["did_aw"], kind="agent")])
+    home = ROOT / cwd / ".aw"
+    record = yaml.safe_load((home / "identity.yaml").read_text())
+    record["did_key"], record["domain"] = record["did"], domain
+
+    # The same ancestor also resolves an unregistered sibling. Discovery
+    # alone must not admit it, and refusal must leave no agent behind.
+    missing = "absent.alpha.example.com"
+    (ROOT / "absent-child").mkdir()
+    command(["id", "namespace", "prepare-controller", "--domain", missing,
+             "--registry", "http://awid-a:8010", "--json"], cwd="absent-child")
+    command(["id", "create", "--name", "absent-child", "--domain", missing,
+             "--registry", "http://awid-a:8010", "--root-parent", "--json"],
+            cwd="absent-child", refusal="evidence_unavailable")
+    for filename in ("identity.yaml", "signing.key", "id-chain.json"):
+        assert not (ROOT / "absent-child/.aw" / filename).exists()
+    print("PASS: delegated child root creation and aw who verify without child TXT; missing sibling refuses before agent creation", flush=True)
+    return public_case(home, record, kind="agent")
+
+
 def main():
     assert not os.environ.get("AWID_SKIP_DNS_VERIFY")
     assert os.environ.get("DBUS_SESSION_BUS_ADDRESS")
@@ -418,6 +451,7 @@ def main():
         cases.append(public_case(home, record, kind="agent", human=parent))
     if os.environ.get("AWEB_CROSS_REGISTRY_CSR") == "1":
         cases.append(csr_root())
+    cases.append(delegated_namespace())
     (ROOT / "journey-public.json").write_text(json.dumps(cases))
     (ROOT / "alice-create.json").write_text(json.dumps(resumed))
     (ROOT / "bob-create.json").write_text(json.dumps(bob))
