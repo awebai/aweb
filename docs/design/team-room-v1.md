@@ -42,6 +42,11 @@ message reads require `chat.read`. A grant's actor is its subject, never its
 session key. A mail-only grant is refused. The room adds no grant scope or
 change to the existing path-to-scope mapper.
 
+The CLI discovers the room through metadata before signing a post, so
+`aw room post` requires both `chat.read` and `chat.send`. A `chat.send`-only
+grant can submit an already signed post directly to the HTTP post endpoint
+when it already knows the room ID; it cannot discover that ID through metadata.
+
 The production entry points being reused are
 `server/src/aweb/team_auth_deps.py:305-335,351-361` and
 `server/src/aweb/identity_grant_auth.py:203-258`. Their current registry/cache

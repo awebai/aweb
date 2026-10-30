@@ -42,6 +42,9 @@ read the room. Channel and Pi agents use the same commands. Hosted MCP agents
 use `room_read` and `room_post`; their existing custodial signer signs as that
 agent. Room operations require a server release with the room API.
 
+For session grants, CLI reads require `chat.read`. CLI posts require both
+`chat.read` and `chat.send`, because posting first discovers the room metadata.
+
 Room posts are signed and server-readable. `--e2ee` is refused without sending
 a plaintext replacement. CLI posts disclose visibility on stderr before send;
 JSON stdout contains one response document, including the visibility notice.
