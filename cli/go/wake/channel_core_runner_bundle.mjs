@@ -10391,6 +10391,7 @@ function rejectItem(item, error) {
 function createTerminalAwakeningHandler(options) {
   const maxAmbient = options.maxAmbient ?? DEFAULT_MAX_AMBIENT;
   const ambient = /* @__PURE__ */ new Map();
+  const heldNotices = /* @__PURE__ */ new Set();
   let ambientDropped = 0;
   let inputTail = Promise.resolve();
   function rejectAll(error) {
@@ -10403,7 +10404,15 @@ function createTerminalAwakeningHandler(options) {
   }
   const handler = (async (awakening, receivingIdentityHome) => {
     throwIfAborted2(options.signal);
-    if (awakening.deliveryIntent === "ambient") {
+    let heldReason;
+    if (awakening.kind === "mail" || awakening.kind === "chat") {
+      if (awakening.meta.decrypted === "false") {
+        heldReason = "could not decrypt";
+      } else if (!isTrustedVerificationStatus(awakening.meta.trust_status)) {
+        heldReason = "unverified sender";
+      }
+    }
+    if (awakening.deliveryIntent === "ambient" && !heldReason) {
       return new Promise((resolve2, reject) => {
         const key = ambientKey(awakening);
         const previous = ambient.get(key);
@@ -10421,14 +10430,16 @@ function createTerminalAwakeningHandler(options) {
         }
       });
     }
-    const delivery = inputTail.then(() => present(awakening, receivingIdentityHome));
+    const delivery = inputTail.then(() => present(awakening, receivingIdentityHome, heldReason));
     inputTail = delivery.catch(() => {
     });
     return delivery;
   });
-  async function present(awakening, receivingIdentityHome) {
+  async function present(awakening, receivingIdentityHome, heldReason) {
     throwIfAborted2(options.signal);
     if (options.isPaused?.()) throw new Error("terminal delivery is paused");
+    const heldKey = JSON.stringify([receivingIdentityHome, awakening.kind, awakening.meta.message_id, heldReason]);
+    if (heldReason && heldNotices.has(heldKey)) throw new Error(`terminal delivery held: ${heldReason}`);
     const ambientBatch = [...ambient.values()];
     let inspection;
     try {
@@ -10444,9 +10455,16 @@ function createTerminalAwakeningHandler(options) {
       throw new TerminalInactiveError(state);
     }
     if (options.isPaused?.()) throw new Error("terminal delivery is paused");
-    const text2 = [...ambientBatch, { awakening, receivingIdentityHome }].map((item) => textForTerminalAwakening(item.awakening, item.receivingIdentityHome)).join("\n\n---\n\n");
+    const quotedHome = receivingIdentityHome === void 0 ? void 0 : quotedIdentityHome(receivingIdentityHome);
+    const command = quotedHome ? `aw --identity-home ${quotedHome}` : "aw";
+    const text2 = heldReason ? `[aweb] 1 message held (${heldReason}). Run: ${command} ${awakening.kind === "mail" ? "mail inbox" : "chat pending"}` : [...ambientBatch, { awakening, receivingIdentityHome }].map((item) => textForTerminalAwakening(item.awakening, item.receivingIdentityHome)).join("\n\n---\n\n");
     throwIfAborted2(options.signal);
     await options.session.input(options.home, text2);
+    if (heldReason) {
+      heldNotices.add(heldKey);
+      if (heldNotices.size > 1e3) heldNotices.delete(heldNotices.values().next().value);
+      throw new Error(`terminal delivery held: ${heldReason}`);
+    }
     for (const item of ambientBatch) {
       if (ambient.get(item.key) === item) ambient.delete(item.key);
       item.resolve();
