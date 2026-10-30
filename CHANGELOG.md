@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- AWID and aweb server: an alias conflict now answers 409 with a coded
+  detail, `{"code": "alias_active", "message": ...}`, the shape AWID already
+  uses for `certificate_already_registered`. The server's connect sends
+  `alias_mismatch` when the key is already bound to another alias. aw reports
+  `alias_active` as the `--json` error code `alias_conflict`.
+
 - aw: with `--json`, a failed command prints one error envelope on stdout,
   `{"error": {"code", "message", "http_status", "detail"}}`. `code` is the
   stable contract; stderr wording is not. stderr and exit codes do not
