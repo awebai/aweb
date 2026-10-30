@@ -1610,7 +1610,7 @@ func formatJSONOutput(v any) string {
 }
 
 func printJSON(v any) {
-	fmt.Println(formatJSONOutput(v))
+	fmt.Fprintln(commandStdout, formatJSONOutput(v))
 }
 
 func addJSONNameCompat(v any) any {
@@ -1645,7 +1645,7 @@ func writeOutput(w io.Writer, v any, formatter func(v any) string) error {
 }
 
 func printOutput(v any, formatter func(v any) string) {
-	_ = writeOutput(os.Stdout, v, formatter)
+	_ = writeOutput(commandStdout, v, formatter)
 }
 
 func parseTimeBestEffort(value string) (time.Time, bool) {
