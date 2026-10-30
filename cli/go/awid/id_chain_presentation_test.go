@@ -31,6 +31,10 @@ func TestClientPresentsIDChainOutsideSignedRequestBody(t *testing.T) {
 	}
 	var headers []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages" {
+			http.NotFound(w, r)
+			return
+		}
 		headers = append(headers, r.Header.Get("X-AWID-ID-Chain"))
 		b, _ := io.ReadAll(r.Body)
 		if string(b) != `{"body":"unchanged"}` {
