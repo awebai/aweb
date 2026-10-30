@@ -221,12 +221,27 @@ func ImportIDCertificateResponse(request map[string]any, raw []byte, evidence *I
 	if response["request_id"] != r["request_id"] {
 		return nil, mismatch
 	}
-	chain := response["chain"].(map[string]any)
+	return importIDCertificateChain(r, response["chain"].(map[string]any), evidence, domain)
+}
+
+// ImportIDCertificateChain applies the response import's existing binding and
+// issuer checks to a creation response's public chain. expected contains the
+// independently selected id, domain, parent and kind. This is pre-registration
+// validation; a global leaf still needs registration and full verification.
+func ImportIDCertificateChain(expected, chain map[string]any, evidence *IDChainEvidence, domain string) (*IDCertificateImport, error) {
+	if _, err := EncodeIDChainHeader(chain); err != nil {
+		return nil, err
+	}
+	return importIDCertificateChain(expected, chain, evidence, domain)
+}
+
+func importIDCertificateChain(expected, chain map[string]any, evidence *IDChainEvidence, domain string) (*IDCertificateImport, error) {
+	mismatch := idCertificateRefusal("request_binding_mismatch")
 	certificates := chain["certificates"].([]any)
 	child := certificates[len(certificates)-1].(map[string]any)
 	c := child["certificate"].(map[string]any)
 	for _, field := range []string{"id", "domain", "parent", "kind"} {
-		if !reflect.DeepEqual(c[field], r[field]) {
+		if !reflect.DeepEqual(c[field], expected[field]) {
 			return nil, mismatch
 		}
 	}

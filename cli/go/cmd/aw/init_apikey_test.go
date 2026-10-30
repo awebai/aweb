@@ -93,6 +93,9 @@ func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveAPIKeyCreationTeamRead(w, r, "backend:acme.com") {
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/api/v1/apps/") {
 			cert := requireCertificateAuthForTest(t, r)
 			body, err := io.ReadAll(r.Body)
@@ -327,6 +330,9 @@ func TestInitAPIKeyGlobalNameCreatesSelfCustodialGlobalCLIIdentity(t *testing.T)
 	var registeredDIDKey string
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveAPIKeyCreationTeamRead(w, r, "default:alice.aweb.ai") {
+			return
+		}
 		switch {
 		case r.URL.Path == "/v1/did":
 			requestOrder = append(requestOrder, "register_identity")
@@ -519,6 +525,9 @@ func TestRunAPIKeyBootstrapInitGlobalResumesPartialAfterWorkspaceInitFailure(t *
 	var workspaceInitCalls int
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveAPIKeyCreationTeamRead(w, r, "default:alice.aweb.ai") {
+			return
+		}
 		switch {
 		case r.URL.Path == "/v1/did":
 			var body map[string]any
@@ -703,6 +712,9 @@ func TestRunAPIKeyBootstrapInitRegisterIdentityFailureShortCircuitsWorkspaceInit
 	registerCalls := 0
 	initCalls := 0
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveAPIKeyCreationTeamRead(w, r, "default:alice.aweb.ai") {
+			return
+		}
 		switch r.URL.Path {
 		case "/v1/did":
 			registerCalls++
@@ -799,6 +811,9 @@ func TestRunAPIKeyBootstrapInitRejectsResponseDIDMismatch(t *testing.T) {
 
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveAPIKeyCreationTeamRead(w, r, "backend:acme.com") {
+			return
+		}
 		switch r.URL.Path {
 		case "/api/v1/workspaces/init":
 			var body map[string]any
@@ -857,6 +872,9 @@ func TestRunAPIKeyBootstrapInitRejectsResponseIdentityScopeMismatch(t *testing.T
 
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveAPIKeyCreationTeamRead(w, r, "default:alice.aweb.ai") {
+			return
+		}
 		switch r.URL.Path {
 		case "/api/v1/workspaces/init":
 			var body map[string]any
@@ -916,6 +934,9 @@ func TestRunAPIKeyBootstrapInitRejectsTamperedTeamCertificate(t *testing.T) {
 
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveAPIKeyCreationTeamRead(w, r, "backend:acme.com") {
+			return
+		}
 		switch r.URL.Path {
 		case "/api/v1/workspaces/init":
 			var body map[string]any
@@ -984,6 +1005,9 @@ func TestRunAPIKeyBootstrapInitRejectsMissingOrNonSelfCustody(t *testing.T) {
 
 			var server *httptest.Server
 			server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+				if serveAPIKeyCreationTeamRead(w, r, "backend:acme.com") {
+					return
+				}
 				switch r.URL.Path {
 				case "/api/v1/workspaces/init":
 					var body map[string]any
@@ -1043,6 +1067,9 @@ func TestRunAPIKeyBootstrapInitRejectsOverlongWorkspaceAPIKey(t *testing.T) {
 
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveAPIKeyCreationTeamRead(w, r, "backend:acme.com") {
+			return
+		}
 		switch r.URL.Path {
 		case "/api/v1/workspaces/init":
 			var body map[string]any
@@ -1149,6 +1176,9 @@ func TestRunAPIKeyBootstrapInitDoesNotSendRepoOrigin(t *testing.T) {
 	var registeredDIDKey string
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveAPIKeyCreationTeamRead(w, r, "default:ama.aweb.ai") {
+			return
+		}
 		switch {
 		case r.URL.Path == "/v1/did":
 			var body map[string]any
@@ -1261,6 +1291,9 @@ func TestRunAPIKeyBootstrapInitGlobalRollsBackOnConnectFailureAndResumes(t *test
 	var connectCalls int
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveAPIKeyCreationTeamRead(w, r, "default:ama.aweb.ai") {
+			return
+		}
 		switch {
 		case r.URL.Path == "/v1/did":
 			var body map[string]any
@@ -1430,6 +1463,9 @@ func TestRunAPIKeyBootstrapInitGlobalRefusesAlreadyRegisteredName(t *testing.T) 
 	var requests atomic.Int32
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveAPIKeyCreationTeamRead(w, r, "default:ama.aweb.ai") {
+			return
+		}
 		requests.Add(1)
 		switch {
 		case r.URL.Path == "/v1/did":
@@ -1539,4 +1575,14 @@ func TestRunAPIKeyBootstrapInitGlobalRefusesAlreadyRegisteredName(t *testing.T) 
 			t.Fatal("rejected-state retry reached network")
 		}
 	}
+}
+
+// Existing constructor fixtures represent older servers that omit ID-tree
+// response fields. The independently selected team read is still required.
+func serveAPIKeyCreationTeamRead(w http.ResponseWriter, r *http.Request, canonical string) bool {
+	if r.Method != "GET" || r.URL.Path != "/api/v1/teams/current" {
+		return false
+	}
+	json.NewEncoder(w).Encode(map[string]any{"team_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": canonical})
+	return true
 }

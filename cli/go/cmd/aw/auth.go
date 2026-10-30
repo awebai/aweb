@@ -168,8 +168,9 @@ func (e *cliOAuthError) Error() string {
 }
 
 type cliAuthAccount struct {
-	ID     string `json:"id"`
-	Handle string `json:"handle,omitempty"`
+	ID              string              `json:"id"`
+	Handle          string              `json:"handle,omitempty"`
+	HumanIdentities []hostedHumanParent `json:"human_identities"`
 }
 
 type cliAuthStatusOutput struct {

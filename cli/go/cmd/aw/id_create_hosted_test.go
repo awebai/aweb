@@ -21,23 +21,16 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
-func TestHostedIdentityCreateRetainsKeyAcrossLostResponse(t *testing.T) {
+func TestOwnerHostedIdentityCreateRetainsKeyAcrossLostResponse(t *testing.T) {
 	for _, mode := range []string{"team_and_contacts", "contacts_only"} {
-		t.Run(mode, func(t *testing.T) { testHostedIdentityCreateRetainsKeyAcrossLostResponse(t, mode) })
+		t.Run(mode, func(t *testing.T) { testHostedIdentityCreateWithAuthority(t, mode, true) })
 	}
 }
-func TestOwnerPrincipalHostedIdentityCreate(t *testing.T) {
-	testHostedIdentityCreateWithAuthority(t, "contacts_only", true)
-}
-func testHostedIdentityCreateRetainsKeyAcrossLostResponse(t *testing.T, mode string) {
-	testHostedIdentityCreateWithAuthority(t, mode, false)
+func TestHostedIdentityCreateRefusesMissingHumanMetadata(t *testing.T) {
+	testHostedIdentityCreateWithAuthority(t, "contacts_only", false)
 }
 func TestHostedIdentityCreateCanonicalTeamSelector(t *testing.T) {
-	for _, owner := range []bool{false, true} {
-		t.Run(map[bool]string{false: "human", true: "owner"}[owner], func(t *testing.T) {
-			testHostedIdentityCreateWithSelector(t, "contacts_only", owner, "machine:chosen.example")
-		})
-	}
+	testHostedIdentityCreateWithSelector(t, "contacts_only", true, "machine:chosen.example")
 }
 func testHostedIdentityCreateWithAuthority(t *testing.T, mode string, ownerMode bool) {
 	testHostedIdentityCreateWithSelector(t, mode, ownerMode, "786a02e4-6a72-44f1-a722-bef232c49a97")
@@ -230,6 +223,16 @@ func testHostedIdentityCreateWithSelector(t *testing.T, mode string, ownerMode b
 		cmd.Stdout, cmd.Stderr = &out, &diagnostic
 		err := cmd.Run()
 		return out.Bytes(), diagnostic.Bytes(), err
+	}
+	if !ownerMode {
+		_, diagnostic, err := run("chosen")
+		if err == nil || !strings.Contains(string(diagnostic), "registered human evidence unavailable") || createCalls != 0 || registerCalls != 0 {
+			t.Fatalf("missing independent parent caused creation: %v; %s", err, diagnostic)
+		}
+		if _, err := os.Stat(filepath.Join(principal, "hosted-identity-create.json")); !os.IsNotExist(err) {
+			t.Fatal("unavailable human metadata left a child operation")
+		}
+		return
 	}
 	_, diagnostic, err := run("chosen")
 	if err == nil || createCalls != 1 {

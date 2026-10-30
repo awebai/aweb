@@ -74,8 +74,8 @@ func init() {
 	idCreateCmd.Flags().StringVar(&idCreateDomain, "domain", "", "Namespace domain for the global identity address")
 	idCreateCmd.Flags().StringVar(&idCreateRegistryURL, "registry", "", "Registry origin override (default: api.awid.ai)")
 	idCreateCmd.Flags().BoolVar(&idCreateSkipDNSVerify, "skip-dns-verify", false, "Skip the DNS TXT verification prompt and lookup")
-	idCreateCmd.Flags().StringVar(&idCreateHumanParent, "human-parent", "", "did:aw of the human on this machine who issues the agent's certificate")
-	idCreateCmd.Flags().BoolVar(&idCreateRootParent, "root-parent", false, "Have this machine's namespace controller issue the agent's certificate (an agent with no human)")
+	idCreateCmd.Flags().StringVar(&idCreateHumanParent, "human-parent", "", "did:aw of the issuing human (local key, or a registered account human with --org)")
+	idCreateCmd.Flags().BoolVar(&idCreateRootParent, "root-parent", false, "Have this machine's namespace controller issue a humanless agent (BYOT only)")
 	identityCmd.AddCommand(idCreateCmd)
 }
 

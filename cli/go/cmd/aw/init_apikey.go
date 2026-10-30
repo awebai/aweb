@@ -29,17 +29,19 @@ const maxWorkspaceAPIKeyLength = 4096
 const apiKeyPartialInitVersion = 1
 
 type apiKeyInitRequest struct {
-	WorkingDir   string
-	IdentityHome string
-	AwebURL      string
-	RegistryURL  string
-	APIKey       string
-	Name         string
-	Alias        string
-	Role         string
-	HumanName    string
-	AgentType    string
-	Global       bool
+	WorkingDir      string
+	IdentityHome    string
+	AwebURL         string
+	RegistryURL     string
+	APIKey          string
+	Name            string
+	Alias           string
+	Role            string
+	HumanName       string
+	AgentType       string
+	Global          bool
+	SelectedTeamID  string
+	CanonicalTeamID string
 	// InboundMode is "open", "team_and_contacts" or "contacts_only" when --inbound-mode is
 	// set on a global init, "" otherwise. The runner forwards it to
 	// /api/v1/workspaces/init only when non-empty; the server defaults
@@ -48,19 +50,21 @@ type apiKeyInitRequest struct {
 }
 
 type apiKeyBootstrapRequest struct {
-	DID           string `json:"did"`
-	PublicKey     string `json:"public_key"`
-	Name          string `json:"name,omitempty"`
-	Alias         string `json:"alias,omitempty"`
-	Custody       string `json:"custody"`
-	RoleName      string `json:"role_name,omitempty"`
-	HumanName     string `json:"human_name,omitempty"`
-	AgentType     string `json:"agent_type,omitempty"`
-	IdentityScope string `json:"identity_scope"`
-	InboundMode   string `json:"inbound_mode,omitempty"`
+	IDTree        *awid.IDTreeCreationRequest `json:"id_tree,omitempty"`
+	DID           string                      `json:"did"`
+	PublicKey     string                      `json:"public_key"`
+	Name          string                      `json:"name,omitempty"`
+	Alias         string                      `json:"alias,omitempty"`
+	Custody       string                      `json:"custody"`
+	RoleName      string                      `json:"role_name,omitempty"`
+	HumanName     string                      `json:"human_name,omitempty"`
+	AgentType     string                      `json:"agent_type,omitempty"`
+	IdentityScope string                      `json:"identity_scope"`
+	InboundMode   string                      `json:"inbound_mode,omitempty"`
 }
 
 type apiKeyBootstrapResponse struct {
+	awid.IDTreeCreationResponse
 	ServerURL     string `json:"server_url"`
 	TeamCert      string `json:"team_cert"`
 	Alias         string `json:"alias"`
@@ -74,17 +78,22 @@ type apiKeyBootstrapResponse struct {
 }
 
 type apiKeyPartialInitState struct {
-	Version       int    `yaml:"version"`
-	DIDKey        string `yaml:"did_key"`
-	StableID      string `yaml:"stable_id"`
-	SigningKeyB64 string `yaml:"signing_key_b64"`
-	Name          string `yaml:"name"`
-	AwebURL       string `yaml:"aweb_url"`
-	RegistryURL   string `yaml:"registry_url"`
-	TeamIDHint    string `yaml:"team_id_hint,omitempty"`
-	RoleName      string `yaml:"role_name,omitempty"`
-	HumanName     string `yaml:"human_name,omitempty"`
-	AgentType     string `yaml:"agent_type,omitempty"`
+	IDTree          *hostedIDTreeRecovery `yaml:"id_tree,omitempty"`
+	IdentityScope   string                `yaml:"identity_scope,omitempty"`
+	Alias           string                `yaml:"alias,omitempty"`
+	InboundMode     string                `yaml:"inbound_mode,omitempty"`
+	CanonicalTeamID string                `yaml:"canonical_team_id,omitempty"`
+	Version         int                   `yaml:"version"`
+	DIDKey          string                `yaml:"did_key"`
+	StableID        string                `yaml:"stable_id"`
+	SigningKeyB64   string                `yaml:"signing_key_b64"`
+	Name            string                `yaml:"name"`
+	AwebURL         string                `yaml:"aweb_url"`
+	RegistryURL     string                `yaml:"registry_url"`
+	TeamIDHint      string                `yaml:"team_id_hint,omitempty"`
+	RoleName        string                `yaml:"role_name,omitempty"`
+	HumanName       string                `yaml:"human_name,omitempty"`
+	AgentType       string                `yaml:"agent_type,omitempty"`
 	// Reachability is a legacy partial-init field. It is accepted on read for
 	// one-release compatibility but ignored and never sent to cloud.
 	Reachability      string `yaml:"reachability,omitempty"`
@@ -122,6 +131,16 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 		return connectOutput{}, err
 	}
 
+	lockPath := apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome) + ".lock"
+	if err := pathpreflight.PreflightFile(lockPath, "API-key creation recovery lock", pathpreflight.Options{}); err != nil {
+		return connectOutput{}, err
+	}
+	lock, err := awconfig.TryLockExclusive(lockPath)
+	if err != nil {
+		return connectOutput{}, fmt.Errorf("API-key creation already in progress or recovery lock unavailable: %w", err)
+	}
+	defer lock.Close()
+
 	// Cloud contract: global uses name (not alias), local uses alias (not name).
 	name := strings.TrimSpace(req.Name)
 	alias := strings.TrimSpace(req.Alias)
@@ -132,14 +151,26 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 		alias = "" // cloud rejects alias for global identity bootstrap
 	}
 
-	var registry *awid.RegistryClient
-	if req.Global {
-		var regErr error
-		registry, regErr = newRegistryClientWithPreferredBaseURL(strings.TrimSpace(req.RegistryURL))
-		if regErr != nil {
-			return connectOutput{}, regErr
+	registry, err := newRegistryClientWithPreferredBaseURL(strings.TrimSpace(req.RegistryURL))
+	if err != nil {
+		return connectOutput{}, err
+	}
+	if previous, loadErr := loadAPIKeyPartialInit(apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome)); loadErr != nil {
+		return connectOutput{}, loadErr
+	} else if previous != nil {
+		original := req
+		original.SelectedTeamID, original.CanonicalTeamID = previous.TeamIDHint, previous.CanonicalTeamID
+		if err := validateAPIKeyPartialInitContext(apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome), previous, original, name, registry.DefaultRegistryURL); err != nil {
+			return connectOutput{}, err
 		}
 	}
+	readContext, readCancel := commandAPIContext(nil)
+	selectedTeam, err := readAPIKeyCreationTeam(readContext, req.AwebURL, req.APIKey)
+	readCancel()
+	if err != nil {
+		return connectOutput{}, err
+	}
+	req.SelectedTeamID, req.CanonicalTeamID = selectedTeam.TeamID, selectedTeam.CanonicalTeamID
 
 	material, err := prepareAPIKeyBootstrapIdentity(req, name, registry)
 	if err != nil {
@@ -147,7 +178,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 	}
 	// Only failures with the original resumable material receive retry guidance.
 	// A rejected server identity must be reconciled, never selected automatically.
-	resumable := req.Global
+	resumable := true
 	defer func() {
 		if resultErr != nil && resumable {
 			if info, err := os.Lstat(apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome)); err == nil && info.Mode().IsRegular() {
@@ -155,6 +186,10 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 			}
 		}
 	}()
+	state, err := loadAPIKeyPartialInit(apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome))
+	if err != nil {
+		return connectOutput{}, err
+	}
 	pub := material.PublicKey
 	signingKey := material.SigningKey
 	didKey := material.DIDKey
@@ -178,6 +213,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 	}
 
 	resp, err := postAPIKeyWorkspaceInit(context.Background(), strings.TrimSpace(req.AwebURL), strings.TrimSpace(req.APIKey), apiKeyBootstrapRequest{
+		IDTree:        state.IDTree.request(nil),
 		DID:           didKey,
 		PublicKey:     base64.StdEncoding.EncodeToString(pub),
 		Name:          name,
@@ -226,6 +262,21 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 		return connectOutput{}, fmt.Errorf("workspace init response is missing api_key")
 	}
 
+	if cert.Team != selectedTeam.CanonicalTeamID {
+		return connectOutput{}, errors.New("workspace creation returned a different team than the API key selected")
+	}
+	if err := state.IDTree.retainResponse(resp.IDTreeCreationResponse); err != nil {
+		return connectOutput{}, err
+	}
+	if err := saveAPIKeyPartialInit(req.WorkingDir, state, req.IdentityHome); err != nil {
+		return connectOutput{}, err
+	}
+	treeContext, treeCancel := commandAPIContext(nil)
+	responsibility, treeErr := finishHostedIDTree(treeContext, state.IDTree, resp.IDTreeCreationResponse, workspaceTeamIdentityMaterial{SigningKey: signingKey, DIDKey: didKey, StableID: localStableID, IdentityScope: initIdentityScopeValue(req.Global)}, req.IdentityHome, registry, nil)
+	treeCancel()
+	if treeErr != nil {
+		return connectOutput{}, fmt.Errorf("hosted membership created; attribution installation incomplete: %w", treeErr)
+	}
 	snapshot, err := snapshotAwTree(req.WorkingDir, req.IdentityHome)
 	if err != nil {
 		return connectOutput{}, err
@@ -255,10 +306,17 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 			return connectOutput{}, err
 		}
 	}
-	if global {
-		if err := removeAPIKeyPartialInit(req.WorkingDir, req.IdentityHome); err != nil {
-			return connectOutput{}, fmt.Errorf("remove partial API-key init state: %w", err)
+	if err := removeAPIKeyPartialInit(req.WorkingDir, req.IdentityHome); err != nil {
+		return connectOutput{}, fmt.Errorf("remove partial API-key init state: %w", err)
+	}
+	out.IDRegistration = "unknown"
+	out.Responsibility = &awid.IDChainResult{Outcome: "unknown", Reason: "legacy_no_chain"}
+	if responsibility != nil {
+		out.IDRegistration = "registered"
+		if !global {
+			out.IDRegistration = "not_required"
 		}
+		out.Responsibility = responsibility
 	}
 	return out, nil
 }
@@ -348,23 +406,11 @@ func prepareAPIKeyBootstrapIdentity(
 	if err := refuseRejectedAPIKeyPartialInit(apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome)); err != nil {
 		return apiKeyBootstrapIdentityMaterial{}, err
 	}
-	if !req.Global {
-		partialPath := apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome)
-		if err := preflightAPIKeyPartialInit(partialPath); err != nil {
-			return apiKeyBootstrapIdentityMaterial{}, err
-		}
-		if _, err := os.Stat(partialPath); err == nil {
-			return apiKeyBootstrapIdentityMaterial{}, usageError(
-				"found partial global API-key init state at %s; retry the global init or remove the file explicitly",
-				partialPath,
-			)
-		} else if !os.IsNotExist(err) {
-			return apiKeyBootstrapIdentityMaterial{}, err
-		}
-		return generateAPIKeyBootstrapIdentity()
-	}
-	if registry == nil {
-		return apiKeyBootstrapIdentityMaterial{}, fmt.Errorf("identity registry client is required for global API-key bootstrap")
+	registryURL := ""
+	if registry != nil {
+		registryURL = registry.DefaultRegistryURL
+	} else if req.Global {
+		return apiKeyBootstrapIdentityMaterial{}, errors.New("identity registry client is required for global API-key bootstrap")
 	}
 
 	path := apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome)
@@ -373,8 +419,17 @@ func prepareAPIKeyBootstrapIdentity(
 		return apiKeyBootstrapIdentityMaterial{}, err
 	}
 	if state != nil {
-		if err := validateAPIKeyPartialInitContext(path, state, req, name, registry.DefaultRegistryURL); err != nil {
+		if err := validateAPIKeyPartialInitContext(path, state, req, name, registryURL); err != nil {
 			return apiKeyBootstrapIdentityMaterial{}, err
+		}
+		if state.IDTree == nil {
+			state.IDTree, err = newAPIKeyCreationRecovery(req)
+			if err != nil {
+				return apiKeyBootstrapIdentityMaterial{}, err
+			}
+			if err := saveAPIKeyPartialInit(req.WorkingDir, state, req.IdentityHome); err != nil {
+				return apiKeyBootstrapIdentityMaterial{}, err
+			}
 		}
 		return materialFromAPIKeyPartialInit(path, state)
 	}
@@ -383,7 +438,11 @@ func prepareAPIKeyBootstrapIdentity(
 	if err != nil {
 		return apiKeyBootstrapIdentityMaterial{}, err
 	}
-	state, err = newAPIKeyPartialInitState(req, name, registry.DefaultRegistryURL, material)
+	state, err = newAPIKeyPartialInitState(req, name, registryURL, material)
+	if err != nil {
+		return apiKeyBootstrapIdentityMaterial{}, err
+	}
+	state.IDTree, err = newAPIKeyCreationRecovery(req)
 	if err != nil {
 		return apiKeyBootstrapIdentityMaterial{}, err
 	}
@@ -529,13 +588,17 @@ func newAPIKeyPartialInitState(
 	}
 	return &apiKeyPartialInitState{
 		Version:           apiKeyPartialInitVersion,
+		IdentityScope:     initIdentityScopeValue(req.Global),
+		Alias:             strings.TrimSpace(req.Alias),
+		InboundMode:       strings.TrimSpace(req.InboundMode),
+		CanonicalTeamID:   req.CanonicalTeamID,
 		DIDKey:            material.DIDKey,
 		StableID:          material.StableID,
 		SigningKeyB64:     base64.StdEncoding.EncodeToString([]byte(material.SigningKey)),
 		Name:              strings.TrimSpace(name),
 		AwebURL:           awebURL,
 		RegistryURL:       strings.TrimSpace(registryURL),
-		TeamIDHint:        "",
+		TeamIDHint:        req.SelectedTeamID,
 		RoleName:          strings.TrimSpace(req.Role),
 		HumanName:         strings.TrimSpace(req.HumanName),
 		AgentType:         strings.TrimSpace(req.AgentType),
@@ -585,6 +648,23 @@ func validateAPIKeyPartialInitContext(
 		return err
 	}
 	var mismatches []string
+	scope := state.IdentityScope
+	if scope == "" {
+		scope = awid.IdentityModeGlobal
+	}
+	if scope != expected.IdentityScope {
+		mismatches = append(mismatches, "identity_scope differs (partial global/local init)")
+	}
+	if state.Alias != expected.Alias {
+		mismatches = append(mismatches, "alias differs")
+	}
+	if state.InboundMode != expected.InboundMode {
+		mismatches = append(mismatches, "inbound_mode differs")
+	}
+	if state.TeamIDHint != expected.TeamIDHint || state.CanonicalTeamID != expected.CanonicalTeamID {
+		mismatches = append(mismatches, "selected team or namespace differs")
+	}
+
 	if state.Name != expected.Name {
 		mismatches = append(mismatches, fmt.Sprintf("name %q != %q", state.Name, expected.Name))
 	}
@@ -873,4 +953,29 @@ func parseWorkspaceInitIdentityKeyMismatch(body []byte) (workspaceInitIdentityKe
 		return workspaceInitIdentityKeyMismatch{}, false
 	}
 	return workspaceInitIdentityKeyMismatch{Alias: strings.TrimSpace(detail.Alias), StrandedNamespace: strings.TrimSpace(detail.StrandedNamespace)}, true
+}
+
+func (response *apiKeyBootstrapResponse) UnmarshalJSON(raw []byte) error {
+	type plain apiKeyBootstrapResponse
+	if err := json.Unmarshal(raw, (*plain)(response)); err != nil {
+		return err
+	}
+	tree, err := awid.DecodeIDTreeCreationResponse(raw)
+	if err != nil {
+		return err
+	}
+	response.IDTreeCreationResponse = tree
+	return nil
+}
+
+func newAPIKeyCreationRecovery(req apiKeyInitRequest) (*hostedIDTreeRecovery, error) {
+	association := hostedIdentityContext{}
+	if req.CanonicalTeamID != "" {
+		domain, _, err := awid.ParseTeamID(req.CanonicalTeamID)
+		if err != nil {
+			return nil, err
+		}
+		association.Domain, association.ParentKind, association.ParentID = domain, "namespace", domain
+	}
+	return newHostedIDTreeRecovery(association)
 }

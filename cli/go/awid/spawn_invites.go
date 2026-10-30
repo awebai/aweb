@@ -32,6 +32,7 @@ type SpawnCreateInviteResponse struct {
 }
 
 type SpawnAcceptInviteRequest struct {
+	IDTree             *IDTreeCreationRequest           `json:"id_tree,omitempty"`
 	Token              string                           `json:"token"`
 	Alias              string                           `json:"alias,omitempty"`
 	Name               string                           `json:"name,omitempty"`
@@ -46,6 +47,7 @@ type SpawnAcceptInviteRequest struct {
 }
 
 type SpawnAcceptInviteResponse struct {
+	IDTreeCreationResponse
 	OrgID               string `json:"org_id,omitempty"`
 	OrgSlug             string `json:"org_slug,omitempty"`
 	TeamID              string `json:"team_id"`
@@ -128,4 +130,17 @@ func (c *Client) AcceptSpawnInvite(ctx context.Context, req *SpawnAcceptInviteRe
 		return nil, err
 	}
 	return &out, nil
+}
+
+func (response *SpawnAcceptInviteResponse) UnmarshalJSON(raw []byte) error {
+	type plain SpawnAcceptInviteResponse
+	if err := json.Unmarshal(raw, (*plain)(response)); err != nil {
+		return err
+	}
+	tree, err := DecodeIDTreeCreationResponse(raw)
+	if err != nil {
+		return err
+	}
+	response.IDTreeCreationResponse = tree
+	return nil
 }
