@@ -1089,6 +1089,9 @@ func TestTeamHumanCreateAPIKeyToleratesAPISuffixedAwebURL(t *testing.T) {
 			var initPaths []string
 			var server *httptest.Server
 			server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+				if serveAPIKeyCreationTeamRead(w, r, "backend:acme.com") {
+					return
+				}
 				switch r.URL.Path {
 				case "/api/v1/workspaces/init":
 					initPaths = append(initPaths, r.URL.Path)
@@ -1168,6 +1171,9 @@ func TestTeamHumanCreateRootOperatorDefaultsToTeamName(t *testing.T) {
 	var gotInitAlias string
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveAPIKeyCreationTeamRead(w, r, "backend:acme.com") {
+			return
+		}
 		switch r.URL.Path {
 		case "/api/v1/workspaces/init":
 			var body map[string]any
@@ -1398,6 +1404,9 @@ func TestTeamHumanAddAPIKeyNoActiveTeamBootstrapsMaterializesAndStartsInCallerTm
 	var initBody map[string]any
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveAPIKeyCreationTeamRead(w, r, "default:launch.aweb.ai") {
+			return
+		}
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/workspaces/init":
 			initCalls++
@@ -1507,6 +1516,9 @@ func TestTeamHumanAddAPIKeyNoActiveTeamBootstrapsGlobalThroughWorkspaceInit(t *t
 	var registeredDIDKey string
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveAPIKeyCreationTeamRead(w, r, "default:launch.aweb.ai") {
+			return
+		}
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/did":
 			requestOrder = append(requestOrder, "register_identity")

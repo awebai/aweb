@@ -1653,6 +1653,9 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 	)
 
 	awebServer := newRawLocalHTTPServerForTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveAPIKeyCreationTeamRead(w, r, teamID) {
+			return
+		}
 		if serveUnadvertisedHealth(w, r) {
 			return
 		}
@@ -2428,6 +2431,9 @@ func TestAwWorkspaceAddWorktreeExternalIdentityHomeUsesParentAPIKey(t *testing.T
 	defer cancel()
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveAPIKeyCreationTeamRead(w, r, teamID) {
+			return
+		}
 		switch r.URL.Path {
 		case "/v1/roles/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{
