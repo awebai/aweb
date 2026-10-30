@@ -340,9 +340,11 @@ ROOT_CONSUMERS = {
             "federation-authority-state-v1.json",
             "federation-discovery-v1.json",
             "federation-origin-ip-v1.json",
+            "id-certificates-v1.json",
             "identity-log-v1.json",
             "message-signing-v1.json",
         },
+        '_ROOT / "docs/vectors/id-certificates-v1.json"',
         '_ROOT / item["path"]',
     ),
     PurePosixPath("scripts/check_federation_harness.py"): _consumer(
@@ -632,6 +634,14 @@ ROOT_CONSUMERS = {
         'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
     ),
     PurePosixPath("channel-core/test/id_signature_non_narrowing.test.ts"): _consumer(
+        "id-certificates-v1.json",
+        'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
+    ),
+    PurePosixPath("channel-core/test/received_id_chain.test.ts"): _consumer(
+        "id-certificates-v1.json",
+        'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
+    ),
+    PurePosixPath("channel-core/test/received_id_chain_dispatch.test.ts"): _consumer(
         "id-certificates-v1.json",
         'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
     ),
