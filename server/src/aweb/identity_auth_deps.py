@@ -53,6 +53,7 @@ class MessagingAuth:
     certificate_id: str | None = None
     verified_team_id: str | None = None
     grant: GrantContext | None = None
+    id_chain: dict | None = None
 
 
 def auth_dids(identity: IdentityAuth | MessagingAuth) -> list[str]:
@@ -254,6 +255,7 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
             identity_scope=team_identity.identity_scope,
             certificate_id=team_identity.certificate_id,
             verified_team_id=team_identity.team_id,
+            id_chain=getattr(request.state, "id_chain", None),
         )
 
     identity = await resolve_identity_auth(request)
@@ -275,4 +277,5 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
         alias=(row or {}).get("alias") or None,
         agent_id=(str((row or {}).get("agent_id")) if (row or {}).get("agent_id") else None),
         identity_scope=(row or {}).get("identity_scope") or None,
+        id_chain=getattr(request.state, "id_chain", None),
     )

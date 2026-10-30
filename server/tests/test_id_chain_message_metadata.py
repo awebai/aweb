@@ -99,3 +99,33 @@ async def test_another_authors_chain_refuses_before_message_storage(privacy_app,
     assert result.status_code == 403, result.text
     assert result.json()['detail'] == 'subject_mismatch'
     assert await env.db.fetch_val('SELECT count(*) FROM {{tables.messages}}') == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('subject_is_session', [False, True], ids=['subject-chain', 'session-is-not-subject'])
+async def test_grant_carrier_is_bound_to_subject_not_session(privacy_app, subject_is_session):
+    from test_identity_grants import _grant_headers
+    env = privacy_app
+    sender, recipient = env.actors['alice'], env.actors['bob']
+    session = SigningKey.generate()
+    session_did = did_from_public_key(bytes(session.verify_key))
+    grant = uuid4()
+    await env.db.execute('''
+        INSERT INTO {{tables.identity_session_grants}}
+        (grant_id, team_id, subject_agent_id, grant_did_key, scopes, issued_at, expires_at)
+        VALUES ($1,$2,$3,$4,ARRAY['mail.send'],now(),now()+interval '10 minutes')
+    ''', grant, TEAM, sender.id, session_did)
+    body = json.dumps(dict(to_did=recipient.did, body='grant subject')).encode()
+    headers = _grant_headers(signing_key=bytes(session), did_key=session_did, grant_id=str(grant),
+                             method='POST', path='/v1/messages', body=body, aud=env.app.state.public_origin)
+    chain = _bundle(session_did if subject_is_session else sender.did)
+    headers['X-AWID-ID-Chain'] = encode_id_chain_header(chain)
+    response = await env.client.post('/v1/messages', content=body, headers=headers)
+    assert response.status_code == (403 if subject_is_session else 200), response.text
+    if subject_is_session:
+        assert response.json()['detail'] == 'subject_mismatch'
+    else:
+        read = await env.client.get('/v1/messages/' + response.json()['message_id'], headers=_headers(recipient))
+        assert read.status_code == 200, read.text
+        assert read.json()['from_did'] == sender.did
+        assert read.json()['id_chain'] == chain

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import json
 from typing import Any
 
 from awid.id_certificates import (
@@ -65,4 +66,10 @@ async def authenticate_id_chain(request: Request, binding: IdentityBinding) -> d
         logger.warning('ID-tree request refused: %s', result['reason'])
         raise HTTPException(status_code=503 if result['outcome'] == 'unavailable' else 403,
                             detail=result['reason'])
+    request.state.id_chain = bundle
     return result
+
+
+def stored_id_chain(value):
+    """Decode the optional JSONB carrier; consumers verify it on current evidence."""
+    return json.loads(value) if isinstance(value, str) else value
