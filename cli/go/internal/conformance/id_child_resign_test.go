@@ -427,7 +427,9 @@ func TestIDChildResignExchangeProbes(t *testing.T) {
 
 func TestIDChildImportFrozenCases(t *testing.T) {
 	x := loadIDChildExchange(t)
-	for _, name := range []string{"csr-import-mismatch-preserves-old-certificate", "csr-local-import-matching-response", "csr-human-import-remains-pending"} {
+	// Import verifies and hands back the chain; registration is the caller's
+	// next step, so a did:aw child is still pending registration after it.
+	for _, name := range []string{"csr-import-mismatch-preserves-old-certificate", "csr-local-import-matching-response", "csr-human-import-remains-pending", "csr-human-import-registers-by-default", "csr-root-human-import-registers-by-default", "csr-root-human-import-stale-root-key-refuses"} {
 		c, ok := x.cases[name]
 		if !ok {
 			t.Fatalf("missing frozen case %s", name)
@@ -450,7 +452,7 @@ func TestIDChildImportFrozenCases(t *testing.T) {
 			if c.Expected.InstalledCertificate != "" && !reflect.DeepEqual(imported.Certificate, x.v.Certificates[c.Expected.InstalledCertificate].Signed) {
 				t.Fatal("imported certificate is not the frozen one")
 			}
-			wantPending := c.Expected.IDRegistration == "pending"
+			wantPending := c.Expected.IDRegistration == "pending" || c.Expected.IDRegistration == "registered"
 			if imported.RegistrationPending != wantPending {
 				t.Fatalf("registration pending=%v want %v", imported.RegistrationPending, wantPending)
 			}
@@ -607,4 +609,49 @@ func TestIDChildResignVerifiesTheParentChain(t *testing.T) {
 	if err == nil || response != nil || a.calls != 0 {
 		t.Fatalf("err=%v calls=%d", err, a.calls)
 	}
+}
+
+// The root-issued import admits exactly the one root certificate under
+// fresh evidence for its own domain.
+func TestIDChildImportRootHumanProbes(t *testing.T) {
+	x := loadIDChildExchange(t)
+	request := x.requests["root-human-issue"].Signed
+	good := []byte(x.responses["root-human-issued"].CanonicalUTF8)
+	refuses := func(t *testing.T, raw []byte, evidence *awid.IDChainEvidence, domain, reason string) {
+		t.Helper()
+		imported, err := awid.ImportIDCertificateResponse(request, raw, evidence, domain)
+		if got := awid.IDCertificateErrorCode(err); got != reason || imported != nil {
+			t.Fatalf("reason=%q (%v) want %q", got, err, reason)
+		}
+	}
+	t.Run("no evidence", func(t *testing.T) { refuses(t, good, nil, "example.com", "evidence_unavailable") })
+	t.Run("evidence past the fresh bound", func(t *testing.T) {
+		refuses(t, good, resignFixture{status: x.v.Statuses["normal"]}.evidence(61), "example.com", "status_expired")
+	})
+	t.Run("another domain", func(t *testing.T) { refuses(t, good, x.evidence("normal"), "example.org", "domain_mismatch") })
+	t.Run("a request to another parent", func(t *testing.T) {
+		r := map[string]any{}
+		for k, v := range request["request"].(map[string]any) {
+			r[k] = v
+		}
+		r["parent"] = map[string]any{"kind": "identity", "id": x.v.Keys["alice"].DIDAW}
+		imported, err := awid.ImportIDCertificateResponse(map[string]any{"request": r, "signature": request["signature"]}, good, x.evidence("normal"), "example.com")
+		if got := awid.IDCertificateErrorCode(err); got != "request_binding_mismatch" || imported != nil {
+			t.Fatalf("reason=%q (%v)", got, err)
+		}
+	})
+	t.Run("a parent chain before the root certificate", func(t *testing.T) {
+		parsed, err := awid.ParseIDCertificateResponse(good)
+		if err != nil {
+			t.Fatal(err)
+		}
+		chain := parsed["chain"].(map[string]any)
+		certificates := chain["certificates"].([]any)
+		chain["certificates"] = append(x.parentChain(t, "normal", x.v.Keys["alice"].DIDAW), certificates...)
+		raw, err := awid.EncodeIDCertificateResponse(parsed["request_id"].(string), chain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		refuses(t, raw, x.evidence("normal"), "example.com", "invalid_shape")
+	})
 }

@@ -445,6 +445,12 @@ Entry-field values specific to this op:
   authorizes its own registration
 - `proof` is signed by the private half of `new_did_key`
 
+`awid.log.initial_registration_entry(did_key, timestamp=...)` builds these
+entry fields; `log_entry_payload(**entry)` is the signed payload.
+`RegistryClient.register_did_with_signer` signs it through a caller's signer
+and returns the response below without any further signed read, so a key
+held behind a signer is asked for this one signature only.
+
 ```
 POST /v1/did
      Body: { <canonical entry payload fields>, "proof": "<base64>" }

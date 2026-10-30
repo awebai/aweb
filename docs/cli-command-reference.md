@@ -365,6 +365,7 @@ Subcommands:
 - `human` Human identities in a namespace's identity tree
 - `log` Show a global AWID DID log
 - `namespace` Protocol/admin namespace controller and address operations
+- `parent` Request and import your own certificate from a parent
 - `register` Register the current global identity at the configured registry
 - `request` Make a DIDKey-signed HTTP request with the local identity key
 - `resolve` Resolve a did:aw to its current did:key
@@ -674,7 +675,7 @@ Flags:
 Human identities in a namespace's identity tree
 
 Subcommands:
-- `init` Create your human ID, issued by this machine's namespace controller
+- `init` Create your human ID in a namespace
 
 Flags:
 - `-h, --help help for human`
@@ -683,8 +684,9 @@ Flags:
 
 ### `id human init`
 
-Create your human ID in --domain and have the namespace controller on this
-machine issue its certificate (--as-root).
+Create your human ID in --domain. With --as-root the namespace controller on
+this machine issues its certificate now. Without it, the human is only
+prepared: an issuer elsewhere admits it through `aw id parent request`.
 
 The human key is kept in the OS keychain, encrypted under a passphrase you
 choose; every signature asks for that passphrase on the terminal. This needs
@@ -855,6 +857,53 @@ Flags:
 - `-h, --help help for set-delivery-origin`
 - `--namespace string Namespace domain (e.g. acme.com)`
 - `--origin string Canonical aweb server origin (e.g. https://aweb.acme.com)`
+
+## `id parent`
+
+### `id parent`
+
+Request and import your own certificate from a parent
+
+Subcommands:
+- `import` Import the parent's response to your request and register it
+- `request` Export a certificate request against a parent's invitation
+
+Flags:
+- `-h, --help help for parent`
+
+## `id parent import`
+
+### `id parent import`
+
+Verify the parent's response against your outstanding request, install the
+chain and register it at AWID with your own key (--no-register leaves the
+registration pending). A failed registration keeps the signed response;
+run import again to retry it.
+
+Flags:
+- `--domain string Namespace domain of the invitation`
+- `-h, --help help for import`
+- `--human string Act as this human prepared on this machine (did:aw)`
+- `--no-register Install the certificate but leave its AWID registration pending`
+- `--registry string Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)`
+
+## `id parent request`
+
+### `id parent request`
+
+Export a certificate request against the invitation your parent fixed: its
+--invitation-id, --domain and parent (--parent <did:aw> or --parent-root).
+Send the request file to the parent over your chosen channel, and tell them
+the fingerprint shown here through a different trusted channel.
+
+Flags:
+- `--domain string Namespace domain of the invitation`
+- `-h, --help help for request`
+- `--human string Act as this human prepared on this machine (did:aw)`
+- `--invitation-id string Invitation ID the parent gave you`
+- `--out string Where to write the request (- for stdout) (default "-")`
+- `--parent string did:aw of the parent identity`
+- `--parent-root The parent is the namespace root of --domain`
 
 ## `id register`
 

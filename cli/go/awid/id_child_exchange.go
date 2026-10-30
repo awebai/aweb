@@ -206,7 +206,8 @@ type IDCertificateImport struct {
 // ImportIDCertificateResponse verifies a response against the child's
 // outstanding request before anything is installed: the exact binding, the
 // parent's current chain through the shared verifier, and the child
-// certificate signed by the parent's current key.
+// certificate signed by the parent's current key. A namespace parent has no
+// chain: its certificate must be signed by the namespace's open epoch key.
 func ImportIDCertificateResponse(request map[string]any, raw []byte, evidence *IDChainEvidence, domain string) (*IDCertificateImport, error) {
 	response, err := ParseIDCertificateResponse(raw)
 	if err != nil {
@@ -230,6 +231,22 @@ func ImportIDCertificateResponse(request map[string]any, raw []byte, evidence *I
 		}
 	}
 	parent := c["parent"].(map[string]any)
+	if parent["kind"] == "namespace" {
+		// The root admits its first human directly: the chain is that one
+		// certificate, signed by the namespace's open epoch key under fresh,
+		// exact-DNS-backed evidence.
+		if len(certificates) != 1 {
+			return nil, idCertificateRefusal("invalid_shape")
+		}
+		current, err := idIssuingKey(parent, domain, c["kind"].(string), nil, evidence)
+		if err != nil {
+			return nil, err
+		}
+		if c["issuer_key"] != current {
+			return nil, idCertificateRefusal("stale_issuer_key")
+		}
+		return &IDCertificateImport{Chain: chain, Certificate: child, RegistrationPending: strings.HasPrefix(c["id"].(string), "did:aw:")}, nil
+	}
 	if parent["kind"] != "identity" || len(certificates) < 2 {
 		return nil, idCertificateRefusal("invalid_shape")
 	}

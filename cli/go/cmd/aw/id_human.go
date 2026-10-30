@@ -34,9 +34,10 @@ var (
 	}
 	idHumanInitCmd = &cobra.Command{
 		Use:   "init",
-		Short: "Create your human ID, issued by this machine's namespace controller",
-		Long: "Create your human ID in --domain and have the namespace controller on this\n" +
-			"machine issue its certificate (--as-root).\n\n" +
+		Short: "Create your human ID in a namespace",
+		Long: "Create your human ID in --domain. With --as-root the namespace controller on\n" +
+			"this machine issues its certificate now. Without it, the human is only\n" +
+			"prepared: an issuer elsewhere admits it through `aw id parent request`.\n\n" +
 			"The human key is kept in the OS keychain, encrypted under a passphrase you\n" +
 			"choose; every signature asks for that passphrase on the terminal. This needs\n" +
 			"a human at an interactive terminal: it refuses without one and inside an\n" +
@@ -105,15 +106,17 @@ var agentRuntimeMarkers = []string{"OATS_INSTANCE_HOME", "OATS_INSTANCE"}
 
 // humanAtTerminal refuses a human-only command that no human can answer:
 // one without a controlling terminal, or one run inside an agent runtime.
-// It is a barrier against accidents, not proof that a human is present.
+// Both refuse human_approval_required. It is a barrier against accidents,
+// not proof that a human is present.
 func humanAtTerminal() error {
+	required := &awid.IDCertificateError{Code: "human_approval_required"}
 	for _, name := range agentRuntimeMarkers {
 		if strings.TrimSpace(os.Getenv(name)) != "" {
-			return fmt.Errorf("this command needs a human at a terminal; it refuses inside an agent runtime (%s is set)", name)
+			return fmt.Errorf("this command needs a human at a terminal; it refuses inside an agent runtime (%s is set): %w", name, required)
 		}
 	}
 	if !awid.ControllingTerminalAttached() {
-		return errors.New("this command needs a human at an interactive terminal")
+		return fmt.Errorf("this command needs a human at an interactive terminal: %w", required)
 	}
 	return nil
 }
@@ -126,15 +129,15 @@ func executeIDHumanInit(ctx context.Context, opts idHumanInitOptions) (idHumanIn
 	if progress == nil {
 		progress = func(string) {}
 	}
-	if !opts.AsRoot {
-		return idHumanInitOutput{}, errors.New("--as-root is required: a human prepared on another machine is admitted with the request exchange, not here")
-	}
 	domain, err := normalizeIDCreateDomain(opts.Domain, false)
 	if err != nil {
 		return idHumanInitOutput{}, err
 	}
 	if err := opts.HumanAtTerminal(); err != nil {
 		return idHumanInitOutput{}, err
+	}
+	if !opts.AsRoot {
+		return prepareRequestedHuman(domain, opts, progress)
 	}
 	controllerKey, err := awconfig.LoadControllerKey(domain)
 	if err != nil {
@@ -151,26 +154,22 @@ func executeIDHumanInit(ctx context.Context, opts idHumanInitOptions) (idHumanIn
 	if strings.TrimSpace(authority.ControllerDID) != controllerDID {
 		return idHumanInitOutput{}, fmt.Errorf("DNS controller %s for %s does not match this machine's controller %s", authority.ControllerDID, domain, controllerDID)
 	}
-	registryURL, err := humanInitRegistryURL(authority, opts.RegistryURL)
+	registryURL, err := domainRegistryURL(authority, opts.RegistryURL)
 	if err != nil {
 		return idHumanInitOutput{}, err
 	}
 	registry := awid.NewAWIDRegistryClient(nil, opts.TXTResolver)
 	registry.DefaultRegistryURL = registryURL
 
-	rec, err := resumableHumanRecord(domain)
+	rec, err := resumableHumanRecord(domain, awconfig.HumanPathRoot)
 	if err != nil {
 		return idHumanInitOutput{}, err
 	}
-	if rec == nil && !opts.Another {
-		if existing, err := registeredHumans(domain); err != nil {
-			return idHumanInitOutput{}, err
-		} else if len(existing) > 0 {
-			return idHumanInitOutput{}, usageError("%s already has a registered human on this machine (%s); pass --another to create a different human", domain, strings.Join(existing, ", "))
-		}
-	}
 	if rec == nil {
-		if rec, err = prepareHuman(domain, registryURL, opts); err != nil {
+		if err := refuseQuietSecondHuman(domain, opts); err != nil {
+			return idHumanInitOutput{}, err
+		}
+		if rec, err = prepareHuman(domain, registryURL, awconfig.HumanPathRoot, opts); err != nil {
 			return idHumanInitOutput{}, err
 		}
 	} else {
@@ -231,32 +230,70 @@ func executeIDHumanInit(ctx context.Context, opts idHumanInitOptions) (idHumanIn
 	return idHumanInitOutput{Status: "registered", ID: rec.StableID, DIDKey: rec.DIDKey, Domain: domain, RegistryURL: rec.RegistryURL, RegisteredAt: rec.RegisteredAt}, nil
 }
 
-// humanInitRegistryURL is the registry the human registers at and reads
-// status from: the one the domain's _awid record names, or the --registry
-// origin when the record names none. A --registry that contradicts the
-// record is refused.
-func humanInitRegistryURL(authority awid.DomainAuthority, override string) (string, error) {
+// domainRegistryURL is the registry an identity of the domain registers at
+// and reads status from: the one the domain's _awid record names, or the
+// --registry origin when the record names none. A --registry that
+// contradicts the record is refused.
+func domainRegistryURL(authority awid.DomainAuthority, override string) (string, error) {
 	named := strings.TrimSpace(authority.RegistryURL)
 	override = strings.TrimSpace(override)
 	if override == "" {
 		return named, nil
 	}
 	if named != "" && named != awid.DefaultAWIDRegistryURL && named != override {
-		return "", fmt.Errorf("--registry %s contradicts the registry %s that %s names", override, named, authority.DNSName)
+		return "", usageError("--registry %s contradicts the registry %s that %s names", override, named, authority.DNSName)
 	}
 	return override, nil
 }
 
-// resumableHumanRecord is the one unfinished human record of domain, if
-// any. Two unfinished records are refused rather than guessed between.
-func resumableHumanRecord(domain string) (*awconfig.HumanRecord, error) {
+// prepareRequestedHuman is init without --as-root: it only prepares a human
+// that an issuer elsewhere admits through the request exchange, its key in
+// the keychain and its record written, and registers nothing. A rerun
+// returns the same prepared human.
+func prepareRequestedHuman(domain string, opts idHumanInitOptions, progress func(string)) (idHumanInitOutput, error) {
+	rec, err := resumableHumanRecord(domain, awconfig.HumanPathRequest)
+	if err != nil {
+		return idHumanInitOutput{}, err
+	}
+	if rec != nil {
+		progress(fmt.Sprintf("%s is already prepared (%s).", rec.StableID, rec.State))
+	} else {
+		if err := refuseQuietSecondHuman(domain, opts); err != nil {
+			return idHumanInitOutput{}, err
+		}
+		if rec, err = prepareHuman(domain, "", awconfig.HumanPathRequest, opts); err != nil {
+			return idHumanInitOutput{}, err
+		}
+	}
+	return idHumanInitOutput{Status: "prepared", ID: rec.StableID, DIDKey: rec.DIDKey, Domain: domain}, nil
+}
+
+// refuseQuietSecondHuman refuses a new human beside a registered one unless
+// --another asks for it.
+func refuseQuietSecondHuman(domain string, opts idHumanInitOptions) error {
+	if opts.Another {
+		return nil
+	}
+	existing, err := registeredHumans(domain)
+	if err != nil {
+		return err
+	}
+	if len(existing) > 0 {
+		return usageError("%s already has a registered human on this machine (%s); pass --another to create a different human", domain, strings.Join(existing, ", "))
+	}
+	return nil
+}
+
+// resumableHumanRecord is the one unfinished human record of domain on path,
+// if any. Two unfinished records are refused rather than guessed between.
+func resumableHumanRecord(domain, path string) (*awconfig.HumanRecord, error) {
 	records, err := awconfig.HumanRecords(domain)
 	if err != nil {
 		return nil, err
 	}
 	var unfinished []*awconfig.HumanRecord
 	for _, rec := range records {
-		if rec.State != awconfig.HumanRegistered {
+		if rec.State != awconfig.HumanRegistered && rec.Path == path {
 			unfinished = append(unfinished, rec)
 		}
 	}
@@ -290,7 +327,7 @@ func registeredHumans(domain string) ([]string, error) {
 
 // prepareHuman makes the human key, stores it in the keychain under a new
 // passphrase, then writes the record that later steps resume from.
-func prepareHuman(domain, registryURL string, opts idHumanInitOptions) (*awconfig.HumanRecord, error) {
+func prepareHuman(domain, registryURL, path string, opts idHumanInitOptions) (*awconfig.HumanRecord, error) {
 	public, key, err := awid.GenerateKeypair()
 	if err != nil {
 		return nil, err
@@ -302,6 +339,7 @@ func prepareHuman(domain, registryURL string, opts idHumanInitOptions) (*awconfi
 		Domain:      domain,
 		RegistryURL: registryURL,
 		State:       awconfig.HumanPrepared,
+		Path:        path,
 	}
 	passphrase, err := opts.Prompt(fmt.Sprintf("Choose a passphrase for your human key %s (at least %d characters): ", rec.StableID, awid.HumanKeyMinPassphrase))
 	defer wipeBytes(passphrase)

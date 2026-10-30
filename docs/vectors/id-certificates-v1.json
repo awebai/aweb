@@ -11733,6 +11733,45 @@
         "new_parent_signatures": 0,
         "human_authority": false
       }
+    },
+    {
+      "name": "csr-root-human-import-registers-by-default",
+      "action": "child_request_import",
+      "input": {
+        "request": "root-human-issue",
+        "response": "root-human-issued",
+        "parent_status": "normal",
+        "no_register": false,
+        "registry_success": true,
+        "current_status": "unavailable"
+      },
+      "expected": {
+        "accepted": true,
+        "registration_requests": 1,
+        "registration_signer": "subject",
+        "id_registration": "registered",
+        "receipt_is_authority": false,
+        "human_authority": false,
+        "same_invitation_id": true
+      }
+    },
+    {
+      "name": "csr-root-human-import-stale-root-key-refuses",
+      "action": "child_request_import",
+      "input": {
+        "request": "root-human-issue",
+        "response": "root-human-issued",
+        "parent_status": "root-rotated",
+        "no_register": false
+      },
+      "expected": {
+        "accepted": false,
+        "reason": "stale_issuer_key",
+        "registration_requests": 0,
+        "outstanding_request_unchanged": true,
+        "old_certificate_unchanged": true,
+        "human_authority": false
+      }
     }
   ],
   "raw_wire_refusals": [

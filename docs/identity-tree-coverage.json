@@ -112,13 +112,15 @@
       "repo": "aweb",
       "files": [
         "cli/go/cmd/aw/id_child.go",
+        "cli/go/cmd/aw/id_parent.go",
         "cli/go/awid/id_invitation.go",
         "cli/go/awid/id_child_exchange.go",
         "cli/go/awid/id_certificate_request.go",
-        "cli/go/awconfig/id_invitation_store.go"
+        "cli/go/awconfig/id_invitation_store.go",
+        "cli/go/awconfig/id_request_store.go"
       ],
-      "status": "candidate",
-      "reason": "aw id child invite/receive/pending/show/approve/refuse: the issuer side of the request exchange under an explicitly selected issuer; a human child is approved only by a confirmed terminal answer. The recipient side (aw id parent request/import) and its journey are not landed."
+      "status": "converted",
+      "reason": "The request exchange: aw id child invite/receive/pending/show/approve/refuse under an explicitly selected issuer, and aw id parent request/import for a prepared human or the current agent, including the root-issued first human; a human child is approved only by a confirmed terminal answer. The cross-registry real-DNS journey (scripts/cross-registry-human-journey.py, AWEB_CROSS_REGISTRY_CSR=1) proves it across separate requester and root machines: a declined fingerprint signs nothing and leaves the request pending, the matching fingerprint is approved with y over a PTY, and the default import registers the human with the same invitation, with outsiders verifying it as nearest_human."
     },
     {
       "id": "CLI.CREATE.HOSTED",

@@ -26,6 +26,8 @@ ways they were found to prove less than assumed.
 
 # How to apply
 
+- Before adding a corpus, apply [frozen vectors need a real consumer](/aweb-protocol-expert/lessons/frozen-vectors-need-a-real-consumer.md):
+  justify its existence and identify the implementation that runs it.
 - Write a reference verifier from the scheme text, not from the generator. Run
   each negative twice: normally (it must refuse with exactly its code), then
   with only that code's check skipped (it must then verify). Exempt codes that
