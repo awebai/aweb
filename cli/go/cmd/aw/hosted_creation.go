@@ -174,6 +174,12 @@ func hostedOwnerIssuer(ctx context.Context, workingDir string, owner *hostedOwne
 	}
 	certificates := chain.Bundle["certificates"].([]any)
 	leaf := certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)
+	// This constructor creates a registered global child. V1 requires every
+	// identity ancestor of a registered child to be registered (contract §3);
+	// presenting a valid local chain does not promote that parent.
+	if strings.HasPrefix(leaf["id"].(string), "did:key:") {
+		return nil, fmt.Errorf("%w: a registered child requires a registered identity parent; select a global owner with its installed chain", &awid.IDCertificateError{Code: "unregistered_parent"})
+	}
 	domain := leaf["domain"].(string)
 	_, origin, err := childIssuerRegistry(ctx, idChildOptions{TXTResolver: resolver}, domain)
 	if err != nil {

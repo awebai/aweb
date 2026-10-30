@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -248,4 +249,59 @@ func (r *registrationTXTResolver) LookupTXT(ctx context.Context, name string) ([
 		return r.after.LookupTXT(ctx, name)
 	}
 	return r.before.LookupTXT(ctx, name)
+}
+
+func TestHostedLocalOwnerCannotCreateRegisteredChild(t *testing.T) {
+	raw, err := os.ReadFile("../../../../docs/vectors/id-certificates-v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v struct {
+		Keys map[string]struct {
+			Seed   string `json:"seed_hex"`
+			DIDKey string `json:"did_key"`
+		}
+		Certificates map[string]struct{ Signed map[string]any }
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&v); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	chain := map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": []any{v.Certificates["root-agent"].Signed}}
+	if err := awconfig.SaveInstalledIDChain(root, chain); err != nil {
+		t.Fatal(err)
+	}
+	seed, _ := hex.DecodeString(v.Keys["root_agent"].Seed)
+
+	key := ed25519.NewKeyFromSeed(seed)
+	if err := awid.SaveSigningKey(filepath.Join(root, "signing.key"), key); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(root, "identity.yaml"), &awconfig.WorktreeIdentity{DID: v.Keys["root_agent"].DIDKey, Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, RegistryURL: "http://127.0.0.1:1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(root, "workspace.yaml"), &awconfig.WorktreeWorkspace{AwebURL: "http://127.0.0.1:1", WorkspacePath: root, Memberships: []awconfig.WorktreeMembership{{TeamID: "agents:example.com", Alias: "owner", CertPath: "team.crt"}}}); err != nil {
+		t.Fatal(err)
+	}
+	owner, err := loadHostedOwnerAuthority(t.TempDir(), awconfig.IdentityHome{Root: t.TempDir()}, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver := &unexpectedHostedOwnerDNS{}
+
+	registry := awid.NewAWIDRegistryClient(nil, staticTXTResolver{})
+	registry.DefaultRegistryURL = "http://127.0.0.1:1"
+	issuer, err := hostedOwnerIssuer(t.Context(), t.TempDir(), owner, registry, resolver)
+	if issuer != nil || awid.IDCertificateErrorCode(err) != "unregistered_parent" || resolver.calls != 0 {
+		t.Fatalf("local parent was not refused before global creation: %+v %v", issuer, err)
+	}
+}
+
+type unexpectedHostedOwnerDNS struct{ calls int }
+
+func (r *unexpectedHostedOwnerDNS) LookupTXT(context.Context, string) ([]string, error) {
+	r.calls++
+	return nil, errors.New("unexpected DNS before local-parent refusal")
 }
