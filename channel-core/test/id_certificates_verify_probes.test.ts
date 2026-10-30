@@ -115,7 +115,7 @@ describe("status consistency probes", () => {
     expect(verifyIdChain(chain, globalAgent, evidence(status))).toEqual(unavailable);
   });
 
-  test("an inherited authority record is unavailable even at the exact name", () => {
+  test("inherited authority without a delegation witness is unavailable", () => {
     expect(verifyIdChain(chain, globalAgent, evidence(normal(), { inherited: true }))).toEqual(unavailable);
   });
 
@@ -248,5 +248,27 @@ describe("cache age probes", () => {
 
   test("a negative age is unavailable, not expired", () => {
     expect(verifyIdChain(chain, local, { ...evidence(normal()), age_seconds: -1 })).toEqual(unavailable);
+  });
+});
+
+describe("delegated namespace binding probes", () => {
+  const c = vector.verification_cases.find((entry: any) => entry.name === "delegated-child-authorized");
+  const chain = chainOf(...c.chain.map((name: string) => signedOf(name)));
+  test.each(["control", "sibling", "self", "label-boundary", "parent-key", "child-key", "dns-name", "extra-field", "null-witness"])("%s", mutation => {
+    const status = structuredClone(vector.status_fixtures[c.status]);
+    const authority = structuredClone(c.namespace_authority);
+    const delegation = status.namespace.delegation;
+    switch (mutation) {
+      case "sibling": delegation.parent_domain = "other.aweb.ai"; break;
+      case "self": delegation.parent_domain = status.domain; break;
+      case "label-boundary": delegation.parent_domain = "web.ai"; break;
+      case "parent-key": delegation.parent_controller_key = keys.root.did_key; break;
+      case "child-key": delegation.controller_key = authority.controller_key; break;
+      case "dns-name": authority.dns_name = "_awid.other.aweb.ai"; break;
+      case "extra-field": delegation.extra = true; break;
+      case "null-witness": status.namespace.delegation = null; break;
+    }
+    const result = verifyIdChain(chain, c.subject, { status, namespace_authority: authority, age_seconds: 0 });
+    expect(result).toEqual(mutation === "control" ? c.expected : unavailable);
   });
 });

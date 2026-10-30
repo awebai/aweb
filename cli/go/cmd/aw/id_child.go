@@ -158,7 +158,7 @@ func selectChildIssuer(ctx context.Context, opts idChildOptions) (*selectedChild
 		if err != nil {
 			return nil, fmt.Errorf("load namespace controller key for %s: %w", domain, err)
 		}
-		if err := checkRootController(ctx, opts.TXTResolver, domain, key); err != nil {
+		if err := checkRootController(ctx, opts.TXTResolver, domain, opts.RegistryURL, key); err != nil {
 			return nil, err
 		}
 		registry, registryURL, err := childIssuerRegistry(ctx, opts, domain)
@@ -190,7 +190,7 @@ func selectChildIssuer(ctx context.Context, opts idChildOptions) (*selectedChild
 // childIssuerRegistry is the registry the root's status comes from: the one
 // its _awid record names, or --registry when the record names none.
 func childIssuerRegistry(ctx context.Context, opts idChildOptions, domain string) (*awid.RegistryClient, string, error) {
-	authority, err := awid.VerifyExactDomainAuthority(ctx, opts.TXTResolver, domain)
+	authority, err := awid.DiscoverAuthoritativeRegistry(ctx, opts.TXTResolver, domain)
 	if err != nil {
 		return nil, "", fmt.Errorf("lookup %s: %w", awid.AWIDTXTName(domain), err)
 	}

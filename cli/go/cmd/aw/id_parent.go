@@ -377,7 +377,7 @@ func executeIDParentImport(ctx context.Context, opts idParentOptions, raw []byte
 		return idParentImportOutput{}, &awid.IDCertificateError{Code: "request_binding_mismatch"}
 	}
 	call, cancel := commandAPIContext(nil, ctx)
-	authority, err := awid.VerifyExactDomainAuthority(call, opts.TXTResolver, r.domain)
+	authority, err := awid.DiscoverAuthoritativeRegistry(call, opts.TXTResolver, r.domain)
 	cancel()
 	if err != nil {
 		return idParentImportOutput{}, fmt.Errorf("lookup %s: %w", awid.AWIDTXTName(r.domain), err)

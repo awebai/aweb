@@ -448,28 +448,8 @@ export async function discoverAuthoritativeRegistry(
   domain: string,
   resolveTxtImpl: ResolveTxt = dns.resolveTxt,
 ): Promise<DomainAuthority> {
-  const authority = await lookupDomainAuthority(domain, true, resolveTxtImpl);
-  return authority ?? {
-    controllerDid: "",
-    registryURL: DEFAULT_AWID_REGISTRY_URL,
-    dnsName: awidTXTName(domain),
-    inherited: false,
-  };
-}
-
-export async function verifyExactDomainAuthority(domain: string, resolver: ResolveTxt = dns.resolveTxt): Promise<DomainAuthority> {
-  const authority = await lookupDomainAuthority(domain, false, resolver);
-  if (!authority) throw new Error("missing exact namespace authority");
-  return authority;
-}
-
-async function lookupDomainAuthority(
-  domain: string,
-  allowAncestors: boolean,
-  resolveTxtImpl: ResolveTxt,
-): Promise<DomainAuthority | null> {
   const canonical = canonicalizeDomain(domain);
-  const candidates = candidateDomainsForLookup(canonical, allowAncestors);
+  const candidates = candidateDomainsForLookup(canonical);
   for (const candidate of candidates) {
     const qname = awidTXTName(candidate);
     let records: string[][];
@@ -477,8 +457,7 @@ async function lookupDomainAuthority(
       records = await resolveTxtImpl(qname);
     } catch (error) {
       if (isTxtNotFound(error)) {
-        if (allowAncestors) continue;
-        throw error;
+        continue;
       }
       throw error;
     }
@@ -486,8 +465,7 @@ async function lookupDomainAuthority(
       .map((parts) => parts.join("").trim())
       .filter((record) => record.startsWith("awid="));
     if (awidRecords.length === 0) {
-      if (allowAncestors) continue;
-      throw new Error(`no awid TXT record found at ${qname}`);
+      continue;
     }
     if (awidRecords.length > 1) {
       throw new Error(`multiple awid TXT records found at ${qname}`);
@@ -498,7 +476,12 @@ async function lookupDomainAuthority(
       inherited: candidate !== canonical,
     };
   }
-  return null;
+  return {
+    controllerDid: "",
+    registryURL: DEFAULT_AWID_REGISTRY_URL,
+    dnsName: awidTXTName(domain),
+    inherited: false,
+  };
 }
 
 export function parseAwidTXTRecord(record: string, dnsName: string): DomainAuthority {
@@ -539,10 +522,9 @@ export function awidTXTName(domain: string): string {
   return `_awid.${canonicalizeDomain(domain)}`;
 }
 
-export function candidateDomainsForLookup(domain: string, allowAncestors: boolean): string[] {
+export function candidateDomainsForLookup(domain: string): string[] {
   const canonical = canonicalizeDomain(domain);
   if (!canonical) return [];
-  if (!allowAncestors) return [canonical];
   const labels = canonical.split(".");
   const boundary = registeredDomainBoundary(canonical);
   const boundaryLabels = boundary.split(".");

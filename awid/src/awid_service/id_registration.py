@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
+from awid.dns_verify import DomainAuthority
 from awid.id_certificates import id_certificate_id
 
 from awid_service.id_tree_clock import Clock, serialization_time
@@ -31,7 +32,7 @@ from awid_service.namespace_epochs import latest_domain_event
 
 async def register_certificate(
     db, *, chain: list[dict], expected_head: str | None, invitation_id: str | None,
-    signer: str, dns_key: str | None, clock: Clock,
+    signer: str, dns_authority: DomainAuthority | None, clock: Clock,
 ) -> dict:
     """Register the leaf of a structurally verified ``chain``; return the receipt."""
     signed = chain[-1]
@@ -91,7 +92,7 @@ async def register_certificate(
         if expected_head != head:
             raise IdentityTreeRefusal("head_conflict", 409)
 
-        root = await current_root(tx, domain, namespace, dns_key)
+        root = await current_root(tx, domain, namespace, dns_authority)
         if root is None:
             raise IdentityTreeRefusal("evidence_unavailable", 503)
         if parent["kind"] == "namespace":
@@ -102,7 +103,7 @@ async def register_certificate(
         await _require_registered_ancestry(tx, chain)
         if parent_did is not None:
             verdict = await verify_parent_chain(
-                tx, domain=domain, parent=parent_did, parent_key=keys[parent_did], dns_key=dns_key, clock=clock,
+                tx, domain=domain, parent=parent_did, parent_key=keys[parent_did], dns_authority=dns_authority, clock=clock,
             )
             if verdict["identity_valid"] is not True:
                 raise IdentityTreeRefusal(verdict["reason"], 503 if verdict["outcome"] == "unavailable" else 422)

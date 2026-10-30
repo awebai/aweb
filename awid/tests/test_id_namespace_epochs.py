@@ -10,6 +10,7 @@ or unverified DNS) never open, replace or retire one.
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 import pytest_asyncio
@@ -24,6 +25,7 @@ from id_tree_support import (
     Tree,
     at,
     certificate,
+    covering_headers,
     consumes,
     did_key,
     seed,
@@ -264,11 +266,11 @@ async def test_pre_upgrade_post_by_another_dns_key_opens_nothing(case, pre_upgra
     assert await _namespace_data(awid_db_infra) == data
 
 
-@consumes("pre-upgrade-parent-authorized-post-no-epoch")
-async def test_pre_upgrade_parent_authorized_post_opens_nothing(case, pre_upgrade, awid_db_infra):
+@consumes("pre-upgrade-parent-authorized-post-opens-epoch")
+async def test_pre_upgrade_parent_authorized_post_opens_first_epoch(case, pre_upgrade, awid_db_infra):
     tree = pre_upgrade
+    await tree.root(controller="other_human", domain="com")
     data = await _namespace_data(awid_db_infra)
-    tree.exact_dns("root")
     parent = build_signed_headers(
         seed("other_human"), did_key("other_human"), domain=DOMAIN,
         operation="authorize_subdomain_registration", child_domain=DOMAIN, controller_did=did_key("root"),
@@ -283,8 +285,13 @@ async def test_pre_upgrade_parent_authorized_post_opens_nothing(case, pre_upgrad
     )
 
     assert resp.status_code == 200, resp.text
-    assert await _epochs(awid_db_infra) == []
-    assert await _namespace_data(awid_db_infra) == data
+    assert len(await _epochs(awid_db_infra)) == case["expected"]["epoch_writes"]
+    after = await _namespace_data(awid_db_infra)
+    for rows in (data[0], after[0]):
+        for row in rows:
+            row.pop("parent_domain")
+            row.pop("parent_controller_key")
+    assert after == data
 
 
 @consumes("pre-upgrade-namespace-unauthenticated-reverify-no-epoch")
@@ -384,8 +391,8 @@ async def test_put_skip_dns_writes_no_epoch(case, tree, awid_db_infra, monkeypat
     assert await _old_tree_survives(tree) is not case["expected"]["old_tree_cut_off"]
 
 
-@consumes("namespace-put-parent-authorization-no-epoch")
-async def test_put_parent_authorization_writes_no_epoch(case, clocked_client, manual_clock, awid_db_infra):
+@consumes("namespace-put-parent-authorization-opens-replaced")
+async def test_put_parent_authorization_opens_replaced(case, clocked_client, manual_clock, awid_db_infra):
     tree = Tree(clocked_client, manual_clock)
     tree.dns("depth1", domain="com")
     assert (await tree.register_namespace("depth1", domain="com")).status_code == 200
@@ -409,9 +416,13 @@ async def test_put_parent_authorization_writes_no_epoch(case, clocked_client, ma
 
     assert resp.status_code == 200, resp.text
     assert (await _namespace(tree))["controller_did"] == case["expected"]["stored_controller"]
-    assert await _epochs(awid_db_infra) == epochs
+    updated = await _epochs(awid_db_infra)
+    assert len(updated) == len(epochs) + case["expected"]["epoch_writes"]
+    assert updated[-1]["seq"] == case["expected"]["open_epoch_seq"]
+    assert updated[-1]["continuity"] == "replaced"
     assert await _root_authority(tree, "other-human") == case["expected"]["current_authority"]
-    assert await _old_tree_survives(tree) is not case["expected"]["old_tree_cut_off"]
+    tree.exact_dns("root_rotated")
+    assert (await _old_tree_reason(tree) == "root_replaced") is case["expected"]["old_tree_cut_off"]
 
 
 @consumes("namespace-reverify-row-change-then-exact-put-opens-replaced")
@@ -509,3 +520,120 @@ async def test_epoch_times_stay_monotone_when_the_clock_goes_back(tree, awid_db_
     assert resp.status_code == 200, resp.text
     first, second = await _epochs(awid_db_infra)
     assert first["retired_at"] == second["registered_at"] > first["registered_at"]
+
+
+async def _delegated_tree(clocked_client, manual_clock):
+    tree = Tree(clocked_client, manual_clock)
+    await tree.root(controller="depth1", domain="com")
+
+    async def inherited(domain):
+        return DomainAuthority(controller_did=did_key("depth1"), registry_url=ORIGIN,
+                               dns_name="_awid.com", inherited=True)
+
+    tree.client.app.dependency_overrides[get_domain_verifier] = lambda: inherited
+    parent = build_signed_headers(seed("depth1"), did_key("depth1"), domain=DOMAIN,
+                                  operation="authorize_subdomain_registration",
+                                  child_domain=DOMAIN, controller_did=did_key("root"))
+    headers = {"X-AWEB-Parent-Authorization": parent["Authorization"],
+               "X-AWEB-Parent-Timestamp": parent["X-AWEB-Timestamp"]}
+    return tree, headers
+
+
+@pytest.mark.asyncio
+async def test_parent_signed_registration_opens_child_epoch_and_status(clocked_client, manual_clock, awid_db_infra):
+    tree, headers = await _delegated_tree(clocked_client, manual_clock)
+    response = await tree.register_namespace(headers=headers)
+    assert response.status_code == 200, response.text
+    assert len(await _epochs(awid_db_infra)) == 1
+    witness = {"parent_domain": "com", "parent_controller_key": did_key("depth1"),
+               "controller_key": did_key("root")}
+    assert (await _namespace(tree))["delegation"] == witness
+    await tree.did("alice")
+    response = await tree.register([certificate("alice")])
+    assert response.status_code == 200, response.text
+    response = await tree.client.post("/v1/id-certificates/status", json={"v": 1, "domain": DOMAIN, "ids": []})
+    assert response.status_code == 200, response.text
+    assert response.json()["namespace"]["delegation"] == witness
+    again = await tree.register_namespace(headers=headers)
+    assert again.status_code == 200, again.text
+    assert len(await _epochs(awid_db_infra)) == 1
+
+
+@pytest.mark.asyncio
+async def test_bare_ancestor_never_backfills_child_delegation(clocked_client, manual_clock, monkeypatch, awid_db_infra):
+    tree, headers = await _delegated_tree(clocked_client, manual_clock)
+    monkeypatch.setenv("AWID_SKIP_DNS_VERIFY", "1")
+    assert (await tree.register_namespace()).status_code == 200
+    monkeypatch.delenv("AWID_SKIP_DNS_VERIFY")
+    response = await tree.client.post("/v1/id-certificates/status", json={"v": 1, "domain": DOMAIN, "ids": []})
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "evidence_unavailable"
+    assert not (await _namespace(tree)).get("delegation")
+    assert (await tree.register_namespace(headers=headers)).status_code == 200
+    assert len(await _epochs(awid_db_infra)) == 1
+
+
+@pytest.mark.asyncio
+async def test_parent_recovery_propagates_delegated_children_atomically(clocked_client, manual_clock):
+    tree, headers = await _delegated_tree(clocked_client, manual_clock)
+    assert (await tree.register_namespace(headers=headers)).status_code == 200
+    await tree.replace_root("root_rotated", domain="com")
+    assert (await _namespace(tree))["delegation"]["parent_controller_key"] == did_key("root_rotated")
+
+
+@pytest.mark.asyncio
+async def test_child_recovery_updates_its_delegation_and_replaced_epoch(clocked_client, manual_clock, awid_db_infra):
+    tree, headers = await _delegated_tree(clocked_client, manual_clock)
+    assert (await tree.register_namespace(headers=headers)).status_code == 200
+    parent = build_signed_headers(seed("depth1"), did_key("depth1"), domain=DOMAIN,
+                                  operation="authorize_subdomain_rotation", child_domain=DOMAIN,
+                                  new_controller_did=did_key("root_rotated"))
+    response = await tree.replace_controller("root_rotated", headers={
+        "X-AWEB-Parent-Authorization": parent["Authorization"],
+        "X-AWEB-Parent-Timestamp": parent["X-AWEB-Timestamp"]})
+    assert response.status_code == 200, response.text
+    assert (await _namespace(tree))["delegation"]["controller_key"] == did_key("root_rotated")
+    assert [e["continuity"] for e in await _epochs(awid_db_infra)] == ["replaced", "replaced"]
+
+
+async def _rotate_controller(tree, domain, previous, new):
+    path = f"/v1/namespaces/{domain}/rotate"
+    body = {"domain": domain, "operation": "rotate_namespace_controller", "from_seq": 1,
+            "previous_did_key": did_key(previous), "new_did_key": did_key(new)}
+    raw = json.dumps(body, separators=(",", ":")).encode()
+    headers = covering_headers(previous, method="POST", path=path, body=raw, domain=domain,
+                               operation="rotate_namespace_controller", new_key_signer=new,
+                               from_seq=1, previous_did_key=did_key(previous), new_did_key=did_key(new))
+    return await tree.client.post(path, content=raw, headers=headers)
+
+
+@pytest.mark.asyncio
+async def test_child_signed_rotation_preserves_delegation_and_epoch_continuity(clocked_client, manual_clock, awid_db_infra):
+    tree, headers = await _delegated_tree(clocked_client, manual_clock)
+    assert (await tree.register_namespace(headers=headers)).status_code == 200
+    response = await _rotate_controller(tree, DOMAIN, "root", "root_rotated")
+    assert response.status_code == 200, response.text
+    assert response.json()["delegation"]["controller_key"] == did_key("root_rotated")
+    assert [e["continuity"] for e in await _epochs(awid_db_infra)] == ["replaced", "rotated"]
+    response = await tree.client.post("/v1/id-certificates/status", json={"v": 1, "domain": DOMAIN, "ids": []})
+    assert response.status_code == 200, response.text
+    assert response.json()["namespace"]["delegation"]["controller_key"] == did_key("root_rotated")
+
+
+@pytest.mark.asyncio
+async def test_parent_signed_rotation_keeps_child_authority(clocked_client, manual_clock, awid_db_infra):
+    tree, headers = await _delegated_tree(clocked_client, manual_clock)
+    assert (await tree.register_namespace(headers=headers)).status_code == 200
+    tree.exact_dns("root_rotated", "com")
+    response = await _rotate_controller(tree, "com", "depth1", "root_rotated")
+    assert response.status_code == 200, response.text
+    assert (await _namespace(tree))["delegation"]["parent_controller_key"] == did_key("root_rotated")
+
+    async def inherited(domain):
+        return DomainAuthority(controller_did=did_key("root_rotated"), registry_url=ORIGIN,
+                               dns_name="_awid.com", inherited=True)
+
+    tree.client.app.dependency_overrides[get_domain_verifier] = lambda: inherited
+    response = await tree.client.post("/v1/id-certificates/status", json={"v": 1, "domain": DOMAIN, "ids": []})
+    assert response.status_code == 200, response.text
+    assert len(await _epochs(awid_db_infra)) == 1

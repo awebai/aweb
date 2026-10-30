@@ -43,8 +43,12 @@ function evidenceOf(c: any): IdStatusEvidence | null {
 
 describe("id chain verification cases", () => {
   test("the fixture has the cases this suite was written against", () => {
-    expect(cases).toHaveLength(122);
-    expect(new Set(cases.map(c => c.name)).size).toBe(122);
+    expect(cases).toHaveLength(127);
+    expect(new Set(cases.map(c => c.name)).size).toBe(127);
+  });
+
+  test.each(["delegated-child-authorized", "delegated-child-without-record", "delegated-child-parent-unsigned", "delegated-child-no-dns-anchor", "delegated-child-exact-record-wins"])("mandatory delegation boundary %s is present", name => {
+    expect(cases.find(c => c.name === name)).toBeDefined();
   });
 
   // R1-R3, the namespace replacement cutoff and the did:key-human shape

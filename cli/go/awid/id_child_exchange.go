@@ -234,7 +234,7 @@ func ImportIDCertificateResponse(request map[string]any, raw []byte, evidence *I
 	if parent["kind"] == "namespace" {
 		// The root admits its first human directly: the chain is that one
 		// certificate, signed by the namespace's open epoch key under fresh,
-		// exact-DNS-backed evidence.
+		// DNS-anchored namespace evidence.
 		if len(certificates) != 1 {
 			return nil, idCertificateRefusal("invalid_shape")
 		}

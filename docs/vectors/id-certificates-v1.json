@@ -1008,6 +1008,50 @@
       "signing_bytes_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a61773a3434614b4e5179766f31786838727636546664667a6a546e366e5270222c226973737565645f6174223a22323032362d31302d32365430303a30333a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f6e334e656364364e6b6b79666f476f48786964327a6e476335394c55334b376d756261526346624c664c58222c226b696e64223a226167656e74222c22706172656e74223a7b226964223a226578616d706c652e636f6d222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
       "certificate_id": "sha256:7c102262376782933531f80202cfd4f73675a5ca21f872845571156342f5a563",
       "signer": "root"
+    },
+    "delegated_alice": {
+      "signed": {
+        "certificate": {
+          "v": 1,
+          "type": "aweb.id-certificate",
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "domain": "tenant.aweb.ai",
+          "parent": {
+            "kind": "namespace",
+            "id": "tenant.aweb.ai"
+          },
+          "kind": "human",
+          "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+          "issued_at": "2026-10-26T00:00:00Z"
+        },
+        "signature": "EO9qy5-6OaNs3ttY1pgQpolD0DFSX66Y8XqNRtCaxHrnThAYXCBGZndfn4cJr6qy4U-sYGzY5mKxIQpS-2rMBw"
+      },
+      "canonical_utf8": "{\"domain\":\"tenant.aweb.ai\",\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"issued_at\":\"2026-10-26T00:00:00Z\",\"issuer_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\",\"kind\":\"human\",\"parent\":{\"id\":\"tenant.aweb.ai\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1}",
+      "signing_bytes_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a2274656e616e742e617765622e6169222c226964223a226469643a61773a335944414d355a4c524b6737654848315a733673534d776b67613877222c226973737565645f6174223a22323032362d31302d32365430303a30303a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f6e334e656364364e6b6b79666f476f48786964327a6e476335394c55334b376d756261526346624c664c58222c226b696e64223a2268756d616e222c22706172656e74223a7b226964223a2274656e616e742e617765622e6169222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+      "certificate_id": "sha256:2782d984c3d9154262284e863fc77e837eea40f5a0bc0f4c41f95fc302497403",
+      "signer": "root"
+    },
+    "delegated_coordinator": {
+      "signed": {
+        "certificate": {
+          "v": 1,
+          "type": "aweb.id-certificate",
+          "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+          "domain": "tenant.aweb.ai",
+          "parent": {
+            "kind": "identity",
+            "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"
+          },
+          "kind": "agent",
+          "issuer_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+          "issued_at": "2026-10-26T00:04:00Z"
+        },
+        "signature": "ix_u7vXsN8l0xZu1cIBzGTIm71PTmBjNSUw2sg670AvjH75paKPyOiglmYz8V_zmMebtu1GEmTXqM_tIpvsADg"
+      },
+      "canonical_utf8": "{\"domain\":\"tenant.aweb.ai\",\"id\":\"did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x\",\"issued_at\":\"2026-10-26T00:04:00Z\",\"issuer_key\":\"did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2\",\"kind\":\"agent\",\"parent\":{\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"kind\":\"identity\"},\"type\":\"aweb.id-certificate\",\"v\":1}",
+      "signing_bytes_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a2274656e616e742e617765622e6169222c226964223a226469643a6b65793a7a364d6b6f6e323276777a394a6f4e704744784372475a5267654e4654645254775859594e336676416841334b313978222c226973737565645f6174223a22323032362d31302d32365430303a30343a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b7652584e596345374d4d6475796e575467654b624461543169696a44534338705a71585a6338724850726632222c226b696e64223a226167656e74222c22706172656e74223a7b226964223a226469643a61773a335944414d355a4c524b6737654848315a733673534d776b67613877222c226b696e64223a226964656e74697479227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+      "certificate_id": "sha256:189d279f38d6db097d68de76557dadd916469d5daa8626bb5451d272addd1460",
+      "signer": "alice"
     }
   },
   "status_fixtures": {
@@ -6085,6 +6129,153 @@
         }
       ],
       "missing": []
+    },
+    "delegated_child": {
+      "v": 1,
+      "domain": "tenant.aweb.ai",
+      "observed_at": "2026-10-26T00:30:00.000000Z",
+      "namespace": {
+        "epochs": [
+          {
+            "seq": 1,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:00:00.000000Z",
+            "retired_at": null,
+            "continuity": "replaced"
+          }
+        ],
+        "delegation": {
+          "parent_domain": "aweb.ai",
+          "parent_controller_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+          "controller_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+        }
+      },
+      "identities": [
+        {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "current_certificate_id": "sha256:2782d984c3d9154262284e863fc77e837eea40f5a0bc0f4c41f95fc302497403",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "new_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "f101717425d7c37244133f3c85015836ed22cd5eb43d666f4a9d533edf8d82d4",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "2cf9b9ca49d6d52198137ecd65b4f22115e43686868be41d029e80c7cd60fcf9",
+                "signature": "0mxM7sA/FFflCx7MKD2/WIlu9ik329eWDeNl2x01wH5pO7Ot8ThAzFnNbn64y+hYxsqGqSJZgXTeArk15cHWAw"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+                  "domain": "tenant.aweb.ai",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "tenant.aweb.ai"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:00:00Z"
+                },
+                "signature": "EO9qy5-6OaNs3ttY1pgQpolD0DFSX66Y8XqNRtCaxHrnThAYXCBGZndfn4cJr6qy4U-sYGzY5mKxIQpS-2rMBw"
+              },
+              "registered_at": "2026-10-26T00:01:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        }
+      ],
+      "missing": []
+    },
+    "delegated_child_missing": {
+      "v": 1,
+      "domain": "tenant.aweb.ai",
+      "observed_at": "2026-10-26T00:30:00.000000Z",
+      "namespace": {
+        "epochs": []
+      },
+      "identities": [],
+      "missing": [
+        "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"
+      ]
+    },
+    "delegated_child_unsigned": {
+      "v": 1,
+      "domain": "tenant.aweb.ai",
+      "observed_at": "2026-10-26T00:30:00.000000Z",
+      "namespace": {
+        "epochs": [
+          {
+            "seq": 1,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:00:00.000000Z",
+            "retired_at": null,
+            "continuity": "replaced"
+          }
+        ]
+      },
+      "identities": [
+        {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "current_certificate_id": "sha256:2782d984c3d9154262284e863fc77e837eea40f5a0bc0f4c41f95fc302497403",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "new_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "f101717425d7c37244133f3c85015836ed22cd5eb43d666f4a9d533edf8d82d4",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "2cf9b9ca49d6d52198137ecd65b4f22115e43686868be41d029e80c7cd60fcf9",
+                "signature": "0mxM7sA/FFflCx7MKD2/WIlu9ik329eWDeNl2x01wH5pO7Ot8ThAzFnNbn64y+hYxsqGqSJZgXTeArk15cHWAw"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+                  "domain": "tenant.aweb.ai",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "tenant.aweb.ai"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:00:00Z"
+                },
+                "signature": "EO9qy5-6OaNs3ttY1pgQpolD0DFSX66Y8XqNRtCaxHrnThAYXCBGZndfn4cJr6qy4U-sYGzY5mKxIQpS-2rMBw"
+              },
+              "registered_at": "2026-10-26T00:01:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        }
+      ],
+      "missing": []
     }
   },
   "batch_example": {
@@ -9617,6 +9808,166 @@
         "ordinary": "continue",
         "human_required": "refuse"
       }
+    },
+    {
+      "name": "delegated-child-authorized",
+      "chain": [
+        "delegated_alice",
+        "delegated_coordinator"
+      ],
+      "status": "delegated_child",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "nearest_human",
+        "human_id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+        "identity_valid": true,
+        "kind": "agent",
+        "reason": "verified"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
+      },
+      "namespace_authority": {
+        "domain": "tenant.aweb.ai",
+        "dns_name": "_awid.aweb.ai",
+        "inherited": true,
+        "controller_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+      }
+    },
+    {
+      "name": "delegated-child-without-record",
+      "chain": [
+        "delegated_alice",
+        "delegated_coordinator"
+      ],
+      "status": "delegated_child_missing",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "evidence_unavailable"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      },
+      "namespace_authority": {
+        "domain": "tenant.aweb.ai",
+        "dns_name": "_awid.aweb.ai",
+        "inherited": true,
+        "controller_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+      }
+    },
+    {
+      "name": "delegated-child-parent-unsigned",
+      "chain": [
+        "delegated_alice",
+        "delegated_coordinator"
+      ],
+      "status": "delegated_child_unsigned",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "evidence_unavailable"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      },
+      "namespace_authority": {
+        "domain": "tenant.aweb.ai",
+        "dns_name": "_awid.aweb.ai",
+        "inherited": true,
+        "controller_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+      }
+    },
+    {
+      "name": "delegated-child-no-dns-anchor",
+      "chain": [
+        "delegated_alice",
+        "delegated_coordinator"
+      ],
+      "status": "delegated_child",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "evidence_unavailable"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      },
+      "namespace_authority": {
+        "domain": "tenant.aweb.ai",
+        "dns_name": null,
+        "inherited": false,
+        "controller_key": null
+      }
+    },
+    {
+      "name": "delegated-child-exact-record-wins",
+      "chain": [
+        "delegated_alice",
+        "delegated_coordinator"
+      ],
+      "status": "delegated_child",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "nearest_human",
+        "human_id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+        "identity_valid": true,
+        "kind": "agent",
+        "reason": "verified"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
+      },
+      "namespace_authority": {
+        "domain": "tenant.aweb.ai",
+        "dns_name": "_awid.tenant.aweb.ai",
+        "inherited": false,
+        "controller_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+      }
     }
   ],
   "operation_cases": [
@@ -10852,7 +11203,7 @@
       }
     },
     {
-      "name": "pre-upgrade-parent-authorized-post-no-epoch",
+      "name": "pre-upgrade-parent-authorized-post-opens-epoch",
       "action": "register_namespace",
       "input": {
         "method": "POST",
@@ -10866,9 +11217,11 @@
       },
       "expected": {
         "accepted": true,
-        "epoch_writes": 0,
+        "epoch_writes": 1,
         "namespace_address_team_data_unchanged": true,
-        "history_inferred": false
+        "history_inferred": false,
+        "epoch_seq": 1,
+        "continuity": "replaced"
       }
     },
     {
@@ -10928,7 +11281,7 @@
       }
     },
     {
-      "name": "namespace-put-parent-authorization-no-epoch",
+      "name": "namespace-put-parent-authorization-opens-replaced",
       "action": "replace_namespace",
       "input": {
         "method": "PUT",
@@ -10946,10 +11299,10 @@
       "expected": {
         "accepted": true,
         "stored_controller": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
-        "epoch_writes": 0,
-        "open_epoch_seq": 1,
+        "epoch_writes": 1,
+        "open_epoch_seq": 2,
         "current_authority": "unavailable",
-        "old_tree_cut_off": false
+        "old_tree_cut_off": true
       }
     },
     {

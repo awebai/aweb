@@ -1,6 +1,6 @@
 // Pure id-chain verification (docs/id-certificates.md sections 3-5). The
 // caller supplies already trusted facts: the authoritative status snapshot
-// from the production cached client, the independently selected exact-domain
+// from the production cached client, the independently selected DNS-anchored
 // namespace authority, and the cache age. Nothing here reads DNS, HTTP or a
 // cache, and nothing here decides a request; see requestDisposition for that.
 import {
@@ -10,6 +10,7 @@ import {
   idChainRefusal,
   isCanonicalDidAw,
   isCanonicalDidKey,
+  isCanonicalDomain,
   isRecord,
   parseSignedIdCertificate,
   type IdCertificate,
@@ -57,7 +58,7 @@ export interface IdSubject {
   team_member_did_key: string | null;
 }
 
-/** Exact-domain DNS authority, selected independently of anything the agent presents. */
+/** Found exact or ancestor TXT authority, selected independently of the agent. */
 export interface IdNamespaceAuthority {
   domain: string;
   dns_name: string;
@@ -264,6 +265,7 @@ interface IdentityStatus {
 
 interface Snapshot {
   epochs: Epoch[];
+  delegation?: Record<string, unknown>;
   /** Registered revisions admitted before this time lost their authority to a namespace replacement. */
   replacedAt: string;
   identities: Map<string, IdentityStatus>;
@@ -282,15 +284,19 @@ function trustedSnapshot(evidence: IdStatusEvidence | null, domain: string | und
     throw new Refusal(age !== null && Number.isFinite(age) && age > ID_STATUS_FRESH_SECONDS ? "status_expired" : "evidence_unavailable");
   }
   const authority = evidence.namespace_authority;
-  // Only this exact domain's own _awid record is authority; never an ancestor's.
-  if (authority.inherited || authority.domain !== domain || authority.dns_name !== `_awid.${domain}`) {
+  if (!isRecord(authority) || !hasExactKeys(authority, ["controller_key", "dns_name", "domain", "inherited"]) || authority.domain !== domain || typeof authority.inherited !== "boolean" || !isCanonicalDidKey(authority.controller_key)) {
     throw new Refusal("evidence_unavailable");
   }
   const snapshot = parseSnapshot(evidence.status, domain);
   if (!snapshot) throw new Refusal("evidence_unavailable");
-  // DNS and the registry's current epoch must name the same root key; a
-  // disagreement is a contradictory authority snapshot, not a bad proof.
-  if (snapshot.epochs[snapshot.epochs.length - 1].didKey !== authority.controller_key) {
+  const current = snapshot.epochs[snapshot.epochs.length - 1].didKey;
+  if (authority.inherited) {
+    const delegation = snapshot.delegation;
+    const parent = delegation?.parent_domain;
+    if (!delegation || typeof parent !== "string" || !isCanonicalDomain(parent) || !domain.endsWith(`.${parent}`) || authority.dns_name !== `_awid.${parent}` || delegation.parent_controller_key !== authority.controller_key || delegation.controller_key !== current) {
+      throw new Refusal("evidence_unavailable");
+    }
+  } else if (authority.dns_name !== `_awid.${domain}` || current !== authority.controller_key) {
     throw new Refusal("evidence_unavailable");
   }
   return snapshot;
@@ -314,11 +320,13 @@ function parseSnapshot(status: unknown, domain: string): Snapshot | undefined {
     missing.add(id);
   }
   const replacedAt = epochs.filter(epoch => epoch.continuity === "replaced").at(-1)!.registeredAt;
-  return { epochs, replacedAt, identities, missing };
+  const delegation = isRecord(status.namespace) && isRecord(status.namespace.delegation) ? status.namespace.delegation : undefined;
+  return { epochs, replacedAt, identities, missing, delegation };
 }
 
 function parseEpochs(namespace: unknown): Epoch[] | undefined {
-  if (!isRecord(namespace) || !hasExactKeys(namespace, ["epochs"]) || !Array.isArray(namespace.epochs)) return undefined;
+  if (!isRecord(namespace) || !(hasExactKeys(namespace, ["epochs"]) || hasExactKeys(namespace, ["delegation", "epochs"])) || !Array.isArray(namespace.epochs)) return undefined;
+  if ("delegation" in namespace && (!isRecord(namespace.delegation) || !hasExactKeys(namespace.delegation, ["controller_key", "parent_controller_key", "parent_domain"]))) return undefined;
   const epochs: Epoch[] = [];
   for (const [index, row] of namespace.epochs.entries()) {
     if (!isRecord(row) || !hasExactKeys(row, ["continuity", "did_key", "registered_at", "retired_at", "seq"])) return undefined;

@@ -48,8 +48,8 @@ func loadIDChainVectors(t *testing.T) idChainVectors {
 
 func TestIDChainFinalVectors(t *testing.T) {
 	v := loadIDChainVectors(t)
-	if len(v.Cases) != 122 {
-		t.Fatalf("case count=%d want122", len(v.Cases))
+	if len(v.Cases) != 127 {
+		t.Fatalf("case count=%d want127", len(v.Cases))
 	}
 	names := map[string]bool{}
 	for _, c := range v.Cases {
@@ -58,7 +58,7 @@ func TestIDChainFinalVectors(t *testing.T) {
 		}
 		names[c.Name] = true
 	}
-	for _, name := range []string{"namespace-overlapping-replaced-successor-unavailable", "namespace-unretired-predecessor-unavailable", "root-replacement-cutoff-in-historical-human-parent", "namespace-epoch-at-retirement-unavailable", "cached-status-age-60", "cached-status-age-61"} {
+	for _, name := range []string{"namespace-overlapping-replaced-successor-unavailable", "namespace-unretired-predecessor-unavailable", "root-replacement-cutoff-in-historical-human-parent", "namespace-epoch-at-retirement-unavailable", "cached-status-age-60", "cached-status-age-61", "delegated-child-authorized", "delegated-child-without-record", "delegated-child-parent-unsigned", "delegated-child-no-dns-anchor", "delegated-child-exact-record-wins"} {
 		if !names[name] {
 			t.Fatal("missing required boundary", name)
 		}

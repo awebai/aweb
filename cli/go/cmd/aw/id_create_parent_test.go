@@ -197,9 +197,8 @@ func TestIDCreateNamesOneParent(t *testing.T) {
 	r.assertNoAgent()
 }
 
-// --root-parent checks exact DNS even with --skip-dns-verify: AWID holds the
-// root's signature to the DNS controller, so a mismatch would leave the
-// agent chainless.
+// --root-parent checks namespace authority even with --skip-dns-verify:
+// a mismatched controller would leave the agent chainless.
 func TestIDCreateRootParentRefusesADNSControllerOtherThanThisMachines(t *testing.T) {
 	r := newParentCreateRun(t, "https://registry.example.com")
 	other, _, err := awid.GenerateKeypair()
