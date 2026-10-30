@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -108,6 +109,7 @@ type humanInitHarness struct {
 	answers       []string
 	prompts       []string
 	prepareOnly   bool
+	another       bool
 	away          bool
 }
 
@@ -134,6 +136,7 @@ func (h *humanInitHarness) run(answers ...string) (idHumanInitOutput, error) {
 	return executeIDHumanInit(context.Background(), idHumanInitOptions{
 		Domain:      humanInitDomain,
 		AsRoot:      !h.prepareOnly,
+		Another:     h.another,
 		RegistryURL: h.registryURL,
 		HumanAtTerminal: func() error {
 			if h.away {
@@ -167,28 +170,56 @@ func (h *humanInitHarness) records() []*awconfig.HumanRecord {
 
 const humanPassphrase = "correct horse battery"
 
+// assertNamespaceRefused checks that err is AWID refusing the namespace and
+// that AWID holds no namespace for the domain afterwards.
+func (h *humanInitHarness) assertNamespaceRefused(err error) {
+	h.t.Helper()
+	if _, ok := registryStatusCode(err); !ok {
+		h.t.Fatalf("err=%v", err)
+	}
+	registry := awid.NewAWIDRegistryClient(nil, nil)
+	_, _, lookup := registry.GetNamespaceAt(context.Background(), h.registryURL, humanInitDomain)
+	if code, ok := registryStatusCode(lookup); !ok || code != http.StatusNotFound {
+		h.t.Fatalf("namespace lookup: %v", lookup)
+	}
+}
+
 func TestHumanInitRefusesADNSControllerOtherThanThisMachines(t *testing.T) {
 	h := newHumanInitHarness(t)
 	_, other, err := awid.GenerateKeypair()
 	if err != nil {
 		t.Fatal(err)
 	}
+	ours := h.resolver["_awid."+humanInitDomain]
 	h.resolver["_awid."+humanInitDomain] = []string{idCreateDNSRecordValue(awid.ComputeDIDKey(other.Public().(ed25519.PublicKey)), "")}
-	if _, err := h.run(humanPassphrase, humanPassphrase); err == nil || !strings.Contains(err.Error(), "does not match this machine's controller") {
-		t.Fatalf("err=%v", err)
+	if _, err := h.run(humanPassphrase, humanPassphrase); err == nil {
+		t.Fatal("initialised under another controller")
 	}
 	if len(h.records()) != 0 || len(h.prompts) != 0 {
 		t.Fatalf("records=%d prompts=%d", len(h.records()), len(h.prompts))
+	}
+	// With this machine's controller in DNS the same run goes on to ask for
+	// the passphrase.
+	h.resolver["_awid."+humanInitDomain] = ours
+	h.answers = nil
+	if _, err := h.run(); err == nil || len(h.prompts) != 1 {
+		t.Fatalf("err=%v prompts=%d", err, len(h.prompts))
 	}
 }
 
 func TestHumanInitMismatchedPassphrasesCreateNothing(t *testing.T) {
 	h := newHumanInitHarness(t)
-	if _, err := h.run(humanPassphrase, humanPassphrase+"!"); err == nil || !strings.Contains(err.Error(), "do not match") {
-		t.Fatalf("err=%v", err)
+	if _, err := h.run(humanPassphrase, humanPassphrase+"!"); err == nil || len(h.prompts) != 2 {
+		t.Fatalf("err=%v prompts=%d", err, len(h.prompts))
 	}
 	if len(h.records()) != 0 {
 		t.Fatal("a record was written")
+	}
+	// Typing the same passphrase twice creates the human.
+	_, err := h.run(humanPassphrase, humanPassphrase, humanPassphrase)
+	h.assertNamespaceRefused(err)
+	if len(h.records()) != 1 {
+		t.Fatal("matching passphrases created no human")
 	}
 }
 
@@ -200,9 +231,7 @@ func TestHumanInitMismatchedPassphrasesCreateNothing(t *testing.T) {
 func TestHumanInitRegistersTheDIDThenResumesTheSameHuman(t *testing.T) {
 	h := newHumanInitHarness(t)
 	_, err := h.run(humanPassphrase, humanPassphrase, humanPassphrase)
-	if err == nil || !strings.Contains(err.Error(), "register namespace "+humanInitDomain) {
-		t.Fatalf("err=%v", err)
-	}
+	h.assertNamespaceRefused(err)
 	records := h.records()
 	if len(records) != 1 || records[0].State != awconfig.HumanDIDRegistered || records[0].CertificateID != "" {
 		t.Fatalf("records %+v", records)
@@ -230,9 +259,8 @@ func TestHumanInitRegistersTheDIDThenResumesTheSameHuman(t *testing.T) {
 	}
 
 	prompts := len(h.prompts)
-	if _, err := h.run(); err == nil || !strings.Contains(err.Error(), "register namespace "+humanInitDomain) {
-		t.Fatalf("retry err=%v", err)
-	}
+	_, err = h.run()
+	h.assertNamespaceRefused(err)
 	if after := h.records(); len(after) != 1 || *after[0] != *human {
 		t.Fatalf("the retry changed the human: %+v", after)
 	}
@@ -249,11 +277,16 @@ func TestHumanInitDoesNotQuietlyCreateASecondHuman(t *testing.T) {
 	if err := awconfig.SaveHumanRecord(done); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.run(humanPassphrase, humanPassphrase); err == nil || !strings.Contains(err.Error(), "--another") {
+	if _, err := h.run(humanPassphrase, humanPassphrase); exitCode(err) != 2 {
 		t.Fatalf("err=%v", err)
 	}
 	if records := h.records(); len(records) != 1 || len(h.prompts) != 0 {
 		t.Fatalf("records=%d prompts=%d", len(records), len(h.prompts))
+	}
+	h.another = true
+	h.answers = nil
+	if _, err := h.run(); err == nil || len(h.prompts) != 1 {
+		t.Fatalf("--another: err=%v prompts=%d", err, len(h.prompts))
 	}
 }
 
@@ -269,18 +302,26 @@ func TestHumanInitRefusesARegistryThatContradictsDNS(t *testing.T) {
 	}
 }
 
+// One unfinished human is resumed, which needs its key from the keychain;
+// two are refused before either is touched.
 func TestHumanInitRefusesToGuessBetweenUnfinishedHumans(t *testing.T) {
-	h := newHumanInitHarness(t)
-	for _, id := range []string{"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w", "did:aw:2e2SPDJNyxg5Dt6EFJX3Tcn8Tauj"} {
-		if err := awconfig.SaveHumanRecord(&awconfig.HumanRecord{StableID: id, DIDKey: "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX", Domain: humanInitDomain, RegistryURL: h.registryURL, State: awconfig.HumanPrepared, Path: awconfig.HumanPathRoot}); err != nil {
-			t.Fatal(err)
+	for _, ids := range [][]string{
+		{"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"},
+		{"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w", "did:aw:2e2SPDJNyxg5Dt6EFJX3Tcn8Tauj"},
+	} {
+		h := newHumanInitHarness(t)
+		for _, id := range ids {
+			if err := awconfig.SaveHumanRecord(&awconfig.HumanRecord{StableID: id, DIDKey: "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX", Domain: humanInitDomain, RegistryURL: h.registryURL, State: awconfig.HumanPrepared, Path: awconfig.HumanPathRoot}); err != nil {
+				t.Fatal(err)
+			}
 		}
-	}
-	if _, err := h.run(humanPassphrase, humanPassphrase); err == nil || !strings.Contains(err.Error(), "more than one unfinished human") {
-		t.Fatalf("err=%v", err)
-	}
-	if len(h.records()) != 2 || len(h.prompts) != 0 {
-		t.Fatalf("records=%d prompts=%d", len(h.records()), len(h.prompts))
+		_, err := h.run(humanPassphrase, humanPassphrase)
+		if resumed := errors.Is(err, awid.ErrHumanKeyNotFound); err == nil || resumed != (len(ids) == 1) {
+			t.Fatalf("%d unfinished: err=%v", len(ids), err)
+		}
+		if len(h.records()) != len(ids) || len(h.prompts) != 0 {
+			t.Fatalf("%d unfinished: records=%d prompts=%d", len(ids), len(h.records()), len(h.prompts))
+		}
 	}
 }
 
