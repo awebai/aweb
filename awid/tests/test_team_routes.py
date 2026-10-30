@@ -380,7 +380,9 @@ async def test_register_certificate_rejects_duplicate_active_alias(client, contr
         headers=headers,
     )
     assert resp.status_code == 409, resp.text
-    assert "Alias already active in team" in resp.text
+    assert resp.json() == {
+        "detail": {"code": "alias_active", "message": "Alias already active in team"}
+    }
 
 
 @pytest.mark.asyncio
