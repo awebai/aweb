@@ -217,7 +217,9 @@ func ApproveIDChildRequest(invitations IDInvitationStore, issuance IDIssuanceSto
 
 // idIssuingKey is the key parent signs a kind child in domain with now: an
 // identity parent's current key once its chain verifies, or the namespace's
-// open epoch key. An agent parent never issues a human (R1).
+// open epoch key. An agent parent never issues a human (R1), and a parent
+// whose chain is already at the maximum depth issues nothing: its child's
+// chain could never verify.
 func idIssuingKey(parent map[string]any, domain, childKind string, parentChain []any, evidence *IDChainEvidence) (string, error) {
 	switch parent["kind"] {
 	case "identity":
@@ -231,6 +233,9 @@ func idIssuingKey(parent map[string]any, domain, childKind string, parentChain [
 		}
 		if !idChainEndsIn(parentChain, parentID) {
 			return "", fmt.Errorf("the parent chain does not end in %s", parentID)
+		}
+		if len(parentChain) >= IDChainMaxDepth {
+			return "", idCertificateRefusal("depth_exceeded")
 		}
 		if err := idParentChainVerified(parentChain, parentID, current, evidence, domain); err != nil {
 			return "", err
