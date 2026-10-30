@@ -235,7 +235,7 @@ func currentAgentIssuer(opts idChildOptions) (*selectedChildIssuer, error) {
 		registryURL = identity.RegistryURL
 	}
 	if registryURL == "" {
-		authority, err := awid.VerifyExactDomainAuthority(context.Background(), opts.TXTResolver, domain)
+		authority, err := awid.DiscoverAuthoritativeRegistry(context.Background(), opts.TXTResolver, domain)
 		if err != nil {
 			return nil, err
 		}
