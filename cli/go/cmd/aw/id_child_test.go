@@ -115,6 +115,20 @@ func (h *childHarness) state(requestID string) *awid.IDInvitation {
 	return found.invitation
 }
 
+// invitations counts the invitations the selected issuer has stored.
+func (h *childHarness) invitations() int {
+	h.t.Helper()
+	issuer, err := selectChildIssuer(context.Background(), h.opts)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	invitations, err := issuer.invitations.Invitations()
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return len(invitations)
+}
+
 func (h *childHarness) issued() int {
 	h.t.Helper()
 	dir, err := awconfig.ControllerIssuanceDir("example.com")
@@ -179,9 +193,14 @@ func TestChildInviteRefusesAnIncompleteInvitation(t *testing.T) {
 		}
 	}
 	h.opts.Issuer.Human = "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"
-	if _, err := executeIDChildInvite(context.Background(), h.opts, "human", childNote, time.Hour); err == nil || !strings.Contains(err.Error(), "choose one") {
+	if _, err := executeIDChildInvite(context.Background(), h.opts, "human", childNote, time.Hour); exitCode(err) != 2 {
 		t.Fatalf("two issuers: %v", err)
 	}
+	h.opts.Issuer.Human = ""
+	if n := h.invitations(); n != 0 {
+		t.Fatalf("stored %d invitations", n)
+	}
+	h.invite("human")
 }
 
 func TestChildReceiveBindsTheRequestAndShowsItsOwnFingerprint(t *testing.T) {
@@ -326,8 +345,8 @@ func TestChildInviteUnderAnAgentInvitesOnlyAgents(t *testing.T) {
 	h := newChildHarness(t, "https://registry.example.com")
 	agentID := installChainedAgent(t, h.opts.WorkingDir)
 	h.opts.Issuer = childIssuerSelection{}
-	if _, err := executeIDChildInvite(context.Background(), h.opts, "human", childNote, time.Hour); err == nil || !strings.Contains(err.Error(), "an agent cannot invite a human") {
-		t.Fatalf("err=%v", err)
+	if _, err := executeIDChildInvite(context.Background(), h.opts, "human", childNote, time.Hour); exitCode(err) != 2 || h.invitations() != 0 {
+		t.Fatalf("err=%v invitations=%d", err, h.invitations())
 	}
 	out, err := executeIDChildInvite(context.Background(), h.opts, "agent", childNote, time.Hour)
 	if err != nil {
