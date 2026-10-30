@@ -67,18 +67,20 @@ Unicode, wrong types and defaulted/omitted fields refuse. An ID certificate is:
   a signed field, not inferred from the domain-free `did:aw` or from a team.
 - `parent` is exactly `{kind,id}`. `kind="namespace"` names this exact `domain`;
   `kind="identity"` names a canonical parent ID in the same domain. The former
-  is resolved from EXACTLY `_awid.<domain>` and that domain's own registry
-  authority/epochs, never an inherited ancestor TXT/controller/registry or
-  an ancestor's epoch history. Missing exact-domain authority, or disagreement
-  between its independently selected current controller key and the status
-  snapshot's current namespace epoch, is unavailable/evidence_unavailable:
-  the latter is a contradictory authority snapshot, not an agent proof failure.
-  Hosted `*.aweb.ai` identities require
-  the hosted namespace's own key and exact TXT authority (aweb-acic.6), not
-  `aweb.ai`'s parent key. Existing ancestor lookup behaviour for other
-  contracts is unchanged. An identity parent resolves from its certificate and
-  key evidence. `issuer_key` is
-  an Ed25519 `did:key`, a selector to verify, never independent authority.
+  uses the existing agent discovery walk: exact `_awid.<domain>` first,
+  then the nearest ancestor record. A found exact record wins. No found record
+  (`public_default`) establishes no authority. An inherited TXT selects the
+  delegate registry and controller; that registry must hold the exact child's
+  parent-authorized namespace record. A bare ancestor TXT grants no child
+  authority. The existing `awid_service.routes.dns_namespaces.register_namespace`
+  and `rotate_namespace_controller` verify parent signatures before recording
+  delegation. Hosted children need no per-namespace TXT; own-record BYOT stays
+  unchanged. The child's controller and own current epoch must agree, bound
+  either to exact DNS or to the delegation witness (§4). Ancestor epochs never
+  substitute for child history. Missing or contradictory authority is
+  unavailable/evidence_unavailable. An identity parent resolves from its
+  certificate and key evidence. `issuer_key` is an Ed25519 `did:key`, a selector
+  to verify, never independent authority.
 - `kind` is exactly `human` or `agent`. `issued_at` is ASCII RFC 3339 UTC to the
   second with `Z`; it is informational, not an admission time witness.
 
@@ -180,13 +182,14 @@ a missing certificate means **unknown**, not no human.
 
 Each namespace epoch records `continuity`: `rotated` only through the new
 previous-key-authorized rotation below; `replaced` for DNS-only establishment
-or replacement. The first witnessed epoch is `replaced`. Domain transfer,
+or parent-authorized establishment or replacement. The first witnessed epoch is `replaced`. Domain transfer,
 loss of the root key, and delete then re-register take the `replaced` path,
 even when re-registration uses the same key. This is a witnessed field in the
 epoch history, not a new ID certificate, delegation or confirmation operation.
 
 An epoch opens ONLY on explicit first namespace registration, re-registration
-after deletion, or an explicit exact-controller-key change. Same-key observations
+after deletion, or an explicit controller-key change authorized by exact DNS
+or a verified parent registration/recovery signature. Same-key observations
 never open, replace or retire an epoch: reverify, address-read verification,
 inherited answers, failed DNS and unverified DNS change only current authority
 availability. Reverify cannot install a different ID-tree epoch key: a disagreement
@@ -195,9 +198,9 @@ reverify behavior continues to update dns_namespaces.controller_did from exact
 DNS; inherited answers retain the row's key. Address and namespace-level team
 operations keep using that stored row key, while existing team certificates
 still use their own team key. ID-tree status and ID-certificate registration
-require the stored row key, open epoch key and independent exact DNS key to
-agree; otherwise they
-are unavailable/evidence_unavailable. No new current status is issued during
+require the stored row and open epoch keys to agree with exact DNS or the
+parent-authorized delegation under independently discovered inherited DNS.
+Otherwise they are unavailable/evidence_unavailable. No new current status is issued during
 that disagreement; existing caches retain their normal freshness bounds. When
 the same exact key returns after an unavailable interval, its epoch continues.
 Publishing another party's public key without holding it grants no authority.
@@ -207,8 +210,8 @@ Pre-upgrade enrollment is a NEW branch of the existing authenticated
 `POST /v1/namespaces` handler, not a check that the released handler already
 makes. When the row exists and has NO epoch, open epoch 1, replaced, ONLY if
 this request's signer equals the row's stored controller_did AND this request
-proved exact DNS for that SAME key. Parent-authorization, skip-DNS and reserved
-local lanes count as no exact proof. Otherwise retain the existing response
+proved exact DNS for that SAME key, or verified parent authorization for
+that child/key. Skip-DNS and reserved local lanes establish no tree authority. Otherwise retain the existing response
 with zero epoch writes; a new owner uses PUT recovery. Check these conditions
 and absence of an epoch under the namespace lock after the last wait, so two
 concurrent valid POSTs open exactly one epoch at its new witness time. Keep all
@@ -242,11 +245,13 @@ It uses configured audience, exact POST/path/body hash, and the existing
 
 Before changing any epoch, verify both proofs, including their signer roles;
 a missing/incorrect old or new proof refuses invalid_signature. Under the
-namespace gate locks, after the last wait, recheck the timestamp, the exact
-DNS evidence for new_did_key and the open epoch: from_seq and previous_did_key
+namespace gate locks, after the last wait, recheck the timestamp, the
+independently discovered authority and the open epoch: from_seq and previous_did_key
 must equal its seq and key, otherwise head_conflict. A captured valid request
 replayed after success therefore refuses head_conflict, even within timestamp
-freshness. Non-exact or contradictory DNS evidence is evidence_unavailable.
+freshness. Exact DNS must name new_did_key. For inherited DNS, the existing
+parent-authorized child record must name previous_did_key; both key proofs
+authorize the change. Missing or contradictory authority is evidence_unavailable.
 No network call occurs under those locks. Retire that epoch and open its
 immediate successor at the SAME post-lock witness time with continuity=rotated.
 This preserves earlier registrations while changing the current root key.
@@ -257,11 +262,22 @@ establishes rotated continuity. With exact DNS proof on this request, compare
 the requested key against the open EPOCH key, even if reverify has already
 updated the stored row: a different key opens replaced, the same epoch key is
 an epoch no-op, and no epoch yet opens epoch 1, replaced. A PUT authorized only
-by parent-authorization, skip-DNS or local bypass may still update the stored
-controller under its released contract, but writes NO epoch (including no
-retirement); ID-tree authority is unavailable until row, epoch and exact DNS
-agree. Existing legacy envelopes and other namespace contracts remain accepted.
+by verified parent authorization establishes the same replaced epoch for the
+child. Skip-DNS or local bypass may still update the stored controller under
+its released contract but writes NO epoch; ID-tree authority is unavailable.
+Existing legacy envelopes and other namespace contracts remain accepted.
 No existing request is silently reinterpreted as old-key proof.
+
+Delegation provenance is stored only after the existing parent proof verifies.
+Existing rows without it require explicit parent-signed registration to reaffirm
+that child; DNS observation never backfills provenance. Same-key reaffirmation
+preserves an existing epoch and opens only a missing first epoch. Deployment
+requires the hosted operator's authorization and execution of reaffirmation,
+with delegated-row counts before and after; public clients do not do it implicitly.
+When a parent's controller changes through an authorized recovery or rotation,
+AWID updates its directly delegated children's `parent_controller_key` in the
+same transaction. A child's ordinary rotation updates its current controller
+and epoch atomically; the exposed witness always names that current child key.
 
 Brief DNS control can cause a permanent tree cutoff: an attacker who installs
 and proves a new key through the recovery path opens replaced. That is the
@@ -521,7 +537,8 @@ its witness time is at or before `observed_at`. Cache age still uses the
 client's trusted local fetch time under R-1.
 
 This pseudocode fixes field names, not a second encoding: bodies use strict
-JSON. All fields are required; `retired_at`/`superseded_at` may be null.
+JSON. All fields shown are required; `retired_at`/`superseded_at` may be null.
+`namespace` additionally permits the optional `delegation` object below.
 Identity rows contain registered IDs only, with nonnull registration/head
 witnesses and positive issuer key sequences. Invitation IDs stay in private
 registration/idempotency storage and receipts' lookup; no invitation field is
@@ -536,9 +553,23 @@ prev_entry_hash makes the required status evidence unavailable
 registered_at is registry log metadata, not the caller-signed timestamp;
 pre-upgrade rows are verified continuity only. The gate's recorded
 issuer_key_seq witnesses which issuer key was current for a child.
-Namespace epochs have positive increasing sequence numbers and verified EXACT
-domain DNS authority at their witnessed time; an ancestor fallback is never
-evidence for this domain. `continuity` is required and is exactly `rotated` or
+Delegated status adds `namespace.delegation`; the existing
+`GET /v1/namespaces/{domain}` adds `delegation` with the same closed object:
+`{parent_domain,parent_controller_key,controller_key}`. The last field is the
+child's current controller. Exact-domain responses may omit this object.
+Trusted `namespace_authority` retains `{domain,dns_name,inherited,controller_key}`:
+`domain` is the requested child; inherited DNS names `_awid.` plus the ancestor
+and its independently discovered controller key, with `inherited=true`.
+Inherited authority requires a strict DNS-label ancestor `parent_domain`, that
+exact DNS name, the witness's `parent_controller_key` equal to the TXT key,
+and its `controller_key` equal to the child's current epoch key. Missing child
+records, unsigned parent records, missing witnesses or no DNS anchor are
+unavailable. Exact authority retains its current-epoch/own-TXT comparison;
+delegation never overrides a found exact record. All evidence shares the
+60-second bound. Child certificates still verify with the child's own epochs.
+
+Namespace epochs have positive increasing sequences and witnessed exact-domain
+or parent-authorized authority. `continuity` is required: `rotated` or
 `replaced`, assigned by the serialized gate's previous-key proof check above.
 Missing, unknown or contradictory continuity evidence is evidence_unavailable.
 Return the complete witnessed namespace epoch history through the current
@@ -999,7 +1030,7 @@ A response or receipt alone never establishes current human authority.
 
 `aw id human init --domain X --as-root` on the same machine is the immediate
 init path, not a CSR exchange: the human operator creates their own human key,
-uses the current exact-domain controller to issue the namespace-parent human
+uses the current namespace controller to issue the namespace-parent human
 certificate directly, and registers with the subject's key proof. It creates
 no CSR or invitation. It requires a human interactive invocation; an agent-run
 or non-TTY command cannot use it to mint a human. Human key custody and each
