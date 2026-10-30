@@ -47,7 +47,8 @@ this machine and nowhere else. Docker's published ports bypass host firewalls
 such as ufw: a port published on every interface is open to the network even
 when the firewall says it is closed. To reach the services from other machines,
 set `AWEB_BIND_ADDRESS` in `server/.env` to `0.0.0.0` or to the address of one
-interface, and put your own firewall rule or proxy in front of it.
+interface, and put a proxy in front of it or filter it with a rule in Docker's
+`DOCKER-USER` chain; a plain ufw rule does not filter it.
 
 Compose refuses to start any container when `AWID_SERVICE_TOKEN` is missing or
 empty. Generate it once as shown above; Compose passes that exact value to both
