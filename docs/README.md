@@ -164,8 +164,9 @@ ownership of definitions, homes, worktrees, runtimes, processes, and session UX.
 - [Work across teams](work-across-teams.md) — multi-team identity and messaging.
 - [MCP tutorial](mcp-tutorial.md) — optional MCP client journey scheduled for an
   OSS/hosted split.
-- [Materialize a local AI tool](add-ai-tool.md) — optional
-  member/home/worktree/runtime workflow.
+- [Add an AI tool to your team](add-ai-tool.md) — connect Claude Code, Pi,
+  Codex or Hermes and make it wake; the optional member/home/worktree/runtime
+  materialization workflow is its last section.
 
 </details>
 
