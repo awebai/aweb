@@ -146,13 +146,10 @@ func executeIDHumanInit(ctx context.Context, opts idHumanInitOptions) (idHumanIn
 	controllerDID := awid.ComputeDIDKey(controllerKey.Public().(ed25519.PublicKey))
 
 	lookup, cancel := commandAPIContext(nil, ctx)
-	authority, err := awid.VerifyExactDomainAuthority(lookup, opts.TXTResolver, domain)
+	authority, err := awid.DiscoverAuthoritativeRegistry(lookup, opts.TXTResolver, domain)
 	cancel()
 	if err != nil {
 		return idHumanInitOutput{}, fmt.Errorf("lookup %s: %w", awid.AWIDTXTName(domain), err)
-	}
-	if strings.TrimSpace(authority.ControllerDID) != controllerDID {
-		return idHumanInitOutput{}, fmt.Errorf("DNS controller %s for %s does not match this machine's controller %s", authority.ControllerDID, domain, controllerDID)
 	}
 	registryURL, err := domainRegistryURL(authority, opts.RegistryURL)
 	if err != nil {
@@ -160,6 +157,13 @@ func executeIDHumanInit(ctx context.Context, opts idHumanInitOptions) (idHumanIn
 	}
 	registry := awid.NewAWIDRegistryClient(nil, opts.TXTResolver)
 	registry.DefaultRegistryURL = registryURL
+	controller, err := registry.IDNamespaceController(ctx, domain, registryURL, authority)
+	if err != nil {
+		return idHumanInitOutput{}, err
+	}
+	if strings.TrimSpace(controller) != controllerDID {
+		return idHumanInitOutput{}, fmt.Errorf("DNS controller %s for %s does not match this machine's controller %s", controller, domain, controllerDID)
+	}
 
 	rec, err := resumableHumanRecord(domain, awconfig.HumanPathRoot)
 	if err != nil {

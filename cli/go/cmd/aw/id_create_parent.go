@@ -130,16 +130,27 @@ func rootIssuer(domain string, controllerKey ed25519.PrivateKey, registry *awid.
 	}, nil
 }
 
-// checkRootController refuses unless exact _awid DNS for domain names this
-// machine's controller, the key AWID will hold the root's signature to.
-func checkRootController(ctx context.Context, resolver awid.TXTResolver, domain string, controllerKey ed25519.PrivateKey) error {
-	authority, err := awid.VerifyExactDomainAuthority(ctx, resolver, domain)
+// checkRootController checks this machine's controller against the domain's
+// exact TXT or its delegate registry's witnessed child record.
+func checkRootController(ctx context.Context, resolver awid.TXTResolver, domain, registryOverride string, controllerKey ed25519.PrivateKey) error {
+	authority, err := awid.DiscoverAuthoritativeRegistry(ctx, resolver, domain)
 	if err != nil {
 		return fmt.Errorf("--root-parent: lookup %s: %w", awid.AWIDTXTName(domain), err)
 	}
+	registryURL, err := domainRegistryURL(authority, registryOverride)
+	if err != nil {
+		return err
+	}
+	controller, err := awid.NewAWIDRegistryClient(nil, resolver).IDNamespaceController(ctx, domain, registryURL, authority)
+	if err != nil {
+		return err
+	}
 	local := awid.ComputeDIDKey(controllerKey.Public().(ed25519.PublicKey))
-	if strings.TrimSpace(authority.ControllerDID) != local {
-		return fmt.Errorf("--root-parent: DNS controller %s for %s does not match this machine's controller %s (publish %s naming it first; `aw id namespace check-txt --domain %s` checks it)", authority.ControllerDID, domain, local, awid.AWIDTXTName(domain), domain)
+	if strings.TrimSpace(controller) != local {
+		if authority.Inherited {
+			return fmt.Errorf("--root-parent: namespace controller %s for %s does not match this machine's controller %s", controller, domain, local)
+		}
+		return fmt.Errorf("--root-parent: DNS controller %s for %s does not match this machine's controller %s (publish %s naming it first; `aw id namespace check-txt --domain %s` checks it)", controller, domain, local, awid.AWIDTXTName(domain), domain)
 	}
 	return nil
 }
@@ -237,7 +248,7 @@ func (p *idCreateParent) issuer(opts idCreateOptions, domain string, controllerK
 // so a refused parent leaves no chainless agent.
 func (p *idCreateParent) preflight(ctx context.Context, opts idCreateOptions, issuer *childIssuer, domain string, controllerKey ed25519.PrivateKey) error {
 	if p.root {
-		return checkRootController(ctx, opts.TXTResolver, domain, controllerKey)
+		return checkRootController(ctx, opts.TXTResolver, domain, opts.RegistryURL, controllerKey)
 	}
 	_, err := issuer.evidence(ctx, "", "")
 	return err
@@ -273,7 +284,7 @@ func resumeIDCreateChain(ctx context.Context, opts idCreateOptions, parent *idCr
 		if controllerKey, err = awconfig.LoadControllerKey(domain); err != nil {
 			return idCreateOutput{}, fmt.Errorf("load namespace controller key for %s: %w", domain, err)
 		}
-		if err := checkRootController(ctx, opts.TXTResolver, domain, controllerKey); err != nil {
+		if err := checkRootController(ctx, opts.TXTResolver, domain, opts.RegistryURL, controllerKey); err != nil {
 			return idCreateOutput{}, err
 		}
 	}

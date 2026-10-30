@@ -207,7 +207,8 @@ type idStatusSnapshot struct {
 	Domain     string `json:"domain"`
 	ObservedAt string `json:"observed_at"`
 	Namespace  struct {
-		Epochs []idNamespaceEpoch `json:"epochs"`
+		Epochs     []idNamespaceEpoch `json:"epochs"`
+		Delegation map[string]any     `json:"delegation,omitempty"`
 	} `json:"namespace"`
 	Identities []idStatusIdentity `json:"identities"`
 	Missing    []string           `json:"missing"`
@@ -233,10 +234,14 @@ func idStatusFields(v any, fields string) bool {
 	return ok && idCertificateExactFields(m, strings.Fields(fields)...)
 }
 func idStatusRequired(s map[string]any) bool {
-	if !idStatusFields(s, "v domain observed_at namespace identities missing") || !idStatusFields(s["namespace"], "epochs") {
+	if !idStatusFields(s, "v domain observed_at namespace identities missing") || (!idStatusFields(s["namespace"], "epochs") && !idStatusFields(s["namespace"], "epochs delegation")) {
 		return false
 	}
-	epochs, ok := s["namespace"].(map[string]any)["epochs"].([]any)
+	namespace := s["namespace"].(map[string]any)
+	if delegation, present := namespace["delegation"]; present && !idStatusFields(delegation, "parent_domain parent_controller_key controller_key") {
+		return false
+	}
+	epochs, ok := namespace["epochs"].([]any)
 	if !ok {
 		return false
 	}
@@ -328,7 +333,13 @@ func parseIDStatus(e *IDChainEvidence, domain string) (*idStatusSnapshot, error)
 	}
 	last := epochs[len(epochs)-1]
 	a := e.NamespaceAuthority
-	if last.RetiredAt != nil || !idStatusFields(a, "domain dns_name inherited controller_key") || a["domain"] != domain || a["dns_name"] != "_awid."+domain || a["inherited"] != false || a["controller_key"] != last.DIDKey {
+	if last.RetiredAt != nil || !idStatusFields(a, "domain dns_name inherited controller_key") || a["domain"] != domain {
+		return nil, bad
+	}
+	dnsName, nameOK := a["dns_name"].(string)
+	controller, keyOK := a["controller_key"].(string)
+	inherited, inheritedOK := a["inherited"].(bool)
+	if !nameOK || !keyOK || !inheritedOK || verifyIDNamespaceAuthority(domain, DomainAuthority{DNSName: dnsName, ControllerDID: controller, Inherited: inherited}, last.DIDKey, s.Namespace.Delegation) != nil {
 		return nil, bad
 	}
 	s.byID = map[string]*idStatusIdentity{}

@@ -72,9 +72,12 @@ func executeIDNamespaceCheckTXT(opts idNamespaceCheckTXTOptions) (idNamespaceChe
 
 	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
-	authority, err := awid.VerifyExactDomainAuthority(ctx, opts.TXTResolver, domain)
+	authority, err := awid.DiscoverAuthoritativeRegistry(ctx, opts.TXTResolver, domain)
 	if err != nil {
 		return idNamespaceCheckTXTOutput{}, fmt.Errorf("lookup %s: %w", awid.AWIDTXTName(domain), err)
+	}
+	if authority.Inherited || authority.DNSName != awid.AWIDTXTName(domain) {
+		return idNamespaceCheckTXTOutput{}, fmt.Errorf("no own-domain TXT record found at %s", awid.AWIDTXTName(domain))
 	}
 	dnsController := strings.TrimSpace(authority.ControllerDID)
 	if dnsController != localController {

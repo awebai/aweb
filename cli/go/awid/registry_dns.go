@@ -38,23 +38,15 @@ type DomainAuthority struct {
 	Inherited     bool
 }
 
-func DiscoverAuthoritativeRegistry(ctx context.Context, resolver TXTResolver, domain string) (DomainAuthority, error) {
-	return lookupDomainAuthority(ctx, resolver, domain, true)
-}
-
-func VerifyExactDomainAuthority(ctx context.Context, resolver TXTResolver, domain string) (DomainAuthority, error) {
-	return lookupDomainAuthority(ctx, resolver, domain, false)
-}
-
 func AWIDTXTName(domain string) string {
 	return "_awid." + canonicalizeDomain(domain)
 }
 
-func lookupDomainAuthority(ctx context.Context, resolver TXTResolver, domain string, allowAncestors bool) (DomainAuthority, error) {
+func DiscoverAuthoritativeRegistry(ctx context.Context, resolver TXTResolver, domain string) (DomainAuthority, error) {
 	if resolver == nil {
 		resolver = &NetTXTResolver{}
 	}
-	candidates := candidateDomainsForLookup(domain, allowAncestors)
+	candidates := candidateDomainsForLookup(domain)
 	if len(candidates) == 0 {
 		return DomainAuthority{}, fmt.Errorf("invalid domain")
 	}
@@ -64,10 +56,7 @@ func lookupDomainAuthority(ctx context.Context, resolver TXTResolver, domain str
 		records, err := resolver.LookupTXT(ctx, qname)
 		if err != nil {
 			if isTXTNotFound(err) {
-				if allowAncestors {
-					continue
-				}
-				return DomainAuthority{}, err
+				continue
 			}
 			return DomainAuthority{}, err
 		}
@@ -79,10 +68,7 @@ func lookupDomainAuthority(ctx context.Context, resolver TXTResolver, domain str
 			}
 		}
 		if len(awidRecords) == 0 {
-			if allowAncestors {
-				continue
-			}
-			return DomainAuthority{}, fmt.Errorf("no awid TXT record found at %s", qname)
+			continue
 		}
 		if len(awidRecords) > 1 {
 			return DomainAuthority{}, fmt.Errorf("multiple awid TXT records found at %s", qname)
@@ -96,12 +82,7 @@ func lookupDomainAuthority(ctx context.Context, resolver TXTResolver, domain str
 		}
 		return authority, nil
 	}
-	if allowAncestors {
-		return DomainAuthority{
-			RegistryURL: DefaultAWIDRegistryURL,
-		}, nil
-	}
-	return DomainAuthority{}, fmt.Errorf("no TXT records found for %s", AWIDTXTName(domain))
+	return DomainAuthority{RegistryURL: DefaultAWIDRegistryURL}, nil
 }
 
 func ParseAWIDTXTRecord(record, dnsName string) (DomainAuthority, error) {
@@ -151,13 +132,10 @@ func ParseAWIDTXTRecord(record, dnsName string) (DomainAuthority, error) {
 	}, nil
 }
 
-func candidateDomainsForLookup(domain string, allowAncestors bool) []string {
+func candidateDomainsForLookup(domain string) []string {
 	canonical := canonicalizeDomain(domain)
 	if canonical == "" {
 		return nil
-	}
-	if !allowAncestors {
-		return []string{canonical}
 	}
 	labels := strings.Split(canonical, ".")
 	boundary := registeredDomainBoundary(canonical)
