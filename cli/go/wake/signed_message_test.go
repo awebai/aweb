@@ -77,16 +77,17 @@ func TestBundledHoldsInvalidSenderUntilVerified(t *testing.T) {
 	event := awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "held-mail"}
 	child.Offer(reg.ReceiveBindings()[0], event)
 	waitForStatus(t, child, func(st ChannelCoreStatus) bool {
-		return st.TraceStage == "lane_job_failed" && strings.Contains(st.LastError, "sender is not verified")
+		return st.TraceStage == "lane_job_failed" && strings.Contains(st.LastError, "unverified sender")
 	})
-	if data, err := os.ReadFile(inputPath); !os.IsNotExist(err) {
-		t.Fatalf("held sender produced input: %q, %v", data, err)
+	data, err := os.ReadFile(inputPath)
+	if err != nil || string(data) != "[aweb] 1 message held (unverified sender). Run: aw mail inbox" {
+		t.Fatalf("held sender notice: %q, %v", data, err)
 	}
 	if acks.Load() != 0 {
 		t.Fatal("held sender acknowledged")
 	}
 	deliveryPath := filepath.Join(identity, "channel-delivered-ids-backend_acme.com.json")
-	data, _ := os.ReadFile(deliveryPath)
+	data, _ = os.ReadFile(deliveryPath)
 	if strings.Contains(string(data), "held-mail") {
 		t.Fatal("held sender marked delivered")
 	}

@@ -431,7 +431,7 @@ func TestBundledEncryptedSecondaryRootUsesBindingIdentityForDecrypt(t *testing.T
 	waitForStatus(t, child, func(st ChannelCoreStatus) bool { return st.Running && st.LastError == "" })
 	child.Offer(reg.ReceiveBindings()[0], awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "mail-enc", ConversationID: "conv-1"})
 	waitForStatus(t, child, func(st ChannelCoreStatus) bool {
-		return st.TraceStage == "lane_job_failed" && strings.Contains(st.LastError, "message could not be decrypted")
+		return st.TraceStage == "lane_job_failed" && strings.Contains(st.LastError, "could not decrypt")
 	})
 	assertFileNotContains(t, inputPath, "decrypted: false")
 	canonicalSecondary, _ := filepath.EvalSymlinks(secondary)

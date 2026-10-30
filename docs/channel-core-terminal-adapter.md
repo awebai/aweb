@@ -12,9 +12,13 @@ architecture rethink: working and unknown states do not delay delivery.
 There is no readiness queue, coalescing window, rate limit or readiness polling.
 
 The terminal adapter holds mail and chat unless sender trust is `verified` or
-`verified_custodial`. Decryption failures are held too, including their diagnostic
-notices: a notice would still submit terminal input. Held messages remain unread
-and are not marked delivered; the child reports the refusal through status.
+`verified_custodial`. Decryption failures are held too. It submits a fixed notice
+with no sender-controlled content and a command to check mail/chat, selecting
+the registered receiving identity when needed. Accepted notices are suppressed
+on retries by a bounded in-memory cache (1000 entries); restart or eviction can
+repeat a notice. Held messages remain unread and are not marked delivered.
+The notice still submits terminal input and Enter; prompt safety remains subject
+to the transport limitation below.
 Native channel adapters retain their own presentation policy.
 
 The terminal adapter serializes input across delivery lanes. Each caller checks

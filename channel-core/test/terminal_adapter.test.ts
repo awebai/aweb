@@ -272,3 +272,29 @@ test("absent harness leaves input pending even with idle state", async () => {
   await expect(handler(awakening())).rejects.toThrow("not-launched");
   expect(input).not.toHaveBeenCalled();
 });
+
+test("held notice uses registered identity, omits sender content and ambient text, and retries failed input", async () => {
+  const input = vi.fn().mockRejectedValueOnce(new Error("input refused")).mockResolvedValue(undefined);
+  const handler = createTerminalAwakeningHandler({ home: "/agent", session: {
+    inspect: async () => ({ present: true, state: "idle" }), input,
+  } });
+  const ambient = handler(awakening({ kind: "work", content: "ambient secret", deliveryIntent: "ambient" }));
+  const held = awakening({ kind: "mail", content: "sender secret", meta: { trust_status: "unverified", subject: "sender subject", from: "sender name", identity_home: "/forged" } });
+  await expect(handler(held, "/joined identity")).rejects.toThrow("input refused");
+  await expect(handler(held, "/joined identity")).rejects.toThrow("terminal delivery held");
+  expect(input).toHaveBeenCalledTimes(2);
+  expect(input.mock.calls[1][1]).toBe("[aweb] 1 message held (unverified sender). Run: aw --identity-home '/joined identity' mail inbox");
+  expect(handler.status().ambientQueued).toBe(1);
+  await handler(awakening());
+  await ambient;
+  expect(input.mock.calls[2][1]).toContain("ambient secret");
+});
+
+test.each(["blocked", "shell", "stopped"])("held notices respect %s safety refusal", async (state) => {
+  const input = vi.fn(async () => {});
+  const handler = createTerminalAwakeningHandler({ home: "/agent", session: {
+    inspect: async () => ({ present: true, state }), input,
+  } });
+  await expect(handler(awakening({ meta: { trust_status: "unverified" } }))).rejects.toThrow("terminal is inactive");
+  expect(input).not.toHaveBeenCalled();
+});
