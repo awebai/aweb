@@ -89,9 +89,10 @@ async def mailbox(aweb_cloud_db, actor):
     db = aweb_cloud_db.aweb_db
     await _insert_team(db, actor.team_id)
     actor.agent_id = await _insert_agent(db, team_id=actor.team_id, alias="actor",
-                                        did_key=actor.did_key, did_aw="did:aw:actor")
+                                        did_key=actor.did_key, did_aw="did:aw:actor",
+                                        address="example.com/actor")
     other = await _insert_agent(db, team_id=actor.team_id, alias="other",
-                               did_key="did:key:other")
+                               did_key="did:key:other", did_aw=None, address=None)
     await db.execute("UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1",
                      UUID(actor.agent_id))
 
@@ -103,8 +104,9 @@ async def mailbox(aweb_cloud_db, actor):
 
     async def chat(did, *, duplicate=False):
         sid = uuid4()
-        await db.execute("INSERT INTO {{tables.chat_sessions}} (session_id, team_id) VALUES ($1,$2)",
-                         sid, actor.team_id)
+        await db.execute("""INSERT INTO {{tables.chat_sessions}}
+            (session_id, team_id, created_by) VALUES ($1,$2,$3)""",
+                         sid, actor.team_id, UUID(actor.agent_id))
         for participant_did, agent_id in [(did, actor.agent_id), ("did:key:other", other)]:
             await db.execute("""INSERT INTO {{tables.chat_participants}}
                 (session_id, did, agent_id, alias) VALUES ($1,$2,$3,'participant')""",
@@ -122,6 +124,7 @@ async def mailbox(aweb_cloud_db, actor):
         for reader, mid in [(did, ids[0]), ("did:key:other", ids[1])]:
             await db.execute("""INSERT INTO {{tables.chat_message_reads}}
                 (session_id,did,message_id) VALUES ($1,$2,$3)""", sid, reader, mid)
+        return sid
 
     return SimpleNamespace(db=db, mail=mail, chat=chat)
 
@@ -160,3 +163,70 @@ async def test_unverified_stable_claim_is_not_a_mailbox_alias(actor, mailbox):
     await mailbox.db.execute("UPDATE {{tables.agents}} SET did_aw_verified_key=NULL")
     original = CallToolResult(content=[TextContent(type="text", text="original")])
     assert await append_pending_nudge(original, infra(mailbox.db)) is original
+
+
+@pytest.mark.asyncio
+async def test_chat_counts_preserve_existing_participant_read_semantics(actor, mailbox):
+    from aweb.messaging.chat import get_pending_conversations
+
+    sid = await mailbox.chat("did:aw:actor", duplicate=True)
+    mid = uuid4()
+    await mailbox.db.execute("""INSERT INTO {{tables.chat_messages}}
+        (message_id, session_id, from_did, from_alias, body)
+        VALUES ($1,$2,$3,'actor','own message under another bound DID')""", mid, sid, actor.did_key)
+    await mailbox.db.execute("""INSERT INTO {{tables.chat_message_reads}}
+        (session_id, did, message_id) VALUES ($1,$2,$3)""", sid, actor.did_key, mid)
+    # check_chats selects the stable participant first, including its independent
+    # read state. This slice must not reinterpret reads/self-sends across aliases.
+    existing = await get_pending_conversations(infra(mailbox.db),
+        participant_did="did:aw:actor", participant_agent_id=actor.agent_id)
+    assert existing[0]["unread_count"] == 2
+    result = await append_pending_nudge([], infra(mailbox.db))
+    assert "0 unread mail and 2 unread chat messages" in result.content[-1].text
+
+
+@pytest.mark.asyncio
+async def test_mounted_core_result_nudge_and_post_consumption_snapshot(actor, mailbox, monkeypatch):
+    import httpx
+    from identity_binding_support import seed_verified_bindings
+    from aweb.internal_auth import build_internal_auth_header_value
+    from aweb.mcp.server import create_mcp_app
+    from test_messages_http import _build_test_app
+
+    app = _build_test_app(mailbox.db, object())
+    seed_verified_bindings(app, ("did:aw:actor", actor.did_key, "example.com/actor"))
+    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
+    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", "nudge-test-secret")
+    principal = str(uuid4())
+    headers = {"Accept": "application/json, text/event-stream",
+        "X-Team-ID": actor.team_id, "X-User-ID": principal,
+        "X-AWEB-Actor-ID": actor.agent_id,
+        "X-AWEB-Auth": build_internal_auth_header_value(secret="nudge-test-secret",
+            team_id=actor.team_id, principal_type="u", principal_id=principal,
+            actor_id=actor.agent_id)}
+    mcp = create_mcp_app(db_infra=app.state.db)
+    app.mount("/mcp", mcp)
+    await mcp.startup()
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            async def call(name):
+                response = await client.post("/mcp/", headers=headers, json={
+                    "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                    "params": {"name": name, "arguments": {}}})
+                assert response.status_code == 200, response.text
+                return response.json()["result"]
+
+            baseline = await call("whoami")
+            await mailbox.mail(actor.did_key)
+            nudged = await call("whoami")
+            assert nudged["content"][:-1] == baseline["content"]
+            assert "1 unread mail and 0 unread chat messages" in nudged["content"][-1]["text"]
+            assert {k: v for k, v in nudged.items() if k != "content"} == {
+                k: v for k, v in baseline.items() if k != "content"}
+            # The count query is AFTER the called tool, so consumed mail is not
+            # advertised again on the result of the call that consumed it.
+            read = await call("check_mail")
+            assert len(read["content"]) == 1
+            assert await call("whoami") == baseline
+    finally:
+        await mcp.shutdown()
