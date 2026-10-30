@@ -57,7 +57,7 @@ func TestTeamInviteInspectCommand(t *testing.T) {
 			t.Error("preview did not send exactly the original full token")
 		}
 		selected := mode.Load().(string)
-		status := map[string]int{"unknown": 404, "rate": 429, "unavailable": 503, "redirect": 307, "bad_request": 422}[selected]
+		status := map[string]int{"unknown": 404, "rate": 429, "unavailable": 503, "redirect": 307, "bad_request": 422, "unauthorized": 401, "gone": 410, "used": 409}[selected]
 		w.Header().Set("X-Reflected-Secret", inner)
 		if status != 0 {
 			w.Header().Set("Location", other.URL+"/?token="+inner)
@@ -145,7 +145,7 @@ func TestTeamInviteInspectCommand(t *testing.T) {
 	}
 	for _, tc := range []struct{ mode, code string }{
 		{"active", ""}, {"nullable", ""}, {"unbound_scope", ""}, {"expired", "expired"}, {"exhausted", "exhausted"}, {"revoked", "revoked"},
-		{"unknown", "unknown_or_invalid"}, {"rate", "server_unreachable"}, {"unavailable", "server_unreachable"},
+		{"unauthorized", "unknown_or_invalid"}, {"gone", "expired_or_revoked"}, {"used", "exhausted"}, {"unknown", "unknown_or_invalid"}, {"rate", "server_unreachable"}, {"unavailable", "server_unreachable"},
 		{"redirect", "server_unreachable"}, {"bad_request", "server_unreachable"}, {"mismatch", "server_mismatch"},
 		{"echo", "server_unreachable"}, {"bad_scope", "server_unreachable"}, {"bad_status", "server_unreachable"},
 		{"bad_expiry", "server_unreachable"}, {"malformed", "server_unreachable"}, {"oversized", "server_unreachable"},

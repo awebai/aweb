@@ -471,6 +471,8 @@ func TestHostedTeamAddProfiledAgentMaterializesAndAppliesRuntime(t *testing.T) {
 				"namespace":      "gracehosted.aweb.ai",
 				"server_url":     serverURL,
 			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/invite-preview":
+			writeLegacyHostedPreviewForTest(t, w, r, teamID, serverURL)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
 			acceptInviteCalls++
 			body, _ := io.ReadAll(r.Body)

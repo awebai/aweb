@@ -2314,6 +2314,8 @@ func TestTeamHumanAddHostedProfileMaterializeFailureRequiresTeamKeyForHostedRoll
 				t.Fatalf("create-invite cert team=%q want %q", cert.Team, teamID)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"invite_id": "invite-1", "token": "aw_inv_hosted_rollback_token", "server_url": serverURL})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/invite-preview":
+			writeLegacyHostedPreviewForTest(t, w, r, teamID, serverURL)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
 			var req map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -2412,6 +2414,8 @@ func TestTeamHumanAddHostedProfileRollbackFailureIsLoud(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"aweb_url": serverURL, "registry_url": serverURL})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/create-invite":
 			_ = json.NewEncoder(w).Encode(map[string]any{"invite_id": "invite-1", "token": "aw_inv_hosted_rollback_fail_token", "server_url": serverURL})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/invite-preview":
+			writeLegacyHostedPreviewForTest(t, w, r, teamID, serverURL)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
 			var req map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

@@ -8,6 +8,7 @@ import (
 // IDTreeCreationRequest is the optional ID-tree part of an existing signed
 // hosted creation request. Native parents supply their already registered chain.
 type IDTreeCreationRequest struct {
+	Mode      string         `json:"mode,omitempty"`
 	V         int            `json:"v"`
 	RequestID string         `json:"request_id"`
 	Domain    string         `json:"domain"`

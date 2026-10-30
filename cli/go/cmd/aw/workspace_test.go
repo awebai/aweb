@@ -2258,6 +2258,8 @@ func TestAwWorkspaceAddWorktreeExternalIdentityHomeUsesHostedInviteWithoutTeamKe
 				Namespace:     "acme.aweb.ai",
 				ServerURL:     "http://" + r.Host,
 			})
+		case "/api/v1/spawn/invite-preview":
+			writeLegacyHostedPreviewForTest(t, w, r, teamID, "http://"+r.Host)
 		case "/api/v1/spawn/accept-invite":
 			if didFromDIDKeyAuthorizationForTest(r.Header.Get("Authorization")) == "" {
 				t.Fatalf("accept-invite missing DIDKey auth")

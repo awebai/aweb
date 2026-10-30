@@ -12,23 +12,48 @@ import (
 const spawnAcceptInvitePath = "/api/v1/spawn/accept-invite"
 
 type SpawnCreateInviteRequest struct {
-	AliasHint        string `json:"alias_hint,omitempty"`
-	AccessMode       string `json:"access_mode,omitempty"`
-	MaxUses          int    `json:"max_uses,omitempty"`
-	ExpiresInSeconds int    `json:"expires_in_seconds,omitempty"`
+	IDChain          map[string]any `json:"id_chain,omitempty"`
+	AliasHint        string         `json:"alias_hint,omitempty"`
+	AccessMode       string         `json:"access_mode,omitempty"`
+	MaxUses          int            `json:"max_uses,omitempty"`
+	ExpiresInSeconds int            `json:"expires_in_seconds,omitempty"`
 }
 
 type SpawnCreateInviteResponse struct {
-	InviteID      string `json:"invite_id"`
-	Token         string `json:"token"`
-	TokenPrefix   string `json:"token_prefix"`
-	AliasHint     string `json:"alias_hint,omitempty"`
-	AccessMode    string `json:"access_mode"`
-	MaxUses       int    `json:"max_uses"`
-	ExpiresAt     string `json:"expires_at"`
-	NamespaceSlug string `json:"namespace_slug"`
-	Namespace     string `json:"namespace"`
-	ServerURL     string `json:"server_url"`
+	IDTree        *SpawnInviteIDTree `json:"id_tree"`
+	InviteID      string             `json:"invite_id"`
+	Token         string             `json:"token"`
+	TokenPrefix   string             `json:"token_prefix"`
+	AliasHint     string             `json:"alias_hint,omitempty"`
+	AccessMode    string             `json:"access_mode"`
+	MaxUses       int                `json:"max_uses"`
+	ExpiresAt     string             `json:"expires_at"`
+	NamespaceSlug string             `json:"namespace_slug"`
+	Namespace     string             `json:"namespace"`
+	ServerURL     string             `json:"server_url"`
+}
+
+// SpawnInviteIDTree is pinned at invitation issue, before the child's key is
+// selected. Mode describes issuer signing custody, independent of child scope.
+type SpawnInviteIDTree struct {
+	V         int    `json:"v"`
+	IssuerID  string `json:"issuer_id"`
+	Domain    string `json:"domain"`
+	ChildKind string `json:"child_kind"`
+	Mode      string `json:"mode"`
+}
+
+// SpawnInvitePreviewResponse carries public selection metadata, not a signature
+// or authorization to issue a child certificate.
+type SpawnInvitePreviewResponse struct {
+	IDTreePresent   bool               `json:"-"`
+	InviteID        string             `json:"invite_id"`
+	IDTree          *SpawnInviteIDTree `json:"id_tree"`
+	CanonicalTeamID string             `json:"canonical_team_id"`
+	IdentityScope   string             `json:"identity_scope"`
+	ServerURL       string             `json:"server_url"`
+	ExpiresAt       *string            `json:"expires_at"`
+	Status          string             `json:"status"`
 }
 
 type SpawnAcceptInviteRequest struct {
@@ -142,5 +167,34 @@ func (response *SpawnAcceptInviteResponse) UnmarshalJSON(raw []byte) error {
 		return err
 	}
 	response.IDTreeCreationResponse = tree
+	return nil
+}
+
+// MarshalJSON preserves legacy omission when a response is retained for resume.
+func (response SpawnAcceptInviteResponse) MarshalJSON() ([]byte, error) {
+	type plain SpawnAcceptInviteResponse
+	raw, err := json.Marshal(plain(response))
+	if err != nil || response.FieldsPresent || response.IDChain != nil || response.RegistrationRequest != nil {
+		return raw, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, err
+	}
+	delete(fields, "id_chain")
+	delete(fields, "registration_request")
+	return json.Marshal(fields)
+}
+
+func (response *SpawnInvitePreviewResponse) UnmarshalJSON(raw []byte) error {
+	type plain SpawnInvitePreviewResponse
+	if err := json.Unmarshal(raw, (*plain)(response)); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return err
+	}
+	_, response.IDTreePresent = fields["id_tree"]
 	return nil
 }

@@ -20,6 +20,7 @@ import (
 // canonical response is retained before registration, so a retry cannot replace
 // a certificate or its registration arguments after a partial remote effect.
 type hostedIDTreeRecovery struct {
+	Mode                  string         `json:"mode,omitempty" yaml:"mode,omitempty"`
 	RequestID             string         `json:"request_id" yaml:"request_id"`
 	Domain                string         `json:"domain,omitempty" yaml:"domain,omitempty"`
 	Parent                map[string]any `json:"parent,omitempty" yaml:"parent,omitempty"`
@@ -44,7 +45,7 @@ func (tree *hostedIDTreeRecovery) request(chain map[string]any) *awid.IDTreeCrea
 	if tree == nil || tree.Domain == "" {
 		return nil
 	}
-	return &awid.IDTreeCreationRequest{V: 1, RequestID: tree.RequestID, Domain: tree.Domain, Parent: tree.Parent, IDChain: chain}
+	return &awid.IDTreeCreationRequest{Mode: tree.Mode, V: 1, RequestID: tree.RequestID, Domain: tree.Domain, Parent: tree.Parent, IDChain: chain}
 }
 
 func (tree *hostedIDTreeRecovery) retainResponse(response awid.IDTreeCreationResponse) error {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 
@@ -103,13 +104,14 @@ func idParentOptionsFromFlags() idParentOptions {
 
 // requester is who asks a parent for its own certificate.
 type requester struct {
-	id     string
-	didKey string
-	domain string
-	kind   string
-	dir    string
-	signer func(description string) awid.IDCertificateSigner
-	human  *awconfig.HumanRecord
+	expectedParent map[string]any
+	id             string
+	didKey         string
+	domain         string
+	kind           string
+	dir            string
+	signer         func(description string) awid.IDCertificateSigner
+	human          *awconfig.HumanRecord
 }
 
 func (r *requester) requests() awconfig.IDRequestFileStore {
@@ -119,6 +121,9 @@ func (r *requester) requests() awconfig.IDRequestFileStore {
 func selectRequester(opts idParentOptions) (*requester, error) {
 	if strings.TrimSpace(opts.Human) == "" {
 		identity, err := resolveIDExchangeIdentity(opts.WorkingDir, opts.IdentityHome)
+		if errors.Is(err, os.ErrNotExist) {
+			return pendingHostedInviteRequester(opts)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -245,6 +250,9 @@ func executeIDParentRequest(opts idParentOptions, invitationID, parentID string,
 	}
 	if parent == nil {
 		parent = map[string]any{"kind": "namespace", "id": r.domain}
+	}
+	if r.expectedParent != nil && !reflect.DeepEqual(parent, r.expectedParent) {
+		return idParentRequestOutput{}, nil, usageError("parent differs from the pending hosted invitation")
 	}
 	requestID, err := newInvitationID()
 	if err != nil {

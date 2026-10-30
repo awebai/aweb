@@ -152,13 +152,18 @@ func inspectUnavailable() *inviteInspectError {
 }
 
 func inspectHostedInvite(ctx context.Context, token string, envelope hostedJoinTokenEnvelope) (*inviteInspection, *inviteInspectError) {
+	inspection, _, err := readHostedInvitePreview(ctx, token, envelope)
+	return inspection, err
+}
+
+func readHostedInvitePreview(ctx context.Context, token string, envelope hostedJoinTokenEnvelope) (*inviteInspection, *awid.SpawnInvitePreviewResponse, *inviteInspectError) {
 	body, _ := json.Marshal(struct {
 		Token string `json:"token"`
 	}{token})
 	base := strings.TrimSuffix(envelope.AwebURL, "/api")
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/api/v1/spawn/invite-preview", bytes.NewReader(body))
 	if err != nil {
-		return nil, inspectUnavailable()
+		return nil, nil, inspectUnavailable()
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
@@ -173,61 +178,61 @@ func inspectHostedInvite(ctx context.Context, token string, envelope hostedJoinT
 	}
 	resp, err := awid.DoServerRequest(&http.Client{Timeout: 15 * time.Second, Transport: transport}, req, envelope.AwebURL)
 	if err != nil {
-		return nil, inspectUnavailable()
+		return nil, nil, inspectUnavailable()
 	}
 	defer resp.Body.Close()
 	if trace {
 		fmt.Fprintf(os.Stderr, "AW TRACE invite preview: HTTP %d\n", resp.StatusCode)
 	}
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, &inviteInspectError{"unknown_or_invalid", "Invite is unknown or invalid, or this service does not support invite preview.", 1}
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusUnauthorized {
+		return nil, nil, &inviteInspectError{"unknown_or_invalid", "Invite is unknown or invalid, or this service does not support invite preview.", 1}
+	}
+	if resp.StatusCode == http.StatusGone {
+		return nil, nil, &inviteInspectError{"expired_or_revoked", "Invite is expired or revoked; request a new invite. No invite was redeemed.", 1}
+	}
+	if resp.StatusCode == http.StatusConflict {
+		return nil, nil, &inviteInspectError{"exhausted", "Invite is exhausted; request a new invite. No invite was redeemed.", 1}
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, inspectUnavailable()
+		return nil, nil, inspectUnavailable()
 	}
 	data, err := awid.ReadAllBounded(resp.Body, 64*1024)
 	if err != nil {
-		return nil, inspectUnavailable()
+		return nil, nil, inspectUnavailable()
 	}
 	// Separate the wire response so a service cannot overwrite Kind.
-	var wire struct {
-		CanonicalTeamID string  `json:"canonical_team_id"`
-		IdentityScope   string  `json:"identity_scope"`
-		ServerURL       string  `json:"server_url"`
-		ExpiresAt       *string `json:"expires_at"`
-		Status          string  `json:"status"`
-	}
+	var wire awid.SpawnInvitePreviewResponse
 	if json.Unmarshal(data, &wire) != nil {
-		return nil, inspectUnavailable()
+		return nil, nil, inspectUnavailable()
 	}
 	domain, team, err := awid.ParseTeamID(wire.CanonicalTeamID)
 	id, valid := inspectCanonicalTeam(domain, team)
 	if err != nil || !valid || id != wire.CanonicalTeamID || (wire.IdentityScope != "local" && wire.IdentityScope != "global" && wire.IdentityScope != "unknown") {
-		return nil, inspectUnavailable()
+		return nil, nil, inspectUnavailable()
 	}
 	server, err := inspectServiceURL(wire.ServerURL)
 	if err != nil {
-		return nil, inspectUnavailable()
+		return nil, nil, inspectUnavailable()
 	}
 	if server != envelope.AwebURL {
-		return nil, &inviteInspectError{"server_mismatch", "Invite preview service does not match the invite envelope; no second request was made.", 1}
+		return nil, nil, &inviteInspectError{"server_mismatch", "Invite preview service does not match the invite envelope; no second request was made.", 1}
 	}
 	if wire.ExpiresAt != nil {
 		if _, err := time.Parse(time.RFC3339Nano, *wire.ExpiresAt); err != nil {
-			return nil, inspectUnavailable()
+			return nil, nil, inspectUnavailable()
 		}
 	}
 	result := &inviteInspection{"hosted", id, wire.IdentityScope, server, wire.ExpiresAt, wire.Status}
 	if inspectResultLeaks(result, token, envelope.InnerToken, strings.TrimPrefix(envelope.InnerToken, "aw_inv_")) {
-		return nil, inspectUnavailable()
+		return nil, nil, inspectUnavailable()
 	}
 	switch wire.Status {
 	case "active":
-		return result, nil
+		return result, &wire, nil
 	case "expired", "exhausted", "revoked":
-		return result, &inviteInspectError{wire.Status, "Invite is " + wire.Status + "; request a new invite. No invite was redeemed.", 1}
+		return result, &wire, &inviteInspectError{wire.Status, "Invite is " + wire.Status + "; request a new invite. No invite was redeemed.", 1}
 	default:
-		return nil, inspectUnavailable()
+		return nil, nil, inspectUnavailable()
 	}
 }
 

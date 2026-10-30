@@ -1864,6 +1864,8 @@ func TestTeamInviteHostedUsesCloudAuthorityWithoutLocalTeamKey(t *testing.T) {
 				"namespace":      "gracehosted.aweb.ai",
 				"server_url":     serverURL,
 			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/invite-preview":
+			writeLegacyHostedPreviewForTest(t, w, r, teamID, serverURL)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
 			body, _ := io.ReadAll(r.Body)
 			var req map[string]any
@@ -2117,6 +2119,8 @@ func TestTeamAcceptHostedInviteWithAddressCreatesGlobalIdentity(t *testing.T) {
 			// the E2E encryption-key assertion to the registry.
 			encryptionKeyPublished.Store(true)
 			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/invite-preview":
+			writeLegacyHostedPreviewForTest(t, w, r, teamID, serverURL)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
 			body, _ := io.ReadAll(r.Body)
 			if err := json.Unmarshal(body, &acceptBody); err != nil {
@@ -2321,6 +2325,10 @@ func TestTeamAcceptHostedGlobalInviteRetryReusesPendingSigningKey(t *testing.T) 
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/did" {
 			t.Fatalf("hosted global retry must not use split DID registration")
 		}
+		if r.URL.Path == "/api/v1/spawn/invite-preview" {
+			writeLegacyHostedPreviewForTest(t, w, r, teamID, serverURL)
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/spawn/accept-invite" {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -2415,6 +2423,10 @@ func TestTeamAcceptHostedLocalInviteRetryReusesPendingSigningKey(t *testing.T) {
 	var acceptCalls int
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/spawn/invite-preview" {
+			writeLegacyHostedPreviewForTest(t, w, r, teamID, serverURL)
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/spawn/accept-invite" {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -2542,6 +2554,8 @@ func testHostedLocalAcceptInviteIntoExternalIdentityHome(t *testing.T, tokenStdi
 	var gotConnectPayload connectRequest
 	server := newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/invite-preview":
+			writeLegacyHostedPreviewForTest(t, w, r, teamID, serverURL)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
 			var req awid.SpawnAcceptInviteRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -2719,6 +2733,8 @@ func TestHostedLocalAcceptExternalIdentityHomeReportsRootRecoveryOnConnectFailur
 	}
 	server := newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/invite-preview":
+			writeLegacyHostedPreviewForTest(t, w, r, teamID, serverURL)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
 			var req awid.SpawnAcceptInviteRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -3084,6 +3100,10 @@ func TestHostedGlobalAcceptNoAddressUsesExistingStableID(t *testing.T) {
 			return
 		}
 
+		if r.URL.Path == "/api/v1/spawn/invite-preview" {
+			writeLegacyHostedPreviewForTest(t, w, r, teamID, serverURL)
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/spawn/accept-invite" {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}

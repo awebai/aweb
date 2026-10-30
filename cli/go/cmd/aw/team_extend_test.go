@@ -422,6 +422,8 @@ func TestTeamExtendCurrentWorkspaceGlobalPreflightHasZeroMutation(t *testing.T) 
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/create-invite":
 			mutationCalls++
 			_ = json.NewEncoder(w).Encode(map[string]any{"invite_id": "invite-1", "token": "aw_inv_hosted_rollback_token", "server_url": serverURL})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/invite-preview":
+			writeLegacyHostedPreviewForTest(t, w, r, teamID, serverURL)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
 			mutationCalls++
 			var req map[string]any
