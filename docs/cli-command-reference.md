@@ -892,7 +892,8 @@ Flags:
 ### `id parent request`
 
 Export a certificate request against the invitation your parent fixed: its
---invitation-id, --domain and parent (--parent <did:aw> or --root-parent).
+--invitation-id, --domain and parent (--parent <did:aw|did:key> or --root-parent).
+A local did:key parent can issue only a local did:key agent child.
 Send the request file to the parent over your chosen channel, and tell them
 the fingerprint shown here through a different trusted channel.
 
@@ -906,7 +907,7 @@ Flags:
 - `--human string Act as this human prepared on this machine (did:aw)`
 - `--invitation-id string Invitation ID the parent gave you`
 - `--out string Where to write the request (- for stdout) (default "-")`
-- `--parent string did:aw of the parent identity`
+- `--parent string did:aw or did:key of the parent identity`
 - `--resign Ask the parent to re-sign the certificate this local agent carries`
 - `--root-parent The parent is the namespace root of --domain`
 
