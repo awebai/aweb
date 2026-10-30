@@ -295,6 +295,7 @@ def unenrolled_creations(team_dir):
     (ROOT / "plain").mkdir()
     plain, prompts = command(["id", "create", "--name", "plain", "--domain", domain, "--json"], cwd="plain")
     assert prompts == 0 and plain["did_aw"].startswith("did:aw:"), plain
+    assert plain["registry_status"] == "registered", plain
     assert not (ROOT / "plain/.aw/id-chain.json").exists()
     assert_unenrolled("plain", plain["did_aw"])
     print("PASS: plain global id create is an unenrolled ID that aw who reports as unregistered_identity", flush=True)
@@ -313,7 +314,10 @@ def unenrolled_creations(team_dir):
 
 
 def human_issues_human(human):
-    """J1: a registered human admits a second human through the request exchange."""
+    """J1: a registered human admits a second human through the request exchange.
+
+    Both humans share this home and keyring; the two-machine proof is the
+    root-human CSR journey (csr_requester and csr_root)."""
     domain = "alpha.example.com"
     issuer = ["--human", human, "--domain", domain]
     second, prompts = command(["id", "human", "init", "--domain", domain, "--another", "--json"])
