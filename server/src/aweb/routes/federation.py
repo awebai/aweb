@@ -27,6 +27,8 @@ from aweb.federation.envelope import (
 )
 from aweb.federation.errors import authority_error_body
 from aweb.messaging.messages import resolve_agent_by_did
+from aweb.identity_binding import verify_identity_binding
+from aweb.id_chain_auth import authenticate_id_chain
 
 logger = logging.getLogger(__name__)
 
@@ -435,11 +437,21 @@ async def receive_federated_message(
                     }
                 )
 
+        # The preserved sender signature and Phase-A authority above establish
+        # the author. Bind the adjacent proof to that author, not this server.
+        binding = await verify_identity_binding(
+            request, did_key=envelope.sender_current_did_key,
+            did_aw="" if _is_local_did_key(envelope.sender_did_aw) else envelope.sender_did_aw,
+            address="" if _is_local_did_key(envelope.sender_did_aw) else (envelope.sender_address or ""),
+        )
+        await authenticate_id_chain(request, binding)
+
         if established_replay is not None:
             result = await deliver_federated_phase_b(
                 db,
                 envelope=envelope,
                 signature=payload.signature,
+                id_chain=getattr(request.state, "id_chain", None),
                 recipient={},
                 authority_token=authority_token,
                 envelope_hash_override=ingress_envelope_hash,
@@ -470,6 +482,7 @@ async def receive_federated_message(
             db,
             envelope=envelope,
             signature=payload.signature,
+            id_chain=getattr(request.state, "id_chain", None),
             recipient=recipient,
             authority_token=authority_token,
             stored_route_continuation=stored_route,

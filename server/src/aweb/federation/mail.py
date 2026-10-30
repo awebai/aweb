@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 
 from awid.log import canonical_server_origin
+from awid.id_certificates import encode_id_chain_header
 
 from .envelope import FederatedDeliveryRequest, FederationEnvelope
 
@@ -57,6 +58,7 @@ async def deliver_federated_message(
     delivery_origin: str,
     envelope: FederationEnvelope,
     signature: str,
+    id_chain: dict | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
     timeout: float = 10.0,
 ) -> dict[str, Any]:
@@ -80,6 +82,7 @@ async def deliver_federated_message(
                     headers={
                         "Accept": "application/json",
                         "Accept-Encoding": "identity",
+                        **({"X-AWID-ID-Chain": encode_id_chain_header(id_chain)} if id_chain is not None else {}),
                     },
                 ) as response:
                     max_bytes = (
@@ -121,6 +124,7 @@ async def deliver_federated_mail(
     delivery_origin: str,
     envelope: FederationEnvelope,
     signature: str,
+    id_chain: dict | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
     timeout: float = 10.0,
 ) -> dict[str, Any]:
@@ -128,6 +132,7 @@ async def deliver_federated_mail(
         delivery_origin=delivery_origin,
         envelope=envelope,
         signature=signature,
+        id_chain=id_chain,
         transport=transport,
         timeout=timeout,
     )

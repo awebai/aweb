@@ -129,3 +129,28 @@ async def test_grant_carrier_is_bound_to_subject_not_session(privacy_app, subjec
         assert read.status_code == 200, read.text
         assert read.json()['from_did'] == sender.did
         assert read.json()['id_chain'] == chain
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('kind', ['mail', 'chat'])
+async def test_federation_transaction_keeps_first_admitted_chain_on_replay(aweb_cloud_db, kind):
+    from awid.did import stable_id_from_did_key
+    from aweb.federation.delivery import deliver_federated_phase_b
+    from test_federation_activation_delivery import _DB, _envelope, _seed_recipient_and_authority
+
+    db = aweb_cloud_db.aweb_db
+    envelope = _envelope(kind=kind)
+    envelope.sender_did_aw = stable_id_from_did_key(envelope.sender_current_did_key)
+    chain = _bundle(envelope.sender_did_aw)
+    # Phase A is a fixture fact here; HTTP original-author admission is tested
+    # above and the real cross-registry journey covers the complete transport.
+    recipient, token = await _seed_recipient_and_authority(db, envelope)
+    options = dict(envelope=envelope, signature='preserved-signature', recipient=recipient, authority_token=token)
+    first = await deliver_federated_phase_b(_DB(db), id_chain=chain, **options)
+    replay = await deliver_federated_phase_b(_DB(db), id_chain=None, **options)
+    assert replay == first
+    table = '{{tables.messages}}' if kind == 'mail' else '{{tables.chat_messages}}'
+    stored = await db.fetch_one(f'SELECT id_chain,signed_payload,signature FROM {table} WHERE message_id=$1', UUID(envelope.message_id))
+    assert json.loads(stored['id_chain']) == chain
+    assert stored['signed_payload'] == envelope.signed_payload
+    assert stored['signature'] == 'preserved-signature'

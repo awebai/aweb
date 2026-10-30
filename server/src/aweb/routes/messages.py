@@ -956,6 +956,7 @@ async def _deliver_remote_mail_and_project_locally(
             delivery_origin=delivery_origin,
             envelope=envelope,
             signature=federation_signature,
+            id_chain=getattr(request.state, "id_chain", None),
             transport=getattr(request.app.state, "federation_mail_transport", None),
         )
     except FederatedMailDeliveryError as exc:

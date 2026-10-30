@@ -767,6 +767,7 @@ async def _deliver_federated_chat(
             delivery_origin=route["delivery_origin"],
             envelope=envelope,
             signature=federation_signature,
+            id_chain=getattr(request.state, "id_chain", None),
             transport=_federation_transport(request),
         )
     except FederatedMailDeliveryError as exc:
