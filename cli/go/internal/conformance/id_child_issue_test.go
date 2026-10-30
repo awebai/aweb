@@ -458,22 +458,30 @@ var fullHumanApproval = awid.IDHumanApproval{Interactive: true, Confirmed: true}
 // request signed by its own key.
 func (x idChildExchange) agentIssue(t *testing.T, parent []string, child, kind string) (*issueRun, string) {
 	t.Helper()
+	var parentChain []any
+	for _, ancestor := range parent {
+		parentChain = append(parentChain, x.parentChain(t, "normal", x.v.Keys[ancestor].DIDAW)...)
+	}
+	signer := parent[len(parent)-1]
+	return x.issueUnder(t, x.issuerParent(signer), parentChain, signer, child, x.v.Keys[child].DIDAW, kind)
+}
+
+// issueUnder is an issue invitation from issuer, whose own chain is
+// parentChain and whose key is signer, for the child id held by child's key.
+func (x idChildExchange) issueUnder(t *testing.T, issuer map[string]any, parentChain []any, signer, child, childID, kind string) (*issueRun, string) {
+	t.Helper()
 	now, err := time.Parse(time.RFC3339, "2026-10-26T00:02:00Z")
 	if err != nil {
 		t.Fatal(err)
 	}
-	issuer := x.issuerParent(parent[len(parent)-1])
 	inv := &awid.IDInvitation{InvitationID: "10000000-0000-4000-8000-0000000000a1", Mode: "self_custodial", Parent: issuer, Domain: "example.com", Kind: kind, Recipient: "fixed privately", ExpiresAt: now.Add(time.Hour).UTC().Format("2006-01-02T15:04:05Z")}
-	r := &issueRun{x: x, invitations: &invitationStore{records: map[string][]byte{}}, issuance: newIssuedStore(t, x.v), issuer: issuer, status: "normal", signer: parent[len(parent)-1], now: now}
-	for _, ancestor := range parent {
-		r.parentChain = append(r.parentChain, x.parentChain(t, "normal", x.v.Keys[ancestor].DIDAW)...)
-	}
+	r := &issueRun{x: x, invitations: &invitationStore{records: map[string][]byte{}}, issuance: newIssuedStore(t, x.v), issuer: issuer, parentChain: parentChain, status: "normal", signer: signer, now: now}
 	if err := r.invitations.PutInvitation(inv); err != nil {
 		t.Fatal(err)
 	}
 	request := map[string]any{
 		"v": json.Number("1"), "type": "aweb.id-certificate-request", "request_id": "20000000-0000-4000-8000-0000000000a1", "operation": "issue",
-		"id": x.v.Keys[child].DIDAW, "domain": "example.com", "parent": issuer, "kind": kind, "subject_key": x.v.Keys[child].DIDKey,
+		"id": childID, "domain": "example.com", "parent": issuer, "kind": kind, "subject_key": x.v.Keys[child].DIDKey,
 		"invitation_id": inv.InvitationID, "old_certificate": nil,
 	}
 	return r, signRequest(t, x.v, child, request)
