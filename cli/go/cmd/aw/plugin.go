@@ -1302,7 +1302,7 @@ func dispatchInstalledManifestPlugin(name string, args []string) (int, bool) {
 		fmt.Fprintln(os.Stderr, err)
 		return 1, true
 	}
-	if _, err := os.Stdout.Write(result.Body); err != nil {
+	if _, err := commandStdout.Write(result.Body); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1, true
 	}

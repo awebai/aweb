@@ -654,9 +654,9 @@ var mailSendCmd = &cobra.Command{
 		if jsonFlag {
 			printJSON(resp)
 		} else if targetKind == "conversation" {
-			fmt.Printf("Sent mail in conversation %s (message_id=%s)\n", targetValue, resp.MessageID)
+			fmt.Fprintf(commandStdout, "Sent mail in conversation %s (message_id=%s)\n", targetValue, resp.MessageID)
 		} else {
-			fmt.Printf("Sent mail to %s (message_id=%s)\n", targetValue, resp.MessageID)
+			fmt.Fprintf(commandStdout, "Sent mail to %s (message_id=%s)\n", targetValue, resp.MessageID)
 		}
 		return nil
 	},
@@ -808,7 +808,7 @@ var mailReplyCmd = &cobra.Command{
 		if jsonFlag {
 			printJSON(resp)
 		} else {
-			fmt.Printf("Sent mail in conversation %s (message_id=%s)\n", conversationID, resp.MessageID)
+			fmt.Fprintf(commandStdout, "Sent mail in conversation %s (message_id=%s)\n", conversationID, resp.MessageID)
 		}
 		return nil
 	},

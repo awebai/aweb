@@ -263,7 +263,7 @@ func gcMailEmit(v any) error {
 	if err != nil {
 		return gcMailError("encode result: %v", err)
 	}
-	fmt.Println(string(encoded))
+	fmt.Fprintln(commandStdout, string(encoded))
 	return nil
 }
 
