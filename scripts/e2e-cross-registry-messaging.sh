@@ -349,6 +349,17 @@ EOF
 # The namespace remains absent when the real AWID resolver sees a different key.
 # Poll on the product's 403, so CoreDNS file reload speed is not a test input.
 publish_dns "$BOB_CONTROLLER" "$BOB_CONTROLLER"
+# The zone starts with no _awid records, where creation is not a refusal case.
+# Wait until the CLI's own lookup sees the other key before asking AWID.
+dns_published=0
+for _ in $(seq 1 30); do
+  if ! seen="$(run_cli alice id namespace check-txt --domain alpha.example.com --json 2>&1)" \
+    && [[ "$seen" == *"DNS controller $BOB_CONTROLLER does not match local controller $ALICE_CONTROLLER"* ]]; then
+    dns_published=1; break
+  fi
+  sleep 1
+done
+[[ "$dns_published" == 1 ]] || { printf '%s\n' "$seen" >&2; exit 1; }
 awid_refused=0
 for _ in $(seq 1 30); do
   if refused="$(run_cli alice id create --name alice --domain alpha.example.com --registry http://awid-a:8010 --json 2>&1)"; then
