@@ -20,7 +20,7 @@ to refresh it.
 | Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `wake` |
 | Coordination & Runtime | `activity`, `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `status`, `status-host`, `task`, `work` |
 | Utility | `completion`, `doctor`, `help`, `plugin`, `upgrade`, `version` |
-| Additional Commands | `blueprint`, `session` |
+| Additional Commands | `blueprint`, `session`, `who` |
 
 ## Global Flags
 
@@ -4290,3 +4290,15 @@ Flags:
 - `--session-id string Per-session identifier`
 - `--session-key string Per-session secret (at least 32 characters; avoid shell history)`
 - `--ttl-seconds int Lease TTL in seconds (default 300)`
+
+## `who`
+
+### `who`
+
+Verify the current identity's installed ID chain on current status from
+its namespace's registry, and show the outcome: the nearest human, no human
+(no human in its chain), unknown or unavailable, with the verifier's reason. The chain is shown only when it verifies.
+
+Flags:
+- `-h, --help help for who`
+- `--registry string Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)`
