@@ -25,7 +25,7 @@ def barrier(name):
 
 
 def command(args, *, cwd="alice", fail_registration=False, json_output=True,
-            confirmation=None, fingerprint=None):
+            confirmation=None, fingerprint=None, refusal=None):
     child = pexpect.spawn("aw", args, cwd=str(ROOT / cwd), encoding="utf-8", timeout=120, echo=False)
     transcript = []
     prompts = 0
@@ -60,11 +60,15 @@ def command(args, *, cwd="alice", fail_registration=False, json_output=True,
         assert child.exitstatus != 0, text
         assert "register the certificate" in text, text
         return None
+    if refusal is not None:
+        assert child.exitstatus != 0 and refusal in text and prompts == 0, text
+        return text, prompts
     assert child.exitstatus == 0, text
     if not json_output:
         return text, prompts
-    start = text.find("{")
-    assert start >= 0, text
+    match = re.search(r"[\[{]", text)
+    assert match is not None, text
+    start = match.start()
     return json.loads(text[start:]), prompts
 
 
@@ -162,6 +166,119 @@ def public_case(home, record, *, kind, human=""):
                 HumanID=human, Kind=kind, Bundle=json.loads((home / "id-chain.json").read_text()))
 
 
+def assert_who(cwd, human, links):
+    result, prompts = command(["who", "--json"], cwd=cwd)
+    assert prompts == 0 and result["identity_valid"] is True, result
+    assert result["outcome"] == ("nearest_human" if human else "no_human"), result
+    assert result["human_id"] == (human or None) and result["reason"] == "verified", result
+    assert result["kind"] == "agent" and result["id"] == links[-1]["id"], result
+    assert result["chain"] == links, result
+    return result
+
+
+def local_child_resign(human, parent):
+    """A real local identity and file exchange; no generated test certificate."""
+    domain = "alpha.example.com"
+    child_dir = ROOT / "local-child"
+    child_dir.mkdir()
+    command(["id", "team", "create", "--name", "journey-local", "--namespace", domain,
+             "--registry", "http://awid-a:8010", "--json"], cwd="fresh")
+    invite, _ = command(["id", "team", "invite", "--team", "journey-local", "--namespace", domain,
+                         "--member-local", "--json"], cwd="fresh")
+    command(["id", "team", "accept-invite", invite["token"], "--name", "local-child", "--local", "--json"],
+            cwd="local-child")
+    home = child_dir / ".aw"
+    record = yaml.safe_load((home / "identity.yaml").read_text())
+    child_id = record["did"]
+    assert child_id.startswith("did:key:") and not record.get("stable_id"), record
+    unchanged = {name: (home / name).read_bytes() for name in ("identity.yaml", "signing.key")}
+    chainless, _ = command(["who", "--json"], cwd="local-child")
+    assert chainless["id"] == child_id and chainless["outcome"] == "unknown", chainless
+    assert chainless["reason"] == "legacy_no_chain" and chainless["human_id"] is None, chainless
+    assert "chain" not in chainless, chainless
+
+    invitation, _ = command(["id", "child", "invite", "--kind", "agent", "--recipient", "local child", "--json"], cwd="fresh")
+    request_file = str(ROOT / "local-issue-request.json")
+    response_file = str(ROOT / "local-issue-response.json")
+    command(["id", "parent", "request", "--invitation-id", invitation["invitation_id"],
+             "--domain", domain, "--parent", parent["did_aw"], "--out", request_file],
+            cwd="local-child", json_output=False)
+    request = json.loads(Path(request_file).read_text())["request"]
+    received, _ = command(["id", "child", "receive", request_file, "--json"], cwd="fresh")
+    assert received["operation"] == "issue" and received["state"] == "pending", received
+    _, prompts = command(["id", "child", "approve", request["request_id"], "--out", response_file],
+                          cwd="fresh", json_output=False)
+    assert prompts == 0
+    imported, _ = command(["id", "parent", "import", response_file, "--domain", domain, "--json"], cwd="local-child")
+    assert imported["id"] == child_id and imported["registration"] == "", imported
+    links = [dict(id=human, kind="human"), dict(id=parent["did_aw"], kind="agent"), dict(id=child_id, kind="agent")]
+    assert_who("local-child", human, links)
+    old_bundle = (home / "id-chain.json").read_bytes()
+    old_leaf = json.loads(old_bundle)["certificates"][-1]
+    parent_home = ROOT / "fresh/.aw"
+    issuer_entries = list((parent_home / "id-issuance").glob("*.json"))
+    entry, = [p for p in issuer_entries if json.loads(p.read_text())["signed"] == old_leaf]
+    old_certificate_id = json.loads(entry.read_text())["certificate_id"]
+    old_entry = entry.read_bytes()
+    old_parent = yaml.safe_load((parent_home / "identity.yaml").read_text())
+    rotated, prompts = command(["id", "rotate-key", "--json"], cwd="fresh")
+    current_parent = yaml.safe_load((parent_home / "identity.yaml").read_text())
+    assert prompts == 0 and rotated["status"] == "rotated", rotated
+    assert current_parent["stable_id"] == old_parent["stable_id"] == parent["did_aw"]
+    assert current_parent["did"] != old_parent["did"]
+    assert rotated["old_did"] == old_parent["did"] and rotated["new_did"] == current_parent["did"]
+    assert entry.read_bytes() == old_entry
+    stale, _ = command(["who", "--json"], cwd="local-child")
+    assert stale["id"] == child_id and stale["reason"] == "stale_issuer_key", stale
+    assert stale["outcome"] == "unknown" and stale["identity_valid"] is False, stale
+    assert stale["human_id"] is None and "chain" not in stale, stale
+    print("PASS: local child loses ancestry after its registered parent's key rotation", flush=True)
+
+    request_file = str(ROOT / "local-resign-request.json")
+    response_file = str(ROOT / "local-resign-response.json")
+    command(["id", "parent", "request", "--resign", "--out", request_file], cwd="local-child", json_output=False)
+    request = json.loads(Path(request_file).read_text())["request"]
+    assert request["operation"] == "resign" and request["invitation_id"] is None, request
+    assert request["old_certificate"] == old_leaf and request["id"] == request["subject_key"] == child_id, request
+    assert request["parent"] == dict(kind="identity", id=parent["did_aw"]) and request["domain"] == domain, request
+    # Simulate lost provenance, using the genuine signed request. Restore the
+    # actual issuance record before the positive; never invent a signer record.
+    withheld = entry.with_suffix(".withheld")
+    entry.rename(withheld)
+    before = {p.name: p.read_bytes() for p in (parent_home / "id-issuance").glob("*.json")}
+    try:
+        command(["id", "child", "receive", request_file, "--json"], cwd="fresh", refusal="issuance_not_recorded")
+        assert {p.name: p.read_bytes() for p in (parent_home / "id-issuance").glob("*.json")} == before
+        assert (home / "id-chain.json").read_bytes() == old_bundle and not Path(response_file).exists()
+    finally:
+        withheld.rename(entry)
+    assert entry.read_bytes() == old_entry
+    print("PASS: missing issuance provenance refuses re-sign before signing", flush=True)
+    received, _ = command(["id", "child", "receive", request_file, "--json"], cwd="fresh")
+    assert received["operation"] == "resign" and received["state"] == "pending", received
+    assert received["old_certificate_id"] == old_certificate_id, received
+    pending, _ = command(["id", "child", "pending", "--json"], cwd="fresh")
+    assert any(r["request_id"] == request["request_id"] and r["operation"] == "resign" for r in pending), pending
+    shown, _ = command(["id", "child", "show", request["request_id"], "--json"], cwd="fresh")
+    assert shown["old_certificate_id"] == old_certificate_id and shown["state"] == "pending", shown
+    _, prompts = command(["id", "child", "approve", request["request_id"], "--out", response_file],
+                          cwd="fresh", json_output=False)
+    assert prompts == 0
+    imported, _ = command(["id", "parent", "import", response_file, "--json"], cwd="local-child")
+    assert imported["id"] == child_id and imported["registration"] == "", imported
+    for name, data in unchanged.items():
+        assert (home / name).read_bytes() == data
+    new_leaf = json.loads((home / "id-chain.json").read_text())["certificates"][-1]
+    for field in ("id", "domain", "parent", "kind"):
+        assert new_leaf["certificate"][field] == old_leaf["certificate"][field]
+    assert old_leaf["certificate"]["issuer_key"] == old_parent["did"]
+    assert new_leaf["certificate"]["issuer_key"] == current_parent["did"]
+    assert_who("local-child", human, links)
+    record.update(stable_id=child_id, did_key=child_id, domain=domain)
+    print("PASS: local re-sign import preserves ID/key and restores aw who under the parent's new key", flush=True)
+    return public_case(home, record, kind="agent", human=human)
+
+
 def main():
     assert not os.environ.get("AWID_SKIP_DNS_VERIFY")
     assert os.environ.get("DBUS_SESSION_BUS_ADDRESS")
@@ -212,7 +329,11 @@ def main():
     assert bob["root_parent"] and prompts == 0, bob
     print("PASS: --root-parent issuance and agent certificate registration", flush=True)
 
-    cases = [public_case(human_home, human_record, kind="human", human=human["id"])]
+    for name, identity in (("alice", resumed), ("fresh", fresh)):
+        assert_who(name, human["id"], [dict(id=human["id"], kind="human"), dict(id=identity["did_aw"], kind="agent")])
+    assert_who("bob", "", [dict(id=bob["did_aw"], kind="agent")])
+    local_case = local_child_resign(human["id"], fresh)
+    cases = [public_case(human_home, human_record, kind="human", human=human["id"]), local_case]
     for name, parent in [("alice", human["id"]), ("fresh", human["id"]), ("bob", "")]:
         home = ROOT / name / ".aw"
         record = yaml.safe_load((home / "identity.yaml").read_text())
