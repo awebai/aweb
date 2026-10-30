@@ -377,6 +377,46 @@ def agent_under(human, name):
     return agent
 
 
+def revoked_inviter(human):
+    """A revoked inviter issues nothing and never falls back to chainless."""
+    domain = "alpha.example.com"
+    inviter = agent_under(human, "revoked-inviter")
+    assert_who("revoked-inviter", human,
+               [dict(id=human, kind="human"), dict(id=inviter["did_aw"], kind="agent")])
+    team = ["--team", "revoked-inviter", "--namespace", domain]
+    command(["id", "team", "create", "--name", "revoked-inviter", "--namespace", domain,
+             "--registry", "http://awid-a:8010", "--json"], cwd="revoked-inviter")
+    invite, prompts = command(["id", "team", "invite", *team, "--member-local", "--json"],
+                              cwd="revoked-inviter")
+    assert prompts == 0, invite
+    issuer = ROOT / "revoked-inviter/.aw"
+
+    def issuer_state():
+        return {p.relative_to(issuer).as_posix(): p.read_bytes()
+                for directory in ("id-issuance", "invitations")
+                for p in (issuer / directory).glob("*.json")}
+
+    revoked, prompts = command(["id", "revoke", inviter["did_aw"], "--json"], cwd="revoked-inviter")
+    assert prompts == 0 and revoked["id"] == inviter["did_aw"], revoked
+    assert_revoked("revoked-inviter", inviter["did_aw"])
+    before = issuer_state()
+    assert any(name.startswith("invitations/") for name in before), before
+
+    (ROOT / "revoked-child").mkdir()
+    home = ROOT / "revoked-child/.aw"
+    command(["--identity-home", str(home), "id", "team", "accept-invite", invite["token"],
+             "--name", "revoked-child", "--local", "--json"], cwd="revoked-child", refusal="revoked")
+    for name in ("identity.yaml", "signing.key", "id-chain.json"):
+        assert not (home / name).exists(), name
+    assert issuer_state() == before
+    print("PASS: acceptance after inviter revocation creates no identity and issues nothing", flush=True)
+
+    command(["id", "team", "invite", *team, "--member-local", "--json"],
+            cwd="revoked-inviter", refusal="revoked")
+    assert issuer_state() == before
+    print("PASS: a revoked inviter cannot create a local invite or fall back to chainless", flush=True)
+
+
 def revoked_case(name, agent):
     home = ROOT / name / ".aw"
     record = yaml.safe_load((home / "identity.yaml").read_text())
@@ -520,6 +560,7 @@ def main():
     assert_who("bob", "", [dict(id=bob["did_aw"], kind="agent")])
     local_case = local_child_resign(human["id"], fresh)
     unenrolled_creations("fresh")
+    revoked_inviter(human["id"])
     second_human_case = human_issues_human(human["id"])
     revoked_cases = revocations(human["id"])
     cases = [public_case(human_home, human_record, kind="human", human=human["id"]), local_case, second_human_case,
