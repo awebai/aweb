@@ -21,7 +21,7 @@
   inside an agent runtime. A run that fails resumes where it stopped without
   minting a new human, and a second human in the same domain needs
   `--another`.
-- aw: `aw id create --parent-human <did:aw>` and `--parent-root` create an
+- aw: `aw id create --human-parent <did:aw>` and `--root-parent` create an
   agent with its ID chain installed: the named human, or the namespace root
   for an agent with no human, issues its certificate. A human parent first
   checks its own chain's current status; the root first checks that the
@@ -35,6 +35,19 @@
   it. To approve a human child, you confirm at a terminal that its key
   fingerprint matches what the recipient told you through a separate trusted
   channel.
+- aw: `aw id parent request` and `import` are the child side. `request`
+  exports a request against the invitation your parent fixed
+  (`--invitation-id`, `--domain`, and `--parent <did:aw>` or `--root-parent`),
+  as `--human <did:aw>` or as the current agent, and shows a fingerprint for
+  you to tell the parent through a separate trusted channel. An identity that
+  already has an ID chain cannot request. `import` verifies the parent's
+  response against your outstanding request, installs the chain and registers
+  it at AWID with your own key, at the registry the domain's _awid record
+  names. A failed registration keeps the response so `import` can retry it,
+  and `--no-register` leaves the registration pending.
+- aw: `aw id human init --domain D` without `--as-root` only prepares the
+  human: an issuer elsewhere, the namespace root or another human, admits it
+  through `aw id parent request` and `import`.
 
 - **Security:** did:key decoding refuses Ed25519 public keys that are small
   order, non-canonical or of mixed order, in Python (`awid.did`), Go

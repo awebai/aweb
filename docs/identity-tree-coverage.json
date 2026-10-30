@@ -105,7 +105,7 @@
         "cli/go/awid/id_direct_issue.go"
       ],
       "status": "converted",
-      "reason": "aw id create --parent-human <did:aw> or --parent-root installs the agent's chain at creation: the named human or the namespace root issues it after verifying current status, records it before release, and the agent registers it with its own key; a parent that cannot issue leaves no agent. The cross-registry real-DNS journey proves both parents and a failed registration resuming with the same ID, key and certificate and one issuance entry; outsiders verify the human-parented agents as nearest_human and the root agent as no_human."
+      "reason": "aw id create --human-parent <did:aw> or --root-parent installs the agent's chain at creation: the named human or the namespace root issues it after verifying current status, records it before release, and the agent registers it with its own key; a parent that cannot issue leaves no agent. The cross-registry real-DNS journey proves both parents and a failed registration resuming with the same ID, key and certificate and one issuance entry; outsiders verify the human-parented agents as nearest_human and the root agent as no_human."
     },
     {
       "id": "CLI.CHILD.EXCHANGE",
