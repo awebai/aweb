@@ -41,10 +41,27 @@ type DidKeyEvidence struct {
 }
 
 type DidKeyResolution struct {
-	DIDAW         string                  `json:"did_aw"`
-	CurrentDIDKey string                  `json:"current_did_key"`
-	LogHead       *DidKeyEvidence         `json:"log_head"`
-	EncryptionKey *EncryptionKeyAssertion `json:"encryption_key,omitempty"`
+	// Private coherent enrollment evidence from this process's key fetch.
+	idTree          IDTreeEnrollmentResult
+	idTreeFetchedAt time.Time
+	DIDAW           string                  `json:"did_aw"`
+	CurrentDIDKey   string                  `json:"current_did_key"`
+	LogHead         *DidKeyEvidence         `json:"log_head"`
+	EncryptionKey   *EncryptionKeyAssertion `json:"encryption_key,omitempty"`
+}
+
+// IDTreeEnrollment returns the key fetch's enrollment evidence for at most 60
+// seconds. It is a location claim, not verified identity-tree authority.
+func (r *DidKeyResolution) IDTreeEnrollment(now time.Time) IDTreeEnrollmentResult {
+	unknown := IDTreeEnrollmentResult{State: "unknown"}
+	if r == nil || r.idTreeFetchedAt.IsZero() || r.idTree.State == "" {
+		return unknown
+	}
+	age := now.Sub(r.idTreeFetchedAt)
+	if age < 0 || age > 60*time.Second {
+		return unknown
+	}
+	return r.idTree
 }
 
 type StableIdentityVerification struct {

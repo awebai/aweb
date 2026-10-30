@@ -20,7 +20,7 @@ import (
 // installed, installed atomically, and registered by default with the
 // child's own proof and the same invitation ID. The requester is explicit:
 // --human <did:aw> for a human prepared on this machine, otherwise the
-// current agent identity. The parent is explicit too: --parent <did:aw> or
+// current agent identity. The parent is explicit too: --parent <did:aw|did:key> or
 // --root-parent, never inferred.
 
 var (
@@ -42,7 +42,8 @@ var (
 		Use:   "request",
 		Short: "Export a certificate request against a parent's invitation",
 		Long: "Export a certificate request against the invitation your parent fixed: its\n" +
-			"--invitation-id, --domain and parent (--parent <did:aw> or --root-parent).\n" +
+			"--invitation-id, --domain and parent (--parent <did:aw|did:key> or --root-parent).\n" +
+			"A local did:key parent can issue only a local did:key agent child.\n" +
 			"Send the request file to the parent over your chosen channel, and tell them\n" +
 			"the fingerprint shown here through a different trusted channel.\n\n" +
 			"With --resign, a local agent (whose ID is its did:key) instead asks the parent\n" +
@@ -70,7 +71,7 @@ func init() {
 		idParentCmd.AddCommand(cmd)
 	}
 	idParentRequestCmd.Flags().StringVar(&idParentInvitationID, "invitation-id", "", "Invitation ID the parent gave you")
-	idParentRequestCmd.Flags().StringVar(&idParentParent, "parent", "", "did:aw of the parent identity")
+	idParentRequestCmd.Flags().StringVar(&idParentParent, "parent", "", "did:aw or did:key of the parent identity")
 	idParentRequestCmd.Flags().BoolVar(&idParentRootParent, "root-parent", false, "The parent is the namespace root of --domain")
 	idParentRequestCmd.Flags().BoolVar(&idParentResign, "resign", false, "Ask the parent to re-sign the certificate this local agent carries")
 	idParentRequestCmd.Flags().StringVar(&idParentOut, "out", "-", "Where to write the request (- for stdout)")
@@ -80,6 +81,7 @@ func init() {
 }
 
 type idParentOptions struct {
+	IdentityHome    string
 	Human           string
 	Domain          string
 	WorkingDir      string
@@ -116,7 +118,7 @@ func (r *requester) requests() awconfig.IDRequestFileStore {
 
 func selectRequester(opts idParentOptions) (*requester, error) {
 	if strings.TrimSpace(opts.Human) == "" {
-		identity, err := resolveIdentityForDir(opts.WorkingDir)
+		identity, err := resolveIDExchangeIdentity(opts.WorkingDir, opts.IdentityHome)
 		if err != nil {
 			return nil, err
 		}
@@ -218,14 +220,19 @@ func executeIDParentRequest(opts idParentOptions, invitationID, parentID string,
 		return idParentRequestOutput{}, nil, usageError("--parent and --root-parent name different parents; choose one")
 	case rootParent:
 		parent = nil
-	case strings.HasPrefix(strings.TrimSpace(parentID), "did:aw:"):
+	case strings.HasPrefix(strings.TrimSpace(parentID), "did:aw:") || strings.HasPrefix(strings.TrimSpace(parentID), "did:key:"):
 		parent = map[string]any{"kind": "identity", "id": strings.TrimSpace(parentID)}
 	default:
-		return idParentRequestOutput{}, nil, usageError("name the parent: --parent <did:aw> or --root-parent")
+		return idParentRequestOutput{}, nil, usageError("name the parent: --parent <did:aw|did:key> or --root-parent")
 	}
 	r, err := selectRequester(opts)
 	if err != nil {
 		return idParentRequestOutput{}, nil, err
+	}
+	// An unregistered local parent can issue carried local agents, but cannot
+	// parent a human or registered child (docs/id-certificates.md §§2–3).
+	if strings.HasPrefix(strings.TrimSpace(parentID), "did:key:") && (r.kind != "agent" || !strings.HasPrefix(r.id, "did:key:")) {
+		return idParentRequestOutput{}, nil, usageError("a local did:key parent can issue only a local did:key agent; use a registered parent for registered children")
 	}
 	// A first certificate only: importing one would replace the identity's
 	// working chain before AWID accepted the new certificate.
@@ -271,7 +278,7 @@ func executeIDParentResign(opts idParentOptions) (idParentRequestOutput, []byte,
 	if strings.TrimSpace(opts.Human) != "" {
 		return idParentRequestOutput{}, nil, usageError("--resign is for the current local agent; a human is registered and keeps its signature")
 	}
-	identity, err := resolveIdentityForDir(opts.WorkingDir)
+	identity, err := resolveIDExchangeIdentity(opts.WorkingDir, opts.IdentityHome)
 	if err != nil {
 		return idParentRequestOutput{}, nil, err
 	}
@@ -370,7 +377,7 @@ func executeIDParentImport(ctx context.Context, opts idParentOptions, raw []byte
 		return idParentImportOutput{}, &awid.IDCertificateError{Code: "request_binding_mismatch"}
 	}
 	call, cancel := commandAPIContext(nil, ctx)
-	authority, err := awid.VerifyExactDomainAuthority(call, opts.TXTResolver, r.domain)
+	authority, err := awid.DiscoverAuthoritativeRegistry(call, opts.TXTResolver, r.domain)
 	cancel()
 	if err != nil {
 		return idParentImportOutput{}, fmt.Errorf("lookup %s: %w", awid.AWIDTXTName(r.domain), err)

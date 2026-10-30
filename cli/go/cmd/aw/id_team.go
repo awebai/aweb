@@ -1071,14 +1071,14 @@ func runTeamAcceptInviteWithConnect(cmd *cobra.Command, args []string, connectWo
 	if home.Source == awconfig.IdentityHomeEnvVar && acceptScope == awid.IdentityModeLocal {
 		return usageError("local identity creation requires an explicit fresh --identity-home target; refusing to change inherited identity home %s", home.Root)
 	}
-	if home.External() && acceptScope == awid.IdentityModeLocal {
-		if err := ensureExternalLocalAcceptHomeAvailable(home.Root); err != nil {
-			return err
-		}
-	}
 	rawToken, inviteAwebURL, err := decodeJoinToken(args[0])
 	if err != nil {
 		return err
+	}
+	if home.External() && acceptScope == awid.IdentityModeLocal && !canResumeTeamInviteIDChild(rawToken, home.Root) {
+		if err := ensureExternalLocalAcceptHomeAvailable(home.Root); err != nil {
+			return err
+		}
 	}
 	accepted, err := acceptAndStoreTeamInvite(workingDir, rawToken, teamAcceptInviteOptions{
 		IdentityHome: externalIdentityHomeRoot(home),
@@ -1648,6 +1648,18 @@ func createTeamInviteToken(domain, team, registryURL, awebURL string, local bool
 }
 
 func createTeamInviteTokenWithOperation(domain, team, registryURL, awebURL string, local bool, operationID string) (string, string, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", "", err
+	}
+	home, err := identityHomeForDir(wd)
+	if err != nil {
+		return "", "", err
+	}
+	return createTeamInviteTokenAt(domain, team, registryURL, awebURL, local, operationID, wd, home.Root)
+}
+
+func createTeamInviteTokenAt(domain, team, registryURL, awebURL string, local bool, operationID, workingDir, identityHome string) (string, string, error) {
 	domain = awconfig.NormalizeDomain(domain)
 	team = strings.ToLower(strings.TrimSpace(team))
 	registryURL = strings.TrimSpace(registryURL)
@@ -1688,6 +1700,13 @@ func createTeamInviteTokenWithOperation(domain, team, registryURL, awebURL strin
 		AwebURL:       awebURL,
 		OperationID:   operationID,
 		CreatedAt:     time.Now().UTC().Format(time.RFC3339),
+	}
+	if local {
+		link, err := prepareTeamInviteIDChild(context.Background(), idChildOptions{WorkingDir: workingDir, IdentityHome: identityHome, Now: time.Now})
+		if err != nil {
+			return "", "", err
+		}
+		invite.IDChild = link
 	}
 	if err := awconfig.SaveTeamInvite(invite); err != nil {
 		return "", "", err
@@ -1773,6 +1792,21 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 	if err != nil {
 		return nil, fmt.Errorf("invite not found (token may be invalid or expired): %w", err)
 	}
+	if invite.IDChild != nil {
+		dir, err := awconfig.DefaultTeamInvitesDir()
+		if err != nil {
+			return nil, err
+		}
+		lock, err := awconfig.LockExclusive(filepath.Join(dir, invite.InviteID+".lock"))
+		if err != nil {
+			return nil, err
+		}
+		defer lock.Close()
+		invite, err = awconfig.LoadTeamInvite(decoded.InviteID)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if invite.Secret != decoded.Secret {
 		return nil, fmt.Errorf("invalid invite token: secret mismatch")
 	}
@@ -1795,6 +1829,17 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
 
+	issueID := false
+	if scope == awid.IdentityModeLocal && invite.IDChild != nil {
+		home := opts.IdentityHome
+		if home == "" {
+			home = awconfig.WorktreeIdentityHome(workingDir)
+		}
+		issueID, err = bindTeamInviteIDChild(ctx, invite, home)
+		if err != nil {
+			return nil, err
+		}
+	}
 	plan, err := resolveTeamMemberEnrollment(ctx, teamMemberEnrollmentResolveOptions{
 		WorkingDir:        workingDir,
 		IdentityHome:      opts.IdentityHome,
@@ -1810,6 +1855,15 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 	})
 	if err != nil {
 		return nil, err
+	}
+	if issueID {
+		if invite.IDChild.ChildDIDKey != "" && invite.IDChild.ChildDIDKey != plan.MemberDIDKey {
+			return nil, fmt.Errorf("invite recipient key changed; restore the original identity")
+		}
+		invite.IDChild.ChildDIDKey = plan.MemberDIDKey
+		if err := awconfig.SaveTeamInvite(invite); err != nil {
+			return nil, err
+		}
 	}
 	var appliedDefaultClaim *awid.AtomicAddressClaimResult
 	if plan.DefaultClaim != nil {
@@ -1851,6 +1905,18 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 		return nil, err
 	}
 
+	if issueID {
+		home := opts.IdentityHome
+		if home == "" {
+			home = awconfig.WorktreeIdentityHome(workingDir)
+		}
+		if err := writeExternalLocalIdentityStateIfNeeded(home, cert); err != nil {
+			return nil, err
+		}
+		if err := completeTeamInviteIDChild(ctx, invite, workingDir, home); err != nil {
+			return nil, fmt.Errorf("team membership certificate saved; ID issuance pending (retry this invite in the same identity home): %w", err)
+		}
+	}
 	if err := awconfig.DeleteTeamInvite(invite.InviteID); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to delete consumed invite %s: %v\n", invite.InviteID, err)
 	}
@@ -3462,9 +3528,12 @@ func loadTeamCleanupCloudNamespaceKey(ctx context.Context, domain, path string) 
 		return nil, err
 	}
 	controllerDID := awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))
-	authority, err := awid.VerifyExactDomainAuthority(ctx, teamCleanupCloudTXTResolver, domain)
+	authority, err := awid.DiscoverAuthoritativeRegistry(ctx, teamCleanupCloudTXTResolver, domain)
 	if err != nil {
 		return nil, fmt.Errorf("verify DNS authority for %s: %w", domain, err)
+	}
+	if authority.Inherited || authority.DNSName != awid.AWIDTXTName(domain) {
+		return nil, fmt.Errorf("no own-domain TXT record found at %s", awid.AWIDTXTName(domain))
 	}
 	if strings.TrimSpace(authority.ControllerDID) != controllerDID {
 		return nil, fmt.Errorf("local namespace controller key for %s does not match DNS controller (local=%s, dns=%s)", domain, controllerDID, strings.TrimSpace(authority.ControllerDID))

@@ -18,26 +18,38 @@ import (
 // names. Only a verified chain is shown.
 
 var whoCmd = &cobra.Command{
-	Use:   "who",
-	Short: "Show the human behind the current identity, verified through its ID chain",
+	Use:   "who [agent]",
+	Short: "Show the verified human behind an identity or a received message sender",
 	Long: `Verify the current identity's installed ID chain on current status from
 its namespace's registry, and show the outcome: the nearest human, no human
-(no human in its chain), unknown or unavailable, with the verifier's reason. The chain is shown only when it verifies.`,
-	Args: cobra.NoArgs,
+(no human in its chain), unknown or unavailable, with the verifier's reason. The chain is shown only when it verifies.
+
+With an agent address, did:aw or local alias, inspect that sender's most recent
+received mail (or chat). Use --message-id for an exact mail, or --session-id
+with an optional --message-id for chat. These reads do not acknowledge messages.`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: runWho,
 }
 
 func init() {
 	whoCmd.Flags().StringVar(&whoRegistry, "registry", "", "Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)")
+	whoCmd.Flags().StringVar(&whoMessageID, "message-id", "", "Inspect the sender of this received mail or chat message")
+	whoCmd.Flags().StringVar(&whoSessionID, "session-id", "", "Inspect received chat in this session")
 	rootCmd.AddCommand(whoCmd)
 }
 
-var whoRegistry string
+var whoRegistry, whoMessageID, whoSessionID string
+
+type whoStatus interface {
+	IDChainEvidence(context.Context, map[string]any, awid.IDChainSubject, string) *awid.IDChainEvidence
+}
 
 type whoOptions struct {
-	WorkingDir  string
-	RegistryURL string
-	TXTResolver awid.TXTResolver
+	ReceivedEnrollment func(context.Context, string, string) awid.IDTreeEnrollmentResult
+	Status             whoStatus
+	WorkingDir         string
+	RegistryURL        string
+	TXTResolver        awid.TXTResolver
 }
 
 // whoLink is one verified certificate of the chain, root side first.
@@ -58,7 +70,31 @@ func runWho(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	out, err := executeWho(cmd.Context(), whoOptions{WorkingDir: wd, RegistryURL: whoRegistry, TXTResolver: &awid.NetTXTResolver{}})
+	opts := whoOptions{WorkingDir: wd, RegistryURL: whoRegistry, TXTResolver: &awid.NetTXTResolver{}}
+	var out whoOutput
+	if len(args) > 0 || whoMessageID != "" || whoSessionID != "" {
+		ctx, cancel := commandAPIContext(cmd)
+		defer cancel()
+		c, sel, resolveErr := resolveClientSelectionForDir(wd)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		if err := configureClientE2EEForRead(cmd, ctx, c, sel); err != nil {
+			return err
+		}
+		target := ""
+		if len(args) > 0 {
+			target = strings.TrimSpace(args[0])
+		}
+		opts.ReceivedEnrollment = c.Client.ReceivedIDTreeEnrollment
+		message, readErr := findWhoSender(ctx, c.Client, target, whoMessageID, whoSessionID)
+		if readErr != nil {
+			return readErr
+		}
+		out, err = executeWhoReceived(ctx, message, opts)
+	} else {
+		out, err = executeWho(cmd.Context(), opts)
+	}
 	if err != nil {
 		return err
 	}
@@ -91,11 +127,21 @@ func executeWho(ctx context.Context, opts whoOptions) (whoOutput, error) {
 			domain, _ = certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)["domain"].(string)
 		}
 	}
-	subject := awid.IDChainSubject{ID: id, DIDKey: identity.DID}
+	return verifyWhoPresentation(ctx, awid.IDChainSubject{ID: id, DIDKey: identity.DID}, bundle, domain, opts)
+}
+
+func verifyWhoPresentation(ctx context.Context, subject awid.IDChainSubject, bundle map[string]any, domain string, opts whoOptions) (whoOutput, error) {
+	out := whoOutput{ID: subject.ID, Domain: domain}
+	// Refuse malformed or mismatched presentations before DNS/HTTP.
+	preflight := awid.VerifyIDChain(bundle, subject, nil, domain)
+	if preflight.Reason != "evidence_unavailable" {
+		out.IDChainResult = preflight
+		return out, nil
+	}
 	registry := awid.NewAWIDRegistryClient(nil, opts.TXTResolver)
 	status := awid.NewIDStatusClient(registry, opts.TXTResolver)
 	if strings.TrimSpace(opts.RegistryURL) != "" {
-		authority, err := awid.VerifyExactDomainAuthority(ctx, opts.TXTResolver, domain)
+		authority, err := awid.DiscoverAuthoritativeRegistry(ctx, opts.TXTResolver, domain)
 		if err != nil {
 			return whoOutput{}, fmt.Errorf("lookup %s: %w", awid.AWIDTXTName(domain), err)
 		}
@@ -105,9 +151,13 @@ func executeWho(ctx context.Context, opts whoOptions) (whoOutput, error) {
 		}
 		status = idStatusAt(registry, opts.TXTResolver, registryURL)
 	}
-	evidence := status.IDChainEvidence(ctx, bundle, subject, domain)
-	out := whoOutput{ID: id, Domain: domain, IDChainResult: awid.VerifyIDChain(bundle, subject, evidence, domain)}
-	if out.IdentityValid != nil && *out.IdentityValid {
+	reader := whoStatus(status)
+	if opts.Status != nil {
+		reader = opts.Status
+	}
+	evidence := reader.IDChainEvidence(ctx, bundle, subject, domain)
+	out.IDChainResult = awid.VerifyIDChain(bundle, subject, evidence, domain)
+	if out.IdentityValid != nil && *out.IdentityValid && bundle != nil {
 		for _, c := range bundle["certificates"].([]any) {
 			certificate := c.(map[string]any)["certificate"].(map[string]any)
 			out.Chain = append(out.Chain, whoLink{ID: certificate["id"].(string), Kind: certificate["kind"].(string)})

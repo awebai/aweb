@@ -106,7 +106,7 @@ wheels = [
 
 [[package]]
 name = "aweb"
-version = "1.27.38"
+version = "1.27.40"
 source = { editable = "." }
 dependencies = [
     { name = "aweb-naapp", extra = ["egress", "hooks"] },
@@ -273,7 +273,7 @@ provides-extras = ["server"]
 
 [[package]]
 name = "awid-service"
-version = "0.5.34"
+version = "0.5.35rc1"
 source = { editable = "../awid" }
 dependencies = [
     { name = "base58" },

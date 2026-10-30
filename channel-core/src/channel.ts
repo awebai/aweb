@@ -1,3 +1,5 @@
+import { readReceivedIdChain, receivedIdSubject } from "./identity/received_id_chain.js";
+import { idRequestDisposition } from "./identity/id_verification.js";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { appendFile, mkdir, open, readFile, rename, rm } from "node:fs/promises";
@@ -750,11 +752,19 @@ async function dispatchMailEvent(
     );
     emitTrace(options, "trust_completed", messageEvent, "mail");
     msg.verification_status = trust.status as InboxMessage["verification_status"];
+    const authenticated = isTrustedVerificationStatus(msg.verification_status);
+    const responsibility = typeof options.trust.verifyResponsibility === "function"
+      ? await options.trust.verifyResponsibility(msg, authenticated)
+      : await readReceivedIdChain(msg, authenticated, { evidence: async () => null });
+    if (authenticated && idRequestDisposition(responsibility, receivedIdSubject(msg), true).ordinary === "refuse") {
+      msg.verification_status = "failed";
+    }
 
     const meta: Record<string, string> = {
       type: "mail",
       from,
       message_id: msg.message_id,
+      responsibility: JSON.stringify(responsibility),
       trust_status: msg.verification_status || "unknown",
       verified: String(isTrustedVerificationStatus(msg.verification_status)),
     };
@@ -829,12 +839,20 @@ async function dispatchChatEvent(
     );
     emitTrace(options, "trust_completed", messageEvent, lane);
     msg.verification_status = trust.status as ChatMessage["verification_status"];
+    const authenticated = isTrustedVerificationStatus(msg.verification_status);
+    const responsibility = typeof options.trust.verifyResponsibility === "function"
+      ? await options.trust.verifyResponsibility(msg, authenticated)
+      : await readReceivedIdChain(msg, authenticated, { evidence: async () => null });
+    if (authenticated && idRequestDisposition(responsibility, receivedIdSubject(msg), true).ordinary === "refuse") {
+      msg.verification_status = "failed";
+    }
 
     const meta: Record<string, string> = {
       type: "chat",
       from,
       session_id: event.session_id,
       message_id: msg.message_id,
+      responsibility: JSON.stringify(responsibility),
       trust_status: msg.verification_status || "unknown",
       verified: String(isTrustedVerificationStatus(msg.verification_status)),
     };

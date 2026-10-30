@@ -18,6 +18,7 @@ export interface ChatMessage {
   sender_leaving: boolean;
   from_did?: string;
   to_did?: string;
+  id_chain?: unknown;
   from_stable_id?: string;
   sender_membership?: SenderMembership;
   to_stable_id?: string;

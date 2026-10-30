@@ -23,6 +23,7 @@ export interface InboxMessage {
   created_at: string;
   from_did?: string;
   to_did?: string;
+  id_chain?: unknown;
   from_stable_id?: string;
   sender_membership?: SenderMembership;
   to_stable_id?: string;

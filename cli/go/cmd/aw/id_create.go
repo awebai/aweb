@@ -444,30 +444,11 @@ func discoverIDCreateRegistryURL(domain string, resolver awid.TXTResolver) (stri
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	authority, err := awid.VerifyExactDomainAuthority(ctx, resolver, domain)
+	authority, err := awid.DiscoverAuthoritativeRegistry(ctx, resolver, domain)
 	if err != nil {
-		if isIDCreateTXTLookupMiss(err) {
-			return "", nil
-		}
 		return "", err
 	}
-	registryURL := strings.TrimSpace(authority.RegistryURL)
-	if registryURL == "" {
-		return awid.DefaultAWIDRegistryURL, nil
-	}
-	return registryURL, nil
-}
-
-func isIDCreateTXTLookupMiss(err error) bool {
-	if err == nil {
-		return false
-	}
-	var dnsErr *net.DNSError
-	if errors.As(err, &dnsErr) {
-		return dnsErr.IsNotFound
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "no awid txt record found") || strings.Contains(msg, "no txt records found")
+	return authority.RegistryURL, nil
 }
 
 func confirmAndVerifyIDCreateDNS(plan *idCreatePlan, opts idCreateOptions) error {
@@ -514,15 +495,32 @@ func idCreateDNSNeedsInteractiveInputError(plan *idCreatePlan) error {
 }
 
 func verifyIDCreateDomainAuthority(ctx context.Context, resolver awid.TXTResolver, domain, expectedControllerDID, expectedRegistryURL string) error {
-	authority, err := awid.VerifyExactDomainAuthority(ctx, resolver, domain)
+	authority, err := awid.DiscoverAuthoritativeRegistry(ctx, resolver, domain)
 	if err != nil {
 		return fmt.Errorf("lookup %s: %w", awid.AWIDTXTName(domain), err)
 	}
-	if strings.TrimSpace(authority.ControllerDID) != strings.TrimSpace(expectedControllerDID) {
-		return fmt.Errorf("TXT controller %s does not match %s", authority.ControllerDID, expectedControllerDID)
+	if authority.ControllerDID == "" || authority.DNSName == "" {
+		return fmt.Errorf("lookup %s: no awid TXT anchor found", awid.AWIDTXTName(domain))
 	}
-	if strings.TrimSpace(authority.RegistryURL) != strings.TrimSpace(expectedRegistryURL) {
-		return fmt.Errorf("TXT registry %s does not match %s", authority.RegistryURL, expectedRegistryURL)
+	registryURL := authority.RegistryURL
+	if authority.Inherited {
+		registryURL, err = domainRegistryURL(authority, expectedRegistryURL)
+		if err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(registryURL) != strings.TrimSpace(expectedRegistryURL) {
+		return fmt.Errorf("TXT registry %s does not match %s", registryURL, expectedRegistryURL)
+	}
+	controller, err := awid.NewAWIDRegistryClient(nil, resolver).IDNamespaceController(ctx, domain, registryURL, authority)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(controller) != strings.TrimSpace(expectedControllerDID) {
+		if authority.Inherited {
+			return fmt.Errorf("namespace controller %s does not match %s", controller, expectedControllerDID)
+		}
+		return fmt.Errorf("TXT controller %s does not match %s", controller, expectedControllerDID)
 	}
 	return nil
 }

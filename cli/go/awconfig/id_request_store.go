@@ -94,3 +94,27 @@ func (s IDRequestFileStore) Put(r *IDOutgoingRequest) error {
 	}
 	return durableWriteFile(path, append(data, '\n'))
 }
+
+// ForInvitation recovers the exact outgoing exchange after an interrupted join.
+func (s IDRequestFileStore) ForInvitation(invitationID string) (*IDOutgoingRequest, error) {
+	entries, err := os.ReadDir(s.Dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		r, err := s.Request(entry.Name()[:len(entry.Name())-5])
+		if err != nil {
+			return nil, err
+		}
+		if r.InvitationID == invitationID {
+			return r, nil
+		}
+	}
+	return nil, nil
+}

@@ -68,13 +68,14 @@ type DIDMapping struct {
 }
 
 type RegistryNamespace struct {
-	NamespaceID           string `json:"namespace_id"`
-	Domain                string `json:"domain"`
-	ControllerDID         string `json:"controller_did,omitempty"`
-	VerificationStatus    string `json:"verification_status"`
-	DefaultDeliveryOrigin string `json:"default_delivery_origin,omitempty"`
-	LastVerifiedAt        string `json:"last_verified_at,omitempty"`
-	CreatedAt             string `json:"created_at"`
+	Delegation            map[string]any `json:"delegation,omitempty"`
+	NamespaceID           string         `json:"namespace_id"`
+	Domain                string         `json:"domain"`
+	ControllerDID         string         `json:"controller_did,omitempty"`
+	VerificationStatus    string         `json:"verification_status"`
+	DefaultDeliveryOrigin string         `json:"default_delivery_origin,omitempty"`
+	LastVerifiedAt        string         `json:"last_verified_at,omitempty"`
+	CreatedAt             string         `json:"created_at"`
 }
 
 type RegistryDelivery struct {
@@ -174,9 +175,11 @@ func (c *RegistryClient) ResolveKeyAt(ctx context.Context, registryURL, didAW st
 		return nil, err
 	}
 	res := &DidKeyResolution{
-		DIDAW:         wire.DIDAW,
-		CurrentDIDKey: wire.CurrentDIDKey,
-		EncryptionKey: wire.EncryptionKey,
+		idTree:          wire.idTreeEnrollment(),
+		idTreeFetchedAt: c.now(),
+		DIDAW:           wire.DIDAW,
+		CurrentDIDKey:   wire.CurrentDIDKey,
+		EncryptionKey:   wire.EncryptionKey,
 	}
 	if wire.LogHead != nil {
 		res.LogHead = &DidKeyEvidence{

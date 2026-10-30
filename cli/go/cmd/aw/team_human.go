@@ -2365,11 +2365,11 @@ func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, gl
 	}
 	var token string
 	if hasTeamKey {
-		_, token, err = createTeamInviteToken(domain, team, registryURL, awebURL, localInvite)
+		_, token, err = createTeamInviteTokenAt(domain, team, registryURL, awebURL, localInvite, "", anchorDir, actorHome.Root)
 	} else if strings.TrimSpace(awebURL) != "" {
 		_, token, err = createHostedTeamInviteToken(anchorDir, awid.BuildTeamID(domain, team), localInvite)
 	} else {
-		_, token, err = createTeamInviteToken(domain, team, registryURL, awebURL, localInvite)
+		_, token, err = createTeamInviteTokenAt(domain, team, registryURL, awebURL, localInvite, "", anchorDir, actorHome.Root)
 	}
 	if err != nil {
 		return nil, err

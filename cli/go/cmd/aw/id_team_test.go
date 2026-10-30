@@ -1589,14 +1589,19 @@ func TestTeamInviteJoinConnectsWorkspaceByDefault(t *testing.T) {
 			JoinedAt:    "2026-05-16T00:00:00Z",
 		}},
 	})
+
+	// The connection test uses a genuinely chainless local inviter. Global
+	// absence of enrollment runs against real AWID in the CoreDNS journey.
+	inviterPub, inviterKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(inviterDir), inviterKey); err != nil {
+		t.Fatal(err)
+	}
 	writeIdentityForTest(t, inviterDir, awconfig.WorktreeIdentity{
-		DID:           "did:key:z6MkiR5hWfjt7SeH1Zs3xJMp5YowQbK5xkYH5BXMxHnXj1aA",
-		StableID:      "did:aw:alice",
-		Address:       "acme.com/alice",
-		Custody:       awid.CustodySelf,
-		IdentityScope: awid.IdentityModeGlobal,
-		RegistryURL:   server.URL,
-		CreatedAt:     "2026-05-16T00:00:00Z",
+		DID: awid.ComputeDIDKey(inviterPub), Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal,
+		CreatedAt: "2026-05-16T00:00:00Z",
 	})
 
 	runInvite := exec.CommandContext(ctx, bin, "team", "invite", "--team-id", "backend:acme.com")

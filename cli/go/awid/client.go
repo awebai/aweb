@@ -252,6 +252,7 @@ type agentMeta struct {
 // - the `aw` CLI
 // - higher-level coordination products built on the same transport
 type Client struct {
+	idChainHeader           string // optional adjacent public proof, outside signed message formats
 	baseURL                 string
 	httpClient              *http.Client
 	sseClient               *http.Client       // No response timeout; SSE connections are long-lived.
@@ -496,6 +497,21 @@ func (c *Client) SetStableID(id string) {
 	if strings.TrimSpace(id) != "" {
 		c.requireRecipientBinding = true
 	}
+}
+
+// SetIDChain sets the optional public proof presented on authenticated requests.
+// Encoding checks shape, limits and signatures, never ancestry authority.
+func (c *Client) SetIDChain(bundle map[string]any) error {
+	if bundle == nil {
+		c.idChainHeader = ""
+		return nil
+	}
+	header, err := EncodeIDChainHeader(bundle)
+	if err != nil {
+		return err
+	}
+	c.idChainHeader = header
+	return nil
 }
 
 // StableID returns the client's stable identifier, if configured.
@@ -1716,6 +1732,9 @@ func SignRequestCredential(key ed25519.PrivateKey, method string, target *url.UR
 // signRequest is shared by JSON/raw, event SSE and chat SSE requests. Grant
 // credentials keep their already target-bound protocol; root credentials use v2.
 func (c *Client) signRequest(req *http.Request, body []byte) error {
+	if c.idChainHeader != "" {
+		req.Header.Set("X-AWID-ID-Chain", c.idChainHeader)
+	}
 	if c.signingKey == nil {
 		return nil
 	}

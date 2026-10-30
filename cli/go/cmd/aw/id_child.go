@@ -107,6 +107,7 @@ type childIssuerSelection struct {
 }
 
 type idChildOptions struct {
+	IdentityHome    string
 	Issuer          childIssuerSelection
 	WorkingDir      string
 	RegistryURL     string
@@ -157,7 +158,7 @@ func selectChildIssuer(ctx context.Context, opts idChildOptions) (*selectedChild
 		if err != nil {
 			return nil, fmt.Errorf("load namespace controller key for %s: %w", domain, err)
 		}
-		if err := checkRootController(ctx, opts.TXTResolver, domain, key); err != nil {
+		if err := checkRootController(ctx, opts.TXTResolver, domain, opts.RegistryURL, key); err != nil {
 			return nil, err
 		}
 		registry, registryURL, err := childIssuerRegistry(ctx, opts, domain)
@@ -189,7 +190,7 @@ func selectChildIssuer(ctx context.Context, opts idChildOptions) (*selectedChild
 // childIssuerRegistry is the registry the root's status comes from: the one
 // its _awid record names, or --registry when the record names none.
 func childIssuerRegistry(ctx context.Context, opts idChildOptions, domain string) (*awid.RegistryClient, string, error) {
-	authority, err := awid.VerifyExactDomainAuthority(ctx, opts.TXTResolver, domain)
+	authority, err := awid.DiscoverAuthoritativeRegistry(ctx, opts.TXTResolver, domain)
 	if err != nil {
 		return nil, "", fmt.Errorf("lookup %s: %w", awid.AWIDTXTName(domain), err)
 	}
@@ -206,7 +207,7 @@ func childIssuerRegistry(ctx context.Context, opts idChildOptions, domain string
 // with its own key and presents its own installed chain. An agent issues
 // only agents.
 func currentAgentIssuer(opts idChildOptions) (*selectedChildIssuer, error) {
-	identity, err := resolveIdentityForDir(opts.WorkingDir)
+	identity, err := resolveIDExchangeIdentity(opts.WorkingDir, opts.IdentityHome)
 	if err != nil {
 		return nil, err
 	}
@@ -229,15 +230,28 @@ func currentAgentIssuer(opts idChildOptions) (*selectedChildIssuer, error) {
 	if err != nil {
 		return nil, err
 	}
-	registryURL := identity.RegistryURL
+	registryURL := opts.RegistryURL
+	if registryURL == "" {
+		registryURL = identity.RegistryURL
+	}
+	if registryURL == "" {
+		authority, err := awid.DiscoverAuthoritativeRegistry(context.Background(), opts.TXTResolver, domain)
+		if err != nil {
+			return nil, err
+		}
+		registryURL, err = domainRegistryURL(authority, "")
+		if err != nil {
+			return nil, err
+		}
+	}
 	issuer := &childIssuer{
-		parent:      map[string]any{"kind": "identity", "id": identity.StableID},
+		parent:      map[string]any{"kind": "identity", "id": identityID(identity)},
 		parentChain: certificates,
 		issuance:    awconfig.IDIssuanceFileStore{Dir: awconfig.IdentityIssuanceDir(dir)},
 		invitations: awconfig.IDInvitationFileStore{Dir: awconfig.IdentityInvitationsDir(dir)},
 		signer:      func(string) awid.IDCertificateSigner { return awid.KeySigner(key) },
 		evidence: func(ctx context.Context, _, _ string) (*awid.IDChainEvidence, error) {
-			subject := awid.IDChainSubject{ID: identity.StableID, DIDKey: identity.DID}
+			subject := awid.IDChainSubject{ID: identityID(identity), DIDKey: identity.DID}
 			return idStatusAt(registry, opts.TXTResolver, registryURL).IDChainEvidence(ctx, chain.Bundle, subject, domain), nil
 		},
 	}
@@ -388,6 +402,7 @@ type idChildRequestOutput struct {
 	Fingerprint    string         `json:"fingerprint"`
 	InvitationVoid bool           `json:"invitation_void"`
 	CertificateID  string         `json:"certificate_id,omitempty"`
+	Purpose        string         `json:"purpose,omitempty"`
 	ExpiresAt      string         `json:"expires_at,omitempty"`
 	Recipient      string         `json:"recipient,omitempty"`
 	// OldCertificateID is the certificate a re-sign request presents.
@@ -430,6 +445,7 @@ func (r receivedRequest) output() (idChildRequestOutput, error) {
 		return out, nil
 	}
 	inv := r.invitation
+	out.Purpose = inv.Purpose
 	out.InvitationID, out.InvitationVoid, out.ExpiresAt, out.Recipient = inv.InvitationID, inv.Void, inv.ExpiresAt, inv.Recipient
 	return out, nil
 }
@@ -666,6 +682,9 @@ func formatIDChildRequest(v any) string {
 	out := v.(idChildRequestOutput)
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Request:     %s (%s, %s)\n", out.RequestID, out.Operation, out.State))
+	if out.Purpose != "" {
+		fmt.Fprintf(&sb, "Purpose:     %s\n", out.Purpose)
+	}
 	if out.Operation != "resign" {
 		sb.WriteString(fmt.Sprintf("Recipient:   %s (your private note)\n", out.Recipient))
 	}

@@ -31,7 +31,7 @@ var ErrMalformedIDStatus = errors.New("malformed identity-tree status answer")
 // unavailable.
 type IDStatusClient struct {
 	Registry *RegistryClient
-	// Authority reads the domain's exact _awid TXT authority.
+	// Authority discovers the domain's exact or nearest ancestor _awid TXT.
 	Authority func(ctx context.Context, domain string) (DomainAuthority, error)
 	// Route finds the registry the domain routes to.
 	Route func(ctx context.Context, domain string) (string, error)
@@ -62,7 +62,7 @@ func NewIDStatusClient(registry *RegistryClient, resolver TXTResolver) *IDStatus
 	return &IDStatusClient{
 		Registry: registry,
 		Authority: func(ctx context.Context, domain string) (DomainAuthority, error) {
-			return VerifyExactDomainAuthority(ctx, resolver, domain)
+			return DiscoverAuthoritativeRegistry(ctx, resolver, domain)
 		},
 		Route:   registry.DiscoverRegistry,
 		Timeout: 5 * time.Second,
@@ -185,6 +185,9 @@ func (c *IDStatusClient) refresh(key, domain string, request map[string]any, a *
 	defer cancel()
 	authority, err := c.Authority(ctx, domain)
 	var status map[string]any
+	if err == nil && (authority.ControllerDID == "" || authority.DNSName == "") {
+		err = idCertificateRefusal("evidence_unavailable")
+	}
 	if err == nil {
 		status, err = c.FetchIDCertificateStatus(ctx, domain, request)
 	}

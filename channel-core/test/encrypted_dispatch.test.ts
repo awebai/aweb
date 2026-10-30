@@ -94,7 +94,10 @@ async function dispatch(kind: "mail" | "chat", mutation = "valid") {
   const self = { alias: "bob", address: bob.address, did: bob.did, stableID: bob.stable_id };
   if (mutation === "recipient") self.did = "did:key:unrelated", self.stableID = "did:aw:unrelated";
   const client = { get: vi.fn(async () => ({ messages: [structuredClone(fetched)] })), post: vi.fn(async () => {}) };
-  const registry = { resolveIdentity: vi.fn(async () => ({ did: alice.did, stableID: alice.stable_id, address: alice.address, identityScope: "global", custody: "self" })),
+  // This encryption/trust fixture predates ID-tree enrollment. State its legacy
+  // enrollment explicitly, as the production key route does for these senders.
+  const registry = { idStatus: { enrollmentFor: vi.fn(async () => ({ state: "not_enrolled" })) },
+    resolveIdentity: vi.fn(async () => ({ did: alice.did, stableID: alice.stable_id, address: alice.address, identityScope: "global", custody: "self" })),
     verifyStableIdentity: vi.fn(async () => ({ outcome: "OK_VERIFIED", currentDidKey: alice.did })) };
   if (mutation === "stale") registry.verifyStableIdentity = vi.fn(async () => ({ outcome: "STALE_CACHE" })) as never;
   if (mutation === "stable-mismatch") registry.verifyStableIdentity = vi.fn(async () => ({ outcome: "HARD_ERROR" })) as never;
