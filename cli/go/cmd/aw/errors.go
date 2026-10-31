@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"strings"
 
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/termtext"
 )
 
 type cliError struct {
@@ -71,6 +74,43 @@ func (e *plainRefusal) Unwrap() error { return e.err }
 // holds the name.
 func isAliasConflict(err error) bool {
 	return awid.DescribeError(err).Code == "alias_conflict"
+}
+
+// recipientHumanMailOnly is the server's refusal of chat to a person: aweb
+// reaches people by mail.
+const recipientHumanMailOnly = "recipient_human_mail_only"
+
+// humanMailOnlyRefusal says, for the server's refusal of chat that reaches a
+// person, that people are reached by mail, under that refusal's code. It
+// names only the people the server names in recipients: a refusal of a group
+// does not say which member is a person, so aw never infers it. Any other
+// error is returned as it is.
+func humanMailOnlyRefusal(err error) error {
+	if status, ok := awid.HTTPStatusCode(err); !ok || status != http.StatusUnprocessableEntity || httpErrorReason(err) != recipientHumanMailOnly {
+		return err
+	}
+	var refusal struct {
+		Recipients []string `json:"recipients"`
+	}
+	if body, ok := awid.HTTPErrorBody(err); ok {
+		_ = json.Unmarshal([]byte(strings.TrimSpace(body)), &refusal)
+	}
+	people := make([]string, 0, len(refusal.Recipients))
+	for _, recipient := range refusal.Recipients {
+		if recipient = termtext.Line(strings.TrimSpace(recipient)); recipient != "" {
+			people = append(people, recipient)
+		}
+	}
+	text := "This chat includes a person; aweb reaches people by mail: aw mail send --to <their alias>"
+	switch len(people) {
+	case 0:
+	case 1:
+		text = fmt.Sprintf("%s is a person; aweb reaches people by mail: aw mail send --to %s", people[0], people[0])
+	default:
+		names := strings.Join(people[:len(people)-1], ", ") + " and " + people[len(people)-1]
+		text = fmt.Sprintf("%s are people; aweb reaches people by mail: aw mail send --to %s", names, people[0])
+	}
+	return withErrorCode(recipientHumanMailOnly, &plainRefusal{text: text, err: err})
 }
 
 // nameTakenText says that another active member of teamID holds alias, and

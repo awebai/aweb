@@ -160,7 +160,7 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
         # Alias encryption to her is refused the same way, and never falls back
         # to plaintext.
         forbidden = await asyncio.create_subprocess_exec(str(binary), "mail", "send", "--to", "alice",
-                                                        "--e2ee", "--body-file", str(body_file), cwd=command_dir,
+                                                        "--subject", "Private", "--e2ee", "--body-file", str(body_file), cwd=command_dir,
                                                         env=command_env, stdout=asyncio.subprocess.PIPE,
                                                         stderr=asyncio.subprocess.STDOUT)
         refused, _ = await asyncio.wait_for(forbidden.communicate(), 30)
@@ -179,7 +179,7 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
 
         # Exercise the reported first-send form before any peer conversation exists.
         default_sent = await _cli(binary, command_dir, command_env, "mail", "send", "--to", "carol",
-                                  "--plaintext", "--body-file", str(body_file), "--json")
+                                  "--subject", "First send", "--plaintext", "--body-file", str(body_file), "--json")
         default_read = await _request(env, "carol", "GET", f"/v1/messages/{default_sent['message_id']}")
         assert default_read.status_code == 200, default_read.text
         default_message = default_read.json()
@@ -195,12 +195,12 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
             body_file.write_text(text)
             control = await _cli(binary, command_dir if global_resident else tmp_path,
                                  command_env if global_resident else child_env, "mail", "send", "--to", "carol",
-                                 mode, "--new-conversation", "--body-file", str(body_file), "--json")
+                                 "--subject", "Peer send", mode, "--body-file", str(body_file), "--json")
             control_read = await _request(env, "carol", "GET", f"/v1/messages/{control['message_id']}")
             assert control_read.status_code == 200, control_read.text
             control_message = control_read.json()
             sent = await _cli(binary, command_dir, command_env, "mail", "send", "--to", "carol",
-                              mode, "--new-conversation", "--body-file", str(body_file), "--json")
+                              "--subject", "Peer send", mode, "--body-file", str(body_file), "--json")
             received = await _request(env, "carol", "GET", f"/v1/messages/{sent['message_id']}")
             assert received.status_code == 200, received.text
             delivered = received.json()
@@ -226,10 +226,9 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
                 })
                 assert decrypted["body"] == text
 
-        # Also retain the ordinary send form, including existing-conversation
-        # lookup, rather than proving only --new-conversation sends.
+        # A later send to the same correspondent starts its own thread too.
         default_sent = await _cli(binary, command_dir, command_env, "mail", "send", "--to", "carol",
-                                  "--plaintext", "--body-file", str(body_file), "--json")
+                                  "--subject", "Another topic", "--plaintext", "--body-file", str(body_file), "--json")
         default_read = await _request(env, "carol", "GET", f"/v1/messages/{default_sent['message_id']}")
         assert default_read.status_code == 200, default_read.text
         default_message = default_read.json()

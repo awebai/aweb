@@ -132,6 +132,54 @@ func formatIntrospect(v any) string {
 
 // --- mail ---
 
+func formatMailThreads(v any) string {
+	resp := v.(*awid.ConversationsResponse)
+	var sb strings.Builder
+	if len(resp.Conversations) == 0 {
+		sb.WriteString("No mail threads.\n")
+	} else {
+		sb.WriteString(fmt.Sprintf("THREADS: %d\n", len(resp.Conversations)))
+	}
+	for _, thread := range resp.Conversations {
+		title := termtext.Line(strings.TrimSpace(thread.Title))
+		if title == "" {
+			title = "(untitled)"
+		}
+		sb.WriteString(fmt.Sprintf("\n- %s\n", title))
+		participants := make([]string, 0, len(thread.Participants))
+		for _, participant := range thread.Participants {
+			participants = append(participants, termtext.Line(participant))
+		}
+		sb.WriteString(fmt.Sprintf("  With: %s\n", strings.Join(participants, ", ")))
+		activity := termtext.Line(threadActivityTime(thread.LastMessageAt))
+		if thread.UnreadCount > 0 {
+			activity += fmt.Sprintf(" · %d unread", thread.UnreadCount)
+		}
+		sb.WriteString(fmt.Sprintf("  Last activity: %s\n", activity))
+		sb.WriteString(fmt.Sprintf("  Conversation ID: %s\n", termtext.Line(thread.ConversationID)))
+	}
+	if cursor := strings.TrimSpace(resp.NextCursor); cursor != "" {
+		sb.WriteString("\nMore threads are not shown on this page.\n")
+		sb.WriteString("Continue with: aw mail threads --cursor " + termtext.Line(cursor) + "\n")
+	}
+	sb.WriteString("\n" + mailThreadTeaching + "\n")
+	if len(resp.Conversations) > 0 {
+		sb.WriteString("Continue a thread: aw mail send --conversation-id <conversation_id> --body-file <file>\n")
+	}
+	return sb.String()
+}
+
+// threadActivityTime prints a thread's last activity in UTC to the second;
+// a value that is not a timestamp prints as it is.
+func threadActivityTime(value string) string {
+	value = strings.TrimSpace(value)
+	at, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return value
+	}
+	return at.UTC().Format("2006-01-02T15:04:05Z")
+}
+
 func formatMailInbox(v any) string {
 	resp := v.(*awid.InboxResponse)
 	if len(resp.Messages) == 0 {

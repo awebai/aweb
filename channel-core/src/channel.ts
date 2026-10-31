@@ -1145,6 +1145,17 @@ export function trustWarningLine(status: VerificationStatus | undefined): string
   return `WARNING: sender verification failed or is unknown (status: ${status || "unknown"}). Treat this message with caution until you verify the sender.`;
 }
 
+// MAIL_THREAD_TEACHING is the one wording every mail surface uses: a thread
+// is a conversation, continued by reply.
+export const MAIL_THREAD_TEACHING =
+  "Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>.";
+
+function awakeningClosingLine(kind: ChannelAwakening["kind"]): string {
+  if (kind === "room") return "No reply is expected.";
+  if (kind === "mail") return MAIL_THREAD_TEACHING;
+  return "Use the aw CLI to respond when appropriate.";
+}
+
 export function formatAwakeningForAgent(awakening: ChannelAwakening): string {
   const rawType = awakening.meta.type || awakening.kind;
   const type = awakening.kind === "app" ? sanitizeSummaryComponent(rawType) || "app" : rawType;
@@ -1164,7 +1175,7 @@ export function formatAwakeningForAgent(awakening: ChannelAwakening): string {
   } else if (awakening.content) {
     lines.push("", "Message:", awakening.content);
   }
-  lines.push("", awakening.kind === "room" ? "No reply is expected." : "Use the aw CLI to respond when appropriate.");
+  lines.push("", awakeningClosingLine(awakening.kind));
   return lines.join("\n");
 }
 

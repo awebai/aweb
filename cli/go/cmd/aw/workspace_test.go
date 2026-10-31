@@ -1444,9 +1444,10 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 			inboxByAlias[toAlias] = append(inboxByAlias[toAlias], msg)
 			mu.Unlock()
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"message_id":   msg.ID,
-				"status":       "delivered",
-				"delivered_at": "2026-04-16T00:00:00Z",
+				"message_id":      msg.ID,
+				"conversation_id": sentConversationIDForTest(body),
+				"status":          "delivered",
+				"delivered_at":    "2026-04-16T00:00:00Z",
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/messages":
 			t.Fatal("mail send should use discovered /api aweb_url")
@@ -1612,12 +1613,12 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 		t.Fatalf("child aweb_url=%q", childWorkspace.AwebURL)
 	}
 
-	runAW(repo, "mail", "send", "--plaintext", "--to", "charlie", "--body", "hello child", "--json")
+	runAW(repo, "mail", "send", "--subject", "Test thread", "--plaintext", "--to", "charlie", "--body", "hello child", "--json")
 	childInbox := runAW(child, "mail", "inbox", "--show-all", "--json")
 	if !strings.Contains(childInbox, "hello child") {
 		t.Fatalf("child inbox missing parent mail:\n%s", childInbox)
 	}
-	runAW(child, "mail", "send", "--plaintext", "--to", "alice", "--body", "hello parent", "--json")
+	runAW(child, "mail", "send", "--subject", "Test thread", "--plaintext", "--to", "alice", "--body", "hello parent", "--json")
 	parentInbox := runAW(repo, "mail", "inbox", "--show-all", "--json")
 	if !strings.Contains(parentInbox, "hello parent") {
 		t.Fatalf("parent inbox missing child mail:\n%s", parentInbox)
@@ -1779,9 +1780,10 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 			inboxByAlias[toAlias] = append(inboxByAlias[toAlias], msg)
 			mu.Unlock()
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"message_id":   msg.ID,
-				"status":       "delivered",
-				"delivered_at": "2026-04-16T00:00:00Z",
+				"message_id":      msg.ID,
+				"conversation_id": sentConversationIDForTest(body),
+				"status":          "delivered",
+				"delivered_at":    "2026-04-16T00:00:00Z",
 			})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/messages/inbox"):
 			did := didFromDIDKeyAuthorizationForTest(r.Header.Get("Authorization"))
@@ -1876,12 +1878,12 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 		t.Fatalf("child local cert member_did_aw=%q", childCert.MemberDIDAW)
 	}
 
-	runAW(repo, baseEnv, "mail", "send", "--plaintext", "--to", "charlie", "--body", "hello child", "--json")
+	runAW(repo, baseEnv, "mail", "send", "--subject", "Test thread", "--plaintext", "--to", "charlie", "--body", "hello child", "--json")
 	childInbox := runAW(child, baseEnv, "mail", "inbox", "--show-all", "--json")
 	if !strings.Contains(childInbox, "hello child") {
 		t.Fatalf("child inbox missing parent mail:\n%s", childInbox)
 	}
-	runAW(child, baseEnv, "mail", "send", "--plaintext", "--to", "alice", "--body", "hello parent", "--json")
+	runAW(child, baseEnv, "mail", "send", "--subject", "Test thread", "--plaintext", "--to", "alice", "--body", "hello parent", "--json")
 	parentInbox := runAW(repo, baseEnv, "mail", "inbox", "--show-all", "--json")
 	if !strings.Contains(parentInbox, "hello parent") {
 		t.Fatalf("parent inbox missing child mail:\n%s", parentInbox)

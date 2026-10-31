@@ -551,12 +551,8 @@ more than 500 in one call. `--json` is what makes the next check possible: the
 plain text output prints sender, subject and body, but no message IDs. The
 `message_id` fields must include both returned IDs:
 `<alice-message-id>` and `<bob-reply-message-id>`. The command
-`aw mail send --to bob` may reuse an existing active one-to-one mail
-conversation, so older messages are valid. Expect exactly the initial message
-and reply only for a fresh Alice/Bob pair. If either returned ID is absent
-from a 500-message result, the current unpaged command cannot prove the
-conversation beyond its ceiling;
-repeat the journey with a fresh pair.
+`aw mail send --to bob` starts a new thread, so expect exactly the initial
+message and the reply.
 
 The live send/wake/reply path is now proven. Keep going before declaring
 activation complete.
@@ -573,8 +569,7 @@ offline:
 cat > follow-up.md <<'EOF'
 This was accepted while Bob's event consumer was stopped.
 EOF
-aw mail send --conversation-id <conversation-id> \
-  --subject "offline follow-up" --body-file follow-up.md
+aw mail send --conversation-id <conversation-id> --body-file follow-up.md
 ```
 
 Restart Bob's event consumer:

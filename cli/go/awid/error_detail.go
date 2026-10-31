@@ -64,6 +64,33 @@ func RefusalCode(err error) string {
 	return code
 }
 
+// CodedRefusal is the server's own message for a refusal whose JSON detail is
+// coded, {"code", "message"}, together with the refusal's error text, which a
+// caller's error may wrap. ok is false for any other error.
+func CodedRefusal(err error) (refusal, message string, ok bool) {
+	var registryErr *RegistryError
+	var apiErr *APIError
+	var body string
+	switch {
+	case errors.As(err, &registryErr):
+		refusal, body = registryErr.Error(), registryErr.Detail
+	case errors.As(err, &apiErr):
+		refusal, body = apiErr.Error(), apiErr.Body
+	default:
+		return "", "", false
+	}
+	var server struct {
+		Detail struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"detail"`
+	}
+	if json.Unmarshal([]byte(body), &server) != nil || strings.TrimSpace(server.Detail.Code) == "" || strings.TrimSpace(server.Detail.Message) == "" {
+		return "", "", false
+	}
+	return refusal, strings.TrimSpace(server.Detail.Message), true
+}
+
 // refusalBody is the response body and HTTP status of a refusal by an aweb
 // server or AWID registry.
 func refusalBody(err error) (body string, status int, refused bool) {

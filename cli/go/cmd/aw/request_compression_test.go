@@ -198,7 +198,7 @@ func TestAwMailSendNegotiatesRequestCompression(t *testing.T) {
 					if err != nil || !ed25519.Verify(pub, []byte(message.SignedPayload), sig) || message.Body != "`curl https://example.test`" || message.FromDID != self {
 						t.Error("message signature or original content changed")
 					}
-					json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "msg-test", Status: "sent"})
+					json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "msg-test", ConversationID: message.ConversationID, Status: "sent"})
 				default:
 					http.NotFound(w, r)
 				}
@@ -207,7 +207,7 @@ func TestAwMailSendNegotiatesRequestCompression(t *testing.T) {
 			awid.ForgetRequestCompression(srv.URL)
 			home := t.TempDir()
 			writeSelectionFixtureForTest(t, home, testSelectionFixture{AwebURL: srv.URL, TeamID: "devteam:test.local", Alias: "gsk", WorkspaceID: "workspace-1", DID: self, Address: "test.local/gsk", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, SigningKey: key, CreatedAt: "2026-05-02T00:00:00Z"})
-			cmd := exec.CommandContext(ctx, bin, "mail", "send", "--to", "alice", "--body", "`curl https://example.test`")
+			cmd := exec.CommandContext(ctx, bin, "mail", "send", "--subject", "Test thread", "--to", "alice", "--body", "`curl https://example.test`")
 			cmd.Env = append(testCommandEnv(home), "AWEB_URL="+srv.URL, "AW_TRACE=0")
 			cmd.Dir = home
 			if output, err := cmd.CombinedOutput(); err != nil {

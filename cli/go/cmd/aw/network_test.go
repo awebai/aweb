@@ -169,9 +169,10 @@ func TestMailSendToAddressUsesUnifiedEndpoint(t *testing.T) {
 				t.Fatalf("decode: %v", err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"message_id":   "net-msg-1",
-				"status":       "sent",
-				"delivered_at": "2026-02-06T00:00:00Z",
+				"message_id":      "net-msg-1",
+				"conversation_id": sentConversationIDForTest(gotBody),
+				"status":          "sent",
+				"delivered_at":    "2026-02-06T00:00:00Z",
 			})
 		case "/api/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -207,7 +208,7 @@ func TestMailSendToAddressUsesUnifiedEndpoint(t *testing.T) {
 	})
 	writeKnownAgentPinForTest(t, tmp, "acme.example/researcher", registryServer.URL)
 
-	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext", "--to-address", "acme.example/researcher", "--body", "hello network", "--json")
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--subject", "Test thread", "--plaintext", "--to-address", "acme.example/researcher", "--body", "hello network", "--json")
 	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
@@ -257,9 +258,10 @@ func TestMailSendToFlagAutoDetectsFullAddress(t *testing.T) {
 				t.Fatalf("decode: %v", err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"message_id":   "auto-msg-1",
-				"status":       "sent",
-				"delivered_at": "2026-02-06T00:00:00Z",
+				"message_id":      "auto-msg-1",
+				"conversation_id": sentConversationIDForTest(gotBody),
+				"status":          "sent",
+				"delivered_at":    "2026-02-06T00:00:00Z",
 			})
 		case "/api/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -297,7 +299,7 @@ func TestMailSendToFlagAutoDetectsFullAddress(t *testing.T) {
 
 	// Use --to with a full address (contains /). Should auto-detect as address
 	// and route to the identity messaging endpoint, not the team-scoped alias endpoint.
-	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext", "--to", "acme.example/researcher", "--body", "hello auto-detect", "--json")
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--subject", "Test thread", "--plaintext", "--to", "acme.example/researcher", "--body", "hello auto-detect", "--json")
 	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
@@ -326,10 +328,13 @@ func TestMailSendPlainAliasRoutesToOSSEndpoint(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{}})
 		case "/v1/messages":
 			gotPath = r.URL.Path
+			var sent map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&sent)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"message_id":   "oss-msg-1",
-				"status":       "sent",
-				"delivered_at": "2026-02-06T00:00:00Z",
+				"conversation_id": sentConversationIDForTest(sent),
+				"message_id":      "oss-msg-1",
+				"status":          "sent",
+				"delivered_at":    "2026-02-06T00:00:00Z",
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -348,7 +353,7 @@ func TestMailSendPlainAliasRoutesToOSSEndpoint(t *testing.T) {
 
 	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
-	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext", "--to", "bob", "--body", "hello local", "--json")
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--subject", "Test thread", "--plaintext", "--to", "bob", "--body", "hello local", "--json")
 	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=http://127.0.0.1:1")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()

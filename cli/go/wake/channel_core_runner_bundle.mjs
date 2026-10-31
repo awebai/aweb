@@ -11037,6 +11037,12 @@ function trustWarningLine(status2) {
   }
   return `WARNING: sender verification failed or is unknown (status: ${status2 || "unknown"}). Treat this message with caution until you verify the sender.`;
 }
+var MAIL_THREAD_TEACHING = "Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>.";
+function awakeningClosingLine(kind) {
+  if (kind === "room") return "No reply is expected.";
+  if (kind === "mail") return MAIL_THREAD_TEACHING;
+  return "Use the aw CLI to respond when appropriate.";
+}
 function formatAwakeningForAgent(awakening) {
   const rawType = awakening.meta.type || awakening.kind;
   const type2 = awakening.kind === "app" ? sanitizeSummaryComponent(rawType) || "app" : rawType;
@@ -11054,7 +11060,7 @@ function formatAwakeningForAgent(awakening) {
   } else if (awakening.content) {
     lines.push("", "Message:", awakening.content);
   }
-  lines.push("", awakening.kind === "room" ? "No reply is expected." : "Use the aw CLI to respond when appropriate.");
+  lines.push("", awakeningClosingLine(awakening.kind));
   return lines.join("\n");
 }
 function formatAppEventMetaSummary(meta) {

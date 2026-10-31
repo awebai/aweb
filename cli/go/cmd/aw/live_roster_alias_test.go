@@ -138,7 +138,8 @@ func TestMailSendBareAliasFallsBackToLiveTeamRoster(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 				t.Fatal(err)
 			}
-			_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "msg-live", Status: "sent"})
+			conversationID, _ := gotBody["conversation_id"].(string)
+			_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "msg-live", ConversationID: conversationID, Status: "sent"})
 		default:
 			t.Fatalf("unexpected api path %s", r.URL.Path)
 		}
@@ -390,14 +391,10 @@ func TestMailSendAliasReachesActiveTeamMembers(t *testing.T) {
 	t.Setenv("AWEB_IDENTITY_HOME", "")
 	t.Setenv("AW_NO_UPDATE_CHECK", "1")
 	resetMailSendGlobalsForLiveRosterTest(t)
-	oldNewConversation := mailSendNewConversation
-	t.Cleanup(func() { mailSendNewConversation = oldNewConversation })
 	for _, tc := range []struct {
 		name, kind, address, scope string
-		fresh                      bool
 	}{
 		{name: "addressless human", kind: "human", scope: awid.IdentityModeGlobal},
-		{name: "addressless human fresh conversation", kind: "human", scope: awid.IdentityModeGlobal, fresh: true},
 		{name: "addressed human", kind: "human", scope: awid.IdentityModeGlobal, address: "demo/juan"},
 		{name: "addressless agent", kind: "agent", scope: awid.IdentityModeGlobal},
 		{name: "addressed agent", kind: "agent", scope: awid.IdentityModeGlobal, address: "demo/juan"},
@@ -423,8 +420,6 @@ func TestMailSendAliasReachesActiveTeamMembers(t *testing.T) {
 						agents = []awid.AgentView{{AgentID: "juan-agent", Alias: "juan", AgentType: tc.kind, DIDKey: memberDID, DIDAW: memberStable, Address: tc.address, IdentityScope: tc.scope}}
 					}
 					_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{TeamID: "backend:demo", Agents: agents})
-				case "/v1/conversations":
-					_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{})
 				case "/v1/messages":
 					cert, err := awid.DecodeTeamCertificateHeader(r.Header.Get("X-AWID-Team-Certificate"))
 					if err != nil || cert.Team != "backend:demo" || cert.MemberDIDKey != selfDID {
@@ -456,7 +451,6 @@ func TestMailSendAliasReachesActiveTeamMembers(t *testing.T) {
 			}))
 			writeSelectionFixtureForTest(t, root, testSelectionFixture{AwebURL: api.URL, TeamID: "backend:demo", Alias: "ada", WorkspaceID: "ada-workspace", DID: selfDID, StableID: awid.ComputeStableID(selfPub), Address: "demo/ada", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, RegistryURL: registry.URL, SigningKey: selfKey})
 			mailSendTo, mailSendSubject, mailSendBody = "juan", "team mail", "hello human or agent"
-			mailSendNewConversation = tc.fresh
 			cmd := &cobra.Command{}
 			cmd.Flags().Bool("e2ee", false, "")
 			if err := mailSendCmd.RunE(cmd, nil); err != nil {
@@ -466,8 +460,8 @@ func TestMailSendAliasReachesActiveTeamMembers(t *testing.T) {
 				t.Fatalf("mail posts=%d want1", len(sent))
 			}
 			req := sent[0]
-			if req.NewConversation != tc.fresh {
-				t.Fatalf("new_conversation=%v want%v", req.NewConversation, tc.fresh)
+			if !req.NewConversation || req.ConversationID == "" {
+				t.Fatalf("a send to a member must start a new thread: %+v", req)
 			}
 			if tc.kind == "human" {
 				if rosterReads != 1 || req.ToDID != memberDID || req.ToStableID != memberStable || req.ToAddress != "" {
