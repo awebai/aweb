@@ -226,6 +226,14 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 	if got["identity_scope"] != awid.IdentityModeGlobal {
 		t.Fatalf("identity_scope=%v", got["identity_scope"])
 	}
+	// The first connect with an accepted certificate is a join: its next
+	// steps include the first message to a teammate.
+	var withSteps struct {
+		NextSteps []initNextStep `json:"next_steps"`
+	}
+	if err := json.Unmarshal(extractJSON(t, out), &withSteps); err != nil || !strings.Contains(initNextStepCommands(withSteps.NextSteps), "aw mail send --to <teammate>") {
+		t.Fatalf("first certificate connect has no joined next steps: %v %+v", err, withSteps.NextSteps)
+	}
 
 	// Verify DIDKey auth was used
 	if !strings.HasPrefix(gotAuthHeader, "DIDKey ") {

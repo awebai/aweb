@@ -40,8 +40,6 @@ func TestInitNextStepLinesHostedPromoteChannelAndDashboard(t *testing.T) {
 		"aw init --setup-channel",
 		"aw init --inject-docs",
 		"aw claim-human --email <your-email>",
-		"claude plugin marketplace add awebai/claude-plugins",
-		"claude plugin install aweb-channel@awebai-marketplace",
 		"claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace",
 		"Channel delivery works in any permission mode, including auto and plan.",
 		"pi install npm:@awebai/pi@latest",
@@ -142,16 +140,15 @@ func TestInitNextStepLinesTellHowToAddASecondAgentToThisTeam(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			text := strings.Join(initNextStepLines(initNextSteps(tc.result, t.TempDir(), tc.done, tc.done)), "\n")
 			if tc.result.APIKeyAuth {
-				if !strings.Contains(text, "create one from the dashboard") || strings.Contains(text, "separate team") {
+				if !strings.Contains(text, "create one from the dashboard") || strings.Contains(text, "separate account and team") {
 					t.Fatalf("API-key second-agent advice contradicts same-team creation:\n%s", text)
 				}
-			} else if !strings.Contains(text, "separate team") || !strings.Contains(text, "new account/team") || strings.Contains(text, "create one from the dashboard") {
-				t.Fatalf("keyless advice missing qualified warning:\n%s", text)
+			} else if initResultIsHosted(tc.result) && (!strings.Contains(text, "separate account and team") || strings.Contains(text, "cannot message") || strings.Contains(text, "create one from the dashboard")) {
+				t.Fatalf("hosted keyless advice missing qualified warning:\n%s", text)
 			}
 			for _, want := range []string{
 				"aw team invite",
-				"aw team join <token> --name <name>",
-				"aw workspace add-worktree <role>",
+				"run the join command it prints in that agent's folder",
 			} {
 				if !strings.Contains(text, want) {
 					t.Fatalf("missing %q in next steps:\n%s", want, text)

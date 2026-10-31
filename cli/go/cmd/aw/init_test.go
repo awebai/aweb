@@ -701,6 +701,31 @@ func TestInitJoinFromHostedSuccessPreservesSourceAndConnectsTarget(t *testing.T)
 }
 
 func TestInitJoinFromControllerKeySuccessPreservesSourceAndConnectsTarget(t *testing.T) {
+	target, source, sourceBefore, teamID, _ := runControllerKeyJoinFromForTest(t, true)
+	cert, err := awconfig.LoadTeamCertificateForTeam(target, teamID)
+	if err != nil {
+		t.Fatalf("load target cert: %v", err)
+	}
+	assertInitJoinTarget(t, target, teamID, "target", cert.MemberDIDKey, sourceBefore, source)
+}
+
+// In text, --join-from writes the default aweb docs like every init path,
+// and its next steps say only what is left to do.
+func TestInitJoinFromTextInjectsDocsAndListsWhatIsLeft(t *testing.T) {
+	target, _, _, _, stdout := runControllerKeyJoinFromForTest(t, false)
+	if _, err := os.Stat(filepath.Join(target, "AGENTS.md")); err != nil {
+		t.Fatalf("--join-from did not write AGENTS.md: %v\n%s", err, stdout)
+	}
+	if strings.Contains(stdout, "aw init --inject-docs") || !strings.Contains(stdout, "aw mail send --to <teammate>") {
+		t.Fatalf("next steps do not fit what --join-from did:\n%s", stdout)
+	}
+}
+
+// runControllerKeyJoinFromForTest joins a target folder from a source
+// workspace whose home holds the team key, and returns the target, the
+// source and its digests, the team and init's stdout.
+func runControllerKeyJoinFromForTest(t *testing.T, asJSON bool) (string, string, map[string]struct{}, string, string) {
+	t.Helper()
 	oldJoinFrom, oldJoinTeam, oldName, oldGlobal := initJoinFrom, initJoinTeam, initName, initGlobal
 	oldJSON, oldRegistry := jsonFlag, initAWIDRegistry
 	t.Cleanup(func() {
@@ -739,6 +764,13 @@ func TestInitJoinFromControllerKeySuccessPreservesSourceAndConnectsTarget(t *tes
 			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": teamID, "alias": "target", "agent_id": "agent-target", "workspace_id": "workspace-target", "team_did_key": teamDID})
 		case strings.HasSuffix(r.URL.Path, "/encryption-key") && (r.Method == http.MethodPost || r.Method == http.MethodPut):
 			writePublishEncryptionKeyResponseForTest(t, w, "agent-target", teamID, "target")
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/instructions/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_instructions_id":        "instructions-1",
+				"active_team_instructions_id": "instructions-1",
+				"version":                     1,
+				"document":                    map[string]any{"body_md": "Use aw mail inbox and aw chat pending."},
+			})
 		default:
 			t.Fatalf("unexpected aweb %s %s", r.Method, r.URL.Path)
 		}
@@ -752,25 +784,24 @@ func TestInitJoinFromControllerKeySuccessPreservesSourceAndConnectsTarget(t *tes
 	writeSelectionFixtureForTest(t, source, testSelectionFixture{AwebURL: awebServer.URL, TeamID: teamID, Alias: "source", WorkspaceID: "workspace-source", DID: awid.ComputeDIDKey(sourcePub), Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, SigningKey: sourceSigning, CreatedAt: "2026-09-26T00:00:00Z"})
 	sourceBefore := fileDigestsForTest(t, filepath.Join(source, ".aw"))
 	target := t.TempDir()
+	var stdout string
 	withTestWorkingDir(t, target, func() {
 		initJoinFrom = source
 		initJoinTeam = teamID
 		initName = "target"
 		initGlobal = false
-		jsonFlag = true
+		jsonFlag = asJSON
 		var out bytes.Buffer
-		if err := runInitJoinFrom(authTestCmd(&out)); err != nil {
-			t.Fatalf("runInitJoinFrom: %v\n%s", err, out.String())
-		}
+		stdout = captureStdout(t, func() {
+			if err := runInitJoinFrom(authTestCmd(&out)); err != nil {
+				t.Fatalf("runInitJoinFrom: %v\n%s", err, out.String())
+			}
+		})
 	})
 	if !sawRegistry || !sawConnect {
 		t.Fatalf("registry=%t connect=%t", sawRegistry, sawConnect)
 	}
-	cert, err := awconfig.LoadTeamCertificateForTeam(target, teamID)
-	if err != nil {
-		t.Fatalf("load target cert: %v", err)
-	}
-	assertInitJoinTarget(t, target, teamID, "target", cert.MemberDIDKey, sourceBefore, source)
+	return target, source, sourceBefore, teamID, stdout
 }
 
 func TestInitJoinFromDenialLeavesTargetEmptyAndSuggestsAdmission(t *testing.T) {
