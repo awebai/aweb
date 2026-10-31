@@ -195,8 +195,8 @@ func TestInitTeamFlagIsForANewLocalTeamOnly(t *testing.T) {
 			initDomain = "acme.test"
 		}
 		err := run()
-		if exitCode(err) != 2 || !strings.Contains(err.Error(), "--team") || gotTeam != "" {
-			t.Fatalf("%s: want a --team usage error, got %v (team %q)", tc.name, err, gotTeam)
+		if exitCode(err) != 2 || err.Error() != "--team only works with --new-team in a new folder on a local (localhost) registry." || gotTeam != "" {
+			t.Fatalf("%s: want the --team usage error, got %v (team %q)", tc.name, err, gotTeam)
 		}
 	}
 
