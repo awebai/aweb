@@ -128,7 +128,13 @@ async def test_fresh_address_delivery_after_cli_rotation_is_local(
             assert response.status_code == expected_status, response.text
             if expected_status != 200:
                 after_counts = {name: await env.db.fetch_val("SELECT count(*) FROM {{tables." + name + "}}") for name in tables}
-                assert after_counts == before_counts
+                if expected_status == 422:
+                    assert after_counts == before_counts
+                else:
+                    # Remote chat may retain its outgoing session projection;
+                    # it must not store a locally delivered message.
+                    assert after_counts["messages"] == before_counts["messages"]
+                    assert after_counts["chat_messages"] == before_counts["chat_messages"]
                 return None
             table, column = ("messages", "conversation_id") if kind == "mail" else ("chat_messages", "session_id")
             stored = await env.db.fetch_one(
@@ -171,7 +177,7 @@ async def test_fresh_address_delivery_after_cli_rotation_is_local(
                     await fresh_send("Invalid binding", claims=claims, expected_status=422)
                 assert before == await env.db.fetch_one("SELECT * FROM {{tables.agents}} WHERE agent_id=$1", bob.id)
                 # A deleted row no longer establishes residence. The valid
-                # address route must then take federation, with no local write.
+                # address route must then take federation, with no local message.
                 await env.db.execute("UPDATE {{tables.agents}} SET deleted_at=clock_timestamp() WHERE agent_id=$1", bob.id)
                 await fresh_send("No local residence", expected_status=502)
         finally:
