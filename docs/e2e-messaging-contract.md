@@ -29,7 +29,13 @@ custody boundaries.
 
 - Hosted custodial tools or any server-side surface that receives plaintext are
   not E2E. They may use the encrypted-v2 wire format as server-readable hosted
-  managed encryption, but must not be described as E2E.
+  managed encryption to a self-custodial recipient, but must not be described as
+  E2E. Encrypted-v2 delivery to a recipient whose exact delivery-key assertion
+  has signature-verified `custody: hosted_custodial` refuses with HTTP 422,
+  `recipient_custodial_no_e2ee`, before message storage. The sender must explicitly
+  retry without `--e2ee`; there is no automatic plaintext downgrade. Missing or
+  legacy null custody is not evidence of hosted custody. The same rule applies
+  to local mail/chat, continuations and federation.
 - The server cannot recover lost encryption keys and cannot decrypt historical
   encrypted messages for support.
 - This contract does not introduce a Signal or MLS-style ratchet. Group chat is

@@ -47,6 +47,7 @@ SUPPORT_MEANINGS = {
     "recipient_identity_not_found": "Target address/DID or active local recipient projection does not exist.",
     "recipient_address_did_mismatch": "Target address resolves to a different stable recipient DID.",
     "recipient_current_key_mismatch": "Target current key differs from authoritative or stored recipient state.",
+    "recipient_custodial_no_e2ee": "The verified recipient encryption-key assertion states hosted custody; send explicitly without --e2ee.",
     "recipient_route_missing": "Target global address or stored participant has no delivery origin.",
     "recipient_route_mismatch": "Target authoritative delivery origin differs from the envelope route.",
     "local_recipient_route_missing": "Local recipient lacks the exact learned conversation/session route.",

@@ -23,6 +23,7 @@ _ERROR_SPECS: dict[str, tuple[int, bool]] = {
     "local_sender_route_mismatch": (422, False),
     "recipient_address_did_mismatch": (422, False),
     "recipient_current_key_mismatch": (422, False),
+    "recipient_custodial_no_e2ee": (422, False),
     "recipient_encryption_assertion_invalid_or_stale": (422, False),
     "recipient_encryption_assertion_missing": (424, False),
     "recipient_identity_not_found": (404, False),
