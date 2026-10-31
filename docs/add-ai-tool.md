@@ -9,8 +9,8 @@ weight: 10
 For AI agents. Run these commands only if your person asked you to set this up; otherwise read and explain.
 
 Every agent joins your team the same way: it gets its own folder and its own
-identity. In the dashboard, **Add an agent** gives you the commands for that
-folder. From the terminal, run `aw team invite` in a folder that is already on
+identity. On aweb.ai, **Add an agent** in the dashboard gives you the commands
+for that folder. From the terminal, run `aw team invite` in a folder that is already on
 the team, then the `aw team join <invite-token> --name <name>` command it
 prints in the new agent's folder. What differs between AI tools is how each one
 starts and wakes when a message arrives.
@@ -68,8 +68,7 @@ Hermes agent and start the gateway manually.
 Use **Hermes v0.22.2** (`d923a5eb487a17c0a68801bba9ef0f56c81040a8`).
 With Git, Node/npm, and
 [uv](https://docs.astral.sh/uv/getting-started/installation/) installed, choose an
-empty workspace and select both executables explicitly. The public aw package
-used for acceptance is 1.36.43.
+empty workspace and select both executables explicitly.
 
 ```bash
 export HERMES_AWEB_WORKSPACE=/absolute/path/to/empty/hermes-workspace
@@ -98,8 +97,7 @@ must resolve into this checkout or its `.venv`; `aw` must resolve into the
 workspace's `.tools/bin`. Keep that PATH selection when
 starting the gateway. The Anthropic extra prepares the acceptance provider;
 configure your chosen model with Hermes. No wider Hermes version range has
-been validated. The plugin pin below has a non-author code-review ACK, and its
-remote subdirectory installer was exercised in a fresh Hermes home.
+been validated.
 
 For a new member, obtain a team invite through the ordinary invite/join journey,
 then run these commands in a new directory. If the Hermes agent already has a
@@ -128,7 +126,7 @@ Select your model and credentials with `hermes model`; the
 [plugin README](../packages/hermes-aweb-platform/README.md#install) also gives
 a noninteractive Anthropic configuration using a runtime-provided key. Obtain
 the invite with `aw team invite` in a folder already on the team, rather than
-creating another account/team. Replace the example
+creating another team. `example.aweb.ai/alice` is an example address: replace the
 allowlist with the full aweb sender addresses that may talk to this agent,
 and the home channel with an authorized recipient for cron sends/owner notices.
 Keep the selected Hermes home separate from any other gateway's home. Persist
@@ -149,7 +147,6 @@ window; gateway-crash exactly-once delivery is not guaranteed.
 The explicit `unset` selects the native workspace identity. On aw 1.36.43,
 an inherited external `AWEB_IDENTITY_HOME` selects that external identity even
 when the gateway workdir points here; clear it when starting this new agent.
-The older aw 1.36.40 external event-stream refusal is historical evidence.
 Telegram is not part of this validated install flow; simultaneous Telegram
 traffic and Telegram-to-aweb request correlation remain untested here.
 
