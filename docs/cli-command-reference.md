@@ -778,6 +778,7 @@ Subcommands:
 - `delete` Delete an AWID namespace using the local controller key
 - `delete-address` Delete a namespace address claim using the local controller key
 - `prepare-controller` Create or show a local namespace controller key and DNS TXT value
+- `reaffirm` Open the ID-tree epoch of a namespace registered before epochs existed
 - `resolve` Resolve a registry namespace address
 - `rotate-controller` Recover namespace control by rotating to a new controller key
 - `set-delivery-origin` Set namespace address-route default delivery origin using the local controller key
@@ -873,6 +874,22 @@ Flags:
 - `--domain string Namespace domain`
 - `-h, --help help for prepare-controller`
 - `--registry string Registry origin to place in the DNS TXT record (default: api.awid.ai or AWID_REGISTRY_URL)`
+
+## `id namespace reaffirm`
+
+### `id namespace reaffirm`
+
+Open the first ID-tree epoch of your own-domain namespace, registered before
+epochs existed, by registering it again with its controller key. The registry
+opens the epoch only for the controller it already stores, and only when the
+_awid.<domain> TXT record names that key. A namespace that has an epoch is
+left as it is.
+
+Flags:
+- `--controller-key string Namespace controller key path override`
+- `--domain string Namespace domain`
+- `-h, --help help for reaffirm`
+- `--registry string Registry origin override`
 
 ## `id namespace resolve`
 
