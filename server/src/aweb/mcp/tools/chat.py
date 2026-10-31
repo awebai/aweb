@@ -303,9 +303,13 @@ async def _wait_for_replies(
                        signature, signed_payload,
                        content_mode, message_version, encrypted_envelope, created_at,
                        sender_leaving, hang_on
-                FROM {{tables.chat_messages}}
+                FROM {{tables.chat_messages}} m
                 WHERE session_id = $1
-                  AND from_did <> $2
+                  AND NOT EXISTS (
+                        SELECT 1 FROM {{tables.chat_participants}} own
+                        WHERE own.session_id = m.session_id AND own.did = $2
+                          AND (m.from_did = own.did OR m.from_did = NULLIF(own.current_did_key, ''))
+                    )
                   AND created_at > $3
                 ORDER BY created_at ASC
                 LIMIT 50

@@ -88,6 +88,14 @@ The normalized participant retains its key as thread-local attribution evidence,
 not as another participant authority. An ambiguous verified mapping aborts the
 migration rather than guessing the owner.
 
+Inside a thread, canonical participant membership authorizes exact message reads
+as well as the whole thread. A message's original sender/recipient matches that
+participant's canonical DID or its own `current_did_key` in that same thread.
+Inbox, unread and acknowledgements use this attribution and exclude own sends;
+acknowledgements remain incoming-only. There is no cross-thread key lookup.
+Pre-thread messages keep literal-DID access. Older rotated keys not retained on
+the participant remain readable through the thread, without unread attribution.
+
 ## Direct Address Send Protocol
 
 For a send to a global address (`domain/name`):

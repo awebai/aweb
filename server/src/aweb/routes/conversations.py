@@ -1,4 +1,5 @@
 from __future__ import annotations
+from aweb.messaging.mail_attribution import incoming_mail_sql
 
 import json
 from datetime import datetime, timezone
@@ -129,12 +130,11 @@ async def unread_counts(
         raise HTTPException(401, "Authenticated identity is missing a routing DID")
     peers = list(dict.fromkeys(participant_did))
     rows = await db.get_manager("aweb").fetch_all(
-        """
+        f"""
         WITH incoming AS MATERIALIZED (
             SELECT conversation_id, from_did, COUNT(*) AS n
-            FROM {{tables.messages}}
-            WHERE to_did = ANY($1::text[]) AND read_at IS NULL
-              AND NOT (from_did = ANY($1::text[]))
+            FROM {{{{tables.messages}}}} m
+            WHERE {incoming_mail_sql('$1')} AND read_at IS NULL
             GROUP BY conversation_id, from_did
         )
         SELECT peer.did AS participant_did, COALESCE(SUM(i.n), 0)::bigint AS unread_count
@@ -142,7 +142,7 @@ async def unread_counts(
         LEFT JOIN incoming i ON (
             (i.conversation_id IS NULL AND i.from_did = peer.did)
             OR EXISTS (
-                SELECT 1 FROM {{tables.conversation_participants}} cp
+                SELECT 1 FROM {{{{tables.conversation_participants}}}} cp
                 WHERE cp.conversation_id = i.conversation_id AND cp.did = peer.did
             )
         )
@@ -202,7 +202,7 @@ async def list_conversations_for_auth(
     mail_rows = []
     if requested_type in (None, "mail"):
         mail_rows = await aweb_db.fetch_all(
-            """
+            f"""
             WITH visible AS (
                 SELECT
                     m.message_id,
@@ -217,8 +217,9 @@ async def list_conversations_for_auth(
                     m.to_alias AS to_alias,
                     m.to_did AS to_did,
                     m.read_at,
+                    {incoming_mail_sql('$1')} AS incoming,
                     COALESCE(m.conversation_id::text, 'legacy:' || m.message_id::text) AS group_key
-                FROM {{tables.messages}} m
+                FROM {{{{tables.messages}}}} m
                 WHERE (
                         m.from_did = ANY($1::text[])
                      OR m.to_did = ANY($1::text[])
@@ -226,7 +227,7 @@ async def list_conversations_for_auth(
                             m.conversation_id IS NOT NULL
                             AND EXISTS (
                                 SELECT 1
-                                FROM {{tables.conversation_participants}} cp
+                                FROM {{{{tables.conversation_participants}}}} cp
                                 WHERE cp.conversation_id = m.conversation_id
                                   AND cp.did = ANY($1::text[])
                             )
@@ -238,7 +239,7 @@ async def list_conversations_for_auth(
                             m.conversation_id IS NOT NULL
                             AND EXISTS (
                                 SELECT 1
-                                FROM {{tables.conversation_participants}} target_cp
+                                FROM {{{{tables.conversation_participants}}}} target_cp
                                 WHERE target_cp.conversation_id = m.conversation_id
                                   AND (
                                        ($2::text IS NOT NULL AND target_cp.did = $2::text)
@@ -253,9 +254,7 @@ async def list_conversations_for_auth(
                     group_key,
                     MAX(created_at) AS last_message_at,
                     COUNT(*) FILTER (
-                        WHERE to_did = ANY($1::text[])
-                          AND NOT (from_did = ANY($1::text[]))
-                          AND read_at IS NULL
+                        WHERE incoming AND read_at IS NULL
                     )::int AS unread_count
                 FROM visible
                 GROUP BY group_key
@@ -303,7 +302,7 @@ async def list_conversations_for_auth(
                 ORDER BY v.created_at ASC, v.message_id ASC
                 LIMIT 1
             ) first ON TRUE
-            LEFT JOIN {{tables.conversations}} c
+            LEFT JOIN {{{{tables.conversations}}}} c
               ON c.conversation_id = newest.conversation_id
             LEFT JOIN LATERAL (
                 SELECT array_agg(ranked.label ORDER BY ranked.first_ord) AS participants
@@ -431,7 +430,8 @@ async def list_conversations_for_auth(
                     SELECT COUNT(*)::int AS cnt
                     FROM {{tables.chat_messages}} cm
                     WHERE cm.session_id = s.session_id
-                      AND cm.from_did <> $1
+                      AND cm.from_did <> p.did
+                      AND cm.from_did IS DISTINCT FROM p.current_did_key
                       AND NOT EXISTS (
                           SELECT 1
                           FROM {{tables.chat_message_reads}} mr

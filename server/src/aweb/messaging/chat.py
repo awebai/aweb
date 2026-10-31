@@ -523,7 +523,7 @@ async def get_pending_conversations(
         """
         WITH mine AS MATERIALIZED (
             SELECT DISTINCT ON (participant.session_id)
-                participant.session_id, participant.did, participant.agent_id
+                participant.session_id, participant.did, participant.agent_id, participant.current_did_key
             FROM {{tables.chat_participants}} participant
             WHERE participant.did = $1
             ORDER BY participant.session_id,
@@ -572,6 +572,7 @@ async def get_pending_conversations(
             FROM {{tables.chat_messages}} m
             WHERE m.session_id = s.session_id
               AND m.from_did <> p.did
+              AND m.from_did IS DISTINCT FROM p.current_did_key
               AND NOT EXISTS (
                   SELECT 1
                   FROM {{tables.chat_message_reads}} mr
@@ -598,7 +599,7 @@ async def get_pending_conversations(
                 )
                 AND (
                     lm.from_did IS NULL
-                    OR lm.from_did <> p.did
+                    OR (lm.from_did <> p.did AND lm.from_did IS DISTINCT FROM p.current_did_key)
                     OR COALESCE(lm.hang_on, FALSE) = TRUE
                 )
                 AND s.wait_started_at
@@ -674,7 +675,7 @@ async def get_message_history(
                    created_at, sender_leaving, from_agent_id, reply_to, from_did,
                    signature, signed_payload, id_chain, content_mode, message_version,
                    encrypted_envelope
-            FROM {{tables.chat_messages}}
+            FROM {{tables.chat_messages}} m
             WHERE session_id = $1
               AND message_id = $2
             ORDER BY created_at DESC
@@ -691,18 +692,22 @@ async def get_message_history(
                    created_at, sender_leaving, from_agent_id, reply_to, from_did,
                    signature, signed_payload, id_chain, content_mode, message_version,
                    encrypted_envelope
-            FROM {{tables.chat_messages}}
+            FROM {{tables.chat_messages}} m
             WHERE session_id = $1
               AND (
                 $2::bool IS FALSE
                 OR (
-                    from_did <> $3
+                    NOT EXISTS (
+                        SELECT 1 FROM {{tables.chat_participants}} own
+                        WHERE own.session_id = m.session_id AND own.did = $3
+                          AND (m.from_did = own.did OR m.from_did = NULLIF(own.current_did_key, ''))
+                    )
                     AND NOT EXISTS (
                         SELECT 1
                         FROM {{tables.chat_message_reads}} mr
-                        WHERE mr.session_id = {{tables.chat_messages}}.session_id
+                        WHERE mr.session_id = m.session_id
                           AND mr.did = $3
-                          AND mr.message_id = {{tables.chat_messages}}.message_id
+                          AND mr.message_id = m.message_id
                     )
                 )
               )
@@ -790,7 +795,11 @@ async def mark_messages_read(
             FROM {{tables.chat_messages}} m
             WHERE m.session_id = $1
               AND m.message_id = ANY($5::uuid[])
-              AND m.from_did <> $2
+              AND NOT EXISTS (
+                        SELECT 1 FROM {{tables.chat_participants}} own
+                        WHERE own.session_id = m.session_id AND own.did = $2
+                          AND (m.from_did = own.did OR m.from_did = NULLIF(own.current_did_key, ''))
+                    )
             ON CONFLICT (session_id, did, message_id) DO NOTHING
             RETURNING message_id
             """,
@@ -869,7 +878,11 @@ async def mark_messages_read_up_to(
             SELECT $1, $2, m.message_id, $3, $4
             FROM {{tables.chat_messages}} m
             WHERE m.session_id = $1
-              AND m.from_did <> $2
+              AND NOT EXISTS (
+                        SELECT 1 FROM {{tables.chat_participants}} own
+                        WHERE own.session_id = m.session_id AND own.did = $2
+                          AND (m.from_did = own.did OR m.from_did = NULLIF(own.current_did_key, ''))
+                    )
               AND m.created_at <= $5
             ON CONFLICT (session_id, did, message_id) DO NOTHING
             RETURNING message_id

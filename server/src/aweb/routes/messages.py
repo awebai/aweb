@@ -1,4 +1,5 @@
 from __future__ import annotations
+from aweb.messaging.mail_attribution import incoming_mail_sql, readable_mail_sql
 
 from aweb.identity_auth_deps import participant_dids
 from aweb.attachment_service import prepare_attachment_send, refuse_remote_attachments, attachment_retry, attachment_references
@@ -1865,7 +1866,7 @@ async def get_inbox(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    where_clause = "WHERE m.to_did = ANY($1::text[])"
+    where_clause = f"WHERE {incoming_mail_sql('$1')}"
     params: list = [inbox_dids]
     if exact_message_id is not None:
         params.append(exact_message_id)
@@ -1938,14 +1939,14 @@ async def get_message(
     if not actor_dids:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
     row = await db.get_manager("aweb").fetch_one(
-        """
+        f"""
         SELECT m.team_id, m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
                m.subject, m.body, m.priority, m.read_at, m.created_at,
                m.from_did, m.to_did, m.signature, m.signed_payload, m.id_chain, m.conversation_id,
                m.content_mode, m.message_version, m.encrypted_envelope
-        FROM {{tables.messages}} m
+        FROM {{{{tables.messages}}}} m
         WHERE m.message_id = $1
-          AND (m.from_did = ANY($2::text[]) OR m.to_did = ANY($2::text[]))
+          AND {readable_mail_sql('$2')}
         """,
         msg_uuid,
         actor_dids,
@@ -1974,10 +1975,10 @@ async def ack_message(
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 
     result = await aweb_db.fetch_one(
-        """
-        UPDATE {{tables.messages}}
+        f"""
+        UPDATE {{{{tables.messages}}}} m
         SET read_at = $1
-        WHERE message_id = $2 AND to_did = ANY($3::text[])
+        WHERE m.message_id = $2 AND {incoming_mail_sql('$3')}
           AND read_at IS NULL
         RETURNING message_id, from_alias, subject, content_mode
         """,
@@ -1989,9 +1990,9 @@ async def ack_message(
     if not result:
         # Either already read or not found — check existence
         existing = await aweb_db.fetch_one(
-            """
-            SELECT message_id, read_at, from_alias, subject FROM {{tables.messages}}
-            WHERE message_id = $1 AND to_did = ANY($2::text[])
+            f"""
+            SELECT message_id, read_at, from_alias, subject FROM {{{{tables.messages}}}} m
+            WHERE m.message_id = $1 AND {incoming_mail_sql('$2')}
             """,
             msg_uuid,
             inbox_dids,

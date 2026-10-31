@@ -1,6 +1,7 @@
 """MCP tools for async mail messaging."""
 
 from __future__ import annotations
+from aweb.messaging.mail_attribution import incoming_mail_sql
 
 from aweb.identity_auth_deps import participant_dids
 from aweb.messaging.participants import messaging_participant_by_alias
@@ -760,13 +761,13 @@ async def check_inbox(
         return json.dumps({"error": "limit must be an integer"})
 
     rows = await aweb_db.fetch_all(
-        """
+        f"""
         SELECT message_id, conversation_id, from_agent_id, from_alias, from_address, to_alias,
                subject, body, priority, read_at, created_at,
                from_did, to_did, signature, signed_payload, content_mode, message_version,
                encrypted_envelope
-        FROM {{tables.messages}}
-        WHERE to_did = ANY($1::text[])
+        FROM {{{{tables.messages}}}} m
+        WHERE {incoming_mail_sql('$1')}
           AND ($2::bool IS FALSE OR read_at IS NULL)
         ORDER BY created_at DESC
         LIMIT $3
@@ -780,10 +781,10 @@ async def check_inbox(
     unread_message_ids = [r["message_id"] for r in rows if r["read_at"] is None]
     if unread_message_ids:
         acknowledged = await aweb_db.fetch_all(
-            """
-            UPDATE {{tables.messages}}
+            f"""
+            UPDATE {{{{tables.messages}}}} m
             SET read_at = NOW()
-            WHERE to_did = ANY($1::text[])
+            WHERE {incoming_mail_sql('$1')}
               AND message_id = ANY($2::uuid[])
               AND read_at IS NULL
             RETURNING message_id, from_alias, subject, content_mode
