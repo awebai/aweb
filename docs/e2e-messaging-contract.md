@@ -30,14 +30,19 @@ custody boundaries.
 - Hosted custodial tools or any server-side surface that receives plaintext are
   not E2E. They may use the encrypted-v2 wire format as server-readable hosted
   managed encryption, but must not be described as E2E. An explicit E2EE send to
-  a recipient whose exact delivery-key assertion
-  has signature-verified `custody: hosted_custodial` refuses with HTTP 422,
+  a recipient whose exact delivery-key assertion has signature-verified
+  `custody: hosted_custodial` refuses with HTTP 422,
   `recipient_custodial_no_e2ee`. The client refuses before sending; ordinary HTTP
   mail/chat routes also refuse before message storage when that verified key
   assertion is already available, including local continuations. There is no
   extra remote-key fetch for this check. The sender must explicitly retry without
   `--e2ee`; there is no automatic plaintext downgrade. Missing or legacy null
-  custody is not evidence of hosted custody. Federation ingress, hosted MCP and
+  custody is not evidence of hosted custody. A hosted sender may also use an
+  ordinary handler for managed sends: only the authenticated sender's exact,
+  non-revoked, signature-verified hosted key assertion exempts that send from
+  the recipient refusal. Every key wrap must name that same sender encryption
+  key. A missing, self or null sender assertion supplies no exemption, and an
+  invalid hosted assertion refuses. Federation ingress, hosted MCP and
   custodial send paths retain the managed encrypted-v2 wire: ingress cannot
   distinguish managed encryption from a sender's E2EE intent, and hosted
   attachments depend on that wire. Such traffic must not be labelled E2EE.

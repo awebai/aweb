@@ -1383,7 +1383,7 @@ async def create_or_send(
     )
     target_dids = sorted({_target_did(row) for row in target_rows if _target_did(row)})
     if _payload_is_encrypted(payload):
-        await require_non_custodial_recipients(db, payload.encrypted_envelope or {}, target_rows)
+        await require_non_custodial_recipients(db, payload.encrypted_envelope or {}, target_rows, sender=auth)
 
     existing_attachment = await attachment_retry(db, payload, "chat")
     if existing_attachment:
@@ -2699,7 +2699,7 @@ async def send_message(
 
     pre_message_id = uuid_mod.uuid4()
     if _payload_is_encrypted(payload):
-        await require_non_custodial_recipients(db, payload.encrypted_envelope or {}, recipient_rows)
+        await require_non_custodial_recipients(db, payload.encrypted_envelope or {}, recipient_rows, sender=auth)
     encrypted_metadata = _validate_encrypted_chat_payload(
         payload,
         auth=auth,

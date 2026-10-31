@@ -157,7 +157,7 @@ async def test_forged_hosted_assertion_is_invalid_not_verified_custody(privacy_a
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["mail", "chat"])
-@pytest.mark.parametrize("sender_state", ["hosted", "self", "legacy", "absent", "forged", "other_key"])
+@pytest.mark.parametrize("sender_state", ["hosted", "self", "legacy", "absent", "forged", "other_key", "revoked"])
 async def test_managed_sender_exemption_requires_exact_verified_key(privacy_app, kind, sender_state):
     env = privacy_app
     custody = "hosted_custodial" if sender_state == "hosted" else None if sender_state == "legacy" else "self"
@@ -167,6 +167,14 @@ async def test_managed_sender_exemption_requires_exact_verified_key(privacy_app,
         await _publish(env, "alice", alice)
     if sender_state == "other_key":
         await _publish(env, "alice", _identity(env.actors["alice"], "hosted_custodial"))
+    if sender_state == "revoked":
+        # A formerly hosted key is not current managed-send authority.
+        alice = _identity(env.actors["alice"], "hosted_custodial")
+        await _publish(env, "alice", alice)
+        await env.db.execute(
+            "UPDATE {{tables.agent_encryption_keys}} SET revoked_at=NOW() WHERE agent_id=$1",
+            env.actors["alice"].id,
+        )
     if sender_state == "forged":
         forged = {**alice["encryption_key"], "custody": "hosted_custodial"}
         await env.db.execute(
@@ -179,7 +187,7 @@ async def test_managed_sender_exemption_requires_exact_verified_key(privacy_app,
     else:
         assert response.status_code == 422, response.text
         assert response.json()["reason"] == (
-            "recipient_encryption_assertion_invalid_or_stale" if sender_state == "forged"
+            "federation_envelope_invalid" if sender_state == "forged"
             else "recipient_custodial_no_e2ee"
         )
         assert await _counts(env) == before
@@ -203,6 +211,35 @@ async def test_verified_managed_sender_can_deliver_hosted_attachment(privacy_app
     fetched = await _request(env, "bob", "GET", f"{prefix}/{wire['message_id']}/attachments/{descriptor['id']}")
     assert fetched.status_code == 200, fetched.text
     assert fetched.content == b"filebytes"
+
+
+@pytest.mark.asyncio
+async def test_managed_sender_cannot_mix_sender_keys_between_wraps(privacy_app):
+    from aweb.e2ee_messages import _envelope_map, _hash_canonical, _key_wrap_map
+
+    env = privacy_app
+    alice, bob = _identity(env.actors["alice"], "hosted_custodial"), _identity(env.actors["bob"], "hosted_custodial")
+    await _publish(env, "alice", alice)
+    await _publish(env, "bob", bob)
+    message_id, conversation_id = str(uuid4()), str(uuid4())
+    envelope = encrypt_e2ee_message(
+        kind="mail", sender=alice, recipients=[bob], body="private",
+        message_id=message_id, conversation_id=conversation_id,
+        created_at=datetime.now(timezone.utc),
+    )
+    envelope["key_wraps"][0]["sender_encryption_key_id"] = _identity(env.actors["alice"])["encryption_key"]["encryption_key_id"]
+    envelope["crypto"]["key_wraps_hash"] = _hash_canonical("key_wraps", [_key_wrap_map(wrap) for wrap in envelope["key_wraps"]])
+    envelope["signature"] = sign_message(alice["signing_key"], canonical_json_bytes(_envelope_map(
+        envelope, include_signature=False, include_ciphertext=True, include_ciphertext_hash=True,
+    )))
+    before = await _counts(env)
+    response = await _request(env, "alice", "POST", "/v1/messages", dict(
+        to_did=bob["did"], message_id=message_id, conversation_id=conversation_id,
+        content_mode="encrypted_v2", message_version=2, encrypted_envelope=envelope,
+    ))
+    assert response.status_code == 422, response.text
+    assert response.json()["reason"] == "federation_envelope_invalid"
+    assert await _counts(env) == before
 
 
 @pytest.mark.asyncio

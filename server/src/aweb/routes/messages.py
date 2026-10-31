@@ -778,7 +778,9 @@ async def _validate_encrypted_payload(
         )
     except E2EEEnvelopeError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    await require_non_custodial_recipients(db, payload.encrypted_envelope or {}, [recipient] if recipient else [])
+    await require_non_custodial_recipients(
+        db, payload.encrypted_envelope or {}, [recipient] if recipient else [], sender=auth,
+    )
     return encrypted_message_storage_metadata(payload.encrypted_envelope or {})
 
 
