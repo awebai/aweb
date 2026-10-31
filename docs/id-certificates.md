@@ -29,10 +29,23 @@ messages and tasks as itself. It is reusable across teams and same-domain orgs
 without new keys, a new ID certificate or re-parenting. For a human leaf, the
 responsible-human result is that human itself, not its inviter.
 
-Human keys are held by the CLI user's OS keychain or a custodial server acting
-for a checked logged-in human session. They never live in an agent home, `.aw`,
-agent-readable file or environment variable. There is no extra login for an
-owned agent's spawn. Hosted namespaces may use hosted root authority. In v1 a
+Human keys are held by the CLI user's OS keychain or a custodial server.
+Custodial use of a human key requires one of exactly three bases:
+
+1. A checked logged-in human session.
+2. A reviewed, checked channel authority bound to the account, as in
+   [linked-channel ingress](agent-channel-endpoints.md#4-who-may-enter-decision-c).
+3. A one-time, operator-approved release enrollment of an account the server
+   already custodially represents, limited to key generation, initial DID
+   registration and root human certificate registration. This authority ends
+   with those enrollment operations; it does not cover encryption-key
+   assertions or team-connect proofs.
+
+A worker or service token alone establishes none of these bases.
+
+Human keys never live in an agent home, `.aw`, agent-readable file or
+environment variable. There is no extra login for an owned agent's spawn.
+Hosted namespaces may use hosted root authority. In v1 a
 customer's custom-domain controller key stays with that customer's controller;
 Cloud does not take custody of it. The customer signs the first human from the
 CLI; a custodial deployment can hold subsequent human keys.
