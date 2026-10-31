@@ -105,7 +105,10 @@ func TestImplicitLocalInitRefusesATeamThatAlreadyExists(t *testing.T) {
 	if err := awconfig.SaveControllerKey("local", key); err != nil {
 		t.Fatal(err)
 	}
-	for _, tc := range []struct{ teamName, team string }{{"", "default"}, {"Ops", "ops"}} {
+	for _, tc := range []struct {
+		teamName, team string
+		private        bool
+	}{{"", "default", false}, {"Ops", "ops", false}, {"", "default", true}} {
 		registry := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch {
 			case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/local":
@@ -113,6 +116,11 @@ func TestImplicitLocalInitRefusesATeamThatAlreadyExists(t *testing.T) {
 					"namespace_id": "ns-1", "domain": "local", "controller_did": awid.ComputeDIDKey(pub),
 					"verification_status": "verified", "created_at": "2026-04-12T00:00:00Z",
 				})
+			case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/local/teams/"+tc.team && tc.private:
+				// AWID answers an unsigned read of a private team with 403
+				// team_private, which discloses that it exists.
+				w.WriteHeader(http.StatusForbidden)
+				_ = json.NewEncoder(w).Encode(map[string]any{"detail": map[string]any{"code": "team_private", "message": "Team is private; reads require a same-team signed request or the trusted service token"}})
 			case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/local/teams/"+tc.team:
 				_ = json.NewEncoder(w).Encode(map[string]any{"team_id": tc.team + ":local", "domain": "local", "name": tc.team})
 			default:
