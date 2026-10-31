@@ -270,6 +270,9 @@ func EncryptE2EEMessage(params E2EEEncryptMessageParams) (*E2EEMessageEnvelope, 
 		return nil, fmt.Errorf("sender encryption key assertion: %w", err)
 	}
 
+	if err := refuseCustodialRecipients(params.Recipients, createdAt); err != nil {
+		return nil, err
+	}
 	recipients := make([]E2EERecipientRef, 0, len(params.Recipients))
 	innerRecipients := make([]E2EEIdentityRef, 0, len(params.Recipients))
 	for i, recipient := range params.Recipients {

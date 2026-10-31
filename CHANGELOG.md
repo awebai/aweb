@@ -38,6 +38,16 @@
   (`Message ID: <id>`) and end with how to reply: `aw mail reply <message-id>
   --body-file <file>`. `--json` is unchanged.
 
+- aw: an `--e2ee` mail or chat to a hosted agent, whose signed encryption
+  key assertion says aweb's service holds its key, is refused before
+  anything is sent: "<address> is a hosted agent: aweb's service reads its
+  messages, so end-to-end encryption is not possible. Send it again without
+  --e2ee." `--json` reports code `recipient_custodial_no_e2ee` with the
+  addresses in `detail`. A server's 422 refusal with that reason reads the
+  same. Continuing an encrypted chat with a peer that has a
+  global address now encrypts to the key that address resolves to, when it
+  is the session's same participant, instead of failing for a missing key.
+
 - aw: with `--json`, a failed command prints one error envelope on stdout,
   `{"error": {"code", "message", "http_status", "detail"}}`. `code` is the
   stable contract; stderr wording is not. stderr and exit codes do not
