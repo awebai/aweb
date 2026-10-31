@@ -67,10 +67,26 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
     source = encrypt_e2ee_mail(sender=human, recipients=[agent], subject="Human question",
                               body="Human private text", message_id=message_id,
                               conversation_id=conversation_id, created_at=now)
-    sent = await _request(env, "alice", "POST", "/v1/messages", {
-        "to_did": agent["did"], "message_id": message_id, "conversation_id": conversation_id,
+    payload = {
+        "to_did": agent["stable_id"] or agent["did"], "message_id": message_id, "conversation_id": conversation_id,
         "content_mode": "encrypted_v2", "message_version": 2, "encrypted_envelope": source,
-    })
+    }
+    if global_resident:
+        # Registering the mapping is not asserting a global messaging subject.
+        # Prove each exact DID/key through real auth before using that projection.
+        from test_messages_http import _signed_identity_headers
+        for name in ("alice", "bob"):
+            identity = identities[name]
+            headers = _signed_identity_headers(identity["signing_key"], identity["did"], identity["stable_id"], b"")
+            checked = await env.client.get("/v1/messages/inbox", headers=headers)
+            assert checked.status_code == 200, checked.text
+        raw = json.dumps(payload).encode()
+        sent = await env.client.post("/v1/messages", content=raw, headers={
+            "Content-Type": "application/json",
+            **_signed_identity_headers(human["signing_key"], human["did"], human["stable_id"], raw),
+        })
+    else:
+        sent = await _request(env, "alice", "POST", "/v1/messages", payload)
     assert sent.status_code == 200, sent.text
     assert source["sender_encryption_key"]["custody"] == "hosted_custodial"
 

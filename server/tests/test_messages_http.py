@@ -2770,7 +2770,7 @@ async def test_mail_conversation_history_distinguishes_missing_and_legacy_messag
         VALUES ($1, $2, 'did:aw:bob', 'alice', 'bob', 'legacy', 'old mail', 'normal', NOW())
         """,
         UUID(legacy_message_id),
-        alice_did_key,
+        "did:aw:alice",
     )
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -7633,7 +7633,7 @@ async def test_send_message_team_auth_uses_cert_identity_when_agent_row_is_parti
 
 
 @pytest.mark.asyncio
-async def test_inbox_matches_stable_and_current_identity_dids(aweb_cloud_db):
+async def test_global_inbox_does_not_include_current_key_identity(aweb_cloud_db):
     bob_sk, _, bob_did_key = _make_keypair()
 
     await aweb_cloud_db.aweb_db.execute(
@@ -7666,8 +7666,12 @@ async def test_inbox_matches_stable_and_current_identity_dids(aweb_cloud_db):
 
     assert resp.status_code == 200, resp.text
     messages = resp.json()["messages"]
-    assert len(messages) == 1
-    assert messages[0]["body"] == "hi"
+    assert messages == []
+    local_headers = _signed_identity_headers(bob_sk, bob_did_key, "")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        local = await client.get("/v1/messages/inbox", headers=local_headers)
+    assert local.status_code == 200, local.text
+    assert [item["body"] for item in local.json()["messages"]] == ["hi"]
 
 
 @pytest.mark.asyncio
@@ -7742,6 +7746,7 @@ async def test_exact_message_read_is_participant_visible_side_effect_free_and_ce
     alice_sk, _, alice_did_key = _make_keypair()
     bob_sk, _, bob_did_key = _make_keypair()
     carol_sk, _, carol_did_key = _make_keypair()
+    local_bob_sk, _, local_bob_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
@@ -7785,7 +7790,7 @@ async def test_exact_message_read_is_participant_visible_side_effect_free_and_ce
              'alice', 'bob', 'legacy local plaintext', 'hello', 'normal', 'legacy_plaintext_v1', 1, NULL)
         """,
         alice_did_key,
-        bob_did_key,
+        local_bob_did_key,
     )
     encrypted_storage = encrypted_message_storage_metadata(encrypted)
     await aweb_cloud_db.aweb_db.execute(
@@ -7803,7 +7808,7 @@ async def test_exact_message_read_is_participant_visible_side_effect_free_and_ce
         """,
         UUID(encrypted_id),
         alice_did_key,
-        bob_did_key,
+        local_bob_did_key,
         json.dumps(encrypted),
         encrypted_storage["encrypted_ciphertext"],
         json.dumps(encrypted_storage["encrypted_key_wraps"]),
@@ -7848,6 +7853,11 @@ async def test_exact_message_read_is_participant_visible_side_effect_free_and_ce
         recipient_local = await client.get(
             "/v1/messages/88888888-8888-4888-8888-888888888888", headers=bob_headers
         )
+        # A separate local identity is still authorized by its literal key.
+        local_key_read = await client.get(
+            "/v1/messages/88888888-8888-4888-8888-888888888888",
+            headers=_signed_identity_headers(local_bob_sk, local_bob_did_key, ""),
+        )
         sender_encrypted = await client.get(f"/v1/messages/{encrypted_id}", headers=alice_headers)
         unrelated = await client.get(
             "/v1/messages/55555555-5555-4555-8555-555555555555", headers=carol_headers
@@ -7862,8 +7872,9 @@ async def test_exact_message_read_is_participant_visible_side_effect_free_and_ce
 
     assert sender_global.status_code == 200, sender_global.text
     assert sender_global.json()["subject"] == "global plaintext"
-    assert recipient_local.status_code == 200, recipient_local.text
-    assert recipient_local.json()["subject"] == "legacy local plaintext"
+    assert recipient_local.status_code == 404, recipient_local.text
+    assert local_key_read.status_code == 200, local_key_read.text
+    assert local_key_read.json()["subject"] == "legacy local plaintext"
     assert sender_encrypted.status_code == 200, sender_encrypted.text
     assert sender_encrypted.json()["content_mode"] == "encrypted_v2"
     assert sender_encrypted.json()["encrypted_envelope"] == encrypted

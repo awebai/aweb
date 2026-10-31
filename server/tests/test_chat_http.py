@@ -5529,7 +5529,7 @@ async def test_chat_send_message_rejects_partial_signed_recipient_binding_for_gr
 
 
 @pytest.mark.asyncio
-async def test_chat_pending_matches_unread_mail_and_sessions_across_actor_dids(aweb_cloud_db):
+async def test_chat_pending_counts_mail_and_sessions_for_global_participant(aweb_cloud_db):
     session_id = uuid4()
     created_at = datetime.now(timezone.utc) - timedelta(minutes=5)
     await aweb_cloud_db.aweb_db.execute(
@@ -5550,7 +5550,7 @@ async def test_chat_pending_matches_unread_mail_and_sessions_across_actor_dids(a
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
         VALUES
-            ($1, 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' /* z6MkAliceCurrent */, 'alice'),
+            ($1, 'did:aw:alice', 'alice'),
             ($1, 'did:aw:bob', 'bob')
         """,
         session_id,
@@ -5578,7 +5578,7 @@ async def test_chat_pending_matches_unread_mail_and_sessions_across_actor_dids(a
         """
         INSERT INTO {{tables.messages}}
             (message_id, from_did, to_did, from_alias, to_alias, subject, body, priority, created_at)
-        VALUES ($1, 'did:aw:bob', 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' /* z6MkAliceCurrent */, 'bob', 'alice', 'hi', 'mail body', 'normal', $2)
+        VALUES ($1, 'did:aw:bob', 'did:aw:alice', 'bob', 'alice', 'hi', 'mail body', 'normal', $2)
         """,
         uuid4(),
         created_at + timedelta(minutes=2),
@@ -5892,7 +5892,7 @@ async def test_cross_org_chat_reply_persists_sender_address_without_local_metada
 
 
 @pytest.mark.asyncio
-async def test_chat_pending_excludes_all_actor_dids_from_waiting_lookup(aweb_cloud_db, monkeypatch):
+async def test_chat_pending_excludes_global_participant_from_waiting_lookup(aweb_cloud_db, monkeypatch):
     session_id = uuid4()
     created_at = datetime.now(timezone.utc) - timedelta(minutes=5)
     await aweb_cloud_db.aweb_db.execute(
@@ -5907,7 +5907,7 @@ async def test_chat_pending_excludes_all_actor_dids_from_waiting_lookup(aweb_clo
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
         VALUES
-            ($1, 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' /* z6MkAliceCurrent */, 'alice'),
+            ($1, 'did:aw:alice', 'alice'),
             ($1, 'did:aw:bob', 'bob')
         """,
         session_id,
@@ -5963,7 +5963,7 @@ async def test_chat_pending_preserves_last_from_did_without_address_mapping(aweb
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
         VALUES
-            ($1, 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' /* z6MkAliceCurrent */, 'alice'),
+            ($1, 'did:aw:alice', 'alice'),
             ($1, 'did:aw:bob', '')
         """,
         session_id,
@@ -6067,7 +6067,7 @@ async def test_chat_pending_includes_last_from_stable_id_for_current_sender_key(
 
 
 @pytest.mark.asyncio
-async def test_chat_send_message_accepts_alternate_session_participant_did(aweb_cloud_db):
+async def test_chat_send_message_accepts_global_session_participant(aweb_cloud_db):
     session_id = uuid4()
     created_at = datetime.now(timezone.utc) - timedelta(minutes=5)
     await aweb_cloud_db.aweb_db.execute(
@@ -6088,7 +6088,7 @@ async def test_chat_send_message_accepts_alternate_session_participant_did(aweb_
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
         VALUES
-            ($1, 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' /* z6MkAliceCurrent */, 'alice'),
+            ($1, 'did:aw:alice', 'alice'),
             ($1, 'did:aw:bob', 'bob')
         """,
         session_id,
@@ -6121,7 +6121,7 @@ async def test_chat_send_message_accepts_alternate_session_participant_did(aweb_
 
 
 @pytest.mark.asyncio
-async def test_chat_history_and_dual_read_contract_for_alternate_participant_did(aweb_cloud_db, monkeypatch):
+async def test_chat_history_and_dual_read_contract_for_global_participant(aweb_cloud_db, monkeypatch):
     session_id = uuid4()
     first_message_id = uuid4()
     exact_message_id = uuid4()
@@ -6139,7 +6139,7 @@ async def test_chat_history_and_dual_read_contract_for_alternate_participant_did
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
         VALUES
-            ($1, 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' /* z6MkAliceCurrent */, 'alice'),
+            ($1, 'did:aw:alice', 'alice'),
             ($1, 'did:aw:bob', 'bob')
         """,
         session_id,
@@ -6355,7 +6355,7 @@ async def test_chat_history_filters_by_message_id(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_accepts_alternate_session_participant_did(aweb_cloud_db, monkeypatch):
+async def test_chat_stream_accepts_global_session_participant(aweb_cloud_db, monkeypatch):
     session_id = uuid4()
     created_at = datetime.now(timezone.utc) - timedelta(minutes=2)
     await aweb_cloud_db.aweb_db.execute(
@@ -6370,7 +6370,7 @@ async def test_chat_stream_accepts_alternate_session_participant_did(aweb_cloud_
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
         VALUES
-            ($1, 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' /* z6MkAliceCurrent */, 'alice'),
+            ($1, 'did:aw:alice', 'alice'),
             ($1, 'did:aw:bob', 'bob')
         """,
         session_id,
@@ -6402,8 +6402,8 @@ async def test_chat_stream_accepts_alternate_session_participant_did(aweb_cloud_
     assert resp.status_code == 200, resp.text
     assert "keepalive" in resp.text
     assert seen == {
-        "viewer_did": named_did_key("z6MkAliceCurrent"),
-        "contact_owner_dids": ["did:aw:alice", named_did_key("z6MkAliceCurrent")],
+        "viewer_did": "did:aw:alice",
+        "contact_owner_dids": ["did:aw:alice"],
     }
 
 
@@ -6498,7 +6498,7 @@ async def test_chat_stream_replay_includes_sender_stable_identity_for_current_ke
 
 
 @pytest.mark.asyncio
-async def test_chat_session_list_accepts_alternate_session_participant_did(aweb_cloud_db):
+async def test_chat_session_list_accepts_global_session_participant(aweb_cloud_db):
     session_id = uuid4()
     created_at = datetime.now(timezone.utc) - timedelta(minutes=2)
     await aweb_cloud_db.aweb_db.execute(
@@ -6519,7 +6519,7 @@ async def test_chat_session_list_accepts_alternate_session_participant_did(aweb_
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
         VALUES
-            ($1, 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' /* z6MkAliceCurrent */, 'alice'),
+            ($1, 'did:aw:alice', 'alice'),
             ($1, 'did:aw:bob', 'bob')
         """,
         session_id,
@@ -6609,7 +6609,7 @@ async def test_list_sessions_reads_page_sized_rows_not_every_session(aweb_cloud_
             """
             INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
             VALUES
-                ($1, 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' /* z6MkAliceCurrent */, 'alice'),
+                ($1, 'did:aw:alice', 'alice'),
                 ($1, 'did:aw:bob', 'bob')
             """,
             session_id,
@@ -6664,7 +6664,7 @@ async def test_list_sessions_reports_whether_the_limit_left_sessions_out(aweb_cl
             """
             INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
             VALUES
-                ($1, 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' /* z6MkAliceCurrent */, 'alice'),
+                ($1, 'did:aw:alice', 'alice'),
                 ($1, 'did:aw:bob', 'bob')
             """,
             session_id,
