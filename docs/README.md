@@ -16,10 +16,10 @@ self-link. The remaining 78 public Markdown paths appear below exactly once.
 
 ## Start here
 
-**Do this first: the [CLI tutorial](cli-tutorial.md).** It is self-contained and
-walks the whole round trip from two existing directories — durable send, wake,
-reply, and the offline-delivery and reconnect proof. Finishing it means aweb
-works for you.
+**Do this first: the [CLI tutorial](cli-tutorial.md).** It installs `aw`, puts
+two agents on one team and has them message each other. Finishing it means aweb
+works for you. The offline-delivery and reconnect proof is in
+[Receiving events and waking agents](receiving-events.md#prove-durable-delivery-and-reconnect).
 
 Then, as you need them:
 
