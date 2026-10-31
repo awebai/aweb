@@ -156,6 +156,56 @@ async def test_forged_hosted_assertion_is_invalid_not_verified_custody(privacy_a
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+@pytest.mark.parametrize("sender_state", ["hosted", "self", "legacy", "absent", "forged", "other_key"])
+async def test_managed_sender_exemption_requires_exact_verified_key(privacy_app, kind, sender_state):
+    env = privacy_app
+    custody = "hosted_custodial" if sender_state == "hosted" else None if sender_state == "legacy" else "self"
+    alice, bob = _identity(env.actors["alice"], custody), _identity(env.actors["bob"], "hosted_custodial")
+    await _publish(env, "bob", bob)
+    if sender_state != "absent":
+        await _publish(env, "alice", alice)
+    if sender_state == "other_key":
+        await _publish(env, "alice", _identity(env.actors["alice"], "hosted_custodial"))
+    if sender_state == "forged":
+        forged = {**alice["encryption_key"], "custody": "hosted_custodial"}
+        await env.db.execute(
+            "UPDATE {{tables.agent_encryption_keys}} SET assertion_canonical=$2 WHERE agent_id=$1",
+            env.actors["alice"].id, canonical_json_bytes(encryption_assertion_payload(forged)).decode(),
+        )
+    response, before, mutations = await _send(env, alice, bob, kind=kind)
+    if sender_state == "hosted":
+        assert response.status_code == 200, response.text
+    else:
+        assert response.status_code == 422, response.text
+        assert response.json()["reason"] == (
+            "recipient_encryption_assertion_invalid_or_stale" if sender_state == "forged"
+            else "recipient_custodial_no_e2ee"
+        )
+        assert await _counts(env) == before
+        assert len(env.dispatched) == mutations
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+async def test_verified_managed_sender_can_deliver_hosted_attachment(privacy_app, kind):
+    from test_attachments_http import managed_fixture
+
+    env = privacy_app
+    _, descriptor, wire, conversation_id = await managed_fixture(env, kind)
+    for name, identity in env.attachment_keys.items():
+        await _publish(env, name, identity)
+    path = "/v1/messages" if kind == "mail" else f"/v1/chat/sessions/{conversation_id}/messages"
+    response = await _request(env, "alice", "POST", path, wire)
+    assert response.status_code == 200, response.text
+    assert await env.db.fetch_val("SELECT SUM(binds) FROM {{tables.attachment_test_storage}}") == 1
+    prefix = "/v1/messages" if kind == "mail" else "/v1/chat/messages"
+    fetched = await _request(env, "bob", "GET", f"{prefix}/{wire['message_id']}/attachments/{descriptor['id']}")
+    assert fetched.status_code == 200, fetched.text
+    assert fetched.content == b"filebytes"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("published", [True, False])
 async def test_hosted_key_does_not_refuse_plaintext_or_imply_custody_when_absent(privacy_app, published):
     env = privacy_app
