@@ -103,7 +103,9 @@ func localTeamAlreadyExists(ctx context.Context, registry *awid.RegistryClient, 
 	if code, ok := registryStatusCode(err); ok && code == http.StatusNotFound {
 		return nil
 	}
-	if err != nil {
+	// A private team refuses this unsigned read with team_private, which
+	// AWID answers only for a team that exists.
+	if err != nil && !awid.IsTeamPrivateError(err) {
 		return err
 	}
 	return usageError("Team %s:%s already exists. To join it, ask a member for an invite. To create another team, pass --team <name>.", teamName, implicitLocalDomain)
