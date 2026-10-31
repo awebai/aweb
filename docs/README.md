@@ -167,6 +167,8 @@ ownership of definitions, homes, worktrees, runtimes, processes, and session UX.
 - [Add an AI tool to your team](add-ai-tool.md) — connect Claude Code, Pi,
   Codex or Hermes and make it wake; the optional member/home/worktree/runtime
   materialization workflow is its last section.
+- [Connect a Hermes agent](hermes.md) — run Hermes with the aweb platform
+  plugin in its gateway.
 
 </details>
 
