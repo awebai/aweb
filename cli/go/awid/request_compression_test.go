@@ -74,6 +74,7 @@ func TestClientRequestCompressionNegotiation(t *testing.T) {
 				w.Write([]byte(`{}`))
 			}))
 			defer srv.Close()
+			ForgetRequestCompression(srv.URL)
 			for _, method := range []string{"POST", "PUT", "PATCH", "DELETE"} {
 				// Separate clients must share the exact-base capability cache.
 				c, _ := New(srv.URL + "/api")
@@ -136,6 +137,7 @@ func TestClientRequestCompressionSignsDecodedBytes(t *testing.T) {
 				w.Write([]byte(`{}`))
 			}))
 			defer srv.Close()
+			ForgetRequestCompression(srv.URL)
 			var c *Client
 			var err error
 			switch kind {
@@ -193,6 +195,7 @@ func TestClientRequestCompressionRefusalDisablesWithoutReplay(t *testing.T) {
 				}
 			}))
 			defer srv.Close()
+			ForgetRequestCompression(srv.URL)
 			for n := 0; n < 2; n++ {
 				c, _ := New(srv.URL)
 				resp, err := c.DoRaw(context.Background(), "POST", "/v1/messages", "application/json", map[string]string{"message_id": "same-id", "body": "test"})
@@ -235,6 +238,7 @@ func TestClientRequestCompressionConcurrentCacheAndMountIsolation(t *testing.T) 
 		w.Write([]byte(`{}`))
 	}))
 	defer srv.Close()
+	ForgetRequestCompression(srv.URL)
 	var wg sync.WaitGroup
 	for n := 0; n < 12; n++ {
 		wg.Add(1)

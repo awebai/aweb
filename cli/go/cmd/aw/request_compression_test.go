@@ -125,6 +125,7 @@ func TestDirectHostedRequestCompression(t *testing.T) {
 					w.Write([]byte(`{}`))
 				}))
 				defer srv.Close()
+				awid.ForgetRequestCompression(srv.URL)
 				// Endpoint-specific response validation is exercised by the existing
 				// tests; this matrix pins each real sender's negotiated wire boundary.
 				base := srv.URL + mount
@@ -203,6 +204,7 @@ func TestAwMailSendNegotiatesRequestCompression(t *testing.T) {
 				}
 			}))
 			defer srv.Close()
+			awid.ForgetRequestCompression(srv.URL)
 			home := t.TempDir()
 			writeSelectionFixtureForTest(t, home, testSelectionFixture{AwebURL: srv.URL, TeamID: "devteam:test.local", Alias: "gsk", WorkspaceID: "workspace-1", DID: self, Address: "test.local/gsk", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, SigningKey: key, CreatedAt: "2026-05-02T00:00:00Z"})
 			cmd := exec.CommandContext(ctx, bin, "mail", "send", "--to", "alice", "--body", "`curl https://example.test`")
@@ -255,6 +257,7 @@ func TestRequestCompressionUsesActuallySelectedFallbackBase(t *testing.T) {
 				}
 			}))
 			defer srv.Close()
+			awid.ForgetRequestCompression(srv.URL)
 			configured := srv.URL + "/api"
 			current := configured
 			if alreadyRecovered {
@@ -300,6 +303,7 @@ func TestCompressionDiscoveryDoesNotTriggerBaseRecovery(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
+	awid.ForgetRequestCompression(srv.URL)
 	base := srv.URL + "/api"
 	state := &baseURLFallbackState{configuredBaseURL: base, currentBaseURL: base}
 	c, _ := awid.New(base)
@@ -345,6 +349,7 @@ func TestFallbackRequestCompressionRefusalClassification(t *testing.T) {
 				w.Write([]byte(`{}`))
 			}))
 			defer srv.Close()
+			awid.ForgetRequestCompression(srv.URL)
 			state := &baseURLFallbackState{configuredBaseURL: srv.URL, currentBaseURL: srv.URL}
 			c, _ := awid.New(srv.URL)
 			c.SetHTTPClient(&http.Client{Transport: &baseURLFallbackTransport{base: awid.NewAPITransport(), state: state}})
