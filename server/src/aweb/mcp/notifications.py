@@ -86,11 +86,21 @@ async def append_pending_nudge(result: Any, db_infra: Any) -> Any:
     if mail == 0 and chat == 0:
         return result
 
-    nudge = TextContent(
-        type="text",
-        text=(f"[aweb] Unread mail: {mail}; unread chat messages: {chat}. "
-              "Call check_mail / check_chats to read them."),
-    )
+    mail_waiting = f"{mail} unread mail message{'s' if mail != 1 else ''}"
+    chat_waiting = f"{chat} unread chat message{'s' if chat != 1 else ''}"
+    if mail and chat:
+        text = (f"[aweb] You have {mail_waiting} and {chat_waiting}. "
+                "Read mail with check_mail. Read chats with check_chats and read_chat, "
+                "then mark them read with mark_chat_read.")
+    elif mail:
+        text = (f"[aweb] You have {mail_waiting}. "
+                f"Read {'it' if mail == 1 else 'them'} with check_mail.")
+    else:
+        pronoun = "it" if chat == 1 else "them"
+        text = (f"[aweb] You have {chat_waiting}. "
+                f"Read {pronoun} with check_chats and read_chat, "
+                f"then mark {pronoun} read with mark_chat_read.")
+    nudge = TextContent(type="text", text=text)
     if isinstance(result, CallToolResult):
         return result.model_copy(update={"content": [*result.content, nudge]})
     # Match mcp.server.lowlevel.Server.call_tool normalization, including its

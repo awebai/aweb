@@ -36,7 +36,7 @@ The core MCP factory appends a text block after a completed tool result when
 the authenticated actor has unread mail or chat messages:
 
 ```text
-[aweb] Unread mail: 2; unread chat messages: 1. Call check_mail / check_chats to read them.
+[aweb] You have 2 unread mail messages and 1 unread chat message. Read mail with check_mail. Read chats with check_chats and read_chat, then mark them read with mark_chat_read.
 ```
 
 This is a snapshot taken after the tool runs. It preserves existing content,
@@ -45,6 +45,9 @@ lookups leave the result unchanged. The lookup only reads counts; it does not
 acknowledge messages or alter chat read state. Chat counts retain the existing
 did-first participant and per-participant read semantics of `check_chats`,
 including when an actor has both stable and key DID participant records.
+`check_chats` lists pending conversations and `read_chat` retrieves their
+history; use `mark_chat_read` to mark the messages read and clear their count.
+The nudge names only the message kinds with work waiting.
 
 This nudge reaches an agent only when its client calls a tool. It does not
 wake an idle conversation. Embedders with their own MCP factory must call the
