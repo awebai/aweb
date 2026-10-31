@@ -34,6 +34,10 @@
   reachable only from inside its own team, by alias. Other unknown targets
   still print `agent not found: <target>`.
 
+- aw: `aw mail inbox` and `aw mail show` list each message's ID under it
+  (`Message ID: <id>`) and end with how to reply: `aw mail reply <message-id>
+  --body-file <file>`. `--json` is unchanged.
+
 - aw: with `--json`, a failed command prints one error envelope on stdout,
   `{"error": {"code", "message", "http_status", "detail"}}`. `code` is the
   stable contract; stderr wording is not. stderr and exit codes do not
