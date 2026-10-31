@@ -55,7 +55,7 @@ async def test_bound_details_and_whole_thread_batch_unread_across_teams(human_me
     await env.db.execute("UPDATE {{tables.agents}} SET team_id=$1,alias='alice' WHERE agent_id=$2", other_team, env.actors["carol"].id)
     first = await mail(env)
     await mail(env, conversation_id=first["conversation_id"], subject="Later subject")
-    await mail(env)
+    separate = await mail(env)
     await mail(env, "carol")
     await mail(env, "bob", conversation_id=first["conversation_id"], body="outgoing")
     self_sent = await mail(env, "bob")
@@ -65,7 +65,7 @@ async def test_bound_details_and_whole_thread_batch_unread_across_teams(human_me
         UUID(first["conversation_id"]), env.actors["carol"].did, env.actors["carol"].id,
     )
     # Settings changes never outrank actual message activity.
-    await env.db.execute("UPDATE {{tables.conversations}} SET updated_at=NOW()+INTERVAL '1 day' WHERE conversation_id=$1", UUID(self_sent["conversation_id"]))
+    await env.db.execute("UPDATE {{tables.conversations}} SET updated_at=NOW()+INTERVAL '1 day' WHERE conversation_id=$1", UUID(separate["conversation_id"]))
     read_before = await env.db.fetch_all("SELECT message_id,read_at FROM {{tables.messages}} ORDER BY message_id")
     page = await _request(env, "bob", "GET", "/v1/conversations?" + urlencode({
         "conversation_type": "mail", "participant_did": env.actors["alice"].did, "limit": 1,
