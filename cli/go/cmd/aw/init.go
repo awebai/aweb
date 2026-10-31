@@ -1085,16 +1085,19 @@ func resolveRequestedRole(explicit string) string {
 	return strings.TrimSpace(os.Getenv("AWEB_ROLE"))
 }
 
-func runDefaultInitDocsInjection(workingDir string) bool {
+// runDefaultInitDocsInjection writes the default aweb docs and returns what
+// it did, or nil when init does not write them by default.
+func runDefaultInitDocsInjection(workingDir string) *injectDocsResult {
 	if jsonFlag || initDoNotTouchAgentsMD || initInjectDocs {
-		return false
+		return nil
 	}
-	repoRoot := resolveRepoRoot(workingDir)
-	printInjectDocsResult(InjectAgentDocs(repoRoot))
-	return true
+	result := InjectAgentDocs(resolveRepoRoot(workingDir))
+	printInjectDocsResult(result)
+	return result
 }
 
-func printPostInitActions(result *initResult, workingDir string, didDefaultInjectDocs bool) {
+func printPostInitActions(result *initResult, workingDir string) initSetupDone {
+	var done initSetupDone
 	if !jsonFlag && result.ServerAssignedName && strings.TrimSpace(result.Alias) != "" {
 		fmt.Fprintf(commandStdout, "\nYour agent is named %s.\n", strings.TrimSpace(result.Alias))
 	}
@@ -1108,16 +1111,21 @@ func printPostInitActions(result *initResult, workingDir string, didDefaultInjec
 	}
 	repoRoot := resolveRepoRoot(workingDir)
 	if initInjectDocs {
-		printInjectDocsResult(InjectAgentDocs(repoRoot))
+		docs := InjectAgentDocs(repoRoot)
+		printInjectDocsResult(docs)
+		done.DocsInjected = docsInjected(docs)
 	}
 	if initSetupChannel {
 		channelResult := SetupChannelMCP(repoRoot, isTTY())
 		printChannelMCPResult(channelResult)
+		done.ChannelSetUp = channelReady(channelResult)
+		done.ChannelGuidancePrinted = channelResult != nil
 	}
 	if initSetupHooks {
 		hookResult := SetupClaudeHooks(repoRoot, isTTY())
 		printClaudeHooksResult(hookResult)
 	}
+	return done
 }
 
 // initNextStep is one thing to do after aw init: the exact command and why.
@@ -1128,19 +1136,24 @@ type initNextStep struct {
 
 const initGuideURL = "https://aweb.ai/docs/cli-tutorial.md"
 
-// withInitNextSteps attaches the next steps for the path init took to its
-// output, which prints them in text and --json alike.
-func withInitNextSteps(out connectOutput, result *initResult, workingDir string) connectOutput {
-	docsInjected := initInjectDocs || (!jsonFlag && !initDoNotTouchAgentsMD)
-	out.NextSteps = initNextSteps(result, workingDir, docsInjected, initSetupChannel)
-	out.Guide = initGuideURL
-	return out
-}
-
 // initSetupDone is what init's setup after connecting actually did.
 type initSetupDone struct {
 	DocsInjected bool
 	ChannelSetUp bool
+	// ChannelGuidancePrinted is set when channel setup already printed how to
+	// start Claude Code with the channel and the Pi alternative.
+	ChannelGuidancePrinted bool
+}
+
+// docsInjected reports whether docs injection wrote its instructions.
+func docsInjected(result *injectDocsResult) bool {
+	return result != nil && len(result.Errors) == 0
+}
+
+// channelReady reports whether channel setup installed the Claude Code
+// plugin or found it already present.
+func channelReady(result *claudeHooksResult) bool {
+	return result != nil && result.Error == nil && !result.Skipped && (result.Created || result.Updated || result.AlreadyExists)
 }
 
 // printInitOutcome prints the connection, runs init's setup and then its
@@ -1148,16 +1161,21 @@ type initSetupDone struct {
 // prints one document.
 func printInitOutcome(out connectOutput, result *initResult, workingDir string, setup func() (initSetupDone, error)) error {
 	if jsonFlag {
-		printOutput(withInitNextSteps(out, result, workingDir), formatConnect)
-		_, err := setup()
-		return err
+		done, err := setup()
+		if err != nil {
+			return err
+		}
+		out.NextSteps = initNextStepsAfter(result, workingDir, done)
+		out.Guide = initGuideURL
+		printOutput(out, formatConnect)
+		return nil
 	}
 	printOutput(out, formatConnect)
 	done, err := setup()
 	if err != nil {
 		return err
 	}
-	fmt.Fprint(commandStdout, formatInitNextSteps(initNextSteps(result, workingDir, done.DocsInjected, done.ChannelSetUp)))
+	fmt.Fprint(commandStdout, formatInitNextSteps(initNextStepsAfter(result, workingDir, done), !done.ChannelGuidancePrinted))
 	return nil
 }
 
@@ -1165,17 +1183,26 @@ func printInitOutcome(out connectOutput, result *initResult, workingDir string, 
 // actions.
 func initDefaultSetup(result *initResult, workingDir string) func() (initSetupDone, error) {
 	return func() (initSetupDone, error) {
-		didInjectDocs := runDefaultInitDocsInjection(workingDir)
+		done := initSetupDone{DocsInjected: docsInjected(runDefaultInitDocsInjection(workingDir))}
 		if !jsonFlag {
-			printPostInitActions(result, workingDir, didInjectDocs)
+			post := printPostInitActions(result, workingDir)
+			done.DocsInjected = done.DocsInjected || post.DocsInjected
+			done.ChannelSetUp = post.ChannelSetUp
+			done.ChannelGuidancePrinted = post.ChannelGuidancePrinted
 		}
-		return initSetupDone{DocsInjected: didInjectDocs || initInjectDocs, ChannelSetUp: initSetupChannel}, nil
+		return done, nil
 	}
 }
 
-// initNextSteps is the one list of next steps for the path init took. Text
-// and --json both print it.
+// initNextSteps is the next steps for the path init took when docs and
+// channel setup did, or did not, happen.
 func initNextSteps(result *initResult, workingDir string, didInjectDocs, didSetupChannel bool) []initNextStep {
+	return initNextStepsAfter(result, workingDir, initSetupDone{DocsInjected: didInjectDocs, ChannelSetUp: didSetupChannel})
+}
+
+// initNextStepsAfter is the one list of next steps for the path init took,
+// after what its setup actually did. Text and --json both print it.
+func initNextStepsAfter(result *initResult, workingDir string, done initSetupDone) []initNextStep {
 	path := initPathNewTeam
 	if result != nil {
 		path = result.Path
@@ -1199,7 +1226,7 @@ func initNextSteps(result *initResult, workingDir string, didInjectDocs, didSetu
 	case initPathNewTeam:
 		joinFromWhy := "Run in another agent's folder on this machine to add it to this team"
 		if initResultIsHosted(result) {
-			joinFromWhy = "Run in another agent's folder to add it to THIS team; aw init there without --join-from creates a new account/team, a separate team whose agents cannot message this one"
+			joinFromWhy = "Run in another agent's folder to add it to THIS team; aw init there without --join-from creates a separate account and team instead"
 		}
 		steps = append(steps,
 			initNextStep{"aw init --join-from " + formatShellCommand([]string{workingDir}) + " --name <name>", joinFromWhy},
@@ -1207,11 +1234,13 @@ func initNextSteps(result *initResult, workingDir string, didInjectDocs, didSetu
 		)
 		steps = appendWorktreeStep(steps, workingDir)
 	}
-	if !didSetupChannel {
+	if !done.ChannelSetUp {
 		steps = append(steps, initNextStep{"aw init --setup-channel", "Install the aweb channel plugin for Claude Code, so messages wake this agent"})
 	}
-	steps = append(steps, initNextStep{"claude --dangerously-load-development-channels " + claudeChannelSpec, "Start Claude Code with the channel loaded"})
-	if !didInjectDocs {
+	if !done.ChannelGuidancePrinted {
+		steps = append(steps, initNextStep{"claude --dangerously-load-development-channels " + claudeChannelSpec, "Start Claude Code with the channel loaded"})
+	}
+	if !done.DocsInjected {
 		steps = append(steps, initNextStep{"aw init --inject-docs", "Add aweb instructions to CLAUDE.md / AGENTS.md"})
 	}
 	return steps
@@ -1226,34 +1255,42 @@ func appendWorktreeStep(steps []initNextStep, workingDir string) []initNextStep 
 	return append(steps, initNextStep{"aw workspace add-worktree <role>", "Or add a git worktree of this repo as another agent"})
 }
 
-// formatInitNextSteps renders the next steps block for text output.
-func formatInitNextSteps(steps []initNextStep) string {
+// formatInitNextSteps renders the next steps block for text output, with the
+// channel guidance unless setup already printed it.
+func formatInitNextSteps(steps []initNextStep, withChannelGuidance bool) string {
 	if len(steps) == 0 {
 		return ""
 	}
 	var sb strings.Builder
 	sb.WriteString("\nNext steps:\n")
-	for _, line := range initNextStepLines(steps) {
+	for _, line := range initStepLines(steps, withChannelGuidance) {
 		sb.WriteString(line + "\n")
 	}
 	return sb.String()
 }
 
-// initNextStepLines renders the next steps for text output.
+// initNextStepLines renders the next steps for text output, with the channel
+// guidance.
 func initNextStepLines(steps []initNextStep) []string {
+	return initStepLines(steps, true)
+}
+
+func initStepLines(steps []initNextStep, withChannelGuidance bool) []string {
 	var lines []string
 	for _, step := range steps {
 		lines = append(lines, "  "+step.Command, "      "+step.Why)
 	}
 	lines = append(lines, "")
-	for _, line := range channelLaunchWhyLines {
-		lines = append(lines, "  "+line)
+	if withChannelGuidance {
+		for _, line := range channelLaunchWhyLines {
+			lines = append(lines, "  "+line)
+		}
+		lines = append(lines, "")
+		for _, line := range channelPiPathLines {
+			lines = append(lines, "  "+line)
+		}
+		lines = append(lines, "")
 	}
-	lines = append(lines, "")
-	for _, line := range channelPiPathLines {
-		lines = append(lines, "  "+line)
-	}
-	lines = append(lines, "")
 	lines = append(lines, "  Tell your agent: please read "+initGuideURL)
 	return lines
 }

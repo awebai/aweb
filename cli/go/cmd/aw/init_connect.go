@@ -347,6 +347,6 @@ func formatConnect(v any) string {
 	if out.IDRegistration != "" {
 		sb.WriteString(fmt.Sprintf("ID registration: %s\n", out.IDRegistration))
 	}
-	sb.WriteString(formatInitNextSteps(out.NextSteps))
+	sb.WriteString(formatInitNextSteps(out.NextSteps, true))
 	return sb.String()
 }

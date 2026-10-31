@@ -215,8 +215,8 @@ func TestInitNextStepsSelfHostedDoNotClaimASeparateAccount(t *testing.T) {
 	}
 	hosted := initResult{ServerName: "app.aweb.ai", ExportBaseURL: "https://app.aweb.ai/api"}
 	text := strings.Join(initNextStepLines(initNextSteps(&hosted, t.TempDir(), true, true)), "\n")
-	if !strings.Contains(text, "separate team") {
-		t.Fatalf("hosted steps lost the separate-team warning:\n%s", text)
+	if !strings.Contains(text, "creates a separate account and team instead") || strings.Contains(text, "cannot message") {
+		t.Fatalf("hosted steps do not say init elsewhere creates a separate account and team, or claim it cannot be reached:\n%s", text)
 	}
 }
 
@@ -289,5 +289,81 @@ func TestInitTextPrintsSideEffectsBeforeNextSteps(t *testing.T) {
 	}
 	if !strings.HasSuffix(strings.TrimSpace(text), "Tell your agent: please read "+initGuideURL) {
 		t.Fatalf("the guide line is not the last line:\n%s", text)
+	}
+}
+
+// The next steps follow what setup actually did, not which flags were
+// asked for: completed setup is omitted, skipped or failed setup stays
+// actionable, and channel guidance that setup printed is not repeated.
+func TestInitOutcomeFollowsWhatGuidedSetupDid(t *testing.T) {
+	// Cannot use t.Parallel(): needs stdout and the setup seams.
+	oldDocs, oldChannel, oldHooks, oldJSON := guidedOnboardingInjectDocs, guidedOnboardingSetupChannel, guidedOnboardingSetupHooks, jsonFlag
+	t.Cleanup(func() {
+		guidedOnboardingInjectDocs, guidedOnboardingSetupChannel, guidedOnboardingSetupHooks, jsonFlag = oldDocs, oldChannel, oldHooks, oldJSON
+	})
+	jsonFlag = false
+	guidedOnboardingSetupHooks = func(string, bool) *claudeHooksResult { return &claudeHooksResult{Skipped: true} }
+	for _, tc := range []struct {
+		name          string
+		answers       string
+		docs          *injectDocsResult
+		channel       *claudeHooksResult
+		wantSetupStep bool
+		wantDocsStep  bool
+	}{
+		{"channel installed, docs written", "y\n", &injectDocsResult{Created: []string{"AGENTS.md"}}, &claudeHooksResult{Created: true}, false, false},
+		{"channel declined", "n\nn\n", &injectDocsResult{Created: []string{"AGENTS.md"}}, &claudeHooksResult{Created: true}, true, false},
+		{"channel failed", "y\n", &injectDocsResult{Created: []string{"AGENTS.md"}}, &claudeHooksResult{Error: io.ErrUnexpectedEOF}, true, false},
+		{"docs failed", "y\n", &injectDocsResult{Errors: []string{"not initialized"}}, &claudeHooksResult{Created: true}, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			guidedOnboardingInjectDocs = func(string) *injectDocsResult { return tc.docs }
+			guidedOnboardingSetupChannel = func(string, bool) *claudeHooksResult { return tc.channel }
+			req := guidedOnboardingRequest{
+				WorkingDir:         t.TempDir(),
+				PromptIn:           &singleByteReader{data: tc.answers},
+				PromptOut:          io.Discard,
+				InjectAgentDocs:    true,
+				AskPostCreateSetup: true,
+			}
+			result := &initResult{ServerName: "localhost", ExportBaseURL: "http://localhost:8000", Path: initPathReconnect}
+			var err error
+			text := captureStdout(t, func() {
+				err = printInitOutcome(connectOutput{Status: "connected", TeamID: "default:local", Alias: "alice"}, result, req.WorkingDir, guidedSetup(req))
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			steps := text[strings.Index(text, "Next steps:"):]
+			if got := strings.Contains(steps, "aw init --setup-channel"); got != tc.wantSetupStep {
+				t.Fatalf("setup-channel step shown=%t, want %t:\n%s", got, tc.wantSetupStep, text)
+			}
+			if got := strings.Contains(steps, "aw init --inject-docs"); got != tc.wantDocsStep {
+				t.Fatalf("inject-docs step shown=%t, want %t:\n%s", got, tc.wantDocsStep, text)
+			}
+			if n := strings.Count(text, "pi install npm:@awebai/pi@latest"); n > 1 {
+				t.Fatalf("Pi install named %d times:\n%s", n, text)
+			}
+			if n := strings.Count(text, "claude --dangerously-load-development-channels"); n > 1 {
+				t.Fatalf("channel launch named %d times:\n%s", n, text)
+			}
+		})
+	}
+}
+
+// Default init setup reports docs as written only when injection succeeded.
+func TestInitDefaultSetupReportsFailedDocsInjection(t *testing.T) {
+	oldJSON, oldInject, oldTouch := jsonFlag, initInjectDocs, initDoNotTouchAgentsMD
+	t.Cleanup(func() { jsonFlag, initInjectDocs, initDoNotTouchAgentsMD = oldJSON, oldInject, oldTouch })
+	jsonFlag, initInjectDocs, initDoNotTouchAgentsMD = false, false, false
+	t.Setenv("HOME", t.TempDir())
+	// A folder with no aw workspace: injection fails.
+	dir := t.TempDir()
+	var done initSetupDone
+	_ = captureStdout(t, func() {
+		done, _ = initDefaultSetup(&initResult{}, dir)()
+	})
+	if done.DocsInjected {
+		t.Fatal("failed docs injection reported as done")
 	}
 }
