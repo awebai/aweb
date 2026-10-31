@@ -151,18 +151,7 @@ is no recipient argument to get wrong.`,
 			return gcMailError("message %s is legacy mail without a conversation; send a new message instead", termtext.Line(messageID))
 		}
 
-		subject := strings.TrimSpace(input.Subject)
-		if subject == "" {
-			original := strings.TrimSpace(source.Subject)
-			switch {
-			case original == "":
-				subject = "Re"
-			case strings.HasPrefix(original, "Re: "):
-				subject = original
-			default:
-				subject = "Re: " + original
-			}
-		}
+		subject := replySubject(input.Subject, source.Subject)
 
 		resp, err := c.SendMessageByIdentity(ctx, &awid.SendMessageRequest{
 			ConversationID: conversationID,

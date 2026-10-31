@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- aw: `aw mail reply` without `--subject` uses "Re: <original subject>"
+  instead of "Re", and never adds a second "Re:". `aw beads-mail` and
+  `aw gc-mail` replies follow the same rule, now case-insensitively.
+
 - aw: with `--json`, a failed command prints one error envelope on stdout,
   `{"error": {"code", "message", "http_status", "detail"}}`. `code` is the
   stable contract; stderr wording is not. stderr and exit codes do not

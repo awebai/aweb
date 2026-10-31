@@ -2965,7 +2965,7 @@ Flags:
 - `-h, --help help for reply`
 - `--plaintext Send explicit server-readable plaintext mail, even when replying to encrypted mail`
 - `--priority string Priority: low|normal|high|urgent (default "normal")`
-- `--subject string Subject`
+- `--subject string Subject (default: Re: <original subject>)`
 
 ## `mail send`
 

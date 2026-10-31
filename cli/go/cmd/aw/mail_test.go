@@ -1257,6 +1257,7 @@ func TestAwMailReplyUsesMessageConversation(t *testing.T) {
 		ToAddress      string `json:"to_address"`
 		ToStableID     string `json:"to_stable_id"`
 		ConversationID string `json:"conversation_id"`
+		Subject        string `json:"subject"`
 		Body           string `json:"body"`
 		SignedPayload  string `json:"signed_payload"`
 	}
@@ -1347,6 +1348,9 @@ func TestAwMailReplyUsesMessageConversation(t *testing.T) {
 	}
 	if got.ConversationID != conversationID || got.Body != "reply" {
 		t.Fatalf("unexpected body: %+v", got)
+	}
+	if got.Subject != "Re: hello" {
+		t.Fatalf("reply subject=%q, want %q", got.Subject, "Re: hello")
 	}
 	if !acked {
 		t.Fatal("reply should ack the source message after sending")
