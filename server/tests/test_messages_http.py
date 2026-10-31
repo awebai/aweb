@@ -1397,7 +1397,7 @@ async def test_same_stable_did_rotation_continues_existing_thread(aweb_cloud_db)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         second = await client.post(
             "/v1/messages",
-            json={"to_alias": "bob", "subject": "rotated stable worker", "body": "still same stable identity"},
+            json={"conversation_id": conversation_id, "subject": "rotated stable worker", "body": "still same stable identity"},
         )
 
     assert second.status_code == 200, second.text
@@ -1610,14 +1610,9 @@ async def test_send_message_to_external_address_posts_federated_mail_and_project
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         retry = await client.post("/v1/messages", json=payload)
 
-    if new_conversation:
-        assert retry.status_code == 409, retry.text
-        assert retry.json()["detail"] == "conversation_exists"
-        assert len(remote_requests) == 1
-    else:
-        assert retry.status_code == 200, retry.text
-        assert retry.json()["message_id"] == message_id
-        assert len(remote_requests) == 2
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["message_id"] == message_id
+    assert len(remote_requests) == 2
     assert registry.resolve_address.await_count == 1
     projected_count = await aweb_cloud_db.aweb_db.fetch_value(
         "SELECT COUNT(*) FROM {{tables.messages}} WHERE message_id = $1",
@@ -2401,7 +2396,7 @@ async def test_send_message_continues_conversation_without_address_discovery(awe
 
 
 @pytest.mark.asyncio
-async def test_send_message_to_address_reuses_existing_conversation_without_address_discovery(aweb_cloud_db):
+async def test_send_message_to_address_with_explicit_id_skips_address_discovery(aweb_cloud_db):
     _, _, alice_did_key = _make_keypair()
     _, _, bob_did_key = _make_keypair()
     await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
@@ -2459,7 +2454,7 @@ async def test_send_message_to_address_reuses_existing_conversation_without_addr
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         reply = await client.post(
             "/v1/messages",
-            json={"to_address": "otherco.com/bob", "subject": "address reply", "body": "hi"},
+            json={"conversation_id": conversation_id, "to_address": "otherco.com/bob", "subject": "address reply", "body": "hi"},
         )
 
     assert reply.status_code == 200, reply.text
@@ -9069,7 +9064,7 @@ async def test_send_message_to_private_address_rejects_unverified_client_recipie
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("expiry_seconds", [-1, 0, 1, None])
-async def test_first_mail_skips_time_expired_active_conversation(aweb_cloud_db, monkeypatch, expiry_seconds):
+async def test_recipient_mail_starts_new_conversation_regardless_of_pair_expiry(aweb_cloud_db, monkeypatch, expiry_seconds):
     from aweb.messaging import conversations
 
     now = datetime.now(timezone.utc)
@@ -9104,14 +9099,11 @@ async def test_first_mail_skips_time_expired_active_conversation(aweb_cloud_db, 
         assert await aweb_cloud_db.aweb_db.fetch_value(
             "SELECT status FROM {{tables.conversations}} WHERE conversation_id = $1", UUID(old_id),
         ) == "active"
-        # No retry: the first send after expiry must succeed on a new thread.
+        # Pair status and expiry never select a recipient-only send's thread.
         sent = await client.post("/v1/messages", json={"to_alias": "bob", "subject": "after expiry", "body": "hello again"})
         assert sent.status_code == 200, sent.text
         new_id = sent.json()["conversation_id"]
-        if expiry_seconds is not None and expiry_seconds <= 0:
-            assert new_id != old_id
-        else:
-            assert new_id == old_id
+        assert new_id != old_id
         stored = await aweb_cloud_db.aweb_db.fetch_one(
             "SELECT conversation_id, to_did FROM {{tables.messages}} WHERE message_id = $1",
             UUID(sent.json()["message_id"]),

@@ -21,6 +21,8 @@ class ConversationItem(BaseModel):
     participant_dids: list[str] = Field(default_factory=list)
     participant_addresses: list[str] = Field(default_factory=list)
     subject: str
+    title: str = ""
+    first_message_id: str | None = None
     last_message_at: str
     last_message_from: str
     last_message_preview: str
@@ -112,6 +114,7 @@ async def list_conversations(
                     m.from_alias,
                     m.from_did,
                     m.subject,
+                    m.content_mode,
                     m.to_alias AS to_alias,
                     m.to_did AS to_did,
                     m.read_at,
@@ -179,6 +182,8 @@ async def list_conversations(
                 newest.from_alias,
                 newest.from_did,
                 newest.subject,
+                first.message_id AS first_message_id,
+                CASE WHEN first.content_mode = 'encrypted_v2' THEN '' ELSE first.subject END AS title,
                 p.unread_count,
                 CASE WHEN c.status = 'active' AND c.expires_at <= CURRENT_TIMESTAMP
                      THEN 'expired' ELSE c.status END AS status,
@@ -192,6 +197,13 @@ async def list_conversations(
                 ORDER BY v.created_at DESC, v.message_id DESC
                 LIMIT 1
             ) newest ON TRUE
+            JOIN LATERAL (
+                SELECT v.message_id, v.subject, v.content_mode
+                FROM visible v
+                WHERE v.group_key = p.group_key
+                ORDER BY v.created_at ASC, v.message_id ASC
+                LIMIT 1
+            ) first ON TRUE
             LEFT JOIN {{tables.conversations}} c
               ON c.conversation_id = newest.conversation_id
             LEFT JOIN LATERAL (
@@ -242,6 +254,8 @@ async def list_conversations(
                 "status": row["status"] or "legacy",
                 "participants": _dedupe_labels(list(row["participants"] or [])),
                 "subject": row["subject"] or "",
+                "title": row["title"] or "",
+                "first_message_id": str(row["first_message_id"]),
                 "last_message_at": row["created_at"],
                 "last_message_from": _conversation_label(row["from_alias"], row["from_did"]),
                 "last_message_preview": row["body"] or "",
@@ -409,6 +423,8 @@ async def list_conversations(
                 participant_dids=item.get("participant_dids", []),
                 participant_addresses=item.get("participant_addresses", []),
                 subject=item["subject"],
+                title=item.get("title", ""),
+                first_message_id=item.get("first_message_id"),
                 last_message_at=ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
                 last_message_from=item["last_message_from"],
                 last_message_preview=item["last_message_preview"],

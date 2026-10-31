@@ -26,7 +26,6 @@ from aweb.messaging.contacts import (
     remove_contact,
     resolve_handle_contact_agent,
 )
-from aweb.messaging.conversations import find_active_one_to_one_conversation_between
 from aweb.messaging.verification import verified_signed_recipient_fields
 from aweb.service_errors import ServiceError, ValidationError
 
@@ -132,7 +131,7 @@ async def send_message_to_contact(
     federation_chat_transport=None,
     public_origin: str | None = None,
 ) -> str:
-    """Send mail or chat to a saved contact, reusing existing 1:1 conversations."""
+    """Start mail or send chat to a saved contact."""
     if not message.strip():
         return json.dumps({"error": "message is required"})
     try:
@@ -149,26 +148,7 @@ async def send_message_to_contact(
 
     # Pending is receiver-side policy state, not sender-side send authority:
     # sending to a pending contact is the bilateral invite/first-contact flow.
-    existing = await _find_existing_conversation(
-        db_infra,
-        conversation_type=normalized_channel,
-        target=target,
-    )
     if normalized_channel == "mail":
-        if existing is not None:
-            return await send_mail(
-                db_infra,
-                registry_client=registry_client,
-                federation_authority=federation_authority,
-                hosted_signer=hosted_signer,
-                hosted_encryptor=hosted_encryptor,
-                federation_transport=federation_mail_transport,
-                public_origin=public_origin,
-                conversation_id=existing["conversation_id"],
-                subject=subject,
-                body=message,
-                priority=priority,
-            )
         return await send_mail(
             db_infra,
             registry_client=registry_client,
@@ -182,6 +162,10 @@ async def send_message_to_contact(
             body=message,
             priority=priority,
         )
+
+    existing = await _find_existing_chat_session(
+        db_infra, target=target,
+    )
 
     if existing is not None:
         return await chat_send(
@@ -412,31 +396,11 @@ async def _resolve_contact_target(
     return copied
 
 
-async def _find_existing_conversation(
-    db_infra, *, conversation_type: str, target: dict
-) -> dict | None:
+async def _find_existing_chat_session(db_infra, *, target: dict) -> dict | None:
     auth = get_auth()
     target_did = (target.get("did_aw") or target.get("did_key") or "").strip()
-    target_address = (
-        None if target_did else (target.get("address") or "").strip() or None
-    )
-    if conversation_type == "chat":
-        session_id = await find_session_between(
-            db_infra,
-            did_a=primary_auth_did(auth),
-            did_key_a=auth.did_key,
-            agent_id_a=auth.agent_id,
-            address_a=(auth.address or "").strip() or derive_team_address(auth.team_id, auth.alias),
-            did_b=target_did,
-            did_key_b=(target.get("did_key") or "").strip() or None,
-            agent_id_b=target.get("agent_id"),
-            address_b=target_address,
-        )
-        if session_id is not None:
-            return {"conversation_id": str(session_id)}
-    return await find_active_one_to_one_conversation_between(
+    session_id = await find_session_between(
         db_infra,
-        conversation_type=conversation_type,  # type: ignore[arg-type]
         did_a=primary_auth_did(auth),
         did_key_a=auth.did_key,
         agent_id_a=auth.agent_id,
@@ -444,8 +408,9 @@ async def _find_existing_conversation(
         did_b=target_did,
         did_key_b=(target.get("did_key") or "").strip() or None,
         agent_id_b=target.get("agent_id"),
-        address_b=target_address,
+        address_b=None if target_did else (target.get("address") or "").strip() or None,
     )
+    return {"conversation_id": str(session_id)} if session_id is not None else None
 
 
 def _target_refs(target: dict) -> tuple[list[str], list[str]]:

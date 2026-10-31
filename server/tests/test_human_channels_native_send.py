@@ -828,17 +828,37 @@ async def test_real_mcp_native_ingress_commits_before_reply_and_replays(
                 }
             )
             assert changed["error"] == "replay_conflict"
+            # Another source event is a new mail intent, while chat keeps its session.
+            headers["X-AWEB-Ingress-Key"] = "event2"
+            second = await call(arguments)
+            assert "error" not in second, second
+            if kind == "mail":
+                assert UUID(first["conversation_id"]).version == 4
+                assert second["conversation_id"] != first["conversation_id"]
+            else:
+                assert second["session_id"] == first["session_id"]
+            assert await call(arguments) == second
+            headers["X-AWEB-Ingress-Key"] = "event3"
+            continuation = {**arguments}
+            continuation.pop("to" if kind == "mail" else "to_alias")
+            continuation["conversation_id" if kind == "mail" else "session_id"] = first["conversation_id"]
+            continued = await call(continuation)
+            assert "error" not in continued, continued
+            assert continued["conversation_id"] == first["conversation_id"]
+            assert await call(continuation) == continued
+
+
     finally:
         await mcp.shutdown()
     table = "messages" if kind == "mail" else "chat_messages"
     assert (
         await env["db"].fetch_one("SELECT count(*) n FROM {{tables." + table + "}}")
-    )["n"] == 1
+    )["n"] == 3
     assert (
         await env["db"].fetch_one(
             "SELECT count(*) n FROM {{tables.human_channel_ingress}}"
         )
-    )["n"] == 1
+    )["n"] == 3
 
 
 @pytest.mark.asyncio

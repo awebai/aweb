@@ -547,7 +547,7 @@ async def test_mcp_chat_send_to_hosted_handle_uses_canonical_address(aweb_cloud_
 
 
 @pytest.mark.asyncio
-async def test_consumer_mcp_send_message_to_identity_contact_reuses_existing_mail_conversation(
+async def test_consumer_mcp_send_message_to_identity_contact_starts_new_mail_conversation(
     aweb_cloud_db,
     monkeypatch,
 ):
@@ -590,7 +590,7 @@ async def test_consumer_mcp_send_message_to_identity_contact_reuses_existing_mai
 
     class NoRegistry:
         async def resolve_address(self, *_args, **_kwargs):
-            raise AssertionError("existing conversation continuation must not rediscover")
+            raise AssertionError("same-team contact send must not rediscover")
 
     result = json.loads(
         await contacts_tools.send_message_to_contact(
@@ -604,10 +604,10 @@ async def test_consumer_mcp_send_message_to_identity_contact_reuses_existing_mai
     )
 
     assert result["status"] == "delivered"
-    assert result["conversation_id"] == existing_conversation_id
-    assert await aweb_cloud_db.aweb_db.fetch_val("SELECT COUNT(*) FROM {{tables.conversations}}") == 1
+    assert result["conversation_id"] != existing_conversation_id
+    assert await aweb_cloud_db.aweb_db.fetch_val("SELECT COUNT(*) FROM {{tables.conversations}}") == 2
     row = await aweb_cloud_db.aweb_db.fetch_one("SELECT conversation_id, body FROM {{tables.messages}}")
-    assert str(row["conversation_id"]) == existing_conversation_id
+    assert str(row["conversation_id"]) == result["conversation_id"]
     assert row["body"] == "hello again"
 
 

@@ -157,8 +157,8 @@ async def test_mcp_send_mail_fires_message_sent_like_rest(server):
     # No pilot/bob mail pair exists yet: the new-conversation path.
     fresh = await server.mcp_call("pilot", "send_mail", to="bob", subject="new", body="fresh", plaintext=True)
     rest = await server.rest_mail("bob", to_alias="pilot", body="from rest")
-    # The pair now exists: the conversation-continuation path.
-    continued = await server.mcp_call("pilot", "send_mail", to="bob", subject="re", body="reply", plaintext=True)
+    # The caller explicitly selects the conversation-continuation path.
+    continued = await server.mcp_call("pilot", "send_mail", conversation_id=fresh["conversation_id"], subject="re", body="reply", plaintext=True)
     assert continued["conversation_id"] == fresh["conversation_id"]
 
     events = _events(server, "message.sent")

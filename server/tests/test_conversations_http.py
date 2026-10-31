@@ -143,7 +143,8 @@ async def test_conversations_lists_identity_scoped_mail_by_current_did(aweb_clou
 
 
 @pytest.mark.asyncio
-async def test_conversations_groups_mail_by_conversation_id(aweb_cloud_db):
+@pytest.mark.parametrize("encrypted_first", [False, True])
+async def test_conversations_groups_mail_by_conversation_id(aweb_cloud_db, encrypted_first):
     bob_sk, _, bob_did_key = _make_keypair()
 
     await aweb_cloud_db.aweb_db.execute(
@@ -205,6 +206,17 @@ async def test_conversations_groups_mail_by_conversation_id(aweb_cloud_db):
         bob_did_key,
     )
 
+    if encrypted_first:
+        # An encrypted first message has no server-readable title.
+        await aweb_cloud_db.aweb_db.execute(
+            """UPDATE {{tables.messages}} SET content_mode='encrypted_v2', message_version=2,
+               subject='', body='', encrypted_envelope='{}', encrypted_ciphertext='ciphertext',
+               encrypted_key_wraps='[]', encrypted_ciphertext_hash='sha256:fixture', encrypted_ciphertext_size=10,
+               encrypted_key_wraps_hash='sha256:fixture', encrypted_inner_header_hash='sha256:fixture',
+               encrypted_suite='fixture', encrypted_signing_key_id='fixture', signed_envelope_hash='sha256:fixture'
+               WHERE message_id='11111111-1111-1111-1111-111111111111'"""
+        )
+
     registry = AsyncMock()
     registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=bob_did_key))
     registry.list_did_addresses = AsyncMock(
@@ -231,6 +243,8 @@ async def test_conversations_groups_mail_by_conversation_id(aweb_cloud_db):
     conversations = resp.json()["conversations"]
     assert len(conversations) == 1
     assert conversations[0]["conversation_id"] == "55555555-5555-4555-8555-555555555555"
+    assert conversations[0]["title"] == ("" if encrypted_first else "first")
+    assert conversations[0]["first_message_id"] == "11111111-1111-1111-1111-111111111111"
     assert conversations[0]["subject"] == "second"
     assert conversations[0]["last_message_preview"] == "two"
     assert conversations[0]["unread_count"] == 2

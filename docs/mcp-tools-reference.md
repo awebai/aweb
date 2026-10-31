@@ -42,7 +42,7 @@ MCP section of [`aweb-sot.md`](https://aweb.ai/docs/aweb-sot.md).
 
 | Tool | Parameters | Registered description |
 | --- | --- | --- |
-| `send_mail` | `to=""`, `body=""`, `conversation_id=""`, `subject=""`, `priority="normal"`, `plaintext=False` | Send async mail with a required body by recipient, or continue an existing mail conversation by conversation_id. Recipient sends reuse the existing active one-to-one conversation when present. Hosted custodial sends use managed encryption by default when the recipient has an encryption key. The hosted service can read the mail; this is not end-to-end encryption. Set plaintext=true to store message content unencrypted. |
+| `send_mail` | `to=""`, `body=""`, `conversation_id=""`, `subject=""`, `priority="normal"`, `plaintext=False` | Send async mail with a required body by recipient, or continue an existing mail conversation by conversation_id. A recipient send starts a new thread. Hosted custodial sends use managed encryption by default when the recipient has an encryption key. The hosted service can read the mail; this is not end-to-end encryption. Set plaintext=true to store message content unencrypted. |
 | `check_mail` | `unread_only=True`, `limit=50`, `include_bodies=True` | Check hosted mail. The tool marks returned unread messages read before returning. The hosted service decrypts managed encrypted mail for this MCP session; self-custodial encrypted content remains metadata-only. |
 
 ## Team Room

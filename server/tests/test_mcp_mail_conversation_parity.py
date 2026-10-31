@@ -118,28 +118,28 @@ async def mail_server(aweb_cloud_db, monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("target", ["alias", "stable_did", "current_did", "address"])
 @pytest.mark.parametrize("plaintext", [True, False])
-async def test_mcp_recipient_send_continues_http_conversation(mail_server, target, plaintext):
+async def test_mcp_recipient_send_starts_new_conversation(mail_server, target, plaintext):
     server = mail_server
     original = await server.human_mail()
-    # The HTTP route already reuses this conversation without its ID.
+    # Neither HTTP nor MCP adopts a pair without an explicit conversation ID.
     ordinary = await server.human_mail("another human message")
-    assert ordinary["conversation_id"] == original["conversation_id"]
+    assert ordinary["conversation_id"] != original["conversation_id"]
     recipient = {"alias": "human", "stable_did": "did:aw:human",
                  "current_did": server.human_did, "address": "acme.com/human"}[target]
     sent = await server.mcp_mail(to=recipient, plaintext=plaintext)
     assert "error" not in sent, sent
-    assert sent["conversation_id"] == original["conversation_id"]
-    assert server.custody.payloads[-1]["conversation_id"] == original["conversation_id"]
+    assert sent["conversation_id"] not in {original["conversation_id"], ordinary["conversation_id"]}
+    assert server.custody.payloads[-1]["conversation_id"] == sent["conversation_id"]
     row = await server.db.fetch_one("SELECT * FROM {{tables.messages}} WHERE message_id=$1", UUID(sent["message_id"]))
-    assert str(row["conversation_id"]) == original["conversation_id"]
-    assert row["to_did"] == "did:aw:human"
+    assert str(row["conversation_id"]) == sent["conversation_id"]
+    assert row["to_did"] == (server.human_did if target == "current_did" else "did:aw:human")
     if plaintext:
-        assert json.loads(row["signed_payload"])["conversation_id"] == original["conversation_id"]
+        assert json.loads(row["signed_payload"])["conversation_id"] == sent["conversation_id"]
     else:
         assert row["content_mode"] == "encrypted_v2"
         envelope = json.loads(row["encrypted_envelope"])
-        assert envelope["conversation_id"] == original["conversation_id"]
-    assert (await server.db.fetch_one("SELECT count(*) AS n FROM {{tables.conversations}}"))["n"] == 1
+        assert envelope["conversation_id"] == sent["conversation_id"]
+    assert (await server.db.fetch_one("SELECT count(*) AS n FROM {{tables.conversations}}"))["n"] == 3
 
 
 @pytest.mark.asyncio
@@ -157,7 +157,7 @@ async def test_mcp_recipient_send_creates_when_no_active_conversation(mail_serve
 
 
 @pytest.mark.asyncio
-async def test_mcp_reused_conversation_does_not_bypass_recipient_policy(mail_server):
+async def test_mcp_new_conversation_does_not_bypass_recipient_policy(mail_server):
     server = mail_server
     old = (await server.human_mail())["conversation_id"]
     await _insert_team(server.db, "ops:otherco.com")
@@ -168,7 +168,7 @@ async def test_mcp_reused_conversation_does_not_bypass_recipient_policy(mail_ser
     assert "error" in result, result
     assert (await server.db.fetch_one("SELECT count(*) AS n FROM {{tables.messages}}"))["n"] == 1
     assert (await server.db.fetch_one("SELECT count(*) AS n FROM {{tables.conversations}}"))["n"] == 1
-    assert server.custody.payloads[-1]["conversation_id"] == old
+    assert server.custody.payloads[-1]["conversation_id"] != old
 
 
 @pytest.mark.asyncio
@@ -242,3 +242,4 @@ async def test_human_alias_refusal_has_no_message_or_mutation(mail_server, failu
     assert response.status_code in (404,422), response.text
     assert (await server.db.fetch_one("SELECT count(*) AS n FROM {{tables.messages}}"))["n"] == 0
     assert (await server.db.fetch_one("SELECT count(*) AS n FROM {{tables.conversations}}"))["n"] == 0
+

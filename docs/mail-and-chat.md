@@ -116,57 +116,35 @@ human dashboard token, does not make the viewer a message participant. Dashboard
 activity requires authentication even for public teams and does not include
 individual mail/chat events; supported usage counts are aggregates only.
 
-### Start a fresh conversation
+### Mail thread selection
 
-Ordinary sends may reuse an existing thread. To send on a fresh thread without
-reading the conversation index or the inbox, opt in explicitly:
+A send with a recipient and no existing conversation ID starts a new mail
+conversation. The client may supply the initial UUID in its signed payload;
+the server stores that exact UUID and never moves the message into another
+pair's thread. To continue, send the explicit `conversation_id`. Existing
+clients that also supply a recipient with that ID must match its recorded
+recipient. All participant, recipient-policy, signature and encryption checks
+still apply. The accepted `new_conversation` request field is a no-op.
 
-```bash
-aw mail send --to <teammate> --new-conversation --body-file message.md --json
-```
+HTTP, MCP `send_mail`, saved-contact mail and native MCP ingress follow the
+same rule. Two distinct native ingress events start two mail conversations;
+replaying the same ingress key returns its original committed result. Chat
+session reuse is unchanged. A bare external `did:aw` without a discovered
+address or stored route remains unsupported for first contact.
 
-The CLI allocates and signs a fresh conversation UUID and sends
-`new_conversation: true`. Success JSON includes `message_id` and
-`conversation_id`. The server requires an explicit recipient and the supplied
-conversation ID (HTTP 422 if missing), refuses an existing ID with HTTP 409
-`conversation_exists`, and skips automatic thread reuse. Recipient resolution,
-authorization and signature checks still apply. Use a same-team alias, supported
-`did:key`, or routable address; a bare `did:aw` cannot use a fresh UUID as evidence
-of a stored route and remains unsupported for first contact.
+`GET /v1/conversations?conversation_type=mail` returns the participant-scoped
+mail index, newest activity first. It returns
+`conversations` and `next_cursor`, accept `limit` (1–100), `cursor`,
+`participant_did` and `participant_address`, and never acknowledges mail.
+Filters narrow participant access; they never grant access. Empty mail
+conversations do not appear until a message exists.
 
-`--new-conversation` and `--conversation-id` are mutually exclusive and are
-rejected together before requests. Omitting the new flag preserves ordinary
-threading, including the index-to-inbox fallback. That internal inbox read does
-not acknowledge messages; the public `aw mail inbox` presentation command does.
-Beads and Gas City sends retain their existing behavior and do not expose this
-flag.
-
-Both the CLI and the serving aweb server must include this feature. Hosted
-service adoption additionally requires the operator to adopt that server
-release; a CLI upgrade alone establishes no server support. Older servers may
-reject the added field, or ignore it and return a reused ID. The CLI rejects a
-mismatched response ID instead of reporting a fresh conversation. The message
-may already have been sent in that case. Fresh sends do not automatically retry
-transport failures, HTTP 503, or expired-conversation errors: a lost response
-can also mean the send succeeded. Do not retry automatically.
-
-This command does not prove server support before sending. An integration
-requiring that guarantee must establish the selected service's support through
-its operator's documented release metadata before invoking the command, and
-refuse unknown support. It must not use a canary send as a capability check.
-
-For the hosted onboarding probe, the supported pre-send observation is read-only
-`GET <origin>/meta`, using the scheme and host of the exact `aweb_url` selected
-for sending (remove its trailing `/api`). Parse `build.aweb_version` as semver,
-not the static top-level `version`, and require both the release-owner-declared
-server floor containing this feature and the corresponding local CLI floor.
-The release owner declares those floors when the server and CLI publish and
-the hosted server pin is adopted; this source documentation assigns no numeric
-floor. Do not substitute another service or metadata route. Missing,
-unreachable, malformed or insufficient metadata, or an unrecognized/non-hosted
-service, fails before send with support unknown. The CLI command itself does
-not perform this integration-level check. A post-send HTTP 422 remains a server
-error, not a unique proof of unsupported features or of rollback.
+Each mail item retains `subject` from the newest message and adds `title`
+from the first message, ordered by server receipt time then message ID.
+`first_message_id` identifies that first message. An encrypted first message
+has an empty server-readable title; an authorized client can read and decrypt
+that message for its title. Later replies do not replace the title. Existing
+participant, last-activity, preview and unread-count fields are unchanged.
 
 Base-URL heartbeat probes refuse HTTP redirects: every 3xx response rejects
 that candidate, and discovery may try another API path on the same origin.

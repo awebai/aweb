@@ -212,8 +212,8 @@ def register_tools(
         name="send_mail",
         description=(
             "Send async mail with a required body by recipient, or continue an existing "
-            "mail conversation by conversation_id. Recipient sends reuse the existing "
-            "active one-to-one conversation when present. Hosted custodial sends use managed "
+            "mail conversation by conversation_id. A recipient send starts a new thread. "
+            "Hosted custodial sends use managed "
             "encryption by default when the recipient has an encryption key. The hosted "
             "service can read the mail; this is not end-to-end encryption. Set plaintext=true "
             "to store message content unencrypted."

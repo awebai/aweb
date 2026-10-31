@@ -71,7 +71,6 @@ from aweb.messaging.mail_routing import (
 from aweb.routes.messages import (
     SendMessageRequest,
     _deliver_remote_mail_and_project_locally,
-    _existing_mail_conversation_for_target,
 )
 from aweb.service_errors import ForbiddenError, NotFoundError, ServiceError, ValidationError
 
@@ -256,34 +255,8 @@ async def send_mail(
     if not recipient_ref and not conversation_ref:
         return json.dumps({"error": "Recipient or conversation_id is required"})
 
-    if recipient_ref:
-        if recipient_ref.startswith("did:aw:"):
-            selector = "to_stable_id"
-        elif recipient_ref.startswith("did:key:"):
-            selector = "to_did"
-        elif "/" in recipient_ref:
-            selector = "to_address"
-        else:
-            if not auth.team_id:
-                return json.dumps({"error": "Alias delivery requires team context"})
-            selector = "to_alias"
-        # Select the same active pair as HTTP before custody signs/encrypts.
-        # The continuation below still checks participants and recipient policy.
-        try:
-            existing = await _existing_mail_conversation_for_target(
-                db_infra,
-                auth=mcp_messaging_auth(auth),
-                sender_did=primary_auth_did(auth),
-                sender_address=sender_address,
-                # Read-only lookup data: MCP already validates its own inputs.
-                # Do not impose HTTP's stricter selector/body validators here.
-                payload=SendMessageRequest.model_construct(body=body, **{selector: recipient_ref}),
-                request=auth.request,
-            )
-        except (HTTPException, ServiceError) as exc:
-            return json.dumps({"error": exc.detail})
-        if existing is not None:
-            conversation_ref = existing["conversation_id"]
+    if recipient_ref and not recipient_ref.startswith("did:") and "/" not in recipient_ref and not auth.team_id:
+        return json.dumps({"error": "Alias delivery requires team context"})
 
     if conversation_ref:
         message_id = uuid_mod.uuid4()
