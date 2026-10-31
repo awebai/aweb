@@ -123,13 +123,27 @@ async def test_cli_first_contact_human_alias_with_signed_key(
                 ["mail", "send", "--to", "alice"] if kind == "mail" else
                 ["chat", "send-and-leave", "alice", "--start-conversation"]
             )
-            denied = await asyncio.create_subprocess_exec(
-                str(binary), "--team", TEAM, *command, "--e2ee",
+            # An explicit end-to-end send is refused and delivers nothing.
+            explicit = await asyncio.create_subprocess_exec(
+                str(binary), "--team", TEAM, "--json", *command, "--e2ee",
                 "--body-file", str(body_file), cwd=cwd, env=child_env,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             )
-            await asyncio.wait_for(denied.communicate(), 30)
-            assert denied.returncode != 0
+            explicit_out, _ = await asyncio.wait_for(explicit.communicate(), 30)
+            assert explicit.returncode == 1, explicit_out.decode()
+            await assert_no_delivery()
+            assert await privacy_state() == before
+            # The ordinary send carries no end-to-end request, so it reaches
+            # the consent check, and contacts_only refuses it: a published key
+            # is capability, not consent.
+            denied = await asyncio.create_subprocess_exec(
+                str(binary), "--team", TEAM, "--json", *command,
+                "--body-file", str(body_file), cwd=cwd, env=child_env,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            denied_out, _ = await asyncio.wait_for(denied.communicate(), 30)
+            assert denied.returncode == 1, denied_out.decode()
+            assert json.loads(denied_out)["error"]["code"] == "http_error"
             await assert_no_delivery()
             assert await privacy_state() == before
             return
