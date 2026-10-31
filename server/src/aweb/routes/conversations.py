@@ -1,5 +1,5 @@
 from __future__ import annotations
-from aweb.messaging.mail_attribution import incoming_mail_sql
+from aweb.messaging.mail_attribution import incoming_mail_sql, readable_mail_sql
 
 import json
 from datetime import datetime, timezone
@@ -220,19 +220,7 @@ async def list_conversations_for_auth(
                     {incoming_mail_sql('$1')} AS incoming,
                     COALESCE(m.conversation_id::text, 'legacy:' || m.message_id::text) AS group_key
                 FROM {{{{tables.messages}}}} m
-                WHERE (
-                        m.from_did = ANY($1::text[])
-                     OR m.to_did = ANY($1::text[])
-                     OR (
-                            m.conversation_id IS NOT NULL
-                            AND EXISTS (
-                                SELECT 1
-                                FROM {{{{tables.conversation_participants}}}} cp
-                                WHERE cp.conversation_id = m.conversation_id
-                                  AND cp.did = ANY($1::text[])
-                            )
-                       )
-                    )
+                WHERE {readable_mail_sql('$1')}
                   AND (
                         ($2::text IS NULL AND $3::text IS NULL)
                      OR (

@@ -100,3 +100,20 @@ async def test_normalized_chat_excludes_own_old_key_from_pending_unread_and_ack(
     await mark_messages_read(infra, session_id=cid, participant_did='did:aw:pilot', message_ids=[str(own), str(messages[1])])
     assert await db.fetch_val('SELECT count(*) FROM {{tables.chat_message_reads}} WHERE message_id=$1', own) == 0
     assert await get_pending_conversations(infra, participant_did='did:aw:pilot') == []
+
+
+@pytest.mark.asyncio
+async def test_thread_index_does_not_promote_a_message_signing_key_to_participant(mail_server):
+    from types import SimpleNamespace
+    from aweb.identity_auth_deps import MessagingAuth
+    from aweb.routes.conversations import list_conversations_for_auth
+    env, db = mail_server, mail_server.db
+    cid, _, _ = await seed_thread(env, 'mail')
+    await apply(db)
+    infra = SimpleNamespace(get_manager=lambda _: db)
+    key_subject = MessagingAuth(did_key=env.pilot_did, did_aw=None, address=None)
+    result = await list_conversations_for_auth(infra, key_subject)
+    assert result.conversations == []
+    owner = MessagingAuth(did_key=env.pilot_did, did_aw='did:aw:pilot', address=None)
+    result = await list_conversations_for_auth(infra, owner)
+    assert [item.conversation_id for item in result.conversations] == [str(cid)]

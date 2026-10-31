@@ -88,7 +88,7 @@ def _build_test_app(aweb_db, registry):
 
 
 @pytest.mark.asyncio
-async def test_conversations_lists_identity_scoped_mail_by_current_did(aweb_cloud_db):
+async def test_conversations_lists_identity_scoped_mail_by_local_did(aweb_cloud_db):
     bob_sk, _, bob_did_key = _make_keypair()
 
     await aweb_cloud_db.aweb_db.execute(
@@ -129,7 +129,7 @@ async def test_conversations_lists_identity_scoped_mail_by_current_did(aweb_clou
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
     seed_verified_bindings(app, ("did:aw:bob", bob_did_key, "acme.com/bob"))
 
-    headers = _signed_identity_headers(bob_sk, bob_did_key, "did:aw:bob")
+    headers = _signed_identity_headers(bob_sk, bob_did_key, "")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/v1/conversations", headers=headers)
 
@@ -164,11 +164,11 @@ async def test_conversations_groups_mail_by_conversation_id(aweb_cloud_db, encry
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.conversation_participants}} (
-            conversation_id, did, alias, address, transport_hint, role
+            conversation_id, did, alias, address, transport_hint, role, current_did_key
         )
         VALUES
-            ('55555555-5555-4555-8555-555555555555', 'did:aw:alice', 'alice', 'acme.com/alice', 'mail', 'initiator'),
-            ('55555555-5555-4555-8555-555555555555', $1, 'bob', 'acme.com/bob', 'mail', 'participant')
+            ('55555555-5555-4555-8555-555555555555', 'did:aw:alice', 'alice', 'acme.com/alice', 'mail', 'initiator', NULL),
+            ('55555555-5555-4555-8555-555555555555', 'did:aw:bob', 'bob', 'acme.com/bob', 'mail', 'participant', $1)
         """,
         bob_did_key,
     )
@@ -305,7 +305,7 @@ async def test_conversations_lists_legacy_mail_messages_without_conversation_id_
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
     seed_verified_bindings(app, ("did:aw:bob", bob_did_key, "acme.com/bob"))
 
-    headers = _signed_identity_headers(bob_sk, bob_did_key, "did:aw:bob")
+    headers = _signed_identity_headers(bob_sk, bob_did_key, "")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/v1/conversations", headers=headers)
 
@@ -341,11 +341,11 @@ async def test_conversations_lists_mail_for_sender_identity(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.conversation_participants}} (
-            conversation_id, did, alias, address, transport_hint, role
+            conversation_id, did, alias, address, transport_hint, role, current_did_key
         )
         VALUES
-            ('55555555-5555-4555-8555-555555555555', $1, 'alice', 'acme.com/alice', 'mail', 'initiator'),
-            ('55555555-5555-4555-8555-555555555555', 'did:aw:bob', 'bob', 'acme.com/bob', 'mail', 'participant')
+            ('55555555-5555-4555-8555-555555555555', 'did:aw:alice', 'alice', 'acme.com/alice', 'mail', 'initiator', $1),
+            ('55555555-5555-4555-8555-555555555555', 'did:aw:bob', 'bob', 'acme.com/bob', 'mail', 'participant', NULL)
         """,
         alice_did_key,
     )
@@ -481,7 +481,7 @@ async def test_conversations_lists_mail_by_authoritative_participant(aweb_cloud_
     async def _auth_override():
         return MessagingAuth(
             did_key="did:key:alice-current",
-            did_aw=None,
+            did_aw="did:aw:alice",
             address="acme.com/alice",
             team_id="ops:acme.com",
             alias="alice",
@@ -877,10 +877,10 @@ async def test_conversations_lists_identity_scoped_chat_by_participant_did(aweb_
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
+        INSERT INTO {{tables.chat_participants}} (session_id, did, alias, current_did_key)
         VALUES
-            ('22222222-2222-2222-2222-222222222222', 'did:aw:alice', 'alice'),
-            ('22222222-2222-2222-2222-222222222222', $1, 'bob')
+            ('22222222-2222-2222-2222-222222222222', 'did:aw:alice', 'alice', NULL),
+            ('22222222-2222-2222-2222-222222222222', 'did:aw:bob', 'bob', $1)
         """,
         bob_did_key,
     )

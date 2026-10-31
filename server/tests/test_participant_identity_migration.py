@@ -49,7 +49,7 @@ async def seed_thread(env, kind, *, duplicate=False):
         for did, alias in [(env.pilot_did, 'pilot'), ('did:aw:human', 'human')]:
             await db.execute("""INSERT INTO {{tables.chat_participants}}
                 (session_id,did,alias,joined_at,agent_id,left_at) VALUES ($1,$2,$3,$4,$5,$6)""",
-                cid, did, alias, old, UUID(env.pilot) if alias == 'pilot' else UUID(env.human), old)
+                cid, did, alias, old, UUID(env.pilot) if alias == 'pilot' else UUID(env.human), old if alias == 'pilot' else None)
         if duplicate:
             await db.execute("""INSERT INTO {{tables.chat_participants}}
                 (session_id,did,alias,joined_at) VALUES ($1,'did:aw:pilot','current-label',$2)""", cid, old + timedelta(days=1))
@@ -121,9 +121,25 @@ async def test_upgrade_preserves_threads_duplicate_state_and_signed_message_byte
     assert {item.conversation_id for item in result.conversations} == {str(r[2][0]) for r in rows}
     assert [dict(r) for r in await db.fetch_all('SELECT * FROM {{tables.messages}} ORDER BY message_id')] == messages_before
     assert [dict(r) for r in await db.fetch_all('SELECT * FROM {{tables.chat_messages}} ORDER BY message_id')] == chat_before
-    snapshot = [dict(r) for r in await db.fetch_all('SELECT * FROM {{tables.conversation_participants}} ORDER BY conversation_id,did')]
+    queries = [
+        'SELECT * FROM {{tables.conversation_participants}} ORDER BY conversation_id,did',
+        'SELECT * FROM {{tables.chat_participants}} ORDER BY session_id,did',
+        'SELECT * FROM {{tables.chat_message_reads}} ORDER BY session_id,did,message_id',
+        'SELECT * FROM {{tables.chat_read_receipts}} ORDER BY session_id,did',
+    ]
+    snapshot = [[dict(r) for r in await db.fetch_all(query)] for query in queries]
     await apply(db)
-    assert [dict(r) for r in await db.fetch_all('SELECT * FROM {{tables.conversation_participants}} ORDER BY conversation_id,did')] == snapshot
+    assert [[dict(r) for r in await db.fetch_all(query)] for query in queries] == snapshot
+    # D8 permits agent chat. This neighbour isolates upgrade continuation from
+    # the separate refusal of chat to a human.
+    await db.execute("UPDATE {{tables.agents}} SET agent_type='agent' WHERE agent_id=$1", UUID(env.human))
+    for kind, _, (cid, _, _) in rows:
+        if kind == 'mail':
+            sent = await env.mcp_mail(conversation_id=str(cid), plaintext=True)
+        else:
+            sent = await env.mcp_call('send_chat', conversation_id=str(cid), message='after upgrade', plaintext=True)
+        assert 'error' not in sent, sent
+        assert sent['conversation_id'] == str(cid)
 
 
 @pytest.mark.asyncio
