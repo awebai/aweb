@@ -128,13 +128,13 @@ async def test_fresh_address_delivery_after_cli_rotation_is_local(
             assert response.status_code == expected_status, response.text
             if expected_status != 200:
                 after_counts = {name: await env.db.fetch_val("SELECT count(*) FROM {{tables." + name + "}}") for name in tables}
-                if expected_status == 422:
+                assert after_counts["messages"] == before_counts["messages"]
+                assert after_counts["chat_messages"] == before_counts["chat_messages"]
+                if kind == "mail":
                     assert after_counts == before_counts
-                else:
-                    # Remote chat may retain its outgoing session projection;
-                    # it must not store a locally delivered message.
-                    assert after_counts["messages"] == before_counts["messages"]
-                    assert after_counts["chat_messages"] == before_counts["chat_messages"]
+                # Existing chat selection may retain/close a session before a
+                # refusal. This routing test pins refusal and no delivered mail
+                # or chat, not a new chat-session transaction contract.
                 return None
             table, column = ("messages", "conversation_id") if kind == "mail" else ("chat_messages", "session_id")
             stored = await env.db.fetch_one(
