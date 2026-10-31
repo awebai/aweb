@@ -643,6 +643,8 @@ func TestInitJoinFromHostedSuccessPreservesSourceAndConnectsTarget(t *testing.T)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/create-invite":
 			sawCreateInvite = true
 			_ = json.NewEncoder(w).Encode(map[string]any{"invite_id": "invite-hosted", "token": "aw_inv_join_hosted", "server_url": serverURL})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/invite-preview":
+			writeLegacyHostedPreviewForTest(t, w, r, teamID, serverURL)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
 			sawAccept = true
 			var req awid.SpawnAcceptInviteRequest
@@ -838,6 +840,8 @@ func TestInitAdmissionTeamIDIssuesAcceptsAndConnects(t *testing.T) {
 				t.Fatalf("admission req=%+v", req)
 			}
 			_ = json.NewEncoder(w).Encode(teamAdmissionInviteResponse{InviteID: "invite-admission", Token: "aw_inv_admission", MaxUses: 1, TeamID: teamID, CanonicalTeamID: teamID, ServerURL: serverURL})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/invite-preview":
+			writeLegacyHostedPreviewForTest(t, w, r, teamID, serverURL)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
 			sawAccept = true
 			var req awid.SpawnAcceptInviteRequest
@@ -912,6 +916,8 @@ func TestInitGlobalHostedJoinWithExistingIdentityInstallsGlobalCert(t *testing.T
 	var sawGlobalAccept bool
 	server := newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/invite-preview":
+			writeLegacyHostedPreviewForTest(t, w, r, teamID, serverURL)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
 			var req awid.SpawnAcceptInviteRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

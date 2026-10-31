@@ -315,6 +315,9 @@ func TestTeamExtendAmbientAPIKeyMatchingActiveTeamCreatesRoster(t *testing.T) {
 	teamDIDKey := awid.ComputeDIDKey(teamPub)
 	var initCalls int
 	server := newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveAPIKeyCreationTeamRead(w, r, teamID) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/workspaces/init":
 			initCalls++
@@ -422,6 +425,8 @@ func TestTeamExtendCurrentWorkspaceGlobalPreflightHasZeroMutation(t *testing.T) 
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/create-invite":
 			mutationCalls++
 			_ = json.NewEncoder(w).Encode(map[string]any{"invite_id": "invite-1", "token": "aw_inv_hosted_rollback_token", "server_url": serverURL})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/invite-preview":
+			writeLegacyHostedPreviewForTest(t, w, r, teamID, serverURL)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
 			mutationCalls++
 			var req map[string]any
@@ -584,6 +589,9 @@ func TestTeamExtendMiddleFailureReportsEveryRosterOutcome(t *testing.T) {
 			teamDIDKey := awid.ComputeDIDKey(teamPub)
 			var attempted []string
 			server := newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+				if serveAPIKeyCreationTeamRead(w, r, teamID) {
+					return
+				}
 				switch {
 				case r.Method == http.MethodPost && r.URL.Path == "/api/v1/workspaces/init":
 					if got := r.Header.Get("Authorization"); got != "Bearer "+apiKey {
@@ -705,6 +713,9 @@ func TestTeamExtendFailedBootstrapAndWorktreeSetupRemoveHomeAndAllowSameNameRetr
 	var initCalls, connectCalls, removeCalls int
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveAPIKeyCreationTeamRead(w, r, teamID) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/workspaces/init":
 			initCalls++
@@ -809,6 +820,9 @@ func TestTeamExtendAmbientAPIKeyTeamMismatchRollsBackWithWorkspaceAssertion(t *t
 	var initCalls, connectCalls, removeCalls int
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveAPIKeyCreationTeamRead(w, r, actualTeamID) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/workspaces/init":
 			initCalls++
@@ -900,6 +914,9 @@ func TestTeamExtendAPIKeyTeamIDMismatchRollsBackWithExplicitAuth(t *testing.T) {
 	var removeAuth string
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveAPIKeyCreationTeamRead(w, r, actualTeamID) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/workspaces/init":
 			initCalls++

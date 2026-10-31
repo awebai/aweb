@@ -8,6 +8,7 @@ import type { AgentEvent } from "../../channel-core/src/api/events.js";
 import { PinStore } from "../../channel-core/src/identity/pinstore.js";
 import { canonicalJSON, signMessage, type MessageEnvelope } from "../../channel-core/src/identity/signing.js";
 import { SenderTrustManager } from "../../channel-core/src/identity/trust.js";
+import { readReceivedIdChain } from "../../channel-core/src/identity/received_id_chain.js";
 import { createChannelTraceSink, dispatchEvent } from "../src/index.js";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
@@ -18,6 +19,14 @@ const vectors = JSON.parse(
   did: string;
   stableID: string;
 };
+
+// These legacy signature fixtures supply enrollment evidence to the production
+// reader; they do not manufacture a responsibility verdict.
+const verifyLegacyResponsibility: SenderTrustManager["verifyResponsibility"] = (message, authenticated) =>
+  readReceivedIdChain(message, authenticated, {
+    enrollmentFor: async () => ({ state: "not_enrolled", domain: null }),
+    evidence: async () => null,
+  });
 
 function b64ToBytes(value: string): Uint8Array {
   return Uint8Array.from(Buffer.from(value, "base64"));
@@ -227,6 +236,7 @@ describe("dispatchEvent", () => {
         pin.did_key = fromDid;
         return { status, stored: true };
       }),
+      verifyResponsibility: verifyLegacyResponsibility,
     } as unknown as SenderTrustManager;
 
     await dispatchEvent(
@@ -249,6 +259,7 @@ describe("dispatchEvent", () => {
           from: "acme.com/alice",
           message_id: "msg-degraded",
           subject: "hello",
+          responsibility: JSON.stringify({ outcome: "unknown", human_id: null, identity_valid: null, kind: null, reason: "unregistered_identity" }),
           trust_status: "verified",
           verified: "true",
         },
@@ -267,7 +278,7 @@ describe("dispatchEvent", () => {
       post: vi.fn().mockResolvedValue(undefined),
     };
     const normalizeResolvedTrust = vi.fn(async () => ({ status: "verified", stored: false }));
-    const trust = { normalizeResolvedTrust } as unknown as SenderTrustManager;
+    const trust = { normalizeResolvedTrust, verifyResponsibility: verifyLegacyResponsibility } as unknown as SenderTrustManager;
 
     await dispatchEvent(
       mcp as never,
@@ -301,6 +312,7 @@ describe("dispatchEvent", () => {
           from: "acme.com/alice",
           message_id: "msg-local-trust",
           subject: "hello",
+          responsibility: JSON.stringify({ outcome: "unknown", human_id: null, identity_valid: null, kind: null, reason: "unregistered_identity" }),
           trust_status: "verified",
           verified: "true",
         },
@@ -318,6 +330,7 @@ describe("dispatchEvent", () => {
     };
     const trust = {
       normalizeResolvedTrust: vi.fn(async () => ({ status: "identity_mismatch", stored: false })),
+      verifyResponsibility: verifyLegacyResponsibility,
     } as unknown as SenderTrustManager;
 
     await dispatchEvent(
@@ -339,6 +352,7 @@ describe("dispatchEvent", () => {
           from: "acme.com/alice",
           message_id: "msg-hard-error",
           subject: "hello",
+          responsibility: JSON.stringify({ outcome: "unknown", human_id: null, identity_valid: false, kind: null, reason: "subject_mismatch" }),
           trust_status: "identity_mismatch",
           verified: "false",
         },
@@ -357,9 +371,11 @@ describe("dispatchEvent", () => {
       }),
       post: vi.fn().mockResolvedValue(undefined),
     };
+    const enrollmentFor = vi.fn(async () => ({ state: "not_enrolled", domain: null }));
     const trust = new SenderTrustManager(
       { get: vi.fn() } as never,
       {
+        idStatus: { enrollmentFor },
         verifyStableIdentity: vi.fn(async () => ({ outcome: "OK_DEGRADED" })),
         resolveIdentity: vi.fn(async () => ({
           did: vectors.did,
@@ -395,11 +411,13 @@ describe("dispatchEvent", () => {
           from: "acme.com/alice",
           message_id: "msg-stable-recipient",
           subject: "stable recipient",
+          responsibility: JSON.stringify({ outcome: "unknown", human_id: null, identity_valid: null, kind: null, reason: "unregistered_identity" }),
           trust_status: "verified",
           verified: "true",
         },
       },
     });
+    expect(enrollmentFor).toHaveBeenCalledExactlyOnceWith(vectors.stableID, "acme.com/alice");
   });
 
   test("fetches mail by triggering message_id instead of a latest-10 window", async () => {

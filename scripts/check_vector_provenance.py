@@ -179,6 +179,10 @@ ROOT_CONSUMERS = {
         "page-proposal-v1.json",
         '"../../../docs/vectors/page-proposal-v1.json"',
     ),
+    PurePosixPath("cli/go/cmd/aw/hosted_creation_install_test.go"): _consumer(
+        "id-certificates-v1.json",
+        '"../../../../docs/vectors/id-certificates-v1.json"',
+    ),
     PurePosixPath("cli/go/cmd/aw/id_create_parent_test.go"): _consumer(
         "id-certificates-v1.json",
         '"../../../../docs/vectors/id-certificates-v1.json"',

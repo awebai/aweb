@@ -175,10 +175,9 @@ type agentChainStep struct {
 	now         time.Time
 }
 
-// install issues, registers and installs the agent's chain. A certificate
-// the issuer already recorded for this agent is released again instead of
-// a second one.
-func (s agentChainStep) install(ctx context.Context) (map[string]any, error) {
+// issue reuses the issuer's original certificate for this child, or records
+// its first certificate before returning it for registration.
+func (s agentChainStep) issue(ctx context.Context) (map[string]any, error) {
 	entry, err := s.issuer.issuance.EntryForSubject(s.agentID)
 	if err != nil {
 		return nil, err
@@ -195,6 +194,14 @@ func (s agentChainStep) install(ctx context.Context) (map[string]any, error) {
 		if bundle, err = awid.IssueIDChild(s.issuer.issuance, child, s.issuer.parentChain, evidence, s.issuer.signer("issue the certificate of "+s.agentID), s.now); err != nil {
 			return nil, fmt.Errorf("issue the certificate of %s: %w", s.agentID, err)
 		}
+	}
+	return bundle, nil
+}
+
+func (s agentChainStep) install(ctx context.Context) (map[string]any, error) {
+	bundle, err := s.issue(ctx)
+	if err != nil {
+		return nil, err
 	}
 	call, cancel := commandAPIContext(nil, ctx)
 	_, err = s.registry.RegisterIDCertificateAt(call, s.registryURL, bundle, awid.KeySigner(s.agentKey), nil, nil)

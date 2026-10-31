@@ -19,6 +19,7 @@ import {
 } from "../src/index.js";
 import * as ed from "@noble/ed25519";
 import { computeDIDKey } from "../src/identity/did.js";
+import { readReceivedIdChain } from "../src/identity/received_id_chain.js";
 import { canonicalJSON, signMessage, type MessageEnvelope } from "../src/identity/signing.js";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
@@ -29,6 +30,14 @@ const vectors = JSON.parse(
   did: string;
   stableID: string;
 };
+
+// These signature/dispatch fixtures predate ID-tree enrollment. Supply the
+// authoritative legacy enrollment fact without manufacturing a chain verdict.
+const verifyLegacyResponsibility: SenderTrustManager["verifyResponsibility"] = (message, authenticated) =>
+  readReceivedIdChain(message, authenticated, {
+    enrollmentFor: async () => ({ state: "not_enrolled", domain: null }),
+    evidence: async () => null,
+  });
 
 function b64ToBytes(value: string): Uint8Array {
   return Uint8Array.from(Buffer.from(value, "base64"));
@@ -782,6 +791,12 @@ describe("channel-core dispatchAgentEvent", () => {
       post: vi.fn().mockResolvedValue(undefined),
     };
     const registry = {
+      idStatus: {
+        enrollmentFor: vi.fn(async () => {
+          expect(lockHeld).toBe(false);
+          return { state: "not_enrolled", domain: null };
+        }),
+      },
       resolveIdentity: vi.fn(async () => {
         expect(lockHeld).toBe(false);
         throw new Error("team aliases must use the authenticated roster");
@@ -1946,7 +1961,7 @@ describe("channel-core dispatchAgentEvent", () => {
       {
         client: client as never,
         pinStore: new PinStore(),
-        trust: { normalizeResolvedTrust: normalizeTrust } as unknown as SenderTrustManager,
+        trust: { normalizeResolvedTrust: normalizeTrust, verifyResponsibility: verifyLegacyResponsibility } as unknown as SenderTrustManager,
         self,
         onAwakening,
       },
@@ -2249,7 +2264,7 @@ describe("channel-core dispatchAgentEvent", () => {
       {
         client: client as never,
         pinStore: new PinStore(),
-        trust: { normalizeResolvedTrust: normalizeTrust } as unknown as SenderTrustManager,
+        trust: { normalizeResolvedTrust: normalizeTrust, verifyResponsibility: verifyLegacyResponsibility } as unknown as SenderTrustManager,
         self,
         onAwakening,
       },
@@ -2311,6 +2326,12 @@ describe("channel-core dispatchAgentEvent", () => {
     };
     let lockHeld = false;
     const registry = {
+      idStatus: {
+        enrollmentFor: vi.fn(async () => {
+          expect(lockHeld).toBe(false);
+          return { state: "not_enrolled", domain: null };
+        }),
+      },
       verifyStableIdentity: vi.fn(async () => {
         expect(lockHeld).toBe(false);
         return { outcome: "OK_VERIFIED", currentDidKey: vectors.did };
@@ -2418,6 +2439,7 @@ describe("channel-core dispatchAgentEvent", () => {
     const trust = new SenderTrustManager(
       client as never,
       {
+        idStatus: { enrollmentFor: async () => ({ state: "not_enrolled", domain: null }) },
         verifyStableIdentity: async () => ({ outcome: "OK_VERIFIED", currentDidKey: vectors.did }),
         resolveIdentity: async () => ({
           did: vectors.did,

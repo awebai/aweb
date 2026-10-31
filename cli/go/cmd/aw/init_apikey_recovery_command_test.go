@@ -41,6 +41,11 @@ func TestAPIKeyGlobalRecoveryCommand(t *testing.T) {
 				mu.Lock()
 				defer mu.Unlock()
 				switch {
+				case r.Method == "GET" && r.URL.Path == "/api/v1/teams/current":
+					if r.Header.Get("Authorization") != "Bearer "+provisioningKey {
+						t.Error("team selection did not use original authority")
+					}
+					json.NewEncoder(w).Encode(map[string]any{"team_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": team})
 				case r.Method == "POST" && r.URL.Path == "/v1/did":
 					var body map[string]any
 					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
