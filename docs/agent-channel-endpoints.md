@@ -16,7 +16,9 @@ one canonical aweb address. Let `T` identify a selected team. Membership in T
 is a relationship of H, not another human identity. An actor row, session key,
 team alias or certificate is a local projection of that relationship. H's
 identity namespace need not match T or S's namespace; joining another team
-does not allocate another human address.
+does not allocate another human address. This is a protocol requirement, not
+evidence of hosted cross-namespace membership support: each consuming host
+must prove that membership path before enabling it.
 
 The existing [ID contract](id-certificates.md#1-what-the-tree-proves), lines
 14–38, separates responsibility, custody and membership. Its human shape

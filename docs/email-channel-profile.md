@@ -98,7 +98,10 @@ H solely by comparing From, Reply-To or a display name to an account row.
 
 Where the current link, authenticated intake, consent, target access and real
 signing custody authorize a native human send, the actual authorized human
-key signs as H with `via=email`. A self-custodial human must supply their own
+key signs as H with `via=email`. Native email reply-in waits until H exists,
+is registered/adopted and the host has that legitimate signing authority; a
+per-team dashboard/workspace key cannot bridge the wait. A self-custodial
+human must supply their own
 signed content or use the existing typed bridged-subject path; the host may
 not borrow a team actor's key to stand in for H. The
 [existing author/custody boundary](human-channels-contract-proposal.md#unlinked-people-and-external-only-agents-a-versus-b),
