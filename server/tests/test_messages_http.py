@@ -7807,8 +7807,8 @@ async def test_exact_message_read_is_participant_visible_side_effect_free_and_ce
         )
         """,
         UUID(encrypted_id),
-        alice_did_key,
-        local_bob_did_key,
+        "did:aw:alice",
+        "did:aw:bob",
         json.dumps(encrypted),
         encrypted_storage["encrypted_ciphertext"],
         json.dumps(encrypted_storage["encrypted_key_wraps"]),
