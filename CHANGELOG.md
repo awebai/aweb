@@ -13,9 +13,14 @@
   Existing installs reached from other machines on a LAN lose that access
   after pulling this compose file until `server/.env` sets
   `AWEB_BIND_ADDRESS=0.0.0.0` (or one interface's address).
-- aw: `aw check` names the team, agent and server; `aw team join` takes the
-  invite token from `--token-file` or `--token-stdin`; `aw team invite`
-  warns on stderr that the printed token is a credential.
+- aw: `aw check` names the team, agent and server; `aw team join` and
+  `aw id team accept-invite` take the invite token from `--token-file` or
+  `--token-stdin`; `aw team invite`, `aw id team invite` and
+  `aw team admission-invite` warn on stderr that the printed token is a
+  credential, say when a hosted invite expires (also as `expires_at` in
+  `--json`) or that a local invite is valid until it is used, and print the
+  join command in its `--token-file` form. The admission invite's
+  `join_command` field no longer embeds the token.
 
 - aw: `aw init --new-team` on a local (localhost) registry refuses a team
   that already exists instead of adding this workspace to it, and

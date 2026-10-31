@@ -113,3 +113,65 @@ func TestTeamInviteWarnsThatThePrintedTokenIsACredential(t *testing.T) {
 		t.Fatal("the warning repeats the token")
 	}
 }
+
+// The printed join command reads the token from a file, so following the
+// invite keeps the token out of shell history; the token itself is printed
+// once, on its own line.
+func TestTeamInviteCommandReadsTheTokenFromAFile(t *testing.T) {
+	for _, tc := range []struct {
+		out  teamInviteOutput
+		want string
+	}{
+		{teamInviteOutput{Token: "fixture-token", PorcelainJoin: true}, "Command:     aw team join --token-file <file> --name <name>\n"},
+		{teamInviteOutput{Token: "fixture-token"}, "Command:     aw id team accept-invite --token-file <file> --name <name>\n"},
+	} {
+		got := formatTeamInvite(tc.out)
+		if !strings.Contains(got, tc.want) {
+			t.Fatalf("missing %q in:\n%s", tc.want, got)
+		}
+		if strings.Count(got, "fixture-token") != 1 || !strings.Contains(got, "Token:       fixture-token\n") {
+			t.Fatalf("the token must appear once, on the Token line:\n%s", got)
+		}
+	}
+}
+
+// The warning names only flags that the printed command has, and says when
+// the invite expires when the invite carries an expiry.
+func TestTeamInviteWarningFitsThePrintedCommand(t *testing.T) {
+	warning := teamInviteTokenWarning("")
+	for _, want := range []string{"credential", "--token-file", "--token-stdin", "command below"} {
+		if !strings.Contains(warning, want) {
+			t.Fatalf("warning %q does not say %q", warning, want)
+		}
+	}
+	if strings.Contains(warning, "aw team join") {
+		t.Fatalf("warning names a command the low-level invite does not print: %q", warning)
+	}
+	// A local invite records no expiry: it is valid until it is used.
+	if !strings.Contains(warning, "can join the team until it is used.") || strings.Contains(warning, "expire") {
+		t.Fatalf("local invite warning must say it is valid until used, with no expiry: %q", warning)
+	}
+	if got := teamInviteTokenWarning("2026-11-06T12:00:00Z"); !strings.Contains(got, "2026-11-06T12:00:00Z") {
+		t.Fatalf("warning does not say when the invite expires: %q", got)
+	}
+}
+
+// aw id team accept-invite reads its token from a file too: the flag its
+// invite command prints.
+func TestAcceptInviteTakesTheTokenFromAFile(t *testing.T) {
+	if teamAcceptInviteCmd.Flags().Lookup("token-file") == nil {
+		t.Fatal("aw id team accept-invite has no --token-file")
+	}
+	cmd := &cobra.Command{}
+	cmd.Flags().String("token-file", "", "")
+	cmd.Flags().Bool("token-stdin", false, "")
+	if err := cmd.Flags().Parse([]string{"--token-file", "invite.token"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := teamAcceptInviteCmd.Args(cmd, nil); err != nil {
+		t.Fatalf("--token-file without a positional token: %v", err)
+	}
+	if err := teamAcceptInviteCmd.Args(cmd, []string{"positional"}); exitCode(err) != 2 {
+		t.Fatalf("--token-file with a positional token: want a usage refusal, got %v", err)
+	}
+}
