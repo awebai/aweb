@@ -157,7 +157,7 @@ func TestInitTeamFlagIsForANewLocalTeamOnly(t *testing.T) {
 		gotTeam = req.TeamName
 		return connectOutput{Status: "connected", TeamID: req.TeamName + ":local", Alias: req.Alias, AwebURL: req.AwebURL}, nil
 	}
-	run := func() error {
+	runIn := func(dir string) error {
 		cmd := &cobraCommandClone{Command: *initCmd}
 		cmd.ResetFlagsForTest()
 		cmd.Command.SetContext(context.Background())
@@ -165,11 +165,12 @@ func TestInitTeamFlagIsForANewLocalTeamOnly(t *testing.T) {
 		cmd.Command.SetOut(io.Discard)
 		cmd.Command.SetErr(io.Discard)
 		var err error
-		withTestWorkingDir(t, t.TempDir(), func() {
+		withTestWorkingDir(t, dir, func() {
 			_ = captureStdout(t, func() { err = runInit(&cmd.Command, nil) })
 		})
 		return err
 	}
+	run := func() error { return runIn(t.TempDir()) }
 	initAwebURL, initAWIDRegistry, initName, initTeam = "http://localhost:8100", "http://127.0.0.1:8010", "frank", "ops"
 
 	initNewTeam, initBYOD, initDomain = true, false, ""
@@ -190,6 +191,34 @@ func TestInitTeamFlagIsForANewLocalTeamOnly(t *testing.T) {
 			t.Fatalf("%s: want a --team usage error, got %v (team %q)", tc.name, err, gotTeam)
 		}
 	}
+
+	// The paths init takes before the local one never see --team, so it is
+	// refused before they contact or change anything.
+	initNewTeam, initBYOD, initDomain = true, false, ""
+	unreachable := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("--team reached the server: %s %s", r.Method, r.URL.Path)
+		http.Error(w, "refused", http.StatusTeapot)
+	}))
+	initAwebURL = unreachable.URL
+	t.Run("with AWEB_API_KEY", func(t *testing.T) {
+		t.Setenv(initAPIKeyEnvVar, "aw_sk_test")
+		gotTeam = ""
+		err := run()
+		if exitCode(err) != 2 || !strings.Contains(err.Error(), "--team") || gotTeam != "" {
+			t.Fatalf("want a --team usage error before API-key init, got %v (team %q)", err, gotTeam)
+		}
+	})
+	t.Run("in a folder with a certificate", func(t *testing.T) {
+		dir := t.TempDir()
+		if _, err := awconfig.SaveTeamCertificateForTeam(dir, "default:local", &awid.TeamCertificate{Team: "default:local"}); err != nil {
+			t.Fatal(err)
+		}
+		gotTeam = ""
+		err := runIn(dir)
+		if exitCode(err) != 2 || !strings.Contains(err.Error(), "--team") || gotTeam != "" {
+			t.Fatalf("want a --team usage error before certificate init, got %v (team %q)", err, gotTeam)
+		}
+	})
 }
 
 func assertNoControllerKeys(t *testing.T) {

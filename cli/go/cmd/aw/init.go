@@ -516,7 +516,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	if cmd.Flags().Changed("org") && !initWorkspaceTeam {
 		return usageError("--org requires --workspace-team")
 	}
-	if strings.TrimSpace(initTeam) != "" && (!initNewTeam || initBYOD || initGlobal || strings.TrimSpace(initUsername) != "" || strings.TrimSpace(initDomain) != "") {
+	if strings.TrimSpace(initTeam) != "" && !initTeamFlagApplies() {
 		return initTeamFlagUsageError()
 	}
 	if initRemoveNotifyHook {

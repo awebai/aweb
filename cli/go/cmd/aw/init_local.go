@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -68,9 +69,31 @@ func localNamespaceHeldElsewhere(ctx context.Context, registry *awid.RegistryCli
 	return usageError("The local namespace on %s was set up with a key this home does not hold, so aw init cannot create a team in it. %s", registryURL, localTeamAdvice)
 }
 
+// initTeamFlagApplies reports whether this init can reach the local
+// --new-team path, the only one that reads --team. The paths runInit takes
+// before it (workspace team, --join-from, admission, AWEB_API_KEY, an
+// existing certificate or workspace) would ignore the flag.
+func initTeamFlagApplies() bool {
+	if !initNewTeam || initBYOD || initGlobal || strings.TrimSpace(initUsername) != "" || strings.TrimSpace(initDomain) != "" {
+		return false
+	}
+	if initWorkspaceTeam || strings.TrimSpace(initJoinFrom) != "" || strings.TrimSpace(initAdmissionTeamID) != "" || resolveInitAPIKey() != "" {
+		return false
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return false
+	}
+	if hasCertificateForInit(wd) {
+		return false
+	}
+	missing, err := initWorkspaceMissing(wd)
+	return err == nil && missing
+}
+
 // initTeamFlagUsageError says where --team applies.
 func initTeamFlagUsageError() error {
-	return usageError("--team names the team that aw init --new-team creates on a local (localhost) awid registry; it does not apply without --new-team, or with --byod, --domain, --global or --username")
+	return usageError("--team names the team that aw init --new-team creates on a local (localhost) awid registry, in a folder with no aw workspace or certificate; it does not apply without --new-team, with --byod, --domain, --global, --username, --join-from or --workspace-team, or with AWEB_API_KEY set")
 }
 
 // localTeamAlreadyExists refuses --new-team for a local team that is already
