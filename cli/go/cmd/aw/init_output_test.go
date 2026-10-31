@@ -18,8 +18,8 @@ func TestCLITutorialRouteIsNotAliasedToTaskWorkflow(t *testing.T) {
 		t.Fatalf("read task-first guide: %v", err)
 	}
 
-	if !strings.Contains(string(tutorial), `title: "First durable agent round trip with aw"`) {
-		t.Fatal("CLI tutorial does not identify the durable round-trip audience")
+	if !strings.Contains(string(tutorial), `title: "Connect two agents with aw"`) {
+		t.Fatal("CLI tutorial does not identify itself as the page that connects two agents")
 	}
 	if strings.Contains(string(startWorking), "/docs/cli-tutorial/") {
 		t.Fatal("task-first guide aliases the canonical CLI tutorial route")

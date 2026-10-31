@@ -19,15 +19,17 @@ import (
 
 // connectOutput is the JSON output for `aw init` when using certificate auth.
 type connectOutput struct {
-	Status        string `json:"status"`
-	TeamID        string `json:"team_id"`
-	Alias         string `json:"alias"`
-	AwebURL       string `json:"aweb_url"`
-	AgentID       string `json:"-"`
-	WorkspaceID   string `json:"workspace_id,omitempty"`
-	StableID      string `json:"stable_id,omitempty"`
-	Address       string `json:"address,omitempty"`
-	IdentityScope string `json:"identity_scope,omitempty"`
+	IDRegistration string              `json:"id_registration,omitempty"`
+	Responsibility *awid.IDChainResult `json:"responsibility,omitempty"`
+	Status         string              `json:"status"`
+	TeamID         string              `json:"team_id"`
+	Alias          string              `json:"alias"`
+	AwebURL        string              `json:"aweb_url"`
+	AgentID        string              `json:"-"`
+	WorkspaceID    string              `json:"workspace_id,omitempty"`
+	StableID       string              `json:"stable_id,omitempty"`
+	Address        string              `json:"address,omitempty"`
+	IdentityScope  string              `json:"identity_scope,omitempty"`
 }
 
 // connectResponse is the server response from POST /v1/connect.
@@ -338,5 +340,8 @@ func formatConnect(v any) string {
 	sb.WriteString(fmt.Sprintf("Team:        %s\n", out.TeamID))
 	sb.WriteString(fmt.Sprintf("Name:        %s\n", out.Alias))
 	sb.WriteString(fmt.Sprintf("Aweb URL:    %s\n", out.AwebURL))
+	if out.IDRegistration != "" {
+		sb.WriteString(fmt.Sprintf("ID registration: %s\n", out.IDRegistration))
+	}
 	return sb.String()
 }

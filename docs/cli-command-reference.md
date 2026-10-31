@@ -596,13 +596,13 @@ otherwise the host's human CLI login authorizes it.
 Flags:
 - `--domain string Namespace domain for the global identity address`
 - `-h, --help help for create`
-- `--human-parent string did:aw of the human on this machine who issues the agent's certificate`
+- `--human-parent string did:aw of the issuing human (local key, or a registered account human with --org)`
 - `--inbound-mode string Hosted inbound delivery mode (default team-and-contacts; requires --org)`
 - `--name string Global identity name (address name under --domain)`
 - `--org string Hosted organization slug or ID (human CLI login or explicit owner principal)`
 - `--owner-identity-home string Authorize --org creation with this owner's absolute native credential directory`
 - `--registry string Registry origin override (default: api.awid.ai)`
-- `--root-parent Have this machine's namespace controller issue the agent's certificate (an agent with no human)`
+- `--root-parent Have this machine's namespace controller issue a humanless agent (BYOT only)`
 - `--skip-dns-verify Skip the DNS TXT verification prompt and lookup`
 - `--team-id string Chosen hosted team service UUID or canonical name:namespace (requires --org)`
 

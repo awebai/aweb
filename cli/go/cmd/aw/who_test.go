@@ -28,6 +28,7 @@ type whoVectors struct {
 	Certificates map[string]struct {
 		Signed map[string]any `json:"signed"`
 	} `json:"certificates"`
+	Statuses map[string]map[string]any `json:"status_fixtures"`
 }
 
 func loadWhoVectors(t *testing.T) whoVectors {
@@ -215,6 +216,66 @@ func TestWhoRefusesARegistryTheDomainDoesNotName(t *testing.T) {
 	}
 }
 
+func TestWhoInstalledGlobalChainIsIndependentOfAddressDomain(t *testing.T) {
+	v := loadWhoVectors(t)
+	for _, tc := range []struct {
+		name, address, status, outcome, reason string
+		certificates                           []string
+	}{
+		{"same-domain", "example.com/child", "normal", "nearest_human", "verified", []string{"alice", "global-agent"}},
+		{"alias-nearest-human", "signup-owner.example.com/child", "normal", "nearest_human", "verified", []string{"alice", "global-agent"}},
+		{"alias-no-human", "signup-owner.example.com/child", "registered-root-agent-rotated", "no_human", "verified", []string{"registered-root-agent"}},
+		{"alias-revoked", "signup-owner.example.com/child", "alice-revoked-now", "unknown", "revoked", []string{"alice", "global-agent"}},
+		{"alias-unavailable", "signup-owner.example.com/child", "", "unavailable", "evidence_unavailable", []string{"alice", "global-agent"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := whoIdentity(t, v, false, false)
+			key := v.Keys["global_agent"]
+			seed, err := hex.DecodeString(key.SeedHex)
+			if err != nil {
+				t.Fatal(err)
+			}
+			home := dir + "/.aw"
+			identity := &awconfig.WorktreeIdentity{DID: key.DIDKey, StableID: key.DIDAW, Address: tc.address, Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal}
+			if err := awconfig.SaveWorktreeIdentityTo(home+"/identity.yaml", identity); err != nil {
+				t.Fatal(err)
+			}
+			if err := awid.SaveSigningKey(home+"/signing.key", ed25519.NewKeyFromSeed(seed)); err != nil {
+				t.Fatal(err)
+			}
+			certificates := []any{}
+			for _, name := range tc.certificates {
+				certificates = append(certificates, v.Certificates[name].Signed)
+			}
+			if err := awconfig.SaveInstalledIDChain(home, map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": certificates}); err != nil {
+				t.Fatal(err)
+			}
+			evidence := &awid.IDChainEvidence{}
+			if tc.status != "" {
+				status := v.Statuses[tc.status]
+				epochs := status["namespace"].(map[string]any)["epochs"].([]any)
+				epoch := epochs[len(epochs)-1].(map[string]any)
+				age := float64(0)
+				evidence = &awid.IDChainEvidence{Status: status, NamespaceAuthority: map[string]any{"domain": "example.com", "dns_name": "_awid.example.com", "inherited": false, "controller_key": epoch["did_key"]}, AgeSeconds: &age}
+			}
+			out, err := executeWho(t.Context(), whoOptions{WorkingDir: dir, Status: whoFixedStatus{evidence}, TXTResolver: staticTXTResolver{}})
+			if err != nil || out.ID != key.DIDAW || out.Domain != "example.com" || out.Outcome != tc.outcome || out.Reason != tc.reason {
+				t.Fatalf("address %s: out %+v err %v", tc.address, out, err)
+			}
+			if tc.reason == "verified" {
+				if out.IdentityValid == nil || !*out.IdentityValid || len(out.Chain) != len(tc.certificates) {
+					t.Fatalf("verified chain missing: %+v", out)
+				}
+			} else if out.HumanID != nil || out.Chain != nil {
+				t.Fatalf("unverified ancestry displayed: %+v", out)
+			}
+			if tc.outcome == "nearest_human" && (out.HumanID == nil || *out.HumanID != v.Keys["alice"].DIDAW) {
+				t.Fatalf("wrong human: %+v", out)
+			}
+		})
+	}
+}
+
 func TestWhoShowsTheVerifiedChainRootFirst(t *testing.T) {
 	human, valid, kind := "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w", true, "agent"
 	out := whoOutput{
@@ -382,5 +443,53 @@ func TestWhoAddresslessGlobalUsesVerifiedDeliveryRegistryEnrollment(t *testing.T
 	_, _ = executeWhoReceived(context.Background(), msg, options)
 	if calls != 1 {
 		t.Fatal("unverified sender must not read enrollment")
+	}
+}
+
+func TestWhoChainlessReceivedGlobalUsesEnrollmentBeforeAddress(t *testing.T) {
+	v := loadWhoVectors(t)
+	domain := "example.com"
+	age := float64(0)
+	evidence := &awid.IDChainEvidence{
+		Status: v.Statuses["normal"], AgeSeconds: &age,
+		NamespaceAuthority: map[string]any{"domain": domain, "dns_name": "_awid." + domain, "inherited": false, "controller_key": v.Keys["root"].DIDKey},
+	}
+	key := v.Keys["global_agent"]
+	for _, tc := range []struct {
+		state, outcome, reason string
+	}{
+		{"enrolled", "nearest_human", "verified"},
+		{"not_enrolled", "unknown", "unregistered_identity"},
+		{"unknown", "unavailable", "evidence_unavailable"},
+		{"malformed", "unavailable", "evidence_unavailable"},
+	} {
+		t.Run(tc.state, func(t *testing.T) {
+			calls := 0
+			message := awid.InboxMessage{FromDID: key.DIDKey, FromStableID: key.DIDAW, FromAddress: "signup-owner.example.com/child", VerificationStatus: awid.Verified}
+			out, err := executeWhoReceived(t.Context(), message, whoOptions{
+				TXTResolver: staticTXTResolver{}, Status: whoFixedStatus{evidence},
+				ReceivedEnrollment: func(_ context.Context, id, didKey string) awid.IDTreeEnrollmentResult {
+					calls++
+					if id != key.DIDAW || didKey != key.DIDKey {
+						t.Fatal("enrollment queried for a different sender")
+					}
+					result := awid.IDTreeEnrollmentResult{State: tc.state}
+					if tc.state == "enrolled" {
+						result.Domain = &domain
+					}
+					return result
+				},
+			})
+			if err != nil || calls != 1 || out.Outcome != tc.outcome || out.Reason != tc.reason {
+				t.Fatalf("out %+v err %v enrollment calls %d", out, err, calls)
+			}
+			if tc.state == "enrolled" {
+				if out.Domain != domain || out.IdentityValid == nil || !*out.IdentityValid || out.HumanID == nil || *out.HumanID != v.Keys["alice"].DIDAW {
+					t.Fatalf("current enrolled ancestry missing: %+v", out)
+				}
+			} else if out.Domain != "" || out.HumanID != nil {
+				t.Fatalf("address supplied ancestry: %+v", out)
+			}
+		})
 	}
 }

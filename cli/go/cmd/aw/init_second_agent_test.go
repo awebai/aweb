@@ -35,6 +35,9 @@ func TestInitTeamAPIKeySecondAgentCommand(t *testing.T) {
 	initialized := map[string]string{}
 	var connects []string
 	server := newLocalHTTPServerHandlerWithURL(t, func(base string, w http.ResponseWriter, r *http.Request) {
+		if serveAPIKeyCreationTeamRead(w, r, team) {
+			return
+		}
 		mu.Lock()
 		defer mu.Unlock()
 		switch r.URL.Path {
