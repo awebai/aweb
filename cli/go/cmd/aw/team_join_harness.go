@@ -47,7 +47,17 @@ func validateTeamJoinArgs(cmd *cobra.Command, args []string) error {
 		}
 		return nil
 	}
+	if teamJoinTokenFromFlags(cmd) {
+		// teamJoinTokenArgs reads the token and refuses a positional one too.
+		return nil
+	}
 	return cobra.ExactArgs(1)(cmd, args)
+}
+
+func teamJoinTokenFromFlags(cmd *cobra.Command) bool {
+	path, _ := cmd.Flags().GetString("token-file")
+	fromStdin, _ := cmd.Flags().GetBool("token-stdin")
+	return strings.TrimSpace(path) != "" || fromStdin
 }
 
 func joinHarnessRetryCommand(home awconfig.IdentityHome, harness string) string {

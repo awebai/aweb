@@ -31,7 +31,7 @@ services:
       dockerfile: awid/Dockerfile
     restart: unless-stopped
     ports:
-      - "${AWID_PORT:-8010}:8010"
+      - "${AWEB_BIND_ADDRESS:-127.0.0.1}:${AWID_PORT:-8010}:8010"
     environment:
       AWID_DATABASE_URL: postgresql://${POSTGRES_USER:-aweb}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-aweb}
       AWID_REDIS_URL: redis://redis:6379/0
@@ -63,7 +63,7 @@ services:
       dockerfile: server/Dockerfile
     restart: unless-stopped
     ports:
-      - "${AWEB_PORT:-8000}:8000"
+      - "${AWEB_BIND_ADDRESS:-127.0.0.1}:${AWEB_PORT:-8000}:8000"
     environment:
       AWEB_DATABASE_URL: postgresql://${POSTGRES_USER:-aweb}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-aweb}
       AWEB_REDIS_URL: redis://redis:6379/0

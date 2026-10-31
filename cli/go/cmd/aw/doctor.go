@@ -10,6 +10,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/termtext"
 	"github.com/spf13/cobra"
 )
 
@@ -543,6 +544,15 @@ func formatDoctorOutput(v any) string {
 			sb.WriteString(fmt.Sprintf("Note:   %d check(s) have no safe probe and were skipped; they do not affect the verdict.\n", out.SkippedChecks))
 		} else {
 			sb.WriteString(fmt.Sprintf("Note:   %d online check(s) were skipped and do not affect the verdict; run `aw check --online` to include them.\n", out.SkippedChecks))
+		}
+	}
+	for _, line := range []struct{ label, value string }{
+		{"Team:   ", out.Subject.TeamID},
+		{"Agent:  ", out.Subject.Alias},
+		{"Server: ", out.Subject.AwebURL},
+	} {
+		if value := strings.TrimSpace(line.value); value != "" {
+			sb.WriteString(line.label + termtext.Line(value) + "\n")
 		}
 	}
 	if out.Subject.WorkingDir != "" {
