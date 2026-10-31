@@ -15,16 +15,25 @@ type ErrorDetail struct {
 	Detail     string `json:"detail,omitempty"`
 }
 
-// DescribeError classifies err. Codes: http_error, outcome_unknown,
+// DescribeError classifies err. Codes: http_error, alias_conflict (a refusal
+// whose detail carries the code alias_active), outcome_unknown,
 // encryption_key_missing, decrypt_failed, and error for any other error.
 func DescribeError(err error) ErrorDetail {
 	detail := ErrorDetail{Code: "error"}
 	var apiErr *APIError
 	var registryErr *RegistryError
+	body, refused := "", false
 	if errors.As(err, &registryErr) {
-		detail = ErrorDetail{Code: "http_error", HTTPStatus: registryErr.StatusCode, Detail: responseDetail(registryErr.Detail)}
+		body, refused, detail.HTTPStatus = registryErr.Detail, true, registryErr.StatusCode
 	} else if errors.As(err, &apiErr) {
-		detail = ErrorDetail{Code: "http_error", HTTPStatus: apiErr.StatusCode, Detail: responseDetail(apiErr.Body)}
+		body, refused, detail.HTTPStatus = apiErr.Body, true, apiErr.StatusCode
+	}
+	if refused {
+		serverCode, text := responseDetail(body)
+		detail.Code, detail.Detail = "http_error", text
+		if serverCode == "alias_active" {
+			detail.Code = "alias_conflict"
+		}
 	}
 	var unknown *OutcomeUnknownError
 	if errors.As(err, &unknown) {
@@ -37,14 +46,22 @@ func DescribeError(err error) ErrorDetail {
 	return detail
 }
 
-// responseDetail is the string detail of a JSON error body, or "".
-func responseDetail(body string) string {
+// responseDetail reads a JSON error body's detail: a string is its text; a
+// coded detail {"code", "message"} gives its code and its message as text.
+func responseDetail(body string) (code, text string) {
 	var server struct {
 		Detail any `json:"detail"`
 	}
 	if json.Unmarshal([]byte(body), &server) != nil {
-		return ""
+		return "", ""
 	}
-	detail, _ := server.Detail.(string)
-	return detail
+	switch detail := server.Detail.(type) {
+	case string:
+		return "", detail
+	case map[string]any:
+		code, _ = detail["code"].(string)
+		text, _ = detail["message"].(string)
+		return code, text
+	}
+	return "", ""
 }
