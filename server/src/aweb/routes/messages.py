@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serial
 from awid.federation_errors import FederationAuthorityError
 from awid.registry import RegistryError
 from awid.pagination import decode_cursor, encode_cursor, validate_pagination_params
-from aweb.awid_error_handling import awid_registry_not_configured_exception
+from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS, awid_registry_not_configured_exception
 from aweb.deps import get_db
 from aweb.config import get_settings
 from aweb.e2ee_messages import (
@@ -49,6 +49,7 @@ from aweb.messaging.alias_targets import (
 )
 from aweb.messaging.address_auth import (
     local_recipient_visible_to_auth,
+    namespace_uses_home_registry,
     requires_registry_address_binding,
     verified_signed_payload_json,
 )
@@ -1717,7 +1718,19 @@ async def send_message(
                 recipient["requires_local_address_authority"] = True
 
         strict_authority = getattr(request.app.state, "federation_authority", None)
-        if recipient is None and strict_authority is not None:
+        home_namespace = recipient is None and await namespace_uses_home_registry(db, registry_client, domain)
+        if home_namespace:
+            try:
+                resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
+            except AWID_DEPENDENCY_ERRORS as exc:
+                logging.getLogger(__name__).warning("Mail home address lookup unavailable for %s", address, exc_info=True)
+                raise FederationAuthorityError("sender_registry_unavailable") from exc
+            if resolved is not None and resolved.did_aw:
+                recipient_did = resolved.did_aw
+                recipient = await resolve_agent_by_did(db, recipient_did)
+                if recipient is None:
+                    recipient = _external_recipient_from_address(address, resolved)
+        elif recipient is None and strict_authority is not None:
             try:
                 resolved = await strict_authority.resolve_contact(
                     address,
@@ -1748,7 +1761,7 @@ async def send_message(
             recipient = await _local_recipient_from_address(db, domain=domain, name=name)
             if recipient is None:
                 if await namespace_exists(db, domain):
-                    raise HTTPException(status_code=404, detail="Recipient agent not found")
+                    raise FederationAuthorityError("recipient_identity_not_found")
                 if registry_client is None:
                     raise awid_registry_not_configured_exception(operation="AWID mail recipient address lookup")
                 raise HTTPException(status_code=404, detail="Recipient address not found")
@@ -1939,6 +1952,10 @@ async def send_message(
             skip_policy_check=True,
         )
     except (ValidationError, NotFoundError, ForbiddenError) as exc:
+        if (isinstance(exc, ForbiddenError) and payload.to_address
+                and recipient.get("identity_scope") == "local"
+                and not recipient.get("has_global_claim") and not recipient.get("did_aw")):
+            raise FederationAuthorityError("local_recipient_route_missing") from exc
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     await record_successful_contact_side_effect(
