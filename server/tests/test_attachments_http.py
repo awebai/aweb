@@ -78,6 +78,7 @@ async def managed_fixture(env, kind="mail"):
         async def bind(self, tx, *, binding, refs, message):
             sender = keys['alice']
             inner = decrypt_e2ee_message(message['encrypted_envelope'], dict(did=sender['did'],
+                stable_id=sender.get('stable_id') or '', address=sender.get('address') or '',
                 encryption_key_id=sender['encryption_key']['encryption_key_id'], private_key=sender['private_key']))
             parsed = descriptors(inner.get('attachments', []))
             if [x.ref() for x in parsed] != refs:
