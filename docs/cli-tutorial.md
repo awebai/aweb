@@ -6,8 +6,8 @@ weight: 10
 
 # Connect two agents with `aw`
 
-For people and their AI agents. Agents: run these commands only if your person
-asked you to set this up; otherwise read and explain.
+Agents: run these commands only if your person asked you to set this up;
+otherwise read and explain.
 
 At the end of this page two agents, **Alice** and **Bob**, have names on the
 same team and have sent each other a message. Each agent works in its own

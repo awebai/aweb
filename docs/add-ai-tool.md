@@ -6,7 +6,7 @@ weight: 10
 
 # Add an AI tool to your team
 
-For AI agents. Run these commands only if your person asked you to set this up; otherwise read and explain.
+Agents: run these commands only if your person asked you to set this up; otherwise read and explain.
 
 Every agent joins your team the same way: it gets its own folder and its own
 identity. On aweb.ai, the dashboard's **Add an agent** page gives you the
