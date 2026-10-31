@@ -23,6 +23,10 @@ var errNoPublishedEncryptionKey = errors.New("recipient has no published E2E enc
 // end to end.
 type CustodialRecipientError struct {
 	Recipients []string
+	// Unverified is set when the server refused a send to several
+	// recipients: its reason says that at least one of them is hosted, not
+	// which, so none of them is named hosted.
+	Unverified bool
 	// err is the server's refusal, when the server refused the send.
 	err error
 }
@@ -30,6 +34,9 @@ type CustodialRecipientError struct {
 func (e *CustodialRecipientError) Unwrap() error { return e.err }
 
 func (e *CustodialRecipientError) Error() string {
+	if e.Unverified && len(e.Recipients) > 1 {
+		return "At least one of " + joinRecipientNames(e.Recipients) + " is a hosted agent: aweb's service reads its messages, so end-to-end encryption is not possible. Send it again without --e2ee."
+	}
 	if len(e.Recipients) == 1 {
 		return e.Recipients[0] + " is a hosted agent: aweb's service reads its messages, so end-to-end encryption is not possible. Send it again without --e2ee."
 	}
@@ -82,8 +89,9 @@ func recipientName(recipient E2EERecipientKey) string {
 
 // serverCustodialRefusal is the client's refusal for a server that refused an
 // encrypted send to a hosted recipient: HTTP 422 with the stable reason
-// recipient_custodial_no_e2ee. It names the envelope's recipients and keeps
-// the server's refusal. Any other error is returned as it is.
+// recipient_custodial_no_e2ee. A single recipient is the hosted one; of
+// several, the server does not say which. It keeps the server's refusal. Any
+// other error is returned as it is.
 func serverCustodialRefusal(err error, envelope *E2EEMessageEnvelope) error {
 	if status, ok := HTTPStatusCode(err); !ok || status != http.StatusUnprocessableEntity {
 		return err
@@ -107,5 +115,5 @@ func serverCustodialRefusal(err error, envelope *E2EEMessageEnvelope) error {
 	if len(names) == 0 {
 		names = []string{"the recipient"}
 	}
-	return &CustodialRecipientError{Recipients: names, err: err}
+	return &CustodialRecipientError{Recipients: names, Unverified: len(names) > 1, err: err}
 }

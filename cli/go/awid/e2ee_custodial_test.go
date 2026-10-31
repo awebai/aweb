@@ -328,3 +328,24 @@ func TestE2EEServerCustodialRefusalReadsLikeTheClients(t *testing.T) {
 	_, err = c.ChatCreateSession(context.Background(), &ChatCreateSessionRequest{ToAddresses: []string{bob.address}, Message: "hi", EncryptE2EE: true})
 	assertCustodialRefusal(t, err, hostedRefusalText(bob.address), bob.address)
 }
+
+// A server refusal of a group send says only that at least one recipient is
+// hosted: the server's reason does not say which, so no recipient is named
+// hosted that the client did not verify. The code and status stay.
+func TestE2EEServerCustodialRefusalOfAGroupNamesNoRecipientHosted(t *testing.T) {
+	self := newE2EETestIdentity(t, "example.com/self")
+	bob := newE2EETestIdentity(t, "example.com/bob")
+	carol := newE2EETestIdentity(t, "example.com/carol")
+	rec := &sendRecorder{refuseCustodial: true}
+	c := newCustodialTestClient(t, rec.server(t).URL, self, custodialTestResolver{bob.address: bob.resolved(), carol.address: carol.resolved()})
+
+	_, err := c.ChatCreateSession(context.Background(), &ChatCreateSessionRequest{ToAddresses: []string{bob.address, carol.address}, Message: "hi", EncryptE2EE: true})
+	want := "At least one of example.com/bob and example.com/carol is a hosted agent: aweb's service reads its messages, so end-to-end encryption is not possible. Send it again without --e2ee."
+	if err == nil || err.Error() != want {
+		t.Fatalf("err=%v, want %q", err, want)
+	}
+	detail := DescribeError(err)
+	if detail.Code != ErrorCodeRecipientCustodialNoE2EE || detail.HTTPStatus != http.StatusUnprocessableEntity || detail.Detail != "" {
+		t.Fatalf("detail=%+v, want the code, status 422 and no recipient named hosted", detail)
+	}
+}

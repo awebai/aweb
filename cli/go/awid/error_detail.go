@@ -39,7 +39,10 @@ func DescribeError(err error) ErrorDetail {
 	var custodial *CustodialRecipientError
 	if errors.As(err, &custodial) {
 		detail.Code = ErrorCodeRecipientCustodialNoE2EE
-		detail.Detail = strings.Join(custodial.Recipients, ", ")
+		detail.Detail = ""
+		if !custodial.Unverified {
+			detail.Detail = strings.Join(custodial.Recipients, ", ")
+		}
 	}
 	return detail
 }
