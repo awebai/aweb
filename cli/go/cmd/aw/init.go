@@ -77,6 +77,7 @@ var (
 	initExpectedAccountID  string
 	initNewAccount         bool
 	initNewTeam            bool
+	initTeam               string
 )
 
 var (
@@ -150,6 +151,7 @@ func init() {
 	initCmd.Flags().StringVar(&initExpectedAccountID, "expect-account", "", "Expected hosted account ID for workspace-team or admission init")
 	initCmd.Flags().BoolVar(&initNewAccount, "new-account", false, "Explicitly create a new hosted aweb.ai account")
 	initCmd.Flags().BoolVar(&initNewTeam, "new-team", false, "Explicitly create a new self-hosted/BYOD team")
+	initCmd.Flags().StringVar(&initTeam, "team", "", "Name of the team --new-team creates on a local (localhost) awid registry (default: default)")
 
 	rootCmd.AddCommand(initCmd)
 }
@@ -534,6 +536,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 	if cmd.Flags().Changed("org") && !initWorkspaceTeam {
 		return usageError("--org requires --workspace-team")
 	}
+	if strings.TrimSpace(initTeam) != "" && !initTeamFlagApplies() {
+		return initTeamFlagUsageError()
+	}
 	if initRemoveNotifyHook {
 		if len(args) != 0 {
 			return usageError("--remove-notify-hook takes no positional arguments")
@@ -674,6 +679,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if initNewTeam && !initBYOD && strings.TrimSpace(initUsername) == "" && strings.TrimSpace(initDomain) == "" && !initGlobal && !initRegistryIsLocalhost(registryURL) {
 			return localNamespaceOnRemoteRegistry(registryURL)
 		}
+		if strings.TrimSpace(initTeam) != "" && !initShouldUseImplicitLocalFlow(registryURL) {
+			return initTeamFlagUsageError()
+		}
 		if initShouldUseImplicitLocalFlow(registryURL) {
 			if !initNewTeam {
 				if err := requireOrPromptInitOutcome(canPrompt, "create a new self-hosted team", "--new-team"); err != nil {
@@ -688,6 +696,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 				AwebURL:     awebURL,
 				RegistryURL: registryURL,
 				Alias:       resolveAliasValue(resolveInitLocalName()),
+				TeamName:    strings.TrimSpace(initTeam),
 				Role:        resolveRequestedRole(strings.TrimSpace(initRole)),
 				HumanName:   resolveHumanNameValue(strings.TrimSpace(initHumanName)),
 				AgentType:   resolveAgentTypeValue(strings.TrimSpace(initAgentType)),

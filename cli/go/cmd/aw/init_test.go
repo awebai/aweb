@@ -1922,6 +1922,8 @@ func TestImplicitLocalInitProvisioningAgainstLocalServers(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/local":
 			http.NotFound(w, r)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/local/teams/default":
+			http.NotFound(w, r)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces":
 			if err := json.NewDecoder(r.Body).Decode(&gotNamespacePayload); err != nil {
 				t.Fatal(err)

@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -33,14 +34,15 @@ func implicitLocalTeamNameValue(value string) string {
 	return implicitLocalTeamName
 }
 
+// localTeamAdvice is what to do instead when aw init cannot create a local
+// team: join a team there, or create one under a domain you control.
+const localTeamAdvice = "To join a team there, ask a member to run `aw team invite` and run the `aw team join` command it prints here. " +
+	"To create a team of your own, use a domain you control: `aw init --new-team --byod --domain <a domain you control>`."
+
 // localNamespaceOnRemoteRegistry refuses --new-team against a registry URL
 // that is not loopback: the self-hosted namespace is created only through one.
 func localNamespaceOnRemoteRegistry(registryURL string) error {
-	return usageError("--new-team without --byod creates the self-hosted namespace %q, which aw init creates only against a loopback (localhost) awid registry URL; %s is not one. "+
-		"The controller key that creates %q on a registry is the one that controls it. "+
-		"To add this workspace to a team there, run `aw team invite` in a member's workspace and `aw team join <token>` here; "+
-		"to create a namespace of your own, run `aw init --new-team --byod --domain <a domain you control>`",
-		implicitLocalDomain, registryURL, implicitLocalDomain)
+	return usageError("aw init --new-team creates a local team only on an awid registry at localhost, and %s is not one. %s", registryURL, localTeamAdvice)
 }
 
 // localNamespaceHeldElsewhere refuses before this home mints a controller key
@@ -64,9 +66,61 @@ func localNamespaceHeldElsewhere(ctx context.Context, registry *awid.RegistryCli
 			return nil
 		}
 	}
-	return usageError("the self-hosted namespace %q on %s is controlled by %s, whose key is not among this home's controller keys. "+
-		"To add this workspace to a team there, run `aw team invite` in a member's workspace and `aw team join <token>` here",
-		implicitLocalDomain, registryURL, strings.TrimSpace(namespace.ControllerDID))
+	return usageError("The local namespace on %s was set up with a key this home does not hold, so aw init cannot create a team in it. %s", registryURL, localTeamAdvice)
+}
+
+// initTeamFlagApplies reports whether this init can reach the local
+// --new-team path, the only one that reads --team. The paths runInit takes
+// before it (workspace team, --join-from, admission, AWEB_API_KEY, an
+// existing certificate or workspace) would ignore the flag.
+func initTeamFlagApplies() bool {
+	if !initNewTeam || initBYOD || initGlobal || strings.TrimSpace(initUsername) != "" || strings.TrimSpace(initDomain) != "" {
+		return false
+	}
+	if initWorkspaceTeam || strings.TrimSpace(initJoinFrom) != "" || strings.TrimSpace(initAdmissionTeamID) != "" || resolveInitAPIKey() != "" {
+		return false
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return false
+	}
+	if hasCertificateForInit(wd) {
+		return false
+	}
+	missing, err := initWorkspaceMissing(wd)
+	return err == nil && missing
+}
+
+// initTeamFlagUsageError says where --team applies.
+func initTeamFlagUsageError() error {
+	return usageError("--team names the team that aw init --new-team creates on a local (localhost) awid registry, in a folder with no aw workspace or certificate; it does not apply without --new-team, with --byod, --domain, --global, --username, --join-from or --workspace-team, or with AWEB_API_KEY set")
+}
+
+// localTeamAlreadyExists refuses --new-team for a local team that is already
+// registered, instead of adding this workspace to it as if it were new.
+func localTeamAlreadyExists(ctx context.Context, registry *awid.RegistryClient, registryURL, teamName string) error {
+	_, err := registry.GetTeam(ctx, registryURL, implicitLocalDomain, teamName, nil)
+	if code, ok := registryStatusCode(err); ok && code == http.StatusNotFound {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return usageError("Team %s:%s already exists. To join it, ask a member for an invite. To create another team, pass --team <name>.", teamName, implicitLocalDomain)
+}
+
+// recordLocalControllerRegistry records the registry where this home's
+// `local` namespace now lives, so invites carry it after the stack moves.
+func recordLocalControllerRegistry(registryURL string) error {
+	meta, err := awconfig.LoadControllerMeta(implicitLocalDomain)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(meta.RegistryURL) == strings.TrimSpace(registryURL) {
+		return nil
+	}
+	meta.RegistryURL = strings.TrimSpace(registryURL)
+	return awconfig.SaveControllerMeta(implicitLocalDomain, meta)
 }
 
 func runImplicitLocalInit(req implicitLocalInitRequest) (connectOutput, error) {
@@ -93,6 +147,9 @@ func runImplicitLocalInit(req implicitLocalInitRequest) (connectOutput, error) {
 		}
 		ctx, cancel := commandAPIContext(nil)
 		err = localNamespaceHeldElsewhere(ctx, registry, req.RegistryURL)
+		if err == nil {
+			err = localTeamAlreadyExists(ctx, registry, req.RegistryURL, implicitLocalTeamNameValue(req.TeamName))
+		}
 		cancel()
 		if err != nil {
 			return connectOutput{}, err
@@ -122,6 +179,9 @@ func runImplicitLocalInit(req implicitLocalInitRequest) (connectOutput, error) {
 	defer cancel()
 
 	if err := ensureStandaloneNamespace(ctx, registry, prepared.Plan, prepared.ControllerKey); err != nil {
+		return connectOutput{}, err
+	}
+	if err := recordLocalControllerRegistry(prepared.Plan.RegistryURL); err != nil {
 		return connectOutput{}, err
 	}
 
