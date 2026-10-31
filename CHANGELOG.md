@@ -2,13 +2,15 @@
 
 ## Unreleased
 
-- aw: an `--e2ee` mail or chat to a hosted agent, whose signed encryption
-  key assertion says aweb's service holds its key, is refused before
-  anything is sent: "<address> is a hosted agent: aweb's service reads its
-  messages, so end-to-end encryption is not possible. Send it again without
-  --e2ee." `--json` reports code `recipient_custodial_no_e2ee` with the
-  addresses in `detail`. A server's 422 refusal with that reason reads the
-  same. Continuing an encrypted chat with a peer that has a
+- aw: an `--e2ee` mail or chat to a recipient on aweb's hosted service,
+  whose signed encryption key assertion says the service holds its key, is
+  refused before anything is sent: "<address> uses aweb's hosted service,
+  which reads its messages, so end-to-end encryption is not possible. Send
+  it again without --e2ee." `--json` reports code
+  `recipient_custodial_no_e2ee` with the addresses in `detail`. A server's
+  422 refusal with that reason reads the same. `aw mail reply` with no mode
+  flag, which encrypts a reply to encrypted mail, replies server-readable to
+  such a recipient instead. Continuing an encrypted chat with a peer that has a
   global address now encrypts to the key that address resolves to, when it
   is the session's same participant, instead of failing for a missing key.
 
