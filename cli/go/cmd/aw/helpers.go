@@ -1759,7 +1759,7 @@ func checkVerificationRequired(err error) string {
 // is "aweb: http 404: ..." which looks like a broken endpoint. This rewrites it
 // to mention the target address.
 func networkError(err error, target string) error {
-	if refused := humanMailOnlyRefusal(err, target); refused != err {
+	if refused := humanMailOnlyRefusal(err); refused != err {
 		return refused
 	}
 	var recipientErr *awid.RecipientResolutionError

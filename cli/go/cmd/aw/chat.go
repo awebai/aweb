@@ -407,8 +407,7 @@ var chatSendCmd = &cobra.Command{
 			EncryptE2EE: chatSendE2EE,
 		})
 		if err != nil {
-			// A session send names no recipient.
-			return humanMailOnlyRefusal(err, "")
+			return humanMailOnlyRefusal(err)
 		}
 		logsDir := defaultLogsDir()
 		appendCommLog(logsDir, commLogNameForSelection(sel), &CommLogEntry{
@@ -494,7 +493,7 @@ var chatExtendWaitCmd = &cobra.Command{
 		}
 		result, err := chat.ExtendWait(ctx, c.Client, args[0], message, encryptE2EE)
 		if err != nil {
-			return humanMailOnlyRefusal(err, args[0])
+			return humanMailOnlyRefusal(err)
 		}
 		logsDir := defaultLogsDir()
 		appendCommLog(logsDir, commLogNameForSelection(sel), &CommLogEntry{

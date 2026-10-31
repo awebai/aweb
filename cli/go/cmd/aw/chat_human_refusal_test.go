@@ -15,10 +15,13 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
-// People are reached by mail. The server refuses chat to an authoritative
-// human with the reason recipient_human_mail_only; every chat send form says
-// so in one sentence that names mail, with that code under --json. Chat to
-// an agent is unchanged, and other refusals keep their own text.
+// People are reached by mail. The server refuses chat that reaches an
+// authoritative human with the reason recipient_human_mail_only, naming the
+// people it refused in recipients; every chat send form says so in one
+// sentence that names mail, with that code under --json. aw names only the
+// people the server names: a send to an agent that lands in a group with a
+// person never calls the agent a person. Chat to an agent is unchanged, and
+// other refusals keep their own text.
 func TestChatToAPersonSaysToUseMail(t *testing.T) {
 	t.Parallel()
 
@@ -28,10 +31,14 @@ func TestChatToAPersonSaysToUseMail(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 
-	refuse := func(w http.ResponseWriter, reason string) {
+	refuse := func(w http.ResponseWriter, reason string, recipients ...string) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnprocessableEntity)
-		_ = json.NewEncoder(w).Encode(map[string]any{"detail": reason, "reason": reason, "retryable": false, "correlation_id": "corr-1"})
+		body := map[string]any{"detail": reason, "reason": reason, "retryable": false, "correlation_id": "corr-1"}
+		if len(recipients) > 0 {
+			body["recipients"] = recipients
+		}
+		_ = json.NewEncoder(w).Encode(body)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -40,14 +47,19 @@ func TestChatToAPersonSaysToUseMail(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/chat/pending":
 			_ = json.NewEncoder(w).Encode(awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/chat/sessions":
+			// bob's only session is a group that also holds the person juan.
 			_ = json.NewEncoder(w).Encode(awid.ChatListSessionsResponse{Sessions: []awid.ChatSessionItem{
 				{SessionID: "human-1", TeamID: "backend:demo", Participants: []string{"alice", "juan"}, CreatedAt: "2026-10-31T00:00:00Z"},
+				{SessionID: "group-1", TeamID: "backend:demo", Participants: []string{"alice", "bob", "juan"}, CreatedAt: "2026-10-31T00:00:00Z"},
 			}})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/chat/sessions":
 			var req awid.ChatCreateSessionRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
 			switch strings.Join(req.ToAliases, ",") {
 			case "juan":
+				refuse(w, "recipient_human_mail_only", "juan")
+			case "maria":
+				// A refusal that names nobody.
 				refuse(w, "recipient_human_mail_only")
 			case "carol":
 				refuse(w, "recipient_custodial_no_e2ee")
@@ -55,7 +67,11 @@ func TestChatToAPersonSaysToUseMail(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(awid.ChatCreateSessionResponse{SessionID: "agent-1", MessageID: "chat-1"})
 			}
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/chat/sessions/human-1/messages":
-			refuse(w, "recipient_human_mail_only")
+			refuse(w, "recipient_human_mail_only", "juan")
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/chat/sessions/group-1/messages":
+			refuse(w, "recipient_human_mail_only", "juan")
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/chat/sessions/people-1/messages":
+			refuse(w, "recipient_human_mail_only", "juan", "maria")
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -87,14 +103,22 @@ func TestChatToAPersonSaysToUseMail(t *testing.T) {
 		{name: "send-and-wait", args: []string{"chat", "send-and-wait", "juan", "hello", "--start-conversation", "--wait", "0"}, want: juan},
 		{name: "send-and-leave", args: []string{"chat", "send-and-leave", "juan", "hello", "--start-conversation"}, want: juan},
 		{name: "extend-wait", args: []string{"chat", "extend-wait", "juan", "one more minute"}, want: juan},
-		{name: "send in a session", args: []string{"chat", "send", "--session-id", "human-1", "--body", "hello"}, want: "The other participant is a person; aweb reaches people by mail: aw mail send --to <their alias>"},
+		{name: "send in a session", args: []string{"chat", "send", "--session-id", "human-1", "--body", "hello"}, want: juan},
+		// To the agent bob, through his group with juan: juan is named.
+		{name: "send to an agent in a group with a person", args: []string{"chat", "send-and-leave", "bob", "hello"}, want: juan},
+		{name: "extend-wait to an agent in a group with a person", args: []string{"chat", "extend-wait", "bob", "one more minute"}, want: juan},
+		{name: "refusal that names nobody", args: []string{"chat", "send-and-leave", "maria", "hello", "--start-conversation"}, want: "This chat includes a person; aweb reaches people by mail: aw mail send --to <their alias>"},
+		{name: "refusal that names two people", args: []string{"chat", "send", "--session-id", "people-1", "--body", "hello"}, want: "juan and maria are people; aweb reaches people by mail: aw mail send --to juan"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			exit, _, stderr := run(tc.args...)
-			if exit != 1 || strings.TrimSpace(stderr) != tc.want {
+			exit, stdout, stderr := run(tc.args...)
+			if exit != 1 || strings.TrimSpace(stderr) != tc.want || strings.Contains(stderr, "bob is a person") {
 				t.Fatalf("exit=%d stderr=%q, want exit 1 and %q", exit, stderr, tc.want)
 			}
-			exit, stdout, _ := run(append([]string{"--json"}, tc.args...)...)
+			if strings.Contains(stdout, "Sent mail") {
+				t.Fatalf("the refusal sent mail: %s", stdout)
+			}
+			exit, stdout, _ = run(append([]string{"--json"}, tc.args...)...)
 			var envelope struct {
 				Error map[string]any `json:"error"`
 			}
