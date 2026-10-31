@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/awebai/aw/awconfig"
@@ -115,15 +116,14 @@ func executeIDNamespaceReaffirm(ctx context.Context, opts idNamespaceReaffirmOpt
 	}
 	status := awid.NewIDStatusClient(registry, opts.TXTResolver)
 	status.Route = func(context.Context, string) (string, error) { return registryURL, nil }
+	// A namespace with no current root, which is every pre-epoch namespace,
+	// has no status to read; one with a current root is already enrolled.
 	epochs, err := namespaceEpochs(ctx, status, domain)
-	if err != nil {
+	if err != nil && !errors.Is(err, errNoCurrentRoot) {
 		return idNamespaceReaffirmOutput{}, err
 	}
 	if open, ok := openNamespaceEpoch(epochs); ok {
 		return idNamespaceReaffirmOutput{Status: "already_enrolled", Domain: domain, ControllerDID: controllerDID, Epoch: open}, nil
-	}
-	if len(epochs) > 0 {
-		return idNamespaceReaffirmOutput{}, fmt.Errorf("%s has ID-tree epoch history but no open epoch; reaffirmation opens only a missing first epoch", domain)
 	}
 
 	// The registry opens the epoch only with exact DNS for the stored
@@ -146,13 +146,17 @@ func executeIDNamespaceReaffirm(ctx context.Context, opts idNamespaceReaffirmOpt
 		return idNamespaceReaffirmOutput{}, fmt.Errorf("register %s: %w", domain, err)
 	}
 	// A successful registration does not prove an epoch opened: read it back.
+	notOpened := fmt.Errorf("the registry did not open an epoch for %s; it opens only a missing first epoch for the stored controller with exact DNS (or the registry is older than AWID 0.5.35)", domain)
 	epochs, err = namespaceEpochs(ctx, status, domain)
+	if errors.Is(err, errNoCurrentRoot) {
+		return idNamespaceReaffirmOutput{}, notOpened
+	}
 	if err != nil {
 		return idNamespaceReaffirmOutput{}, err
 	}
 	open, ok := openNamespaceEpoch(epochs)
 	if !ok || len(epochs) != 1 || open.Seq != 1 || open.DIDKey != controllerDID || open.Continuity != "replaced" {
-		return idNamespaceReaffirmOutput{}, fmt.Errorf("the registry did not open an epoch for %s; it may be older than AWID 0.5.35. Nothing else was changed", domain)
+		return idNamespaceReaffirmOutput{}, notOpened
 	}
 	return idNamespaceReaffirmOutput{Status: "opened", Domain: domain, ControllerDID: controllerDID, Epoch: open}, nil
 }
@@ -177,10 +181,19 @@ type namespaceEpoch struct {
 	open bool
 }
 
+// errNoCurrentRoot is the registry's answer for a domain with no current
+// root: no open epoch for its stored controller with its DNS.
+var errNoCurrentRoot = errors.New("the namespace has no current ID-tree root")
+
 // namespaceEpochs reads a namespace's ID-tree epochs from the registry's
-// ID-certificate status.
+// ID-certificate status. The registry answers a domain with no current root
+// with 503 evidence_unavailable, reported as errNoCurrentRoot.
 func namespaceEpochs(ctx context.Context, status *awid.IDStatusClient, domain string) ([]namespaceEpoch, error) {
 	raw, err := status.FetchIDCertificateStatus(ctx, domain, map[string]any{"v": 1, "domain": domain, "ids": []string{}})
+	var refused *awid.RegistryError
+	if errors.As(err, &refused) && refused.StatusCode == http.StatusServiceUnavailable && refused.Code == "evidence_unavailable" {
+		return nil, errNoCurrentRoot
+	}
 	if err != nil {
 		return nil, fmt.Errorf("read ID-tree status for %s: %w", domain, err)
 	}

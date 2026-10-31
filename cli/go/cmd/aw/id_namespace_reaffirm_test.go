@@ -16,8 +16,10 @@ import (
 )
 
 // reaffirmRegistry is a fixture AWID registry for one namespace: it serves the
-// namespace row, the registration route and the ID-certificate status epochs,
-// and records every registration.
+// namespace row, the registration route and the ID-certificate status, and
+// records every registration. Like AWID, status answers 503
+// evidence_unavailable whenever the domain has no open epoch for its stored
+// controller, and the epochs otherwise.
 type reaffirmRegistry struct {
 	mu         sync.Mutex
 	stored     string
@@ -40,6 +42,7 @@ func (r *reaffirmRegistry) handler(t *testing.T, domain string) http.Handler {
 			if body["domain"] != domain || body["controller_did"] != r.stored {
 				t.Errorf("registration body %v", body)
 			}
+			// Like AWID, a registration opens only a missing first epoch.
 			if r.opensEpoch && len(r.epochs) == 0 {
 				r.epochs = []map[string]any{{"seq": 1, "did_key": r.stored, "registered_at": "2026-10-31T12:00:00.000000Z", "retired_at": nil, "continuity": "replaced"}}
 			}
@@ -50,10 +53,19 @@ func (r *reaffirmRegistry) handler(t *testing.T, domain string) http.Handler {
 			if body["domain"] != domain || body["v"] != float64(1) {
 				t.Errorf("status body %v", body)
 			}
-			epochs := r.epochs
-			if epochs == nil {
-				epochs = []map[string]any{}
+			currentRoot := false
+			for _, epoch := range r.epochs {
+				if epoch["retired_at"] == nil && epoch["did_key"] == r.stored {
+					currentRoot = true
+				}
 			}
+			if !currentRoot {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_ = json.NewEncoder(w).Encode(map[string]any{"detail": map[string]string{"code": "evidence_unavailable", "message": "evidence unavailable"}})
+				return
+			}
+			epochs := r.epochs
 			_ = json.NewEncoder(w).Encode(map[string]any{"v": 1, "domain": domain, "observed_at": "2026-10-31T12:00:01.000000Z", "namespace": map[string]any{"epochs": epochs}, "identities": []any{}, "missing": []any{}})
 		default:
 			t.Errorf("unexpected registry request %s %s", req.Method, req.URL.Path)
@@ -71,6 +83,7 @@ func TestIDNamespaceReaffirm(t *testing.T) {
 		name                 string
 		dnsOther, storeOther bool
 		enrolled, noEpoch    bool
+		retiredOnly          bool
 		wantStatus, wantErr  string
 		wantPosts            int
 	}{
@@ -78,7 +91,10 @@ func TestIDNamespaceReaffirm(t *testing.T) {
 		{name: "already enrolled", enrolled: true, wantStatus: "already_enrolled"},
 		{name: "DNS names another key", dnsOther: true, wantErr: "_awid." + domain + " names"},
 		{name: "the registry stores another controller", storeOther: true, wantErr: "aw id namespace rotate-controller --domain " + domain},
-		{name: "the registry opens no epoch", noEpoch: true, wantErr: "the registry did not open an epoch", wantPosts: 1},
+		{name: "the registry opens no epoch", noEpoch: true, wantErr: "the registry did not open an epoch for " + domain + "; it opens only a missing first epoch", wantPosts: 1},
+		// Epoch history with none open: the server opens only a missing
+		// first epoch, so the registration changes nothing and says so.
+		{name: "history but no open epoch", retiredOnly: true, wantErr: "it opens only a missing first epoch for the stored controller with exact DNS", wantPosts: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			keyring.MockInit()
@@ -98,6 +114,9 @@ func TestIDNamespaceReaffirm(t *testing.T) {
 			}
 			if tc.enrolled {
 				fixture.epochs = []map[string]any{{"seq": 1, "did_key": did, "registered_at": "2026-10-01T00:00:00.000000Z", "retired_at": nil, "continuity": "replaced"}}
+			}
+			if tc.retiredOnly {
+				fixture.epochs = []map[string]any{{"seq": 1, "did_key": did, "registered_at": "2026-09-01T00:00:00.000000Z", "retired_at": "2026-09-02T00:00:00.000000Z", "continuity": "replaced"}}
 			}
 			server := httptest.NewServer(fixture.handler(t, domain))
 			defer server.Close()
