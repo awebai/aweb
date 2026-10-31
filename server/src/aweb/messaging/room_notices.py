@@ -9,6 +9,7 @@ from fastapi import HTTPException, Request
 from aweb.config import require_registered_certificates
 from aweb.grant_streams import grant_has_scope, grant_terminal_reason
 from aweb.identity_binding import verify_identity_binding
+from aweb.id_chain_auth import authenticate_id_chain
 from aweb.messaging.room import _active_member, _post_dict, _uuid
 from aweb.service_errors import ServiceError
 from aweb.team_auth import parse_and_verify_certificate
@@ -70,12 +71,13 @@ async def _refresh_room_authority(request, db, identity):
                 raise HTTPException(
                     status_code=403, detail="Room certificate not registered"
                 )
-    await verify_identity_binding(
+    binding = await verify_identity_binding(
         authority_request,
         did_key=identity.did_key,
         did_aw=identity.did_aw,
         address=identity.address,
     )
+    await authenticate_id_chain(authority_request, binding)
 
 
 async def pending_room_notices(db, actor, *, limit=50):
