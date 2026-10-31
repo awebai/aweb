@@ -73,6 +73,11 @@ def harness(monkeypatch):
                 return [dict(did=identity.did_key, alias="alice", address=identity.address)]
             return []
 
+        async def fetch_val(self, sql, *args):
+            # No room activity adds authority reads to these existing streams.
+            assert "SELECT EXISTS" in sql and "{{tables.room_post_notices}}" in sql
+            return False
+
     class Redis:
         closed = False
 
