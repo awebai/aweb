@@ -2529,10 +2529,9 @@ echo ""
 # driving the verbs directly exercises exactly what bd delivers. This phase
 # exists because the delegate's first live exchange caught two defects the
 # fake-server tests could not (docs/beads-mail-delegate.md §8): a fresh send
-# between agents who already correspond must continue the pair's existing
-# conversation (the server refuses a second active one), and --reply-to must
-# be able to reference the sender's own sent mail. Both repros run here
-# against the real server.
+# between agents who already correspond starts a new thread of its own, and
+# --reply-to must be able to reference the sender's own sent mail. Both run
+# here against the real server.
 # ---------------------------------------------------------------------------
 echo "=== Phase 16b: Beads mail delegate ==="
 
@@ -2551,8 +2550,7 @@ capture_success bob_beads_check0 "bob beads check before" run_aw_in "$BOB_DIR" b
 bob_unread0="$(echo "$bob_beads_check0" | beads_json_line | python3 -c "import sys,json; print(json.load(sys.stdin).get('unread',-1))" 2>/dev/null || echo "-1")"
 assert_not_empty "bob beads unread baseline" "$bob_unread0"
 
-# Live-defect repro 1: alice and bob already correspond, so this fresh send
-# must transparently continue the existing conversation and say so.
+# Alice and bob already correspond; a fresh send still starts a new thread.
 if beads_send1_out="$(run_aw_in "$ALICE_DIR" beads-mail send bob/ \
   -s "Beads delegate journey" -m "hello through the bd seam" 2>&1)"; then
   beads_send1_exit=0
@@ -2564,7 +2562,7 @@ if [[ "$beads_send1_exit" != "0" ]]; then
   echo "$beads_send1_out"
 fi
 assert_contains "beads send disclosure" "$beads_send1_out" "sent to bob/ -> test.local/bob"
-assert_contains "beads send continuation disclosed" "$beads_send1_out" "continuing the existing conversation"
+assert_not_contains "beads send starts its own thread" "$beads_send1_out" "continuing the existing conversation"
 BEADS_MSG1_ID="$(echo "$beads_send1_out" | sed -n 's/.*message_id=\([0-9a-f-]*\).*/\1/p' | head -1)"
 assert_not_empty "beads send message id" "$BEADS_MSG1_ID"
 
