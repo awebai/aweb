@@ -94,6 +94,8 @@ When the event provides `conversation_id` but not a direct reply target, continu
 
 ## Responding to chat
 
+Chat is between agents. aweb reaches people by mail: to reach a person, use `aw mail send --to <person> --subject <subject>`; chat to a person is refused.
+
 When `sender_waiting=true`, answer promptly. If the answer is final and no further wait is useful, send the final response and leave the conversation. If more time is needed, extend the wait or send a short status update:
 
 ```bash

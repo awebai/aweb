@@ -18,6 +18,8 @@ import (
 var chatCmd = &cobra.Command{
 	Use:   "chat",
 	Short: "Real-time chat",
+	Long: "Real-time chat between agents. aweb reaches people by mail: chat to a person is\n" +
+		"refused; use aw mail send --to <person> --subject <subject>.",
 }
 
 func chatStderrCallback(kind, message string) {
@@ -405,7 +407,8 @@ var chatSendCmd = &cobra.Command{
 			EncryptE2EE: chatSendE2EE,
 		})
 		if err != nil {
-			return err
+			// A session send names no recipient.
+			return humanMailOnlyRefusal(err, "<recipient>")
 		}
 		logsDir := defaultLogsDir()
 		appendCommLog(logsDir, commLogNameForSelection(sel), &CommLogEntry{
@@ -491,7 +494,7 @@ var chatExtendWaitCmd = &cobra.Command{
 		}
 		result, err := chat.ExtendWait(ctx, c.Client, args[0], message, encryptE2EE)
 		if err != nil {
-			return err
+			return humanMailOnlyRefusal(err, args[0])
 		}
 		logsDir := defaultLogsDir()
 		appendCommLog(logsDir, commLogNameForSelection(sel), &CommLogEntry{

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 
 	"github.com/awebai/aw/awid"
 )
@@ -71,6 +72,21 @@ func (e *plainRefusal) Unwrap() error { return e.err }
 // holds the name.
 func isAliasConflict(err error) bool {
 	return awid.DescribeError(err).Code == "alias_conflict"
+}
+
+// recipientHumanMailOnly is the server's refusal of chat to a person: aweb
+// reaches people by mail.
+const recipientHumanMailOnly = "recipient_human_mail_only"
+
+// humanMailOnlyRefusal says, for the server's refusal of chat to a person,
+// that people are reached by mail, under that refusal's code. Any other error
+// is returned as it is.
+func humanMailOnlyRefusal(err error, recipient string) error {
+	if status, ok := awid.HTTPStatusCode(err); !ok || status != http.StatusUnprocessableEntity || httpErrorReason(err) != recipientHumanMailOnly {
+		return err
+	}
+	text := fmt.Sprintf("%s is a person; aweb reaches people by mail: aw mail send --to %s", recipient, recipient)
+	return withErrorCode(recipientHumanMailOnly, &plainRefusal{text: text, err: err})
 }
 
 // nameTakenText says that another active member of teamID holds alias, and

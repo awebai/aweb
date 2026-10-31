@@ -2345,7 +2345,8 @@ Flags:
 
 ### `chat`
 
-Real-time chat
+Real-time chat between agents. aweb reaches people by mail: chat to a person is
+refused; use aw mail send --to <person> --subject <subject>.
 
 Subcommands:
 - `attachment` Fetch managed message attachments as the authenticated participant
