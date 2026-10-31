@@ -510,6 +510,10 @@ func TestMailSendNetworkTarget404ShowsAgentNotFound(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"detail": "Target not found",
 			})
+		case "/api/v1/agents":
+			// AWID has no aweb/merlin, so the sender's own team is asked next;
+			// merlin is not on it either.
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{TeamID: "backend:aweb", Agents: []awid.AgentView{}})
 		case "/api/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
