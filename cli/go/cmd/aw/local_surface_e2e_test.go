@@ -81,6 +81,8 @@ func TestLocalSurfaceE2EEmptyProfileCreateAdd(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"onboarding_url": "", "aweb_url": r.Host, "registry_url": r.Host})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/local":
 			http.NotFound(w, r)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/local/teams/eng":
+			http.NotFound(w, r)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces":
 			var body map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -189,6 +191,8 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{"onboarding_url": "", "aweb_url": r.Host, "registry_url": r.Host})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/local":
+			http.NotFound(w, r)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/local/teams/eng":
 			http.NotFound(w, r)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces":
 			var body map[string]any
