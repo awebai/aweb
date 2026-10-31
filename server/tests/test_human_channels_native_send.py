@@ -3,7 +3,7 @@
 import json
 from copy import deepcopy
 from datetime import UTC, datetime
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import pytest
 import pytest_asyncio
@@ -817,6 +817,16 @@ async def test_real_mcp_native_ingress_commits_before_reply_and_replays(
                     ))["n"] == 0
                 return
             assert "error" not in first, first
+            ingress_namespace = canonical_json_bytes({
+                "issuer": "did:aw:agent", "namespace": "mcp", "key": "event1",
+            }).decode()
+            assert first["message_id"] == str(uuid5(
+                NAMESPACE_URL, "aweb-native-ingress-message:" + ingress_namespace,
+            ))
+            if kind == "chat":
+                assert first["session_id"] == str(uuid5(
+                    NAMESPACE_URL, "aweb-native-ingress-conversation:" + ingress_namespace,
+                ))
             again = await call(arguments)
             assert again == first
             assert len(signatures) == (1 if arguments["plaintext"] else 0)

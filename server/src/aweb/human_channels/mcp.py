@@ -129,7 +129,12 @@ async def send_mcp_native(
             did_a=_principal(caller),
             did_b=recipient["did_aw"] or recipient["did_key"],
         )
-    cid = str(cid) if cid else str(uuid4())
+    if cid:
+        cid = str(cid)
+    elif kind == "mail":
+        cid = str(uuid4())
+    else:
+        cid = str(uuid5(NAMESPACE_URL, "aweb-native-ingress-conversation:" + namespace))
     target = await service._facts(caller, recipient)
     signed = dict(
         type=kind,
