@@ -141,6 +141,22 @@ async def test_unverified_custody_projection_does_not_classify_recipient(privacy
 
 
 @pytest.mark.asyncio
+async def test_forged_hosted_assertion_is_invalid_not_verified_custody(privacy_app):
+    env = privacy_app
+    alice, bob = _identity(env.actors["alice"]), _identity(env.actors["bob"])
+    await _publish(env, "bob", bob)
+    forged = {**bob["encryption_key"], "custody": "hosted_custodial"}
+    await env.db.execute(
+        "UPDATE {{tables.agent_encryption_keys}} SET assertion_canonical=$2 WHERE agent_id=$1",
+        env.actors["bob"].id, canonical_json_bytes(encryption_assertion_payload(forged)).decode(),
+    )
+    response, before, _ = await _send(env, alice, bob, kind="mail")
+    assert response.status_code == 422, response.text
+    assert response.json()["reason"] == "recipient_encryption_assertion_invalid_or_stale"
+    assert await _counts(env) == before
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("published", [True, False])
 async def test_hosted_key_does_not_refuse_plaintext_or_imply_custody_when_absent(privacy_app, published):
     env = privacy_app

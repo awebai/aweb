@@ -28,9 +28,9 @@ _VECTOR_PINS = {
         "47b0c4f01973bec0935628d2b992bdf4cafa9c034935da6c9cc978a4c8333860",
     ),
     "federation-authority-state-v1.json": (
-        24926,
-        "dbfae045d87a947ba5e9add41b03832159eb584c1ab1d8644ec5a34f27f8d616",
-        "653515763d49617951204f8eefcf72fcb375dbab9ef081519bad6a1af37dccbf",
+        25085,
+        "f47996006465b825a876621468dd651c1d15e8d0177c2e021e63a103c97f4e28",
+        "208d38e9cab84f6ced4a6d3e9eea05af5aff9ac3ed83125a2554eb811239a96c",
     ),
 }
 _STABLE_ERRORS = {
