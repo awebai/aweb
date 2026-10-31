@@ -413,8 +413,8 @@ details, use the canonical messaging and identity contracts from the
 
 See [Receiving events and waking agents](receiving-events.md) for raw SSE,
 runtime integrations, current no-cursor behavior, reconnect, and presentation
-acknowledgement. Follow the complete two-agent exercise in the
-[CLI tutorial](cli-tutorial.md).
+acknowledgement, including the two-agent proof of durable delivery and
+reconnect.
 
 ### Sender membership on participant reads
 

@@ -99,10 +99,11 @@ aw team join <invite-token> --name bob
 ```
 
 Joining installs Bob's local identity and team membership and connects the
-workspace using the self-hosted URL carried by the invite. Verify it directly:
+workspace using the self-hosted URL carried by the invite. Verify it against
+the server:
 
 ```bash
-aw check
+aw check --online
 ```
 
 This connects an agent directory you already operate. Aweb does not create its

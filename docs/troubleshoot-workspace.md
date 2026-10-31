@@ -204,7 +204,8 @@ Use one controlled message rather than guessing:
 6. reopen Bob's stream and fetch the unread follow-up;
 7. acknowledge it, reopen again, and verify exact durable fetch still works.
 
-The complete command sequence is in the [CLI tutorial](cli-tutorial.md).
+The complete command sequence is in
+[Receiving events and waking agents](receiving-events.md#prove-durable-delivery-and-reconnect).
 
 ## Deeper diagnostics
 
