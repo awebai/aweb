@@ -15,6 +15,24 @@ type whoMessages interface {
 	ListConversationsWithParams(context.Context, awid.ConversationListParams) (*awid.ConversationsResponse, error)
 }
 
+type whoRooms interface {
+	RoomMessage(context.Context, string) (*awid.RoomMessage, error)
+}
+
+func findWhoRoomSender(ctx context.Context, reader whoRooms, target, messageID string) (awid.InboxMessage, error) {
+	post, err := reader.RoomMessage(ctx, messageID)
+	if err != nil {
+		return awid.InboxMessage{}, err
+	}
+	message := awid.InboxMessage{MessageID: post.MessageID, FromAlias: post.FromAlias, FromAddress: post.FromAddress,
+		FromDID: post.FromDID, FromStableID: post.FromStableID, IDChain: post.IDChain,
+		VerificationStatus: post.VerificationStatus, SignedPayload: post.SignedPayload}
+	if message.MessageID != messageID || (target != "" && !whoSenderMatches(message, target)) {
+		return awid.InboxMessage{}, fmt.Errorf("room post does not match the requested message or sender")
+	}
+	return message, nil
+}
+
 func whoSenderMatches(message awid.InboxMessage, target string) bool {
 	if strings.HasPrefix(target, "did:") {
 		return message.FromStableID == target || message.FromDID == target
@@ -67,6 +85,20 @@ func findWhoSender(ctx context.Context, reader whoMessages, target, messageID, s
 	} else if messageID != "" {
 		response, err := reader.Message(ctx, messageID)
 		if err != nil {
+			// An exact missing mail can be a room post. Authentication and
+			// dependency failures remain the original mail error.
+			if code, ok := awid.HTTPStatusCode(err); ok && code == 404 {
+				if rooms, ok := reader.(whoRooms); ok {
+					message, roomErr := findWhoRoomSender(ctx, rooms, target, messageID)
+					if roomErr != nil {
+						if code, ok := awid.HTTPStatusCode(roomErr); !ok || code != 404 {
+							return awid.InboxMessage{}, roomErr
+						}
+					} else {
+						return message, nil
+					}
+				}
+			}
 			return awid.InboxMessage{}, err
 		}
 		if message, ok := match(response.Messages); ok {
