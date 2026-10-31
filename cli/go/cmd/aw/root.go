@@ -423,10 +423,23 @@ func checkVersionFromHeader() {
 // its error envelope on stdout. stdout carries one document: a command that
 // already printed its own output keeps it, without a second document.
 func reportCLIError(err error, msg string, asJSON bool) {
+	msg = codedRefusalText(err, msg)
 	writeCLIError(os.Stderr, msg)
 	if asJSON && !commandStdout.written {
 		writeCLIErrorEnvelope(commandStdout, err, msg)
 	}
+}
+
+// codedRefusalText says a coded server refusal in the server's own words: the
+// refusal's raw text in msg becomes its detail message, keeping any prefix
+// the command added. --debug also prints the raw refusal.
+func codedRefusalText(err error, msg string) string {
+	refusal, message, ok := awid.CodedRefusal(err)
+	if !ok || !strings.Contains(msg, refusal) {
+		return msg
+	}
+	debugLog("%s", refusal)
+	return strings.Replace(msg, refusal, message, 1)
 }
 
 // commandStdout is the stdout every command writes through, so the error
