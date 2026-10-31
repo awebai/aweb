@@ -30,16 +30,16 @@ func TestCLITutorialRouteIsNotAliasedToTaskWorkflow(t *testing.T) {
 }
 
 func TestInitNextStepLinesHostedPromoteChannelAndDashboard(t *testing.T) {
-	lines := initNextStepLines(&initResult{
+	lines := initNextStepLines(initNextSteps(&initResult{
 		ServerName:    "app.aweb.ai",
 		ExportBaseURL: "https://app.aweb.ai/api",
-	}, t.TempDir(), false, false, false)
+	}, t.TempDir(), false, false))
 	text := strings.Join(lines, "\n")
 
 	for _, want := range []string{
 		"aw init --setup-channel",
 		"aw init --inject-docs",
-		"aw claim-human --email you@example.com",
+		"aw claim-human --email <your-email>",
 		"claude plugin marketplace add awebai/claude-plugins",
 		"claude plugin install aweb-channel@awebai-marketplace",
 		"claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace",
@@ -59,10 +59,10 @@ func TestInitNextStepLinesHostedPromoteChannelAndDashboard(t *testing.T) {
 }
 
 func TestInitNextStepLinesLocalDirAllDoneStillShowsChannelLaunch(t *testing.T) {
-	lines := initNextStepLines(&initResult{
+	lines := initNextStepLines(initNextSteps(&initResult{
 		ServerName:    "localhost",
 		ExportBaseURL: "http://127.0.0.1:8000/api",
-	}, t.TempDir(), true, true, true)
+	}, t.TempDir(), true, true))
 	text := strings.Join(lines, "\n")
 
 	if !strings.Contains(text, "claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace") {
@@ -108,11 +108,11 @@ func TestChannelLaunchInstructionsCarryInstallLaunchWhyAndPi(t *testing.T) {
 }
 
 func TestInitNextStepLinesAPIKeyAuthSuppressesClaimHuman(t *testing.T) {
-	lines := initNextStepLines(&initResult{
+	lines := initNextStepLines(initNextSteps(&initResult{
 		ServerName:    "app.aweb.ai",
 		ExportBaseURL: "https://app.aweb.ai/api",
 		APIKeyAuth:    true,
-	}, t.TempDir(), false, false, false)
+	}, t.TempDir(), false, false))
 	text := strings.Join(lines, "\n")
 
 	if strings.Contains(text, "aw claim-human") {
@@ -140,7 +140,7 @@ func TestInitNextStepLinesTellHowToAddASecondAgentToThisTeam(t *testing.T) {
 		{"local-all-done", &initResult{ServerName: "localhost", ExportBaseURL: "http://127.0.0.1:8000/api"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			text := strings.Join(initNextStepLines(tc.result, t.TempDir(), tc.done, tc.done, tc.done), "\n")
+			text := strings.Join(initNextStepLines(initNextSteps(tc.result, t.TempDir(), tc.done, tc.done)), "\n")
 			if tc.result.APIKeyAuth {
 				if !strings.Contains(text, "create one from the dashboard") || strings.Contains(text, "separate team") {
 					t.Fatalf("API-key second-agent advice contradicts same-team creation:\n%s", text)
