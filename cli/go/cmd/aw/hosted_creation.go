@@ -296,7 +296,7 @@ func readAPIKeyCreationTeam(ctx context.Context, baseURL, apiKey string) (*apiKe
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("selected API-key team unavailable (HTTP %d)", response.StatusCode)
+		return nil, apiKeyTeamReadRefusal(base, response.StatusCode)
 	}
 	raw, err := awid.ReadAllBounded(response.Body, awid.MaxResponseSize)
 	if err != nil {
@@ -312,6 +312,19 @@ func readAPIKeyCreationTeam(ctx context.Context, baseURL, apiKey string) (*apiKe
 	}
 	selected.Domain = domain
 	return &selected, nil
+}
+
+// apiKeyTeamReadRefusal says what is likely wrong when a service does not
+// answer the API key's team read: a 404 is a service older than this aw; a
+// 401 or 403 is a wrong key or an older service.
+func apiKeyTeamReadRefusal(base string, status int) error {
+	switch status {
+	case http.StatusNotFound:
+		return fmt.Errorf("The aweb service at %s is older than this aw and cannot create agents with it. Use the latest aw: npm install -g @awebai/aw@latest.", base)
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return fmt.Errorf("The aweb service at %s refused this API key's team read (HTTP %d). Check that AWEB_API_KEY is current; if it is, this service is older than this aw: use the latest aw (npm install -g @awebai/aw@latest).", base, status)
+	}
+	return fmt.Errorf("selected API-key team unavailable (HTTP %d)", status)
 }
 
 // readHostedCreationResponse keeps the constructor transport at the creation
