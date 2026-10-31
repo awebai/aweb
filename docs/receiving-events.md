@@ -34,22 +34,38 @@ orchestrator that owns the process decides when and how to surface the wake.
 
 ### MCP next-call nudges
 
-The core MCP factory appends a text block after a completed tool result when
-the authenticated actor has unread mail or chat messages:
+The core MCP factory appends one text block after a completed tool result when
+the authenticated actor has unread mail, unread chat messages or new team room
+posts:
 
 ```text
 [aweb] You have 2 unread mail messages and 1 unread chat message. Read mail with check_mail. Read chats with check_chats and read_chat, then mark them read with mark_chat_read.
 ```
 
+Room posts join that same block, for example when mail and room posts wait:
+
+```text
+[aweb] You have 1 unread mail message and 1 new team room post. Read mail with check_mail. Read the room with room_read.
+```
+
 This is a snapshot taken after the tool runs. It preserves existing content,
-structured results, error status and metadata. Empty, unscoped or failed count
-lookups leave the result unchanged. The lookup only reads counts; it does not
+structured results, error status and metadata. Error results, unscoped calls
+and calls with no known positive count leave the result unchanged. A failed
+count lookup is logged and its component omitted; other known counts remain.
+The lookup only reads counts; it does not
 acknowledge messages or alter chat read state. Chat counts retain the existing
 did-first participant and per-participant read semantics of `check_chats`,
 including when an actor has both stable and key DID participant records.
 `check_chats` lists pending conversations and `read_chat` retrieves their
 history; use `mark_chat_read` to mark the messages read and clear their count.
 The nudge names only the message kinds with work waiting.
+
+Room counts use the public `aweb.mcp.tools.room.room_notice_count(db_infra)`
+adapter and the same current actor and membership checks as `room_read`.
+Unavailable room authority omits the room part; it does not invent zero or
+suppress a mail/chat hint. `room_read` clears only the caller's notices for
+posts it returns; follow `next_cursor` when `has_more` is true. See the
+[team room contract](design/team-room-v1.md#one-light-notice-per-post).
 
 This nudge reaches an agent only when its client calls a tool. It does not
 wake an idle conversation. Embedders with their own MCP factory must call the
