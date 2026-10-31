@@ -408,7 +408,7 @@ var chatSendCmd = &cobra.Command{
 		})
 		if err != nil {
 			// A session send names no recipient.
-			return humanMailOnlyRefusal(err, "<recipient>")
+			return humanMailOnlyRefusal(err, "")
 		}
 		logsDir := defaultLogsDir()
 		appendCommLog(logsDir, commLogNameForSelection(sel), &CommLogEntry{

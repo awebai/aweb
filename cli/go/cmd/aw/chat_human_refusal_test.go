@@ -87,7 +87,7 @@ func TestChatToAPersonSaysToUseMail(t *testing.T) {
 		{name: "send-and-wait", args: []string{"chat", "send-and-wait", "juan", "hello", "--start-conversation", "--wait", "0"}, want: juan},
 		{name: "send-and-leave", args: []string{"chat", "send-and-leave", "juan", "hello", "--start-conversation"}, want: juan},
 		{name: "extend-wait", args: []string{"chat", "extend-wait", "juan", "one more minute"}, want: juan},
-		{name: "send in a session", args: []string{"chat", "send", "--session-id", "human-1", "--body", "hello"}, want: "<recipient> is a person; aweb reaches people by mail: aw mail send --to <recipient>"},
+		{name: "send in a session", args: []string{"chat", "send", "--session-id", "human-1", "--body", "hello"}, want: "The other participant is a person; aweb reaches people by mail: aw mail send --to <their alias>"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			exit, _, stderr := run(tc.args...)

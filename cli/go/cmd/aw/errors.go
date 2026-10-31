@@ -79,13 +79,17 @@ func isAliasConflict(err error) bool {
 const recipientHumanMailOnly = "recipient_human_mail_only"
 
 // humanMailOnlyRefusal says, for the server's refusal of chat to a person,
-// that people are reached by mail, under that refusal's code. Any other error
-// is returned as it is.
+// that people are reached by mail, under that refusal's code. A send that
+// names no recipient speaks of the other participant. Any other error is
+// returned as it is.
 func humanMailOnlyRefusal(err error, recipient string) error {
 	if status, ok := awid.HTTPStatusCode(err); !ok || status != http.StatusUnprocessableEntity || httpErrorReason(err) != recipientHumanMailOnly {
 		return err
 	}
 	text := fmt.Sprintf("%s is a person; aweb reaches people by mail: aw mail send --to %s", recipient, recipient)
+	if recipient == "" {
+		text = "The other participant is a person; aweb reaches people by mail: aw mail send --to <their alias>"
+	}
 	return withErrorCode(recipientHumanMailOnly, &plainRefusal{text: text, err: err})
 }
 
