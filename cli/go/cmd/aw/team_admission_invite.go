@@ -97,10 +97,10 @@ func runTeamAdmissionInvite(ctx context.Context, cmd *cobra.Command) error {
 		return err
 	}
 	out := teamAdmissionInviteOutputFromResponse(resp, teamID)
-	fmt.Fprintln(cmd.ErrOrStderr(), teamInviteTokenWarning(out.ExpiresAt))
 	if jsonFlag {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 	}
+	fmt.Fprintln(cmd.ErrOrStderr(), teamInviteTokenWarning(out.ExpiresAt))
 	fmt.Fprintf(cmd.OutOrStdout(), "invite_id: %s\n", out.InviteID)
 	fmt.Fprintf(cmd.OutOrStdout(), "token: %s\n", out.Token)
 	fmt.Fprintf(cmd.OutOrStdout(), "join_command: %s\n", out.JoinCommand)

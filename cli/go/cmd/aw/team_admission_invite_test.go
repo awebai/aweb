@@ -83,9 +83,26 @@ func TestTeamAdmissionInviteRequiresTeamAdmissionScopeAndDoesNotAcceptInvite(t *
 	if decoded.Token != "aw_inv_secret" || decoded.JoinCommand != "aw team join --token-file <file> --name <name>" || decoded.CanonicalTeamID != "shared:example.aweb.ai" {
 		t.Fatalf("output=%+v", decoded)
 	}
+	// Under --json the output is the one JSON document and stderr stays empty.
+	if stderr.Len() != 0 {
+		t.Fatalf("--json admission invite wrote to stderr: %q", stderr.String())
+	}
+
 	// The admission token is the same single-use credential as a team invite:
-	// the same warning, with its expiry, and never the token itself.
-	if want := teamInviteTokenWarning(decoded.ExpiresAt); !strings.Contains(stderr.String(), want) || decoded.ExpiresAt == "" {
+	// the human output carries the same warning, with its expiry, and never
+	// the token itself.
+	jsonFlag = false
+	out.Reset()
+	if err := runTeamAdmissionInvite(t.Context(), cmd); err != nil {
+		t.Fatalf("runTeamAdmissionInvite: %v", err)
+	}
+	var expiresAt string
+	for _, line := range strings.Split(out.String(), "\n") {
+		if rest, ok := strings.CutPrefix(line, "expires_at: "); ok {
+			expiresAt = rest
+		}
+	}
+	if want := teamInviteTokenWarning(expiresAt); !strings.Contains(stderr.String(), want) || expiresAt == "" {
 		t.Fatalf("stderr %q does not carry the invite warning %q", stderr.String(), want)
 	}
 	if strings.Contains(stderr.String(), "aw_inv_secret") {

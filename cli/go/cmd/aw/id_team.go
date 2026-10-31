@@ -798,7 +798,9 @@ func runTeamInviteWithOutput(cmd *cobra.Command, args []string, porcelainJoin bo
 			return err
 		}
 	}
-	fmt.Fprintln(cmd.ErrOrStderr(), teamInviteTokenWarning(expiresAt))
+	if !jsonFlag {
+		fmt.Fprintln(cmd.ErrOrStderr(), teamInviteTokenWarning(expiresAt))
+	}
 	printOutput(teamInviteOutput{
 		Status:        "created",
 		InviteID:      inviteID,
@@ -809,7 +811,9 @@ func runTeamInviteWithOutput(cmd *cobra.Command, args []string, porcelainJoin bo
 	return nil
 }
 
-// teamInviteTokenWarning goes to stderr, so the invite's output is unchanged.
+// teamInviteTokenWarning goes to stderr with the human output, so the
+// invite's output is unchanged; --json output carries expires_at and writes
+// nothing to stderr.
 // It names only the flags that the printed join command has, and the expiry
 // when the invite carries one; a local invite records none and is valid
 // until it is used.
