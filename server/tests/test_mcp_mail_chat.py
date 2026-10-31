@@ -1409,7 +1409,7 @@ async def test_mcp_send_mail_requires_current_local_address_authority(
     if address_registered:
         assert result["status"] == "delivered"
     else:
-        assert result["error"] == ("otherco.com/bob has no registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned.")
+        assert result["error"] == ("otherco.com/bob is not a registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned.")
 
 
 @pytest.mark.asyncio
@@ -2120,7 +2120,7 @@ async def test_mcp_chat_send_requires_current_local_address_authority(
     if address_registered:
         assert result["session_id"]
     else:
-        assert result["error"] == ("otherco.com/bob has no registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned.")
+        assert result["error"] == ("otherco.com/bob is not a registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned.")
 
 
 @pytest.mark.asyncio
@@ -3258,4 +3258,4 @@ async def test_mcp_full_address_to_another_teams_local_identity_is_refused_witho
 
     # The same words as for a name nobody holds: the refusal does not say
     # whether a local identity holds this name in another team.
-    assert result == {"error": ("otherco.com/bob has no registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned.")}, result
+    assert result == {"error": ("otherco.com/bob is not a registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned.")}, result

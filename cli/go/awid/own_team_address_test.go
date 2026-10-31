@@ -107,7 +107,7 @@ func TestGlobalSenderReachesOwnTeamLocalMemberByFullAddress(t *testing.T) {
 }
 
 // An address that neither the sender's team roster nor AWID knows is refused,
-// and the refusal says why: a local identity has no registered address.
+// and the refusal says why: a local identity has no address.
 func TestUnregisteredAddressRefusalSaysWhy(t *testing.T) {
 	for _, target := range []string{"acme.com/nobody", "other.com/kestrel"} {
 		f := newOwnTeamAddressFixture(t)
@@ -116,7 +116,7 @@ func TestUnregisteredAddressRefusalSaysWhy(t *testing.T) {
 		if !errors.As(err, &refusal) || f.sent != nil {
 			t.Fatalf("%s: err %v sent %v", target, err, f.sent)
 		}
-		for _, want := range []string{target + " has no registered address", "local identity", "inside its own team, by alias"} {
+		for _, want := range []string{target + " is not a registered address", "local identity", "inside its own team, by alias"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Fatalf("refusal %q does not say %q", err.Error(), want)
 			}

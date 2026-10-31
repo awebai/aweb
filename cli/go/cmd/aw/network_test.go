@@ -580,7 +580,7 @@ func TestMailSendToAddressPrintsTheTypedRefusal(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ target, reason, want string }{
 		{"local/bbo", "recipient_identity_not_found", "local/bbo is not a member of your team or a registered address."},
-		{"acme.test/grace", "local_recipient_route_missing", "acme.test/grace has no registered address. A local identity has no address and is reachable only from inside its own team, by alias"},
+		{"acme.test/grace", "local_recipient_route_missing", "acme.test/grace is not a registered address. A local identity has no address and is reachable only from inside its own team, by alias"},
 	} {
 		var posts atomic.Int32
 		server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
