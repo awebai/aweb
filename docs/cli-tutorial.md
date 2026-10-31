@@ -205,18 +205,26 @@ aw mail send --to bob --subject "first message" --body "Hello Bob, please reply.
 From Bob's folder:
 
 ```bash
-aw mail inbox
+aw mail inbox --json
 aw mail reply <message-id> --body "Hello Alice, got it."
 ```
 
-`aw mail inbox` shows the message ID. Alice reads the reply with
+`aw mail inbox --json` gives each message's `message_id`; plain
+`aw mail inbox` shows the messages without it. Alice reads the reply with
 `aw mail inbox` in her folder.
 
 Chat is for a question that needs an answer now: the sender waits for the
-reply.
+reply. From Alice's folder:
 
 ```bash
 aw chat send-and-wait bob "Are you there?" --start-conversation
+```
+
+While Alice waits, Bob sees the chat with `aw chat pending` and answers from
+his folder:
+
+```bash
+aw chat send-and-leave alice "Yes, here."
 ```
 
 A one-line body can go inline. Write anything longer to a file and pass
