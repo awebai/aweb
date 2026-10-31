@@ -81,6 +81,13 @@ scope and continuation use that participant reference. Hosted plaintext signing
 keeps the original key in the signed payload without replacing the participant
 or stored author identity with that key.
 
+Migration 045 normalizes historical participant keys to a global DID only from
+an unambiguous current verified key binding. Duplicate participant rows merge
+without losing join/read state; signed message identity fields remain unchanged.
+The normalized participant retains its key as thread-local attribution evidence,
+not as another participant authority. An ambiguous verified mapping aborts the
+migration rather than guessing the owner.
+
 ## Direct Address Send Protocol
 
 For a send to a global address (`domain/name`):

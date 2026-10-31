@@ -472,6 +472,9 @@ async def send_mail(
         recipient = await resolve_agent_by_did(db_infra, recipient_did)
         if recipient is not None:
             recipient = identity_recipient(recipient)
+            # An explicit current key selects the verified identity; it is
+            # signature evidence, not a second global participant.
+            recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or recipient_ref).strip()
     elif "/" in recipient_ref:
         domain, name = recipient_ref.split("/", 1)
         try:

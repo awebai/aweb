@@ -137,7 +137,7 @@ async def test_mcp_recipient_send_starts_new_conversation(mail_server, target, p
     assert server.custody.payloads[-1]["conversation_id"] == sent["conversation_id"]
     row = await server.db.fetch_one("SELECT * FROM {{tables.messages}} WHERE message_id=$1", UUID(sent["message_id"]))
     assert str(row["conversation_id"]) == sent["conversation_id"]
-    assert row["to_did"] == (server.human_did if target == "current_did" else "did:aw:human")
+    assert row["to_did"] == "did:aw:human"
     if plaintext:
         assert json.loads(row["signed_payload"])["conversation_id"] == sent["conversation_id"]
     else:
