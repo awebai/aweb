@@ -39,6 +39,7 @@ from aweb.mcp.tools.contacts import send_message_to_contact as _send_message_to_
 from aweb.mcp.tools.contacts import read_messages_from_contact as _read_messages_from_contact_impl
 from aweb.mcp.tools.identity import whoami as _whoami_impl
 from aweb.mcp.tools.mail import check_inbox as _check_inbox_impl
+from aweb.mcp.tools.mail import list_threads as _list_threads_impl
 from aweb.mcp.tools.mail import send_mail as _send_mail_impl
 from aweb.mcp.tools.room import room_read as _room_read_impl, room_post as _room_post_impl, room_pending as _room_pending_impl
 from aweb.messaging.room import ROOM_DISCLOSURE
@@ -213,7 +214,7 @@ def register_tools(
         description=(
             "Send async mail with a required body by recipient, or continue an existing "
             "mail conversation by conversation_id. A recipient send starts a new thread. "
-            "Hosted custodial sends use managed "
+            "Use list_threads to find a conversation to continue. Hosted custodial sends use managed "
             "encryption by default when the recipient has an encryption key. The hosted "
             "service can read the mail; this is not end-to-end encryption. Set plaintext=true "
             "to store message content unencrypted."
@@ -241,6 +242,24 @@ def register_tools(
             plaintext=plaintext,
             federation_transport=federation_mail_transport,
             public_origin=public_origin,
+        )
+
+    @mcp.tool(
+        name="list_threads",
+        description=(
+            "List your mail threads without acknowledging messages, newest activity first. "
+            "Returns title (first-message subject; empty for E2EE), first_message_id, "
+            "participants, last activity, unread count and conversation_id. Filters only "
+            "narrow your participant access. Continue a chosen thread with send_mail conversation_id."
+        ),
+    )
+    async def list_threads(
+        limit: int = 50, cursor: str = "", participant_did: str = "",
+        participant_address: str = "",
+    ) -> str:
+        return await _list_threads_impl(
+            db_infra, limit=limit, cursor=cursor, participant_did=participant_did,
+            participant_address=participant_address,
         )
 
     @mcp.tool(

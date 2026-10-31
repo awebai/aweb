@@ -120,6 +120,7 @@ def test_mcp_tool_names_include_canonical_and_legacy_compatibility_aliases():
     expected = {
         "send_mail",
         "check_mail",
+        "list_threads",
         "send_chat",
         "check_chats",
         "read_chat",

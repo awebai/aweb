@@ -75,7 +75,20 @@ async def list_conversations(
     db=Depends(get_db),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> ConversationsResponse:
-    del request
+    return await list_conversations_for_auth(
+        db, auth, cursor=cursor, limit=limit, conversation_type=conversation_type,
+        participant_did=participant_did, participant_address=participant_address,
+    )
+
+
+async def list_conversations_for_auth(
+    db, auth: MessagingAuth, *, cursor: str | None = None, limit: int = 50,
+    conversation_type: str | None = None, participant_did: str | None = None,
+    participant_address: str | None = None,
+) -> ConversationsResponse:
+    """The participant-scoped index shared by HTTP and MCP; never marks mail read."""
+    if not 1 <= limit <= 100:
+        raise HTTPException(status_code=422, detail="limit must be between 1 and 100")
     aweb_db = db.get_manager("aweb")
     actor_dids = auth_dids(auth)
     actor_agent_id = str(auth.agent_id).strip() if auth.agent_id else None

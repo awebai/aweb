@@ -42,8 +42,9 @@ MCP section of [`aweb-sot.md`](https://aweb.ai/docs/aweb-sot.md).
 
 | Tool | Parameters | Registered description |
 | --- | --- | --- |
-| `send_mail` | `to=""`, `body=""`, `conversation_id=""`, `subject=""`, `priority="normal"`, `plaintext=False` | Send async mail with a required body by recipient, or continue an existing mail conversation by conversation_id. A recipient send starts a new thread. Hosted custodial sends use managed encryption by default when the recipient has an encryption key. The hosted service can read the mail; this is not end-to-end encryption. Set plaintext=true to store message content unencrypted. |
+| `send_mail` | `to=""`, `body=""`, `conversation_id=""`, `subject=""`, `priority="normal"`, `plaintext=False` | Send async mail with a required body by recipient, or continue an existing mail conversation by conversation_id. A recipient send starts a new thread. Use list_threads to find a conversation to continue. Hosted custodial sends use managed encryption by default when the recipient has an encryption key. The hosted service can read the mail; this is not end-to-end encryption. Set plaintext=true to store message content unencrypted. |
 | `check_mail` | `unread_only=True`, `limit=50`, `include_bodies=True` | Check hosted mail. The tool marks returned unread messages read before returning. The hosted service decrypts managed encrypted mail for this MCP session; self-custodial encrypted content remains metadata-only. |
+| `list_threads` | `limit=50`, `cursor=""`, `participant_did=""`, `participant_address=""` | List your mail threads without acknowledging messages, newest activity first. Returns title (first-message subject; empty for E2EE), first_message_id, participants, last activity, unread count and conversation_id. Filters only narrow your participant access. Continue a chosen thread with send_mail conversation_id. |
 
 ## Team Room
 

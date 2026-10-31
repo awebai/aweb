@@ -74,6 +74,23 @@ from aweb.routes.messages import (
 )
 from aweb.service_errors import ForbiddenError, NotFoundError, ServiceError, ValidationError
 
+async def list_threads(
+    db, *, limit: int = 50, cursor: str = "", participant_did: str = "",
+    participant_address: str = "",
+) -> str:
+    from aweb.routes.conversations import list_conversations_for_auth
+
+    try:
+        response = await list_conversations_for_auth(
+            db, mcp_messaging_auth(get_auth()), conversation_type="mail", limit=limit,
+            cursor=cursor or None, participant_did=participant_did or None,
+            participant_address=participant_address or None,
+        )
+    except HTTPException as exc:
+        return json.dumps({"error": exc.detail})
+    return response.model_dump_json()
+
+
 VALID_PRIORITIES: set[str] = set(MessagePriority.__args__)  # type: ignore[attr-defined]
 
 

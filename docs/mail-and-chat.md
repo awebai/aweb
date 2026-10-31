@@ -132,10 +132,10 @@ replaying the same ingress key returns its original committed result. Chat
 session reuse is unchanged. A bare external `did:aw` without a discovered
 address or stored route remains unsupported for first contact.
 
-`GET /v1/conversations?conversation_type=mail` returns the participant-scoped
-mail index, newest activity first. It returns
+`GET /v1/conversations?conversation_type=mail` and MCP `list_threads` share the
+participant-scoped mail index, newest activity first. They return
 `conversations` and `next_cursor`, accept `limit` (1–100), `cursor`,
-`participant_did` and `participant_address`, and never acknowledges mail.
+`participant_did` and `participant_address`, and never acknowledge mail.
 Filters narrow participant access; they never grant access. Empty mail
 conversations do not appear until a message exists.
 

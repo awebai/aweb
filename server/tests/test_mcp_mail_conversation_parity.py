@@ -75,6 +75,8 @@ async def mail_server(aweb_cloud_db, monkeypatch):
                            ("did:aw:human", human_did, ""))
     from aweb.routes.messaging import router as messaging_router
     app.include_router(messaging_router)
+    from aweb.routes.conversations import router as conversations_router
+    app.include_router(conversations_router)
     mcp = create_mcp_app(db_infra=app.state.db, hosted_signer=signer, hosted_encryptor=encryptor)
     app.mount("/mcp", mcp)
     await mcp.startup()
@@ -89,7 +91,7 @@ async def mail_server(aweb_cloud_db, monkeypatch):
                 assert response.status_code == 200, response.text
                 return response.json()
 
-            async def mcp_mail(**arguments):
+            async def mcp_call(tool, **arguments):
                 principal = str(uuid4())
                 headers = {
                     "Accept": "application/json, text/event-stream", "X-Team-ID": team,
@@ -101,14 +103,17 @@ async def mail_server(aweb_cloud_db, monkeypatch):
                 }
                 response = await client.post("/mcp/", headers=headers, json={
                     "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                    "params": {"name": "send_mail", "arguments": {"body": "unprompted update", **arguments}},
+                    "params": {"name": tool, "arguments": arguments},
                 })
                 assert response.status_code == 200, response.text
                 result = response.json()
                 assert "error" not in result, result
                 return json.loads(result["result"]["content"][0]["text"])
 
-            yield SimpleNamespace(db=db, human_mail=human_mail, mcp_mail=mcp_mail,
+            async def mcp_mail(**arguments):
+                return await mcp_call("send_mail", body="unprompted update", **arguments)
+
+            yield SimpleNamespace(db=db, human_mail=human_mail, mcp_mail=mcp_mail, mcp_call=mcp_call,
                                   custody=custody, human=human, human_did=human_did, pilot=pilot,
                                   client=client, pilot_key=pilot_key, pilot_did=pilot_did)
     finally:
@@ -243,3 +248,35 @@ async def test_human_alias_refusal_has_no_message_or_mutation(mail_server, failu
     assert (await server.db.fetch_one("SELECT count(*) AS n FROM {{tables.messages}}"))["n"] == 0
     assert (await server.db.fetch_one("SELECT count(*) AS n FROM {{tables.conversations}}"))["n"] == 0
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("plaintext", [True, False])
+async def test_mcp_lists_threads_from_the_participant_http_index_without_ack(mail_server, plaintext):
+    server = mail_server
+    first = await server.mcp_mail(to="human", subject="First title", plaintext=plaintext)
+    reply = await server.mcp_mail(conversation_id=first["conversation_id"], subject="New subject", plaintext=True)
+    assert reply["conversation_id"] == first["conversation_id"]
+    # Another pair's mail stays outside this actor's index.
+    _, _, other = _make_keypair()
+    await _insert_agent(server.db, team_id="ops:acme.com", alias="other", did_key=other, did_aw=None, address=None)
+    await server.human_mail(to_alias="other", subject="Private other pair")
+    before = await server.db.fetch_all("SELECT message_id,read_at FROM {{tables.messages}} ORDER BY message_id")
+    listed = await server.mcp_call("list_threads", participant_did="did:aw:human")
+    assert len(listed["conversations"]) == 1, listed
+    item = listed["conversations"][0]
+    assert item["conversation_id"] == first["conversation_id"]
+    assert item["first_message_id"] == first["message_id"]
+    assert item["title"] == ("First title" if plaintext else "")
+    assert item["subject"] == "New subject"
+    assert set(item["participant_dids"]) == {server.pilot_did if plaintext else "did:aw:pilot", "did:aw:human"}
+    response = await server.client.get(
+        "/v1/conversations?conversation_type=mail&participant_did=did:aw:human",
+        headers=_signed_identity_headers(server.pilot_key, server.pilot_did, "", b""),
+    )
+    assert response.status_code == 200, response.text
+    assert listed == response.json()
+    assert before == await server.db.fetch_all("SELECT message_id,read_at FROM {{tables.messages}} ORDER BY message_id")
+    # A filter does not grant access to another pair, nor acknowledge its mail.
+    assert (await server.mcp_call("list_threads", participant_did=other))["conversations"] == []
+    invalid = await server.mcp_call("list_threads", limit=101)
+    assert "error" in invalid, invalid
