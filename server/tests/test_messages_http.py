@@ -340,6 +340,11 @@ def _build_test_app(aweb_db, registry, *, verified_bindings=()):
     app.state.redis = None
     app.state.rate_limiter = None
     app.state.awid_registry_client = registry
+    if registry is not None:
+        # These unit cases select the strict foreign authority supplied below.
+        # Configured-home namespace routing is exercised against real AWID apps.
+        registry.registry_url = "https://home-registry.test"
+        registry.registry_audience = AsyncMock(return_value="https://registry.test")
     # Routing/signature unit cases supply established authority facts explicitly.
     # Fresh registry admission and refusals use test_identity_binding_http.
     app.state.identity_binding_cache = OrderedDict({
