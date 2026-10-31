@@ -741,10 +741,9 @@ def _require_remote_mail_signature(payload: SendMessageRequest) -> None:
         )
 
 
-async def _validate_encrypted_payload(
+def _validate_encrypted_payload(
     payload: SendMessageRequest,
     *,
-    db,
     auth: MessagingAuth,
     sender_did: str,
     recipient: dict | None,
@@ -779,9 +778,6 @@ async def _validate_encrypted_payload(
         )
     except E2EEEnvelopeError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    await require_non_custodial_recipients(
-        db, payload.encrypted_envelope or {}, [recipient] if recipient else [], sender=auth,
-    )
     return encrypted_message_storage_metadata(payload.encrypted_envelope or {})
 
 
@@ -865,14 +861,17 @@ async def _deliver_remote_mail_and_project_locally(
             status_code=424,
             detail="Recipient address has no federated delivery origin",
         )
-    encrypted_metadata = await _validate_encrypted_payload(
+    encrypted_metadata = _validate_encrypted_payload(
         payload,
-        db=db,
         auth=auth,
         sender_did=sender_did,
         recipient=recipient,
         recipient_did=recipient_did,
     )
+    if encrypted_metadata is not None:
+        await require_non_custodial_recipients(
+            db, payload.encrypted_envelope or {}, [recipient] if recipient else [], sender=auth,
+        )
     is_encrypted = payload.content_mode == "encrypted_v2"
     if not is_encrypted:
         _require_remote_mail_signature(payload)
@@ -1273,14 +1272,17 @@ async def _send_mail_conversation_continuation(
             # signed_payload; deliver_message separately assigns server receipt
             # time for ordering, so the two values may disagree.
             _parse_signed_timestamp(payload.timestamp)
-        encrypted_metadata = await _validate_encrypted_payload(
+        encrypted_metadata = _validate_encrypted_payload(
             payload,
-            db=db,
             auth=auth,
             sender_did=sender_did,
             recipient=recipient,
             recipient_did=recipient_participant["did"],
         )
+        if encrypted_metadata is not None:
+            await require_non_custodial_recipients(
+                db, payload.encrypted_envelope or {}, [recipient] if recipient else [], sender=auth,
+            )
         message_id, server_received_at = await deliver_message(
             db,
             id_chain=getattr(getattr(request, "state", None), "id_chain", None),
@@ -1897,14 +1899,17 @@ async def send_message(
                 sender_verified_team_id=auth.verified_team_id,
                 sender_verified_dids=auth_dids(auth),
             )
-        encrypted_metadata = await _validate_encrypted_payload(
+        encrypted_metadata = _validate_encrypted_payload(
             payload,
-            db=db,
             auth=auth,
             sender_did=sender_did,
             recipient=recipient,
             recipient_did=recipient_did or "",
         )
+        if encrypted_metadata is not None:
+            await require_non_custodial_recipients(
+                db, payload.encrypted_envelope or {}, [recipient] if recipient else [], sender=auth,
+            )
         # If an explicit recipient is present, conversation_id is a caller-chosen
         # initial id. Continuations use conversation_id without recipient fields.
         conversation = await _create_requested_mail_conversation(
