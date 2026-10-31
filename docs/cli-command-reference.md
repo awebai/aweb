@@ -1573,8 +1573,9 @@ Issue a shared-team admission invite token.
 
 This uses host CLI auth with scope cli.team_admission to request an ordinary
 single-use aw_inv_ token for a chosen recipient. It does not accept the invite,
-install membership, or bind this workspace; use aw team join or aw id team
-accept-invite with the returned token in the target identity root.
+install membership, or bind this workspace; save the returned token to a file
+and run aw team join --token-file (or aw id team accept-invite --token-file)
+in the target identity root.
 
 Flags:
 - `--alias-hint string Optional suggested member alias for the recipient`

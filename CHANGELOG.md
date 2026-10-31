@@ -9,10 +9,12 @@
   `AWEB_BIND_ADDRESS=0.0.0.0` (or one interface's address).
 - aw: `aw check` names the team, agent and server; `aw team join` and
   `aw id team accept-invite` take the invite token from `--token-file` or
-  `--token-stdin`; `aw team invite` and `aw id team invite` warn on stderr
-  that the printed token is a credential, say when a hosted invite expires
-  (also as `expires_at` in `--json`), and print the join command in its
-  `--token-file` form.
+  `--token-stdin`; `aw team invite`, `aw id team invite` and
+  `aw team admission-invite` warn on stderr that the printed token is a
+  credential, say when a hosted invite expires (also as `expires_at` in
+  `--json`) or that a local invite is valid until it is used, and print the
+  join command in its `--token-file` form. The admission invite's
+  `join_command` field no longer embeds the token.
 
 - aw: with `--json`, a failed command prints one error envelope on stdout,
   `{"error": {"code", "message", "http_status", "detail"}}`. `code` is the

@@ -811,9 +811,10 @@ func runTeamInviteWithOutput(cmd *cobra.Command, args []string, porcelainJoin bo
 
 // teamInviteTokenWarning goes to stderr, so the invite's output is unchanged.
 // It names only the flags that the printed join command has, and the expiry
-// when the invite carries one.
+// when the invite carries one; a local invite records none and is valid
+// until it is used.
 func teamInviteTokenWarning(expiresAt string) string {
-	validity := "until it is used or expires"
+	validity := "until it is used"
 	if expiresAt = strings.TrimSpace(expiresAt); expiresAt != "" {
 		validity = "until it is used or until " + expiresAt
 	}
