@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Self-hosted compose: aweb and awid are now published on 127.0.0.1 only,
+  because Docker's published ports bypass host firewalls such as ufw.
+  Existing installs reached from other machines on a LAN lose that access
+  after pulling this compose file until `server/.env` sets
+  `AWEB_BIND_ADDRESS=0.0.0.0` (or one interface's address).
+- aw: `aw check` names the team, agent and server; `aw team join` takes the
+  invite token from `--token-file` or `--token-stdin`; `aw team invite`
+  warns on stderr that the printed token is a credential.
+
 - aw: with `--json`, a failed command prints one error envelope on stdout,
   `{"error": {"code", "message", "http_status", "detail"}}`. `code` is the
   stable contract; stderr wording is not. stderr and exit codes do not
