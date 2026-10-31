@@ -606,10 +606,15 @@ async def test_address_resolution_returns_namespace_route_origin(client, control
 
 
 @pytest.mark.asyncio
-async def test_rotate_local_namespace_controller_skips_dns_verification(client):
+async def test_rotate_local_namespace_controller_requires_previous_key(client):
+    """A new key alone cannot replace the controller of the reserved local
+    namespace: it has no DNS or parent authority to recover through."""
     signing_key, public_key = generate_keypair()
     controller_did = did_from_public_key(public_key)
     await _register_namespace(client, signing_key, controller_did, "local")
+    await _create_team(client, signing_key, controller_did, "local", "default")
+    team_before = await client.get("/v1/namespaces/local/teams/default")
+    assert team_before.status_code == 200, team_before.text
 
     new_signing_key, new_public_key = generate_keypair()
     new_controller_did = did_from_public_key(new_public_key)
@@ -626,8 +631,14 @@ async def test_rotate_local_namespace_controller_skips_dns_verification(client):
         headers=headers,
     )
 
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["controller_did"] == new_controller_did
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["detail"]["code"] == "local_rotation_requires_previous_key", resp.text
+    current = await client.get("/v1/namespaces/local")
+    assert current.status_code == 200, current.text
+    assert current.json()["controller_did"] == controller_did
+    team_after = await client.get("/v1/namespaces/local/teams/default")
+    assert team_after.status_code == 200, team_after.text
+    assert team_after.json() == team_before.json()
 
 
 @pytest.mark.asyncio
