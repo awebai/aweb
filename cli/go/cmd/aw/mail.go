@@ -753,6 +753,7 @@ var mailReplyCmd = &cobra.Command{
 			Body:           body,
 			Priority:       awid.MessagePriority(mailReplyPriority),
 			EncryptE2EE:    encryptReply,
+			E2EEInherited:  encryptReply && !cmd.Flags().Changed("e2ee"),
 		}
 		if encryptReply && inbox.Messages[0].Encrypted != nil {
 			source := inbox.Messages[0]
@@ -1339,7 +1340,7 @@ func init() {
 	mailReplyCmd.Flags().StringVar(&mailReplyBodyFile, "body-file", "", safeFileInputHelp("message body"))
 	mailReplyCmd.Flags().StringVar(&mailReplyPriority, "priority", "normal", "Priority: low|normal|high|urgent")
 	mailReplyCmd.Flags().BoolVar(&mailReplyPlaintext, "plaintext", false, "Send explicit server-readable plaintext mail, even when replying to encrypted mail")
-	mailReplyCmd.Flags().BoolVar(&mailReplyE2EE, "e2ee", false, "Send E2E encrypted mail (default for an encrypted source); fails closed if encryption keys are missing")
+	mailReplyCmd.Flags().BoolVar(&mailReplyE2EE, "e2ee", false, "Send E2E encrypted mail (default for an encrypted source, except to a recipient on aweb's hosted service, which gets server-readable mail); fails closed if encryption keys are missing")
 	mailReplyCmd.Flags().BoolVar(&mailReplyLegacyPlaintext, "legacy-plaintext", false, "Deprecated alias for --plaintext")
 	_ = mailReplyCmd.Flags().MarkHidden("legacy-plaintext")
 	mailShowCmd.Flags().StringVar(&mailShowConversationID, "conversation-id", "", "Mail conversation to inspect")

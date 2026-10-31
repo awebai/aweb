@@ -35,12 +35,12 @@ func (e *CustodialRecipientError) Unwrap() error { return e.err }
 
 func (e *CustodialRecipientError) Error() string {
 	if e.Unverified && len(e.Recipients) > 1 {
-		return "At least one of " + joinRecipientNames(e.Recipients) + " is a hosted agent: aweb's service reads its messages, so end-to-end encryption is not possible. Send it again without --e2ee."
+		return "At least one of " + joinRecipientNames(e.Recipients) + " uses aweb's hosted service, which reads its messages, so end-to-end encryption is not possible. Send it again without --e2ee."
 	}
 	if len(e.Recipients) == 1 {
-		return e.Recipients[0] + " is a hosted agent: aweb's service reads its messages, so end-to-end encryption is not possible. Send it again without --e2ee."
+		return e.Recipients[0] + " uses aweb's hosted service, which reads its messages, so end-to-end encryption is not possible. Send it again without --e2ee."
 	}
-	return joinRecipientNames(e.Recipients) + " are hosted agents: aweb's service reads their messages, so end-to-end encryption is not possible. Send it again without --e2ee."
+	return joinRecipientNames(e.Recipients) + " use aweb's hosted service, which reads their messages, so end-to-end encryption is not possible. Send it again without --e2ee."
 }
 
 func joinRecipientNames(names []string) string {
@@ -58,19 +58,25 @@ func joinRecipientNames(names []string) string {
 func refuseCustodialRecipients(recipients []E2EERecipientKey, now time.Time) error {
 	var hosted []string
 	for _, recipient := range recipients {
-		assertion := recipient.EncryptionKey
-		if assertion == nil || strings.TrimSpace(assertion.Custody) != EncryptionKeyCustodyHosted {
-			continue
+		if recipientKeyIsHosted(recipient, now) {
+			hosted = append(hosted, recipientName(recipient))
 		}
-		if VerifyEncryptionKeyAssertion(assertion, strings.TrimSpace(recipient.DID), strings.TrimSpace(recipient.StableID), now) != nil {
-			continue
-		}
-		hosted = append(hosted, recipientName(recipient))
 	}
 	if len(hosted) == 0 {
 		return nil
 	}
 	return &CustodialRecipientError{Recipients: hosted}
+}
+
+// recipientKeyIsHosted reports whether the recipient's encryption key
+// assertion, verified against the recipient's identity, says aweb's hosted
+// service holds the key. An assertion that does not verify says nothing.
+func recipientKeyIsHosted(recipient E2EERecipientKey, now time.Time) bool {
+	assertion := recipient.EncryptionKey
+	if assertion == nil || strings.TrimSpace(assertion.Custody) != EncryptionKeyCustodyHosted {
+		return false
+	}
+	return VerifyEncryptionKeyAssertion(assertion, strings.TrimSpace(recipient.DID), strings.TrimSpace(recipient.StableID), now) == nil
 }
 
 // recipientName is how a refusal names a recipient: its address, else its

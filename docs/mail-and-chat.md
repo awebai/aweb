@@ -197,7 +197,10 @@ aw mail reply <message-id> --body-file reply.md
 
 Reply always prepares decryption before reading the source. With no mode flag,
 `aw mail reply` encrypts a reply to encrypted mail and keeps a reply to plaintext
-mail plaintext. `--e2ee` requests encryption explicitly; `--plaintext` explicitly
+mail plaintext. The exception is a recipient on aweb's hosted service (its
+verified encryption key says the service holds it): the service reads its
+messages, so an unflagged reply to it is server-readable. `--e2ee` requests
+encryption explicitly, and is refused for such a recipient; `--plaintext` explicitly
 sends server-readable plaintext even for an encrypted source. These flags are
 mutually exclusive. If required decryption or peer encryption is unavailable,
 the reply fails rather than falling back to plaintext. Grant homes use their

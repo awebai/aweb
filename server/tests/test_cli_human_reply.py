@@ -132,8 +132,17 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
                                                     stderr=asyncio.subprocess.STDOUT)
         output, _ = await asyncio.wait_for(reply.communicate(), 30)
         assert reply.returncode == 0, output.decode()
-        # Stored-source reply can use its signed key; alias encryption still
-        # requires a published participant key and never falls back to plaintext.
+        # An explicit end-to-end reply to the hosted human is refused before any
+        # request: aweb's service holds her key. Nothing is stored.
+        explicit = await asyncio.create_subprocess_exec(str(binary), "mail", "reply", message_id, "--e2ee",
+                                                       "--body-file", str(body_file), "--json", cwd=command_dir,
+                                                       env=command_env, stdout=asyncio.subprocess.PIPE,
+                                                       stderr=asyncio.subprocess.PIPE)
+        explicit_out, _ = await asyncio.wait_for(explicit.communicate(), 30)
+        assert explicit.returncode == 1, explicit_out.decode()
+        assert json.loads(explicit_out)["error"]["code"] == "recipient_custodial_no_e2ee"
+        # Alias encryption to her is refused the same way, and never falls back
+        # to plaintext.
         forbidden = await asyncio.create_subprocess_exec(str(binary), "mail", "send", "--to", "alice",
                                                         "--e2ee", "--body-file", str(body_file), cwd=command_dir,
                                                         env=command_env, stdout=asyncio.subprocess.PIPE,
@@ -145,14 +154,12 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
         assert response.status_code == 200, response.text
         messages = response.json()["messages"]
         assert len(messages) == 2
+        # The unflagged reply inherits no end-to-end request to a hosted
+        # recipient: it is delivered server-readable in the same conversation.
         delivered = next(m for m in messages if m["message_id"] != message_id)
-        assert delivered["content_mode"] == "encrypted_v2"
+        assert delivered["content_mode"] != "encrypted_v2"
         assert delivered["conversation_id"] == conversation_id
-        assert "Agent private reply" not in json.dumps(delivered)
-        plain = decrypt_e2ee_message(delivered["encrypted_envelope"], {
-            **human, "encryption_key_id": human["encryption_key"]["encryption_key_id"],
-        })
-        assert plain["body"] == "Agent private reply"
+        assert delivered["body"] == "Agent private reply"
 
         # Exercise the reported first-send form before any peer conversation exists.
         default_sent = await _cli(binary, command_dir, command_env, "mail", "send", "--to", "carol",
