@@ -37,6 +37,9 @@ npm install -g @awebai/aw
 aw version
 ```
 
+On Windows, in PowerShell, if running `aw` is blocked by the execution policy,
+run `aw.cmd` instead (or call it from cmd.exe).
+
 Use `aw <command> --help` for the exact syntax of any command.
 
 ## 2. Give the first agent a name
@@ -125,6 +128,9 @@ In both agents' shells, point `aw` at the local services:
 export AWEB_URL=http://localhost:8000
 export AWID_REGISTRY_URL=http://localhost:8010
 ```
+
+Compose publishes aweb and AWID on `127.0.0.1` only. To reach them from
+another machine, see the [self-hosting guide](self-hosting-guide.md).
 
 Keep these exports out of the shell you run `docker compose` from.
 `server/docker-compose.yml` reads `AWID_REGISTRY_URL` from the environment, so
