@@ -11,18 +11,13 @@ from awid.federation_errors import FederationAuthorityError
 logger = logging.getLogger(__name__)
 
 
-def require_non_custodial_assertion(assertion: dict) -> None:
-    """Call only after signature and current recipient binding verification."""
-    if assertion.get("custody") == "hosted_custodial":
-        raise FederationAuthorityError("recipient_custodial_no_e2ee")
-
-
 async def require_non_custodial_recipients(db, envelope: dict, recipients: list[dict]) -> None:
     """Absent assertions retain legacy behavior; absence is no custody fact.
 
-    Remote recipients are checked by their receiving server's Phase B. A local
-    recipient's exact delivered key is checked, never its latest unrelated key
-    or an unverified projection of the assertion's custody field.
+    Remote recipients without an assertion already in hand remain the sending
+    client's responsibility. Ingress and managed hosted sends cannot establish
+    user E2EE intent. Check a local recipient's exact delivered key, never its
+    latest unrelated key or an unverified projection of its custody field.
     """
     references = envelope.get("recipients")
     if not isinstance(references, list):
@@ -58,4 +53,4 @@ async def require_non_custodial_recipients(db, envelope: dict, recipients: list[
         except (ValueError, TypeError) as exc:
             logger.warning("Invalid delivery-key assertion for recipient %s", recipient["agent_id"], exc_info=True)
             raise FederationAuthorityError("recipient_encryption_assertion_invalid_or_stale") from exc
-        require_non_custodial_assertion(assertion)
+        raise FederationAuthorityError("recipient_custodial_no_e2ee")

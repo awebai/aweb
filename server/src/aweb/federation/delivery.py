@@ -23,7 +23,6 @@ from aweb.service_errors import ForbiddenError
 from aweb.e2ee_messages import encrypted_message_storage_metadata
 from aweb.federation.authority_state import AuthoritySecurityToken
 from aweb.federation.envelope import FederationEnvelope
-from aweb.messaging.encryption_custody import require_non_custodial_assertion
 
 BeforeCommit = Callable[[], Awaitable[None]]
 
@@ -341,7 +340,6 @@ async def _require_recipient_encryption_assertion(
         raise FederationAuthorityError(
             "recipient_encryption_assertion_invalid_or_stale"
         ) from exc
-    require_non_custodial_assertion(assertion)
 
 
 async def _authorize_policy(

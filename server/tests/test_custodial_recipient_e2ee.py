@@ -11,7 +11,6 @@ from uuid import uuid4
 import pytest
 
 from awid.e2ee_keys import build_encryption_key_assertion, encryption_assertion_payload
-from awid.federation_errors import FederationAuthorityError
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.e2ee_messages import encrypt_e2ee_message, generate_x25519_keypair
 from aweb.federation.delivery import deliver_federated_phase_b
@@ -171,15 +170,13 @@ async def test_hosted_key_does_not_refuse_plaintext_or_imply_custody_when_absent
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["mail", "chat"])
-@pytest.mark.parametrize("custody", ["hosted_custodial", "self", None])
-@pytest.mark.parametrize("sender_custody", ["self", "hosted_custodial"])
-async def test_federation_refuses_verified_hosted_key_before_atomic_effects(aweb_cloud_db, kind, custody, sender_custody):
+async def test_federation_preserves_managed_hosted_delivery(aweb_cloud_db, kind):
     from types import SimpleNamespace
 
     sender_sk, _, sender_did = _make_keypair()
     recipient_sk, _, recipient_did = _make_keypair()
-    alice = _identity(SimpleNamespace(sk=sender_sk, did=sender_did), sender_custody, address="alpha.example/alice", stable_id="did:aw:alice")
-    bob = _identity(SimpleNamespace(sk=recipient_sk, did=recipient_did), custody, address="beta.example/bob", stable_id="did:aw:bob")
+    alice = _identity(SimpleNamespace(sk=sender_sk, did=sender_did), "hosted_custodial", address="alpha.example/alice", stable_id="did:aw:alice")
+    bob = _identity(SimpleNamespace(sk=recipient_sk, did=recipient_did), "hosted_custodial", address="beta.example/bob", stable_id="did:aw:bob")
     envelope = _envelope(kind=kind).model_copy(update={
         "sender_current_did_key": sender_did, "target_current_did_key": recipient_did,
     })
@@ -196,18 +193,8 @@ async def test_federation_refuses_verified_hosted_key_before_atomic_effects(aweb
     recipient, token = await _seed_recipient_and_authority(manager, envelope)
     await _insert_agent_encryption_assertion(manager, agent_id=recipient["agent_id"],
                                            team_id=recipient["team_id"], assertion=bob["encryption_key"])
-    async def deliver():
-        return await deliver_federated_phase_b(
-            _DB(manager), envelope=envelope, signature=encrypted["signature"],
-            recipient=recipient, authority_token=token,
-        )
-    if custody == "hosted_custodial" and sender_custody == "self":
-        with pytest.raises(FederationAuthorityError) as refused:
-            await deliver()
-        assert refused.value.reason == "recipient_custodial_no_e2ee"
-        assert refused.value.http_status == 422
-        for table in ("messages", "chat_messages", "conversations", "chat_sessions", "message_ingress_receipts", "federation_mutation_outbox"):
-            assert await manager.fetch_val("SELECT COUNT(*) FROM {{tables." + table + "}}") == 0
-    else:
-        result = await deliver()
-        assert result["message_id"] == envelope.message_id
+    result = await deliver_federated_phase_b(
+        _DB(manager), envelope=envelope, signature=encrypted["signature"],
+        recipient=recipient, authority_token=token,
+    )
+    assert result["message_id"] == envelope.message_id
