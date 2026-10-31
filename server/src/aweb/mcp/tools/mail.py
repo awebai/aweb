@@ -45,6 +45,8 @@ from aweb.messaging.alias_targets import (
 )
 from aweb.messaging.address_auth import (
     identity_recipient,
+    local_recipient_for_address_binding,
+    requires_registry_address_binding,
     local_recipient_visible_to_auth,
     unreachable_address_refusal,
 )
@@ -484,6 +486,8 @@ async def send_mail(
             )
         except ServiceError as exc:
             return json.dumps({"error": exc.detail})
+        if requires_registry_address_binding(recipient):
+            recipient = None
         if recipient is not None:
             if not hosted_handle and not local_recipient_visible_to_auth(recipient, auth):
                 controller_did = await resolve_local_namespace_controller_did(
@@ -516,9 +520,9 @@ async def send_mail(
                 )
             if resolved is not None and resolved.did_aw:
                 recipient_did = resolved.did_aw
-                # The address lookup above found no local membership. Another
-                # membership of the same DID is not this address's participant.
-                recipient = _external_recipient_from_address(recipient_ref, resolved)
+                recipient = await local_recipient_for_address_binding(db_infra, resolved, recipient_ref)
+                if recipient is None:
+                    recipient = _external_recipient_from_address(recipient_ref, resolved)
         if recipient is None:
             if await namespace_exists(db_infra, domain):
                 return json.dumps({"error": f"Agent '{recipient_ref}' not found"})

@@ -972,7 +972,7 @@ async def _resolve_chat_targets(
             raise HTTPException(status_code=422, detail="to_addresses entries must be domain/name")
         domain, name = address.split("/", 1)
         local_candidate = await _local_agent_by_address(db, domain=domain, name=name)
-        if local_candidate is not None:
+        if local_candidate is not None and not requires_registry_address_binding(local_candidate):
             binding = _signed_payload_address_binding(
                 verified_signed_payload_json(
                     signed_payload=signed_payload,
@@ -1014,7 +1014,7 @@ async def _resolve_chat_targets(
         elif registry_client is not None:
             resolution = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
         if resolution is not None and resolution.did_aw:
-            row = local_recipient_for_address_binding(await resolve_agent_by_did(db, resolution.did_aw), resolution, address)
+            row = await local_recipient_for_address_binding(db, resolution, address)
             if row is None:
                 delivery = getattr(resolution, "delivery", None)
                 delivery_origin = (

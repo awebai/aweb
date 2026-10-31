@@ -1541,7 +1541,7 @@ async def send_message(
             raise HTTPException(status_code=422, detail="to_address must be domain/name")
         domain, name = address.split("/", 1)
         local_candidate = await _local_recipient_from_address(db, domain=domain, name=name)
-        if local_candidate is not None:
+        if local_candidate is not None and not requires_registry_address_binding(local_candidate):
             signed_binding = _signed_payload_matches_address_binding(
                 verified_signed_payload_json(
                     signed_payload=payload.signed_payload,
@@ -1568,7 +1568,7 @@ async def send_message(
                 raise FederationAuthorityError("sender_registry_unavailable") from exc
             if resolved is not None and resolved.did_aw:
                 recipient_did = resolved.did_aw
-                recipient = local_recipient_for_address_binding(await resolve_agent_by_did(db, resolved.did_aw), resolved, address)
+                recipient = await local_recipient_for_address_binding(db, resolved, address)
                 if recipient is None:
                     recipient = _external_recipient_from_address(address, resolved)
         elif recipient is None and strict_authority is not None:
@@ -1583,7 +1583,7 @@ async def send_message(
                 resolved = None
             if resolved is not None and resolved.did_aw:
                 recipient_did = resolved.did_aw
-                recipient = local_recipient_for_address_binding(await resolve_agent_by_did(db, resolved.did_aw), resolved, address)
+                recipient = await local_recipient_for_address_binding(db, resolved, address)
                 if recipient is None:
                     recipient = _external_recipient_from_address(address, resolved)
                 else:
@@ -1594,7 +1594,7 @@ async def send_message(
             resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
             if resolved is not None and resolved.did_aw:
                 recipient_did = resolved.did_aw
-                recipient = local_recipient_for_address_binding(await resolve_agent_by_did(db, resolved.did_aw), resolved, address)
+                recipient = await local_recipient_for_address_binding(db, resolved, address)
                 if recipient is None:
                     recipient = _external_recipient_from_address(address, resolved)
 

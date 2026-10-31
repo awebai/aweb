@@ -29,10 +29,25 @@ def identity_recipient(row: Mapping[str, Any], address: str | None = None) -> di
     return recipient
 
 
-def local_recipient_for_address_binding(row: Mapping[str, Any] | None, resolution: Any, address: str) -> dict | None:
-    # A local projection establishes residence, not which membership receives.
-    # The admitted registry binding supplies the identity and current key.
-    if row is None or str(row.get("did_aw") or "").strip() != resolution.did_aw:
+async def local_recipient_for_address_binding(db, resolution: Any, address: str) -> dict | None:
+    """Find residence for an independently admitted address identity.
+
+    The registry supplies the canonical DID and current signature key. A local
+    membership's old key/verification marker cannot decide whether that DID
+    still lives here after rotation. This lookup grants no membership or actor
+    authority and does not refresh any key projection.
+    """
+    row = await db.get_manager("aweb").fetch_one(
+        """
+        SELECT did_aw, identity_scope, inbound_mode, status, deleted_at,
+               did_aw AS policy_did_aw, true AS has_global_claim
+        FROM {{tables.agents}}
+        WHERE did_aw=$1 AND deleted_at IS NULL
+        ORDER BY agent_id
+        LIMIT 1
+        """, resolution.did_aw,
+    )
+    if row is None:
         return None
     recipient = identity_recipient(row, address)
     recipient["did_key"] = resolution.current_did_key

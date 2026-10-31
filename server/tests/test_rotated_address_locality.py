@@ -3,6 +3,7 @@
 The old membership projection deliberately retains its old key. All address,
 rotation, authentication, signature and delivery decisions use real services.
 """
+import base64
 import json
 import os
 from datetime import datetime, timezone
@@ -11,6 +12,9 @@ from uuid import UUID, uuid4
 import pytest
 
 from awid.signing import canonical_json_bytes, sign_message
+from aweb.internal_auth import build_internal_auth_header_value
+from aweb.mcp.server import create_mcp_app
+from aweb.mcp.signing import HostedMessageSigningResult, canonical_signed_payload
 from test_cli_human_reply import _cli, _pem
 from test_cli_never_grants import registry_listener
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
@@ -21,8 +25,9 @@ from test_messages_http import _signed_identity_headers
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["mail", "chat"])
+@pytest.mark.parametrize("adapter", ["http", "mcp"])
 async def test_fresh_address_delivery_after_cli_rotation_is_local(
-    privacy_app, source_cli_binary, tmp_path, kind,
+    privacy_app, source_cli_binary, tmp_path, monkeypatch, kind, adapter,
 ):
     env = privacy_app
     alice, bob = env.actors["alice"], env.actors["bob"]
@@ -48,9 +53,53 @@ async def test_fresh_address_delivery_after_cli_rotation_is_local(
         child.update(HOME=str(tmp_path), PWD=str(tmp_path), XDG_CONFIG_HOME=str(tmp_path / ".config"),
                      AW_NO_UPDATE_CHECK="1", AWID_REGISTRY_URL=origin)
 
-        async def fresh_send(label):
+        mcp = None
+        if adapter == "mcp":
+            monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
+            monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", "rotation-locality-test-secret")
+
+            async def signer(**kwargs):
+                encoded = canonical_signed_payload(kwargs["payload"])
+                return HostedMessageSigningResult(
+                    from_did=alice.did, signing_key_id=alice.did, signed_payload=encoded,
+                    signature=sign_message(alice.sk, encoded.encode()),
+                )
+
+            mcp = create_mcp_app(db_infra=env.infra, redis=env.redis, registry_client=registry,
+                                 hosted_signer=signer, public_origin=env.app.state.public_origin)
+            env.app.mount("/mcp", mcp)
+            await mcp.startup()
+
+        async def fresh_send(label, *, claims=None, expected_status=200):
             resolved = await registry.resolve_address_fresh("example.test", "bob")
             assert resolved.did_aw == stable
+            if adapter == "mcp":
+                principal = str(uuid4())
+                from test_dashboard_privacy import TEAM
+                headers = {
+                    "Accept": "application/json, text/event-stream", "X-Team-ID": TEAM,
+                    "X-User-ID": principal, "X-AWEB-Actor-ID": str(alice.id),
+                    "X-AWEB-Auth": build_internal_auth_header_value(
+                        secret="rotation-locality-test-secret", team_id=TEAM,
+                        principal_type="u", principal_id=principal, actor_id=str(alice.id),
+                    ),
+                }
+                arguments = {"to": address, "plaintext": True}
+                arguments.update({"body": label, "subject": label} if kind == "mail" else {"message": label, "leaving": True})
+                response = await env.client.post("/mcp/", headers=headers, json={
+                    "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                    "params": {"name": "send_mail" if kind == "mail" else "send_chat", "arguments": arguments},
+                })
+                assert response.status_code == 200, response.text
+                result = response.json()
+                assert "error" not in result, result
+                result = json.loads(result["result"]["content"][0]["text"])
+                assert "error" not in result, result
+                mid = result["message_id"]
+                cid = result["conversation_id"] if kind == "mail" else result["session_id"]
+                table = "messages" if kind == "mail" else "chat_messages"
+                assert await env.db.fetch_val("SELECT count(*) FROM {{tables." + table + "}} WHERE message_id=$1", UUID(mid)) == 1
+                return cid
             mid, cid = str(uuid4()), str(uuid4())
             timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
             signed = {"type": kind, "from_did": alice.did, "from": "example.test/alice", "to": address,
@@ -64,16 +113,23 @@ async def test_fresh_address_delivery_after_cli_rotation_is_local(
                 path = "/v1/messages"
             else:
                 payload = {"to_addresses": [address], "message": label, "leaving": True, "session_id": cid}
-                signed.update(session_id=cid, sender_leaving=True)
+                signed["sender_leaving"] = True
                 path = "/v1/chat/sessions"
+            signed.update(claims or {})
             encoded = canonical_json_bytes(signed).decode()
             payload.update(message_id=mid, timestamp=timestamp, from_did=alice.did,
                            signed_payload=encoded, signature=sign_message(alice.sk, encoded.encode()))
             raw = json.dumps(payload).encode()
+            tables = ("messages", "chat_messages", "conversations", "chat_sessions")
+            before_counts = {name: await env.db.fetch_val("SELECT count(*) FROM {{tables." + name + "}}") for name in tables}
             response = await env.client.post(path, content=raw, headers={
                 "Content-Type": "application/json", **_signed_identity_headers(alice.sk, alice.did, "", raw),
             })
-            assert response.status_code == 200, response.text
+            assert response.status_code == expected_status, response.text
+            if expected_status != 200:
+                after_counts = {name: await env.db.fetch_val("SELECT count(*) FROM {{tables." + name + "}}") for name in tables}
+                assert after_counts == before_counts
+                return None
             table, column = ("messages", "conversation_id") if kind == "mail" else ("chat_messages", "session_id")
             stored = await env.db.fetch_one(
                 "SELECT * FROM {{tables." + table + "}} WHERE message_id=$1", UUID(mid),
@@ -82,22 +138,42 @@ async def test_fresh_address_delivery_after_cli_rotation_is_local(
             assert str(stored[column]) == cid
             return cid
 
-        first = await fresh_send("Before rotation")
-        old_key = bob.did
-        rotated = await _cli(source_cli_binary, tmp_path, child, "id", "rotate-key", "--json")
-        new_key = rotated["new_did"]
-        assert new_key != old_key
-        assert (await registry.resolve_key_fresh(stable)).current_did_key == new_key
-        # Mirror the real walk: the new key authenticates before the later
-        # delegate sends. This invalidates superseded projection evidence.
-        import base64
-        bob.sk = base64.b64decode("".join((home / "signing.key").read_text().splitlines()[1:-1]))
-        bob.did = new_key
-        refreshed = await request(env, bob, "GET", "/v1/messages/inbox", did_aw=stable)
-        assert refreshed.status_code == 200, refreshed.text
-        before = await env.db.fetch_one("SELECT * FROM {{tables.agents}} WHERE agent_id=$1", bob.id)
-        assert before["did_key"] == old_key
-        assert before["did_aw_verified_key"] is None
-        second = await fresh_send("After rotation")
-        assert first != second
-        assert before == await env.db.fetch_one("SELECT * FROM {{tables.agents}} WHERE agent_id=$1", bob.id)
+        try:
+            first = await fresh_send("Before rotation")
+            old_key = bob.did
+            rotated = await _cli(source_cli_binary, tmp_path, child, "id", "rotate-key", "--json")
+            new_key = rotated["new_did"]
+            assert new_key != old_key
+            assert (await registry.resolve_key_fresh(stable)).current_did_key == new_key
+            interim = await fresh_send("After rotation before new-key auth")
+            if adapter == "mcp" and kind == "chat":
+                assert interim == first  # Agent chat keeps its existing session reuse.
+            else:
+                assert interim != first
+            # Mirror the real walk: the new key authenticates before the later
+            # delegate sends. This invalidates superseded projection evidence.
+            bob.sk = base64.b64decode("".join((home / "signing.key").read_text().splitlines()[1:-1]))
+            bob.did = new_key
+            refreshed = await request(env, bob, "GET", "/v1/messages/inbox", did_aw=stable)
+            assert refreshed.status_code == 200, refreshed.text
+            before = await env.db.fetch_one("SELECT * FROM {{tables.agents}} WHERE agent_id=$1", bob.id)
+            assert before["did_key"] == old_key
+            assert before["did_aw_verified_key"] is None
+            second = await fresh_send("After rotation")
+            if adapter == "mcp" and kind == "chat":
+                assert second == first
+            else:
+                assert second != first
+            assert before == await env.db.fetch_one("SELECT * FROM {{tables.agents}} WHERE agent_id=$1", bob.id)
+            if adapter == "http":
+                # Residence never substitutes for current key/address binding.
+                for claims in ({"to_did": old_key}, {"to_stable_id": "did:aw:other"}, {"to": "example.test/other"}):
+                    await fresh_send("Invalid binding", claims=claims, expected_status=422)
+                assert before == await env.db.fetch_one("SELECT * FROM {{tables.agents}} WHERE agent_id=$1", bob.id)
+                # A deleted row no longer establishes residence. The valid
+                # address route must then take federation, with no local write.
+                await env.db.execute("UPDATE {{tables.agents}} SET deleted_at=clock_timestamp() WHERE agent_id=$1", bob.id)
+                await fresh_send("No local residence", expected_status=502)
+        finally:
+            if mcp is not None:
+                await mcp.shutdown()

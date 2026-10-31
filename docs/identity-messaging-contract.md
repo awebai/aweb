@@ -228,7 +228,12 @@ those facts do not validate, it reads the address once fresh and repeats the
 same checks before refusing. Successful cached validation requires no extra
 registry read. The refresh happens before database locks; unavailable evidence
 returns retryable 503, while a fresh mismatch retains its specific refusal.
-Local recipient selection still requires the verified projection marker.
+Generic local key/membership selection still requires the verified projection
+marker. After an address has independently resolved to its canonical `did:aw`
+and current key, locality is residence of that exact DID, independent of a
+membership's superseded key or invalidated marker. The address resolution
+supplies the recipient key and route; this residence lookup supplies no actor
+or team authority and does not restore a verification marker.
 
 ## Receiver-Wide Replay And Contact Compatibility
 
