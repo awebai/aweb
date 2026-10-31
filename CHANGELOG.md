@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- aw: `aw init --new-team` on a local (localhost) registry refuses a team
+  that already exists instead of adding this workspace to it, and
+  `--team <name>` names another team to create. When the local stack has
+  moved, init records the registry it now uses, so invites carry it. The
+  local-namespace refusals say what to do instead in plain words.
+
 - aw: with `--json`, a failed command prints one error envelope on stdout,
   `{"error": {"code", "message", "http_status", "detail"}}`. `code` is the
   stable contract; stderr wording is not. stderr and exit codes do not

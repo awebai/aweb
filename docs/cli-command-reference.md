@@ -151,6 +151,7 @@ Flags:
 - `--role-name string Workspace role name (must match a role in the active team roles bundle)`
 - `--setup-channel Set up Claude Code aweb-channel plugin for real-time coordination`
 - `--setup-hooks Enable Claude Code chat-only polling after tool calls (explicit fallback; no mail or idle wake-ups)`
+- `--team string Name of the team --new-team creates on a local (localhost) awid registry (default: default)`
 - `--url string Base URL for the aweb server used for init, bootstrap, and hosted onboarding flows`
 - `--username string Hosted username to create`
 - `--workspace-key string OATS canonical format-1 workspace key for --workspace-team`
