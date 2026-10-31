@@ -310,3 +310,13 @@ the activation order is a recorded decision):
    remain required; no application migration or production activation is part
    of this branch. Genuine product forks go to the coordinator with options and
    a recommendation; none is proposed by this predicate.
+
+## 9. Agent endpoint and email follow-on design
+
+The [agent endpoint model](agent-channel-endpoints.md) and
+[email platform profile](email-channel-profile.md) propose the 2026-10-31
+follow-on: ONE human ID across teams, human-selected channel sets per agent,
+message-ID reply correlation and the additive email profile. Both are design
+candidates; they implement no migration or activation and do not change the
+current closed platform grammar. Their one-H migration must replace per-team
+actors as personal-link keys before the new endpoint model is enabled.

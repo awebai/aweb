@@ -45,7 +45,10 @@ is not stable. stderr and the exit code are the same with or without
 `--json`. For a server refusal (`http_error`, `alias_conflict`),
 `http_status` and `detail` are present: `detail` is the server's string
 `detail`, or the `message` of a coded detail, never its headers or any
-other text. For `recipient_custodial_no_e2ee`, `detail` lists the hosted
+other text. When the body names the server's own refusal code, the `code`
+of a coded detail or a top-level `reason`, `reason` carries it, such as
+`admin_required`; without one there is no `reason`. For
+`recipient_custodial_no_e2ee`, `detail` lists the hosted
 recipients' addresses; when the server refused the send, `http_status` is
 422, and for several recipients `detail` is absent, because the server
 does not say which recipient is hosted.
@@ -72,7 +75,7 @@ envelope.
 
 `aw wake status --json` describes a receive stream's error the same way:
 beside the `stream_error` text, `stream_error_detail` holds its `code`,
-`http_status` and `detail`.
+`http_status`, `detail` and `reason`.
 
 ## `check`
 

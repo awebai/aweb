@@ -1,4 +1,4 @@
-"""Shared, non-consuming next-call mail/chat nudges for MCP factories."""
+"""Shared, non-consuming next-call mail/chat/room nudges for MCP factories."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from uuid import UUID
 from mcp.types import CallToolResult, TextContent
 
 from aweb.mcp.auth import get_auth
+from aweb.mcp.tools.room import room_notice_count
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,8 @@ async def append_pending_nudge(result: Any, db_infra: Any) -> Any:
     actor. Supported inputs are the SDK's CallToolResult, content sequence,
     structured dict, and (content, structuredContent) return shapes. Existing
     content, structured data, error state and metadata retain their wire form.
-    No-pending, unscoped, failed and unavailable lookups return the input itself.
+    Unavailable count components are omitted; no known pending work returns the
+    input itself. Room authority/counts come from the shared room-read adapter.
     This is an active-call hint, never an idle wake or a delivery receipt.
     """
     if isinstance(result, CallToolResult) and result.isError:
@@ -36,6 +38,7 @@ async def append_pending_nudge(result: Any, db_infra: Any) -> Any:
     if not auth.team_id or not auth.agent_id:
         return result
 
+    mail = chat = None
     try:
         counts = await db_infra.get_manager("aweb").fetch_one(
             """
@@ -72,34 +75,51 @@ async def append_pending_nudge(result: Any, db_infra: Any) -> Any:
             auth.team_id,
             UUID(auth.agent_id),
         )
-        if counts is None:
-            return result
-        mail = counts["unread_mail"]
-        chat = counts["unread_chat_messages"]
-        if type(mail) is not int or type(chat) is not int or mail < 0 or chat < 0:
-            raise ValueError("Invalid pending message counts")
+        if counts is not None:
+            mail = counts["unread_mail"]
+            chat = counts["unread_chat_messages"]
+            if type(mail) is not int or type(chat) is not int or mail < 0 or chat < 0:
+                raise ValueError("Invalid pending message counts")
     except Exception:
         # Counting is best effort; never replace a successful tool result or
         # invent an empty mailbox when the lookup failed. Cancellation propagates.
         logger.exception("MCP pending message count lookup failed")
-        return result
-    if mail == 0 and chat == 0:
-        return result
+        mail = chat = None
 
-    mail_waiting = f"{mail} unread mail message{'s' if mail != 1 else ''}"
-    chat_waiting = f"{chat} unread chat message{'s' if chat != 1 else ''}"
-    if mail and chat:
-        text = (f"[aweb] You have {mail_waiting} and {chat_waiting}. "
-                "Read mail with check_mail. Read chats with check_chats and read_chat, "
-                "then mark them read with mark_chat_read.")
-    elif mail:
-        text = (f"[aweb] You have {mail_waiting}. "
-                f"Read {'it' if mail == 1 else 'them'} with check_mail.")
+    room = None
+    try:
+        room = await room_notice_count(db_infra)
+        if room is not None and (type(room) is not int or room < 0):
+            raise ValueError("Invalid pending room post count")
+    except Exception:
+        logger.exception("MCP room notice count lookup failed")
+        room = None
+
+    pending = []
+    instructions = []
+    if mail:
+        pending.append(f"{mail} unread mail message{'s' if mail != 1 else ''}")
+        instructions.append("Read mail with check_mail.")
+    if chat:
+        pending.append(f"{chat} unread chat message{'s' if chat != 1 else ''}")
+        instructions.append("Read chats with check_chats and read_chat, "
+                            "then mark them read with mark_chat_read.")
+    if room:
+        pending.append(f"{room} new team room post{'s' if room != 1 else ''}")
+        instructions.append("Read the room with room_read.")
+    if not pending:
+        return result
+    if len(pending) == 1:
+        waiting = pending[0]
+        if mail:
+            instructions = [f"Read {'it' if mail == 1 else 'them'} with check_mail."]
+        elif chat:
+            pronoun = "it" if chat == 1 else "them"
+            instructions = [f"Read {pronoun} with check_chats and read_chat, "
+                            f"then mark {pronoun} read with mark_chat_read."]
     else:
-        pronoun = "it" if chat == 1 else "them"
-        text = (f"[aweb] You have {chat_waiting}. "
-                f"Read {pronoun} with check_chats and read_chat, "
-                f"then mark {pronoun} read with mark_chat_read.")
+        waiting = ", ".join(pending[:-1]) + (", and " if len(pending) > 2 else " and ") + pending[-1]
+    text = f"[aweb] You have {waiting}. {' '.join(instructions)}"
     nudge = TextContent(type="text", text=text)
     if isinstance(result, CallToolResult):
         return result.model_copy(update={"content": [*result.content, nudge]})
