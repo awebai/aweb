@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -545,6 +546,79 @@ func TestMailSendNetworkTarget404ShowsAgentNotFound(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(output), "not found") {
 		t.Fatalf("error should say not found, got: %s", output)
+	}
+}
+
+// The server's typed recipient refusals reach the person as plain text,
+// keyed on the stable reason; any other 404 keeps the generic text.
+func TestNetworkErrorMapsTypedRecipientRefusals(t *testing.T) {
+	t.Parallel()
+	typed := func(reason string) error {
+		return &awid.APIError{StatusCode: http.StatusNotFound, Body: `{"detail":"` + reason + `","reason":"` + reason + `","retryable":false,"correlation_id":"5836a664-515f-4ce7-a53e-def8406fa5f2"}`}
+	}
+	for _, tc := range []struct {
+		name, target string
+		err          error
+		want         string
+	}{
+		{"typo in the team", "local/bbo", typed("recipient_identity_not_found"),
+			"local/bbo is not a member of your team or a registered address. Check the name with `aw workspace status`."},
+		{"local identity in another team", "acme.test/grace", typed("local_recipient_route_missing"),
+			awid.UnreachableAddressText("acme.test/grace")},
+		{"other 404", "aweb/merlin", &awid.APIError{StatusCode: http.StatusNotFound, Body: `{"detail":"Target not found"}`},
+			"agent not found: aweb/merlin"},
+	} {
+		if got := networkError(tc.err, tc.target); got == nil || got.Error() != tc.want {
+			t.Fatalf("%s: got %v, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// Plain mail to an address the server refuses with a typed reason prints the
+// mapped text after one POST, with no retry and no raw body.
+func TestMailSendToAddressPrintsTheTypedRefusal(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ target, reason, want string }{
+		{"local/bbo", "recipient_identity_not_found", "local/bbo is not a member of your team or a registered address."},
+		{"acme.test/grace", "local_recipient_route_missing", "acme.test/grace has no registered address. A local identity has no address and is reachable only from inside its own team, by alias"},
+	} {
+		var posts atomic.Int32
+		server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/v1/conversations":
+				_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{})
+			case "/api/v1/messages/inbox":
+				_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{}})
+			case "/api/v1/messages":
+				posts.Add(1)
+				w.WriteHeader(http.StatusNotFound)
+				_ = json.NewEncoder(w).Encode(map[string]any{"detail": tc.reason, "reason": tc.reason, "retryable": false, "correlation_id": "0b780fbf-f248-4a15-89c1-25dbbd719cd1"})
+			case "/api/v1/agents/heartbeat":
+				w.WriteHeader(http.StatusOK)
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		tmp := t.TempDir()
+		bin := filepath.Join(tmp, "aw")
+		buildAwBinary(t, ctx, bin)
+		writeNetworkWorkspace(t, tmp, server.URL+"/api", "alice", "local")
+		run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext", "--to-address", tc.target, "--body", "hi", "--subject", "hi")
+		run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL, "HTTPS_PROXY=http://127.0.0.1:1", "HTTP_PROXY=http://127.0.0.1:1", "NO_PROXY=127.0.0.1,localhost")
+		run.Dir = tmp
+		out, err := run.CombinedOutput()
+		cancel()
+		if err == nil {
+			t.Fatalf("%s: expected error, got success: %s", tc.target, out)
+		}
+		output := string(out)
+		if !strings.Contains(output, tc.want) || strings.Contains(output, tc.reason) || strings.Contains(output, "agent not found") {
+			t.Fatalf("%s: want %q without the raw reason, got:\n%s", tc.target, tc.want, output)
+		}
+		if n := posts.Load(); n != 1 {
+			t.Fatalf("%s: %d POSTs, want 1", tc.target, n)
+		}
 	}
 }
 

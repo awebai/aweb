@@ -28,6 +28,12 @@
   moved, init records the registry it now uses, so invites carry it. The
   local-namespace refusals say what to do instead in plain words.
 
+- aw: `aw mail send` and `aw chat` say why a recipient was refused. A name
+  that is not on your team or a registered address says to check it with
+  `aw workspace status`. A local identity in another team says it is
+  reachable only from inside its own team, by alias. Other unknown targets
+  still print `agent not found: <target>`.
+
 - aw: with `--json`, a failed command prints one error envelope on stdout,
   `{"error": {"code", "message", "http_status", "detail"}}`. `code` is the
   stable contract; stderr wording is not. stderr and exit codes do not
