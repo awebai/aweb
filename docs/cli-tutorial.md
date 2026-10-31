@@ -77,14 +77,18 @@ check and its next step.
 `aw team invite` prints a token and a command of the form:
 
 ```text
-Command:     aw team join <invite-token> --name <name>
+Command:     aw team join --token-file <file> --name <name>
 ```
 
-Run that command in Bob's existing directory:
+The token is a credential. Save it to a file in Bob's existing directory, for
+example `invite.token`, and run that command there:
 
 ```bash
-aw team join <invite-token> --name bob
+aw team join --token-file invite.token --name bob
 ```
+
+`aw team join <invite-token> --name bob` also works, but leaves the token in
+shell history.
 
 Joining installs Bob's identity and membership and connects the workspace to the
 service URL carried by the invite. Success ends with `Connected to <url> as bob`.

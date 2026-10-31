@@ -29,9 +29,9 @@ func formatTeamInvite(v any) string {
 	sb.WriteString(fmt.Sprintf("Invite ID:   %s\n", out.InviteID))
 	sb.WriteString(fmt.Sprintf("Token:       %s\n", out.Token))
 	if out.PorcelainJoin {
-		sb.WriteString(fmt.Sprintf("Command:     aw team join %s --name <name>\n", out.Token))
+		sb.WriteString("Command:     aw team join --token-file <file> --name <name>\n")
 	} else {
-		sb.WriteString(fmt.Sprintf("Command:     aw id team accept-invite %s --name <name>\n", out.Token))
+		sb.WriteString("Command:     aw id team accept-invite --token-file <file> --name <name>\n")
 	}
 	return sb.String()
 }
