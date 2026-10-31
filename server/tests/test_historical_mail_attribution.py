@@ -117,3 +117,53 @@ async def test_thread_index_does_not_promote_a_message_signing_key_to_participan
     owner = MessagingAuth(did_key=env.pilot_did, did_aw='did:aw:pilot', address=None)
     result = await list_conversations_for_auth(infra, owner)
     assert [item.conversation_id for item in result.conversations] == [str(cid)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('seam', ['inbox', 'total', 'peer', 'ack', 'mcp'])
+async def test_literal_key_cannot_read_count_or_ack_a_normalized_global_thread(mail_server, monkeypatch, seam):
+    import json
+    from types import SimpleNamespace
+    from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
+    from aweb.mcp.auth import AuthContext
+    from aweb.mcp.tools import mail as mail_tools
+    env, db = mail_server, mail_server.db
+    _, messages, _ = await seed_thread(env, 'mail')
+    protected = messages[0]
+    await apply(db)
+    local = uuid4()
+    await db.execute("INSERT INTO {{tables.messages}} (message_id,from_did,to_did,body) VALUES ($1,'did:aw:human',$2,'genuine pre-thread local mail')", local, env.pilot_did)
+    owner_headers = _signed_identity_headers(env.pilot_key, env.pilot_did, 'did:aw:pilot', b'')
+    owner_read = await env.client.get(f'/v1/messages/{protected}', headers=owner_headers)
+    assert owner_read.status_code == 200, owner_read.text
+    # Supply the literal-key subject explicitly at each adapter's auth seam:
+    # the signing key must not silently become the migrated global participant.
+    app = env.client._transport.app
+    app.dependency_overrides[get_messaging_auth] = lambda: MessagingAuth(did_key=env.pilot_did, did_aw=None, address=None)
+    literal = _signed_identity_headers(env.pilot_key, env.pilot_did, '', b'')
+    exact = await env.client.get(f'/v1/messages/{protected}', headers=literal)
+    assert exact.status_code == 404, exact.text
+    if seam == 'inbox':
+        response = await env.client.get('/v1/messages/inbox', headers=literal)
+        assert response.status_code == 200, response.text
+        assert {UUID(m['message_id']) for m in response.json()['messages']} == {local}
+    elif seam == 'total':
+        response = await env.client.get('/v1/messages/unread-count', headers=literal)
+        assert response.json() == {'unread_count': 1}
+    elif seam == 'peer':
+        response = await env.client.get('/v1/conversations/unread-counts?participant_did=did:aw:human', headers=literal)
+        assert response.json()['counts'] == [{'participant_did': 'did:aw:human', 'unread_count': 1}]
+    elif seam == 'ack':
+        response = await env.client.post(f'/v1/messages/{protected}/ack', headers=literal)
+        assert response.status_code == 404, response.text
+        valid = await env.client.post(f'/v1/messages/{local}/ack', headers=literal)
+        assert valid.status_code == 200, valid.text
+    else:
+        monkeypatch.setattr(mail_tools, 'get_auth', lambda: AuthContext(team_id=None, agent_id=None, alias=None, did_key=env.pilot_did, did_aw=None))
+        response = json.loads(await mail_tools.check_inbox(SimpleNamespace(get_manager=lambda _: db)))
+        assert {UUID(m['message_id']) for m in response['messages']} == {local}, response
+        assert await db.fetch_val('SELECT read_at FROM {{tables.messages}} WHERE message_id=$1', local) is not None
+    assert await db.fetch_val('SELECT read_at FROM {{tables.messages}} WHERE message_id=$1', protected) is None
+    app.dependency_overrides.pop(get_messaging_auth)
+    owner_ack = await env.client.post(f'/v1/messages/{protected}/ack', headers=owner_headers)
+    assert owner_ack.status_code == 200, owner_ack.text

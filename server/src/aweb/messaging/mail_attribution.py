@@ -21,7 +21,12 @@ def mail_identity_sql(field: str, dids_parameter: str) -> str:
 
 
 def incoming_mail_sql(dids_parameter: str) -> str:
-    return f"({mail_identity_sql('to_did', dids_parameter)} AND NOT {mail_identity_sql('from_did', dids_parameter)})"
+    """Require read authority before interpreting historical incoming keys."""
+    return (
+        f"({readable_mail_sql(dids_parameter)}"
+        f" AND {mail_identity_sql('to_did', dids_parameter)}"
+        f" AND NOT {mail_identity_sql('from_did', dids_parameter)})"
+    )
 
 
 def readable_mail_sql(dids_parameter: str) -> str:
