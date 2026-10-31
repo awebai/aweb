@@ -327,7 +327,8 @@ func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant,
 			}
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{message}})
 		case r.URL.Path == "/v1/agents":
-			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{}})
+			// The real roster always names its team; bob is not a member.
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{TeamID: "backend:acme.com", Agents: []awid.AgentView{}})
 		case r.URL.Path == "/v1/conversations":
 			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{Conversations: []awid.ConversationItem{{
 				ConversationType:     "mail",

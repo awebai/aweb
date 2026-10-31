@@ -3169,3 +3169,95 @@ async def test_mcp_same_team_contacts_only(aweb_cloud_db, monkeypatch, kind, mod
         removed = json.loads(await chat_tools.chat_send(DBInfra(manager), **continuation_args))
         assert removed == {"error": "Recipient only accepts messages from exact active contacts"}
         assert await manager.fetch_value("SELECT COUNT(*) FROM {{tables.chat_messages}}") == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", ["mail", "chat"])
+async def test_mcp_full_address_to_another_teams_local_identity_says_why(
+    aweb_cloud_db, monkeypatch, tool
+):
+    """A local identity has no registered address: outside its team, a full
+    address to it is refused with that reason, not a bare not-found."""
+    alice_agent_id = uuid4()
+    _, alice_pub = generate_keypair()
+    alice_did = did_from_public_key(alice_pub)
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES
+            ('ops:acme.com', 'acme.com', 'ops', 'did:key:z6MkiCjepNBfAFPiASoBnxAFuZcERqR5z1yW8Jfob8YMYmhJ' /* z6MkTeam1 */),
+            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkjDjkDkLwiaCvhbzB37J8Z9FB31zvSDYHb5aEddNr47XB' /* z6MkTeam2 */)
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode, did_aw_verified_key)
+        VALUES
+            ($1, 'ops:acme.com', $2, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open', $2),
+            ($3, 'ops:otherco.com', 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9' /* z6MkBob */, NULL, NULL, 'bob', 'local', 'active', 'open', NULL)
+        """,
+        alice_agent_id,
+        alice_did,
+        uuid4(),
+    )
+    tools = mail_tools if tool == "mail" else chat_tools
+    monkeypatch.setattr(
+        tools,
+        "get_auth",
+        lambda: AuthContext(
+            team_id="ops:acme.com",
+            agent_id=str(alice_agent_id),
+            workspace_id="",
+            alias="alice",
+            did_key=alice_did,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            trusted_proxy=False,
+        ),
+    )
+
+    class _Registry:
+        async def resolve_address_fresh(self, domain: str, name: str, *, did_key: str | None = None):
+            assert (domain, name) == ("otherco.com", "bob")
+            return None
+
+        async def get_namespace_fresh(self, domain: str):
+            assert domain == "otherco.com"
+            return Namespace(
+                namespace_id="namespace-otherco",
+                domain=domain,
+                controller_did=named_did_key("z6MkNamespaceController"),
+                verification_status="verified",
+                last_verified_at=None,
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
+
+    if tool == "mail":
+        result = json.loads(
+            await mail_tools.send_mail(
+                DBInfra(aweb_cloud_db.aweb_db),
+                registry_client=_Registry(),
+                hosted_signer=None,
+                to="otherco.com/bob",
+                subject="cross team local",
+                body="hello bob",
+            )
+        )
+    else:
+        result = json.loads(
+            await chat_tools.chat_send(
+                DBInfra(aweb_cloud_db.aweb_db),
+                None,
+                registry_client=_Registry(),
+                hosted_signer=None,
+                to_address="otherco.com/bob",
+                message="hello bob",
+            )
+        )
+
+    assert result == {
+        "error": "otherco.com/bob is a local identity: it has no registered address and is "
+        "reachable only from inside its own team, by alias. A global identity is reachable "
+        "by address once one is assigned."
+    }, result

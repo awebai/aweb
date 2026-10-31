@@ -64,6 +64,9 @@ func (e *RecipientResolutionError) Error() string {
 	if e.Err == nil {
 		return fmt.Sprintf("resolve recipient %q for signed %s", e.Target, msgType)
 	}
+	if code, ok := HTTPStatusCode(e.Err); ok && code == http.StatusNotFound && isRoutableAddressTarget(e.Target) {
+		return fmt.Sprintf("resolve recipient %q for signed %s: %s has no registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned (%v)", e.Target, msgType, e.Target, e.Err)
+	}
 	return fmt.Sprintf("resolve recipient %q for signed %s: %v", e.Target, msgType, e.Err)
 }
 
