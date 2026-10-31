@@ -14,6 +14,8 @@ from aweb.messaging.room import _active_member, _post_dict, _uuid
 from aweb.service_errors import ServiceError
 from aweb.team_auth import parse_and_verify_certificate
 from aweb.team_auth_deps import (
+    TeamIdentity,
+    _aweb_db,
     _get_registered_certificates,
     _get_revoked_certificates,
     _resolve_team_key,
@@ -80,12 +82,50 @@ async def _refresh_room_authority(request, db, identity):
     await authenticate_id_chain(authority_request, binding)
 
 
+async def count_room_notices(db, actor: TeamIdentity) -> int:
+    """Count for an already room-admitted actor; no content, locks or receipts.
+
+    Callers establish current room membership through ordinary admission.
+    This SELECT also binds the live member/key/team and any admitted grant,
+    so a stale actor or narrowed grant cannot disclose another count.
+    """
+    if not grant_has_scope(actor, "chat.read"):
+        return 0
+    grant = actor.grant
+    return int(
+        await _aweb_db(db).fetch_val(
+            """
+        SELECT count(*)
+        FROM {{tables.room_post_notices}} n
+        JOIN {{tables.room_messages}} m ON m.message_id=n.message_id
+        JOIN {{tables.team_rooms}} r ON r.room_id=m.room_id
+        JOIN {{tables.agents}} a ON a.agent_id=n.recipient_agent_id
+          AND a.team_id=r.team_id
+        WHERE a.agent_id=$1 AND a.team_id=$2 AND a.did_key=$3
+          AND a.status='active' AND a.deleted_at IS NULL
+          AND ($4::uuid IS NULL OR EXISTS (
+              SELECT 1 FROM {{tables.identity_session_grants}} g
+              WHERE g.grant_id=$4 AND g.subject_agent_id=a.agent_id
+                AND g.team_id=a.team_id AND g.grant_did_key=$5
+                AND g.revoked_at IS NULL AND 'chat.read'=ANY(g.scopes)
+                AND (g.expires_at>now() OR g.expires_at>=g.issued_at+interval '99 years')
+          ))
+        """,
+            UUID(actor.agent_id),
+            actor.team_id,
+            actor.did_key,
+            UUID(grant.grant_id) if grant else None,
+            grant.session_did_key if grant else None,
+        )
+    )
+
+
 async def pending_room_notices(db, actor, *, limit=50):
     async with db.get_manager("aweb").transaction() as tx:
         await _active_member(tx, actor)
         rows = await tx.fetch_all(
             """
-            SELECT m.*, count(*) OVER () AS pending_count
+            SELECT m.*
             FROM {{tables.room_post_notices}} n
             JOIN {{tables.room_messages}} m ON m.message_id=n.message_id
             JOIN {{tables.team_rooms}} r ON r.room_id=m.room_id
@@ -112,7 +152,7 @@ async def pending_room_notices(db, actor, *, limit=50):
                     "subject": post["subject"],
                 }
             )
-        count = int(rows[0]["pending_count"]) if rows else 0
+        count = await count_room_notices(tx, actor)
         return {
             "pending_count": count,
             "notices": notices,

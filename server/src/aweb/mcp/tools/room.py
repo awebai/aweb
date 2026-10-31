@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
@@ -20,7 +21,9 @@ from aweb.messaging.room import (
     present_room,
 )
 from aweb.team_auth_deps import TeamIdentity
-from aweb.messaging.room_notices import pending_room_notices
+from aweb.messaging.room_notices import count_room_notices, pending_room_notices
+
+logger = logging.getLogger(__name__)
 
 
 async def _room_actor(db):
@@ -81,6 +84,18 @@ async def room_read(db, *, after=None, limit=50):
             db, auth.request, await read_room(db, actor, after=after, limit=limit)
         )
     )
+
+
+async def room_notice_count(db) -> int | None:
+    """Optional hosted-nudge count for the current admitted MCP actor only."""
+    try:
+        _, actor = await _room_actor(db)
+        return await count_room_notices(db, actor)
+    except Exception:
+        # A count failure must not fail the already-successful tool or turn
+        # unknown authority into a zero. The nudge omits this component.
+        logger.warning("Room notice count unavailable", exc_info=True)
+        return None
 
 
 async def room_pending(db):

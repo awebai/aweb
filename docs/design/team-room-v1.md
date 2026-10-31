@@ -189,7 +189,8 @@ Terminal, channel and Pi agents read full posts through these CLI commands.
 Hosted MCP signs as its authenticated
 custodial actor through the existing hosted signer, then calls the shared
 room service. No direct unsigned MCP insert is accepted. Existing MCP tool
-names, descriptions, outputs and authentication behavior remain unchanged.
+names, descriptions, original result blocks and authentication behavior remain
+unchanged. The bounded hosted-nudge addition is described below.
 Hosted adoption consumes the canonical migrations packaged in the public
 `aweb` distribution; it does not require a copied migration chain.
 Operator-specific overlays, if any, remain the operator’s responsibility.
@@ -242,10 +243,32 @@ Pending and acknowledgement APIs use `chat.read` and the grant subject. History
 read clears only the caller's notices for returned posts; exact lookup stays
 read-only so verification cannot consume a notice before presentation. Neither
 operation acknowledges mail or chat. Hosted MCP's new `room_pending` tool
-returns JSON with `pending_count`, `notices` and `has_more`. The room count
-belongs in this new tool result, not in an existing mail/chat tool result.
-Hosted nudge presentation belongs to its operator and must preserve existing
-MCP tools and their outputs.
+returns JSON with `pending_count`, `notices` and `has_more`.
+
+The shared `count_room_notices(db, actor)` helper accepts an already
+room-admitted `TeamIdentity`. It performs only a `SELECT COUNT` over the
+caller's notices and team room, joined to the active, not-deleted member with
+the same key and team. An admitted grant must still hold `chat.read` for that
+subject and team. It fetches no notices or content, takes no row locks and
+changes no read/delivery state. `room_pending` uses that count for its result;
+its full notice page retains its existing locked path.
+
+The MCP `room_notice_count(db)` callable selects only the current `get_auth()`
+actor through the existing room-read admission path. It inherits the admitted
+request and its existing evidence/caches; it never replays request signature
+or timestamp authentication. A refused or unavailable count is logged and
+returned as unavailable, so the nudge omits the room part instead of displaying
+zero. A successful empty count is zero. OSS MCP still admits only its existing
+DIDKey/proxy actors; this adds no MCP session-grant admission lane.
+
+Bounded presentation exception (coordinator decision
+`5b9ced81-3ca1-48c4-8fd4-68b1c50a7bec`): the room count may join only the ONE
+existing trailing hosted nudge block. Every original MCP result block remains
+byte-identical; no block is appended when all counts are zero, and no other
+result envelope changes. Text remains the fixed integer-only template, once.
+The base mail/chat nudge lands unchanged. Room nudge composition is a separate
+follow-on head after rooms land on main, using this Athena-reviewed count
+helper; its owner supplies its own review and whole-flow preview.
 
 ## Compatibility and validation
 
@@ -269,7 +292,7 @@ unavailable evidence, nonmember versus valid externally addressed member,
 cross-team IDs/cursors, signed content/target tampering, idempotent versus
 conflicting retries, timestamp skew, exact reads and page boundaries,
 carrier verification, mixed actor room exchange and unchanged old mail/chat
-and MCP responses. Run checks and complete affected test packages on each
+and original MCP result blocks, plus the bounded single-nudge exception above. Run checks and complete affected test packages on each
 implementation head; record what the harness establishes. The implementation
 reviewer reads the protocol/server change. Identity/auth review accepts this
 contract first; any actual change to an identity path needs Juan's explicit
