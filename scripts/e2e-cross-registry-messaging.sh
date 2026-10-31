@@ -489,9 +489,10 @@ assert_received_who bob "$ALICE_WHO" --message-id "$MAIL_ID"
 verify_ts_received "$bob_inbox" "$ALICE_HUMAN" "$MAIL_ID"
 echo "PASS: received mail exposes the sender's verified human in Go who and the TS reader"
 
-run_cli bob mail send --plaintext --conversation-id "$CONVERSATION_ID" --subject "two registry reply" --body "bob to alice" --json >/dev/null
+run_cli bob mail send --plaintext --conversation-id "$CONVERSATION_ID" --body "bob to alice" --json >/dev/null
 alice_inbox="$(run_cli alice mail inbox --show-all --json)"
-assert_inbox_message "$alice_inbox" "two registry reply" "bob to alice"
+# A continuation keeps the thread's title; the reply itself carries no subject.
+assert_inbox_message "$alice_inbox" "" "bob to alice"
 
 echo "Proving CLI chat delivery across two registries"
 chat_out="$(run_cli alice chat send-and-leave --plaintext beta.example.net/bob "two registry chat" --json)"

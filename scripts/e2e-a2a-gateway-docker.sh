@@ -492,7 +492,6 @@ EOF
 capture_success reply_send "personal sends a2a reply" run_aw_in "$PERSONAL_DIR" mail send \
   --plaintext \
   --conversation-id "$conversation_id" \
-  --subject "A2A reply" \
   --body "$reply_body" \
   --json
 

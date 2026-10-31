@@ -120,7 +120,7 @@ async def test_cli_first_contact_human_alias_with_signed_key(
         assert not before[0]
         if inbound_mode == "contacts_only":
             command = (
-                ["mail", "send", "--to", "alice"] if kind == "mail" else
+                ["mail", "send", "--to", "alice", "--subject", "Hello"] if kind == "mail" else
                 ["chat", "send-and-leave", "alice", "--start-conversation"]
             )
             # An explicit end-to-end send is refused and delivers nothing.
@@ -151,7 +151,7 @@ async def test_cli_first_contact_human_alias_with_signed_key(
         # aweb's hosted service holds the human's key, so an explicit
         # end-to-end send to her is refused before any request.
         command = (
-            ["mail", "send", "--to", "alice"] if kind == "mail" else
+            ["mail", "send", "--to", "alice", "--subject", "Hello"] if kind == "mail" else
             ["chat", "send-and-leave", "alice", "--start-conversation"]
         )
         explicit = await asyncio.create_subprocess_exec(
@@ -398,7 +398,7 @@ async def test_cli_human_alias_requires_independent_global_key(
         body_file = tmp_path / "global-human-key.txt"
         body_file.write_text("Only the registry-authorized human may decrypt this")
         command = (
-            ["mail", "send", "--to", "alice"] if kind == "mail" else
+            ["mail", "send", "--to", "alice", "--subject", "Hello"] if kind == "mail" else
             ["chat", "send-and-leave", "alice", "--start-conversation"]
         )
         # A bound, non-listening socket makes the CLI registry unreachable;

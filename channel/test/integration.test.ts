@@ -427,7 +427,7 @@ describe.sequential("channel integration", () => {
     // The new did:key is a different participant; it cannot continue the old
     // identity's conversation. Start a new signed conversation explicitly.
     const after = await runAwJSON<MailSendInfo>(homeDir, senderDir, server.awidURL, [
-      "--json", "mail", "send", "--to", "bob", "--body", "local after re-init", "--new-conversation",
+      "--json", "mail", "send", "--to", "bob", "--subject", "Local after re-init", "--body", "local after re-init",
     ]);
     const second = await notifications.waitFor(item => item.meta.message_id === after.message_id);
     console.log(`LOCAL_RESPAWN_PROOF ${JSON.stringify({ old_did: oldDID, new_did: replacement.new_did_key,
