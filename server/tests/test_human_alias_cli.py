@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
-from aweb.e2ee_messages import decrypt_e2ee_message, generate_x25519_keypair
+from aweb.e2ee_messages import generate_x25519_keypair
 from awid.e2ee_keys import build_encryption_key_assertion
 from test_cli_human_reply import _cli
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
@@ -134,73 +134,51 @@ async def test_cli_first_contact_human_alias_with_signed_key(
             assert await privacy_state() == before
             return
 
-        if kind == "chat":
-            try:
-                chat_sent = await _cli(
-                    binary, cwd, child_env, "--team", TEAM, "--json", "chat",
-                    "send-and-leave", "alice", "--start-conversation", "--e2ee",
-                    "--body-file", str(body_file),
-                )
-            finally:
-                assert await privacy_state() == before
-            chat_stored = await env.db.fetch_one(
-                "SELECT content_mode,encrypted_envelope FROM {{tables.chat_messages}} WHERE message_id=$1",
-                UUID(chat_sent["message_id"]),
-            )
-            assert chat_stored["content_mode"] == "encrypted_v2"
-            participants = await env.db.fetch_all(
-                "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1",
-                UUID(chat_sent["session_id"]),
-            )
-            assert (row["did_aw"] or actor.did) in {p["did"] for p in participants}
-            chat_envelope = chat_stored["encrypted_envelope"]
-            if isinstance(chat_envelope, str):
-                chat_envelope = json.loads(chat_envelope)
-            assert decrypt_e2ee_message(chat_envelope, identity={
-                "did": actor.did, "stable_id": row["did_aw"], "private_key": private,
-                "encryption_key_id": assertion["encryption_key_id"],
-            })["body"] == body_file.read_text()
-            return
+        # aweb's hosted service holds the human's key, so an explicit
+        # end-to-end send to her is refused before any request.
+        command = (
+            ["mail", "send", "--to", "alice"] if kind == "mail" else
+            ["chat", "send-and-leave", "alice", "--start-conversation"]
+        )
+        explicit = await asyncio.create_subprocess_exec(
+            str(binary), "--team", TEAM, "--json", *command, "--e2ee",
+            "--body-file", str(body_file), cwd=cwd, env=child_env,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        explicit_out, _ = await asyncio.wait_for(explicit.communicate(), 30)
+        assert explicit.returncode == 1, explicit_out.decode()
+        assert json.loads(explicit_out)["error"]["code"] == "recipient_custodial_no_e2ee"
+        await assert_no_delivery()
+        assert await privacy_state() == before
 
+        # The ordinary send reaches her, server-readable.
         try:
             sent = await _cli(
-                binary,
-                cwd,
-                child_env,
-                "--team",
-                TEAM,
-                "--json",
-                "mail",
-                "send",
-                "--to",
-                "alice",
-                "--e2ee",
-                "--body-file",
-                str(body_file),
+                binary, cwd, child_env, "--team", TEAM, "--json", *command,
+                "--body-file", str(body_file),
             )
         finally:
             assert await privacy_state() == before
+        if kind == "chat":
+            chat_stored = await env.db.fetch_one(
+                "SELECT content_mode,body FROM {{tables.chat_messages}} WHERE message_id=$1",
+                UUID(sent["message_id"]),
+            )
+            assert chat_stored["content_mode"] != "encrypted_v2"
+            assert chat_stored["body"] == body_file.read_text()
+            participants = await env.db.fetch_all(
+                "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1",
+                UUID(sent["session_id"]),
+            )
+            assert (row["did_aw"] or actor.did) in {p["did"] for p in participants}
+            return
         stored = await env.db.fetch_one(
             "SELECT * FROM {{tables.messages}} WHERE message_id=$1",
             UUID(sent["message_id"]),
         )
         assert stored["to_did"] == (row["did_aw"] or actor.did)
-        assert stored["content_mode"] == "encrypted_v2"
-        encrypted = (
-            json.loads(stored["encrypted_envelope"])
-            if isinstance(stored["encrypted_envelope"], str)
-            else stored["encrypted_envelope"]
-        )
-        decrypted = decrypt_e2ee_message(
-            encrypted,
-            identity={
-                "did": actor.did,
-                "stable_id": row["did_aw"],
-                "private_key": private,
-                "encryption_key_id": assertion["encryption_key_id"],
-            },
-        )
-        assert decrypted["body"] == body_file.read_text()
+        assert stored["content_mode"] != "encrypted_v2"
+        assert stored["body"] == body_file.read_text()
 
 
         # The same actual TCP server now accepts the protected native envelope

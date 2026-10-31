@@ -126,7 +126,7 @@ func newCustodialTestClient(t *testing.T, serverURL string, self e2eeTestIdentit
 }
 
 func hostedRefusalText(address string) string {
-	return address + " is a hosted agent: aweb's service reads its messages, so end-to-end encryption is not possible. Send it again without --e2ee."
+	return address + " uses aweb's hosted service, which reads its messages, so end-to-end encryption is not possible. Send it again without --e2ee."
 }
 
 func assertCustodialRefusal(t *testing.T, err error, want string, addresses ...string) {
@@ -247,7 +247,7 @@ func TestE2EEChatToHostedRecipientsNamesEachAndSendsNothing(t *testing.T) {
 	_, err := c.ChatCreateSession(context.Background(), &ChatCreateSessionRequest{
 		ToAddresses: []string{aida.address, bob.address, nova.address}, Message: "hi", EncryptE2EE: true,
 	})
-	want := "aweb.ai/aida and aweb.ai/nova are hosted agents: aweb's service reads their messages, so end-to-end encryption is not possible. Send it again without --e2ee."
+	want := "aweb.ai/aida and aweb.ai/nova use aweb's hosted service, which reads their messages, so end-to-end encryption is not possible. Send it again without --e2ee."
 	assertCustodialRefusal(t, err, want, aida.address, nova.address)
 	if sent := rec.sent(); len(sent) != 0 {
 		t.Fatalf("refused chat was sent: %v", sent)
@@ -340,12 +340,69 @@ func TestE2EEServerCustodialRefusalOfAGroupNamesNoRecipientHosted(t *testing.T) 
 	c := newCustodialTestClient(t, rec.server(t).URL, self, custodialTestResolver{bob.address: bob.resolved(), carol.address: carol.resolved()})
 
 	_, err := c.ChatCreateSession(context.Background(), &ChatCreateSessionRequest{ToAddresses: []string{bob.address, carol.address}, Message: "hi", EncryptE2EE: true})
-	want := "At least one of example.com/bob and example.com/carol is a hosted agent: aweb's service reads its messages, so end-to-end encryption is not possible. Send it again without --e2ee."
+	want := "At least one of example.com/bob and example.com/carol uses aweb's hosted service, which reads its messages, so end-to-end encryption is not possible. Send it again without --e2ee."
 	if err == nil || err.Error() != want {
 		t.Fatalf("err=%v, want %q", err, want)
 	}
 	detail := DescribeError(err)
 	if detail.Code != ErrorCodeRecipientCustodialNoE2EE || detail.HTTPStatus != http.StatusUnprocessableEntity || detail.Detail != "" {
 		t.Fatalf("detail=%+v, want the code, status 422 and no recipient named hosted", detail)
+	}
+}
+
+// Encryption a reply inherits from its source is not a request for end-to-end
+// encryption: to a recipient whose verified key assertion says aweb's hosted
+// service holds the key, the reply is sent once, server-readable, to the same
+// recipient, and nothing is refused.
+func TestE2EEInheritedMailToHostedRecipientIsSentServerReadable(t *testing.T) {
+	self := newE2EETestIdentity(t, "example.com/self")
+	hosted := newHostedE2EETestIdentity(t, "aweb.ai/aida")
+	rec := &sendRecorder{}
+	c := newCustodialTestClient(t, rec.server(t).URL, self, custodialTestResolver{hosted.address: hosted.resolved()})
+
+	_, err := c.SendMessage(context.Background(), &SendMessageRequest{ToAddress: hosted.address, Subject: "Re: hi", Body: "hi", EncryptE2EE: true, E2EEInherited: true})
+	if err != nil {
+		t.Fatalf("inherited reply to a hosted recipient was refused: %v", err)
+	}
+	if sent := rec.sent(); len(sent) != 1 || sent[0] != "/v1/messages" {
+		t.Fatalf("sends=%v, want one mail send", sent)
+	}
+	if rec.mail.Encrypted != nil || rec.mail.Body != "hi" || rec.mail.ToAddress != hosted.address {
+		t.Fatalf("reply was not sent server-readable to the same recipient: %+v", rec.mail)
+	}
+}
+
+// An inherited reply to a self-custodial recipient stays end-to-end encrypted.
+func TestE2EEInheritedMailToSelfCustodialRecipientStaysEncrypted(t *testing.T) {
+	self := newE2EETestIdentity(t, "example.com/self")
+	bob := newE2EETestIdentity(t, "example.com/bob")
+	rec := &sendRecorder{}
+	c := newCustodialTestClient(t, rec.server(t).URL, self, custodialTestResolver{bob.address: bob.resolved()})
+
+	_, err := c.SendMessage(context.Background(), &SendMessageRequest{ToAddress: bob.address, Subject: "Re: hi", Body: "hi", EncryptE2EE: true, E2EEInherited: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.mail.Encrypted == nil || rec.mail.Body != "" {
+		t.Fatalf("inherited reply to a self-custodial recipient was not encrypted: %+v", rec.mail)
+	}
+}
+
+// Unknown custody keeps the inherited encryption: a recipient with no
+// published key gets today's refusal, not a server-readable send.
+func TestE2EEInheritedMailWithoutAPublishedKeyKeepsTheRefusal(t *testing.T) {
+	self := newE2EETestIdentity(t, "example.com/self")
+	bob := newE2EETestIdentity(t, "example.com/bob")
+	noKey := bob.resolved()
+	noKey.EncryptionKey = nil
+	rec := &sendRecorder{}
+	c := newCustodialTestClient(t, rec.server(t).URL, self, custodialTestResolver{bob.address: noKey})
+
+	_, err := c.SendMessage(context.Background(), &SendMessageRequest{ToAddress: bob.address, Subject: "Re: hi", Body: "hi", EncryptE2EE: true, E2EEInherited: true})
+	if err == nil || !strings.Contains(err.Error(), "no published E2E encryption key") {
+		t.Fatalf("err=%v, want the no-published-key refusal", err)
+	}
+	if sent := rec.sent(); len(sent) != 0 {
+		t.Fatalf("mail was sent without a key: %v", sent)
 	}
 }

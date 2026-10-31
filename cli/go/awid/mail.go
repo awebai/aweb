@@ -42,7 +42,11 @@ type SendMessageRequest struct {
 	SignedPayload    string               `json:"signed_payload,omitempty"`
 	ReplyToMessageID string               `json:"-"`
 	EncryptE2EE      bool                 `json:"-"`
-	E2EERecipient    *E2EERecipientKey    `json:"-"`
+	// E2EEInherited marks EncryptE2EE as inherited from the message being
+	// replied to rather than requested: it does not apply to a recipient whose
+	// verified key assertion says aweb's hosted service holds the key.
+	E2EEInherited bool              `json:"-"`
+	E2EERecipient *E2EERecipientKey `json:"-"`
 
 	NewConversation bool `json:"new_conversation,omitempty"`
 }
@@ -96,6 +100,32 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 			strings.TrimSpace(payload.ToDID) != "" ||
 			strings.TrimSpace(payload.ToStableID) != "" ||
 			strings.TrimSpace(payload.ToAddress) != ""
+	}
+	if payload.EncryptE2EE && payload.E2EEInherited {
+		// Inherited encryption is not a request for end to end: to a recipient
+		// whose verified key says aweb's hosted service holds it, send the
+		// reply server-readable to that same recipient, decided before any
+		// request. Unknown custody keeps the inherited encryption.
+		recipient, err := c.e2eeMailRecipient(ctx, &payload)
+		if err != nil {
+			return nil, err
+		}
+		payload.E2EERecipient = &recipient
+		if recipientKeyIsHosted(recipient, time.Now().UTC()) {
+			payload.EncryptE2EE = false
+			payload.E2EERecipient = nil
+			if !hasRecipient {
+				switch {
+				case strings.TrimSpace(recipient.Address) != "":
+					payload.ToAddress = strings.TrimSpace(recipient.Address)
+				case strings.TrimSpace(recipient.StableID) != "":
+					payload.ToStableID = strings.TrimSpace(recipient.StableID)
+				default:
+					payload.ToDID = strings.TrimSpace(recipient.DID)
+				}
+				hasRecipient = true
+			}
+		}
 	}
 	initialConversationID := strings.TrimSpace(payload.ConversationID)
 	if c.canAttachPlainMessageSignature() && initialConversationID == "" && hasRecipient {
