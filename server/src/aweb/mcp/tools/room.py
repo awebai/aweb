@@ -20,6 +20,7 @@ from aweb.messaging.room import (
     present_room,
 )
 from aweb.team_auth_deps import TeamIdentity
+from aweb.messaging.room_notices import pending_room_notices
 
 
 async def _room_actor(db):
@@ -80,6 +81,11 @@ async def room_read(db, *, after=None, limit=50):
             db, auth.request, await read_room(db, actor, after=after, limit=limit)
         )
     )
+
+
+async def room_pending(db):
+    _, actor = await _room_actor(db)
+    return json.dumps(await pending_room_notices(db, actor))
 
 
 async def room_post(

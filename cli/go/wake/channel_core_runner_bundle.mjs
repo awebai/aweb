@@ -3950,6 +3950,25 @@ async function verifyChatMessage(msg) {
   return status2;
 }
 
+// channel-core/src/api/room.ts
+async function fetchRoomMessage(client, team, room, id) {
+  const message = await client.get(`/v1/room/messages/${encodeURIComponent(id)}`);
+  const status2 = await verifySignedPayload(message.signed_payload || "", message.signature || "", message.from_did || "", message.signing_key_id || "");
+  if (status2 !== "verified") throw new Error("room post signature failed");
+  const signed = JSON.parse(message.signed_payload);
+  if (message.team_id !== team || message.room_id !== room || message.conversation_id !== room || message.message_id !== id || signed.type !== "chat" || signed.to !== `team-room:${team}` || signed.conversation_id !== room || signed.message_id !== id || signed.to_did || signed.to_stable_id || signed.from_did !== message.from_did || message.signing_key_id !== message.from_did || (signed.from_stable_id || "") !== (message.from_stable_id || "") || signed.from !== message.from_alias || signed.subject !== message.subject || signed.body !== message.body || signed.timestamp !== message.timestamp || message.from_address && message.from_address !== signed.from) {
+    throw new Error("room post signed bindings failed");
+  }
+  message.verification_status = status2;
+  message.projected_from_did = message.from_did;
+  message.signed_from = signed.from;
+  message.signed_from_team_id = team;
+  return message;
+}
+async function ackRoomNotice(client, id) {
+  await client.post(`/v1/room/notices/${encodeURIComponent(id)}/ack`, {});
+}
+
 // channel-core/src/config.ts
 import { lstatSync } from "node:fs";
 import { readdir, readFile as readFile3 } from "node:fs/promises";
@@ -10461,7 +10480,7 @@ async function consumeAgentEvents(options, dispatched, events, log = () => {
       emitTrace(options, "lane_job_completed", event, lane);
     }).catch((error) => {
       emitTrace(options, "lane_job_failed", event, lane);
-      if (error instanceof RetryableAwakeningError && (event.type === "mail_message" || event.type === "chat_message") && !options.signal?.aborted) {
+      if (error instanceof RetryableAwakeningError && (event.type === "mail_message" || event.type === "chat_message" || event.type === "room_post") && !options.signal?.aborted) {
         emitTrace(options, "delivery_retry_exhausted", event, lane);
       }
       const detail = error instanceof Error ? error.message : String(error);
@@ -10479,6 +10498,7 @@ async function consumeAgentEvents(options, dispatched, events, log = () => {
 function eventDeliveryIntent(event) {
   switch (event.type) {
     case "mail_message":
+    case "room_post":
       return "wake";
     case "chat_message":
       return event.sender_waiting ? "steer" : "wake";
@@ -10521,6 +10541,8 @@ function eventDispatchLane(event) {
   switch (event.type) {
     case "mail_message":
       return "mail";
+    case "room_post":
+      return "room";
     case "chat_message":
       return `chat:${event.session_id || event.conversation_id || "unknown"}`;
     default:
@@ -10566,6 +10588,9 @@ async function dispatchAgentEvent(options, dispatched, event, log = (message) =>
       await dispatchChatEvent(options, dispatched, event);
       break;
     }
+    case "room_post":
+      await dispatchRoomPostEvent(options, dispatched, event);
+      break;
     case "control_pause":
     case "control_resume":
     case "control_interrupt":
@@ -10733,6 +10758,33 @@ async function dispatchMailEvent(options, dispatched, event, log) {
       emitTrace(options, "ack_completed", messageEvent, "mail");
     }
   }
+}
+async function dispatchRoomPostEvent(options, dispatched, event) {
+  if (!options.teamID || event.team_id !== options.teamID || !event.room_id || !event.message_id) {
+    throw new Error("room notice does not match the selected team");
+  }
+  const key = `room:${options.teamID}:${options.self.stableID || options.self.did}:${event.message_id}`;
+  if (dispatched.has(key) || options.deliveryStore?.has(key)) {
+    await ackRoomNotice(options.client, event.message_id);
+    return;
+  }
+  const post = await fetchRoomMessage(options.client, options.teamID, event.room_id, event.message_id);
+  const trust = await normalizeAndPersistMessageTrust(options, post, post.from_alias, post.from_address, void 0, void 0, event, "room");
+  post.verification_status = trust.status;
+  const authenticated = isTrustedVerificationStatus(post.verification_status);
+  const responsibility = typeof options.trust.verifyResponsibility === "function" ? await options.trust.verifyResponsibility(post, authenticated) : await readReceivedIdChain(post, authenticated, { evidence: async () => null });
+  if (!authenticated || idRequestDisposition(responsibility, receivedIdSubject(post), true).ordinary === "refuse") {
+    throw new Error("room post sender verification failed");
+  }
+  const safe = (value) => truncateText(sanitizeSummaryComponent(terminalInputSafeText(value)).replace(/[\u2028\u2029]/g, " "), 160);
+  await deliverAwakening(options, {
+    kind: "room",
+    content: `New team room post from ${safe(post.from_alias)}: ${safe(post.subject)}. Read it: aw room read`,
+    deliveryIntent: "wake",
+    meta: { type: "room", message_id: post.message_id, room_id: post.room_id, team_id: options.teamID, from: safe(post.from_alias), trust_status: post.verification_status || "unknown", verified: "true", responsibility: JSON.stringify(responsibility) }
+  });
+  await persistDeliveryMark(options, dispatched, key, event, "room");
+  await ackRoomNotice(options.client, post.message_id);
 }
 async function dispatchChatEvent(options, dispatched, event) {
   if (!event.session_id) return;
@@ -11002,7 +11054,7 @@ function formatAwakeningForAgent(awakening) {
   } else if (awakening.content) {
     lines.push("", "Message:", awakening.content);
   }
-  lines.push("", "Use the aw CLI to respond when appropriate.");
+  lines.push("", awakening.kind === "room" ? "No reply is expected." : "Use the aw CLI to respond when appropriate.");
   return lines.join("\n");
 }
 function formatAppEventMetaSummary(meta) {
@@ -11157,7 +11209,7 @@ function safeAwakeningNotice(awakening, awCommand = "aw") {
 function textForTerminalAwakening(awakening, receivingIdentityHome) {
   const quotedHome = receivingIdentityHome === void 0 ? void 0 : quotedIdentityHome(receivingIdentityHome);
   const richText = terminalInputSafeText(formatAwakeningForAgent(awakening));
-  if (awakening.kind === "mail" || awakening.kind === "chat") {
+  if (awakening.kind === "mail" || awakening.kind === "chat" || awakening.kind === "room") {
     const recovery = quotedHome ? messageRecoveryCommand(awakening, `aw --identity-home ${quotedHome}`) : void 0;
     return recovery ? `${richText}
 
@@ -11219,7 +11271,7 @@ function createTerminalAwakeningHandler(options) {
   const handler = (async (awakening, receivingIdentityHome) => {
     throwIfAborted2(options.signal);
     let heldReason;
-    if (awakening.kind === "mail" || awakening.kind === "chat") {
+    if (awakening.kind === "mail" || awakening.kind === "chat" || awakening.kind === "room") {
       if (awakening.meta.decrypted === "false") {
         heldReason = "could not decrypt";
       } else if (!isTrustedVerificationStatus(awakening.meta.trust_status)) {
@@ -11265,6 +11317,9 @@ function createTerminalAwakeningHandler(options) {
     }
     throwIfAborted2(options.signal);
     const state = normalizeTerminalReadiness(inspection.state ?? inspection.rawState, inspection.present ?? true);
+    if (awakening.kind === "room" && state === "working") {
+      throw new Error("terminal delivery deferred while pane is working");
+    }
     if (state === "blocked" || state === "shell" || state === "stopped" || state === "not-launched") {
       throw new TerminalInactiveError(state);
     }
@@ -11456,6 +11511,11 @@ async function main() {
           continue;
         }
         if ((type2 === "actionable_chat" || type2 === "chat_message") && !capabilities.scopes.has("chat.read")) {
+          lastError = "grant lacks chat.read";
+          status({ binding_id: msg.binding_id, error: lastError });
+          continue;
+        }
+        if ((type2 === "actionable_room_post" || type2 === "room_post") && !capabilities.scopes.has("chat.read")) {
           lastError = "grant lacks chat.read";
           status({ binding_id: msg.binding_id, error: lastError });
           continue;

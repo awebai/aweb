@@ -16,17 +16,18 @@ import (
 type AgentEventType string
 
 const (
-	AgentEventConnected        AgentEventType = "connected"
-	AgentEventActionableMail   AgentEventType = "actionable_mail"
-	AgentEventActionableChat   AgentEventType = "actionable_chat"
-	AgentEventWorkAvailable    AgentEventType = "work_available"
-	AgentEventClaimUpdate      AgentEventType = "claim_update"
-	AgentEventClaimRemoved     AgentEventType = "claim_removed"
-	AgentEventControlPause     AgentEventType = "control_pause"
-	AgentEventControlResume    AgentEventType = "control_resume"
-	AgentEventControlInterrupt AgentEventType = "control_interrupt"
-	AgentEventAppEvent         AgentEventType = "app_event"
-	AgentEventError            AgentEventType = "error"
+	AgentEventConnected          AgentEventType = "connected"
+	AgentEventActionableMail     AgentEventType = "actionable_mail"
+	AgentEventActionableChat     AgentEventType = "actionable_chat"
+	AgentEventActionableRoomPost AgentEventType = "actionable_room_post"
+	AgentEventWorkAvailable      AgentEventType = "work_available"
+	AgentEventClaimUpdate        AgentEventType = "claim_update"
+	AgentEventClaimRemoved       AgentEventType = "claim_removed"
+	AgentEventControlPause       AgentEventType = "control_pause"
+	AgentEventControlResume      AgentEventType = "control_resume"
+	AgentEventControlInterrupt   AgentEventType = "control_interrupt"
+	AgentEventAppEvent           AgentEventType = "app_event"
+	AgentEventError              AgentEventType = "error"
 	// AgentEventChannelReconnected is synthesized by the local run loop after
 	// recovering its SSE connection; it is never accepted from the server wire.
 	AgentEventChannelReconnected AgentEventType = "channel_reconnected"
@@ -41,6 +42,7 @@ type AgentEvent struct {
 	WakeMode       string          `json:"wake_mode,omitempty"`
 	Channel        string          `json:"channel,omitempty"`
 	MessageID      string          `json:"message_id,omitempty"`
+	RoomID         string          `json:"room_id,omitempty"`
 	ConversationID string          `json:"conversation_id,omitempty"`
 	FromAlias      string          `json:"from_alias,omitempty"`
 	FromStableID   string          `json:"from_stable_id,omitempty"`
@@ -231,6 +233,14 @@ func parseAgentEvent(eventName, data string) (AgentEvent, bool, error) {
 			Encrypted:      payload.Encrypted,
 			UnreadCount:    payload.UnreadCount,
 		}, true, nil
+
+	case AgentEventActionableRoomPost:
+		var event AgentEvent
+		if err := json.Unmarshal(raw, &event); err != nil {
+			return AgentEvent{}, false, fmt.Errorf("parse actionable_room_post event: %w", err)
+		}
+		event.Type, event.Raw = AgentEventActionableRoomPost, raw
+		return event, true, nil
 
 	case AgentEventActionableChat:
 		var payload struct {

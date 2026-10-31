@@ -30,6 +30,7 @@ from aweb.agent_health import LISTENING_REFRESH_SECONDS, record_stream_listening
 from aweb.deps import get_db, get_redis
 from aweb.identity_metadata import lookup_identity_metadata_by_did, routable_chat_address
 from aweb.messaging.chat import get_pending_conversations
+from aweb.messaging.room_notices import current_room_events
 from aweb.messaging.waiting import get_waiting_agents, get_waiting_agents_by_session
 from aweb.internal_auth import parse_internal_auth_context
 from aweb.grant_streams import (
@@ -451,6 +452,8 @@ async def _sse_agent_events(
     previous_mail = _index_events(mail_events, key_field="message_id")
     previous_chat = _index_events(chat_events, key_field="session_id")
     previous_app = _index_events(app_events, key_field="event_id")
+    room_events = await current_room_events(request, db, identity)
+    previous_room = _index_events(room_events, key_field="message_id")
 
     reason = await guard.reason()
     if reason:
@@ -469,6 +472,9 @@ async def _sse_agent_events(
         if agent_event_allowed(identity, evt):
             yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
     for evt in app_events:
+        if agent_event_allowed(identity, evt):
+            yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
+    for evt in room_events:
         if agent_event_allowed(identity, evt):
             yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
 
@@ -518,6 +524,7 @@ async def _sse_agent_events(
             )
             control_events = await _poll_control_signals(aweb_db, team_id=team_id, agent_id=aid)
             current_app = await current_app_events_for_agent(aweb_db, team_id=team_id, agent_id=agent_id)
+            current_room = await current_room_events(request, db, identity)
         except Exception:
             logger.exception("event-stream poll error for agent %s", agent_id)
             now = monotonic()
@@ -547,6 +554,7 @@ async def _sse_agent_events(
             previous_app,
             key_field="event_id",
         )
+        room_events = _new_or_changed_events(current_room, previous_room, key_field="message_id")
 
         reason = await guard.reason()
         if reason:
@@ -568,8 +576,11 @@ async def _sse_agent_events(
         for evt in app_events:
             if agent_event_allowed(identity, evt):
                 yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
+        for evt in room_events:
+            if agent_event_allowed(identity, evt):
+                yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
 
-        if mail_events or chat_events or control_events or app_events:
+        if mail_events or chat_events or control_events or app_events or room_events:
             last_heartbeat_at = datetime.now(timezone.utc)
         else:
             now = datetime.now(timezone.utc)
@@ -580,6 +591,7 @@ async def _sse_agent_events(
         previous_mail = _index_events(current_mail, key_field="message_id")
         previous_chat = _index_events(current_chat, key_field="session_id")
         previous_app = _index_events(current_app, key_field="event_id")
+        previous_room = _index_events(current_room, key_field="message_id")
 
     reason = await guard.reason()
     if reason:

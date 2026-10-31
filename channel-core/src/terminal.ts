@@ -90,7 +90,7 @@ export function normalizeTerminalReadiness(raw: string | undefined, present = tr
   }
 }
 
-function terminalInputSafeText(text: string): string {
+export function terminalInputSafeText(text: string): string {
   return text
     .replace(/\r\n?/g, "\n")
     .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\u0080-\u009F]/g, "");
@@ -131,7 +131,7 @@ function textForTerminalAwakening(awakening: ChannelAwakening, receivingIdentity
   const richText = terminalInputSafeText(formatAwakeningForAgent(awakening));
   // Mail/chat present actual content before their accepted-input receipt
   // can mark them read, regardless of harness readiness.
-  if (awakening.kind === "mail" || awakening.kind === "chat") {
+  if (awakening.kind === "mail" || awakening.kind === "chat" || awakening.kind === "room") {
     const recovery = quotedHome ? messageRecoveryCommand(awakening, `aw --identity-home ${quotedHome}`) : undefined;
     return recovery ? `${richText}\n\nRecovery: ${recovery}` : richText;
   }
@@ -206,7 +206,7 @@ export function createTerminalAwakeningHandler(options: TerminalAwakeningHandler
   const handler = (async (awakening: ChannelAwakening, receivingIdentityHome?: string): Promise<void> => {
     throwIfAborted(options.signal);
     let heldReason: string | undefined;
-    if (awakening.kind === "mail" || awakening.kind === "chat") {
+    if (awakening.kind === "mail" || awakening.kind === "chat" || awakening.kind === "room") {
       if (awakening.meta.decrypted === "false") {
         heldReason = "could not decrypt";
       } else if (!isTrustedVerificationStatus(awakening.meta.trust_status as VerificationStatus | undefined)) {
@@ -255,6 +255,9 @@ export function createTerminalAwakeningHandler(options: TerminalAwakeningHandler
     }
     throwIfAborted(options.signal);
     const state = normalizeTerminalReadiness(inspection.state ?? inspection.rawState, inspection.present ?? true);
+    if (awakening.kind === "room" && state === "working") {
+      throw new Error("terminal delivery deferred while pane is working");
+    }
     if (state === "blocked" || state === "shell" || state === "stopped" || state === "not-launched") {
       throw new TerminalInactiveError(state);
     }

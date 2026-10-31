@@ -3017,7 +3017,7 @@ Flags:
 
 ### `room`
 
-Read or post signed announcements to the shared team room. Team room posts are readable by the service operator and all current and future team members. Rooms use explicit reads; posting does not wake or broadcast to teammates.
+Read or post signed announcements to the shared team room. Team room posts are readable by the service operator and all current and future team members. Each post notifies other current members once. Read the room for the full post; no reply is expected.
 
 Subcommands:
 - `post` Post a signed announcement to the team room
@@ -3035,7 +3035,6 @@ Post a signed announcement. Team room posts are readable by the service operator
 Flags:
 - `--body string Announcement body. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples`
 - `--body-file string Read announcement body from a file; safe for Markdown or command examples`
-- `--e2ee Request E2E encryption (rooms refuse this mode)`
 - `-h, --help help for post`
 - `--subject string Announcement subject`
 

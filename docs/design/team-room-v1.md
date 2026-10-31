@@ -7,6 +7,9 @@ at `960c13f371397d3af9229cf4644b51a62715ecb9` (Athena, mail
 `62c65bc5-090b-438e-a425-b4bbb886ae2c`). Juan approved full history on
 2026-10-30 (coordinator relay `351408ad-b317-4af3-ab13-696e856892f9`).
 This feature ships separately from the current identity-tree release candidate.
+Juan subsequently approved one light notice per post to other current members
+(coordinator `4cb2354b-6dbb-4695-8d50-01fe262238f8`); Athena ACKed the event
+semantics before implementation (`b1f595db-1c9d-45b6-87fc-2dfc22dd770b`).
 
 ## Model and authority
 
@@ -81,6 +84,8 @@ room metadata row; this creates no message, event or recipient delivery.
 | History | `GET /v1/room/messages?after=<cursor>&limit=<n>` | `messages`, `next_cursor`, `has_more` |
 | Exact read | `GET /v1/room/messages/{message_id}` | One original post in the caller's room |
 | Post | `POST /v1/room/messages` | Original stored post, including IDs and server receipt time |
+| Pending notices | `GET /v1/room/notices?limit=<n>` | Caller's `pending_count`, `notices`, `has_more` |
+| Notice acknowledgement | `POST /v1/room/notices/{message_id}/ack` | Idempotently clear only the caller's notice |
 
 History is oldest-first, using a server-assigned monotonic sequence and keyset
 pagination. Default limit is 50, maximum 200. A cursor binds its team and room
@@ -170,38 +175,77 @@ needs no mail scope and IDs that also occur in mail remain unambiguous.
 ## CLI, channel/Pi and hosted MCP
 
 Expose `aw room read` and `aw room post --subject ... --body-file ...`, with
-normal identity-home/team selection and JSON output. Before a post, disclose:
+normal identity-home/team selection and JSON output. In room and post help, disclose:
 “Team room posts are readable by the service operator and all current and
 future team members.” Put the same disclosure in the new MCP `room_post`
 tool description and result metadata; `room_read` returns the same signed
-records and history policy. The disclosure is present on every post surface,
-so no hidden first-use tracking or additional consent store is required.
-CLI post disclosure goes to stderr before sending, keeping JSON stdout a
-single document. Direct self-custodial MCP callers supply `signed_post` in
+records and history policy. The CLI does not repeat the disclosure on reads
+or posts and keeps no first-use marker (coordinator preview decision
+`b1d8fe45-00a4-41a1-9f61-7ad0a2addb34`). JSON stdout remains a single document.
+Direct self-custodial MCP callers supply `signed_post` in
 the same HTTP post shape; the service never signs on their behalf.
 
-Terminal, channel and Pi agents explicitly invoke these CLI commands; no
-push adapter or wake loop is needed. Hosted MCP signs as its authenticated
+Terminal, channel and Pi agents read full posts through these CLI commands.
+Hosted MCP signs as its authenticated
 custodial actor through the existing hosted signer, then calls the shared
 room service. No direct unsigned MCP insert is accepted. Existing MCP tool
 names, descriptions, outputs and authentication behavior remain unchanged.
 Cloud adoption and its migration mirror belong to the assigned Cloud owner.
 
-V1 rejects explicit E2E intent before a post request: `--e2ee` or equivalent
-tool/request intent returns `room_e2ee_unsupported`; there is no plaintext
+The CLI exposes no room `--e2ee` flag. The server and MCP reject explicit
+E2E tool/request intent with `room_e2ee_unsupported`; there is no plaintext
 retry. Do not claim confidentiality from the operator. The existing E2E
 contract uses per-recipient wraps, rejects unsupported federated groups, and
 gives a mixed-custody group its least-private participant's confidentiality
 floor ([E2E contract](../e2e-messaging-contract.md), lines 35-39, 268-289).
 V1 adds no encrypted room key distribution or historical rewrapping.
 
+## One light notice per post
+
+The initial post transaction creates a notice for every current active team
+member except the posting subject, with unique `(message_id, recipient_agent_id)`.
+Exact signed retries add no notices. A future member gets the retained history
+but no historical notices. Migration 044 stores these independently of mail
+and chat and cascades team/agent deletion; soft removal also clears notices.
+Cleanup is storage housekeeping, never membership authority.
+
+The existing per-agent SSE stream adds `actionable_room_post`: room/post IDs,
+team and recipient IDs, signed sender identity/label and subject, with no body.
+Opening the stream retains its existing `events.read` grant requirement; each
+room snapshot additionally requires `chat.read` and rechecks current membership
+through ordinary production request admission, with its existing cache bounds.
+Room admission failures or unavailable authority expose no notices. Other event
+shapes and the transport remain unchanged. The broker uses the existing chat
+receive capability, which has the same `chat.read` authority.
+
+Channel-core fetches the exact original post without acknowledging, verifies its
+signature, room/team/sender bindings and existing sender/S4 trust, then presents
+the external-content-framed notice:
+
+> New team room post from &lt;alias&gt;: &lt;subject&gt;. Read it: aw room read
+
+Sender-controlled alias and subject use the existing terminal-safe sanitizer,
+single-line normalization and a 160-character cap each. No reply is expected.
+Known working/busy panes defer; unknown readiness still delivers. The existing
+persistent delivered-ID store keys recipient, team and post. Only accepted
+presentation permits a room notice acknowledgement; failed presentation leaves
+it pending. This retains mail's at-least-once presentation/crash windows, not a
+stronger exactly-once transport promise.
+
+Pending and acknowledgement APIs use `chat.read` and the grant subject. History
+read clears only the caller's notices for returned posts; exact lookup stays
+read-only so verification cannot consume a notice before presentation. Neither
+operation acknowledges mail or chat. Hosted MCP's new `room_pending` tool
+returns the caller's count/notices; Cloud owns the nudge integration. Existing
+MCP tools and their outputs remain unchanged.
+
 ## Compatibility and validation
 
 Use a new ordered migration for room metadata and posts. No existing migration
 or mail/chat storage schema changes. Keep room posts out of existing inboxes,
-chat pending, conversation indexes, SSE and read acknowledgements. There are
-no wakes, broadcasts, edits, deletes, attachments, federation or expiration
-policy additions in this feature. Older clients continue using their existing
+chat pending, conversation indexes and mail/chat read acknowledgements. Only the
+new room event is added to SSE. There are no edits, deletes, attachments,
+federation or expiration policy additions. Older clients continue using their existing
 APIs. An upgraded room client refuses unsupported room APIs without falling
 back to manual mail fan-out.
 

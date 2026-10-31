@@ -106,7 +106,7 @@ async def test_room_is_shared_and_history_includes_posts_before_join(privacy_app
     assert exact.json() == item
     assert await env.db.fetch_val("SELECT count(*) FROM {{tables.messages}}") == 0
     assert await env.db.fetch_val("SELECT count(*) FROM {{tables.chat_messages}}") == 0
-    assert env.dispatched == []  # Explicit reads; no broadcast or wakes.
+    assert env.dispatched == []  # Room notices use no legacy mutation fan-out.
 
 
 @pytest.mark.asyncio
@@ -524,20 +524,30 @@ async def test_hosted_mcp_room_signs_as_actor_and_reads_shared_history(
 
     try:
         before = await call("check_mail")
+        initial = await call("room_pending")
+        assert json.loads(initial["content"][0]["text"])["pending_count"] == 0
         result = await call("room_post", subject="Hosted", body="MCP announcement")
         assert not result.get("isError"), result
-        post = json.loads(result["content"][0]["text"])
-        assert post["from_did"] == actor.did
-        assert post["body"] == "MCP announcement"
-        assert post["confidentiality"] == "server_readable"
+        stored_post = json.loads(result["content"][0]["text"])
+        assert stored_post["from_did"] == actor.did
+        assert stored_post["body"] == "MCP announcement"
+        assert stored_post["confidentiality"] == "server_readable"
         assert len(calls) == 1
+        room = await metadata(env)
+        assert (
+            await post(env, room, actor="bob", text="Another team update")
+        ).status_code == 200
+        pending = await call("room_pending")
+        assert json.loads(pending["content"][0]["text"])["pending_count"] == 1
         read = await call("room_read")
         assert not read.get("isError"), read
         assert (
             json.loads(read["content"][0]["text"])["messages"][0]["message_id"]
-            == post["message_id"]
+            == stored_post["message_id"]
         )
         assert await call("check_mail") == before
+        pending = await call("room_pending")
+        assert json.loads(pending["content"][0]["text"])["pending_count"] == 0
         refused = await call("room_post", body="no downgrade", e2ee=True)
         assert (
             refused.get("isError")
@@ -548,7 +558,7 @@ async def test_hosted_mcp_room_signs_as_actor_and_reads_shared_history(
         refused = await call("room_post", body="wrong signer")
         assert refused.get("isError"), refused
         assert (
-            await env.db.fetch_val("SELECT count(*) FROM {{tables.room_messages}}") == 1
+            await env.db.fetch_val("SELECT count(*) FROM {{tables.room_messages}}") == 2
         )
         await env.registry_db.execute(
             """INSERT INTO {{tables.team_certificates}}
@@ -564,7 +574,7 @@ async def test_hosted_mcp_room_signs_as_actor_and_reads_shared_history(
     finally:
         await mcp.shutdown()
     read = await env.client.get("/v1/room/messages", headers=headers(env.actors["bob"]))
-    assert read.json()["messages"][0]["message_id"] == post["message_id"]
+    assert read.json()["messages"][0]["message_id"] == stored_post["message_id"]
 
 
 @pytest.mark.asyncio
@@ -630,7 +640,7 @@ async def test_real_cli_room_post_read_and_who(
                 "UPDATE {{tables.identity_session_grants}} SET scopes=ARRAY['chat.read','chat.send']"
             )
 
-        async def run(*args):
+        async def raw(*args, expected=0):
             proc = await asyncio.create_subprocess_exec(
                 str(binary),
                 *args,
@@ -640,15 +650,26 @@ async def test_real_cli_room_post_read_and_who(
                 stderr=asyncio.subprocess.PIPE,
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), 30)
-            assert proc.returncode == 0, stderr.decode() + stdout.decode()
-            return json.loads(stdout), stderr.decode()
+            assert proc.returncode == expected, stderr.decode() + stdout.decode()
+            return stdout.decode(), stderr.decode()
+
+        async def run(*args):
+            stdout, stderr = await raw(*args)
+            return json.loads(stdout), stderr
+
+        empty, notice = await raw("room", "read")
+        assert empty == (
+            "The team room is empty. Post with: "
+            "aw room post --subject ... --body-file ...\n"
+        )
+        assert notice == ""
 
         body_file = tmp_path / "room-post.txt"
         body_file.write_text("A team update with `backticks` and $(literal text).\n")
         sent, notice = await run(
             "room", "post", "--subject", "CLI", "--body-file", str(body_file), "--json"
         )
-        assert "all current and future team members" in notice
+        assert notice == ""
         assert sent["body"] == "A team update with `backticks` and $(literal text)."
         assert sent["from_did"] == env.actors["bob"].did
         read, _ = await run("room", "read", "--json")
@@ -663,6 +684,34 @@ async def test_real_cli_room_post_read_and_who(
         )
         assert who["id"] == (sent.get("from_stable_id") or sent["from_did"])
         assert who["reason"] != "subject_mismatch"
+        shown, notice = await raw("room", "read")
+        assert "[verified]" in shown
+        assert "Team room posts are readable" not in shown
+        assert notice == ""
+        missing_id = str(uuid4())
+        stdout, stderr = await raw(
+            "room", "read", "--message-id", missing_id, expected=1
+        )
+        assert stdout == ""
+        assert stderr == f"No room post {missing_id} in your team.\n"
+        stdout, stderr = await raw(
+            "room", "post", "--e2ee", "--body", "must not send", expected=1
+        )
+        assert stdout == ""
+        assert "unknown flag: --e2ee" in stderr
+        assert (
+            await env.db.fetch_val("SELECT count(*) FROM {{tables.room_messages}}") == 1
+        )
+        if not grant:
+            await env.db.execute(
+                "UPDATE {{tables.agents}} SET deleted_at=now(),status='deleted' WHERE agent_id=$1",
+                env.actors["bob"].id,
+            )
+            stdout, stderr = await raw("room", "read", expected=1)
+            assert stdout == ""
+            assert stderr == (
+                f"You are no longer a member of {TEAM}, so you cannot read its room.\n"
+            )
 
 
 @pytest.mark.asyncio

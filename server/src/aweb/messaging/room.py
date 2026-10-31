@@ -214,6 +214,12 @@ async def read_room(db, actor, *, after=None, limit=50):
         )
         more = len(rows) > limit
         rows = rows[:limit]
+        if rows:
+            await tx.execute(
+                "DELETE FROM {{tables.room_post_notices}} WHERE recipient_agent_id=$1 AND message_id=ANY($2::uuid[])",
+                UUID(actor.agent_id),
+                [row["message_id"] for row in rows],
+            )
         return {
             "team_id": actor.team_id,
             "room_id": str(room["room_id"]),
@@ -333,4 +339,17 @@ async def post_room_message(db, actor, post: RoomPost, *, id_chain=None):
         if row is None:
             # A concurrent append to another team's room won this global ID.
             raise ConflictError("Room message ID already used")
+        await tx.execute(
+            """WITH recipients AS (
+                SELECT agent_id FROM {{tables.agents}}
+                WHERE team_id=$2 AND agent_id<>$3 AND status='active' AND deleted_at IS NULL
+                ORDER BY agent_id FOR SHARE
+            )
+            INSERT INTO {{tables.room_post_notices}} (message_id, recipient_agent_id)
+            SELECT $1, agent_id FROM recipients
+            ON CONFLICT DO NOTHING""",
+            message_id,
+            actor.team_id,
+            UUID(actor.agent_id),
+        )
         return _post_dict(row, actor.team_id)

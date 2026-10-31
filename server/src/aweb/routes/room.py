@@ -1,4 +1,4 @@
-"""Explicit team room operations; no mail/chat routing or wake effects."""
+"""Team room posts, reads and independent per-member notice receipts."""
 
 from fastapi import APIRouter, Depends, Query, Request
 
@@ -12,6 +12,7 @@ from aweb.messaging.room import (
     present_room,
 )
 from aweb.team_auth_deps import team_identity_with_grant_scope
+from aweb.messaging.room_notices import pending_room_notices, ack_room_notice
 
 router = APIRouter(prefix="/v1/room", tags=["room"])
 _read = team_identity_with_grant_scope("chat.read")
@@ -21,6 +22,18 @@ _post = team_identity_with_grant_scope("chat.send")
 @router.get("")
 async def metadata(db=Depends(get_db), actor=Depends(_read)):
     return await room_metadata(db, actor)
+
+
+@router.get("/notices")
+async def notices(
+    limit: int = Query(50, ge=1, le=200), db=Depends(get_db), actor=Depends(_read)
+):
+    return await pending_room_notices(db, actor, limit=limit)
+
+
+@router.post("/notices/{message_id}/ack")
+async def acknowledge_notice(message_id: str, db=Depends(get_db), actor=Depends(_read)):
+    return await ack_room_notice(db, actor, message_id)
 
 
 @router.get("/messages")
