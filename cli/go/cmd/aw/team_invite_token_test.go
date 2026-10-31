@@ -70,8 +70,9 @@ func TestTeamJoinTakesTheTokenFromAFileOrStdin(t *testing.T) {
 	}
 }
 
-// A printed invite token admits whoever holds it. The invite says so on
-// stderr; stdout keeps its exact output.
+// A printed invite token admits whoever holds it. The human invite says so on
+// stderr; under --json nothing goes to stderr, so a script that captures both
+// streams still reads one JSON document.
 func TestTeamInviteWarnsThatThePrintedTokenIsACredential(t *testing.T) {
 	t.Parallel()
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -88,26 +89,44 @@ func TestTeamInviteWarnsThatThePrintedTokenIsACredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeTeamKeyForTest(t, tmp, "acme.com", "backend", teamKey)
+	invite := func(extra ...string) (string, string) {
+		t.Helper()
+		args := append([]string{"id", "team", "invite", "--team", "backend", "--namespace", "acme.com"}, extra...)
+		run := exec.CommandContext(ctx, bin, args...)
+		run.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
+		run.Dir = tmp
+		var stdout, stderr bytes.Buffer
+		run.Stdout, run.Stderr = &stdout, &stderr
+		if err := run.Run(); err != nil {
+			t.Fatalf("invite %v failed: %v\n%s", extra, err, &stderr)
+		}
+		return stdout.String(), stderr.String()
+	}
 
-	run := exec.CommandContext(ctx, bin, "id", "team", "invite", "--team", "backend", "--namespace", "acme.com", "--json")
-	run.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
-	run.Dir = tmp
-	var stdout, stderr bytes.Buffer
-	run.Stdout, run.Stderr = &stdout, &stderr
-	if err := run.Run(); err != nil {
-		t.Fatalf("invite failed: %v\n%s", err, &stderr)
-	}
-	assertOneJSONDocument(t, stdout.Bytes())
+	stdout, stderr := invite("--json")
+	assertOneJSONDocument(t, []byte(stdout))
 	var out map[string]any
-	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil || out["token"] == "" {
-		t.Fatalf("invite output %s: %v", &stdout, err)
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil || out["token"] == "" {
+		t.Fatalf("invite output %s: %v", stdout, err)
 	}
-	token, _ := out["token"].(string)
-	warning := stderr.String()
+	if stderr != "" {
+		t.Fatalf("--json invite wrote to stderr: %q", stderr)
+	}
+
+	stdout, warning := invite()
 	for _, want := range []string{"credential", "--token-file", "--token-stdin"} {
 		if !strings.Contains(warning, want) {
 			t.Fatalf("stderr %q does not say %q", warning, want)
 		}
+	}
+	var token string
+	for _, line := range strings.Split(stdout, "\n") {
+		if rest, ok := strings.CutPrefix(line, "Token:"); ok {
+			token = strings.TrimSpace(rest)
+		}
+	}
+	if token == "" {
+		t.Fatalf("human invite printed no token:\n%s", stdout)
 	}
 	if strings.Contains(warning, token) {
 		t.Fatal("the warning repeats the token")
