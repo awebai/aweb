@@ -135,5 +135,8 @@ async def test_id_request_uses_fixed_target_bound_v2(privacy_app, tmp_path, fami
             envelope = json.loads(stdout)
             assert set(envelope) == {'error'}, stdout
             message = envelope['error']['message']
-            assert message.startswith('request signing field "') and message.endswith('" is reserved'), stdout
+            if family == 'certificate':
+                assert message == 'request signing field "did_aw" is reserved', stdout
+            else:
+                assert message == '--sign fields require --team-auth', stdout
             assert len(captured) == before
