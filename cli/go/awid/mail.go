@@ -126,7 +126,7 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 		}
 		var out SendMessageResponse
 		if err := c.Post(ctx, "/v1/messages", &payload, &out); err != nil {
-			return nil, err
+			return nil, serverCustodialRefusal(err, payload.Encrypted)
 		}
 		return &out, nil
 	}
@@ -188,6 +188,9 @@ func (c *Client) prepareE2EEMail(ctx context.Context, payload *SendMessageReques
 		return err
 	}
 	now := time.Now().UTC().Truncate(time.Second)
+	if err := refuseCustodialRecipients([]E2EERecipientKey{recipient}, now); err != nil {
+		return err
+	}
 	messageID := strings.TrimSpace(payload.MessageID)
 	if messageID == "" {
 		messageID, err = GenerateUUID4()
@@ -366,7 +369,7 @@ func (c *Client) e2eeMailRecipient(ctx context.Context, payload *SendMessageRequ
 		return E2EERecipientKey{}, err
 	}
 	if identity.EncryptionKey == nil {
-		return E2EERecipientKey{}, errors.New("recipient has no published E2E encryption key; ask them to upgrade aw/Pi/channel and run `aw id encryption-key setup`, or explicitly send a server-readable upgrade note with --plaintext")
+		return E2EERecipientKey{}, errNoPublishedEncryptionKey
 	}
 	return E2EERecipientKey{
 		Address:        strings.TrimSpace(identity.Address),

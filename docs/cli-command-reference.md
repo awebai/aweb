@@ -42,9 +42,10 @@ JSON line on stdout:
 
 `code` is the stable contract. `message` is the text stderr prints, which
 is not stable. stderr and the exit code are the same with or without
-`--json`. `http_status` and `detail` are present only for `http_error`;
-`detail` is the string `detail` of the server's JSON body, never its
-headers or any other text.
+`--json`. `http_status` and `detail` are present only for `http_error`,
+where `detail` is the string `detail` of the server's JSON body, never its
+headers or any other text. For `recipient_custodial_no_e2ee`, `detail`
+lists the refused recipients' addresses.
 
 Under `--json`, stdout carries one document. A command that already
 printed its own output, such as a partial result, and then failed keeps
@@ -59,6 +60,7 @@ envelope.
 | `outcome_unknown` | A mutating request timed out before its response; it may have applied. Check current state before retrying. |
 | `encryption_key_missing` | An encrypted message needs a local encryption private key this identity does not have. |
 | `decrypt_failed` | An encrypted message could not be opened or validated. |
+| `recipient_custodial_no_e2ee` | An end-to-end encrypted send names a hosted agent, whose signed encryption key assertion says aweb's service holds its key; nothing was sent. Send it again without `--e2ee`. |
 | `team_not_hosted` | `aw workspace delete` through an external identity home: the team is not hosted, so no cloud-held controller can release the alias. |
 | `global_identity` | `aw workspace delete` through an external identity home: a global identity's alias is released by its team, not by itself. |
 | `not_own_workspace` | `aw workspace delete` through an external identity home names another workspace. |

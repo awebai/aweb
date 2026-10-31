@@ -3,6 +3,7 @@ package awid
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 )
 
 // ErrorDetail is an error's stable machine description: its class code and,
@@ -16,7 +17,8 @@ type ErrorDetail struct {
 }
 
 // DescribeError classifies err. Codes: http_error, outcome_unknown,
-// encryption_key_missing, decrypt_failed, and error for any other error.
+// encryption_key_missing, decrypt_failed, recipient_custodial_no_e2ee, and
+// error for any other error.
 func DescribeError(err error) ErrorDetail {
 	detail := ErrorDetail{Code: "error"}
 	var apiErr *APIError
@@ -33,6 +35,11 @@ func DescribeError(err error) ErrorDetail {
 	var decryption *DecryptionError
 	if errors.As(err, &decryption) {
 		detail.Code = decryption.Code
+	}
+	var custodial *CustodialRecipientError
+	if errors.As(err, &custodial) {
+		detail.Code = ErrorCodeRecipientCustodialNoE2EE
+		detail.Detail = strings.Join(custodial.Recipients, ", ")
 	}
 	return detail
 }

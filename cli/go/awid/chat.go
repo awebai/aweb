@@ -238,7 +238,7 @@ func (c *Client) ChatCreateSession(ctx context.Context, req *ChatCreateSessionRe
 		}
 		var out ChatCreateSessionResponse
 		if err := c.Post(ctx, "/v1/chat/sessions", &payload, &out); err != nil {
-			return nil, err
+			return nil, serverCustodialRefusal(err, payload.Encrypted)
 		}
 		return &out, nil
 	}
@@ -316,6 +316,9 @@ func (c *Client) prepareE2EEChatCreate(ctx context.Context, payload *ChatCreateS
 	}
 	recipients, err := c.e2eeChatRecipients(ctx, payload.ToAliases, payload.ToDIDs, payload.ToAddresses)
 	if err != nil {
+		return err
+	}
+	if err := refuseCustodialRecipients(recipients, time.Now().UTC()); err != nil {
 		return err
 	}
 	messageID, err := GenerateUUID4()
@@ -401,6 +404,9 @@ func (c *Client) prepareE2EEChatSend(ctx context.Context, sessionID string, payl
 	if err != nil {
 		return err
 	}
+	if err := refuseCustodialRecipients(recipients, time.Now().UTC()); err != nil {
+		return err
+	}
 	messageID, err := GenerateUUID4()
 	if err != nil {
 		return err
@@ -457,6 +463,11 @@ func (c *Client) prepareE2EEChatSend(ctx context.Context, sessionID string, payl
 }
 
 func (c *Client) e2eeChatRecipientsForSession(ctx context.Context, sessionID string) ([]E2EERecipientKey, error) {
+	if recipient, ok, err := c.addressedSessionParticipant(ctx, sessionID); err != nil {
+		return nil, err
+	} else if ok {
+		return []E2EERecipientKey{recipient}, nil
+	}
 	to, err := c.toAddressForSession(ctx, sessionID, true)
 	if err != nil {
 		return nil, err
@@ -473,6 +484,38 @@ func (c *Client) e2eeChatRecipientsForSession(ctx context.Context, sessionID str
 		}
 	}
 	return c.e2eeChatRecipients(ctx, aliases, dids, addresses)
+}
+
+// addressedSessionParticipant resolves the other participant of a one-to-one
+// session through its address, when the session lists one. It is that
+// participant only if the address resolves to the session's did:key; an
+// address now held by another identity is not used.
+func (c *Client) addressedSessionParticipant(ctx context.Context, sessionID string) (E2EERecipientKey, bool, error) {
+	resp, err := c.ChatListSessions(ctx)
+	if err != nil {
+		return E2EERecipientKey{}, false, err
+	}
+	for _, session := range resp.Sessions {
+		if session.SessionID != sessionID {
+			continue
+		}
+		otherDIDs, otherAddresses := OtherConversationParticipants(session.ParticipantDIDs, session.ParticipantAddresses, c.stableID, c.did, c.address)
+		if len(otherDIDs) != 1 || len(otherAddresses) != 1 || !isLocalDIDKey(otherDIDs[0]) || !strings.Contains(otherAddresses[0], "/") {
+			return E2EERecipientKey{}, false, nil
+		}
+		identity, err := c.ResolveIdentity(ctx, otherAddresses[0])
+		if err != nil || identity == nil || identity.EncryptionKey == nil || strings.TrimSpace(identity.DID) != strings.TrimSpace(otherDIDs[0]) {
+			return E2EERecipientKey{}, false, nil
+		}
+		return E2EERecipientKey{
+			Address:        strings.TrimSpace(identity.Address),
+			DID:            strings.TrimSpace(identity.DID),
+			StableID:       strings.TrimSpace(identity.StableID),
+			EncryptionKey:  identity.EncryptionKey,
+			DeliveryOrigin: strings.TrimSpace(identity.DeliveryOrigin),
+		}, true, nil
+	}
+	return E2EERecipientKey{}, false, nil
 }
 
 func hasGlobalDIDTarget(dids []string) bool {
@@ -608,7 +651,7 @@ func (c *Client) e2eeChatRecipients(ctx context.Context, aliases []string, dids 
 			return nil, err
 		}
 		if identity.EncryptionKey == nil {
-			return nil, errors.New("recipient has no published E2E encryption key; ask them to upgrade aw/Pi/channel and run `aw id encryption-key setup`, or explicitly send a server-readable upgrade note with --plaintext")
+			return nil, errNoPublishedEncryptionKey
 		}
 		recipients = append(recipients, E2EERecipientKey{
 			Address:        strings.TrimSpace(identity.Address),
@@ -630,7 +673,7 @@ func (c *Client) e2eeChatRecipients(ctx context.Context, aliases []string, dids 
 				recipients = append(recipients, recipient)
 				continue
 			}
-			return nil, errors.New("recipient has no published E2E encryption key; ask them to upgrade aw/Pi/channel and run `aw id encryption-key setup`, or explicitly send a server-readable upgrade note with --plaintext")
+			return nil, errNoPublishedEncryptionKey
 		}
 		recipients = append(recipients, E2EERecipientKey{
 			Address:        strings.TrimSpace(identity.Address),
@@ -1009,7 +1052,7 @@ func (c *Client) ChatSendMessage(ctx context.Context, sessionID string, req *Cha
 		}
 		var out ChatSendMessageResponse
 		if err := c.Post(ctx, "/v1/chat/sessions/"+urlPathEscape(sessionID)+"/messages", &payload, &out); err != nil {
-			return nil, err
+			return nil, serverCustodialRefusal(err, payload.Encrypted)
 		}
 		return &out, nil
 	}
