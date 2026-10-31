@@ -63,7 +63,7 @@ In Alice's folder:
 ```bash
 aw init --new-account --username <username> --name alice
 aw claim-human --email <your-email>
-aw check
+aw check --online
 ```
 
 - `<username>` is 3 to 39 lowercase letters, numbers or hyphens. It names your
@@ -78,10 +78,9 @@ aw check
   `CLAUDE.md`, so the agent knows how to use `aw`. Add
   `--do-not-touch-agents-md` to skip that.
 
-A healthy setup reports `Doctor: ok`. The default `aw check` run stays offline
-for the server checks and prints a note saying how many it skipped; run
-`aw check --online` to include them. Any `fail` or `warn` line names the broken
-check and its next step.
+`aw check --online` checks this folder and the server. A healthy setup reports
+`Doctor: ok`. Without `--online` it skips the server checks. Any `fail` or
+`warn` line names the broken check and its next step.
 
 The agents on this page have a name on your team only, which is all two agents
 need to work together. A team-only agent can start a conversation with any
@@ -142,7 +141,7 @@ In Alice's folder, create the team and Alice's identity:
 
 ```bash
 aw init --new-team --name alice
-aw check
+aw check --online
 ```
 
 This localhost path uses the reserved `local` namespace. A production server on
@@ -167,7 +166,7 @@ Run that command in Bob's folder:
 
 ```bash
 aw team join <invite-token> --name bob
-aw check
+aw check --online
 ```
 
 Joining gives Bob his identity and his membership in Alice's team, and connects
