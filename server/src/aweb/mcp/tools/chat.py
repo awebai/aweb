@@ -37,7 +37,6 @@ from aweb.messaging.alias_targets import (
 from aweb.messaging.address_auth import (
     identity_recipient,
     local_recipient_for_address_binding,
-    requires_registry_address_binding,
     local_recipient_visible_to_auth,
     unreachable_address_refusal,
 )
@@ -483,8 +482,6 @@ async def chat_send(
                 )
             except ServiceError as exc:
                 return json.dumps({"error": exc.detail})
-            if requires_registry_address_binding(target):
-                target = None
             if target is not None:
                 if not hosted_handle_address and not local_recipient_visible_to_auth(target, auth):
                     controller_did = await resolve_local_namespace_controller_did(

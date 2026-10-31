@@ -1236,6 +1236,13 @@ async def _send_mail_conversation_continuation(
                 timestamp=payload.timestamp,
                 conversation_id=conversation_id,
             )
+            if recipient.get("did_aw") and not recipient.get("did_key"):
+                # A canonical stored participant can outlive its key projection.
+                # Even a stable-only signed target needs current key evidence.
+                validation["recipient"] = await _continuation_signature_recipient(
+                    request, participant=recipient_participant, recipient=recipient,
+                    payload=payload, sender_did_key=auth.did_key,
+                )
             try:
                 _validate_signed_mail_payload(**validation)
             except HTTPException as exc:
@@ -1541,17 +1548,20 @@ async def send_message(
             raise HTTPException(status_code=422, detail="to_address must be domain/name")
         domain, name = address.split("/", 1)
         local_candidate = await _local_recipient_from_address(db, domain=domain, name=name)
-        if local_candidate is not None and not requires_registry_address_binding(local_candidate):
-            signed_binding = _signed_payload_matches_address_binding(
-                verified_signed_payload_json(
-                    signed_payload=payload.signed_payload,
-                    signature=payload.signature,
-                    did_key=auth.did_key,
-                ),
-                address=address,
-                recipient=local_candidate,
+        if local_candidate is not None:
+            signed = verified_signed_payload_json(
+                signed_payload=payload.signed_payload, signature=payload.signature, did_key=auth.did_key,
             )
-            if local_recipient_visible_to_auth(local_candidate, auth) or signed_binding:
+            signed_binding = _signed_payload_matches_address_binding(
+                signed, address=address, recipient=local_candidate,
+            )
+            # Preserve already admitted local sends. A signed current-key claim
+            # that contradicts the projection must instead use registry evidence.
+            needs_current_binding = (
+                requires_registry_address_binding(local_candidate) and signed is not None
+                and bool(signed.get("to_did") or signed.get("to_stable_id")) and not signed_binding
+            )
+            if signed_binding or (local_recipient_visible_to_auth(local_candidate, auth) and not needs_current_binding):
                 recipient_did = str(
                     local_candidate.get("did_aw") or local_candidate.get("did_key") or ""
                 ).strip()

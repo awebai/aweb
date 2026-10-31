@@ -798,11 +798,11 @@ def _row_matches_signed_address_binding(row: dict[str, Any], binding: dict[str, 
     row_current_did = str(row.get("did_key") or row.get("did") or "").strip()
     bound_stable_id = str(binding.get("did_aw") or "").strip()
     bound_current_did = str(binding.get("did_key") or "").strip()
-    if bound_stable_id and row_stable_id and bound_stable_id == row_stable_id:
-        return True
-    if bound_current_did and row_current_did and bound_current_did == row_current_did:
-        return True
-    return False
+    if bound_stable_id and bound_stable_id != row_stable_id:
+        return False
+    if bound_current_did and bound_current_did not in {row_stable_id, row_current_did}:
+        return False
+    return bool(bound_stable_id or bound_current_did)
 
 
 async def _resolve_actor_agent(db, actor_dids: list[str]) -> dict[str, Any] | None:
@@ -972,7 +972,7 @@ async def _resolve_chat_targets(
             raise HTTPException(status_code=422, detail="to_addresses entries must be domain/name")
         domain, name = address.split("/", 1)
         local_candidate = await _local_agent_by_address(db, domain=domain, name=name)
-        if local_candidate is not None and not requires_registry_address_binding(local_candidate):
+        if local_candidate is not None:
             binding = _signed_payload_address_binding(
                 verified_signed_payload_json(
                     signed_payload=signed_payload,
@@ -981,9 +981,9 @@ async def _resolve_chat_targets(
                 ),
                 address=address,
             )
-            if local_recipient_visible_to_auth(
-                local_candidate, auth
-            ) or _row_matches_signed_address_binding(local_candidate, binding):
+            signed_binding = _row_matches_signed_address_binding(local_candidate, binding)
+            needs_current_binding = requires_registry_address_binding(local_candidate) and binding is not None and not signed_binding
+            if signed_binding or (local_recipient_visible_to_auth(local_candidate, auth) and not needs_current_binding):
                 target_did = str(
                     local_candidate.get("did_aw") or local_candidate.get("did_key") or ""
                 ).strip()
