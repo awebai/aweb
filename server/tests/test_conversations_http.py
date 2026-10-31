@@ -841,14 +841,21 @@ async def test_grant_conversations_require_type_specific_read_scopes(aweb_cloud_
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         mail_allowed = await client.get("/v1/conversations?conversation_type=mail")
+        counts_allowed = await client.get("/v1/conversations/unread-counts?participant_did=did:aw:bob")
         chat_denied = await client.get("/v1/conversations?conversation_type=chat")
         unfiltered_denied = await client.get("/v1/conversations")
         grant_scopes = ("mail.read", "chat.read")
         unfiltered_allowed = await client.get("/v1/conversations")
         invalid_type = await client.get("/v1/conversations?conversation_type=task")
+        grant_scopes = ("chat.read",)
+        counts_denied = await client.get("/v1/conversations/unread-counts?participant_did=did:aw:bob")
 
     assert mail_allowed.status_code == 200, mail_allowed.text
     assert [item["conversation_type"] for item in mail_allowed.json()["conversations"]] == ["mail"]
+    assert counts_allowed.status_code == 200, counts_allowed.text
+    assert counts_allowed.json() == {"counts": [{"participant_did": "did:aw:bob", "unread_count": 1}]}
+    assert counts_denied.status_code == 403
+    assert counts_denied.json()["detail"] == "outside grant scope"
     assert chat_denied.status_code == 403
     assert chat_denied.json()["detail"] == "outside grant scope"
     assert unfiltered_denied.status_code == 403

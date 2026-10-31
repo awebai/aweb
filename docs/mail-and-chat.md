@@ -143,8 +143,42 @@ Each mail item retains `subject` from the newest message and adds `title`
 from the first message, ordered by server receipt time then message ID.
 `first_message_id` identifies that first message. An encrypted first message
 has an empty server-readable title; an authorized client can read and decrypt
-that message for its title. Later replies do not replace the title. Existing
-participant, last-activity, preview and unread-count fields are unchanged.
+that message for its title. Later replies do not replace the title. `last_message_at`
+is the last actual message activity, not a conversation settings change.
+`unread_count` counts incoming unread messages across the whole thread,
+excluding the authenticated identity's own sends. Listing never changes
+`read_at`. Existing participant arrays and previews remain available.
+
+`participant_details` binds each participant's display metadata to its identity:
+`{participant_ref: {kind: "native", did: "did:aw:…"}, alias, address}`.
+The address is nullable. A historical unparseable reference is null; its label
+or address must not be used to infer identity or authorize access. Separate
+participants may share an alias. The exact `participant_did` filter narrows the
+caller's visible threads by the stored peer DID, across teams; an alias is not
+an identity filter. `conversation_type=mail` selects logical mail threads,
+including their channel legs, not a provider badge or a merged chat session.
+
+`next_cursor` is opaque and scoped to the authenticated routing DIDs, type and
+peer filters. Its boundary includes message activity time and a typed unique
+row ID, so equal-time threads are not skipped. Reuse it unchanged with the
+same filters. Invalid, old timestamp-only, or differently scoped cursors get
+HTTP 400 with an instruction to start from the first page.
+
+`GET /v1/conversations/unread-counts?conversation_type=mail&participant_did=DID`
+accepts 1–100 repeated `participant_did` parameters, deduplicates them, and
+returns `{counts: [{participant_did, unread_count}]}` with an explicit zero for
+each requested peer with no matching incoming unread mail. It counts all
+matching threads, independent of the list page, using the same incoming/read
+semantics. A multi-peer thread contributes independently to each participating
+peer; these counts must not be summed into a unique global total. A zero does
+not establish that a peer exists or is in a roster. Access derives only from
+the authenticated participant, never a caller-supplied human or team selector.
+Session grants require `mail.read` for this mail-only summary.
+
+Reading the thread or a single message is read-only. An authorized client
+acknowledges only actually displayed incoming message IDs through the existing
+`POST /v1/messages/{message_id}/ack`. Reply uses `conversation_id` continuation;
+no plaintext message-level reply field is added.
 
 Base-URL heartbeat probes refuse HTTP redirects: every 3xx response rejects
 that candidate, and discovery may try another API path on the same origin.

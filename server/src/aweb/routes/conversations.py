@@ -1,15 +1,24 @@
 from __future__ import annotations
 
-from datetime import datetime
+import json
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from awid.pagination import decode_cursor, encode_cursor
 from aweb.deps import get_db
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, get_messaging_auth
+from aweb.identity_metadata import native_participant_reference
 
 router = APIRouter(prefix="/v1/conversations", tags=["aweb-conversations"])
+
+
+class ParticipantDetail(BaseModel):
+    participant_ref: dict[str, str] | None = None
+    alias: str
+    address: str | None = None
 
 
 class ConversationItem(BaseModel):
@@ -20,6 +29,7 @@ class ConversationItem(BaseModel):
     participants: list[str]
     participant_dids: list[str] = Field(default_factory=list)
     participant_addresses: list[str] = Field(default_factory=list)
+    participant_details: list[ParticipantDetail] = Field(default_factory=list)
     subject: str
     title: str = ""
     first_message_id: str | None = None
@@ -64,6 +74,86 @@ def _grant_conversation_scope_allowed(auth: MessagingAuth, requested_type: str |
         raise HTTPException(status_code=403, detail="outside grant scope")
 
 
+def _participant_detail(did: str | None, alias: str | None, address: str | None = None) -> dict:
+    return {
+        "participant_ref": native_participant_reference(str(did or "")),
+        "alias": str(alias or ""), "address": str(address or "").strip() or None,
+    }
+
+
+def _index_boundary(cursor: str | None, scope: dict) -> tuple[datetime | None, str | None]:
+    if not cursor:
+        return None, None
+    try:
+        data = decode_cursor(cursor)
+        if not data or data.get("kind") != "conversation_index" or data.get("scope") != scope:
+            raise ValueError("Cursor scope mismatch")
+        at = datetime.fromisoformat(data["last_message_at"])
+        if at.tzinfo is None:
+            raise ValueError("Cursor timestamp must have a timezone")
+        key = data["key"]
+        parts = key.split(":")
+        if not ((len(parts) == 2 and parts[0] in {"mail", "chat"})
+                or (len(parts) == 3 and parts[:2] == ["mail", "legacy"])):
+            raise ValueError("Invalid row key")
+        if str(UUID(parts[-1])) != parts[-1]:
+            raise ValueError("Invalid row ID")
+        return at.astimezone(timezone.utc), key
+    except (ValueError, KeyError, TypeError, AttributeError, OverflowError) as exc:
+        raise HTTPException(400, "Invalid conversation cursor; start from the first page") from exc
+
+
+class PeerUnreadCount(BaseModel):
+    participant_did: str
+    unread_count: int
+
+
+class UnreadCountsResponse(BaseModel):
+    counts: list[PeerUnreadCount]
+
+
+@router.get("/unread-counts", response_model=UnreadCountsResponse)
+async def unread_counts(
+    participant_did: list[str] = Query(..., min_length=1, max_length=100),
+    conversation_type: str = Query("mail"),
+    db=Depends(get_db), auth: MessagingAuth = Depends(get_messaging_auth),
+) -> UnreadCountsResponse:
+    if conversation_type != "mail":
+        raise HTTPException(422, "conversation_type must be mail")
+    if any(native_participant_reference(did) is None for did in participant_did):
+        raise HTTPException(422, "participant_did must be a native DID")
+    _grant_conversation_scope_allowed(auth, "mail")
+    actor_dids = auth_dids(auth)
+    if not actor_dids:
+        raise HTTPException(401, "Authenticated identity is missing a routing DID")
+    peers = list(dict.fromkeys(participant_did))
+    rows = await db.get_manager("aweb").fetch_all(
+        """
+        WITH incoming AS MATERIALIZED (
+            SELECT conversation_id, from_did, COUNT(*) AS n
+            FROM {{tables.messages}}
+            WHERE to_did = ANY($1::text[]) AND read_at IS NULL
+              AND NOT (from_did = ANY($1::text[]))
+            GROUP BY conversation_id, from_did
+        )
+        SELECT peer.did AS participant_did, COALESCE(SUM(i.n), 0)::bigint AS unread_count
+        FROM unnest($2::text[]) AS peer(did)
+        LEFT JOIN incoming i ON (
+            (i.conversation_id IS NULL AND i.from_did = peer.did)
+            OR EXISTS (
+                SELECT 1 FROM {{tables.conversation_participants}} cp
+                WHERE cp.conversation_id = i.conversation_id AND cp.did = peer.did
+            )
+        )
+        GROUP BY peer.did
+        """, actor_dids, peers,
+    )
+    counts = {row["participant_did"]: row["unread_count"] for row in rows}
+    return UnreadCountsResponse(counts=[
+        PeerUnreadCount(participant_did=did, unread_count=counts[did]) for did in peers
+    ])
+
+
 @router.get("", response_model=ConversationsResponse)
 async def list_conversations(
     request: Request,
@@ -96,19 +186,15 @@ async def list_conversations_for_auth(
     if not actor_dids and not actor_agent_id and not actor_address:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 
-    cursor_dt: datetime | None = None
-    if cursor:
-        try:
-            cursor_dt = datetime.fromisoformat(cursor.replace("Z", "+00:00"))
-        except Exception:
-            raise HTTPException(status_code=422, detail="Invalid cursor format")
-
     requested_type = (conversation_type or "").strip().lower() or None
     if requested_type is not None and requested_type not in {"mail", "chat"}:
         raise HTTPException(status_code=422, detail="conversation_type must be mail or chat")
     _grant_conversation_scope_allowed(auth, requested_type)
     target_did = (participant_did or "").strip() or None
     target_address = (participant_address or "").strip() or None
+    cursor_scope = {"actor_dids": sorted(actor_dids), "conversation_type": requested_type,
+                    "participant_did": target_did, "participant_address": target_address}
+    cursor_dt, cursor_key = _index_boundary(cursor, cursor_scope)
 
     # --- Mail conversations ---
     # New mail rows share conversation_id across a thread. Legacy rows without
@@ -125,6 +211,7 @@ async def list_conversations_for_auth(
                     m.created_at,
                     m.body,
                     m.from_alias,
+                    m.from_address,
                     m.from_did,
                     m.subject,
                     m.content_mode,
@@ -171,7 +258,8 @@ async def list_conversations_for_auth(
                     group_key,
                     MAX(created_at) AS last_message_at,
                     COUNT(*) FILTER (
-                        WHERE BTRIM(COALESCE(to_did, '')) = ANY($1::text[])
+                        WHERE to_did = ANY($1::text[])
+                          AND NOT (from_did = ANY($1::text[]))
                           AND read_at IS NULL
                     )::int AS unread_count
                 FROM visible
@@ -183,7 +271,9 @@ async def list_conversations_for_auth(
                 -- decided here, not by the caller-visible sort further down.
                 SELECT group_key, last_message_at, unread_count
                 FROM grouped
-                WHERE ($6::timestamptz IS NULL OR last_message_at < $6::timestamptz)
+                WHERE ($6::timestamptz IS NULL OR last_message_at < $6::timestamptz
+                    OR (last_message_at = $6::timestamptz AND $8::text IS NOT NULL
+                        AND 'mail:' || group_key < $8::text))
                 ORDER BY last_message_at DESC, group_key DESC
                 LIMIT $7::int
             )
@@ -194,6 +284,7 @@ async def list_conversations_for_auth(
                 LEFT(COALESCE(newest.body, ''), 100) AS body,
                 newest.from_alias,
                 newest.from_did,
+                newest.from_address, newest.to_did, newest.to_alias,
                 newest.subject,
                 first.message_id AS first_message_id,
                 CASE WHEN first.content_mode = 'encrypted_v2' THEN '' ELSE first.subject END AS title,
@@ -204,7 +295,7 @@ async def list_conversations_for_auth(
             FROM page p
             JOIN LATERAL (
                 SELECT v.message_id, v.conversation_id, v.body, v.subject,
-                       v.from_alias, v.from_did
+                       v.from_alias, v.from_did, v.from_address, v.to_did, v.to_alias
                 FROM visible v
                 WHERE v.group_key = p.group_key
                 ORDER BY v.created_at DESC, v.message_id DESC
@@ -253,6 +344,7 @@ async def list_conversations_for_auth(
             target_address,
             cursor_dt,
             limit + 1,
+            cursor_key,
         )
 
     mail_items: list[dict] = []
@@ -262,6 +354,9 @@ async def list_conversations_for_auth(
         mail_items.append(
             {
                 "conversation_type": "mail",
+                "cursor_key": "mail:" + (real_conversation_id or "legacy:" + legacy_message_id),
+                "participant_details": [_participant_detail(row["from_did"], row["from_alias"], row["from_address"]),
+                                        _participant_detail(row["to_did"], row["to_alias"])],
                 "conversation_id": real_conversation_id,
                 "legacy_message_id": legacy_message_id,
                 "status": row["status"] or "legacy",
@@ -287,7 +382,7 @@ async def list_conversations_for_auth(
             SELECT conversation_id, did, alias, address
             FROM {{tables.conversation_participants}}
             WHERE conversation_id = ANY($1::uuid[])
-            ORDER BY conversation_id, alias
+            ORDER BY conversation_id, alias, did
             """,
             mail_conversation_ids,
         )
@@ -301,6 +396,7 @@ async def list_conversations_for_auth(
             item["participant_addresses"] = []
             continue
         participant_rows = mail_participants_by_conversation.get(str(conversation_id), [])
+        item["participant_details"] = [_participant_detail(row["did"], row["alias"], row["address"]) for row in participant_rows]
         item["participant_dids"] = _dedupe_labels(
             [(row.get("did") or "").strip() for row in participant_rows]
         )
@@ -316,6 +412,8 @@ async def list_conversations_for_auth(
                 """
                 SELECT
                     s.session_id::text AS conversation_id,
+                    jsonb_agg(jsonb_build_object('did', p2.did, 'alias', p2.alias, 'address', p2.address)
+                              ORDER BY p2.alias, p2.did) AS participant_details,
                     array_agg(p2.alias ORDER BY p2.alias) AS participants,
                     array_agg(p2.did ORDER BY p2.alias) AS participant_dids,
                     array_agg(p2.address ORDER BY p2.alias) AS participant_addresses,
@@ -333,7 +431,7 @@ async def list_conversations_for_auth(
                     SELECT body, from_alias, from_did, created_at
                     FROM {{tables.chat_messages}}
                     WHERE session_id = s.session_id
-                    ORDER BY created_at DESC
+                    ORDER BY created_at DESC, message_id DESC
                     LIMIT 1
                 ) lm ON TRUE
                 LEFT JOIN LATERAL (
@@ -350,7 +448,9 @@ async def list_conversations_for_auth(
                       )
                 ) unread ON TRUE
                 WHERE lm.created_at IS NOT NULL
-                  AND ($4::timestamptz IS NULL OR lm.created_at < $4::timestamptz)
+                  AND ($4::timestamptz IS NULL OR lm.created_at < $4::timestamptz
+                    OR (lm.created_at = $4::timestamptz AND $5::text IS NOT NULL
+                        AND 'chat:' || s.session_id::text < $5::text))
                   AND (
                         ($2::text IS NULL AND $3::text IS NULL)
                      OR EXISTS (
@@ -365,12 +465,13 @@ async def list_conversations_for_auth(
                   )
                 GROUP BY s.session_id, lm.body, lm.from_alias, lm.from_did, lm.created_at, unread.cnt
                 ORDER BY lm.created_at DESC, s.session_id DESC
-                LIMIT $5::int
+                LIMIT $6::int
                 """,
                 actor_did,
                 target_did,
                 target_address,
                 cursor_dt,
+                cursor_key,
                 limit + 1,
             )
             for row in rows:
@@ -380,6 +481,9 @@ async def list_conversations_for_auth(
 
     chat_items: list[dict] = []
     for row in chat_rows:
+        details = row["participant_details"]
+        if isinstance(details, str):
+            details = json.loads(details)
         preview = (row["last_body"] or "")[:100]
         participants = _dedupe_labels(
             [
@@ -390,6 +494,9 @@ async def list_conversations_for_auth(
         chat_items.append(
             {
                 "conversation_type": "chat",
+                "cursor_key": "chat:" + row["conversation_id"],
+                "participant_details": [_participant_detail(p["did"], p["alias"], p["address"])
+                                        for p in details],
                 "conversation_id": row["conversation_id"],
                 "status": "active",
                 "participants": participants,
@@ -409,18 +516,16 @@ async def list_conversations_for_auth(
 
     # --- Merge and sort ---
     combined = mail_items + chat_items
-    combined.sort(key=lambda x: x["last_message_at"], reverse=True)
-
-    # Apply cursor filter
-    if cursor_dt:
-        combined = [c for c in combined if c["last_message_at"] < cursor_dt]
+    combined.sort(key=lambda x: (x["last_message_at"], x["cursor_key"]), reverse=True)
 
     # Apply limit
     page = combined[:limit]
     next_cursor: str | None = None
     if len(page) == limit and len(combined) > limit:
-        last = page[-1]["last_message_at"]
-        next_cursor = last.isoformat() if hasattr(last, "isoformat") else str(last)
+        last = page[-1]
+        next_cursor = encode_cursor({"kind": "conversation_index", "scope": cursor_scope,
+                                     "last_message_at": last["last_message_at"].isoformat(),
+                                     "key": last["cursor_key"]})
 
     # Serialize datetimes
     result = []
@@ -435,6 +540,7 @@ async def list_conversations_for_auth(
                 participants=item["participants"],
                 participant_dids=item.get("participant_dids", []),
                 participant_addresses=item.get("participant_addresses", []),
+                participant_details=item.get("participant_details", []),
                 subject=item["subject"],
                 title=item.get("title", ""),
                 first_message_id=item.get("first_message_id"),

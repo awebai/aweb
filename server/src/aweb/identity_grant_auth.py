@@ -69,6 +69,8 @@ def required_grant_scope(method: str, path: str) -> str | None:
         return None
     if path == "/v1/agents" and method in _READ_METHODS:
         return None
+    if path == "/v1/conversations/unread-counts" and method in _READ_METHODS:
+        return "mail.read"
     if path == "/v1/conversations" and method in _READ_METHODS:
         # The conversations index can return mail, chat, or both depending on
         # query parameters. Authenticate the grant here; the route enforces the

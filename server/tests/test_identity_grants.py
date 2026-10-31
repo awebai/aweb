@@ -420,6 +420,11 @@ async def test_scope_enforcement_for_mail_chat_and_roster(aweb_cloud_db):
 def test_required_grant_scope_admits_conversation_index_read_only():
     assert required_grant_scope("GET", "/v1/conversations") is None
     assert required_grant_scope("HEAD", "/v1/conversations") is None
+    assert required_grant_scope("GET", "/v1/conversations/unread-counts") == "mail.read"
+    assert required_grant_scope("HEAD", "/v1/conversations/unread-counts") == "mail.read"
+    with pytest.raises(Exception) as unread_write:
+        required_grant_scope("POST", "/v1/conversations/unread-counts")
+    assert getattr(unread_write.value, "status_code", None) == 403
     with pytest.raises(Exception) as exc_info:
         required_grant_scope("POST", "/v1/conversations")
     assert getattr(exc_info.value, "status_code", None) == 403
