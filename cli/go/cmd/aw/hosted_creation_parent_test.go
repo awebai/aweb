@@ -118,9 +118,9 @@ func TestAPIKeyCreationTeamReadRefusalSaysWhatIsLikelyWrong(t *testing.T) {
 		status int
 		want   string
 	}{
-		{http.StatusNotFound, "is older than this aw and cannot create agents with it. Use the latest aw: npm install -g @awebai/aw@latest."},
-		{http.StatusUnauthorized, "refused this API key's team read (HTTP 401). Check that AWEB_API_KEY is current; if it is, this service is older than this aw: use the latest aw (npm install -g @awebai/aw@latest)."},
-		{http.StatusForbidden, "refused this API key's team read (HTTP 403). Check that AWEB_API_KEY is current; if it is, this service is older than this aw: use the latest aw (npm install -g @awebai/aw@latest)."},
+		{http.StatusNotFound, "does not support creating agents with an API key; it is older than this aw. Use an aweb service that does, or an older aw."},
+		{http.StatusUnauthorized, "refused this API key's team read (HTTP 401). Check that AWEB_API_KEY is current; if it is, the service may be older than this aw and not support creating agents with an API key."},
+		{http.StatusForbidden, "refused this API key's team read (HTTP 403). Check that AWEB_API_KEY is current; if it is, the service may be older than this aw and not support creating agents with an API key."},
 	} {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(tt.status)

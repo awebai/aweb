@@ -4,10 +4,10 @@
 
 - aw: `aw init` with `AWEB_API_KEY` needs the aweb.ai service release that
   answers the API key's team read (`GET /api/v1/teams/current`). Against an
-  older service it refuses, saying the service is older than this aw (or,
-  for HTTP 401/403, that the key may not be current) and to use the latest
-  aw. This aw is promoted to latest only after that service release is
-  deployed.
+  older service it refuses, saying the service does not support creating
+  agents with an API key (or, for HTTP 401/403, that the key may not be
+  current). This aw is promoted to latest only after that service release
+  is deployed.
 
 - aw: with `--json`, a failed command prints one error envelope on stdout,
   `{"error": {"code", "message", "http_status", "detail"}}`. `code` is the
