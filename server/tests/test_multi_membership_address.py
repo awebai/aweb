@@ -85,6 +85,9 @@ async def test_cli_new_and_continued_message_keep_identity_and_address(addressed
         await env.db.execute("INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) VALUES ($1,'example.test','neighbor',$2)", team, env.team_did)
         await env.db.execute("""INSERT INTO {{tables.agents}} (team_id,alias,did_key,did_aw,did_aw_verified_key,address,identity_scope,agent_type,inbound_mode)
             VALUES ($1,'alice',$2,$3,$2,'example.test/alice','global','human','open')""", team, env.actors['alice'].did, env.stable['alice'])
+    if kind == 'chat':
+        # Membership multiplicity must not change agent chat; humans use mail.
+        await env.db.execute("UPDATE {{tables.agents}} SET agent_type='agent' WHERE did_aw=$1", env.stable['alice'])
     if kind == 'mail':
         args = ['mail', 'send', '--to-address', address, '--subject', 'Explicit route', '--body', 'first']
     else:

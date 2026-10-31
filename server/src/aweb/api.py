@@ -28,6 +28,7 @@ from .mutation_hooks import create_mutation_handler
 from awid.ratelimit import build_rate_limiter
 from .routing_utils import move_mount_before_spa_fallback
 from .service_errors import ServiceError
+from .messaging.chat_policy import HumanChatRefused
 from .install_admins import install_admin_setup_message
 from .mcp.server import NormalizeMountedMCPPathMiddleware
 from .request_compression import RequestDecompressionFastAPI
@@ -508,6 +509,12 @@ def create_app(
             content=authority_error_body(exc, correlation_id=correlation_id),
             headers=headers,
         )
+
+    @app.exception_handler(HumanChatRefused)
+    async def _human_chat_refused_handler(request: Request, exc: HumanChatRefused):
+        return JSONResponse(status_code=422, content=exc.body(
+            correlation_id=request.headers.get("X-Correlation-ID"),
+        ))
 
     @app.exception_handler(ServiceError)
     async def _service_error_handler(request: Request, exc: ServiceError):

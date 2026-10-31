@@ -253,6 +253,10 @@ async def complete(env, prepared, *, fail=None, key=None):
 @pytest.mark.parametrize("kind", ["mail", "chat"])
 async def test_native_send_and_host_result_commit_once(native_send, kind):
     env = native_send
+    if kind == "chat":
+        # D8: this is the valid agent-chat neighbour; mail still reaches a human.
+        await env["db"].execute("UPDATE {{tables.agents}} SET agent_type='agent' WHERE agent_id=$1", UUID(env["b"]))
+
     prepared = await env["prepared"](kind)
     result = await complete(env, prepared)
     assert canonical_record(await complete(env, prepared)) == canonical_record(result)
@@ -389,6 +393,10 @@ async def test_native_http_ingress_headers_recover_without_resend(native_send, k
     from aweb.routes.messaging import router as messaging_router
 
     env = native_send
+    if kind == "chat":
+        # D8: this is the valid agent-chat neighbour; mail still reaches a human.
+        await env["db"].execute("UPDATE {{tables.agents}} SET agent_type='agent' WHERE agent_id=$1", UUID(env["b"]))
+
     app = env["app"]
     app.include_router(chat_router)
     app.include_router(messaging_router)
@@ -531,6 +539,10 @@ async def test_prepared_native_v2_preserves_exact_envelope_and_hosted_label(
     from awid.e2ee_keys import build_encryption_key_assertion
 
     env = native_send
+    if kind == "chat":
+        # D8: this is the valid agent-chat neighbour; mail still reaches a human.
+        await env["db"].execute("UPDATE {{tables.agents}} SET agent_type='agent' WHERE agent_id=$1", UUID(env["b"]))
+
     identities = []
     for actor, did, principal, sk, custody in (
         (env["a"], env["auth"].did_key, "did:aw:agent", env["signing_key"], "self"),
@@ -682,6 +694,10 @@ async def test_real_mcp_native_ingress_commits_before_reply_and_replays(
     from aweb.mcp.signing import HostedMessageSigningResult, canonical_signed_payload
 
     env = native_send
+    if kind == "chat":
+        # D8: this is the valid agent-chat neighbour; mail still reaches a human.
+        await env["db"].execute("UPDATE {{tables.agents}} SET agent_type='agent' WHERE agent_id=$1", UUID(env["b"]))
+
     await env["db"].execute(
         "INSERT INTO {{tables.workspaces}} (workspace_id,team_id,agent_id,alias,workspace_type) VALUES ($1,$2,$3,'agent','hosted_mcp')",
         uuid4(),

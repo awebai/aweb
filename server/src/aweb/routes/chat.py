@@ -49,6 +49,7 @@ from aweb.federation.mail import FederatedMailDeliveryError, deliver_federated_m
 from aweb.hooks import fire_mutation_hook
 from aweb.identity_metadata import lookup_identity_metadata_by_did, routable_chat_address
 from aweb.id_chain_auth import stored_id_chain
+from aweb.messaging.chat_policy import require_agent_chat
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, get_messaging_auth
 from aweb.messaging.sender_address import sender_address as _sender_address
 from aweb.messaging.alias_targets import (
@@ -1078,6 +1079,7 @@ async def _resolve_chat_targets(
     if any(_target_did_refs(row) & actor_did_set for row in resolved.values()):
         raise HTTPException(status_code=400, detail="Self-chat is not supported")
 
+    await require_agent_chat(db, list(resolved.values()), registry_client=registry_client)
     for row in resolved.values():
         if row.get("external"):
             continue
@@ -2648,6 +2650,7 @@ async def send_message(
     if not actor_did:
         raise HTTPException(status_code=404, detail="Session not found")
     recipient_rows = await _resolve_session_recipient_rows(db, session_id=session_uuid, actor_dids=actor_dids)
+    await require_agent_chat(db, recipient_rows, registry_client=getattr(request.app.state, "awid_registry_client", None))
     for row in recipient_rows:
         if (
             str(row.get("did") or "").startswith("did:key:")

@@ -110,6 +110,21 @@ async def test_cli_first_contact_human_alias_with_signed_key(
         await _insert_agent_encryption_assertion(
             env.db, agent_id=actor.id, team_id=TEAM, assertion=assertion
         )
+        if kind == "chat":
+            # D8: an authoritative person is reached by mail, even with a
+            # usable key and valid same-team admission. No session is created.
+            process = await asyncio.create_subprocess_exec(
+                str(binary), "--team", TEAM, "--json", "chat", "send-and-leave",
+                "alice", "--start-conversation", "--plaintext", "--body-file", str(body_file),
+                cwd=cwd, env=child_env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(process.communicate(), 30)
+            assert process.returncode == 1, (stdout, stderr)
+            assert json.loads(stdout)["error"]["reason"] == "recipient_human_mail_only"
+            await assert_no_delivery()
+            assert await privacy_state() == before
+            return
+
         if inbound_mode == "contacts_only":
             # A valid published key supplies encryption capability, not consent.
             await env.db.execute(
@@ -173,19 +188,6 @@ async def test_cli_first_contact_human_alias_with_signed_key(
             )
         finally:
             assert await privacy_state() == before
-        if kind == "chat":
-            chat_stored = await env.db.fetch_one(
-                "SELECT content_mode,body FROM {{tables.chat_messages}} WHERE message_id=$1",
-                UUID(sent["message_id"]),
-            )
-            assert chat_stored["content_mode"] != "encrypted_v2"
-            assert chat_stored["body"] == body_file.read_text()
-            participants = await env.db.fetch_all(
-                "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1",
-                UUID(sent["session_id"]),
-            )
-            assert (row["did_aw"] or actor.did) in {p["did"] for p in participants}
-            return
         stored = await env.db.fetch_one(
             "SELECT * FROM {{tables.messages}} WHERE message_id=$1",
             UUID(sent["message_id"]),

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from aweb.messaging.chat_policy import HumanChatRefused, recipient_label
 from aweb.messaging.messages import _is_global_recipient
 
 import hashlib
@@ -262,7 +263,7 @@ async def _lock_current_recipient(
     row = await tx.fetch_one(
         """
         SELECT agent_id, team_id, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, alias,
-               inbound_mode, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw
+               inbound_mode, agent_type, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw
         FROM {{tables.agents}}
         WHERE agent_id = $1 AND deleted_at IS NULL
         FOR SHARE
@@ -867,6 +868,8 @@ async def _deliver_federated_phase_b(
             envelope=envelope,
             recipient=recipient,
         )
+        if envelope.type == "chat" and recipient.get("agent_type") == "human":
+            raise HumanChatRefused(recipient_label(recipient))
         if stored_route_continuation:
             if stored_route_snapshot is None:
                 raise FederationAuthorityError("federation_conversation_invalid")

@@ -25,6 +25,7 @@ from aweb.identity_auth_deps import auth_dids
 from aweb.identity_binding import verified_projection
 from aweb.inbound_modes import effective_inbound_mode
 from aweb.messaging.chat import ensure_session, send_in_session
+from aweb.messaging.chat_policy import HumanChatRefused, recipient_label, require_agent_chat
 from aweb.messaging.conversations import create_conversation, get_conversation
 from aweb.messaging.messages import authorize_message_delivery, deliver_message
 
@@ -257,6 +258,8 @@ class NativeMessagingService:
             and recipient["team_id"] != auth.team_id
         ):
             raise ContractError("forbidden", "human selected team")
+        if value["kind"] == "chat":
+            await require_agent_chat(self.db, [recipient])
         facts = await self._facts(auth, recipient)
         if canonical_record(facts) != canonical_record(requested_target):
             raise ContractError("stale", "recipient authority")
@@ -701,6 +704,10 @@ class NativeMessagingUnitOfWork:
             ),
         )
         by_id = {str(row["agent_id"]): verified_projection(row) for row in rows}
+        if value["kind"] == "chat":
+            current_recipient = by_id.get(str(retained.recipient["agent_id"]))
+            if current_recipient and current_recipient.get("agent_type") == "human":
+                raise HumanChatRefused(recipient_label(current_recipient))
         for old in (retained.author, retained.recipient):
             row = by_id.get(str(old["agent_id"]))
             if (

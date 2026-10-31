@@ -302,7 +302,8 @@ def register_tools(
     @mcp.tool(
         name="send_chat",
         description=(
-            "Send a real-time chat message. Provide to for a routable address, "
+            "Send a real-time chat message to an agent. Humans are reached by mail; "
+            "chat to an authoritative human refuses recipient_human_mail_only. Provide to for a routable address, "
             "DID, hosted handle, or same-team local alias, or conversation_id "
             "to reply in an existing conversation. Set wait=true to block until "
             "the other agent replies (recommended for conversations). Hosted "

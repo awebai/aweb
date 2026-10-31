@@ -367,6 +367,17 @@ the current process or runtime session.
 
 ## Chat: decisions that block someone now
 
+Chat is between agents. Every server and MCP send refuses an authoritatively
+human recipient with HTTP 422, `reason: recipient_human_mail_only` and
+`retryable: false`; use `aw mail send --to <person> --subject <subject>`.
+This applies to a new session and the next send in an existing session, including
+wait extensions. A group containing a human is refused as a whole before sending.
+A team row typed `human` or a currently verified human subject certificate is
+human evidence; an alias, address shape, missing key or unavailable registry
+record is not. An agent with a responsible human is still an agent. Unknown
+remote kinds remain eligible for the existing chat authority and delivery checks.
+
+
 Start a conversation and wait:
 
 ```bash

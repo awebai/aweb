@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from aweb.messaging.participants import messaging_participant_by_alias
+from aweb.messaging.chat_policy import HumanChatRefused, require_agent_chat
 
 from aweb.attachments import readable_attachments
 
@@ -407,6 +408,8 @@ async def chat_send(
                 hosted_signer=hosted_signer,
                 hosted_encryptor=hosted_encryptor,
             )
+        except HumanChatRefused as exc:
+            return json.dumps({"error": exc.detail, **exc.body(), "effects": "none"})
         except ContractError as error:
             return json.dumps({"error": error.code, "effects": "none"})
         if wait:
@@ -541,6 +544,10 @@ async def chat_send(
             if not _target_did(target):
                 return json.dumps({"error": f"Recipient '{to_address}' not connected"})
 
+        try:
+            await require_agent_chat(db_infra, [target], registry_client=registry_client)
+        except HumanChatRefused as exc:
+            return json.dumps({"error": exc.detail, **exc.body()})
         target_did = _target_did(target)
         if not target_did:
             return json.dumps({"error": f"Recipient '{to_address or to_did or to_alias}' not connected"})
@@ -768,6 +775,10 @@ async def chat_send(
         sender_attested_at = datetime.now(timezone.utc).replace(microsecond=0)
         pre_message_id = uuid_mod.uuid4()
         recipient_rows = await _session_recipient_rows(db_infra, session_id=sid, actor_dids=actor_dids)
+        try:
+            await require_agent_chat(db_infra, recipient_rows, registry_client=registry_client)
+        except HumanChatRefused as exc:
+            return json.dumps({"error": exc.detail, **exc.body()})
         try:
             for recipient in recipient_rows:
                 if recipient.get("delivery_origin"):
