@@ -272,6 +272,10 @@ func postConnect(ctx context.Context, awebURL string, signingKey ed25519.Private
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		refusal := &awid.APIError{StatusCode: resp.StatusCode, Body: string(respBody)}
+		if text := connectNameRefusalText(awid.RefusalCode(refusal), cert); text != "" {
+			return nil, &plainRefusal{text: text, err: refusal}
+		}
 		return nil, fmt.Errorf("POST /v1/connect returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -280,6 +284,19 @@ func postConnect(ctx context.Context, awebURL string, signingKey ed25519.Private
 		return nil, fmt.Errorf("decode connect response: %w", err)
 	}
 	return &result, nil
+}
+
+// connectNameRefusalText tells a connect refused over its certificate's name,
+// or is "" for any other refusal. The certificate already carries the name, so
+// no flag of this workspace changes it.
+func connectNameRefusalText(code string, cert *awid.TeamCertificate) string {
+	switch code {
+	case "alias_active":
+		return fmt.Sprintf("The name %s is already used by another agent in %s. This workspace's certificate is for that name, so ask a team admin to free the name, or join again with a new invite and another --name.", cert.Alias, cert.Team)
+	case "alias_mismatch":
+		return fmt.Sprintf("This agent is already a member of %s under another name, so its certificate for the name %s cannot connect. Connect with its certificate for that other name, or ask a team admin to retire that membership first.", cert.Team, cert.Alias)
+	}
+	return ""
 }
 
 // hasCertificateForInit checks if at least one team certificate exists in the working directory.

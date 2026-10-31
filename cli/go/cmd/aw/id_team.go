@@ -1969,6 +1969,11 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 
 	if err := registry.RegisterCertificate(ctx, registryURL, invite.Domain, invite.TeamName, cert, teamKey); err != nil {
 		registerErr := fmt.Errorf("register certificate at registry: %w", err)
+		if isAliasConflict(err) {
+			// The invite is deleted only after a successful accept, so it
+			// still works with another name.
+			registerErr = &plainRefusal{text: nameTakenText(plan.Name, teamID, "--name") + " Your invite is still valid.", err: err}
+		}
 		return nil, rollbackDefaultAddressClaimAfterCertificateFailure(
 			registry,
 			registryURL,
@@ -4259,6 +4264,11 @@ func bootstrapLocalTeamMemberWithScope(
 		return nil, err
 	}
 	if err := registry.RegisterCertificate(ctx, resolvedRegistryURL, awconfig.NormalizeDomain(domain), strings.ToLower(strings.TrimSpace(teamName)), cert, registration.TeamKey); err != nil {
+		if isAliasConflict(err) {
+			// aw init's local and guided paths call this, and --name sets
+			// their name.
+			return nil, &plainRefusal{text: nameTakenText(strings.TrimSpace(alias), registration.TeamID, "--name"), err: err}
+		}
 		return nil, fmt.Errorf("register certificate at registry: %w", err)
 	}
 	return &localTeamBootstrapResult{

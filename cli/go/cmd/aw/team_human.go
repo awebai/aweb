@@ -1097,6 +1097,9 @@ func foundTeamWithNamespaceControllerAuthority(wd, teamName, alias, explicitDoma
 		return nil, err
 	}
 	if err := registry.RegisterCertificate(ctx, strings.TrimSpace(registry.DefaultRegistryURL), domain, strings.ToLower(strings.TrimSpace(teamName)), cert, registration.TeamKey); err != nil {
+		if isAliasConflict(err) {
+			return nil, &plainRefusal{text: nameTakenText(strings.TrimSpace(plan.Name), registration.TeamID, "--first-agent-name"), err: err}
+		}
 		return nil, fmt.Errorf("register certificate at registry: %w", err)
 	}
 	bootstrap := &localTeamBootstrapResult{TeamID: registration.TeamID, TeamDIDKey: registration.TeamDIDKey, TeamKeyPath: registration.TeamKeyPath, Certificate: cert}
