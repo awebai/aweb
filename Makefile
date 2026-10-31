@@ -139,6 +139,7 @@ test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-ide
 test-shipping:
 	python3 scripts/test_shipping.py
 	python3 scripts/test_candidate_cleanup.py
+	python3 scripts/test_candidate_disk_floor.py
 
 # AWID metadata is repeated in every committed Python lock that takes the in-repo
 # awid (awid, server, naapp-lib and each naapp). Check them all without repair,
@@ -548,6 +549,7 @@ test-naapp-e2e:
 	uv run --no-project python scripts/test_naapp_e2e.py
 
 test-candidate-ledger: test-naapp-e2e
+	bash scripts/candidate-docker-gate.sh --wait-for-disk
 	python3 scripts/test_candidate_gate_ledger.py
 
 _candidate-unit-suites:
