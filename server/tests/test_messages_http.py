@@ -19,6 +19,7 @@ from httpx import ASGITransport, AsyncClient
 from nacl.signing import SigningKey
 
 from awid.did import did_from_public_key, stable_id_from_public_key
+from awid.federation_errors import FederationAuthorityError
 from awid.e2ee_keys import (
     build_encryption_key_assertion,
     canonical_encryption_assertion,
@@ -8666,7 +8667,7 @@ async def test_send_message_global_recipient_null_inbound_mode_fails_migration_r
 
 
 @pytest.mark.asyncio
-async def test_send_message_to_address_falls_back_to_local_ephemeral_agent(aweb_cloud_db):
+async def test_send_message_to_address_local_ephemeral_without_route_is_not_routable(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -8695,10 +8696,16 @@ async def test_send_message_to_address_falls_back_to_local_ephemeral_agent(aweb_
         "Content-Type": "application/json",
     }
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
+        # This router-only app has no production exception renderer. Check the
+        # typed refusal here; the real-app journey checks its HTTP JSON body.
+        with pytest.raises(FederationAuthorityError) as refused:
+            await client.post("/v1/messages", content=body_bytes, headers=headers)
 
-    assert resp.status_code == 403, resp.text
-    assert "Local recipient only accepts" in resp.text
+    assert refused.value.reason == "local_recipient_route_missing"
+    assert refused.value.http_status == 404
+    assert refused.value.retryable is False
+    assert "Local recipient only accepts" in str(refused.value.__cause__)
+    assert await aweb_cloud_db.aweb_db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}}") == 0
 
 
 @pytest.mark.asyncio
