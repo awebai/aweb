@@ -171,7 +171,8 @@ async def test_mcp_send_mail_fires_message_sent_like_rest(server):
         assert set(event) == set(rest_event)
         assert event["team_id"] == TEAM
         assert event["from_agent_id"] == server.agents["pilot"]
-        assert event["to_agent_id"] == server.agents["bob"]
+        # A continuation retains canonical identity without inventing membership.
+        assert event["to_agent_id"] == (server.agents["bob"] if event is events[0] else None)
         assert event["to_alias"] == "bob"
         assert event["from_alias"] == "pilot"
         assert event["from_did_aw"] == "did:aw:pilot"

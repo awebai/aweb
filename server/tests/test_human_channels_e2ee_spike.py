@@ -48,7 +48,7 @@ async def test_real_http_native_source_and_authorized_capsule(privacy_app, tmp_p
         ids[name] = spike.identity(name, index, now, signing_seed=actor.sk, team_id=TEAM)
         # Disposable identity provisioning, never session membership fabrication.
         await env.app.state.awid_registry_client.register_did(actor.did, actor.sk)
-        await env.db.execute("UPDATE {{tables.agents}} SET identity_scope='global', did_aw=$1, certificate_id=$2 WHERE agent_id=$3",
+        await env.db.execute("UPDATE {{tables.agents}} SET identity_scope='global', did_aw=$1, did_aw_verified_key=did_key, certificate_id=$2 WHERE agent_id=$3",
                              ids[name]['stable_id'], 'privacy-' + name, actor.id)
     fixture = spike.experiment(ids, now=now)['fixture']
     original = fixture['original']

@@ -2146,14 +2146,31 @@ async def _sse_events(
     next_reconnect_at: float | None = None
 
     try:
+        # DID participation was already authorized. Activity channels are only
+        # a display projection, resolved in the conversation's team when absent.
         participant_rows = await aweb_db.fetch_all(
             """
-            SELECT p.did, p.alias, p.address, p.agent_id
+            SELECT p.did, p.alias, p.address, p.agent_id,
+                   activity_agent.agent_id AS activity_agent_id
             FROM {{tables.chat_participants}} p
+            LEFT JOIN LATERAL (
+                SELECT a.agent_id
+                FROM {{tables.agents}} a
+                WHERE $3::boolean AND a.deleted_at IS NULL AND a.status = 'active'
+                  AND CASE WHEN a.did_aw_verified_key = a.did_key
+                           THEN COALESCE(NULLIF(a.did_aw, ''), a.did_key)
+                           ELSE a.did_key END = p.did
+                  AND ((p.agent_id IS NOT NULL AND a.agent_id = p.agent_id)
+                       OR (p.agent_id IS NULL AND a.team_id = $2))
+                ORDER BY a.agent_id
+                LIMIT 1
+            ) activity_agent ON TRUE
             WHERE p.session_id = $1
             ORDER BY p.alias ASC
             """,
             session_id,
+            delivery_team_id,
+            include_activity and redis is not None,
         )
         if not participant_rows:
             yield f"event: error\ndata: {json.dumps({'error': 'Session not found'})}\n\n"
@@ -2168,9 +2185,9 @@ async def _sse_events(
             activity = SessionActivity(
                 session_id_str,
                 {
-                    str(row["agent_id"]): row["alias"]
+                    str(row["activity_agent_id"]): row["alias"]
                     for row in participant_rows
-                    if row.get("agent_id") is not None and row is not viewer_row
+                    if row.get("activity_agent_id") is not None and row is not viewer_row
                 },
             )
 

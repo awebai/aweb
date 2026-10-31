@@ -10,8 +10,9 @@ from uuid import UUID
 
 from mcp.types import CallToolResult, TextContent
 
-from aweb.mcp.auth import get_auth
+from aweb.mcp.auth import get_auth, primary_auth_did
 from aweb.mcp.tools.room import room_notice_count
+from aweb.messaging.mail_attribution import incoming_mail_sql
 
 logger = logging.getLogger(__name__)
 
@@ -37,36 +38,35 @@ async def append_pending_nudge(result: Any, db_infra: Any) -> Any:
         return result
     if not auth.team_id or not auth.agent_id:
         return result
+    participant_did = primary_auth_did(auth)
+    if not participant_did:
+        return result
 
     mail = chat = None
     try:
         counts = await db_infra.get_manager("aweb").fetch_one(
-            """
+            f"""
             WITH actor AS MATERIALIZED (
-                SELECT agent_id, did_key,
-                       CASE WHEN did_aw_verified_key = did_key
-                            THEN NULLIF(did_aw, '') END AS did_aw
-                FROM {{tables.agents}}
+                SELECT agent_id
+                FROM {{{{tables.agents}}}}
                 WHERE team_id = $1 AND agent_id = $2
                   AND deleted_at IS NULL AND status = 'active'
             ),
             mine AS MATERIALIZED (
-                SELECT DISTINCT ON (p.session_id) p.session_id, p.did
-                FROM {{tables.chat_participants}} p CROSS JOIN actor a
-                WHERE p.did = a.did_key OR p.did = a.did_aw OR p.agent_id = a.agent_id
-                ORDER BY p.session_id,
-                         CASE WHEN p.did = a.did_aw THEN 0
-                              WHEN p.did = a.did_key THEN 1 ELSE 2 END, p.did
+                SELECT p.session_id, p.did, p.current_did_key
+                FROM {{{{tables.chat_participants}}}} p CROSS JOIN actor a
+                WHERE p.did = ANY($3::text[])
             )
             SELECT
-                (SELECT COUNT(*) FROM {{tables.messages}} m
+                (SELECT COUNT(*) FROM {{{{tables.messages}}}} m
                  WHERE m.read_at IS NULL
-                   AND (m.to_did = a.did_key OR m.to_did = a.did_aw)) AS unread_mail,
+                   AND {incoming_mail_sql('$3')}) AS unread_mail,
                 (SELECT COUNT(*) FROM mine p
-                 JOIN {{tables.chat_messages}} m ON m.session_id = p.session_id
+                 JOIN {{{{tables.chat_messages}}}} m ON m.session_id = p.session_id
                  WHERE m.from_did <> p.did
+                   AND m.from_did IS DISTINCT FROM p.current_did_key
                    AND NOT EXISTS (
-                       SELECT 1 FROM {{tables.chat_message_reads}} r
+                       SELECT 1 FROM {{{{tables.chat_message_reads}}}} r
                        WHERE r.session_id = m.session_id AND r.did = p.did
                          AND r.message_id = m.message_id
                    )) AS unread_chat_messages
@@ -74,6 +74,7 @@ async def append_pending_nudge(result: Any, db_infra: Any) -> Any:
             """,
             auth.team_id,
             UUID(auth.agent_id),
+            [participant_did],
         )
         if counts is not None:
             mail = counts["unread_mail"]

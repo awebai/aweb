@@ -178,7 +178,7 @@ async def test_mcp_read_tools_accept_old_new_and_expand_contract_shapes(
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
-        VALUES ($1, 'did:key:alice', 'alice'), ($1, 'did:aw:bob', 'bob')
+        VALUES ($1, 'did:aw:alice', 'alice'), ($1, 'did:aw:bob', 'bob')
         """,
         session_id,
     )
@@ -516,7 +516,8 @@ async def test_mcp_mail_send_to_hosted_handle_uses_canonical_address(aweb_cloud_
     )
     assert row["to_did"] == "did:aw:c3po"
     assert row["to_alias"] == "c3po"
-    assert row["to_agent_id"] is not None
+    # An explicit address selects the identity, not a team membership.
+    assert row["to_agent_id"] is None
 
 
 @pytest.mark.asyncio

@@ -252,7 +252,7 @@ async def _present_by_wake(tmp_path, binary, command_dir, command_env, message_i
                 # Wait for the bounded retry window, so shutdown cannot hide an
                 # incorrect acknowledgment or delivered-ID write after input.
                 return message.get("trace_stage") == "lane_job_failed"
-            return "Use the aw CLI" in text
+            return "Answer in the conversation: aw mail reply <message_id>." in text
 
         await _read_until(runner, presented, "wake runner")
     finally:
