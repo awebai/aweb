@@ -341,7 +341,7 @@ def _build_test_app(aweb_db, registry, *, verified_bindings=()):
     app.state.redis = None
     app.state.rate_limiter = None
     app.state.awid_registry_client = registry
-    if registry is not None:
+    if isinstance(registry, AsyncMock):
         # These unit cases select the strict foreign authority supplied below.
         # Configured-home namespace routing is exercised against real AWID apps.
         registry.registry_url = "https://home-registry.test"
