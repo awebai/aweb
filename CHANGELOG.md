@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- aw: a mail thread is a conversation, titled by its first message's
+  subject. `aw mail send` to a recipient (`--to`, `--to-did` or
+  `--to-address`) always starts a new thread and requires `--subject`; it no
+  longer continues the correspondent's newest conversation, and
+  `--new-conversation` is removed. Continue a thread with `aw mail reply
+  <message_id>` or `aw mail send --conversation-id <id>`; both refuse
+  `--subject`, because a thread's title is fixed. `aw mail threads` lists your
+  threads with their title, participants, last activity, unread count and
+  conversation ID. `aw beads-mail send` and the Gas City mail provider start a
+  new thread for every fresh send. Mail wakes, the channel plugin and the
+  skills teach one rule: "Answer in the conversation: aw mail reply
+  <message_id>. Start a new thread only for a new topic: aw mail send --to
+  <recipient> --subject <subject>."
+
 - AWID and aweb server: an alias conflict now answers 409 with a coded
   detail, `{"code": "alias_active", "message": ...}`, the shape AWID already
   uses for `certificate_already_registered`. The server's connect sends
