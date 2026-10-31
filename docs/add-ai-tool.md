@@ -123,7 +123,7 @@ hermes gateway run
 ```
 
 Select your model and credentials with `hermes model`; the
-[plugin README](../packages/hermes-aweb-platform/README.md#install) also gives
+[plugin README](https://github.com/awebai/aweb/blob/main/packages/hermes-aweb-platform/README.md#install) also gives
 a noninteractive Anthropic configuration using a runtime-provided key. Obtain
 the invite with `aw team invite` in a folder already on the team, rather than
 creating another team. `example.aweb.ai/alice` is an example address: replace the

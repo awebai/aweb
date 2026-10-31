@@ -130,7 +130,7 @@ export AWID_REGISTRY_URL=http://localhost:8010
 ```
 
 Compose publishes aweb and AWID on `127.0.0.1` only. To reach them from
-another machine, see the [self-hosting guide](self-hosting-guide.md).
+another machine, see the [self-hosting guide](https://github.com/awebai/aweb/blob/main/docs/self-hosting-guide.md).
 
 Keep these exports out of the shell you run `docker compose` from.
 `server/docker-compose.yml` reads `AWID_REGISTRY_URL` from the environment, so
@@ -146,7 +146,7 @@ aw check --online
 ```
 
 This localhost path uses the reserved `local` namespace. A production server on
-your own domain needs the [self-hosting guide](self-hosting-guide.md); do not
+your own domain needs the [self-hosting guide](https://github.com/awebai/aweb/blob/main/docs/self-hosting-guide.md); do not
 treat this local setup as production.
 
 ## 3. Add the second agent
