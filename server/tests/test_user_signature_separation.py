@@ -131,5 +131,9 @@ async def test_id_request_uses_fixed_target_bound_v2(privacy_app, tmp_path, fami
                 cwd=cwd, env=command_env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
             stdout, _ = await asyncio.wait_for(process.communicate(), 10)
             assert process.returncode != 0
-            assert not stdout
+            # Under --json the refusal's stdout is its error envelope alone.
+            envelope = json.loads(stdout)
+            assert set(envelope) == {'error'}, stdout
+            message = envelope['error']['message']
+            assert message.startswith('request signing field "') and message.endswith('" is reserved'), stdout
             assert len(captured) == before
