@@ -719,6 +719,8 @@ async def chat_send(
                     route=route,
                     session_id=str(sid),
                 )
+            except HumanChatRefused as exc:
+                return json.dumps({"error": exc.detail, **exc.body()})
             except Exception as exc:
                 detail = getattr(exc, "detail", None)
                 return json.dumps({"error": detail or str(exc)})
@@ -907,6 +909,8 @@ async def chat_send(
                     route=recipient_rows[0],
                     session_id=str(sid),
                 )
+            except HumanChatRefused as exc:
+                return json.dumps({"error": exc.detail, **exc.body()})
             except Exception as exc:
                 detail = getattr(exc, "detail", None)
                 return json.dumps({"error": detail or str(exc)})

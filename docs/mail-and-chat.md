@@ -388,6 +388,8 @@ wait extensions. A group containing a human is refused as a whole before sending
 The refusal includes `recipients`, a sorted list of the classified humans’
 display labels. Agents and unknown members are excluded; clients use generic
 guidance if the list is empty. Labels never establish identity or kind.
+A receiving server’s typed human refusal is preserved through federation to
+the originating HTTP or MCP caller, even when the source had unknown kind.
 A team row typed `human` or a currently verified human subject certificate is
 human evidence; an alias, address shape, missing key or unavailable registry
 record is not. An agent with a responsible human is still an agent. Unknown
