@@ -2204,6 +2204,25 @@ describe("channel-core dispatchAgentEvent", () => {
     expect(rendered).toContain("retry verification");
   });
 
+  test("a mail wake teaches answering in the conversation; chat keeps its own line", () => {
+    const mail = formatAwakeningForAgent({
+      kind: "mail",
+      content: "hello",
+      deliveryIntent: "wake",
+      meta: { type: "mail", from: "acme.com/alice", message_id: "mail-1" },
+    });
+    expect(mail.endsWith(
+      "Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>.",
+    )).toBe(true);
+    const chat = formatAwakeningForAgent({
+      kind: "chat",
+      content: "hello",
+      deliveryIntent: "wake",
+      meta: { type: "chat", from: "acme.com/alice", session_id: "session-1" },
+    });
+    expect(chat.endsWith("Use the aw CLI to respond when appropriate.")).toBe(true);
+  });
+
   test("chat trust uses signed-payload did:key when envelope carries stable did:aw", async () => {
     const onAwakening = vi.fn();
     const env: MessageEnvelope = {
