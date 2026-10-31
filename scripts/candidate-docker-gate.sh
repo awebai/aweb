@@ -5,6 +5,46 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 SOURCE_SHA="${CANDIDATE_SOURCE_SHA:-$(git -C "$ROOT" rev-parse HEAD)}"
 refuse() { printf 'candidate gate refused: %s\n' "$*" >&2; exit 2; }
+
+# Probe the backing host filesystem without pulling an image or starting a
+# container. Desktop's Linux DockerRootDir lives inside its sparse disk image.
+wait_for_disk() {
+  local floor="${AWEB_GATE_MIN_FREE_GB:-50}" path available
+  [[ "$floor" =~ ^[0-9]+$ ]] || refuse "AWEB_GATE_MIN_FREE_GB must be a nonnegative integer"
+  path="$(docker info --format '{{.DockerRootDir}}')" || refuse "docker daemon is unavailable"
+  if [[ "$(uname -s)" == Darwin ]]; then
+    path="$(python3 - <<'PY'
+import json
+from pathlib import Path
+
+settings = Path.home() / 'Library/Group Containers/group.com.docker/settings-store.json'
+config = json.loads(settings.read_text()) if settings.exists() else {}
+directory = Path(config.get('dataFolder') or Path.home() / 'Library/Containers/com.docker.docker/Data/vms/0/data').expanduser()
+disk = directory / 'Docker.raw'
+if not disk.is_file():
+    raise SystemExit('Docker Desktop backing disk is unavailable: ' + str(disk))
+print(disk.resolve())
+PY
+)" || refuse "could not locate Docker Desktop's data volume"
+  fi
+  while :; do
+    available="$(df -Pk "$path" | awk 'NR == 2 {print $4}')" \
+      || refuse "could not measure Docker's data volume"
+    [[ "$available" =~ ^[0-9]+$ ]] || refuse "could not measure Docker's data volume"
+    if awk -v free="$available" -v floor="$floor" 'BEGIN {exit !(free >= floor * 1024 * 1024)}'; then
+      return
+    fi
+    awk -v free="$available" -v floor="$floor" -v path="$path" \
+      'BEGIN {printf "candidate gate waiting: Docker data volume %s has %.1f GiB free; need %s GiB (AWEB_GATE_MIN_FREE_GB); retrying in 60s\n", path, free / 1024 / 1024, floor}'
+    sleep 60
+  done
+}
+
+# The make prerequisites use the same wait before their own Docker tests.
+if [[ "${1:-}" == --wait-for-disk && "$#" == 1 ]]; then
+  wait_for_disk
+  exit 0
+fi
 # Library builds from the candidate checkout, with its awid and naapp-lib.
 [[ -z "${LIBRARY_E2E_LIBRARY_CONTEXT:-}" ]] \
   || refuse "LIBRARY_E2E_LIBRARY_CONTEXT is not an input: Library builds from the candidate checkout"
@@ -120,7 +160,7 @@ fi
 run_candidate() (
 set -euo pipefail
 command -v docker >/dev/null || refuse "docker is unavailable"
-docker info >/dev/null || refuse "docker daemon is unavailable"
+wait_for_disk
 
 if ! work="$(mktemp -d "/tmp/aweb-candidate-work.XXXXXX")"; then
   refuse "could not allocate the candidate work directory"
