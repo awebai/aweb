@@ -1093,7 +1093,7 @@ var mailInboxCmd = &cobra.Command{
 	Short: "List inbox messages (unread only by default)",
 	Long: "List inbox messages, newest first and unread only by default. Messages shown by this command are acknowledged as read.\n\n" +
 		"Use --count-only to count all unread mail without acknowledging or displaying messages. This read-only count walks inbox pages and does not decrypt message content.\n\n" +
-		"The response is one bounded page. Text output reports when more messages exist and prints a continuation command; JSON output carries has_more and next_cursor. Pass the returned value to --cursor to continue without overlap.",
+		"Without --count-only, the response is one bounded page. Text output reports when more messages exist and prints a continuation command; JSON output carries has_more and next_cursor. Pass the returned value to --cursor to continue without overlap.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
