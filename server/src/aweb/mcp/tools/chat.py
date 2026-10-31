@@ -33,9 +33,8 @@ from aweb.messaging.alias_targets import (
     namespace_exists,
 )
 from aweb.messaging.address_auth import (
-    local_identity_address_refusal,
     local_recipient_visible_to_auth,
-    requires_registry_address_binding,
+    unreachable_address_refusal,
 )
 from aweb.messaging.contacts import resolve_local_namespace_controller_did
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
@@ -485,12 +484,8 @@ async def chat_send(
                         contact_current_did_key=str(target.get("did_key") or ""),
                     )
                     if controller_did is None:
-                        if not requires_registry_address_binding(target):
-                            return json.dumps(
-                                {"error": local_identity_address_refusal(to_address)}
-                            )
                         return json.dumps(
-                            {"error": f"Recipient address '{to_address}' not found"}
+                            {"error": unreachable_address_refusal(to_address)}
                         )
                     target["authority_controller_did"] = controller_did
                 target = _with_requested_address(target, to_address.strip())
@@ -540,7 +535,7 @@ async def chat_send(
                         }
                     )
                 return json.dumps(
-                    {"error": f"Recipient address '{to_address}' not found"}
+                    {"error": unreachable_address_refusal(to_address)}
                 )
             if not _target_did(target):
                 return json.dumps({"error": f"Recipient '{to_address}' not connected"})

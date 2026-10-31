@@ -42,9 +42,8 @@ from aweb.messaging.alias_targets import (
     namespace_exists,
 )
 from aweb.messaging.address_auth import (
-    local_identity_address_refusal,
     local_recipient_visible_to_auth,
-    requires_registry_address_binding,
+    unreachable_address_refusal,
 )
 from aweb.messaging.contacts import resolve_local_namespace_controller_did
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
@@ -495,9 +494,7 @@ async def send_mail(
                     contact_current_did_key=str(recipient.get("did_key") or ""),
                 )
                 if controller_did is None:
-                    if not requires_registry_address_binding(recipient):
-                        return json.dumps({"error": local_identity_address_refusal(recipient_ref)})
-                    return json.dumps({"error": f"Address '{recipient_ref}' not found"})
+                    return json.dumps({"error": unreachable_address_refusal(recipient_ref)})
                 recipient["authority_controller_did"] = controller_did
             recipient = _with_requested_address(recipient, recipient_ref)
             recipient_did = (
@@ -536,7 +533,7 @@ async def send_mail(
                         ),
                     }
                 )
-            return json.dumps({"error": f"Address '{recipient_ref}' not found"})
+            return json.dumps({"error": unreachable_address_refusal(recipient_ref)})
         if not recipient_did:
             return json.dumps({"error": f"Agent '{recipient_ref}' not found"})
     else:
