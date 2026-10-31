@@ -465,7 +465,7 @@ func TestHostedInviteIssuePresentsSelectedAgentChain(t *testing.T) {
 					if wrongIssuer {
 						issuer = v.Keys["coordinator"].DIDKey
 					}
-					json.NewEncoder(w).Encode(map[string]any{"invite_id": "11111111-1111-4111-8111-111111111111", "token": "aw_inv_signed_fixture", "id_tree": map[string]any{"v": 1, "issuer_id": issuer, "domain": "example.com", "child_kind": "agent", "mode": "self_custodial"}})
+					json.NewEncoder(w).Encode(map[string]any{"invite_id": "11111111-1111-4111-8111-111111111111", "token": "aw_inv_signed_fixture", "expires_at": "2026-11-06T12:00:00Z", "id_tree": map[string]any{"v": 1, "issuer_id": issuer, "domain": "example.com", "child_kind": "agent", "mode": "self_custodial"}})
 				default:
 					http.NotFound(w, r)
 				}
@@ -477,9 +477,12 @@ func TestHostedInviteIssuePresentsSelectedAgentChain(t *testing.T) {
 			if err := awconfig.SaveInstalledIDChain(filepath.Join(principal, ".aw"), chain); err != nil {
 				t.Fatal(err)
 			}
-			_, token, err := createHostedTeamInviteTokenAt(decoy, filepath.Join(principal, ".aw"), team, true)
-			if (err != nil) != wrongIssuer || calls != 1 || (!wrongIssuer && token == "") {
+			created, err := createHostedTeamInvite(decoy, filepath.Join(principal, ".aw"), team, true)
+			if (err != nil) != wrongIssuer || calls != 1 || (!wrongIssuer && created.Token == "") {
 				t.Fatalf("err=%v calls=%d", err, calls)
+			}
+			if !wrongIssuer && created.ExpiresAt != "2026-11-06T12:00:00Z" {
+				t.Fatalf("hosted invite expiry not returned: %q", created.ExpiresAt)
 			}
 		})
 	}

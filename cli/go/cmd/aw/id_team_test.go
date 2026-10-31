@@ -1613,20 +1613,20 @@ func TestTeamInviteJoinConnectsWorkspaceByDefault(t *testing.T) {
 	}
 	token := ""
 	for _, line := range strings.Split(string(inviteOut), "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "Command:") {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) >= 5 && fields[1] == "aw" && fields[2] == "team" && fields[3] == "join" {
-			token = fields[4]
+		if fields := strings.Fields(line); len(fields) == 2 && fields[0] == "Token:" {
+			token = fields[1]
 		}
 	}
-	if token == "" {
-		t.Fatalf("invite output did not include accept command with token:\n%s", string(inviteOut))
+	if token == "" || !strings.Contains(string(inviteOut), "Command:     aw team join --token-file <file> --name <name>\n") {
+		t.Fatalf("invite output did not include the token and the token-file join command:\n%s", string(inviteOut))
+	}
+	tokenFile := filepath.Join(t.TempDir(), "invite.token")
+	if err := os.WriteFile(tokenFile, []byte(token+"\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 
-	runAccept := exec.CommandContext(ctx, bin, "team", "join", token, "--name", "bob", "--json")
+	// Run the printed command, with the saved token file.
+	runAccept := exec.CommandContext(ctx, bin, "team", "join", "--token-file", tokenFile, "--name", "bob", "--json")
 	runAccept.Env = append(testCommandEnv(home), "AWEB_URL=https://ambient-must-not-win.example")
 	runAccept.Dir = acceptDir
 	acceptOut, err := runAccept.CombinedOutput()
