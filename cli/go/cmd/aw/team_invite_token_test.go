@@ -147,6 +147,10 @@ func TestTeamInviteWarningFitsThePrintedCommand(t *testing.T) {
 	if strings.Contains(warning, "aw team join") {
 		t.Fatalf("warning names a command the low-level invite does not print: %q", warning)
 	}
+	// A local invite records no expiry: it is valid until it is used.
+	if !strings.Contains(warning, "can join the team until it is used.") || strings.Contains(warning, "expire") {
+		t.Fatalf("local invite warning must say it is valid until used, with no expiry: %q", warning)
+	}
 	if got := teamInviteTokenWarning("2026-11-06T12:00:00Z"); !strings.Contains(got, "2026-11-06T12:00:00Z") {
 		t.Fatalf("warning does not say when the invite expires: %q", got)
 	}
