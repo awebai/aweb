@@ -623,6 +623,9 @@ authority remains the ordered SQL itself; this SOT does not duplicate that DDL.
 - `human_channel_sends`
 - `human_channel_ingress`
 - `human_channel_mutations`
+- `team_rooms`
+- `room_messages`
+- `room_post_notices`
 <!-- END SOURCE INVENTORY: aweb-tables -->
 
 Migrations `035_team_app_installation_identity` and `036_app_installation_management`
@@ -682,6 +685,7 @@ router entry.
 - `identity_grants`
 - `messaging`
 - `messages`
+- `room`
 - `reservations`
 - `session_leases`
 - `service_registration`

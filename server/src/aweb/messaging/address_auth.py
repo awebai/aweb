@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Mapping
 
+from awid.federation_errors import FederationAuthorityError
+from awid.log import canonical_server_origin
 from awid.signing import verify_did_key_signature
+from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
+from aweb.messaging.alias_targets import namespace_exists
 
 
 def local_recipient_visible_to_auth(row: Mapping[str, Any] | None, auth: Any) -> bool:
@@ -34,3 +39,21 @@ def verified_signed_payload_json(
     except Exception:
         return None
     return payload if isinstance(payload, dict) else None
+
+
+async def namespace_uses_home_registry(db, registry_client, domain: str) -> bool:
+    # A local team label alone is not authority. Use the configured registry
+    # only when it is the selected origin and actually serves this namespace.
+    if registry_client is None or not await namespace_exists(db, domain):
+        return False
+    try:
+        if await registry_client.registry_audience(domain) != canonical_server_origin(registry_client.registry_url):
+            return False
+        namespace = await registry_client.get_namespace_fresh(domain)
+    except AWID_DEPENDENCY_ERRORS as exc:
+        logging.getLogger(__name__).warning("Messaging home namespace lookup unavailable for %s", domain, exc_info=True)
+        raise FederationAuthorityError("sender_registry_unavailable") from exc
+    return bool(
+        namespace and namespace.domain == domain
+        and namespace.verification_status == "verified" and namespace.controller_did
+    )

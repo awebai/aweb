@@ -87,7 +87,7 @@ func TestPersistentRefusalBacksOffAndResumeRecovers(t *testing.T) {
 			t.Fatalf("reopen gap%d=%s want >=%s", i, gap, minimum)
 		}
 	}
-	writeStateOATS(t, root, inputPath, "working")
+	writeStateOATS(t, root, inputPath, "idle")
 	if err := broker.SetPaused(home, true); err != nil {
 		t.Fatal(err)
 	}
