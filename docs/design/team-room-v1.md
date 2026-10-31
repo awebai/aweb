@@ -190,7 +190,9 @@ Hosted MCP signs as its authenticated
 custodial actor through the existing hosted signer, then calls the shared
 room service. No direct unsigned MCP insert is accepted. Existing MCP tool
 names, descriptions, outputs and authentication behavior remain unchanged.
-Cloud adoption and its migration mirror belong to the assigned Cloud owner.
+Hosted adoption consumes the canonical migrations packaged in the public
+`aweb` distribution; it does not require a copied migration chain.
+Operator-specific overlays, if any, remain the operator’s responsibility.
 
 The CLI exposes no room `--e2ee` flag. The server and MCP reject explicit
 E2E tool/request intent with `room_e2ee_unsupported`; there is no plaintext
@@ -240,8 +242,10 @@ Pending and acknowledgement APIs use `chat.read` and the grant subject. History
 read clears only the caller's notices for returned posts; exact lookup stays
 read-only so verification cannot consume a notice before presentation. Neither
 operation acknowledges mail or chat. Hosted MCP's new `room_pending` tool
-returns the caller's count/notices; Cloud owns the nudge integration. Existing
-MCP tools and their outputs remain unchanged.
+returns JSON with `pending_count`, `notices` and `has_more`. The room count
+belongs in this new tool result, not in an existing mail/chat tool result.
+Hosted nudge presentation belongs to its operator and must preserve existing
+MCP tools and their outputs.
 
 ## Compatibility and validation
 
