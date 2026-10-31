@@ -23,6 +23,7 @@ func TestErrorEnvelopeCarriesAStableCode(t *testing.T) {
 		code   string
 		status int
 		detail string
+		reason string
 	}{
 		{name: "unclassified", err: errors.New("boom"), code: "error"},
 		// Exit 2 is shared by usage mistakes and refusals, so it names no class.
@@ -31,8 +32,12 @@ func TestErrorEnvelopeCarriesAStableCode(t *testing.T) {
 		{name: "body without detail", err: &awid.APIError{StatusCode: 502, Body: "bad gateway"}, code: "http_error", status: 502},
 		{name: "detail that is not a string", err: &awid.APIError{StatusCode: 422, Body: `{"detail":[{"loc":["name"]}]}`}, code: "http_error", status: 422},
 		{name: "tagged refusal", err: fmt.Errorf("init: %w", withErrorCode("alias_conflict", &awid.APIError{StatusCode: 409, Body: `{"detail":"alias exists"}`})), code: "alias_conflict", status: 409, detail: "alias exists"},
+		{name: "alias conflict keeps the server's code", err: &awid.APIError{StatusCode: 409, Body: `{"detail":{"code":"alias_active","message":"Alias already active"}}`}, code: "alias_conflict", status: 409, detail: "Alias already active", reason: "alias_active"},
 		{name: "registry refusal", err: fmt.Errorf("register: %w", &awid.RegistryError{StatusCode: 409, Detail: `{"detail":"Alias already active in team"}`}), code: "http_error", status: 409, detail: "Alias already active in team"},
-		{name: "registry refusal with a coded detail", err: &awid.RegistryError{StatusCode: 409, Detail: `{"detail":{"code":"certificate_already_registered"}}`, Code: "certificate_already_registered"}, code: "http_error", status: 409},
+		{name: "registry refusal with a coded detail", err: &awid.RegistryError{StatusCode: 409, Detail: `{"detail":{"code":"certificate_already_registered"}}`, Code: "certificate_already_registered"}, code: "http_error", status: 409, reason: "certificate_already_registered"},
+		// The server's own refusal code travels as reason, beside the class code.
+		{name: "server refusal with a coded detail", err: &awid.APIError{StatusCode: 403, Body: `{"detail":{"code":"admin_required","message":"Only an admin human can publish roles."}}`}, code: "http_error", status: 403, detail: "Only an admin human can publish roles.", reason: "admin_required"},
+		{name: "server refusal with a reason", err: &awid.APIError{StatusCode: 404, Body: `{"detail":"recipient_identity_not_found","reason":"recipient_identity_not_found","retryable":false}`}, code: "http_error", status: 404, detail: "recipient_identity_not_found", reason: "recipient_identity_not_found"},
 		{name: "decryption", err: fmt.Errorf("show: %w", undecryptable(t)), code: "encryption_key_missing"},
 		{name: "mutation timed out", err: fmt.Errorf("revoke: %w", timedOutMutation(t)), code: "outcome_unknown"},
 		{name: "tagged usage refusal", err: withErrorCode("team_not_hosted", usageError("refusing")), code: "team_not_hosted"},
@@ -61,6 +66,10 @@ func TestErrorEnvelopeCarriesAStableCode(t *testing.T) {
 			}
 			if _, present := body["http_status"]; present != (tc.status != 0) {
 				t.Fatalf("http_status present=%v for %v", present, body)
+			}
+			// No reason key when the server gave no code.
+			if reason, present := body["reason"]; present != (tc.reason != "") || (present && reason != tc.reason) {
+				t.Fatalf("reason %v (present=%v), want %q", reason, present, tc.reason)
 			}
 		})
 	}

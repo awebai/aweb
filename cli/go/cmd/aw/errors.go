@@ -90,6 +90,7 @@ type cliErrorBody struct {
 	Message    string `json:"message"`
 	HTTPStatus int    `json:"http_status,omitempty"`
 	Detail     string `json:"detail,omitempty"`
+	Reason     string `json:"reason,omitempty"`
 }
 
 func errorEnvelope(err error, message string) cliErrorEnvelope {
@@ -98,7 +99,7 @@ func errorEnvelope(err error, message string) cliErrorEnvelope {
 	if errors.As(err, &coded) {
 		detail.Code = coded.code
 	}
-	return cliErrorEnvelope{Error: cliErrorBody{Code: detail.Code, Message: message, HTTPStatus: detail.HTTPStatus, Detail: detail.Detail}}
+	return cliErrorEnvelope{Error: cliErrorBody{Code: detail.Code, Message: message, HTTPStatus: detail.HTTPStatus, Detail: detail.Detail, Reason: detail.Reason}}
 }
 
 func writeCLIErrorEnvelope(w io.Writer, err error, message string) {
