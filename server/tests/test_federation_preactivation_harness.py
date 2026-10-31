@@ -155,8 +155,8 @@ def test_topology_and_canonical_input_artifacts_are_exact() -> None:
             "42fc649d28f097d22073d10e01c800ca653e177ec055a9cd2f40b047eb6a22da",
         ),
         "docs/vectors/federation-authority-state-v1.json": (
-            24926,
-            "dbfae045d87a947ba5e9add41b03832159eb584c1ab1d8644ec5a34f27f8d616",
+            25085,
+            "f47996006465b825a876621468dd651c1d15e8d0177c2e021e63a103c97f4e28",
         ),
         "docs/vectors/identity-log-v1.json": (
             4169,

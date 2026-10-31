@@ -173,9 +173,10 @@ def register_tools(
         description=(
             "Send async mail with a required body by recipient, or continue an existing "
             "mail conversation by conversation_id. Recipient sends reuse the existing "
-            "active one-to-one conversation when present. Hosted custodial sends encrypt by "
-            "default when the recipient has an E2E key; set plaintext=true only for "
-            "explicit server-readable mail."
+            "active one-to-one conversation when present. Hosted custodial sends use managed "
+            "encryption by default when the recipient has an encryption key. The hosted "
+            "service can read the mail; this is not end-to-end encryption. Set plaintext=true "
+            "to store message content unencrypted."
         ),
     )
     async def send_mail(
@@ -206,7 +207,7 @@ def register_tools(
         name="check_mail",
         description=(
             "Check hosted mail. The tool marks returned unread messages read before returning. "
-            "Hosted custodial identities decrypt encrypted E2E mail for this MCP session; "
+            "The hosted service decrypts managed encrypted mail for this MCP session; "
             "self-custodial encrypted content remains metadata-only."
         ),
     )
@@ -246,8 +247,9 @@ def register_tools(
             "DID, hosted handle, or same-team local alias, or conversation_id "
             "to reply in an existing conversation. Set wait=true to block until "
             "the other agent replies (recommended for conversations). Hosted "
-            "custodial sends encrypt by default; set plaintext=true only for "
-            "explicit server-readable chat."
+            "custodial sends use managed encryption by default. The hosted service can read "
+            "the chat; this is not end-to-end encryption. Set plaintext=true to store "
+            "message content unencrypted."
         ),
     )
     async def send_chat(
@@ -587,8 +589,8 @@ def register_tools(
         name="check_inbox",
         description=(
             "Legacy compatibility alias for check_mail. Prefer check_mail. It marks returned "
-            "unread messages read before returning. Hosted custodial identities decrypt "
-            "encrypted E2E mail for this MCP session."
+            "unread messages read before returning. The hosted service decrypts managed "
+            "encrypted mail for this MCP session; it is readable by that service."
         ),
     )
     async def check_inbox(

@@ -33,6 +33,7 @@ from aweb.awid_error_handling import (
 from aweb.config import get_settings
 from aweb.deps import get_db, get_redis
 from aweb.events import chat_session_channel_name, publish_chat_session_signal
+from aweb.messaging.encryption_custody import require_non_custodial_recipients
 from aweb.e2ee_messages import (
     E2EEEnvelopeError,
     encrypted_message_storage_metadata,
@@ -1393,6 +1394,8 @@ async def create_or_send(
         signature=payload.signature,
     )
     target_dids = sorted({_target_did(row) for row in target_rows if _target_did(row)})
+    if _payload_is_encrypted(payload):
+        await require_non_custodial_recipients(db, payload.encrypted_envelope or {}, target_rows, sender=auth)
 
     existing_attachment = await attachment_retry(db, payload, "chat")
     if existing_attachment:
@@ -2707,6 +2710,8 @@ async def send_message(
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     pre_message_id = uuid_mod.uuid4()
+    if _payload_is_encrypted(payload):
+        await require_non_custodial_recipients(db, payload.encrypted_envelope or {}, recipient_rows, sender=auth)
     encrypted_metadata = _validate_encrypted_chat_payload(
         payload,
         auth=auth,
