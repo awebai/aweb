@@ -402,13 +402,7 @@ async def _find_existing_chat_session(db_infra, *, target: dict) -> dict | None:
     session_id = await find_session_between(
         db_infra,
         did_a=primary_auth_did(auth),
-        did_key_a=auth.did_key,
-        agent_id_a=auth.agent_id,
-        address_a=(auth.address or "").strip() or derive_team_address(auth.team_id, auth.alias),
         did_b=target_did,
-        did_key_b=(target.get("did_key") or "").strip() or None,
-        agent_id_b=target.get("agent_id"),
-        address_b=None if target_did else (target.get("address") or "").strip() or None,
     )
     return {"conversation_id": str(session_id)} if session_id is not None else None
 

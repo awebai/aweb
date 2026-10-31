@@ -33,6 +33,7 @@ from aweb.messaging.alias_targets import (
     namespace_exists,
 )
 from aweb.messaging.address_auth import (
+    identity_recipient,
     local_recipient_visible_to_auth,
     unreachable_address_refusal,
 )
@@ -118,12 +119,6 @@ async def _local_agent_by_address(db_infra, *, domain: str, name: str) -> dict |
         return await get_agent_by_namespace_alias(db_infra, namespace=domain, alias=name)
     except AmbiguousLocalAddressError as exc:
         raise ServiceError(str(exc)) from exc
-
-
-def _with_requested_address(row: dict, address: str) -> dict:
-    copied = dict(row)
-    copied["address"] = (copied.get("address") or "").strip() or address
-    return copied
 
 
 def _recipient_signed_fields(rows: list[dict]) -> tuple[str, str, str]:
@@ -231,14 +226,9 @@ async def _session_recipient_rows(db_infra, *, session_id: UUID, actor_dids: lis
     aweb_db = db_infra.get_manager("aweb")
     rows = await aweb_db.fetch_all(
         """
-        SELECT p.did, p.agent_id, p.alias, p.address AS participant_address, p.delivery_origin,
-               p.current_did_key, a.did_key,
-               CASE WHEN a.did_aw_verified_key=a.did_key THEN a.did_aw END AS did_aw,
-               CASE WHEN a.did_aw_verified_key=a.did_key THEN a.address END AS address,
-               a.identity_scope, (NULLIF(a.did_aw,'') IS NOT NULL) AS has_global_claim,
-               a.did_aw AS policy_did_aw, a.inbound_mode
+        SELECT p.did, p.alias, p.address AS participant_address, p.delivery_origin,
+               p.current_did_key
         FROM {{tables.chat_participants}} p
-        LEFT JOIN {{tables.agents}} a ON a.agent_id = p.agent_id AND a.deleted_at IS NULL
         WHERE p.session_id = $1
           AND p.did <> ALL($2::text[])
           AND p.left_at IS NULL
@@ -249,14 +239,20 @@ async def _session_recipient_rows(db_infra, *, session_id: UUID, actor_dids: lis
     )
     result: list[dict] = []
     for row in rows:
-        item = dict(row)
-        item["_policy_recipients"] = await policy_rows_for_participant(db_infra, item)
-        if not item["_policy_recipients"] and not item.get("delivery_origin"):
-            item["agent_id"] = None
-        participant_address = (item.get("participant_address") or "").strip()
-        item["address"] = (item.get("address") or "").strip() or participant_address
-        item["delivery_origin"] = (item.get("delivery_origin") or "").strip() or None
-        item["external"] = bool(participant_address and not (item.get("did_aw") or item.get("did_key")))
+        participant = dict(row)
+        did = participant["did"]
+        resolved = await resolve_agent_by_did(db_infra, did)
+        item = identity_recipient(resolved, participant.get("participant_address") or "") if resolved else {
+            "agent_id": None, "team_id": None,
+            "did_aw": did if did.startswith("did:aw:") else None,
+            "did_key": participant.get("current_did_key") or (did if did.startswith("did:key:") else None),
+            "address": participant.get("participant_address") or None,
+        }
+        item.update(did=did, alias=participant["alias"],
+                    delivery_origin=participant.get("delivery_origin") or None,
+                    current_did_key=participant.get("current_did_key"),
+                    external=bool(participant.get("delivery_origin") and resolved is None))
+        item["_policy_recipients"] = await policy_rows_for_participant(db_infra, participant)
         result.append(item)
     return result
 
@@ -463,6 +459,8 @@ async def chat_send(
                 return json.dumps({"error": f"Agent '{to_alias}' not found in team"})
         elif to_did:
             target = await resolve_agent_by_did(db_infra, to_did.strip())
+            if target is not None:
+                target = identity_recipient(target)
             if not target:
                 return json.dumps({"error": f"Recipient '{to_did}' not found"})
         else:
@@ -488,7 +486,7 @@ async def chat_send(
                             {"error": unreachable_address_refusal(to_address)}
                         )
                     target["authority_controller_did"] = controller_did
-                target = _with_requested_address(target, to_address.strip())
+                target = identity_recipient(target, to_address.strip())
             else:
                 resolved = None
                 if federation_authority is not None:
@@ -507,6 +505,9 @@ async def chat_send(
                     )
                 if resolved is not None and resolved.did_aw:
                     target = await resolve_agent_by_did(db_infra, resolved.did_aw)
+                    if target is not None:
+                        target = identity_recipient(target, to_address.strip())
+                        target["did_key"] = resolved.current_did_key
                     if not target:
                         target = {
                             "agent_id": None,

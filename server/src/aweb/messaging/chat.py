@@ -18,7 +18,6 @@ from pgdbm.errors import QueryError
 
 from aweb.service_errors import ConflictError, NotFoundError, ServiceError, ValidationError
 from aweb.messaging.conversations import (
-    _equivalent_identity_refs,
     find_active_one_to_one_conversation_between,
 )
 
@@ -154,39 +153,15 @@ async def find_session_between(
     *,
     did_a: str,
     did_b: str,
-    did_key_a: str | None = None,
-    did_key_b: str | None = None,
-    agent_id_a: str | UUID | None = None,
-    agent_id_b: str | UUID | None = None,
-    address_a: str | None = None,
-    address_b: str | None = None,
 ) -> UUID | None:
     conversation = await find_active_one_to_one_conversation_between(
         db,
         conversation_type="chat",
         did_a=did_a,
         did_b=did_b,
-        did_key_a=did_key_a,
-        did_key_b=did_key_b,
-        agent_id_a=agent_id_a,
-        agent_id_b=agent_id_b,
-        address_a=address_a,
-        address_b=address_b,
     )
     if conversation is None:
-        # Fallback: legacy chat_sessions row without a matching conversations
-        # row. Use _equivalent_identity_refs so the multi-team agent expansion
-        # is the same here as in the conversations-table path: single shared
-        # walk anchored on did_key, collision-resistant against did_aw collisions.
-        dids_a, agent_ids_a = await _equivalent_identity_refs(
-            db, did_a, did_key=did_key_a, agent_id=agent_id_a
-        )
-        dids_b, agent_ids_b = await _equivalent_identity_refs(
-            db, did_b, did_key=did_key_b, agent_id=agent_id_b
-        )
-        # Addresses can be reassigned; they do not establish identity continuity.
-        if not (dids_a or agent_ids_a) or not (dids_b or agent_ids_b):
-            return None
+        # Legacy sessions use the same DID participant identity as canonical threads.
         aweb_db = db.get_manager("aweb")
         rows = await aweb_db.fetch_all(
             """
@@ -196,14 +171,8 @@ async def find_session_between(
               ON pa.session_id = s.session_id
             JOIN {{tables.chat_participants}} pb
               ON pb.session_id = s.session_id
-            WHERE (
-                    ($2::uuid[] <> '{}'::uuid[] AND pa.agent_id = ANY($2::uuid[]))
-                 OR ($2::uuid[] = '{}'::uuid[] AND pa.did = ANY($1::text[]))
-              )
-              AND (
-                    ($4::uuid[] <> '{}'::uuid[] AND pb.agent_id = ANY($4::uuid[]))
-                 OR ($4::uuid[] = '{}'::uuid[] AND pb.did = ANY($3::text[]))
-              )
+            WHERE pa.did = $1
+              AND pb.did = $2
               AND pa.did <> pb.did
               AND NOT EXISTS (
                     SELECT 1 FROM {{tables.conversations}} c
@@ -217,10 +186,8 @@ async def find_session_between(
             ORDER BY s.created_at DESC, s.session_id DESC
             LIMIT 2
             """,
-            dids_a,
-            agent_ids_a,
-            dids_b,
-            agent_ids_b,
+            did_a,
+            did_b,
         )
         if not rows:
             return None
@@ -276,7 +243,6 @@ async def validate_session_id(
     *,
     session_id: UUID,
     actor_dids: list[str],
-    actor_agent_id: str | UUID | None = None,
 ) -> bool:
     """Allow a fresh UUID or an existing chat's active caller; never grant membership."""
     row = await db.get_manager("aweb").fetch_one(
@@ -285,13 +251,13 @@ async def validate_session_id(
                EXISTS (
                    SELECT 1 FROM {{tables.chat_participants}} p
                    WHERE p.session_id = s.session_id AND p.left_at IS NULL
-                     AND (p.did = ANY($2::text[]) OR p.agent_id = $3::uuid)
+                     AND p.did = ANY($2::text[])
                ) AS caller_participant
         FROM {{tables.conversations}} c
         FULL OUTER JOIN {{tables.chat_sessions}} s ON s.session_id = c.conversation_id
         WHERE COALESCE(c.conversation_id, s.session_id) = $1
         """,
-        session_id, actor_dids, _uuid_or_none(actor_agent_id),
+        session_id, actor_dids,
     )
     if row is None:
         return False
@@ -371,7 +337,7 @@ async def ensure_session(
     actor = normalized_participants[0]  # Supplied by the authenticated adapter, never by target resolution.
     actor_dids = list(dict.fromkeys(d for d in (actor["did"], actor.get("did_key")) if d))
     if session_id is not None and await validate_session_id(
-        db, session_id=session_id, actor_dids=actor_dids, actor_agent_id=actor["agent_id"],
+        db, session_id=session_id, actor_dids=actor_dids,
     ):
         await _backfill_legacy_chat_conversation(db, session_id=session_id)
         return UUID(str(session_id))
@@ -381,16 +347,10 @@ async def ensure_session(
             db,
             did_a=normalized_participants[0]["did"],
             did_b=normalized_participants[1]["did"],
-            did_key_a=normalized_participants[0].get("did_key"),
-            did_key_b=normalized_participants[1].get("did_key"),
-            agent_id_a=normalized_participants[0].get("agent_id"),
-            agent_id_b=normalized_participants[1].get("agent_id"),
-            address_a=normalized_participants[0].get("address"),
-            address_b=normalized_participants[1].get("address"),
         )
         if existing is not None:
             await validate_session_id(
-                db, session_id=existing, actor_dids=actor_dids, actor_agent_id=actor["agent_id"],
+                db, session_id=existing, actor_dids=actor_dids,
             )
             await _backfill_legacy_chat_conversation(db, session_id=existing)
             return existing
@@ -566,7 +526,6 @@ async def get_pending_conversations(
                 participant.session_id, participant.did, participant.agent_id
             FROM {{tables.chat_participants}} participant
             WHERE participant.did = $1
-               OR ($3::uuid IS NOT NULL AND participant.agent_id = $3)
             ORDER BY participant.session_id,
                      CASE WHEN participant.did = $1 THEN 0 ELSE 1 END
         )

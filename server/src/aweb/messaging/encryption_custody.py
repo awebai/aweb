@@ -73,8 +73,6 @@ async def require_non_custodial_recipients(
     if not isinstance(references, list):
         return  # Malformed envelopes still go through the shared validator.
     for recipient in recipients:
-        if not recipient.get("agent_id"):
-            continue
         did = str(recipient.get("did_key") or recipient.get("current_did_key") or "").strip()
         reference = next((item for item in references if isinstance(item, dict) and item.get("did") == did), None)
         if not reference:
@@ -82,9 +80,19 @@ async def require_non_custodial_recipients(
         key_id = reference.get("encryption_key_id")
         if not isinstance(key_id, str) or not key_id:
             continue
-        if await _verified_hosted_key(
-            db, agent_id=recipient["agent_id"], did=did,
-            stable_id=str(recipient.get("did_aw") or "").strip(), key_id=key_id,
-            invalid_reason="recipient_encryption_assertion_invalid_or_stale",
-        ):
-            raise FederationAuthorityError("recipient_custodial_no_e2ee")
+        # Custody belongs to the delivered identity/key assertion. A thread's
+        # optional actor projection cannot select it or suppress this check.
+        stable_id = str(recipient.get("did_aw") or "").strip()
+        rows = await db.get_manager("aweb").fetch_all(
+            """SELECT agent_id FROM {{tables.agents}}
+               WHERE deleted_at IS NULL AND did_key=$1
+                 AND ($2::text='' OR (did_aw=$2 AND did_aw_verified_key=did_key))
+               ORDER BY agent_id""", did, stable_id,
+        )
+        for row in rows:
+            if await _verified_hosted_key(
+                db, agent_id=row["agent_id"], did=did,
+                stable_id=stable_id, key_id=key_id,
+                invalid_reason="recipient_encryption_assertion_invalid_or_stale",
+            ):
+                raise FederationAuthorityError("recipient_custodial_no_e2ee")

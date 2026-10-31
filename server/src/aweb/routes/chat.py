@@ -60,6 +60,8 @@ from aweb.messaging.alias_targets import (
     validate_alias_selector,
 )
 from aweb.messaging.address_auth import (
+    identity_recipient,
+    local_recipient_for_address_binding,
     local_recipient_visible_to_auth,
     namespace_uses_home_registry,
     requires_registry_address_binding,
@@ -774,12 +776,6 @@ async def _local_agent_by_address(db, *, domain: str, name: str) -> dict[str, An
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-def _with_requested_address(row: dict[str, Any], address: str) -> dict[str, Any]:
-    copied = dict(row)
-    copied["address"] = (copied.get("address") or "").strip() or address
-    return copied
-
-
 def _signed_payload_address_binding(
     payload: dict[str, Any] | None,
     *,
@@ -971,7 +967,7 @@ async def _resolve_chat_targets(
             _raise_bare_did_chat_first_contact_unsupported()
         if row is None:
             raise HTTPException(status_code=404, detail=f"Recipient agent not found: {did}")
-        resolved[did] = row
+        resolved[did] = identity_recipient(row)
 
     for address in to_addresses:
         if "/" not in address:
@@ -994,11 +990,7 @@ async def _resolve_chat_targets(
                     local_candidate.get("did_aw") or local_candidate.get("did_key") or ""
                 ).strip()
                 if target_did:
-                    canonical_recipient = await resolve_agent_by_did(db, target_did)
-                    local_recipient = _with_requested_address(
-                        canonical_recipient or local_candidate,
-                        address,
-                    )
+                    local_recipient = identity_recipient(local_candidate, address)
                     local_recipient["requires_local_address_authority"] = True
                     resolved[target_did] = local_recipient
                     continue
@@ -1024,7 +1016,7 @@ async def _resolve_chat_targets(
         elif registry_client is not None:
             resolution = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
         if resolution is not None and resolution.did_aw:
-            row = await resolve_agent_by_did(db, resolution.did_aw)
+            row = local_recipient_for_address_binding(await resolve_agent_by_did(db, resolution.did_aw), resolution, address)
             if row is None:
                 delivery = getattr(resolution, "delivery", None)
                 delivery_origin = (
@@ -1074,7 +1066,7 @@ async def _resolve_chat_targets(
                 or _row_matches_signed_address_binding(row, binding)
             ):
                 raise HTTPException(status_code=404, detail=f"Recipient address not found: {address}")
-        row = _with_requested_address(row, address)
+        row = identity_recipient(row, address)
         target_did = (row.get("did_aw") or row.get("did_key") or "").strip()
         if not target_did:
             raise HTTPException(status_code=404, detail=f"Recipient agent not found: {address}")
@@ -1132,6 +1124,8 @@ async def _resolve_session_recipient_rows(
     for row in rows:
         participant = dict(row)
         resolved = await resolve_agent_by_did(db, participant.get("did") or "")
+        if resolved is not None:
+            resolved = identity_recipient(resolved, str(participant.get("address") or ""))
         policy_rows = await policy_rows_for_participant(db, participant)
         policy = resolved or (policy_rows[0] if policy_rows else {})
         participant_did = (participant.get("did") or "").strip()
@@ -1379,7 +1373,7 @@ async def create_or_send(
     requested_session_id = UUID(payload.session_id) if payload.session_id is not None else None
     if requested_session_id is not None:
         await validate_session_id(
-            db, session_id=requested_session_id, actor_dids=actor_dids, actor_agent_id=actor_agent_id,
+            db, session_id=requested_session_id, actor_dids=actor_dids,
         )
 
     target_rows = await _resolve_chat_targets(
@@ -1444,12 +1438,6 @@ async def create_or_send(
                 db,
                 did_a=participant_rows[0]["did"],
                 did_b=participant_rows[1]["did"],
-                did_key_a=participant_rows[0].get("did_key"),
-                did_key_b=participant_rows[1].get("did_key"),
-                agent_id_a=participant_rows[0].get("agent_id"),
-                agent_id_b=participant_rows[1].get("agent_id"),
-                address_a=participant_rows[0].get("address"),
-                address_b=participant_rows[1].get("address"),
             )
         except ConflictError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc

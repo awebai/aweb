@@ -1765,7 +1765,7 @@ async def test_mcp_chat_send_uses_hosted_encryptor_by_default_for_trusted_proxy(
 
 
 @pytest.mark.asyncio
-async def test_mcp_chat_continuation_encryptor_gets_active_recipient_agent_ids(aweb_cloud_db, monkeypatch):
+async def test_mcp_chat_continuation_encryptor_gets_active_recipient_identities(aweb_cloud_db, monkeypatch):
     team_id = "ops:acme.com"
     alice_agent_id = uuid4()
     workspace_id = uuid4()
@@ -1856,7 +1856,9 @@ async def test_mcp_chat_continuation_encryptor_gets_active_recipient_agent_ids(a
 
     assert "error" not in result, result
     assert len(seen) == 1
-    assert [recipient.get("agent_id") for recipient in seen[0]["recipients"]] == [str(bob_agent_id)]
+    assert [recipient.get("did_aw") for recipient in seen[0]["recipients"]] == ["did:aw:bob"]
+    assert [recipient.get("did_key") for recipient in seen[0]["recipients"]] == [named_did_key("z6MkBob")]
+    assert [recipient.get("agent_id") for recipient in seen[0]["recipients"]] == [None]
     assert all(recipient.get("agent_id") != str(carol_agent_id) for recipient in seen[0]["recipients"])
 
 

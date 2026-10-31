@@ -17,6 +17,28 @@ def local_recipient_visible_to_auth(row: Mapping[str, Any] | None, auth: Any) ->
     return bool(row_team_id and auth_team_id and row_team_id == auth_team_id)
 
 
+def identity_recipient(row: Mapping[str, Any], address: str | None = None) -> dict:
+    """Project an admitted identity/route, never a team actor as a participant."""
+    recipient = dict(row)
+    recipient["agent_id"] = None
+    if recipient.get("did_aw"):
+        recipient["team_id"] = None
+    if address is not None:
+        recipient["address"] = address or None
+        recipient["alias"] = address.split("/", 1)[-1] if address else (recipient.get("did_aw") or recipient.get("did_key"))
+    return recipient
+
+
+def local_recipient_for_address_binding(row: Mapping[str, Any] | None, resolution: Any, address: str) -> dict | None:
+    # A local projection establishes residence, not which membership receives.
+    # The admitted registry binding supplies the identity and current key.
+    if row is None or str(row.get("did_aw") or "").strip() != resolution.did_aw:
+        return None
+    recipient = identity_recipient(row, address)
+    recipient["did_key"] = resolution.current_did_key
+    return recipient
+
+
 def requires_registry_address_binding(row: Mapping[str, Any] | None) -> bool:
     return str((row or {}).get("identity_scope") or "").strip().lower() == "global"
 

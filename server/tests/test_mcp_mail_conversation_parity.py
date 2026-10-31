@@ -280,3 +280,19 @@ async def test_mcp_lists_threads_from_the_participant_http_index_without_ack(mai
     assert (await server.mcp_call("list_threads", participant_did=other))["conversations"] == []
     invalid = await server.mcp_call("list_threads", limit=101)
     assert "error" in invalid, invalid
+
+
+@pytest.mark.asyncio
+async def test_mcp_address_mail_keeps_the_selected_membership(mail_server):
+    server = mail_server
+    await _insert_team(server.db, "partner:partner.test")
+    other = await _insert_agent(server.db, team_id="partner:partner.test", alias="human", did_key=server.human_did,
+        did_aw="did:aw:human", address="partner.test/human")
+    await server.db.execute("UPDATE {{tables.agents}} SET created_at=NOW()+INTERVAL '1 second' WHERE agent_id=$1", UUID(other))
+    sent = await server.mcp_mail(to="acme.com/human", plaintext=True)
+    assert "error" not in sent, sent
+    continued = await server.mcp_mail(conversation_id=sent['conversation_id'], plaintext=True)
+    assert "error" not in continued, continued
+    participant = await server.db.fetch_one("SELECT agent_id,address FROM {{tables.conversation_participants}} WHERE conversation_id=$1 AND did='did:aw:human'", UUID(sent['conversation_id']))
+    assert participant['agent_id'] is None
+    assert participant['address'] == 'acme.com/human'

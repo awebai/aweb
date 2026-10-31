@@ -3,14 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-from aweb.messaging.alias_targets import AmbiguousLocalAddressError, get_agent_by_namespace_alias
+from aweb.messaging.address_auth import identity_recipient
 from aweb.messaging.conversations import (
     list_conversation_participants,
     require_active_conversation_participant,
 )
 from aweb.messaging.messages import get_agent_by_id, resolve_agent_by_did
 from aweb.messaging.verification import require_conversation_not_legacy_bound
-from aweb.service_errors import ConflictError, ValidationError
+from aweb.service_errors import ValidationError
 
 
 @dataclass(frozen=True)
@@ -49,45 +49,18 @@ def participant_recipient(participant: dict) -> dict:
     }
 
 
-async def _local_recipient_from_address(db, *, address: str) -> dict | None:
-    if "/" not in address:
-        return None
-    domain, name = address.split("/", 1)
-    try:
-        return await get_agent_by_namespace_alias(db, namespace=domain, alias=name)
-    except AmbiguousLocalAddressError as exc:
-        raise ConflictError(str(exc)) from exc
-
-
-def with_requested_address(row: dict, address: str) -> dict:
-    copied = dict(row)
-    copied["address"] = (copied.get("address") or "").strip() or address
-    return copied
-
-
 async def recipient_for_conversation_participant(db, participant: dict) -> dict:
-    address = str(participant.get("address") or "").strip()
     did = str(participant.get("did") or "").strip()
-    if participant.get("agent_id") is not None:
-        local_recipient = await get_agent_by_id(db, agent_id=str(participant["agent_id"]))
-        if local_recipient is not None:
-            return with_requested_address(local_recipient, address) if address else local_recipient
-        if did.startswith("did:key:") and not participant_delivery_origin(participant):
-            alias = str(participant.get("alias") or did).strip()
-            raise ValidationError(
-                f'Conversation recipient "{alias}" has been retired and is unreachable. '
-                "Start a new conversation with an active recipient."
-            )
-
-    local_recipient = await resolve_agent_by_did(db, did)
-    if local_recipient is not None:
-        return with_requested_address(local_recipient, address) if address else local_recipient
-    local_recipient = await _local_recipient_from_address(db, address=address)
-    if local_recipient is not None:
-        return with_requested_address(local_recipient, address)
+    local = await resolve_agent_by_did(db, did)
+    if local is not None:
+        recipient = identity_recipient(local, str(participant.get("address") or "").strip())
+        recipient["alias"] = participant.get("alias") or did
+        return recipient
     if did.startswith("did:key:") and not participant_delivery_origin(participant):
-        raise ValidationError("Local did:key recipient requires local resolution or learned return route")
-    return participant_recipient(participant)
+        alias = str(participant.get("alias") or did)
+        raise ValidationError(f'Conversation recipient "{alias}" has been retired and is unreachable. '
+                              'Start a new conversation with an active recipient.')
+    return participant_recipient({**participant, "agent_id": None})
 
 
 async def remote_recipient_from_participant(registry_client, participant: dict) -> dict:
@@ -170,8 +143,8 @@ async def mail_continuation_context(
     )
 
 
-def explicit_mail_target_matches_participant(
-    participant: dict,
+async def explicit_mail_target_matches_participant(
+    db, participant: dict,
     *,
     to_agent_id: str | None = None,
     to_alias: str | None = None,
@@ -180,18 +153,19 @@ def explicit_mail_target_matches_participant(
     to_address: str | None = None,
 ) -> bool:
     checks: list[bool] = []
-    participant_agent_id = str(participant.get("agent_id") or "").strip()
     participant_alias = str(participant.get("alias") or "").strip()
     participant_did = str(participant.get("did") or "").strip()
     participant_address = str(participant.get("address") or "").strip()
 
-    agent_id_matches = False
+    selected_identity_matches = False
     stable_id_matches = False
     address_matches = False
 
     if to_agent_id is not None and str(to_agent_id).strip():
-        agent_id_matches = participant_agent_id == str(to_agent_id).strip()
-        checks.append(agent_id_matches)
+        selected = await get_agent_by_id(db, agent_id=str(to_agent_id).strip())
+        selected_did = str((selected or {}).get("did_aw") or (selected or {}).get("did_key") or "")
+        selected_identity_matches = selected_did == participant_did
+        checks.append(selected_identity_matches)
     if to_alias is not None and str(to_alias).strip():
         checks.append(participant_alias == str(to_alias).strip())
     if to_stable_id is not None and str(to_stable_id).strip():
@@ -206,6 +180,6 @@ def explicit_mail_target_matches_participant(
         # extra binding while the conversation participant stores the stable
         # did:aw. Accept that only when another stable participant field has
         # already identified the recorded recipient.
-        checks.append(did_matches or stable_id_matches or address_matches or agent_id_matches)
+        checks.append(did_matches or stable_id_matches or address_matches or selected_identity_matches)
 
     return bool(checks) and all(checks)

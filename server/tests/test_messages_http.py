@@ -897,7 +897,7 @@ async def test_send_message_to_address_reuses_alias_thread(aweb_cloud_db):
         """
     )
     assert [str(row["conversation_id"]) for row in messages] == [conversation_id, conversation_id]
-    assert str(messages[1]["to_agent_id"]) == bob_agent_id
+    assert messages[1]["to_agent_id"] is None
     assert messages[1]["to_did"] == "did:aw:bob"
     app.state.awid_registry_client.resolve_address.assert_not_called()
 
@@ -1463,8 +1463,8 @@ async def test_send_message_to_cross_team_did_creates_conversation(aweb_cloud_db
     assert message["to_did"] == "did:aw:bob"
     assert by_did["did:aw:alice"]["current_did_key"] == alice_did_key
     assert by_did["did:aw:alice"]["transport_hint"] == "local"
-    assert str(by_did["did:aw:bob"]["agent_id"]) == bob_agent_id
-    assert by_did["did:aw:bob"]["address"] == "otherco.com/bob"
+    assert by_did["did:aw:bob"]["agent_id"] is None
+    assert by_did["did:aw:bob"]["address"] is None
     assert by_did["did:aw:bob"]["current_did_key"] == bob_did_key
     assert by_did["did:aw:bob"]["transport_hint"] == "local"
 
@@ -2314,7 +2314,7 @@ async def test_send_message_to_hosted_handle_alias_uses_canonical_address(aweb_c
         """
     )
     assert row["to_did"] == "did:aw:c3po"
-    assert str(row["to_agent_id"]) == c3po_agent_id
+    assert row["to_agent_id"] is None
     assert row["to_alias"] == "c3po"
 
 
@@ -2392,7 +2392,7 @@ async def test_send_message_continues_conversation_without_address_discovery(awe
     assert str(row["conversation_id"]) == conversation_id
     assert row["from_did"] == "did:aw:bob"
     assert row["to_did"] == "did:aw:alice"
-    assert str(row["to_agent_id"]) == alice_agent_id
+    assert row["to_agent_id"] is None
 
 
 @pytest.mark.asyncio
@@ -2469,7 +2469,7 @@ async def test_send_message_to_address_with_explicit_id_skips_address_discovery(
     assert str(row["conversation_id"]) == conversation_id
     assert row["from_did"] == "did:aw:alice"
     assert row["to_did"] == "did:aw:bob"
-    assert str(row["to_agent_id"]) == bob_agent_id
+    assert row["to_agent_id"] is None
     registry.resolve_address.assert_not_called()
 
 
@@ -2552,7 +2552,7 @@ async def test_send_message_to_address_with_existing_conversation_id_continues_l
     assert str(row["conversation_id"]) == conversation_id
     assert row["from_did"] == "did:aw:alice"
     assert row["to_did"] == "did:aw:bob"
-    assert str(row["to_agent_id"]) == bob_agent_id
+    assert row["to_agent_id"] is None
     registry.resolve_address.assert_not_called()
 
 
@@ -2656,7 +2656,7 @@ async def test_signed_address_continuation_keeps_ephemeral_participant_address(a
         """
     )
     assert row["to_did"] == gsk_did_key
-    assert str(row["to_agent_id"]) == gsk_agent_id
+    assert row["to_agent_id"] is None
     registry.resolve_address.assert_not_called()
 
 
@@ -6267,7 +6267,7 @@ async def test_send_message_accepts_to_stable_id_did_binding_with_duplicate_iden
         """
     )
     assert row["to_did"] == "did:aw:bob"
-    assert row["to_agent_id"] is not None
+    assert row["to_agent_id"] is None
     assert row["to_alias"] == "bob-stable"
 
 
@@ -6322,7 +6322,7 @@ async def test_send_message_accepts_to_stable_id_alias_binding_with_duplicate_id
         """
     )
     assert row["to_did"] == "did:aw:bob"
-    assert row["to_agent_id"] is not None
+    assert row["to_agent_id"] is None
     assert row["to_alias"] == "bob-stable"
 
 
@@ -6544,7 +6544,7 @@ async def test_send_message_accepts_local_to_address_binding_when_awid_misses(aw
         """
     )
     assert row["to_did"] == "did:aw:bob"
-    assert row["to_agent_id"] is not None
+    assert row["to_agent_id"] is None
     assert row["to_alias"] == "gsk"
 
 
@@ -6742,7 +6742,7 @@ async def test_send_message_accepts_to_did_alias_binding_with_duplicate_identity
         """
     )
     assert row["to_did"] == "did:aw:bob"
-    assert row["to_agent_id"] is not None
+    assert row["to_agent_id"] is None
     assert row["to_alias"] == "bob-stable"
 
 
@@ -6928,8 +6928,8 @@ async def test_send_message_accepts_to_address_alias_binding_with_duplicate_iden
         """
     )
     assert row["to_did"] == "did:aw:bob"
-    assert row["to_agent_id"] is not None
-    assert row["to_alias"] == "bob-stable"
+    assert row["to_agent_id"] is None
+    assert row["to_alias"] == "bob"
 
 
 @pytest.mark.asyncio

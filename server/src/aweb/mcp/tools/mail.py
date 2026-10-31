@@ -42,6 +42,7 @@ from aweb.messaging.alias_targets import (
     namespace_exists,
 )
 from aweb.messaging.address_auth import (
+    identity_recipient,
     local_recipient_visible_to_auth,
     unreachable_address_refusal,
 )
@@ -66,7 +67,6 @@ from aweb.messaging.mail_routing import (
     participant_is_remote,
     recipient_for_conversation_participant,
     remote_recipient_from_participant,
-    with_requested_address as _with_requested_address,
 )
 from aweb.routes.messages import (
     SendMessageRequest,
@@ -419,7 +419,7 @@ async def send_mail(
                 from_agent_id=auth.agent_id,
                 from_alias=auth.alias,
                 sender_address=sender_address,
-                to_agent_id=recipient_participant.get("agent_id"),
+                to_agent_id=recipient.get("agent_id"),
                 to_alias=recipient_participant.get("alias"),
                 subject="" if encrypted is not None else subject,
                 body="" if encrypted is not None else body,
@@ -443,7 +443,7 @@ async def send_mail(
         await _fire_message_sent(
             auth,
             from_did=sender_did,
-            to_agent_id=recipient_participant.get("agent_id"),
+            to_agent_id=recipient.get("agent_id"),
             to_alias=recipient_participant.get("alias"),
             message_id=message_id,
             conversation_id=conversation_ref,
@@ -467,6 +467,8 @@ async def send_mail(
     if recipient_ref.startswith("did:aw:") or recipient_ref.startswith("did:key:"):
         recipient_did = recipient_ref
         recipient = await resolve_agent_by_did(db_infra, recipient_did)
+        if recipient is not None:
+            recipient = identity_recipient(recipient)
     elif "/" in recipient_ref:
         domain, name = recipient_ref.split("/", 1)
         try:
@@ -486,7 +488,7 @@ async def send_mail(
                 if controller_did is None:
                     return json.dumps({"error": unreachable_address_refusal(recipient_ref)})
                 recipient["authority_controller_did"] = controller_did
-            recipient = _with_requested_address(recipient, recipient_ref)
+            recipient = identity_recipient(recipient, recipient_ref)
             recipient_did = (
                 recipient.get("did_aw") or recipient.get("did_key") or ""
             ).strip()
@@ -507,11 +509,9 @@ async def send_mail(
                 )
             if resolved is not None and resolved.did_aw:
                 recipient_did = resolved.did_aw
-                recipient = await resolve_agent_by_did(db_infra, recipient_did)
-                if recipient is None:
-                    recipient = _external_recipient_from_address(
-                        recipient_ref, resolved
-                    )
+                # The address lookup above found no local membership. Another
+                # membership of the same DID is not this address's participant.
+                recipient = _external_recipient_from_address(recipient_ref, resolved)
         if recipient is None:
             if await namespace_exists(db_infra, domain):
                 return json.dumps({"error": f"Agent '{recipient_ref}' not found"})

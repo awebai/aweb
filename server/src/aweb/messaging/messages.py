@@ -99,10 +99,6 @@ async def resolve_agent_by_did(db, did: str) -> dict | None:
 
 async def policy_rows_for_participant(db, participant: dict) -> list[dict]:
     """Policy evidence for an existing participant, never new routing authority."""
-    if participant.get("agent_id") is not None:
-        row = await get_agent_by_id(db, agent_id=str(participant["agent_id"]))
-        if row is not None:
-            return [row]
     did = str(participant.get("did") or "").strip()
     if not did:
         return []
@@ -323,7 +319,7 @@ async def deliver_message(
     if not recipient_did:
         raise ValidationError("Missing to_did")
 
-    recipient = await resolve_agent_by_did(db, recipient_did) or recipient_agent
+    recipient = recipient_agent or await resolve_agent_by_did(db, recipient_did)
     if recipient is None:
         raise NotFoundError("Recipient agent not found")
 

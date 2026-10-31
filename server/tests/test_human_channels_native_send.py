@@ -986,3 +986,17 @@ async def test_identity_policy_lock_spans_outer_commit(native_send):
         if update and not update.done():
             update.cancel()
             await asyncio.gather(update, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_native_facts_project_identity_in_endpoint_team(native_send):
+    env = native_send
+    await _insert_team(env['db'], 'partner:partner.test')
+    other = await _insert_agent(env['db'], team_id='partner:partner.test', alias='same-human',
+        did_key=env['recipient_did'], did_aw='did:aw:human', address='partner.test/same-human')
+    # Even a valid projection elsewhere is not the endpoint team's admission context.
+    row = await env['service']._row(actor_id=other)
+    facts = await env['service']._facts(env['auth'], row)
+    assert facts.value['principal'] == {'kind': 'native', 'did': 'did:aw:human'}
+    assert facts.value['actor_id'] == env['b']
+    assert facts.value['team_id'] == env['auth'].team_id

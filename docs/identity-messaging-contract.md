@@ -88,6 +88,14 @@ For a send to a global address (`domain/name`):
    resolved recipient identity binding (`to`, `to_stable_id`, `to_did`).
 4. The aweb server authenticates the sender and validates that behavior-shaping
    outer fields match the signed payload.
+   A thread participant is the identity (`did:aw` for a global identity), not
+   a per-team actor. The address selects that identity and its route, never a
+   different address from a membership projection. `agent_id` is nullable
+   display/admission metadata: explicit-address participants leave it null;
+   a team-scoped alias may record its selected membership. Read access and
+   continuation compare participant DIDs, not actor IDs or address equality.
+   Native admission's actor/team facts are a separate current membership
+   projection for the target identity in the authenticated endpoint team.
 5. Federation delivery uses the resolved delivery origin and the target identity
    binding. The recipient server re-resolves the target address/key and fails
    closed on mismatch.

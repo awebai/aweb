@@ -178,6 +178,8 @@ class NativeMessagingService:
             raise ContractError("authority_unavailable", "authority hook result")
 
     async def _facts(self, auth, row):
+        # Actor/team identify current admission context, never a thread participant.
+        row = await self._row(principal=row["did_aw"] or row["did_key"], team_id=auth.team_id)
         subject = NativeMessagingSubject(
             row["did_aw"] or row["did_key"],
             row["did_key"],
@@ -248,7 +250,7 @@ class NativeMessagingService:
         if target_ref["kind"] != "native":
             raise ContractError("unsupported", "native recipient")
         recipient = await self._row(
-            principal=target_ref["did"], actor_id=requested_target.value.get("actor_id")
+            principal=target_ref["did"], team_id=auth.team_id
         )
         if (
             recipient.get("agent_type") == "human"
@@ -862,8 +864,8 @@ class NativeMessagingUnitOfWork:
                         db,
                         conversation_type="mail",
                         created_by_did=_principal(self.auth),
-                        initiator=actor,
-                        recipients=[recipient],
+                        initiator=dict(actor, agent_id=None),
+                        recipients=[dict(recipient, agent_id=None)],
                         conversation_id=cid,
                         team_id=self.auth.team_id,
                     )
@@ -901,7 +903,7 @@ class NativeMessagingUnitOfWork:
                 cid = await ensure_session(
                     db,
                     team_id=self.auth.team_id,
-                    participant_rows=[actor, recipient],
+                    participant_rows=[dict(actor, agent_id=None), dict(recipient, agent_id=None)],
                     created_by=_principal(self.auth),
                     session_id=UUID(value["conversation_id"]),
                 )

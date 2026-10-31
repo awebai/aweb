@@ -181,9 +181,7 @@ async def list_conversations_for_auth(
         raise HTTPException(status_code=422, detail="limit must be between 1 and 100")
     aweb_db = db.get_manager("aweb")
     actor_dids = auth_dids(auth)
-    actor_agent_id = str(auth.agent_id).strip() if auth.agent_id else None
-    actor_address = str(auth.address).strip() if auth.address else None
-    if not actor_dids and not actor_agent_id and not actor_address:
+    if not actor_dids:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 
     requested_type = (conversation_type or "").strip().lower() or None
@@ -229,16 +227,12 @@ async def list_conversations_for_auth(
                                 SELECT 1
                                 FROM {{tables.conversation_participants}} cp
                                 WHERE cp.conversation_id = m.conversation_id
-                                  AND (
-                                       cp.did = ANY($1::text[])
-                                    OR ($2::uuid IS NOT NULL AND cp.agent_id = $2::uuid)
-                                    OR ($3::text IS NOT NULL AND cp.address = $3::text)
-                                  )
+                                  AND cp.did = ANY($1::text[])
                             )
                        )
                     )
                   AND (
-                        ($4::text IS NULL AND $5::text IS NULL)
+                        ($2::text IS NULL AND $3::text IS NULL)
                      OR (
                             m.conversation_id IS NOT NULL
                             AND EXISTS (
@@ -246,8 +240,8 @@ async def list_conversations_for_auth(
                                 FROM {{tables.conversation_participants}} target_cp
                                 WHERE target_cp.conversation_id = m.conversation_id
                                   AND (
-                                       ($4::text IS NOT NULL AND target_cp.did = $4::text)
-                                    OR ($5::text IS NOT NULL AND target_cp.address = $5::text)
+                                       ($2::text IS NOT NULL AND target_cp.did = $2::text)
+                                    OR ($3::text IS NOT NULL AND target_cp.address = $3::text)
                                   )
                             )
                         )
@@ -271,11 +265,11 @@ async def list_conversations_for_auth(
                 -- decided here, not by the caller-visible sort further down.
                 SELECT group_key, last_message_at, unread_count
                 FROM grouped
-                WHERE ($6::timestamptz IS NULL OR last_message_at < $6::timestamptz
-                    OR (last_message_at = $6::timestamptz AND $8::text IS NOT NULL
-                        AND 'mail:' || group_key < $8::text))
+                WHERE ($4::timestamptz IS NULL OR last_message_at < $4::timestamptz
+                    OR (last_message_at = $4::timestamptz AND $6::text IS NOT NULL
+                        AND 'mail:' || group_key < $6::text))
                 ORDER BY last_message_at DESC, group_key DESC
-                LIMIT $7::int
+                LIMIT $5::int
             )
             SELECT
                 newest.message_id,
@@ -338,8 +332,6 @@ async def list_conversations_for_auth(
             ORDER BY p.last_message_at DESC, p.group_key DESC
             """,
             actor_dids,
-            actor_agent_id,
-            actor_address,
             target_did,
             target_address,
             cursor_dt,

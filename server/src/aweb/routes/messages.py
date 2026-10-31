@@ -49,6 +49,8 @@ from aweb.messaging.alias_targets import (
     validate_alias_selector,
 )
 from aweb.messaging.address_auth import (
+    identity_recipient,
+    local_recipient_for_address_binding,
     local_recipient_visible_to_auth,
     namespace_uses_home_registry,
     requires_registry_address_binding,
@@ -71,7 +73,6 @@ from aweb.messaging.mail_routing import (
     participant_is_remote,
     recipient_for_conversation_participant,
     remote_recipient_from_participant,
-    with_requested_address as _with_requested_address,
 )
 from aweb.messaging.messages import (
     MessagePriority,
@@ -674,16 +675,9 @@ async def _local_recipient_from_address(db, *, domain: str, name: str) -> dict |
 def _recipient_identity_matches(left: dict | None, right: dict | None) -> bool:
     if left is None or right is None:
         return False
-    left_agent_id = str(left.get("agent_id") or "").strip()
-    right_agent_id = str(right.get("agent_id") or "").strip()
-    if left_agent_id and left_agent_id == right_agent_id:
-        return True
-    for field in ("did_aw", "did_key"):
-        left_value = str(left.get(field) or "").strip()
-        right_value = str(right.get(field) or "").strip()
-        if left_value and right_value and left_value == right_value:
-            return True
-    return False
+    left_did = str(left.get("did_aw") or left.get("did_key") or "").strip()
+    right_did = str(right.get("did_aw") or right.get("did_key") or "").strip()
+    return bool(left_did and right_did and left_did == right_did)
 
 
 def _signed_payload_matches_address_binding(
@@ -1273,7 +1267,7 @@ async def _send_mail_conversation_continuation(
             team_id=continuation.conversation.get("team_id") or auth.team_id,
             from_agent_id=auth.agent_id,
             from_alias=auth.alias,
-            to_agent_id=recipient_participant.get("agent_id"),
+            to_agent_id=recipient.get("agent_id"),
             to_alias=recipient_participant.get("alias"),
             from_did=sender_did,
             to_did=recipient_participant["did"],
@@ -1431,8 +1425,8 @@ async def send_message(
                 )
             except (ValidationError, NotFoundError, ForbiddenError, ConflictError) as exc:
                 raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-            if not explicit_mail_target_matches_participant(
-                requested_continuation.recipient_participant,
+            if not await explicit_mail_target_matches_participant(
+                db, requested_continuation.recipient_participant,
                 to_agent_id=payload.to_agent_id,
                 to_alias=payload.to_alias,
                 to_did=payload.to_did,
@@ -1473,6 +1467,8 @@ async def send_message(
     if payload.to_address is None and payload.to_stable_id is not None:
         recipient_did = payload.to_stable_id.strip()
         recipient = await resolve_agent_by_did(db, recipient_did)
+        if recipient is not None:
+            recipient = identity_recipient(recipient)
         if recipient is None:
             if recipient_did.startswith("did:aw:"):
                 _raise_bare_did_first_contact_unsupported()
@@ -1501,12 +1497,14 @@ async def send_message(
             )
             if not _recipient_identity_matches(bound_recipient, recipient):
                 raise HTTPException(status_code=422, detail="to_address must match the to_stable_id recipient")
-            recipient = _with_requested_address(recipient, address)
+            recipient = identity_recipient(recipient, address)
         to_agent_id = str(recipient["agent_id"]) if recipient.get("agent_id") else None
         to_alias = recipient.get("alias")
     elif payload.to_address is None and payload.to_did is not None:
         requested_recipient_did = payload.to_did.strip()
         recipient = await resolve_agent_by_did(db, requested_recipient_did)
+        if recipient is not None:
+            recipient = identity_recipient(recipient)
         if recipient is None:
             if requested_recipient_did.startswith("did:aw:"):
                 _raise_bare_did_first_contact_unsupported()
@@ -1531,7 +1529,7 @@ async def send_message(
             )
             if not _recipient_identity_matches(bound_recipient, recipient):
                 raise HTTPException(status_code=422, detail="to_address must match the to_did recipient")
-            recipient = _with_requested_address(recipient, address)
+            recipient = identity_recipient(recipient, address)
         recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or requested_recipient_did).strip()
         to_agent_id = str(recipient["agent_id"]) if recipient.get("agent_id") else None
         to_alias = recipient.get("alias")
@@ -1555,15 +1553,7 @@ async def send_message(
                 recipient_did = str(
                     local_candidate.get("did_aw") or local_candidate.get("did_key") or ""
                 ).strip()
-                canonical_recipient = (
-                    await resolve_agent_by_did(db, recipient_did)
-                    if recipient_did
-                    else None
-                )
-                recipient = _with_requested_address(
-                    canonical_recipient or local_candidate,
-                    address,
-                )
+                recipient = identity_recipient(local_candidate, address)
                 recipient["requires_local_address_authority"] = True
 
         strict_authority = getattr(request.app.state, "federation_authority", None)
@@ -1576,7 +1566,7 @@ async def send_message(
                 raise FederationAuthorityError("sender_registry_unavailable") from exc
             if resolved is not None and resolved.did_aw:
                 recipient_did = resolved.did_aw
-                recipient = await resolve_agent_by_did(db, recipient_did)
+                recipient = local_recipient_for_address_binding(await resolve_agent_by_did(db, resolved.did_aw), resolved, address)
                 if recipient is None:
                     recipient = _external_recipient_from_address(address, resolved)
         elif recipient is None and strict_authority is not None:
@@ -1591,7 +1581,7 @@ async def send_message(
                 resolved = None
             if resolved is not None and resolved.did_aw:
                 recipient_did = resolved.did_aw
-                recipient = await resolve_agent_by_did(db, recipient_did)
+                recipient = local_recipient_for_address_binding(await resolve_agent_by_did(db, resolved.did_aw), resolved, address)
                 if recipient is None:
                     recipient = _external_recipient_from_address(address, resolved)
                 else:
@@ -1602,7 +1592,7 @@ async def send_message(
             resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
             if resolved is not None and resolved.did_aw:
                 recipient_did = resolved.did_aw
-                recipient = await resolve_agent_by_did(db, recipient_did)
+                recipient = local_recipient_for_address_binding(await resolve_agent_by_did(db, resolved.did_aw), resolved, address)
                 if recipient is None:
                     recipient = _external_recipient_from_address(address, resolved)
 
@@ -1628,7 +1618,7 @@ async def send_message(
                     )
                 ):
                     raise HTTPException(status_code=404, detail="Recipient address not found")
-            recipient = _with_requested_address(recipient, address)
+            recipient = identity_recipient(recipient, address)
             recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()
             if not recipient_did:
                 raise HTTPException(status_code=404, detail="Recipient agent not found")
