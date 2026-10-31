@@ -55,6 +55,30 @@ func withErrorCode(code string, err error) error {
 	return &codedError{code: code, err: err}
 }
 
+// plainRefusal is a refusal by an aweb server or AWID registry told in a
+// sentence for people. It wraps the refusal, so --json keeps its code, status
+// and detail.
+type plainRefusal struct {
+	text string
+	err  error
+}
+
+func (e *plainRefusal) Error() string { return e.text }
+
+func (e *plainRefusal) Unwrap() error { return e.err }
+
+// isAliasConflict reports a refusal because another active member of the team
+// holds the name.
+func isAliasConflict(err error) bool {
+	return awid.DescribeError(err).Code == "alias_conflict"
+}
+
+// nameTakenText says that another active member of teamID holds alias, and
+// which flag of the command picks another name.
+func nameTakenText(alias, teamID, flag string) string {
+	return fmt.Sprintf("The name %s is already taken in %s. Pick another with %s.", alias, teamID, flag)
+}
+
 // cliErrorEnvelope is what --json prints for a failed command: the error's
 // awid.ErrorDetail, with the code of a tagged refusal, and its message.
 type cliErrorEnvelope struct {

@@ -20,15 +20,9 @@ type ErrorDetail struct {
 // encryption_key_missing, decrypt_failed, and error for any other error.
 func DescribeError(err error) ErrorDetail {
 	detail := ErrorDetail{Code: "error"}
-	var apiErr *APIError
-	var registryErr *RegistryError
-	body, refused := "", false
-	if errors.As(err, &registryErr) {
-		body, refused, detail.HTTPStatus = registryErr.Detail, true, registryErr.StatusCode
-	} else if errors.As(err, &apiErr) {
-		body, refused, detail.HTTPStatus = apiErr.Body, true, apiErr.StatusCode
-	}
+	body, status, refused := refusalBody(err)
 	if refused {
+		detail.HTTPStatus = status
 		serverCode, text := responseDetail(body)
 		detail.Code, detail.Detail = "http_error", text
 		if serverCode == "alias_active" {
@@ -44,6 +38,32 @@ func DescribeError(err error) ErrorDetail {
 		detail.Code = decryption.Code
 	}
 	return detail
+}
+
+// RefusalCode is the code of a refusal's coded detail {"code", "message"}, or
+// "" when err is no refusal by an aweb server or AWID registry or its detail
+// carries no code.
+func RefusalCode(err error) string {
+	body, _, refused := refusalBody(err)
+	if !refused {
+		return ""
+	}
+	code, _ := responseDetail(body)
+	return code
+}
+
+// refusalBody is the response body and HTTP status of a refusal by an aweb
+// server or AWID registry.
+func refusalBody(err error) (body string, status int, refused bool) {
+	var apiErr *APIError
+	var registryErr *RegistryError
+	if errors.As(err, &registryErr) {
+		return registryErr.Detail, registryErr.StatusCode, true
+	}
+	if errors.As(err, &apiErr) {
+		return apiErr.Body, apiErr.StatusCode, true
+	}
+	return "", 0, false
 }
 
 // responseDetail reads a JSON error body's detail: a string is its text; a
