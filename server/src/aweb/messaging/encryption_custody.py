@@ -24,18 +24,24 @@ async def require_non_custodial_recipients(db, envelope: dict, recipients: list[
     recipient's exact delivered key is checked, never its latest unrelated key
     or an unverified projection of the assertion's custody field.
     """
+    references = envelope.get("recipients")
+    if not isinstance(references, list):
+        return  # Malformed envelopes still go through the shared validator.
     for recipient in recipients:
         if not recipient.get("agent_id"):
             continue
         did = str(recipient.get("did_key") or recipient.get("current_did_key") or "").strip()
-        reference = next((item for item in envelope.get("recipients", []) if item.get("did") == did), None)
+        reference = next((item for item in references if isinstance(item, dict) and item.get("did") == did), None)
         if not reference:
             continue  # Envelope binding validation remains the caller's job.
+        key_id = reference.get("encryption_key_id")
+        if not isinstance(key_id, str) or not key_id:
+            continue
         row = await db.get_manager("aweb").fetch_one(
             """SELECT assertion_canonical, assertion_signature
                FROM {{tables.agent_encryption_keys}}
                WHERE agent_id=$1 AND encryption_key_id=$2 AND revoked_at IS NULL""",
-            UUID(str(recipient["agent_id"])), reference["encryption_key_id"],
+            UUID(str(recipient["agent_id"])), key_id,
         )
         if row is None:
             continue

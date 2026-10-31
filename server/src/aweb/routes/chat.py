@@ -414,10 +414,9 @@ def _chat_envelope_recipients(rows: list[dict[str, Any]]) -> list[dict[str, str 
     return recipients
 
 
-async def _validate_encrypted_chat_payload(
+def _validate_encrypted_chat_payload(
     payload: CreateSessionRequest | SendMessageRequest,
     *,
-    db,
     auth: MessagingAuth,
     actor_did: str,
     session_id: str,
@@ -452,7 +451,6 @@ async def _validate_encrypted_chat_payload(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if str(envelope.get("signature") or "").strip() == "":
         raise HTTPException(status_code=422, detail="encrypted envelope signature is required")
-    await require_non_custodial_recipients(db, envelope, recipient_rows)
     return encrypted_message_storage_metadata(envelope)
 
 
@@ -1384,6 +1382,8 @@ async def create_or_send(
         signature=payload.signature,
     )
     target_dids = sorted({_target_did(row) for row in target_rows if _target_did(row)})
+    if _payload_is_encrypted(payload):
+        await require_non_custodial_recipients(db, payload.encrypted_envelope or {}, target_rows)
 
     existing_attachment = await attachment_retry(db, payload, "chat")
     if existing_attachment:
@@ -1479,9 +1479,8 @@ async def create_or_send(
             raise HTTPException(status_code=424, detail="Recipient address has no federated delivery origin")
         if requested_session_id is None:
             raise HTTPException(status_code=422, detail="Federated chat delivery requires session_id")
-        encrypted_metadata = await _validate_encrypted_chat_payload(
+        encrypted_metadata = _validate_encrypted_chat_payload(
             payload,
-            db=db,
             auth=auth,
             actor_did=actor_did,
             session_id=str(requested_session_id),
@@ -1628,9 +1627,8 @@ async def create_or_send(
     aweb_db = db.get_manager("aweb")
     pre_message_id = uuid_mod.uuid4()
 
-    encrypted_metadata = await _validate_encrypted_chat_payload(
+    encrypted_metadata = _validate_encrypted_chat_payload(
         payload,
-        db=db,
         auth=auth,
         actor_did=actor_did,
         session_id=str(session_id),
@@ -2700,9 +2698,10 @@ async def send_message(
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     pre_message_id = uuid_mod.uuid4()
-    encrypted_metadata = await _validate_encrypted_chat_payload(
+    if _payload_is_encrypted(payload):
+        await require_non_custodial_recipients(db, payload.encrypted_envelope or {}, recipient_rows)
+    encrypted_metadata = _validate_encrypted_chat_payload(
         payload,
-        db=db,
         auth=auth,
         actor_did=actor_did,
         session_id=str(session_uuid),
