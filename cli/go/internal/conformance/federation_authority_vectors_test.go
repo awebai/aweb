@@ -275,6 +275,7 @@ func TestFederationAuthorityStateVectorReferencesAndErrors(t *testing.T) {
 		"recipient_current_key_mismatch":                  {422, false},
 		"recipient_encryption_assertion_invalid_or_stale": {422, false},
 		"recipient_encryption_assertion_missing":          {424, false},
+		"recipient_custodial_no_e2ee":                     {422, false},
 		"recipient_identity_not_found":                    {404, false},
 		"recipient_policy_rejected":                       {403, false},
 		"recipient_route_mismatch":                        {422, false},
