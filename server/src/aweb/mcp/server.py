@@ -40,6 +40,8 @@ from aweb.mcp.tools.contacts import read_messages_from_contact as _read_messages
 from aweb.mcp.tools.identity import whoami as _whoami_impl
 from aweb.mcp.tools.mail import check_inbox as _check_inbox_impl
 from aweb.mcp.tools.mail import send_mail as _send_mail_impl
+from aweb.mcp.tools.room import room_read as _room_read_impl, room_post as _room_post_impl, room_pending as _room_pending_impl
+from aweb.messaging.room import ROOM_DISCLOSURE
 from aweb.mcp.tools.team_instructions import instructions_history as _instructions_history_impl
 from aweb.mcp.tools.team_instructions import instructions_show as _instructions_show_impl
 from aweb.mcp.tools.team_roles import roles_show as _roles_show_impl
@@ -166,6 +168,43 @@ def register_tools(
     )
     async def whoami() -> str:
         return await _whoami_impl(db_infra)
+
+    # -- Team room --
+
+    @mcp.tool(
+        name="room_pending",
+        description="Check your pending team room notices without acknowledging mail or chat. Read posts with room_read.",
+    )
+    async def room_pending() -> str:
+        return await _room_pending_impl(db_infra)
+
+    @mcp.tool(
+        name="room_read",
+        description=(
+            "Read the shared team room, oldest first. All current members can read retained "
+            "history, including posts made before they joined. Explicit read only; follow "
+            "next_cursor when has_more is true."
+        ),
+    )
+    async def room_read(after: str | None = None, limit: int = 50) -> str:
+        return await _room_read_impl(db_infra, after=after, limit=limit)
+
+    @mcp.tool(
+        name="room_post",
+        description=(
+            "Post a signed announcement to the shared team room. " + ROOM_DISCLOSURE
+            + " Hosted MCP signs as the authenticated actor. Self-custodial callers supply "
+            "signed_post. E2E rooms are unsupported. Other current members receive one notice per post; no reply is expected."
+        ),
+    )
+    async def room_post(
+        body: str = "", subject: str = "", e2ee: bool = False,
+        signed_post: dict[str, Any] | None = None,
+    ) -> str:
+        return await _room_post_impl(
+            db_infra, hosted_signer=hosted_signer, body=body, subject=subject,
+            e2ee=e2ee, signed_post=signed_post,
+        )
 
     # -- Mail --
 

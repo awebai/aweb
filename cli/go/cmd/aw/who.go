@@ -36,10 +36,12 @@ func init() {
 	whoCmd.Flags().StringVar(&whoRegistry, "registry", "", "Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)")
 	whoCmd.Flags().StringVar(&whoMessageID, "message-id", "", "Inspect the sender of this received mail or chat message")
 	whoCmd.Flags().StringVar(&whoSessionID, "session-id", "", "Inspect received chat in this session")
+	whoCmd.Flags().BoolVar(&whoRoom, "room", false, "Inspect an exact team room post (requires --message-id)")
 	rootCmd.AddCommand(whoCmd)
 }
 
 var whoRegistry, whoMessageID, whoSessionID string
+var whoRoom bool
 
 type whoStatus interface {
 	IDChainEvidence(context.Context, map[string]any, awid.IDChainSubject, string) *awid.IDChainEvidence
@@ -67,6 +69,9 @@ type whoOutput struct {
 }
 
 func runWho(cmd *cobra.Command, args []string) error {
+	if whoRoom && (whoMessageID == "" || whoSessionID != "") {
+		return fmt.Errorf("--room requires --message-id and cannot be combined with --session-id")
+	}
 	wd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -80,15 +85,23 @@ func runWho(cmd *cobra.Command, args []string) error {
 		if resolveErr != nil {
 			return resolveErr
 		}
-		if err := configureClientE2EEForRead(cmd, ctx, c, sel); err != nil {
-			return err
+		if !whoRoom {
+			if err := configureClientE2EEForRead(cmd, ctx, c, sel); err != nil {
+				return err
+			}
 		}
 		target := ""
 		if len(args) > 0 {
 			target = strings.TrimSpace(args[0])
 		}
 		opts.ReceivedEnrollment = c.Client.ReceivedIDTreeEnrollment
-		message, readErr := findWhoSender(ctx, c.Client, target, whoMessageID, whoSessionID)
+		var message awid.InboxMessage
+		var readErr error
+		if whoRoom {
+			message, readErr = findWhoRoomSender(ctx, c.Client, target, whoMessageID)
+		} else {
+			message, readErr = findWhoSender(ctx, c.Client, target, whoMessageID, whoSessionID)
+		}
 		if readErr != nil {
 			return readErr
 		}

@@ -8,6 +8,8 @@ func eventDeliveryClass(ev awid.AgentEvent) (string, bool) {
 		return EventClassMail, true
 	case string(awid.AgentEventActionableChat), "chat_message":
 		return EventClassChat, true
+	case string(awid.AgentEventActionableRoomPost), "room_post":
+		return EventClassChat, true
 	case string(awid.AgentEventControlInterrupt), string(awid.AgentEventWorkAvailable), string(awid.AgentEventClaimUpdate), string(awid.AgentEventClaimRemoved), string(awid.AgentEventAppEvent):
 		return "control", true
 	default:
