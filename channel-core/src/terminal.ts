@@ -111,6 +111,7 @@ function quotedIdentityHome(home: string): string | undefined {
 }
 
 function messageRecoveryCommand(awakening: ChannelAwakening, awCommand: string): string | undefined {
+  if (awakening.kind === "room") return `${awCommand} room read`;
   const id = validatedNoticeID(awakening.meta.message_id);
   if (awakening.kind === "mail" && id) return `${awCommand} mail show --message-id ${id}`;
   if (awakening.kind === "chat") {

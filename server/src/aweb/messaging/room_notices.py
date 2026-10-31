@@ -5,14 +5,77 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from fastapi import HTTPException
-from aweb.grant_streams import grant_has_scope
+from fastapi import HTTPException, Request
+from aweb.config import require_registered_certificates
+from aweb.grant_streams import grant_has_scope, grant_terminal_reason
+from aweb.identity_binding import verify_identity_binding
 from aweb.messaging.room import _active_member, _post_dict, _uuid
 from aweb.service_errors import ServiceError
-from aweb.team_auth_deps import team_identity_with_grant_scope
+from aweb.team_auth import parse_and_verify_certificate
+from aweb.team_auth_deps import (
+    _get_registered_certificates,
+    _get_revoked_certificates,
+    _resolve_team_key,
+)
 
 logger = logging.getLogger(__name__)
-_read_actor = team_identity_with_grant_scope("chat.read")
+
+
+async def _refresh_room_authority(request, db, identity):
+    # A snapshot is not a new HTTP request. Its opening signature/timestamp
+    # already admitted this actor; only current authority must be refreshed.
+    # Reset request-local binding observations so they cannot outlive the
+    # production registry cache bounds during the stream.
+    authority_request = Request({**request.scope, "state": {}})
+    if identity.grant is not None:
+        reason = await grant_terminal_reason(authority_request, db, identity)
+        if reason:
+            raise HTTPException(status_code=403, detail=reason)
+        row = await db.get_manager("aweb").fetch_one(
+            """SELECT team_id, scopes FROM {{tables.identity_session_grants}}
+            WHERE grant_id=$1 AND subject_agent_id=$2""",
+            UUID(identity.grant.grant_id),
+            UUID(identity.agent_id),
+        )
+        if (
+            not row
+            or row["team_id"] != identity.team_id
+            or "chat.read" not in (row["scopes"] or ())
+        ):
+            raise HTTPException(status_code=403, detail="Room grant out of scope")
+    else:
+        team_key = await _resolve_team_key(authority_request, identity.team_id)
+        revoked = await _get_revoked_certificates(authority_request, identity.team_id)
+        try:
+            cert = parse_and_verify_certificate(
+                request.headers.get("X-AWID-Team-Certificate", ""),
+                request_did_key=identity.did_key,
+                team_public_key_resolver=lambda team: (
+                    team_key if team == identity.team_id else ""
+                ),
+                revocation_checker=lambda team, certificate: certificate in revoked,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        if (
+            cert["team_id"] != identity.team_id
+            or cert["certificate_id"] != identity.certificate_id
+        ):
+            raise HTTPException(status_code=403, detail="Room membership changed")
+        if require_registered_certificates():
+            registered = await _get_registered_certificates(
+                authority_request, identity.team_id
+            )
+            if identity.certificate_id not in registered:
+                raise HTTPException(
+                    status_code=403, detail="Room certificate not registered"
+                )
+    await verify_identity_binding(
+        authority_request,
+        did_key=identity.did_key,
+        did_aw=identity.did_aw,
+        address=identity.address,
+    )
 
 
 async def pending_room_notices(db, actor, *, limit=50):
@@ -86,13 +149,8 @@ async def current_room_events(request, db, identity):
     if not exists:
         return []
     try:
-        # Reuse ordinary production request admission and its cache bounds,
-        # including current grants/certificates; no stream-lifetime room ACL.
-        actor = await _read_actor(request, db)
-        if actor.agent_id != identity.agent_id or actor.team_id != identity.team_id:
-            logger.warning("Room event actor changed after stream admission")
-            return []
-        return (await pending_room_notices(db, actor))["notices"]
+        await _refresh_room_authority(request, db, identity)
+        return (await pending_room_notices(db, identity))["notices"]
     except (HTTPException, ServiceError):
         logger.warning(
             "Room notice snapshot refused by current membership authority",

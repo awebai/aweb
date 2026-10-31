@@ -74,3 +74,20 @@ test("room wakes defer for known working panes and deliver for unknown readiness
     else {await handler(awakening);expect(input).toHaveBeenCalledOnce();}
   }
 });
+
+test("room instructions retain each receiving binding and the default-home neighbour", async () => {
+  const input = vi.fn(async () => {});
+  const handler = createTerminalAwakeningHandler({home:"/instance",session:{inspect:async()=>({state:"idle",present:true}),input}});
+  const awakening = {kind:"room" as const,content:"New team room post from alice: Update. Read it: aw room read",meta:{type:"room",trust_status:"verified",message_id:"22222222-2222-4222-8222-222222222222"},deliveryIntent:"wake" as const};
+  for (const home of [undefined, "/joined-team/.aw", "/second team's/.aw"]) {
+    await handler(awakening, home);
+    const text = String(input.mock.calls.at(-1)?.[1]);
+    if (home === undefined) {
+      expect(text).toContain("Read it: aw room read");
+      expect(text).not.toContain("--identity-home");
+    } else {
+      const quoted = "'" + home.replace(/'/g, "'\\''") + "'";
+      expect(text).toContain(`Recovery: aw --identity-home ${quoted} room read`);
+    }
+  }
+});

@@ -18,11 +18,17 @@ async def pending(env, actor="bob"):
 
 async def snapshot(env, actor="bob", extra_headers=None):
     deadline = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
-    response = await env.client.get(
+    request = env.client.build_request(
+        "GET",
         "/v1/events/stream",
         params={"deadline": deadline},
-        headers=extra_headers or headers(env.actors[actor]),
     )
+    request.headers.update(
+        extra_headers(request.url.raw_path.decode())
+        if extra_headers
+        else headers(env.actors[actor])
+    )
+    response = await env.client.send(request)
     assert response.status_code == 200, response.text
     return [
         json.loads(line[6:])
@@ -146,12 +152,12 @@ async def test_room_notice_snapshot_uses_current_certificate_and_chat_scope(
             aud=env.app.state.public_origin,
         )
 
-    assert await snapshot(env, extra_headers=signed("/v1/events/stream")) == []
+    assert await snapshot(env, extra_headers=signed) == []
     await env.db.execute(
         "UPDATE {{tables.identity_session_grants}} SET scopes=ARRAY['events.read','chat.read'] WHERE grant_id=$1",
         grant,
     )
-    assert len(await snapshot(env, extra_headers=signed("/v1/events/stream"))) == 1
+    assert len(await snapshot(env, extra_headers=signed)) == 1
     await env.registry_db.execute(
         """INSERT INTO {{tables.team_certificates}}
     (team_uuid,certificate_id,member_did_key,alias,revoked_at)
@@ -188,3 +194,157 @@ async def test_room_notice_snapshot_uses_current_certificate_and_chat_scope(
         certificate_id="privacy-bob",
     )
     assert await current_room_events(request, env.infra, identity) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "grant_actor, authority",
+    [
+        (False, "current"),
+        (True, "current"),
+        (False, "revoked"),
+        (True, "revoked"),
+        (False, "unavailable"),
+        (True, "unavailable"),
+        (True, "scope_removed"),
+        (True, "grant_revoked"),
+    ],
+)
+async def test_live_room_stream_refreshes_authority_without_replaying_opening_timestamp(
+    privacy_app,
+    monkeypatch,
+    grant_actor,
+    authority,
+):
+    """A -120s opening proof stays admitted at +181s of a 300s stream."""
+    import hashlib
+    from types import SimpleNamespace
+    from nacl.signing import SigningKey
+    from awid.did import did_from_public_key
+    from awid.signing import canonical_json_bytes, sign_message
+    from awid.registry import RegistryClient
+    import awid.dns_auth as dns_auth
+    import aweb.routes.events as events_routes
+    import aweb.grant_streams as grant_streams
+    from test_identity_grants import _grant_headers
+    from tests.real_stack import ServiceTransport
+
+    env = privacy_app
+    room = await metadata(env)
+    clock = SimpleNamespace(now=datetime.now(timezone.utc), polls=0)
+    start = clock.now
+    timestamp = (start - timedelta(seconds=120)).isoformat()
+    request = env.client.build_request(
+        "GET",
+        "/v1/events/stream",
+        params={"deadline": (start + timedelta(seconds=300)).isoformat()},
+    )
+    if grant_actor:
+        key = SigningKey.generate()
+        grant_id = uuid4()
+        await env.db.execute(
+            """INSERT INTO {{tables.identity_session_grants}}
+            (grant_id,team_id,subject_agent_id,grant_did_key,scopes,issued_at,
+             expires_at,issued_by_certificate_id)
+            VALUES ($1,$2,$3,$4,$5,now(),now()+interval '10 minutes','privacy-bob')""",
+            grant_id,
+            TEAM,
+            env.actors["bob"].id,
+            did_from_public_key(bytes(key.verify_key)),
+            ["events.read", "chat.read"],
+        )
+        signed_headers = _grant_headers(
+            signing_key=bytes(key),
+            did_key=did_from_public_key(bytes(key.verify_key)),
+            grant_id=str(grant_id),
+            method="GET",
+            path=request.url.raw_path.decode(),
+            aud=env.app.state.public_origin,
+            payload_overrides={"timestamp": timestamp},
+        )
+        signed_headers["X-AWEB-Timestamp"] = timestamp
+    else:
+        bob = env.actors["bob"]
+        signed = canonical_json_bytes(
+            {
+                "team_id": TEAM,
+                "timestamp": timestamp,
+                "body_sha256": hashlib.sha256(b"").hexdigest(),
+            }
+        )
+        signed_headers = {
+            "Authorization": f"DIDKey {bob.did} {sign_message(bob.sk, signed)}",
+            "X-AWEB-Timestamp": timestamp,
+            "X-AWID-Team-Certificate": bob.certificate,
+        }
+    request.headers.update(signed_headers)
+
+    class StreamClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock.now
+
+    previous_registry = env.app.state.awid_registry_client
+    unavailable = None
+
+    async def advance_poll(seconds):
+        nonlocal unavailable
+        clock.polls += 1
+        if clock.polls == 1:
+            clock.now = start + timedelta(seconds=181)
+            sent = await post(env, room)
+            assert sent.status_code == 200, sent.text
+            if authority == "revoked":
+                await env.registry_db.execute(
+                    """INSERT INTO {{tables.team_certificates}}
+                    (team_uuid,certificate_id,member_did_key,alias,revoked_at)
+                    SELECT team_uuid,'privacy-bob',$2,'bob',now()
+                    FROM {{tables.teams}} WHERE name=$1""",
+                    TEAM.split(":")[0],
+                    env.actors["bob"].did,
+                )
+            elif authority == "scope_removed":
+                await env.db.execute(
+                    "UPDATE {{tables.identity_session_grants}} SET scopes=ARRAY['events.read'] WHERE grant_id=$1",
+                    grant_id,
+                )
+            elif authority == "grant_revoked":
+                await env.db.execute(
+                    "UPDATE {{tables.identity_session_grants}} SET revoked_at=now() WHERE grant_id=$1",
+                    grant_id,
+                )
+            elif authority == "unavailable":
+                transport = ServiceTransport(env.registry_app)
+                transport.down = True
+                unavailable = RegistryClient(
+                    registry_url="http://registry.test", transport=transport
+                )
+                env.app.state.awid_registry_client = unavailable
+        else:
+            clock.now = start + timedelta(seconds=301)
+
+    monkeypatch.setattr(dns_auth, "datetime", StreamClock)
+    monkeypatch.setattr(events_routes, "datetime", StreamClock)
+    monkeypatch.setattr(grant_streams, "datetime", StreamClock)
+    monkeypatch.setattr(events_routes, "asyncio", SimpleNamespace(sleep=advance_poll))
+    try:
+        response = await env.client.send(request)
+        assert response.status_code == 200, response.text
+        assert "event: connected" in response.text
+        notices = [
+            json.loads(line[6:])
+            for line in response.text.splitlines()
+            if line.startswith("data: ")
+            and json.loads(line[6:]).get("type") == "actionable_room_post"
+        ]
+        assert len(notices) == (1 if authority == "current" else 0), response.text
+        if notices:
+            assert notices[0]["agent_id"] == str(env.actors["bob"].id)
+            assert notices[0]["room_id"] == room["room_id"]
+        assert (
+            await env.db.fetch_val("SELECT count(*) FROM {{tables.room_post_notices}}")
+        ) == 2
+    finally:
+        env.app.state.awid_registry_client = previous_registry
+        if unavailable:
+            await unavailable.aclose()

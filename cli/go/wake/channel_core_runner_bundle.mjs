@@ -11193,6 +11193,7 @@ function quotedIdentityHome(home) {
   return "'" + home.replace(/'/g, "'\\''") + "'";
 }
 function messageRecoveryCommand(awakening, awCommand) {
+  if (awakening.kind === "room") return `${awCommand} room read`;
   const id = validatedNoticeID(awakening.meta.message_id);
   if (awakening.kind === "mail" && id) return `${awCommand} mail show --message-id ${id}`;
   if (awakening.kind === "chat") {

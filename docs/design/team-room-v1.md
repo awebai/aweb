@@ -213,7 +213,9 @@ The existing per-agent SSE stream adds `actionable_room_post`: room/post IDs,
 team and recipient IDs, signed sender identity/label and subject, with no body.
 Opening the stream retains its existing `events.read` grant requirement; each
 room snapshot additionally requires `chat.read` and rechecks current membership
-through ordinary production request admission, with its existing cache bounds.
+using the existing production certificate/grant validators and registry cache
+bounds for the admitted subject. The opening request signature and timestamp
+are not replayed as a new request at each snapshot.
 Room admission failures or unavailable authority expose no notices. Other event
 shapes and the transport remain unchanged. The broker uses the existing chat
 receive capability, which has the same `chat.read` authority.
@@ -225,7 +227,9 @@ the external-content-framed notice:
 > New team room post from &lt;alias&gt;: &lt;subject&gt;. Read it: aw room read
 
 Sender-controlled alias and subject use the existing terminal-safe sanitizer,
-single-line normalization and a 160-character cap each. No reply is expected.
+single-line normalization and a 160-character cap each. Joined-team notices
+include a read instruction with the trusted receiving identity home. No reply
+is expected.
 Known working/busy panes defer; unknown readiness still delivers. The existing
 persistent delivered-ID store keys recipient, team and post. Only accepted
 presentation permits a room notice acknowledgement; failed presentation leaves
