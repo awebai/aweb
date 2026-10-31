@@ -654,10 +654,15 @@ type ConversationItem struct {
 	ParticipantDIDs      []string `json:"participant_dids,omitempty"`
 	ParticipantAddresses []string `json:"participant_addresses,omitempty"`
 	Subject              string   `json:"subject,omitempty"`
-	LastMessageAt        string   `json:"last_message_at,omitempty"`
-	LastMessageFrom      string   `json:"last_message_from,omitempty"`
-	LastMessagePreview   string   `json:"last_message_preview,omitempty"`
-	UnreadCount          int      `json:"unread_count,omitempty"`
+	// Title is the subject of the conversation's first message, empty when
+	// that message is end-to-end encrypted; FirstMessageID lets a reader
+	// decrypt it.
+	Title              string `json:"title,omitempty"`
+	FirstMessageID     string `json:"first_message_id,omitempty"`
+	LastMessageAt      string `json:"last_message_at,omitempty"`
+	LastMessageFrom    string `json:"last_message_from,omitempty"`
+	LastMessagePreview string `json:"last_message_preview,omitempty"`
+	UnreadCount        int    `json:"unread_count,omitempty"`
 }
 
 type ConversationsResponse struct {

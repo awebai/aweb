@@ -132,6 +132,40 @@ func formatIntrospect(v any) string {
 
 // --- mail ---
 
+func formatMailThreads(v any) string {
+	resp := v.(*awid.ConversationsResponse)
+	var sb strings.Builder
+	if len(resp.Conversations) == 0 {
+		sb.WriteString("No mail threads.\n")
+	} else {
+		sb.WriteString(fmt.Sprintf("THREADS: %d\n", len(resp.Conversations)))
+	}
+	for _, thread := range resp.Conversations {
+		title := termtext.Line(strings.TrimSpace(thread.Title))
+		if title == "" {
+			title = "(untitled)"
+		}
+		sb.WriteString(fmt.Sprintf("\n- %s\n", title))
+		participants := make([]string, 0, len(thread.Participants))
+		for _, participant := range thread.Participants {
+			participants = append(participants, termtext.Line(participant))
+		}
+		sb.WriteString(fmt.Sprintf("  With: %s\n", strings.Join(participants, ", ")))
+		activity := termtext.Line(strings.TrimSpace(thread.LastMessageAt))
+		if thread.UnreadCount > 0 {
+			activity += fmt.Sprintf(" · %d unread", thread.UnreadCount)
+		}
+		sb.WriteString(fmt.Sprintf("  Last activity: %s\n", activity))
+		sb.WriteString(fmt.Sprintf("  Conversation ID: %s\n", termtext.Line(thread.ConversationID)))
+	}
+	if cursor := strings.TrimSpace(resp.NextCursor); cursor != "" {
+		sb.WriteString("\nMore threads are not shown on this page.\n")
+		sb.WriteString("Continue with: aw mail threads --cursor " + termtext.Line(cursor) + "\n")
+	}
+	sb.WriteString("\n" + mailThreadTeaching + "\n")
+	return sb.String()
+}
+
 func formatMailInbox(v any) string {
 	resp := v.(*awid.InboxResponse)
 	if len(resp.Messages) == 0 {

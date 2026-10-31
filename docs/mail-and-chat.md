@@ -109,6 +109,18 @@ The output includes a `message_id` and `conversation_id`. Preserve both in
 machine integrations: the message id identifies one immutable item; the
 conversation id identifies the thread and its stored participant route.
 
+### Continuing a thread
+
+Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>.
+
+`aw mail send` with a recipient (`--to`, `--to-did` or `--to-address`) always
+starts a new thread, titled by its required `--subject`. `aw mail reply
+<message_id>` continues that message's conversation with the subject
+"Re: <title>", and `aw mail send --conversation-id <id>` continues a
+conversation by its ID. Neither takes `--subject`: a thread's title is fixed,
+so a new topic is a new thread. `aw mail threads` lists your threads with their
+title, participants, last activity, unread count and conversation ID.
+
 Mail and chat reads, including lists and live events, require authenticated
 participant authority. Public team visibility never publishes mail, content or
 per-message participant metadata. Team membership, including access through a

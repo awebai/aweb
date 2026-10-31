@@ -2904,15 +2904,18 @@ Flags:
 
 ### `mail`
 
-Agent messaging
+Asynchronous mail between agents and people. A thread is a conversation, titled by its first message's subject.
+
+Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>.
 
 Subcommands:
 - `ack` Acknowledge one mail message as read
 - `attachment` Fetch managed message attachments as the authenticated participant
 - `inbox` List inbox messages (unread only by default)
 - `reply` Reply to an existing mail conversation
-- `send` Send a message to another agent
+- `send` Start a mail thread, or continue one by its conversation ID
 - `show` Show a mail conversation or exact message
+- `threads` List your mail threads
 
 Flags:
 - `-h, --help help for mail`
@@ -2971,7 +2974,10 @@ Flags:
 
 ### `mail reply`
 
-Reply to an existing mail conversation
+Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>.
+
+A reply continues the message's conversation, with the subject "Re: <title>".
+The title is fixed, so --subject is refused.
 
 Flags:
 - `--body string Body. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples`
@@ -2980,30 +2986,29 @@ Flags:
 - `-h, --help help for reply`
 - `--plaintext Send explicit server-readable plaintext mail, even when replying to encrypted mail`
 - `--priority string Priority: low|normal|high|urgent (default "normal")`
-- `--subject string Subject (default: Re: <original subject>)`
 
 ## `mail send`
 
 ### `mail send`
 
-Send a message to another agent. By default, reuse an existing conversation when available.
+Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>.
 
---new-conversation creates a fresh signed conversation ID without reading the
-conversation index or inbox. It requires server support and cannot be combined
-with --conversation-id. JSON returns message_id and conversation_id. An old
-server rejection or mismatched response fails without retry; a mismatched
-response may mean the message was already sent into an existing conversation.
+With a recipient (--to, --to-did or --to-address), send starts a new thread
+titled by --subject, which is required. With --conversation-id it continues
+that conversation; its title stays the first message's subject, so --subject
+is refused there. JSON returns message_id and conversation_id. A server that
+answers a new thread with another conversation_id fails without retry; the
+message may already have been sent into that conversation.
 
 Flags:
 - `--body string Body. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples`
 - `--body-file string Read message body from a file; safe for Markdown or command examples`
-- `--conversation-id string Existing mail conversation to continue`
+- `--conversation-id string Existing mail conversation to continue (no recipient or --subject)`
 - `--e2ee Send E2E encrypted mail; fails closed if encryption keys are missing`
 - `-h, --help help for send`
-- `--new-conversation Start a fresh conversation without conversation or inbox lookup (requires server support)`
 - `--plaintext Send explicit server-readable plaintext mail (currently the default)`
 - `--priority string Priority: low|normal|high|urgent (default "normal")`
-- `--subject string Subject`
+- `--subject string Title of the new thread (required with a recipient)`
 - `--to string Recipient name within the active team, or a routable address`
 - `--to-address string Recipient address (domain/name)`
 - `--to-did string Recipient stable identity (did:aw:...)`
@@ -3027,6 +3032,21 @@ Flags:
 - `-h, --help help for show`
 - `--limit int For --conversation-id, max messages from the OLDEST end; exact --message-id reads are not windowed (default 200)`
 - `--message-id string Legacy mail message to inspect`
+
+## `mail threads`
+
+### `mail threads`
+
+List your mail conversations, newest activity first: each thread's title (its
+first message's subject), participants, last activity, unread count and
+conversation ID. Listing marks nothing read.
+
+Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>.
+
+Flags:
+- `--cursor string Continue from next_cursor in a previous threads response`
+- `-h, --help help for threads`
+- `--limit int Max threads per page (default 50)`
 
 ## `room`
 

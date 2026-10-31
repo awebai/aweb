@@ -572,7 +572,8 @@ func TestAwMailSendBodyFilePreservesBackticksOnTheWire(t *testing.T) {
 	bodyContent := "look at `config.ts` line 42 and ${VAR} stays literal\nsecond `paragraph` here"
 
 	type captured struct {
-		Body string `json:"body"`
+		Body           string `json:"body"`
+		ConversationID string `json:"conversation_id"`
 	}
 	var got captured
 
@@ -606,9 +607,10 @@ func TestAwMailSendBodyFilePreservesBackticksOnTheWire(t *testing.T) {
 				t.Fatalf("decode body: %v", err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]string{
-				"message_id":   "msg-aalh-1",
-				"status":       "delivered",
-				"delivered_at": "2026-04-26T00:00:00Z",
+				"message_id":      "msg-aalh-1",
+				"conversation_id": got.ConversationID,
+				"status":          "delivered",
+				"delivered_at":    "2026-04-26T00:00:00Z",
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -641,7 +643,7 @@ func TestAwMailSendBodyFilePreservesBackticksOnTheWire(t *testing.T) {
 		t.Fatalf("write body file: %v", err)
 	}
 
-	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext",
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--subject", "Test thread", "--plaintext",
 		"--to-address", "otherco.com/monitor",
 		"--body-file", bodyFile,
 	)
@@ -728,7 +730,6 @@ func TestAwMailSendConversationIDSignsPayloadWithRediscoveredRecipient(t *testin
 
 	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext",
 		"--conversation-id", conversationID,
-		"--subject", "Re",
 		"--body", "reply",
 	)
 	run.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
@@ -757,7 +758,7 @@ func TestAwMailSendConversationIDSignsPayloadWithRediscoveredRecipient(t *testin
 	if got.ToStableID != "did:aw:bob" {
 		t.Fatalf("to_stable_id=%q, want did:aw:bob", got.ToStableID)
 	}
-	if got.Subject != "Re" || got.Body != "reply" {
+	if got.Subject != "" || got.Body != "reply" {
 		t.Fatalf("unexpected message body: %+v", got)
 	}
 	var signed map[string]any
@@ -774,365 +775,6 @@ func TestAwMailSendConversationIDSignsPayloadWithRediscoveredRecipient(t *testin
 		t.Fatalf("signed continuation should leave unresolved to_did empty for stored did:aw route: %+v", signed)
 	}
 
-}
-
-func TestAwMailSendToAddressAutoThreadsUniqueConversation(t *testing.T) {
-	t.Parallel()
-
-	pub, priv, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	did := awid.ComputeDIDKey(pub)
-	stableID := stableIDFromDidForTest(t, did)
-	conversationID := "55555555-5555-4555-8555-555555555555"
-
-	type captured struct {
-		ToAddress      string `json:"to_address"`
-		ToStableID     string `json:"to_stable_id"`
-		ConversationID string `json:"conversation_id"`
-		SignedPayload  string `json:"signed_payload"`
-	}
-	var got captured
-
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/conversations":
-			http.NotFound(w, r)
-		case "/v1/messages/inbox":
-			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{
-				{
-					MessageID:      "msg-in",
-					ConversationID: conversationID,
-					FromAddress:    "otherco.example/bob",
-					FromDID:        "did:aw:bob",
-					ToAddress:      "acme.com/alice",
-					ToDID:          stableID,
-					Subject:        "hello",
-					Body:           "hi",
-					CreatedAt:      "2026-05-02T00:00:00Z",
-				},
-			}})
-		case "/v1/messages":
-			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-				t.Fatalf("decode body: %v", err)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]string{
-				"message_id":      "msg-reply",
-				"conversation_id": conversationID,
-				"status":          "delivered",
-				"delivered_at":    "2026-05-02T00:00:01Z",
-			})
-		case "/v1/agents/heartbeat":
-			w.WriteHeader(http.StatusOK)
-		default:
-			t.Fatalf("unexpected path=%s", r.URL.Path)
-		}
-	}))
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "aw")
-	buildAwBinary(t, ctx, bin)
-
-	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:           did,
-		Address:       "acme.com/alice",
-		Custody:       awid.CustodySelf,
-		IdentityScope: awid.IdentityModeLocal,
-		CreatedAt:     "2026-05-02T00:00:00Z",
-	})
-	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
-		t.Fatalf("write signing key: %v", err)
-	}
-
-	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext",
-		"--to-address", "otherco.example/bob",
-		"--subject", "Re",
-		"--body", "reply",
-	)
-	run.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL, "AWID_REGISTRY_URL=http://127.0.0.1:1")
-	run.Dir = tmp
-	out, err := run.CombinedOutput()
-	if err != nil {
-		t.Fatalf("run failed: %v\n%s", err, string(out))
-	}
-	if !strings.Contains(string(out), "Sent mail in conversation "+conversationID) {
-		t.Fatalf("unexpected output:\n%s", string(out))
-	}
-	if got.ConversationID != conversationID {
-		t.Fatalf("conversation_id=%q, want %q", got.ConversationID, conversationID)
-	}
-	if got.ToAddress != "" {
-		t.Fatalf("to_address=%q, want empty for identity-bound continuation", got.ToAddress)
-	}
-	if got.ToStableID != "did:aw:bob" {
-		t.Fatalf("to_stable_id=%q, want did:aw:bob", got.ToStableID)
-	}
-	var signed map[string]any
-	if err := json.Unmarshal([]byte(got.SignedPayload), &signed); err != nil {
-		t.Fatalf("decode signed_payload: %v", err)
-	}
-	if signed["conversation_id"] != conversationID {
-		t.Fatalf("signed conversation_id=%v, want %s", signed["conversation_id"], conversationID)
-	}
-	if signed["to"] != "did:aw:bob" || signed["to_stable_id"] != "did:aw:bob" {
-		t.Fatalf("signed threaded reply did not bind participant identity: %+v", signed)
-	}
-}
-
-func TestAwMailSendToAddressAutoThreadsSentConversationFromIndex(t *testing.T) {
-	t.Parallel()
-
-	pub, priv, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	did := awid.ComputeDIDKey(pub)
-	stableID := stableIDFromDidForTest(t, did)
-	conversationID := "66666666-6666-4666-8666-666666666666"
-
-	type captured struct {
-		ToAddress      string `json:"to_address"`
-		ToStableID     string `json:"to_stable_id"`
-		ConversationID string `json:"conversation_id"`
-		SignedPayload  string `json:"signed_payload"`
-	}
-	var got captured
-	var conversationQuery string
-	var registryAddressLookups int
-
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/messages/inbox":
-			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{}})
-		case "/v1/conversations":
-			conversationQuery = r.URL.RawQuery
-			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{Conversations: []awid.ConversationItem{
-				{
-					ConversationType:     "mail",
-					ConversationID:       conversationID,
-					Participants:         []string{"gsk", "alice"},
-					ParticipantDIDs:      []string{stableID, "did:aw:alice"},
-					ParticipantAddresses: []string{"test.local/gsk", "test.local/alice"},
-					Subject:              "Ephemeral sender address",
-					LastMessageAt:        "2026-05-02T00:00:00Z",
-				},
-			}})
-		case "/v1/messages":
-			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-				t.Fatalf("decode body: %v", err)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]string{
-				"message_id":      "msg-reply",
-				"conversation_id": conversationID,
-				"status":          "delivered",
-				"delivered_at":    "2026-05-02T00:00:01Z",
-			})
-		case "/v1/agents/heartbeat":
-			w.WriteHeader(http.StatusOK)
-		case "/v1/namespaces/test.local/addresses/alice":
-			registryAddressLookups++
-			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte(`{"detail":"Address not found"}`))
-		case "/v1/did/did%3Aaw%3Aalice/key", "/v1/did/did:aw:alice/key":
-			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte(`{"detail":"DID not found"}`))
-		default:
-			t.Fatalf("unexpected path=%s", r.URL.Path)
-		}
-	}))
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "aw")
-	buildAwBinary(t, ctx, bin)
-
-	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:           did,
-		StableID:      stableID,
-		Address:       "test.local/gsk",
-		Custody:       awid.CustodySelf,
-		IdentityScope: awid.IdentityModeGlobal,
-		RegistryURL:   server.URL,
-		CreatedAt:     "2026-05-02T00:00:00Z",
-	})
-	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
-		t.Fatalf("write signing key: %v", err)
-	}
-
-	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext",
-		"--to-address", "test.local/alice",
-		"--subject", "Re",
-		"--body", "reply",
-	)
-	run.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
-	run.Dir = tmp
-	out, err := run.CombinedOutput()
-	if err != nil {
-		t.Fatalf("run failed: %v\n%s", err, string(out))
-	}
-	if !strings.Contains(string(out), "Sent mail in conversation "+conversationID) {
-		t.Fatalf("unexpected output:\n%s", string(out))
-	}
-	if got := conversationQuery; !strings.Contains(got, "conversation_type=mail") || !strings.Contains(got, "participant_address=test.local%2Falice") {
-		t.Fatalf("conversation query=%q, want mail participant_address filter", got)
-	}
-	if got.ConversationID != conversationID {
-		t.Fatalf("conversation_id=%q, want %q", got.ConversationID, conversationID)
-	}
-	if got.ToAddress != "" {
-		t.Fatalf("to_address=%q, want empty for threaded identity-bound continuation", got.ToAddress)
-	}
-	if got.ToStableID != "did:aw:alice" {
-		t.Fatalf("to_stable_id=%q, want did:aw:alice", got.ToStableID)
-	}
-	if registryAddressLookups != 0 {
-		t.Fatalf("threaded continuation performed %d address lookup(s), want 0", registryAddressLookups)
-	}
-	var signed map[string]any
-	if err := json.Unmarshal([]byte(got.SignedPayload), &signed); err != nil {
-		t.Fatalf("decode signed_payload: %v", err)
-	}
-	if signed["conversation_id"] != conversationID {
-		t.Fatalf("signed conversation_id=%v, want %s", signed["conversation_id"], conversationID)
-	}
-	if signed["to"] != "did:aw:alice" || signed["to_stable_id"] != "did:aw:alice" {
-		t.Fatalf("signed threaded sent-side reply did not bind participant identity: %+v", signed)
-	}
-}
-
-func TestAwMailSendAliasAutoThreadsConcreteAgentConversation(t *testing.T) {
-	t.Parallel()
-
-	pub, priv, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	did := awid.ComputeDIDKey(pub)
-	stableID := stableIDFromDidForTest(t, did)
-	conversationID := "77777777-7777-4777-8777-777777777777"
-
-	type captured struct {
-		ToAlias        string `json:"to_alias"`
-		ToAddress      string `json:"to_address"`
-		ToStableID     string `json:"to_stable_id"`
-		ConversationID string `json:"conversation_id"`
-		SignedPayload  string `json:"signed_payload"`
-	}
-	var got captured
-	var conversationQuery string
-
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/agents":
-			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{
-				TeamID: "devteam:test.local",
-				Agents: []awid.AgentView{
-					{
-						AgentID: "alice-agent",
-						Alias:   "alice",
-						DIDKey:  "did:key:alice-current",
-						DIDAW:   "did:aw:alice",
-						Address: "test.local/alice",
-					},
-				},
-			})
-		case "/v1/messages/inbox":
-			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{}})
-		case "/v1/conversations":
-			conversationQuery = r.URL.RawQuery
-			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{Conversations: []awid.ConversationItem{
-				{
-					ConversationType:     "mail",
-					ConversationID:       conversationID,
-					Participants:         []string{"gsk", "alice"},
-					ParticipantDIDs:      []string{stableID, "did:aw:alice"},
-					ParticipantAddresses: []string{"test.local/gsk", "test.local/alice"},
-					Subject:              "Ephemeral sender address",
-					LastMessageAt:        "2026-05-02T00:00:00Z",
-				},
-			}})
-		case "/v1/messages":
-			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-				t.Fatalf("decode body: %v", err)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]string{
-				"message_id":      "msg-alias-reply",
-				"conversation_id": conversationID,
-				"status":          "delivered",
-				"delivered_at":    "2026-05-02T00:00:01Z",
-			})
-		case "/v1/agents/heartbeat":
-			w.WriteHeader(http.StatusOK)
-		default:
-			t.Fatalf("unexpected path=%s", r.URL.Path)
-		}
-	}))
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "aw")
-	buildAwBinary(t, ctx, bin)
-
-	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
-		AwebURL:       server.URL,
-		TeamID:        "devteam:test.local",
-		Alias:         "gsk",
-		WorkspaceID:   "workspace-1",
-		DID:           did,
-		Address:       "test.local/gsk",
-		Custody:       awid.CustodySelf,
-		IdentityScope: awid.IdentityModeLocal,
-		SigningKey:    priv,
-		CreatedAt:     "2026-05-02T00:00:00Z",
-	})
-
-	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext",
-		"--to", "alice",
-		"--subject", "Re",
-		"--body", "reply",
-	)
-	run.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
-	run.Dir = tmp
-	out, err := run.CombinedOutput()
-	if err != nil {
-		t.Fatalf("run failed: %v\n%s", err, string(out))
-	}
-	if !strings.Contains(string(out), "Sent mail in conversation "+conversationID) {
-		t.Fatalf("unexpected output:\n%s", string(out))
-	}
-	if got := conversationQuery; !strings.Contains(got, "conversation_type=mail") || !strings.Contains(got, "participant_did=did%3Aaw%3Aalice") {
-		t.Fatalf("conversation query=%q, want mail participant_did filter", got)
-	}
-	if got.ConversationID != conversationID {
-		t.Fatalf("conversation_id=%q, want %q", got.ConversationID, conversationID)
-	}
-	if got.ToAlias != "" {
-		t.Fatalf("auto-threaded alias reply leaked to_alias=%q", got.ToAlias)
-	}
-	if got.ToAddress != "" {
-		t.Fatalf("to_address=%q, want empty for threaded identity-bound continuation", got.ToAddress)
-	}
-	if got.ToStableID != "did:aw:alice" {
-		t.Fatalf("to_stable_id=%q, want did:aw:alice", got.ToStableID)
-	}
-	var signed map[string]any
-	if err := json.Unmarshal([]byte(got.SignedPayload), &signed); err != nil {
-		t.Fatalf("decode signed_payload: %v", err)
-	}
-	if signed["conversation_id"] != conversationID {
-		t.Fatalf("signed conversation_id=%v, want %s", signed["conversation_id"], conversationID)
-	}
-	if signed["to"] != "did:aw:alice" || signed["to_stable_id"] != "did:aw:alice" {
-		t.Fatalf("signed threaded alias reply did not bind participant identity: %+v", signed)
-	}
 }
 
 func TestAwMailSendAliasToSelfSkipsConversationDiscovery(t *testing.T) {
@@ -1175,7 +817,7 @@ func TestAwMailSendAliasToSelfSkipsConversationDiscovery(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"message_id":      "msg-self",
-				"conversation_id": "88888888-8888-4888-8888-888888888888",
+				"conversation_id": got.ConversationID,
 				"status":          "delivered",
 				"delivered_at":    "2026-05-02T00:00:01Z",
 			})
@@ -1710,7 +1352,7 @@ func TestAwMailSendRejectsBothBodyAndBodyFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext",
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--subject", "Test thread", "--plaintext",
 		"--to", "alice",
 		"--body", "from flag",
 		"--body-file", bodyFile,
@@ -1756,9 +1398,10 @@ func TestMailAndChatDefaultPlaintextAndE2EEOptInFailsClosed(t *testing.T) {
 				t.Fatalf("decode mail body: %v", err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]string{
-				"message_id":   "mail-1",
-				"status":       "delivered",
-				"delivered_at": "2026-03-17T12:00:00Z",
+				"message_id":      "mail-1",
+				"conversation_id": sentConversationIDForTest(mailBody),
+				"status":          "delivered",
+				"delivered_at":    "2026-03-17T12:00:00Z",
 			})
 		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/encryption-key"):
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "published"})
@@ -1788,7 +1431,7 @@ func TestMailAndChatDefaultPlaintextAndE2EEOptInFailsClosed(t *testing.T) {
 		name string
 		args []string
 	}{
-		{name: "mail", args: []string{"mail", "send", "--to", "alice", "--body", "hello"}},
+		{name: "mail", args: []string{"mail", "send", "--subject", "Test thread", "--to", "alice", "--body", "hello"}},
 		{name: "chat", args: []string{"chat", "send-and-leave", "alice", "hello"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1823,7 +1466,7 @@ func TestMailAndChatDefaultPlaintextAndE2EEOptInFailsClosed(t *testing.T) {
 		name string
 		args []string
 	}{
-		{name: "mail", args: []string{"mail", "send", "--e2ee", "--to", "alice", "--body", "hello"}},
+		{name: "mail", args: []string{"mail", "send", "--subject", "Test thread", "--e2ee", "--to", "alice", "--body", "hello"}},
 		{name: "chat", args: []string{"chat", "send-and-leave", "--e2ee", "alice", "hello"}},
 	} {
 		t.Run(tc.name+"_e2ee_opt_in", func(t *testing.T) {
@@ -1843,7 +1486,7 @@ func TestMailAndChatDefaultPlaintextAndE2EEOptInFailsClosed(t *testing.T) {
 }
 
 // One inconsistent roster key used to disable threading for every recipient.
-func TestAwMailSendThreadsDespiteInvalidRosterKey(t *testing.T) {
+func TestAwMailSendStartsAThreadDespiteInvalidRosterKey(t *testing.T) {
 	pub, priv, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -1907,12 +1550,7 @@ func TestAwMailSendThreadsDespiteInvalidRosterKey(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
 				t.Error(err)
 			}
-			if posted.ConversationID != conversationID {
-				w.WriteHeader(http.StatusConflict)
-				_ = json.NewEncoder(w).Encode(map[string]string{"detail": "Existing active conversation found; continue that conversation instead"})
-				return
-			}
-			_ = json.NewEncoder(w).Encode(map[string]string{"message_id": posted.MessageID, "conversation_id": conversationID})
+			_ = json.NewEncoder(w).Encode(map[string]string{"message_id": posted.MessageID, "conversation_id": posted.ConversationID})
 		case "/api/health", "/health", "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -1932,7 +1570,7 @@ func TestAwMailSendThreadsDespiteInvalidRosterKey(t *testing.T) {
 	})
 	for _, alias := range []string{"peer", "masked"} {
 		t.Run(alias, func(t *testing.T) {
-			run := exec.CommandContext(ctx, bin, "mail", "send", "--to", alias, "--body", "reply", "--json")
+			run := exec.CommandContext(ctx, bin, "mail", "send", "--subject", "Test thread", "--to", alias, "--body", "reply", "--json")
 			run.Dir, run.Env = tmp, append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
 			var warnings strings.Builder
 			run.Stderr = &warnings
@@ -1947,15 +1585,15 @@ func TestAwMailSendThreadsDespiteInvalidRosterKey(t *testing.T) {
 			if err := json.Unmarshal(out, &result); err != nil {
 				t.Fatalf("JSON output: %v: %s", err, out)
 			}
-			if result["conversation_id"] != conversationID || request.ConversationID != conversationID {
-				t.Fatalf("thread changed: %s %+v", out, request)
+			if result["conversation_id"] != request.ConversationID || request.ConversationID == conversationID || !request.NewConversation {
+				t.Fatalf("send did not start a new thread: %s %+v", out, request)
 			}
 			var signed map[string]any
 			if err := json.Unmarshal([]byte(request.SignedPayload), &signed); err != nil {
 				t.Fatal(err)
 			}
-			if signed["conversation_id"] != conversationID {
-				t.Fatalf("signed id changed: %+v", signed)
+			if signed["conversation_id"] != request.ConversationID {
+				t.Fatalf("signed id differs from the sent one: %+v", signed)
 			}
 			if !strings.Contains(warnings.String(), "masked") || strings.Count(warnings.String(), "invalid_encryption_key_assertion") != 1 {
 				t.Fatalf("missing visible key warning: %q", warnings.String())
@@ -1965,8 +1603,8 @@ func TestAwMailSendThreadsDespiteInvalidRosterKey(t *testing.T) {
 	mu.Lock()
 	indexCount := indexes
 	mu.Unlock()
-	if indexCount != 2 {
-		t.Errorf("index requests=%d, want 2", indexCount)
+	if indexCount != 0 {
+		t.Errorf("a new thread read the conversation index %d times", indexCount)
 	}
 	client, err := awid.NewWithIdentity(server.URL, priv, self)
 	if err != nil {
@@ -2012,7 +1650,7 @@ func TestAwMailSendThreadsDespiteInvalidRosterKey(t *testing.T) {
 	before := posts
 	mu.Unlock()
 	for _, args := range [][]string{
-		{"mail", "send", "--to", "masked", "--e2ee", "--body", "secret"},
+		{"mail", "send", "--subject", "Test thread", "--to", "masked", "--e2ee", "--body", "secret"},
 		{"chat", "send-and-leave", "masked", "secret", "--start-conversation", "--e2ee"},
 	} {
 		run := exec.CommandContext(ctx, bin, args...)
@@ -2030,10 +1668,10 @@ func TestAwMailSendThreadsDespiteInvalidRosterKey(t *testing.T) {
 		t.Fatal("E2EE refusal stored a message")
 	}
 	// A transport-level roster failure must also be visible without --debug.
-	run := exec.CommandContext(ctx, bin, "mail", "send", "--to", "peer", "--body", "reply")
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--subject", "Test thread", "--to", "peer", "--body", "reply")
 	run.Dir, run.Env = tmp, append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
 	out, err := run.CombinedOutput()
-	if err == nil || !strings.Contains(string(out), "Warning: recipient lookup failed; automatic mail threading unavailable") {
+	if err != nil || !strings.Contains(string(out), "Warning: recipient lookup failed:") {
 		t.Fatalf("missing lookup warning: err=%v output=%s", err, out)
 	}
 }
