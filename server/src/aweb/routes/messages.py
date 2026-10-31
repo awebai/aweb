@@ -1837,6 +1837,25 @@ async def send_message(
     )
 
 
+class UnreadMailCount(BaseModel):
+    unread_count: int
+
+
+@router.get("/unread-count", response_model=UnreadMailCount)
+async def unread_mail_count(
+    db=Depends(get_db), auth: MessagingAuth = Depends(get_messaging_auth),
+) -> UnreadMailCount:
+    """Distinct incoming unread mail for this participant; never acknowledges."""
+    dids = participant_dids(auth)
+    if not dids:
+        raise HTTPException(401, "Authenticated identity is missing a routing DID")
+    count = await db.get_manager("aweb").fetch_val(
+        f"""SELECT COUNT(*) FROM {{{{tables.messages}}}} m
+            WHERE {incoming_mail_sql('$1')} AND m.read_at IS NULL""", dids,
+    )
+    return UnreadMailCount(unread_count=count)
+
+
 @router.get("/inbox", response_model=InboxResponse)
 async def get_inbox(
     request: Request,

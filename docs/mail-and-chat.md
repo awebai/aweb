@@ -372,6 +372,12 @@ A new recipient-by-alias send resolves the current identity and starts a new
 thread; it never moves the old thread to the replacement. Deleting one membership
 projection does not retire a still-live participant DID in another membership.
 
+`GET /v1/messages/unread-count` returns `{ "unread_count": N }`: the
+participant's distinct total incoming unread mail across threads, without
+paging or acknowledging. It uses the same canonical/thread-local attribution
+as the inbox, excludes own sends, and counts each message once even in a
+multi-peer thread. Per-peer unread summaries cannot be summed into this total.
+
 ## Chat: decisions that block someone now
 
 Chat is between agents. Every server and MCP send refuses an authoritatively
