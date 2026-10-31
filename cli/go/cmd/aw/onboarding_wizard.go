@@ -98,9 +98,7 @@ func executeReconnectPath(req guidedOnboardingRequest) (*guidedOnboardingResult,
 	if err != nil {
 		return nil, err
 	}
-	printOutput(withInitNextSteps(result, &initResult{ServerName: hostFromBaseURL(result.AwebURL), ExportBaseURL: result.AwebURL, Alias: strings.TrimSpace(result.Alias), Path: initPathReconnect}, req.WorkingDir), formatConnect)
-
-	if err := runGuidedPostInitSetup(req); err != nil {
+	if err := printInitOutcome(result, &initResult{ServerName: hostFromBaseURL(result.AwebURL), ExportBaseURL: result.AwebURL, Alias: strings.TrimSpace(result.Alias), Path: initPathReconnect}, req.WorkingDir, guidedSetup(req)); err != nil {
 		return nil, err
 	}
 	return &guidedOnboardingResult{}, nil
@@ -183,9 +181,7 @@ func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, er
 			return nil, err
 		}
 	}
-	printOutput(withInitNextSteps(result, &initResult{ServerName: hostFromBaseURL(result.AwebURL), ExportBaseURL: result.AwebURL, Alias: strings.TrimSpace(result.Alias), Path: initPathNewTeam}, req.WorkingDir), formatConnect)
-
-	if err := runGuidedPostInitSetup(req); err != nil {
+	if err := printInitOutcome(result, &initResult{ServerName: hostFromBaseURL(result.AwebURL), ExportBaseURL: result.AwebURL, Alias: strings.TrimSpace(result.Alias), Path: initPathNewTeam}, req.WorkingDir, guidedSetup(req)); err != nil {
 		return nil, err
 	}
 	if req.AskPostCreateSetup && !req.NonInteractive {
@@ -259,8 +255,7 @@ func executeBYODPath(req guidedOnboardingRequest) (*guidedOnboardingResult, erro
 	if err != nil {
 		return nil, err
 	}
-	printOutput(withInitNextSteps(result, &initResult{ServerName: hostFromBaseURL(result.AwebURL), ExportBaseURL: result.AwebURL, Alias: strings.TrimSpace(result.Alias), Path: initPathNewTeam}, req.WorkingDir), formatConnect)
-	if err := runGuidedPostInitSetup(req); err != nil {
+	if err := printInitOutcome(result, &initResult{ServerName: hostFromBaseURL(result.AwebURL), ExportBaseURL: result.AwebURL, Alias: strings.TrimSpace(result.Alias), Path: initPathNewTeam}, req.WorkingDir, guidedSetup(req)); err != nil {
 		return nil, err
 	}
 	return &guidedOnboardingResult{}, nil
@@ -273,6 +268,16 @@ func guidedOnboardingHasReconnectState(workingDir string) bool {
 	}
 	stored, err := awconfig.ListTeamCertificates(workingDir)
 	return err == nil && len(stored) > 0
+}
+
+// guidedSetup runs the wizard's setup after connecting for printInitOutcome.
+func guidedSetup(req guidedOnboardingRequest) func() (initSetupDone, error) {
+	return func() (initSetupDone, error) {
+		if err := runGuidedPostInitSetup(req); err != nil {
+			return initSetupDone{}, err
+		}
+		return initSetupDone{DocsInjected: initInjectDocs || (req.InjectAgentDocs && !req.DoNotTouchAgentsMD), ChannelSetUp: initSetupChannel}, nil
+	}
 }
 
 func runGuidedPostInitSetup(req guidedOnboardingRequest) error {

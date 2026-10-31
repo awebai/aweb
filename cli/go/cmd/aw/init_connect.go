@@ -347,11 +347,6 @@ func formatConnect(v any) string {
 	if out.IDRegistration != "" {
 		sb.WriteString(fmt.Sprintf("ID registration: %s\n", out.IDRegistration))
 	}
-	if len(out.NextSteps) > 0 {
-		sb.WriteString("\nNext steps:\n")
-		for _, line := range initNextStepLines(out.NextSteps) {
-			sb.WriteString(line + "\n")
-		}
-	}
+	sb.WriteString(formatInitNextSteps(out.NextSteps))
 	return sb.String()
 }

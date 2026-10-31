@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -33,7 +34,7 @@ func TestInitNextStepsFitThePathTaken(t *testing.T) {
 			want: []string{
 				"aw mail send --to-address aweb.ai/aida",
 				"aw claim-human --email <your-email>",
-				"claude plugin marketplace add awebai/claude-plugins && claude plugin install aweb-channel@awebai-marketplace",
+				"aw init --setup-channel",
 				"claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace",
 				"aw init --join-from /work/alice --name <name>",
 			},
@@ -48,7 +49,7 @@ func TestInitNextStepsFitThePathTaken(t *testing.T) {
 		{
 			name:   "joined a team",
 			result: initResult{ServerName: "app.aweb.ai", ExportBaseURL: "https://app.aweb.ai/api", Path: initPathJoined},
-			want:   []string{"aw team list", "aw mail send --to <teammate>"},
+			want:   []string{"aw workspace status", "aw mail send --to <teammate>"},
 			absent: []string{"aw claim-human", "aweb.ai/aida", "--join-from"},
 		},
 		{
@@ -178,5 +179,115 @@ func TestInitJSONOnTheSelfHostedPathPrintsItsNextSteps(t *testing.T) {
 	commands := initNextStepCommands(out.NextSteps)
 	if !strings.Contains(commands, "aw init --join-from") || !strings.Contains(commands, "--name <name>") || out.Guide != initGuideURL {
 		t.Fatalf("next steps %+v guide %q", out.NextSteps, out.Guide)
+	}
+}
+
+// Every path starts by checking, against the server, that the agent is
+// connected; that check also lists the team.
+func TestInitNextStepsStartWithAServerCheck(t *testing.T) {
+	for _, path := range []initPath{initPathNewTeam, initPathAPIKey, initPathJoined, initPathReconnect} {
+		result := initResult{ServerName: "localhost", ExportBaseURL: "http://localhost:8000", Path: path}
+		steps := initNextSteps(&result, t.TempDir(), true, true)
+		if len(steps) == 0 || steps[0].Command != "aw workspace status" {
+			t.Fatalf("path %q does not start with the server check: %+v", path, steps)
+		}
+	}
+}
+
+// A new member is pointed at a command that lists teammates, not at
+// aw team list, which lists only this agent's own memberships.
+func TestInitNextStepsJoinedPointToTheTeamNotTeamList(t *testing.T) {
+	result := initResult{ServerName: "localhost", ExportBaseURL: "http://localhost:8000", Path: initPathJoined}
+	commands := initNextStepCommands(initNextSteps(&result, t.TempDir(), true, true))
+	if strings.Contains(commands, "aw team list") {
+		t.Fatalf("joined steps point to aw team list:\n%s", commands)
+	}
+}
+
+// Only hosted onboarding creates a separate account; on a self-hosted
+// stack the step only says how to add an agent to this team.
+func TestInitNextStepsSelfHostedDoNotClaimASeparateAccount(t *testing.T) {
+	result := initResult{ServerName: "localhost", ExportBaseURL: "http://localhost:8000"}
+	for _, step := range initNextSteps(&result, t.TempDir(), true, true) {
+		if strings.Contains(step.Why, "account") || strings.Contains(step.Why, "separate team") {
+			t.Fatalf("self-hosted step claims hosted behaviour: %+v", step)
+		}
+	}
+	hosted := initResult{ServerName: "app.aweb.ai", ExportBaseURL: "https://app.aweb.ai/api"}
+	text := strings.Join(initNextStepLines(initNextSteps(&hosted, t.TempDir(), true, true)), "\n")
+	if !strings.Contains(text, "separate team") {
+		t.Fatalf("hosted steps lost the separate-team warning:\n%s", text)
+	}
+}
+
+// add-worktree is offered only inside a git worktree.
+func TestInitNextStepsOfferWorktreesOnlyInAGitRepo(t *testing.T) {
+	result := initResult{ServerName: "localhost", ExportBaseURL: "http://localhost:8000"}
+	plain := t.TempDir()
+	if commands := initNextStepCommands(initNextSteps(&result, plain, true, true)); strings.Contains(commands, "aw workspace add-worktree") {
+		t.Fatalf("worktree step outside a git repo:\n%s", commands)
+	}
+	repo := t.TempDir()
+	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	if commands := initNextStepCommands(initNextSteps(&result, repo, true, true)); !strings.Contains(commands, "aw workspace add-worktree <role>") {
+		t.Fatalf("no worktree step inside a git repo:\n%s", commands)
+	}
+}
+
+// aw init --setup-channel installs the Claude Code plugin, so the manual
+// install is not a second step; Pi is named once.
+func TestInitNextStepsNameEachChannelPathOnce(t *testing.T) {
+	result := initResult{ServerName: "localhost", ExportBaseURL: "http://localhost:8000"}
+	text := strings.Join(initNextStepLines(initNextSteps(&result, t.TempDir(), true, false)), "\n")
+	if !strings.Contains(text, "aw init --setup-channel") || strings.Contains(text, "claude plugin install") {
+		t.Fatalf("channel install listed twice:\n%s", text)
+	}
+	if n := strings.Count(text, "pi install npm:@awebai/pi@latest"); n != 1 {
+		t.Fatalf("Pi install named %d times:\n%s", n, text)
+	}
+}
+
+// Text output prints what init did before its next steps, so the steps and
+// the guide are the last thing read.
+func TestInitTextPrintsSideEffectsBeforeNextSteps(t *testing.T) {
+	// Cannot use t.Parallel(): needs cwd, stdout and the init globals.
+	oldLocalFlow, oldIsTTY, oldJSON := initRunImplicitLocalFlow, initIsTTY, jsonFlag
+	oldAwebURL, oldRegistry, oldName, oldNewTeam := initAwebURL, initAWIDRegistry, initName, initNewTeam
+	oldPrintExports := initPrintExports
+	t.Cleanup(func() {
+		initRunImplicitLocalFlow, initIsTTY, jsonFlag = oldLocalFlow, oldIsTTY, oldJSON
+		initAwebURL, initAWIDRegistry, initName, initNewTeam = oldAwebURL, oldRegistry, oldName, oldNewTeam
+		initPrintExports = oldPrintExports
+	})
+	t.Setenv("HOME", t.TempDir())
+	initIsTTY = func() bool { return false }
+	jsonFlag = false
+	initPrintExports = true
+	initAwebURL, initAWIDRegistry, initName, initNewTeam = "http://localhost:8100", "http://127.0.0.1:8010", "alice", true
+	initRunImplicitLocalFlow = func(req implicitLocalInitRequest) (connectOutput, error) {
+		return connectOutput{Status: "connected", TeamID: "default:local", Alias: "alice", AwebURL: req.AwebURL}, nil
+	}
+	cmd := &cobraCommandClone{Command: *initCmd}
+	cmd.ResetFlagsForTest()
+	cmd.Command.SetIn(strings.NewReader(""))
+
+	var err error
+	text := captureStdout(t, func() {
+		withTestWorkingDir(t, t.TempDir(), func() {
+			err = runInit(&cmd.Command, nil)
+		})
+	})
+	if err != nil {
+		t.Fatalf("init: %v\n%s", err, text)
+	}
+	created := strings.Index(text, "export AWEB_URL=")
+	steps := strings.Index(text, "Next steps:")
+	if created < 0 || steps < 0 || created > steps {
+		t.Fatalf("side effects are not printed before the next steps:\n%s", text)
+	}
+	if !strings.HasSuffix(strings.TrimSpace(text), "Tell your agent: please read "+initGuideURL) {
+		t.Fatalf("the guide line is not the last line:\n%s", text)
 	}
 }

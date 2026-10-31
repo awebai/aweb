@@ -475,13 +475,13 @@ func acceptInitInviteAndConnect(cmd *cobra.Command, workingDir, token, preferred
 	if err != nil {
 		return err
 	}
-	printOutput(withInitNextSteps(result, &initResult{
+	resultInit := &initResult{
 		ServerName:    hostFromBaseURL(awebURL),
 		ExportBaseURL: awebURL,
 		Alias:         strings.TrimSpace(result.Alias),
 		Path:          initPathJoined,
-	}, workingDir), formatConnect)
-	return nil
+	}
+	return printInitOutcome(result, resultInit, workingDir, initDefaultSetup(resultInit, workingDir))
 }
 
 func resolveInitJoinSource(rawSource, explicitTeam string) (workingDir, identityHome, teamID string, err error) {
@@ -621,18 +621,17 @@ func runInit(cmd *cobra.Command, args []string) error {
 			ServerAssignedName: !initGlobal && requestedAlias == "",
 			Path:               initPathAPIKey,
 		}
-		printOutput(withInitNextSteps(result, resultInit, wd), formatConnect)
-		didInjectDocs := runDefaultInitDocsInjection(wd)
-		if !jsonFlag {
-			printPostInitActions(resultInit, wd, didInjectDocs)
-		}
-		return nil
+		return printInitOutcome(result, resultInit, wd, initDefaultSetup(resultInit, wd))
 	}
 
 	// Certificate-based init: when a team certificate exists and a server URL is provided.
 	{
 		wd, _ := os.Getwd()
 		if hasCertificateForInit(wd) {
+			path := initPathReconnect
+			if firstConnect, err := initWorkspaceMissing(wd); err == nil && firstConnect {
+				path = initPathJoined
+			}
 			awebURL, err := resolveExplicitInitAwebURL()
 			if err != nil {
 				return err
@@ -651,14 +650,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 				ServerName:    hostFromBaseURL(serviceURLs.AwebURL),
 				ExportBaseURL: serviceURLs.AwebURL,
 				Alias:         strings.TrimSpace(result.Alias),
-				Path:          initPathReconnect,
+				Path:          path,
 			}
-			printOutput(withInitNextSteps(result, resultInit, wd), formatConnect)
-			didInjectDocs := runDefaultInitDocsInjection(wd)
-			if !jsonFlag {
-				printPostInitActions(resultInit, wd, didInjectDocs)
-			}
-			return nil
+			return printInitOutcome(result, resultInit, wd, initDefaultSetup(resultInit, wd))
 		}
 	}
 
@@ -706,12 +700,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 				ExportBaseURL: awebURL,
 				Alias:         strings.TrimSpace(result.Alias),
 			}
-			printOutput(withInitNextSteps(result, resultInit, wd), formatConnect)
-			didInjectDocs := runDefaultInitDocsInjection(wd)
-			if !jsonFlag {
-				printPostInitActions(resultInit, wd, didInjectDocs)
-			}
-			return nil
+			return printInitOutcome(result, resultInit, wd, initDefaultSetup(resultInit, wd))
 		}
 		if initBYOD {
 			if !initNewTeam {
@@ -1148,10 +1137,45 @@ func withInitNextSteps(out connectOutput, result *initResult, workingDir string)
 	return out
 }
 
+// initSetupDone is what init's setup after connecting actually did.
+type initSetupDone struct {
+	DocsInjected bool
+	ChannelSetUp bool
+}
+
+// printInitOutcome prints the connection, runs init's setup and then its
+// next steps, so text output ends with the steps and the guide. --json
+// prints one document.
+func printInitOutcome(out connectOutput, result *initResult, workingDir string, setup func() (initSetupDone, error)) error {
+	if jsonFlag {
+		printOutput(withInitNextSteps(out, result, workingDir), formatConnect)
+		_, err := setup()
+		return err
+	}
+	printOutput(out, formatConnect)
+	done, err := setup()
+	if err != nil {
+		return err
+	}
+	fmt.Fprint(commandStdout, formatInitNextSteps(initNextSteps(result, workingDir, done.DocsInjected, done.ChannelSetUp)))
+	return nil
+}
+
+// initDefaultSetup injects the default docs and runs the requested post-init
+// actions.
+func initDefaultSetup(result *initResult, workingDir string) func() (initSetupDone, error) {
+	return func() (initSetupDone, error) {
+		didInjectDocs := runDefaultInitDocsInjection(workingDir)
+		if !jsonFlag {
+			printPostInitActions(result, workingDir, didInjectDocs)
+		}
+		return initSetupDone{DocsInjected: didInjectDocs || initInjectDocs, ChannelSetUp: initSetupChannel}, nil
+	}
+}
+
 // initNextSteps is the one list of next steps for the path init took. Text
 // and --json both print it.
 func initNextSteps(result *initResult, workingDir string, didInjectDocs, didSetupChannel bool) []initNextStep {
-	var steps []initNextStep
 	path := initPathNewTeam
 	if result != nil {
 		path = result.Path
@@ -1159,41 +1183,60 @@ func initNextSteps(result *initResult, workingDir string, didInjectDocs, didSetu
 			path = initPathAPIKey
 		}
 	}
+	steps := []initNextStep{{"aw workspace status", "Check that this agent reaches the server, and see who is on your team"}}
 	if path == initPathNewTeam && shouldSuggestClaimHuman(result) {
 		steps = append(steps,
 			initNextStep{"aw mail send --to-address aweb.ai/aida --subject hello --body \"Hi Aida, I just joined aweb.\"", "Say hi to Aida, aweb's own agent: a first message to a public address"},
 			initNextStep{"aw claim-human --email <your-email>", "Attach your person to this account; until then .aw/signing.key is its only recovery"},
 		)
 	}
-	if !didSetupChannel {
-		steps = append(steps, initNextStep{"aw init --setup-channel", "Set up the Claude Code channel for real-time coordination"})
+	switch path {
+	case initPathAPIKey:
+		steps = append(steps, initNextStep{"aw team invite", "Add another agent to this team (or create one from the dashboard): run the join command it prints in that agent's folder"})
+		steps = appendWorktreeStep(steps, workingDir)
+	case initPathJoined:
+		steps = append(steps, initNextStep{"aw mail send --to <teammate> --subject hello --body \"Hello\"", "Send your first message to a teammate"})
+	case initPathNewTeam:
+		joinFromWhy := "Run in another agent's folder on this machine to add it to this team"
+		if initResultIsHosted(result) {
+			joinFromWhy = "Run in another agent's folder to add it to THIS team; aw init there without --join-from creates a new account/team, a separate team whose agents cannot message this one"
+		}
+		steps = append(steps,
+			initNextStep{"aw init --join-from " + formatShellCommand([]string{workingDir}) + " --name <name>", joinFromWhy},
+			initNextStep{"aw team invite", "Or, for an agent on another machine: run the join command it prints in that agent's folder"},
+		)
+		steps = appendWorktreeStep(steps, workingDir)
 	}
-	steps = append(steps,
-		initNextStep{"claude plugin marketplace add " + claudeChannelMarketplace + " && claude plugin install " + claudeChannelPlugin, "Install the aweb channel for Claude Code once, so messages wake this agent; for Pi, run pi install npm:@awebai/pi@latest instead"},
-		initNextStep{"claude --dangerously-load-development-channels " + claudeChannelSpec, "Start Claude Code with the channel loaded"},
-	)
+	if !didSetupChannel {
+		steps = append(steps, initNextStep{"aw init --setup-channel", "Install the aweb channel plugin for Claude Code, so messages wake this agent"})
+	}
+	steps = append(steps, initNextStep{"claude --dangerously-load-development-channels " + claudeChannelSpec, "Start Claude Code with the channel loaded"})
 	if !didInjectDocs {
 		steps = append(steps, initNextStep{"aw init --inject-docs", "Add aweb instructions to CLAUDE.md / AGENTS.md"})
 	}
-	switch path {
-	case initPathAPIKey:
-		steps = append(steps,
-			initNextStep{"aw team invite", "Add another agent to this team (or create one from the dashboard): run the printed aw team join <token> --name <name> in its folder"},
-			initNextStep{"aw workspace add-worktree <role>", "Or add a git worktree of this repo as another agent"},
-		)
-	case initPathJoined:
-		steps = append(steps,
-			initNextStep{"aw team list", "See your teammates' names"},
-			initNextStep{"aw mail send --to <teammate> --subject hello --body \"Hello\"", "Send your first message to a teammate"},
-		)
-	case initPathNewTeam:
-		steps = append(steps,
-			initNextStep{"aw init --join-from " + formatShellCommand([]string{workingDir}) + " --name <name>", "Run in another agent's folder to add it to THIS team; aw init there without --join-from creates a new account/team, a separate team whose agents cannot message this one"},
-			initNextStep{"aw team invite", "Or, for an agent on another machine: it runs the printed aw team join <token> --name <name> in its folder"},
-			initNextStep{"aw workspace add-worktree <role>", "Or add a git worktree of this repo as another agent"},
-		)
-	}
 	return steps
+}
+
+// appendWorktreeStep offers another worktree as another agent, inside a git
+// worktree only.
+func appendWorktreeStep(steps []initNextStep, workingDir string) []initNextStep {
+	if _, err := currentGitWorktreeRootFromDir(workingDir); err != nil {
+		return steps
+	}
+	return append(steps, initNextStep{"aw workspace add-worktree <role>", "Or add a git worktree of this repo as another agent"})
+}
+
+// formatInitNextSteps renders the next steps block for text output.
+func formatInitNextSteps(steps []initNextStep) string {
+	if len(steps) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("\nNext steps:\n")
+	for _, line := range initNextStepLines(steps) {
+		sb.WriteString(line + "\n")
+	}
+	return sb.String()
 }
 
 // initNextStepLines renders the next steps for text output.
@@ -1223,6 +1266,14 @@ func shouldSuggestClaimHuman(result *initResult) bool {
 	// are minted from authenticated contexts (dashboard or programmatic).
 	// Suggesting claim-human in that case is misleading.
 	if result.APIKeyAuth {
+		return false
+	}
+	return initResultIsHosted(result)
+}
+
+// initResultIsHosted reports whether init connected to hosted aweb.ai.
+func initResultIsHosted(result *initResult) bool {
+	if result == nil {
 		return false
 	}
 	values := []string{result.ServerName, result.ExportBaseURL}
