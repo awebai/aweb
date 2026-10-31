@@ -173,13 +173,13 @@ async def test_unverified_home_namespace_does_not_supply_authority(local_mail, c
 
 @pytest.mark.asyncio
 async def test_home_registry_outage_remains_retryable(local_mail):
-    from aweb.routes.messages import _mail_namespace_uses_home_registry
+    from aweb.messaging.address_auth import namespace_uses_home_registry
     from awid.federation_errors import FederationAuthorityError
 
     registry = RegistryClient(registry_url="http://127.0.0.1:1")
     try:
         with pytest.raises(FederationAuthorityError) as refused:
-            await _mail_namespace_uses_home_registry(local_mail.env.infra, registry, "local")
+            await namespace_uses_home_registry(local_mail.env.infra, registry, "local")
         assert refused.value.reason == "sender_registry_unavailable"
         assert refused.value.http_status == 503
         assert refused.value.retryable is True
@@ -191,7 +191,7 @@ async def test_home_registry_outage_remains_retryable(local_mail):
 
 @pytest.mark.asyncio
 async def test_selected_foreign_origin_does_not_use_home_namespace(local_mail):
-    from aweb.routes.messages import _mail_namespace_uses_home_registry
+    from aweb.messaging.address_auth import namespace_uses_home_registry
 
     async def foreign_registry(domain):
         assert domain == "local"
@@ -199,7 +199,7 @@ async def test_selected_foreign_origin_does_not_use_home_namespace(local_mail):
 
     registry = RegistryClient(registry_url="http://127.0.0.1:2", domain_registry_resolver=foreign_registry)
     try:
-        assert not await _mail_namespace_uses_home_registry(local_mail.env.infra, registry, "local")
+        assert not await namespace_uses_home_registry(local_mail.env.infra, registry, "local")
     finally:
         await registry.aclose()
 
@@ -242,7 +242,10 @@ async def test_plain_cli_local_address_refusal_does_not_retry(local_mail, tmp_pa
     output, _ = await asyncio.wait_for(process.communicate(), 30)
     text = output.decode()
     assert process.returncode != 0, text
-    assert target in text if channel == "mail" else target in text or reason in text, text
+    if channel == "mail":
+        assert target in text, text
+    else:
+        assert target in text or reason in text, text
     assert "retrying" not in text.lower(), text
     assert local_mail.responses == [{"status": 404, "reason": reason, "retryable": False}]
     assert local_mail.queries == []

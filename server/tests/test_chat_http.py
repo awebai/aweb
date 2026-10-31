@@ -251,6 +251,11 @@ def _build_test_app(aweb_db, registry, *, verified_bindings=()):
     app.state.redis = None
     app.state.rate_limiter = None
     app.state.awid_registry_client = registry
+    if registry is not None:
+        # These routing unit cases select the supplied strict foreign authority.
+        # Configured-home authority is exercised against real AWID apps.
+        registry.registry_url = "https://home-registry.test"
+        registry.registry_audience = AsyncMock(return_value="https://registry.test")
     # Routing/signature unit cases supply established authority facts explicitly.
     # Fresh registry admission and refusals use test_identity_binding_http.
     app.state.identity_binding_cache = OrderedDict({
@@ -3734,7 +3739,7 @@ async def test_create_chat_session_global_recipient_null_inbound_mode_fails_migr
 
 
 @pytest.mark.asyncio
-async def test_create_chat_session_to_address_falls_back_to_local_ephemeral_agent(aweb_cloud_db):
+async def test_create_chat_session_to_address_local_ephemeral_without_route_is_not_routable(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -3763,10 +3768,16 @@ async def test_create_chat_session_to_address_falls_back_to_local_ephemeral_agen
         "Content-Type": "application/json",
     }
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
+        # This router-only app omits the production exception renderer.
+        with pytest.raises(FederationAuthorityError) as refused:
+            await client.post("/v1/chat/sessions", content=body, headers=headers)
 
-    assert resp.status_code == 403, resp.text
-    assert "Local recipient only accepts" in resp.text
+    assert refused.value.reason == "local_recipient_route_missing"
+    assert refused.value.http_status == 404
+    assert refused.value.retryable is False
+    assert "Local recipient only accepts" in str(refused.value.__cause__)
+    assert await aweb_cloud_db.aweb_db.fetch_value("SELECT COUNT(*) FROM {{tables.chat_messages}}") == 0
+    assert await aweb_cloud_db.aweb_db.fetch_value("SELECT COUNT(*) FROM {{tables.chat_sessions}}") == 0
 
 
 @pytest.mark.asyncio
