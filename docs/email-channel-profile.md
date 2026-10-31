@@ -50,6 +50,8 @@ not an email alias silently attached to the parent namespace.
 Hosted namespaces use one wildcard MX and one matching suffix receipt rule:
 for `aweb.ai`, `*.aweb.ai MX 10 inbound-smtp.us-east-1.amazonaws.com` and one
 SES receipt rule with [recipient condition `.aweb.ai`](https://docs.aws.amazon.com/ses/latest/dg/receiving-email-receipt-rules-console-walkthrough.html).
+The wildcard does not cover `aweb.ai` itself: attach reports email as not ready
+for that apex namespace and leaves its company-mail MX untouched.
 The attach flow checks the actual MX answer for namespace D before advertising
 email as ready. If records at D or below it prevent wildcard synthesis, require
 an explicit MX at D pointing to the authorized receiver. This is a provisioning
