@@ -55,3 +55,31 @@ func TestWhoExactSelectorsDoNotSubstituteAnotherSender(t *testing.T) {
 		t.Fatal("exact selectors must not scan inbox")
 	}
 }
+
+type whoRoomFixture struct {
+	whoMessageFixture
+	status    int
+	roomCalls int
+	room      awid.RoomMessage
+}
+
+func (f *whoRoomFixture) Message(context.Context, string) (*awid.InboxResponse, error) {
+	return nil, &awid.APIError{StatusCode: f.status, Body: `{"detail":"Not found"}`}
+}
+func (f *whoRoomFixture) RoomMessage(context.Context, string) (*awid.RoomMessage, error) {
+	f.roomCalls++
+	return &f.room, nil
+}
+func TestWhoFindsExactRoomPostOnlyAfterMailNotFound(t *testing.T) {
+	for _, status := range []int{404, 403, 503} {
+		f := &whoRoomFixture{status: status, room: awid.RoomMessage{MessageID: "m", FromAlias: "sender", FromDID: "did:key:sender", VerificationStatus: awid.Verified}}
+		got, err := findWhoSender(context.Background(), f, "sender", "m", "")
+		if status == 404 {
+			if err != nil || got.MessageID != "m" || f.roomCalls != 1 {
+				t.Fatalf("got=%+v err=%v calls=%d", got, err, f.roomCalls)
+			}
+		} else if err == nil || f.roomCalls != 0 {
+			t.Fatalf("mail auth/dependency error was hidden: %d", status)
+		}
+	}
+}
