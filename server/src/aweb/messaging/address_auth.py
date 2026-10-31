@@ -16,11 +16,12 @@ def requires_registry_address_binding(row: Mapping[str, Any] | None) -> bool:
     return str((row or {}).get("identity_scope") or "").strip().lower() == "global"
 
 
-def local_identity_address_refusal(address: str) -> str:
-    """Why a full address does not reach a local identity outside its team."""
+def unreachable_address_refusal(address: str) -> str:
+    """Why a full address reaches no one, in words that do not say whether a
+    local identity holds that name."""
     return (
-        f"{address} is a local identity: it has no registered address and is "
-        "reachable only from inside its own team, by alias. A global identity is "
+        f"{address} has no registered address. A local identity has no address and "
+        "is reachable only from inside its own team, by alias; a global identity is "
         "reachable by address once one is assigned."
     )
 

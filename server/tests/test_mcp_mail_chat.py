@@ -1409,7 +1409,7 @@ async def test_mcp_send_mail_requires_current_local_address_authority(
     if address_registered:
         assert result["status"] == "delivered"
     else:
-        assert result["error"] == "Address 'otherco.com/bob' not found"
+        assert result["error"] == ("otherco.com/bob has no registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned.")
 
 
 @pytest.mark.asyncio
@@ -2120,7 +2120,7 @@ async def test_mcp_chat_send_requires_current_local_address_authority(
     if address_registered:
         assert result["session_id"]
     else:
-        assert result["error"] == "Recipient address 'otherco.com/bob' not found"
+        assert result["error"] == ("otherco.com/bob has no registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned.")
 
 
 @pytest.mark.asyncio
@@ -3173,11 +3173,11 @@ async def test_mcp_same_team_contacts_only(aweb_cloud_db, monkeypatch, kind, mod
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("tool", ["mail", "chat"])
-async def test_mcp_full_address_to_another_teams_local_identity_says_why(
+async def test_mcp_full_address_to_another_teams_local_identity_is_refused_without_confirming_it(
     aweb_cloud_db, monkeypatch, tool
 ):
-    """A local identity has no registered address: outside its team, a full
-    address to it is refused with that reason, not a bare not-found."""
+    """Outside its team, a full address to a local identity is refused with
+    the reason a full address can fail, in the words used for an unknown name."""
     alice_agent_id = uuid4()
     _, alice_pub = generate_keypair()
     alice_did = did_from_public_key(alice_pub)
@@ -3256,8 +3256,6 @@ async def test_mcp_full_address_to_another_teams_local_identity_says_why(
             )
         )
 
-    assert result == {
-        "error": "otherco.com/bob is a local identity: it has no registered address and is "
-        "reachable only from inside its own team, by alias. A global identity is reachable "
-        "by address once one is assigned."
-    }, result
+    # The same words as for a name nobody holds: the refusal does not say
+    # whether a local identity holds this name in another team.
+    assert result == {"error": ("otherco.com/bob has no registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned.")}, result
