@@ -172,12 +172,13 @@ async def test_hosted_key_does_not_refuse_plaintext_or_imply_custody_when_absent
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["mail", "chat"])
 @pytest.mark.parametrize("custody", ["hosted_custodial", "self", None])
-async def test_federation_refuses_verified_hosted_key_before_atomic_effects(aweb_cloud_db, kind, custody):
+@pytest.mark.parametrize("sender_custody", ["self", "hosted_custodial"])
+async def test_federation_refuses_verified_hosted_key_before_atomic_effects(aweb_cloud_db, kind, custody, sender_custody):
     from types import SimpleNamespace
 
     sender_sk, _, sender_did = _make_keypair()
     recipient_sk, _, recipient_did = _make_keypair()
-    alice = _identity(SimpleNamespace(sk=sender_sk, did=sender_did), address="alpha.example/alice", stable_id="did:aw:alice")
+    alice = _identity(SimpleNamespace(sk=sender_sk, did=sender_did), sender_custody, address="alpha.example/alice", stable_id="did:aw:alice")
     bob = _identity(SimpleNamespace(sk=recipient_sk, did=recipient_did), custody, address="beta.example/bob", stable_id="did:aw:bob")
     envelope = _envelope(kind=kind).model_copy(update={
         "sender_current_did_key": sender_did, "target_current_did_key": recipient_did,
@@ -200,7 +201,7 @@ async def test_federation_refuses_verified_hosted_key_before_atomic_effects(aweb
             _DB(manager), envelope=envelope, signature=encrypted["signature"],
             recipient=recipient, authority_token=token,
         )
-    if custody == "hosted_custodial":
+    if custody == "hosted_custodial" and sender_custody == "self":
         with pytest.raises(FederationAuthorityError) as refused:
             await deliver()
         assert refused.value.reason == "recipient_custodial_no_e2ee"
