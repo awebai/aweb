@@ -318,6 +318,11 @@ bob_controller="$(run_cli bob id namespace prepare-controller --domain beta.exam
 ALICE_CONTROLLER="$(printf '%s' "$alice_controller" | json_field controller_did)"
 BOB_CONTROLLER="$(printf '%s' "$bob_controller" | json_field controller_did)"
 [[ -n "$ALICE_CONTROLLER" && -n "$BOB_CONTROLLER" && "$ALICE_CONTROLLER" != "$BOB_CONTROLLER" ]]
+# A namespace registered before ID-tree epochs existed, for aw id namespace
+# reaffirm against the real AWID handler.
+legacy_controller="$(run_cli alice id namespace prepare-controller --domain legacy.example.com --registry http://awid-a:8010 --json)"
+LEGACY_CONTROLLER="$(printf '%s' "$legacy_controller" | json_field controller_did)"
+[[ -n "$LEGACY_CONTROLLER" && "$LEGACY_CONTROLLER" != "$ALICE_CONTROLLER" ]]
 
 # Both products consume these exact-domain records from the same authority.
 DNS_SERIAL=1
@@ -332,6 +337,7 @@ publish_dns() {
 ns IN A 127.0.0.1
 _awid IN TXT "awid=v1; controller=$ALICE_CONTROLLER; registry=http://awid-a:8010;"
 _awid.alpha IN TXT "awid=v1; controller=$alpha_controller; registry=http://awid-a:8010;"
+_awid.legacy IN TXT "awid=v1; controller=$LEGACY_CONTROLLER; registry=http://awid-a:8010;"
 EOF
   cat > "$DNS_DIR/example.net.zone.tmp" <<EOF
 \$ORIGIN example.net.
@@ -394,6 +400,31 @@ for identity in alice bob; do
   done
   [[ "$matched" == 1 ]] || { echo "CLI never verified exact DNS for $domain" >&2; exit 1; }
 done
+
+echo "Reaffirming a namespace registered before ID-tree epochs"
+# A pre-epoch row: the stored controller with no epoch history, as AWID kept
+# namespaces before 0.5.35. The real handler answers its status with 503
+# evidence_unavailable until reaffirmation opens epoch 1.
+legacy_epochs() {
+  compose exec -T postgres-a psql -U aweb -d aweb -Atc "SELECT count(*) FROM awid.id_namespace_epochs WHERE domain = 'legacy.example.com'"
+}
+compose exec -T postgres-a psql -U aweb -d aweb -v ON_ERROR_STOP=1 -c \
+  "INSERT INTO awid.dns_namespaces (domain, controller_did, verification_status, last_verified_at) VALUES ('legacy.example.com', '$LEGACY_CONTROLLER', 'verified', NOW())" >/dev/null
+[[ "$(legacy_epochs)" == 0 ]]
+reaffirmed="$(run_cli alice id namespace reaffirm --domain legacy.example.com --json)"
+[[ "$(printf '%s' "$reaffirmed" | json_field status)" == opened ]] || { echo "$reaffirmed" >&2; exit 1; }
+python3 - "$reaffirmed" "$LEGACY_CONTROLLER" <<'PYCHECK'
+import json, sys
+text, controller = sys.argv[1], sys.argv[2]
+epoch = json.loads(text[text.find("{"):])["epoch"]
+assert epoch["seq"] == 1 and epoch["did_key"] == controller and epoch["continuity"] == "replaced", epoch
+PYCHECK
+[[ "$(legacy_epochs)" == 1 ]]
+# A second run finds the open epoch and writes nothing.
+again="$(run_cli alice id namespace reaffirm --domain legacy.example.com --json)"
+[[ "$(printf '%s' "$again" | json_field status)" == already_enrolled ]] || { echo "$again" >&2; exit 1; }
+[[ "$(legacy_epochs)" == 1 ]]
+echo "PASS: aw id namespace reaffirm opens epoch 1 for a pre-epoch namespace on the real AWID handler, and a second run writes nothing"
 
 echo "Creating human and agent chains through real DNS, Secret Service and PTY"
 compose run --rm -T --no-deps --entrypoint dbus-run-session cli -- \

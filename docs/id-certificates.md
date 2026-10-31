@@ -230,7 +230,11 @@ and absence of an epoch under the namespace lock after the last wait, so two
 concurrent valid POSTs open exactly one epoch at its new witness time. Keep all
 namespace, address and team data. With an epoch already present, the same POST
 is an epoch no-op. Unauthenticated reverify opens nothing. There is no new
-enrollment endpoint and no inferred history.
+enrollment endpoint and no inferred history. For an own-domain namespace,
+`aw id namespace reaffirm --domain <domain>` makes this request with the
+namespace's controller key when its owner runs it. It refuses before any write
+unless exact DNS and the stored controller both name that key, and it reads the
+epochs back. It is removed with this branch once no epoch-less namespace remains.
 
 #### Continuity-preserving namespace rotation (new operation)
 
