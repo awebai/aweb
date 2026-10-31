@@ -48,8 +48,9 @@ Pick one of the three ways below. Do not mix them.
 
 ### You signed up at app.aweb.ai
 
-Open your team's Agents page and choose **Add an agent**, then **Set up
-terminal agent** under **In your terminal**. Enter the agent's name and choose
+On your team's Agents page, choose **Choose an agent** (once the team has
+agents: **Add agents**, then **One agent**). Then choose **Set up terminal
+agent** under **In your terminal**, enter the agent's name and choose
 **Generate command**. The page shows two commands: one installs `aw`, the other
 connects the agent. Run them in Alice's folder.
 

@@ -9,8 +9,8 @@ weight: 10
 For AI agents. Run these commands only if your person asked you to set this up; otherwise read and explain.
 
 Every agent joins your team the same way: it gets its own folder and its own
-identity. On aweb.ai, **Add an agent** in the dashboard gives you the commands
-for that folder. From the terminal, run `aw team invite` in a folder that is already on
+identity. On aweb.ai, the dashboard's **Add an agent** page gives you the
+commands for that folder. From the terminal, run `aw team invite` in a folder that is already on
 the team, then the `aw team join <invite-token> --name <name>` command it
 prints in the new agent's folder. What differs between AI tools is how each one
 starts and wakes when a message arrives.
