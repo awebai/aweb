@@ -61,12 +61,22 @@
   instead of "Re", and never adds a second "Re:". `aw beads-mail` and
   `aw gc-mail` replies follow the same rule, now case-insensitively.
 
-- aw: with `--json`, a failed command prints one error envelope on stdout,
-  `{"error": {"code", "message", "http_status", "detail"}}`. `code` is the
-  stable contract; stderr wording is not. stderr and exit codes do not
-  change. The codes are listed in the CLI reference. `aw wake status --json`
-  reports a receive stream's error the same way, as `stream_error_detail`
-  beside `stream_error`.
+- aw: the `--json` refusal shape changes. A failed command run with `--json`
+  now prints one document on stdout,
+  `{"error": {"code", "message", "http_status", "detail", "reason"}}`, and
+  the server's own refusal code (for example `admin_required`) is in
+  `error.reason`. Scripts that parsed the raw server body's `detail.code` out
+  of stderr must read `error.reason` instead; stderr wording is not a
+  contract. `code` is the stable class (`http_error` for a server refusal),
+  `detail` is the server's message, and `reason` is absent when the server
+  gave no code. stderr and exit codes do not change. The codes are listed in
+  the CLI reference. `aw wake status --json` reports a receive stream's
+  error the same way, as `stream_error_detail` beside `stream_error`.
+
+- aw: accepting a hosted invite works when `AWEB_URL` is the server's base
+  URL. The invite preview treats a base URL and its `/api` mount as the same
+  service; a different scheme, host or port is still refused as
+  `server_mismatch`.
 
 - AWID SDK: `RegistryClient.register_did_with_signer(did_key, *, signer,
   timestamp=None)` registers a did:aw whose key stays behind a signer

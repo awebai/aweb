@@ -51,7 +51,11 @@ creation chooses its scope explicitly. `expires_at` may be null. Status is the
 service's current report, not a reservation or guarantee that later acceptance
 will succeed. The envelope is unsigned: contacting its chosen service does not
 independently verify the service or team. The normalized response `server_url`
-must match the envelope URL; mismatch fails without a second request.
+must name the same service as the envelope URL. A base URL and its `/api` mount
+are the same service, because the preview request goes to `<base>/api/v1`
+either way; any other difference in scheme, host, port or path is a mismatch,
+which fails without a second request. Acceptance applies the same rule to the
+service URL it was given.
 
 ## Controller tokens
 

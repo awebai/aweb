@@ -7,13 +7,15 @@ import (
 )
 
 // ErrorDetail is an error's stable machine description: its class code and,
-// for a refusal by an aweb server or AWID registry, the HTTP status and the
-// string detail of the response's JSON body, never its headers or any other
-// text. The message an error prints is not stable; this is.
+// for a refusal by an aweb server or AWID registry, the HTTP status, the
+// string detail of the response's JSON body and the server's own refusal
+// code as Reason, never its headers or any other text. The message an error
+// prints is not stable; this is.
 type ErrorDetail struct {
 	Code       string `json:"code"`
 	HTTPStatus int    `json:"http_status,omitempty"`
 	Detail     string `json:"detail,omitempty"`
+	Reason     string `json:"reason,omitempty"`
 }
 
 // DescribeError classifies err. Codes: http_error, alias_conflict (a refusal
@@ -26,7 +28,7 @@ func DescribeError(err error) ErrorDetail {
 	if refused {
 		detail.HTTPStatus = status
 		serverCode, text := responseDetail(body)
-		detail.Code, detail.Detail = "http_error", text
+		detail.Code, detail.Detail, detail.Reason = "http_error", text, serverCode
 		if serverCode == "alias_active" {
 			detail.Code = "alias_conflict"
 		}
@@ -50,9 +52,9 @@ func DescribeError(err error) ErrorDetail {
 	return detail
 }
 
-// RefusalCode is the code of a refusal's coded detail {"code", "message"}, or
-// "" when err is no refusal by an aweb server or AWID registry or its detail
-// carries no code.
+// RefusalCode is the server's code for a refusal: the code of its coded
+// detail {"code", "message"}, else its top-level reason, or "" when err is no
+// refusal by an aweb server or AWID registry or its body carries no code.
 func RefusalCode(err error) string {
 	body, _, refused := refusalBody(err)
 	if !refused {
@@ -76,22 +78,26 @@ func refusalBody(err error) (body string, status int, refused bool) {
 	return "", 0, false
 }
 
-// responseDetail reads a JSON error body's detail: a string is its text; a
-// coded detail {"code", "message"} gives its code and its message as text.
+// responseDetail reads a JSON error body: a string detail is its text; a coded
+// detail {"code", "message"} gives its code and its message as text; without
+// a coded detail, a top-level reason is the code.
 func responseDetail(body string) (code, text string) {
 	var server struct {
-		Detail any `json:"detail"`
+		Detail any    `json:"detail"`
+		Reason string `json:"reason"`
 	}
 	if json.Unmarshal([]byte(body), &server) != nil {
 		return "", ""
 	}
+	code = server.Reason
 	switch detail := server.Detail.(type) {
 	case string:
-		return "", detail
+		text = detail
 	case map[string]any:
-		code, _ = detail["code"].(string)
+		if coded, _ := detail["code"].(string); coded != "" {
+			code = coded
+		}
 		text, _ = detail["message"].(string)
-		return code, text
 	}
-	return "", ""
+	return code, text
 }

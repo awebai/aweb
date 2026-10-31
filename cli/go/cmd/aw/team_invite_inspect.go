@@ -156,6 +156,14 @@ func inspectHostedInvite(ctx context.Context, token string, envelope hostedJoinT
 	return inspection, err
 }
 
+// sameInviteService reports whether two service URLs name the same service.
+// The preview request goes to <origin>/api/v1 whether a URL names the origin
+// or its /api mount, so those two are one service; any other difference in
+// scheme, host, port or path is another service.
+func sameInviteService(a, b string) bool {
+	return strings.TrimSuffix(a, "/api") == strings.TrimSuffix(b, "/api")
+}
+
 func readHostedInvitePreview(ctx context.Context, token string, envelope hostedJoinTokenEnvelope) (*inviteInspection, *awid.SpawnInvitePreviewResponse, *inviteInspectError) {
 	body, _ := json.Marshal(struct {
 		Token string `json:"token"`
@@ -214,7 +222,7 @@ func readHostedInvitePreview(ctx context.Context, token string, envelope hostedJ
 	if err != nil {
 		return nil, nil, inspectUnavailable()
 	}
-	if server != envelope.AwebURL {
+	if !sameInviteService(server, envelope.AwebURL) {
 		return nil, nil, &inviteInspectError{"server_mismatch", "Invite preview service does not match the invite envelope; no second request was made.", 1}
 	}
 	if wire.ExpiresAt != nil {
