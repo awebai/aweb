@@ -23,6 +23,7 @@ func TestForgetRequestCompressionProbesAReusedBaseAgain(t *testing.T) {
 	plain.Listener.Close()
 	plain.Listener = first
 	plain.Start()
+	ForgetRequestCompression(plain.URL)
 	postToCompressionBase(t, plain.URL)
 	plain.Close()
 
@@ -73,4 +74,27 @@ func postToCompressionBase(t *testing.T, base string) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
+}
+
+// Forgetting a server's origin forgets every base mounted on it, so a test
+// that uses srv.URL+"/api" is isolated as well as one that uses srv.URL.
+func TestForgetRequestCompressionCoversEveryMountOnTheOrigin(t *testing.T) {
+	keep := "http://127.0.0.2:1"
+	for _, base := range []string{"http://127.0.0.1:1", "http://127.0.0.1:1/api", "http://127.0.0.1:1/other", keep} {
+		support := &requestCompressionSupport{ready: make(chan struct{})}
+		close(support.ready)
+		requestCompressionServers.Store(base, support)
+	}
+	t.Cleanup(func() { requestCompressionServers.Delete(keep) })
+
+	ForgetRequestCompression("http://127.0.0.1:1")
+
+	for _, base := range []string{"http://127.0.0.1:1", "http://127.0.0.1:1/api", "http://127.0.0.1:1/other"} {
+		if _, ok := requestCompressionServers.Load(base); ok {
+			t.Fatalf("%s is still cached after forgetting its origin", base)
+		}
+	}
+	if _, ok := requestCompressionServers.Load(keep); !ok {
+		t.Fatal("another origin's entry was forgotten")
+	}
 }
