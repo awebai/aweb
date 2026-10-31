@@ -379,6 +379,9 @@ human recipient with HTTP 422, `reason: recipient_human_mail_only` and
 `retryable: false`; use `aw mail send --to <person> --subject <subject>`.
 This applies to a new session and the next send in an existing session, including
 wait extensions. A group containing a human is refused as a whole before sending.
+The refusal includes `recipients`, a sorted list of the classified humans’
+display labels. Agents and unknown members are excluded; clients use generic
+guidance if the list is empty. Labels never establish identity or kind.
 A team row typed `human` or a currently verified human subject certificate is
 human evidence; an alias, address shape, missing key or unavailable registry
 record is not. An agent with a responsible human is still an agent. Unknown

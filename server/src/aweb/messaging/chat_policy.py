@@ -14,19 +14,26 @@ logger = logging.getLogger(__name__)
 class HumanChatRefused(ValidationError):
     reason = 'recipient_human_mail_only'
 
-    def __init__(self, recipient: str):
-        super().__init__(
-            f'{recipient} is a person; aweb reaches people by mail: aw mail send --to {recipient}'
-        )
+    def __init__(self, recipient: str | list[str]):
+        values = [recipient] if isinstance(recipient, str) else recipient
+        self.recipients = sorted({value.strip() for value in values if value.strip()})
+        if len(self.recipients) == 1:
+            description = f'{self.recipients[0]} is a person'
+        elif self.recipients:
+            description = f'{", ".join(self.recipients)} are people'
+        else:
+            description = 'This chat includes a person'
+        target = self.recipients[0] if self.recipients else '<their alias>'
+        super().__init__(f'{description}; aweb reaches people by mail: aw mail send --to {target}')
 
     def body(self, *, correlation_id: str | None = None) -> dict:
         return dict(detail=self.detail, reason=self.reason, retryable=False,
-                    correlation_id=correlation_id or str(uuid4()))
+                    correlation_id=correlation_id or str(uuid4()), recipients=self.recipients)
 
 
 def recipient_label(row: dict) -> str:
     return str(row.get('address') or row.get('alias') or row.get('did_aw')
-               or row.get('did') or row.get('did_key') or 'recipient')
+               or row.get('did') or row.get('did_key') or '')
 
 
 async def require_agent_chat(db, recipients: list[dict], *, registry_client=None) -> None:
@@ -37,6 +44,7 @@ async def require_agent_chat(db, recipients: list[dict], *, registry_client=None
     nearest_human on an AGENT certificate does not make the agent a human.
     """
     manager = db.get_manager('aweb')
+    humans = []
     for row in recipients:
         did = str(row.get('did_aw') or row.get('did') or row.get('did_key') or '').strip()
         if not did:
@@ -49,7 +57,8 @@ async def require_agent_chat(db, recipients: list[dict], *, registry_client=None
                LIMIT 1""", did,
         )
         if human:
-            raise HumanChatRefused(recipient_label(row))
+            humans.append(recipient_label(row))
+            continue
         resolve = getattr(registry_client, 'resolve_key_fresh', None)
         evidence_for = getattr(registry_client, 'id_chain_evidence', None)
         if not did.startswith('did:aw:') or not callable(resolve) or not callable(evidence_for):
@@ -72,4 +81,6 @@ async def require_agent_chat(db, recipients: list[dict], *, registry_client=None
             logger.warning('Chat recipient kind unavailable for %s', did, exc_info=True)
             continue
         if result['identity_valid'] is True and result['kind'] == 'human':
-            raise HumanChatRefused(recipient_label(row))
+            humans.append(recipient_label(row))
+    if humans:
+        raise HumanChatRefused(humans)

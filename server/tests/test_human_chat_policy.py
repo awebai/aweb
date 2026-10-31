@@ -147,3 +147,38 @@ async def test_federated_ingress_cannot_send_chat_to_authoritative_human(aweb_cl
     assert refused.value.reason == 'recipient_human_mail_only'
     for table in ('chat_messages', 'message_ingress_receipts', 'federation_mutation_outbox'):
         assert await db.fetch_val('SELECT count(*) FROM {{tables.' + table + '}}') == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('existing', [False, True])
+async def test_group_refusal_names_only_authoritative_humans_in_stable_order(privacy_app, existing):
+    env = privacy_app
+    # The requested agent can be in a group with several people. Never label
+    # that agent a person merely because the whole send is refused.
+    if existing:
+        started = await request(env, '/v1/chat/sessions', {
+            'to_aliases': ['carol', 'bob'], 'message': 'agent control',
+        })
+        assert started.status_code == 200, started.text
+    await env.db.execute("UPDATE {{tables.agents}} SET agent_type='human' WHERE alias IN ('bob','carol')")
+    if existing:
+        response = await request(env, '/v1/chat/sessions/' + started.json()['session_id'] + '/messages', {'body': 'no', 'hang_on': True})
+    else:
+        response = await request(env, '/v1/chat/sessions', {'to_aliases': ['carol', 'bob'], 'message': 'no'})
+    assert response.status_code == 422, response.text
+    assert response.json()['recipients'] == ['bob', 'carol']
+    assert await env.db.fetch_val('SELECT count(*) FROM {{tables.chat_messages}}') == int(existing)
+
+
+@pytest.mark.asyncio
+async def test_refusal_names_exclude_agent_and_unknown_members(privacy_app):
+    from aweb.messaging.chat_policy import HumanChatRefused, require_agent_chat
+    env = privacy_app
+    await env.db.execute("UPDATE {{tables.agents}} SET agent_type='human' WHERE alias='bob'")
+    rows = [dict(did_key=env.actors['carol'].did, alias='carol'),
+            dict(did_key='did:key:unknown', alias='unknown'),
+            dict(did_key=env.actors['bob'].did, alias='bob'),
+            dict(did_key=env.actors['bob'].did, alias='bob')]
+    with pytest.raises(HumanChatRefused) as refused:
+        await require_agent_chat(env.infra, rows)
+    assert refused.value.body()['recipients'] == ['bob']
