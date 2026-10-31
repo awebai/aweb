@@ -91,9 +91,12 @@ func initTeamFlagApplies() bool {
 	return err == nil && missing
 }
 
-// initTeamFlagUsageError says where --team applies.
+// initTeamFlagUsageText says where --team applies.
+const initTeamFlagUsageText = "--team only works with --new-team in a new folder on a local (localhost) registry."
+
+// initTeamFlagUsageError refuses --team on a path that would not read it.
 func initTeamFlagUsageError() error {
-	return usageError("--team names the team that aw init --new-team creates on a local (localhost) awid registry, in a folder with no aw workspace or certificate; it does not apply without --new-team, with --byod, --domain, --global, --username, --join-from or --workspace-team, or with AWEB_API_KEY set")
+	return usageError("%s", initTeamFlagUsageText)
 }
 
 // localTeamAlreadyExists refuses --new-team for a local team that is already
