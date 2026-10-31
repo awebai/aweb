@@ -158,8 +158,9 @@ func formatMailInbox(v any) string {
 		if msg.ContentMode == awid.ContentModeEncryptedV2 && !msg.AttachmentsAvailable {
 			sb.WriteString("  Attachments unavailable.\n")
 		}
-
+		writeMailMessageID(&sb, msg.MessageID)
 	}
+	writeMailReplyHint(&sb, resp.Messages)
 	if resp.HasMore {
 		sb.WriteString("\nMore messages are not shown on this page.\n")
 		if cursor := strings.TrimSpace(resp.NextCursor); cursor != "" {
@@ -186,6 +187,24 @@ func formatMailInbox(v any) string {
 		}
 	}
 	return sb.String()
+}
+
+// writeMailMessageID shows a message's id under it: aw mail reply takes the
+// exact id.
+func writeMailMessageID(sb *strings.Builder, messageID string) {
+	if id := strings.TrimSpace(messageID); id != "" {
+		sb.WriteString("  Message ID: " + termtext.Line(id) + "\n")
+	}
+}
+
+// writeMailReplyHint says once how to reply when any listed message has an id.
+func writeMailReplyHint(sb *strings.Builder, messages []awid.InboxMessage) {
+	for _, msg := range messages {
+		if strings.TrimSpace(msg.MessageID) != "" {
+			sb.WriteString("\nTo reply: aw mail reply <message-id> --body-file <file>\n")
+			return
+		}
+	}
 }
 
 // mailWindowNotice reports that a listing filled its limit exactly, and is empty
@@ -259,8 +278,9 @@ func formatMailShowResponse(resp *awid.InboxResponse, notice string) string {
 		if msg.ContentMode == awid.ContentModeEncryptedV2 && !msg.AttachmentsAvailable {
 			sb.WriteString("  Attachments unavailable.\n")
 		}
-
+		writeMailMessageID(&sb, msg.MessageID)
 	}
+	writeMailReplyHint(&sb, resp.Messages)
 	return sb.String()
 }
 
