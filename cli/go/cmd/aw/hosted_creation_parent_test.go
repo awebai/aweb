@@ -109,3 +109,26 @@ func TestAPIKeyCreationParentComesFromThatKeysSelectedTeam(t *testing.T) {
 		})
 	}
 }
+
+// A service that cannot answer the API key's team read says what is likely
+// wrong: a 404 is a service older than this aw; a 401 or 403 is a wrong key
+// or an older service, and the refusal says both.
+func TestAPIKeyCreationTeamReadRefusalSaysWhatIsLikelyWrong(t *testing.T) {
+	for _, tt := range []struct {
+		status int
+		want   string
+	}{
+		{http.StatusNotFound, "does not support creating agents with an API key; it is older than this aw. Use an aweb service that does, or an older aw."},
+		{http.StatusUnauthorized, "refused this API key's team read (HTTP 401). Check that AWEB_API_KEY is current; if it is, the service may be older than this aw and not support creating agents with an API key."},
+		{http.StatusForbidden, "refused this API key's team read (HTTP 403). Check that AWEB_API_KEY is current; if it is, the service may be older than this aw and not support creating agents with an API key."},
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(tt.status)
+		}))
+		_, err := readAPIKeyCreationTeam(t.Context(), server.URL, "fixture-key")
+		server.Close()
+		if err == nil || !strings.Contains(err.Error(), "The aweb service at ") || !strings.HasSuffix(err.Error(), tt.want) {
+			t.Fatalf("HTTP %d: err=%v, want ...%q", tt.status, err, tt.want)
+		}
+	}
+}

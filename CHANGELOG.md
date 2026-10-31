@@ -48,6 +48,13 @@
   global address now encrypts to the key that address resolves to, when it
   is the session's same participant, instead of failing for a missing key.
 
+- aw: `aw init` with `AWEB_API_KEY` needs the aweb.ai service release that
+  answers the API key's team read (`GET /api/v1/teams/current`). Against an
+  older service it refuses, saying the service does not support creating
+  agents with an API key (or, for HTTP 401/403, that the key may not be
+  current). This aw is promoted to latest only after that service release
+  is deployed.
+
 - aw: with `--json`, a failed command prints one error envelope on stdout,
   `{"error": {"code", "message", "http_status", "detail"}}`. `code` is the
   stable contract; stderr wording is not. stderr and exit codes do not
