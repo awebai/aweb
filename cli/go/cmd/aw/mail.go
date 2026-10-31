@@ -1094,6 +1094,20 @@ var mailInboxCmd = &cobra.Command{
 	Long: "List inbox messages, newest first and unread only by default. Messages shown by this command are acknowledged as read.\n\n" +
 		"Use --count-only to count all unread mail without acknowledging or displaying messages. This read-only count walks inbox pages and does not decrypt message content.\n\n" +
 		"Without --count-only, the response is one bounded page. Text output reports when more messages exist and prints a continuation command; JSON output carries has_more and next_cursor. Pass the returned value to --cursor to continue without overlap.",
+	PreRunE: func(cmd *cobra.Command, args []string) error {
+		if cmd.Flags().Changed("count-only") {
+			for _, flag := range []string{"show-all", "limit", "cursor"} {
+				if cmd.Flags().Changed(flag) {
+					scope := "every page"
+					if flag == "show-all" {
+						scope = "unread messages"
+					}
+					return fmt.Errorf("--count-only counts %s, so it cannot be combined with --%s.", scope, flag)
+				}
+			}
+		}
+		return nil
+	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
@@ -1110,7 +1124,13 @@ var mailInboxCmd = &cobra.Command{
 			result := struct {
 				UnreadCount int `json:"unread_count"`
 			}{count}
-			return writeOutput(cmd.OutOrStdout(), result, func(any) string { return fmt.Sprintf("%d\n", count) })
+			return writeOutput(cmd.OutOrStdout(), result, func(any) string {
+				unit := "messages"
+				if count == 1 {
+					unit = "message"
+				}
+				return fmt.Sprintf("%d unread %s\n", count, unit)
+			})
 		}
 		if err := configureClientE2EEForRead(cmd, ctx, c, sel); err != nil {
 			return err
@@ -1317,9 +1337,6 @@ func init() {
 	mailInboxCmd.Flags().BoolVar(&mailInboxShowAll, "show-all", false, "Show all messages including already-read")
 	mailInboxCmd.Flags().IntVar(&mailInboxLimit, "limit", 50, "Max messages per page")
 	mailInboxCmd.Flags().StringVar(&mailInboxCursor, "cursor", "", "Continue from next_cursor in a previous inbox response")
-	for _, flag := range []string{"show-all", "limit", "cursor"} {
-		mailInboxCmd.MarkFlagsMutuallyExclusive("count-only", flag)
-	}
 	mailReplyCmd.Flags().StringVar(&mailReplySubject, "subject", "", "Subject")
 	mailReplyCmd.Flags().StringVar(&mailReplyBody, "body", "", shellExpandedInlineHelp("Body", "--body-file"))
 	mailReplyCmd.Flags().StringVar(&mailReplyBodyFile, "body-file", "", safeFileInputHelp("message body"))

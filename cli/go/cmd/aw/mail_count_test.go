@@ -28,7 +28,7 @@ func TestAwMailInboxCountOnlyNeverAcknowledges(t *testing.T) {
 		failPage bool
 		identity string
 	}{
-		{name: "empty"}, {name: "multiple-pages", count: 3},
+		{name: "empty"}, {name: "one-message", count: 1}, {name: "multiple-pages", count: 3},
 		{name: "external-local", count: 3, identity: "local"},
 		{name: "external-global", count: 3, identity: "global"},
 		{name: "read-only-grant", count: 3, identity: "grant"}, {name: "failed-continuation", count: 3, failPage: true},
@@ -54,7 +54,7 @@ func TestAwMailInboxCountOnlyNeverAcknowledges(t *testing.T) {
 						// Deliberately include encrypted/unverifiable content. Counting must not
 						// decrypt, verify senders, or configure/publish encryption keys.
 						messages = append(messages, map[string]any{"message_id": "m3", "content_mode": "encrypted_v2", "encrypted_envelope": map[string]any{}})
-						if cursor == "" {
+						if cursor == "" && tc.count > 1 {
 							messages = append(messages, map[string]any{"message_id": "m2"})
 							more = true
 							next = "page-2"
@@ -103,7 +103,11 @@ func TestAwMailInboxCountOnlyNeverAcknowledges(t *testing.T) {
 			}
 			before := fileDigestsForTest(t, identityHome)
 			for attempt := 0; attempt < 2; attempt++ {
-				cmd := exec.CommandContext(ctx, bin, args...)
+				commandArgs := args
+				if attempt == 1 {
+					commandArgs = args[:len(args)-1] // Repeat as human-readable text.
+				}
+				cmd := exec.CommandContext(ctx, bin, commandArgs...)
 				cmd.Env = testCommandEnv(home)
 				cmd.Dir = home
 				out, err := cmd.CombinedOutput()
@@ -115,6 +119,13 @@ func TestAwMailInboxCountOnlyNeverAcknowledges(t *testing.T) {
 				}
 				if err != nil {
 					t.Fatalf("count failed: %v\n%s", err, out)
+				}
+				if attempt == 1 {
+					want := map[int]string{0: "0 unread messages\n", 1: "1 unread message\n", 3: "3 unread messages\n"}[tc.count]
+					if string(out) != want {
+						t.Fatalf("text count = %q, want %q", out, want)
+					}
+					continue
 				}
 				var result map[string]int
 				if err := json.Unmarshal(out, &result); err != nil {
@@ -136,4 +147,44 @@ func TestAwMailInboxCountOnlyNeverAcknowledges(t *testing.T) {
 			}
 		})
 	}
+	t.Run("flag-errors-before-identity-selection", func(t *testing.T) {
+		home := t.TempDir()
+		for _, tc := range []struct {
+			flag, value, message string
+		}{
+			{"limit", "1", "--count-only counts every page, so it cannot be combined with --limit."},
+			{"cursor", "page-2", "--count-only counts every page, so it cannot be combined with --cursor."},
+			{"show-all", "true", "--count-only counts unread messages, so it cannot be combined with --show-all."},
+		} {
+			for _, jsonOutput := range []bool{false, true} {
+				args := []string{"mail", "inbox", "--count-only", "--" + tc.flag + "=" + tc.value}
+				if jsonOutput {
+					args = append(args, "--json")
+				}
+				cmd := exec.CommandContext(ctx, bin, args...)
+				cmd.Env = testCommandEnv(home)
+				cmd.Dir = home
+				out, err := cmd.Output()
+				if err == nil {
+					t.Fatalf("--%s accepted with count-only", tc.flag)
+				}
+				exit, ok := err.(*exec.ExitError)
+				if !ok || exit.ExitCode() != 1 {
+					t.Fatalf("--%s exit = %v, want 1", tc.flag, err)
+				}
+				if jsonOutput {
+					var result struct {
+						Error struct{ Code, Message string } `json:"error"`
+					}
+					if err := json.Unmarshal(out, &result); err != nil || result.Error.Code != "error" || result.Error.Message != tc.message {
+						t.Fatalf("--%s JSON error = %s, decode=%v", tc.flag, out, err)
+					}
+				} else {
+					if !strings.Contains(string(exit.Stderr), tc.message) {
+						t.Fatalf("--%s text error = %v, stderr=%q", tc.flag, err, exit.Stderr)
+					}
+				}
+			}
+		}
+	})
 }
