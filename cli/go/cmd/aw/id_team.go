@@ -1756,6 +1756,22 @@ func createHostedTeamInviteTokenAt(workingDir, identityHome, teamID string, loca
 	return strings.TrimSpace(created.InviteID), strings.TrimSpace(created.Token), nil
 }
 
+// inviteAliasTakenError refuses an invite accept whose name another active
+// member of the team holds. The invite is deleted only after a successful
+// accept, so it still works with another name. It wraps the registry's
+// refusal, so --json keeps alias_conflict and its detail.
+type inviteAliasTakenError struct {
+	alias  string
+	teamID string
+	err    error
+}
+
+func (e *inviteAliasTakenError) Error() string {
+	return fmt.Sprintf("The name %s is already taken in %s. Pick another with --name. Your invite is still valid.", e.alias, e.teamID)
+}
+
+func (e *inviteAliasTakenError) Unwrap() error { return e.err }
+
 func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInviteOptions) (*acceptedTeamInvite, error) {
 	if awid.IsHostedSpawnInviteToken(token) {
 		return acceptHostedTeamInviteWithDetails(workingDir, token, opts)
@@ -1891,6 +1907,9 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 
 	if err := registry.RegisterCertificate(ctx, registryURL, invite.Domain, invite.TeamName, cert, teamKey); err != nil {
 		registerErr := fmt.Errorf("register certificate at registry: %w", err)
+		if awid.DescribeError(err).Code == "alias_conflict" {
+			registerErr = &inviteAliasTakenError{alias: plan.Name, teamID: teamID, err: err}
+		}
 		return nil, rollbackDefaultAddressClaimAfterCertificateFailure(
 			registry,
 			registryURL,
