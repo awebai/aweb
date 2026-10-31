@@ -13,6 +13,31 @@ from aweb.messaging.verification import require_conversation_not_legacy_bound
 from aweb.service_errors import ValidationError
 
 
+class ParticipantRetiredError(ValidationError):
+    status_code = 410
+
+    def __init__(self, alias: str, team: str):
+        super().__init__({
+            "code": "participant_retired",
+            "message": f"{alias} has moved; start a new mail to {alias} in {team}",
+        })
+
+
+async def _require_live_mail_participant(db, participant: dict, conversation: dict) -> None:
+    did = participant["did"]
+    rows = await db.get_manager("aweb").fetch_all(
+        """SELECT deleted_at FROM {{tables.agents}}
+           WHERE COALESCE(CASE WHEN did_aw_verified_key=did_key THEN NULLIF(did_aw,'') END, did_key)=$1""",
+        did,
+    )
+    # Unknown/remote residence is not retirement. A deleted actor projection
+    # cannot retire a DID that still has a live membership elsewhere.
+    if rows and all(row["deleted_at"] is not None for row in rows):
+        alias = str(participant.get("alias") or did)
+        team = str(conversation.get("team_id") or "the original team")
+        raise ParticipantRetiredError(alias, team)
+
+
 @dataclass(frozen=True)
 class MailContinuationContext:
     conversation: dict
@@ -116,11 +141,6 @@ async def mail_continuation_context(
         authenticated_did=sender_did,
         equivalent_dids=equivalent_dids,
     )
-    await require_conversation_not_legacy_bound(
-        db,
-        conversation_id=conversation_id,
-        conversation_type="mail",
-    )
     participants = await list_conversation_participants(db, conversation_id=conversation_id)
     sender_participant_did = auth_context["participant"]["did"]
     recipients = [
@@ -135,6 +155,12 @@ async def mail_continuation_context(
         recipient_participant = recipients[0]
     else:
         raise ValidationError("Mail conversation continuation requires exactly one recipient")
+    await _require_live_mail_participant(db, recipient_participant, auth_context["conversation"])
+    await require_conversation_not_legacy_bound(
+        db,
+        conversation_id=conversation_id,
+        conversation_type="mail",
+    )
     return MailContinuationContext(
         conversation=auth_context["conversation"],
         sender_participant=auth_context["participant"],

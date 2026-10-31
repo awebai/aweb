@@ -21,7 +21,7 @@ from awid.signing import canonical_json_bytes
 from fastapi import HTTPException
 
 from aweb.attachment_service import prepare_attachment_send
-from aweb.identity_auth_deps import auth_dids
+from aweb.identity_auth_deps import auth_dids, participant_dids
 from aweb.identity_binding import verified_projection
 from aweb.inbound_modes import effective_inbound_mode
 from aweb.messaging.chat import ensure_session, send_in_session
@@ -883,7 +883,7 @@ class NativeMessagingUnitOfWork:
                         db,
                         conversation_id=cid,
                         sender_did=_principal(self.auth),
-                        equivalent_dids=auth_dids(self.auth),
+                        equivalent_dids=participant_dids(self.auth),
                     )
                     if route.recipient_participant["did"] != recipient["did"]:
                         raise ContractError(

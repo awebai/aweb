@@ -65,6 +65,7 @@ from aweb.messaging.verification import (
 )
 from aweb.messaging.mail_routing import (
     mail_continuation_context,
+    ParticipantRetiredError,
     participant_is_remote,
     recipient_for_conversation_participant,
     remote_recipient_from_participant,
@@ -255,6 +256,8 @@ async def send_mail(
                     hosted_encryptor=hosted_encryptor,
                 )
             )
+        except ParticipantRetiredError as error:
+            return json.dumps({"error": error.detail, "effects": "none"})
         except ContractError as error:
             return json.dumps({"error": error.code, "effects": "none"})
     sender_address = _sender_address(auth)

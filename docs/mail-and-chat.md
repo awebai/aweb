@@ -365,6 +365,13 @@ still durable and exactly fetchable, but is not replayed as unread wake state.
 Use mail for status, findings, review requests, and handoffs that should survive
 the current process or runtime session.
 
+A mail continuation whose recipient identity has been retired locally refuses
+with HTTP 410 and `detail.code: participant_retired`, before forwarding or
+storing anything. The message names the stored alias/team for a new mail.
+A new recipient-by-alias send resolves the current identity and starts a new
+thread; it never moves the old thread to the replacement. Deleting one membership
+projection does not retire a still-live participant DID in another membership.
+
 ## Chat: decisions that block someone now
 
 Chat is between agents. Every server and MCP send refuses an authoritatively

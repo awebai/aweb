@@ -1913,7 +1913,7 @@ async def test_send_message_from_local_didkey_to_global_did_first_contact_fails_
 
 
 @pytest.mark.asyncio
-async def test_mail_reply_to_retired_local_didkey_uses_learned_route_or_reports_unreachable(aweb_cloud_db):
+async def test_retired_mail_recipient_refuses_even_with_a_learned_return_route(aweb_cloud_db):
     bob_sk, _, bob_did_key = _make_keypair()
     local_did_key = named_did_key("z6MkLocalOnly")
     await _insert_team(aweb_cloud_db.aweb_db, "backend:remote.example")
@@ -2019,13 +2019,12 @@ async def test_mail_reply_to_retired_local_didkey_uses_learned_route_or_reports_
             },
         )
 
-    assert routed.status_code == 200, routed.text
-    assert len(remote_requests) == 1
-    envelope = json.loads(remote_requests[0].content)["envelope"]
-    assert str(remote_requests[0].url) == "https://local.example/v1/federation/messages"
-    assert envelope["target_did_aw"] == local_did_key
-    assert envelope["target_current_did_key"] == local_did_key
-    assert envelope["target_delivery_origin"] == "https://local.example"
+    assert routed.status_code == 410, routed.text
+    assert routed.json()["detail"] == {
+        "code": "participant_retired",
+        "message": "retired-routed has moved; start a new mail to retired-routed in backend:remote.example",
+    }
+    assert remote_requests == []
 
     retired_local_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
         """
@@ -2090,15 +2089,14 @@ async def test_mail_reply_to_retired_local_didkey_uses_learned_route_or_reports_
             },
         )
 
-    assert blocked.status_code == 422, blocked.text
-    detail = blocked.json()["detail"]
-    assert "retired-local" in detail
-    assert "retired" in detail
-    assert "unreachable" in detail
-    assert "Start a new conversation with an active recipient" in detail
-    assert "local resolution" not in detail
-    assert "learned return route" not in detail
-    assert len(remote_requests) == 1
+    assert blocked.status_code == 410, blocked.text
+    assert blocked.json()["detail"] == {
+        "code": "participant_retired",
+        "message": "retired-local has moved; start a new mail to retired-local in backend:remote.example",
+    }
+    assert remote_requests == []
+    registry.resolve_key.assert_not_awaited()
+    assert await aweb_cloud_db.aweb_db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 0
 
 
 @pytest.mark.asyncio
