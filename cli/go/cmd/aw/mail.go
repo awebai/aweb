@@ -745,10 +745,7 @@ var mailReplyCmd = &cobra.Command{
 		if conversationID == "" {
 			return fmt.Errorf("message %s is legacy mail without a conversation; send a new message instead", messageID)
 		}
-		subject := mailReplySubject
-		if strings.TrimSpace(subject) == "" {
-			subject = "Re"
-		}
+		subject := replySubject(mailReplySubject, inbox.Messages[0].Subject)
 		req := &awid.SendMessageRequest{
 			ConversationID: conversationID,
 			Subject:        subject,
@@ -1271,7 +1268,7 @@ func init() {
 	mailInboxCmd.Flags().BoolVar(&mailInboxShowAll, "show-all", false, "Show all messages including already-read")
 	mailInboxCmd.Flags().IntVar(&mailInboxLimit, "limit", 50, "Max messages per page")
 	mailInboxCmd.Flags().StringVar(&mailInboxCursor, "cursor", "", "Continue from next_cursor in a previous inbox response")
-	mailReplyCmd.Flags().StringVar(&mailReplySubject, "subject", "", "Subject")
+	mailReplyCmd.Flags().StringVar(&mailReplySubject, "subject", "", "Subject (default: Re: <original subject>)")
 	mailReplyCmd.Flags().StringVar(&mailReplyBody, "body", "", shellExpandedInlineHelp("Body", "--body-file"))
 	mailReplyCmd.Flags().StringVar(&mailReplyBodyFile, "body-file", "", safeFileInputHelp("message body"))
 	mailReplyCmd.Flags().StringVar(&mailReplyPriority, "priority", "normal", "Priority: low|normal|high|urgent")
@@ -1285,4 +1282,21 @@ func init() {
 
 	mailCmd.AddCommand(mailSendCmd, mailReplyCmd, mailInboxCmd, mailShowCmd, mailAckCmd)
 	rootCmd.AddCommand(mailCmd)
+}
+
+// replySubject is the subject of a reply: the explicit one when given,
+// otherwise "Re: <original>", never prefixed twice.
+func replySubject(explicit, original string) string {
+	if subject := strings.TrimSpace(explicit); subject != "" {
+		return subject
+	}
+	original = strings.TrimSpace(original)
+	switch {
+	case original == "":
+		return "Re"
+	case len(original) >= 3 && strings.EqualFold(original[:3], "re:"):
+		return original
+	default:
+		return "Re: " + original
+	}
 }

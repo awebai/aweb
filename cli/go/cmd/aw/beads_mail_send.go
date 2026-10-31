@@ -294,17 +294,7 @@ var beadsMailReplyCmd = &cobra.Command{
 		if conversationID == "" {
 			return fmt.Errorf("message %s is legacy mail without a conversation; send a new message instead", messageID)
 		}
-		subject := strings.TrimSpace(beadsMailReplySubject)
-		if subject == "" {
-			original := strings.TrimSpace(source.Subject)
-			if original == "" {
-				subject = "Re"
-			} else if strings.HasPrefix(original, "Re: ") {
-				subject = original
-			} else {
-				subject = "Re: " + original
-			}
-		}
+		subject := replySubject(beadsMailReplySubject, source.Subject)
 
 		req := &awid.SendMessageRequest{
 			ConversationID: conversationID,
