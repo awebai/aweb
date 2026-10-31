@@ -81,7 +81,7 @@ async def local_mail(privacy_app, monkeypatch):
 
         async def observe(message):
             nonlocal status
-            if scope.get("path") == "/v1/messages" and scope.get("method") == "POST":
+            if scope.get("path") in {"/v1/messages", "/v1/chat/sessions"} and scope.get("method") == "POST":
                 if message["type"] == "http.response.start":
                     status = message["status"]
                 elif message["type"] == "http.response.body":
@@ -95,12 +95,14 @@ async def local_mail(privacy_app, monkeypatch):
 
     env.app.middleware_stack = record_response
 
-    async def send(actor_name, address):
+    async def send(actor_name, address, channel="mail"):
         actor, team, certificate = actors[actor_name]
-        body = json.dumps({"to_address": address, "subject": "hello", "body": "hello"}).encode()
+        payload = ({"to_address": address, "subject": "hello", "body": "hello"} if channel == "mail"
+                   else {"to_addresses": [address], "message": "hello", "leaving": True})
+        body = json.dumps(payload).encode()
         headers = _signed_team_headers(actor.sk, actor.did, team, certificate, body)
         headers["Content-Type"] = "application/json"
-        return await env.client.post("/v1/messages", content=body, headers=headers)
+        return await env.client.post("/v1/messages" if channel == "mail" else "/v1/chat/sessions", content=body, headers=headers)
 
     try:
         yield SimpleNamespace(env=env, actors=actors, queries=queries, responses=responses, send=send)
@@ -110,38 +112,47 @@ async def local_mail(privacy_app, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_unknown_local_address_is_not_a_registry_outage(local_mail):
-    response = await local_mail.send("alice", "local/bbo")
+@pytest.mark.parametrize("channel", ["mail", "chat"])
+async def test_unknown_local_address_is_not_a_registry_outage(local_mail, channel):
+    response = await local_mail.send("alice", "local/bbo", channel)
     assert response.status_code == 404, response.text
     assert response.json()["reason"] == "recipient_identity_not_found"
     assert response.json()["retryable"] is False
     assert local_mail.queries == []
     assert await local_mail.env.db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}}") == 0
+    assert await local_mail.env.db.fetch_value("SELECT COUNT(*) FROM {{tables.chat_messages}}") == 0
+    assert await local_mail.env.db.fetch_value("SELECT COUNT(*) FROM {{tables.chat_sessions}}") == 0
 
 
 @pytest.mark.asyncio
-async def test_same_team_local_address_remains_reachable(local_mail):
-    response = await local_mail.send("alice", "local/bob")
+@pytest.mark.parametrize("channel", ["mail", "chat"])
+async def test_same_team_local_address_remains_reachable(local_mail, channel):
+    response = await local_mail.send("alice", "local/bob", channel)
     assert response.status_code == 200, response.text
     assert local_mail.queries == []
-    assert await local_mail.env.db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}}") == 1
+    table = "SELECT COUNT(*) FROM {{tables.messages}}" if channel == "mail" else "SELECT COUNT(*) FROM {{tables.chat_messages}}"
+    assert await local_mail.env.db.fetch_value(table) == 1
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("sender,target", [("carol", "local/alice"), ("alice", "company.test/carol")])
-async def test_cross_team_local_address_without_route_refuses_definitely(local_mail, sender, target):
-    response = await local_mail.send(sender, target)
+@pytest.mark.parametrize("channel", ["mail", "chat"])
+async def test_cross_team_local_address_without_route_refuses_definitely(local_mail, sender, target, channel):
+    response = await local_mail.send(sender, target, channel)
     assert response.status_code == 404, response.text
     assert response.json()["reason"] == "local_recipient_route_missing"
     assert response.json()["retryable"] is False
     assert local_mail.queries == []
     assert await local_mail.env.db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}}") == 0
+    assert await local_mail.env.db.fetch_value("SELECT COUNT(*) FROM {{tables.chat_messages}}") == 0
+    assert await local_mail.env.db.fetch_value("SELECT COUNT(*) FROM {{tables.chat_sessions}}") == 0
     assert await local_mail.env.db.fetch_value("SELECT COUNT(*) FROM {{tables.conversations}}") == 0
 
 
 @pytest.mark.asyncio
-async def test_foreign_discovery_failure_remains_retryable(local_mail):
-    response = await local_mail.send("alice", "foreign.example/nobody")
+@pytest.mark.parametrize("channel", ["mail", "chat"])
+async def test_foreign_discovery_failure_remains_retryable(local_mail, channel):
+    response = await local_mail.send("alice", "foreign.example/nobody", channel)
     assert response.status_code == 503, response.text
     assert response.json()["reason"] == "sender_registry_discovery_failed"
     assert response.json()["retryable"] is True
@@ -149,11 +160,12 @@ async def test_foreign_discovery_failure_remains_retryable(local_mail):
 
 
 @pytest.mark.asyncio
-async def test_unverified_home_namespace_does_not_supply_authority(local_mail):
+@pytest.mark.parametrize("channel", ["mail", "chat"])
+async def test_unverified_home_namespace_does_not_supply_authority(local_mail, channel):
     await local_mail.env.registry_db.execute(
         "UPDATE {{tables.dns_namespaces}} SET verification_status = 'unverified' WHERE domain = 'local'",
     )
-    response = await local_mail.send("alice", "local/bbo")
+    response = await local_mail.send("alice", "local/bbo", channel)
     assert response.status_code == 503, response.text
     assert response.json()["reason"] == "sender_registry_discovery_failed"
     assert local_mail.queries == ["_awid.local"]
@@ -161,13 +173,13 @@ async def test_unverified_home_namespace_does_not_supply_authority(local_mail):
 
 @pytest.mark.asyncio
 async def test_home_registry_outage_remains_retryable(local_mail):
-    from aweb.routes.messages import _mail_namespace_uses_home_registry
+    from aweb.messaging.address_auth import namespace_uses_home_registry
     from awid.federation_errors import FederationAuthorityError
 
     registry = RegistryClient(registry_url="http://127.0.0.1:1")
     try:
         with pytest.raises(FederationAuthorityError) as refused:
-            await _mail_namespace_uses_home_registry(local_mail.env.infra, registry, "local")
+            await namespace_uses_home_registry(local_mail.env.infra, registry, "local")
         assert refused.value.reason == "sender_registry_unavailable"
         assert refused.value.http_status == 503
         assert refused.value.retryable is True
@@ -179,7 +191,7 @@ async def test_home_registry_outage_remains_retryable(local_mail):
 
 @pytest.mark.asyncio
 async def test_selected_foreign_origin_does_not_use_home_namespace(local_mail):
-    from aweb.routes.messages import _mail_namespace_uses_home_registry
+    from aweb.messaging.address_auth import namespace_uses_home_registry
 
     async def foreign_registry(domain):
         assert domain == "local"
@@ -187,7 +199,7 @@ async def test_selected_foreign_origin_does_not_use_home_namespace(local_mail):
 
     registry = RegistryClient(registry_url="http://127.0.0.1:2", domain_registry_resolver=foreign_registry)
     try:
-        assert not await _mail_namespace_uses_home_registry(local_mail.env.infra, registry, "local")
+        assert not await namespace_uses_home_registry(local_mail.env.infra, registry, "local")
     finally:
         await registry.aclose()
 
@@ -199,7 +211,8 @@ async def test_selected_foreign_origin_does_not_use_home_namespace(local_mail):
     ("carol", "local/alice", "local_recipient_route_missing"),
     ("alice", "company.test/carol", "local_recipient_route_missing"),
 ])
-async def test_plain_cli_local_address_refusal_does_not_retry(local_mail, tmp_path, sender, target, reason):
+@pytest.mark.parametrize("channel", ["mail", "chat"])
+async def test_plain_cli_local_address_refusal_does_not_retry(local_mail, tmp_path, sender, target, reason, channel):
     actor, team, certificate = local_mail.actors[sender]
     home = tmp_path / ".aw"
     home.mkdir(mode=0o700)
@@ -220,15 +233,19 @@ async def test_plain_cli_local_address_refusal_does_not_retry(local_mail, tmp_pa
     child_env = {key: value for key, value in os.environ.items() if not key.startswith(("AWEB_", "AWID_"))}
     child_env.update(AWEB_IDENTITY_HOME=str(home), AWID_REGISTRY_URL="http://127.0.0.1:1",
                      HOME=str(tmp_path), XDG_CONFIG_HOME=str(tmp_path / "config"), AW_NO_UPDATE_CHECK="1")
+    command = (["mail", "send", "--to-address", target, "--subject", "hello", "--body", "hello"]
+               if channel == "mail" else ["chat", "send-and-leave", target, "hello"])
     process = await asyncio.create_subprocess_exec(
-        os.environ["AW_TEST_CLI_BINARY"], "mail", "send", "--to-address", target,
-        "--subject", "hello", "--body", "hello", cwd=tmp_path, env=child_env,
+        os.environ["AW_TEST_CLI_BINARY"], *command, cwd=tmp_path, env=child_env,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
     )
     output, _ = await asyncio.wait_for(process.communicate(), 30)
     text = output.decode()
     assert process.returncode != 0, text
-    assert target in text, text
+    if channel == "mail":
+        assert target in text, text
+    else:
+        assert target in text or reason in text, text
     assert "retrying" not in text.lower(), text
     assert local_mail.responses == [{"status": 404, "reason": reason, "retryable": False}]
     assert local_mail.queries == []

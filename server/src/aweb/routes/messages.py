@@ -15,7 +15,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
 from awid.federation_errors import FederationAuthorityError
-from awid.log import canonical_server_origin
 from awid.registry import RegistryError
 from awid.pagination import decode_cursor, encode_cursor, validate_pagination_params
 from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS, awid_registry_not_configured_exception
@@ -50,6 +49,7 @@ from aweb.messaging.alias_targets import (
 )
 from aweb.messaging.address_auth import (
     local_recipient_visible_to_auth,
+    namespace_uses_home_registry,
     requires_registry_address_binding,
     verified_signed_payload_json,
 )
@@ -669,24 +669,6 @@ async def _local_recipient_from_address(db, *, domain: str, name: str) -> dict |
         return await get_agent_by_namespace_alias(db, namespace=domain, alias=name)
     except AmbiguousLocalAddressError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-
-async def _mail_namespace_uses_home_registry(db, registry_client, domain: str) -> bool:
-    # A local team label alone is not authority. Use the configured registry
-    # only when it is the selected origin and actually serves this namespace.
-    if registry_client is None or not await namespace_exists(db, domain):
-        return False
-    try:
-        if await registry_client.registry_audience(domain) != canonical_server_origin(registry_client.registry_url):
-            return False
-        namespace = await registry_client.get_namespace_fresh(domain)
-    except AWID_DEPENDENCY_ERRORS as exc:
-        logging.getLogger(__name__).warning("Mail home namespace lookup unavailable for %s", domain, exc_info=True)
-        raise FederationAuthorityError("sender_registry_unavailable") from exc
-    return bool(
-        namespace and namespace.domain == domain
-        and namespace.verification_status == "verified" and namespace.controller_did
-    )
 
 
 def _recipient_identity_matches(left: dict | None, right: dict | None) -> bool:
@@ -1736,7 +1718,7 @@ async def send_message(
                 recipient["requires_local_address_authority"] = True
 
         strict_authority = getattr(request.app.state, "federation_authority", None)
-        home_namespace = recipient is None and await _mail_namespace_uses_home_registry(db, registry_client, domain)
+        home_namespace = recipient is None and await namespace_uses_home_registry(db, registry_client, domain)
         if home_namespace:
             try:
                 resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)

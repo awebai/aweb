@@ -60,6 +60,7 @@ from aweb.messaging.alias_targets import (
 )
 from aweb.messaging.address_auth import (
     local_recipient_visible_to_auth,
+    namespace_uses_home_registry,
     requires_registry_address_binding,
     verified_signed_payload_json,
 )
@@ -476,7 +477,7 @@ async def _resolve_remote_chat_route(
     requester_did_key: str | None = None,
 ) -> dict[str, Any]:
     address = str(recipient.get("address") or "").strip()
-    if recipient.get("_strict_authority_route_current"):
+    if recipient.get("_authority_route_current"):
         route = {
             "address": address,
             "did_aw": str(recipient.get("did_aw") or "").strip(),
@@ -1003,7 +1004,14 @@ async def _resolve_chat_targets(
 
         resolution = None
         strict_authority = getattr(request.app.state, "federation_authority", None)
-        if strict_authority is not None:
+        home_namespace = await namespace_uses_home_registry(db, registry_client, domain)
+        if home_namespace:
+            try:
+                resolution = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
+            except AWID_DEPENDENCY_ERRORS as exc:
+                logger.warning("Chat home address lookup unavailable for %s", address, exc_info=True)
+                raise FederationAuthorityError("sender_registry_unavailable") from exc
+        elif strict_authority is not None:
             try:
                 resolution = await strict_authority.resolve_contact(
                     address,
@@ -1035,7 +1043,7 @@ async def _resolve_chat_targets(
                         getattr(resolution, "controller_did", "") or ""
                     ).strip(),
                     "external": True,
-                    "_strict_authority_route_current": strict_authority is not None,
+                    "_authority_route_current": home_namespace or strict_authority is not None,
                 }
             else:
                 row["authority_controller_did"] = str(
@@ -1047,7 +1055,7 @@ async def _resolve_chat_targets(
         row = await _local_agent_by_address(db, domain=domain, name=name)
         if row is None:
             if await namespace_exists(db, domain):
-                raise HTTPException(status_code=404, detail=f"Recipient agent not found: {address}")
+                raise FederationAuthorityError("recipient_identity_not_found")
             if registry_client is None:
                 raise awid_registry_not_configured_exception(operation="AWID chat address target lookup")
             raise HTTPException(status_code=404, detail=f"Recipient address not found: {address}")
@@ -1091,6 +1099,10 @@ async def _resolve_chat_targets(
                 sender_verified_dids=auth_dids(auth),
             )
         except (ValidationError, NotFoundError, ForbiddenError) as exc:
+            if (isinstance(exc, ForbiddenError) and row.get("address") in to_addresses
+                    and row.get("identity_scope") == "local"
+                    and not row.get("has_global_claim") and not row.get("did_aw")):
+                raise FederationAuthorityError("local_recipient_route_missing") from exc
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     return list(resolved.values())
