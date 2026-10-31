@@ -50,6 +50,7 @@ from aweb.hooks import fire_mutation_hook
 from aweb.identity_metadata import lookup_identity_metadata_by_did, routable_chat_address
 from aweb.id_chain_auth import stored_id_chain
 from aweb.messaging.chat_policy import require_agent_chat
+from aweb.identity_auth_deps import participant_dids
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, get_messaging_auth
 from aweb.messaging.sender_address import sender_address as _sender_address
 from aweb.messaging.alias_targets import (
@@ -339,11 +340,7 @@ def _actor_did(auth: MessagingAuth) -> str:
 
 
 def _actor_dids(auth: MessagingAuth) -> list[str]:
-    dids: list[str] = []
-    for value in ((auth.did_aw or "").strip(), (auth.did_key or "").strip()):
-        if value and value not in dids:
-            dids.append(value)
-    return dids
+    return participant_dids(auth)
 
 
 def _actor_alias(auth: MessagingAuth, actor_agent: dict[str, Any] | None) -> str:
@@ -714,7 +711,7 @@ async def _deliver_federated_chat(
         else payload.from_did
     )
     sender_current_did = str(sender_current_did or "").strip()
-    if sender_current_did not in set(_actor_dids(auth)):
+    if sender_current_did not in set(auth_dids(auth)):
         raise HTTPException(status_code=422, detail="from_did must match the authenticated sender")
     federation_signature = _chat_federation_signature(payload)
 
@@ -1491,7 +1488,7 @@ async def create_or_send(
         if encrypted_metadata is None:
             _require_remote_chat_signature(payload, session_id=str(requested_session_id))
             from_did = str(payload.from_did or "").strip()
-            if from_did not in set(_actor_dids(auth)):
+            if from_did not in set(auth_dids(auth)):
                 raise HTTPException(status_code=422, detail="from_did must match the authenticated sender")
             _validate_signed_chat_payload(
                 signature=str(payload.signature),
@@ -1647,7 +1644,7 @@ async def create_or_send(
         if payload.from_did is None or not payload.from_did.strip():
             raise HTTPException(status_code=422, detail="from_did is required when signature is provided")
         from_did = payload.from_did.strip()
-        if from_did not in set(_actor_dids(auth)):
+        if from_did not in set(auth_dids(auth)):
             raise HTTPException(status_code=422, detail="from_did must match the authenticated sender")
         if payload.message_id is None or payload.timestamp is None:
             raise HTTPException(
@@ -2720,7 +2717,7 @@ async def send_message(
         if payload.from_did is None or not payload.from_did.strip():
             raise HTTPException(status_code=422, detail="from_did is required when signature is provided")
         from_did = payload.from_did.strip()
-        if from_did not in set(_actor_dids(auth)):
+        if from_did not in set(auth_dids(auth)):
             raise HTTPException(status_code=422, detail="from_did must match the authenticated sender")
         if payload.message_id is None or payload.timestamp is None:
             raise HTTPException(

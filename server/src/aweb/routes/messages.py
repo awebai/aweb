@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from aweb.identity_auth_deps import participant_dids
 from aweb.attachment_service import prepare_attachment_send, refuse_remote_attachments, attachment_retry, attachment_references
 
 import json
@@ -378,7 +379,7 @@ async def get_mail_conversation(
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> MailConversationResponse:
     aweb_db = db.get_manager("aweb")
-    actor_dids = auth_dids(auth)
+    actor_dids = participant_dids(auth)
     if not actor_dids:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 
@@ -1190,7 +1191,7 @@ async def _send_mail_conversation_continuation(
             db,
             conversation_id=conversation_id,
             sender_did=sender_did,
-            equivalent_dids=auth_dids(auth),
+            equivalent_dids=participant_dids(auth),
         )
         recipient_participant = continuation.recipient_participant
         if participant_is_remote(recipient_participant):
@@ -1421,7 +1422,7 @@ async def send_message(
                     db,
                     conversation_id=payload.conversation_id,
                     sender_did=sender_did,
-                    equivalent_dids=auth_dids(auth),
+                    equivalent_dids=participant_dids(auth),
                 )
             except (ValidationError, NotFoundError, ForbiddenError, ConflictError) as exc:
                 raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
@@ -1846,7 +1847,7 @@ async def get_inbox(
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> InboxResponse:
     aweb_db = db.get_manager("aweb")
-    inbox_dids = auth_dids(auth)
+    inbox_dids = participant_dids(auth)
     if not inbox_dids:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 
@@ -1933,7 +1934,7 @@ async def get_message(
     except Exception:
         raise HTTPException(status_code=422, detail="Invalid message_id format")
 
-    actor_dids = auth_dids(auth)
+    actor_dids = participant_dids(auth)
     if not actor_dids:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
     row = await db.get_manager("aweb").fetch_one(
@@ -1968,7 +1969,7 @@ async def ack_message(
 
     aweb_db = db.get_manager("aweb")
     now = datetime.now(timezone.utc)
-    inbox_dids = auth_dids(auth)
+    inbox_dids = participant_dids(auth)
     if not inbox_dids:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 

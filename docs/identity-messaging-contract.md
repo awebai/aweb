@@ -74,6 +74,13 @@ The modes are:
 Rows without an explicit `inbound_mode` require migration and must fail with an
 explicit migration-required diagnostic rather than silently widening to open.
 
+An authenticated global subject participates as its `did:aw`; its current
+`did:key` proves signatures and is not a second participant reference. Local
+subjects participate as their literal `did:key`. Thread visibility, unread/ack
+scope and continuation use that participant reference. Hosted plaintext signing
+keeps the original key in the signed payload without replacing the participant
+or stored author identity with that key.
+
 ## Direct Address Send Protocol
 
 For a send to a global address (`domain/name`):

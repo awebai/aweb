@@ -64,6 +64,16 @@ def auth_dids(identity: IdentityAuth | MessagingAuth) -> list[str]:
     return dids
 
 
+
+def participant_dids(identity: IdentityAuth | MessagingAuth) -> list[str]:
+    """One participant identity: global did:aw, otherwise local did:key.
+
+    auth_dids additionally includes the signing key for cryptographic checks;
+    that key is not a second global participant or continuation authority.
+    """
+    return auth_dids(identity)[:1]
+
+
 def _get_body_sha256(request: Request) -> str:
     body_sha256 = getattr(request.state, "body_sha256", None)
     if body_sha256 is not None:

@@ -268,7 +268,7 @@ async def test_mcp_lists_threads_from_the_participant_http_index_without_ack(mai
     assert item["first_message_id"] == first["message_id"]
     assert item["title"] == ("First title" if plaintext else "")
     assert item["subject"] == "New subject"
-    assert set(item["participant_dids"]) == {server.pilot_did if plaintext else "did:aw:pilot", "did:aw:human"}
+    assert set(item["participant_dids"]) == {"did:aw:pilot", "did:aw:human"}
     response = await server.client.get(
         "/v1/conversations?conversation_type=mail&participant_did=did:aw:human",
         headers=_signed_identity_headers(server.pilot_key, server.pilot_did, "", b""),

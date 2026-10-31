@@ -8,8 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from awid.pagination import decode_cursor, encode_cursor
+from aweb.identity_auth_deps import participant_dids
 from aweb.deps import get_db
-from aweb.identity_auth_deps import MessagingAuth, auth_dids, get_messaging_auth
+from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
 from aweb.identity_metadata import native_participant_reference
 
 router = APIRouter(prefix="/v1/conversations", tags=["aweb-conversations"])
@@ -123,7 +124,7 @@ async def unread_counts(
     if any(native_participant_reference(did) is None for did in participant_did):
         raise HTTPException(422, "participant_did must be a native DID")
     _grant_conversation_scope_allowed(auth, "mail")
-    actor_dids = auth_dids(auth)
+    actor_dids = participant_dids(auth)
     if not actor_dids:
         raise HTTPException(401, "Authenticated identity is missing a routing DID")
     peers = list(dict.fromkeys(participant_did))
@@ -180,7 +181,7 @@ async def list_conversations_for_auth(
     if not 1 <= limit <= 100:
         raise HTTPException(status_code=422, detail="limit must be between 1 and 100")
     aweb_db = db.get_manager("aweb")
-    actor_dids = auth_dids(auth)
+    actor_dids = participant_dids(auth)
     if not actor_dids:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 

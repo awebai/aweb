@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from aweb.identity_auth_deps import participant_dids
 from aweb.messaging.participants import messaging_participant_by_alias
 
 from aweb.attachments import readable_attachments
@@ -289,7 +290,7 @@ async def send_mail(
                 db_infra,
                 conversation_id=conversation_ref,
                 sender_did=sender_did,
-                equivalent_dids=auth_dids(auth),
+                equivalent_dids=participant_dids(auth),
             )
             recipient_participant = continuation.recipient_participant
             if participant_is_remote(recipient_participant):
@@ -363,7 +364,6 @@ async def send_mail(
             except HostedMessageSigningError as exc:
                 return json.dumps({"error": str(exc)})
             if signed is not None:
-                sender_did = signed.from_did
                 signature = signed.signature
                 signed_payload = signed.signed_payload
         try:
@@ -379,7 +379,7 @@ async def send_mail(
                     priority=cast(MessagePriority, priority),
                     message_id=str(message_id),
                     timestamp=_utc_iso(sender_attested_at),
-                    from_did=sender_did,
+                    from_did=auth.did_key,
                     signature=None if encrypted is not None else signature,
                     signed_payload=None if encrypted is not None else signed_payload,
                 )
@@ -602,7 +602,6 @@ async def send_mail(
         except HostedMessageSigningError as exc:
             return json.dumps({"error": str(exc)})
         if signed is not None:
-            sender_did = signed.from_did
             signature = signed.signature
             signed_payload = signed.signed_payload
 
@@ -630,7 +629,7 @@ async def send_mail(
                 priority=cast(MessagePriority, priority),
                 message_id=str(message_id),
                 timestamp=_utc_iso(sender_attested_at),
-                from_did=sender_did,
+                from_did=auth.did_key,
                 signature=None if encrypted is not None else signature,
                 signed_payload=None if encrypted is not None else signed_payload,
             )
@@ -745,7 +744,7 @@ async def check_inbox(
     """List inbox messages for the authenticated agent."""
     auth = get_auth()
     aweb_db = db_infra.get_manager("aweb")
-    inbox_dids = auth_dids(auth)
+    inbox_dids = participant_dids(auth)
     if not inbox_dids:
         return json.dumps({"error": "Authenticated identity is missing a routing DID"})
 

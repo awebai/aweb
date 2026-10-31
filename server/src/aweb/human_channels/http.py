@@ -8,7 +8,7 @@ from uuid import UUID
 from awid.signing import canonical_json_bytes
 from fastapi import HTTPException
 
-from aweb.identity_auth_deps import auth_dids
+from aweb.identity_auth_deps import participant_dids
 
 from .contract import ContractError
 from .native import _dto, _hash, _principal
@@ -244,7 +244,7 @@ async def _target(request, payload, auth, db, kind, session_id):
             db,
             conversation_id=payload.conversation_id,
             sender_did=_principal(auth),
-            equivalent_dids=auth_dids(auth),
+            equivalent_dids=participant_dids(auth),
         )
         participant = route.recipient_participant
         recipient = await resolve_agent_by_did(db, participant["did"])
@@ -258,7 +258,7 @@ async def _target(request, payload, auth, db, kind, session_id):
                  AND EXISTS (SELECT 1 FROM {{tables.chat_participants}} a
                    WHERE a.session_id=p.session_id AND a.left_at IS NULL AND a.did=ANY($2::text[]))""",
             UUID(session_id),
-            auth_dids(auth),
+            participant_dids(auth),
         )
         if len(rows) == 1:
             participant = rows[0]

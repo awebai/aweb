@@ -634,7 +634,7 @@ async def test_mcp_send_mail_uses_hosted_signer_for_trusted_proxy(aweb_cloud_db,
     assert seen[0]["payload"]["priority"] == "urgent"
 
     row = await aweb_cloud_db.aweb_db.fetch_one("SELECT * FROM {{tables.messages}}")
-    assert row["from_did"] == alice_did
+    assert row["from_did"] == "did:aw:alice"
     assert str(row["conversation_id"]) == result["conversation_id"]
     assert row["signature"]
     assert row["signed_payload"] == canonical_signed_payload(seen[0]["payload"])
@@ -852,7 +852,7 @@ async def test_mcp_send_mail_continues_conversation_without_recipient_rediscover
         "SELECT conversation_id, from_did, to_did, signed_payload FROM {{tables.messages}}"
     )
     assert str(row["conversation_id"]) == str(conversation_id)
-    assert row["from_did"] == alice_did_key
+    assert row["from_did"] == "did:aw:alice"
     assert row["to_did"] == "did:aw:bob"
     assert row["signed_payload"] == canonical_signed_payload(seen[0]["payload"])
 
@@ -999,7 +999,7 @@ async def test_mcp_send_mail_continues_federated_conversation(aweb_cloud_db, mon
         "SELECT conversation_id, from_did, to_did, to_agent_id, to_alias, signed_payload FROM {{tables.messages}}"
     )
     assert str(row["conversation_id"]) == str(conversation_id)
-    assert row["from_did"] == alice_did_key
+    assert row["from_did"] == "did:aw:alice"
     assert row["to_did"] == "did:aw:bob"
     assert row["to_agent_id"] is None
     assert row["to_alias"] == "bob"
@@ -1262,7 +1262,7 @@ async def test_mcp_send_mail_accepts_external_to_address_without_local_agent(awe
         WHERE subject = 'external'
         """
     )
-    assert message["from_did"] == alice_did
+    assert message["from_did"] == "did:aw:alice"
     assert message["to_did"] == "did:aw:bob"
     assert message["to_agent_id"] is None
     assert message["to_alias"] == "bob"
@@ -1685,7 +1685,7 @@ async def test_mcp_chat_send_uses_hosted_signer_for_trusted_proxy(aweb_cloud_db,
     assert seen[0]["payload"]["hang_on"] is True
 
     row = await aweb_cloud_db.aweb_db.fetch_one("SELECT * FROM {{tables.chat_messages}}")
-    assert row["from_did"] == alice_did
+    assert row["from_did"] == "did:aw:alice"
     assert row["hang_on"] is True
     assert row["signature"]
     assert row["signed_payload"] == canonical_signed_payload(seen[0]["payload"])
@@ -1803,12 +1803,11 @@ async def test_mcp_chat_continuation_encryptor_gets_active_recipient_identities(
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address, left_at)
         VALUES
-            ($1, $2, $3, 'alice', 'acme.com/alice', NULL),
-            ($1, 'did:aw:bob', $4, 'bob', 'acme.com/bob', NULL),
-            ($1, 'did:aw:carol', $5, 'carol', 'acme.com/carol', NOW())
+            ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', NULL),
+            ($1, 'did:aw:bob', $3, 'bob', 'acme.com/bob', NULL),
+            ($1, 'did:aw:carol', $4, 'carol', 'acme.com/carol', NOW())
         """,
         session_id,
-        alice_did,
         alice_agent_id,
         bob_agent_id,
         carol_agent_id,
@@ -1979,7 +1978,7 @@ async def test_mcp_chat_send_accepts_external_to_address_without_local_agent(awe
     message = await aweb_cloud_db.aweb_db.fetch_one(
         "SELECT from_did, from_address FROM {{tables.chat_messages}}"
     )
-    assert message["from_did"] == alice_did
+    assert message["from_did"] == "did:aw:alice"
     assert message["from_address"] == "acme.com/alice"
 
 
@@ -2153,11 +2152,10 @@ async def test_mcp_chat_send_existing_session_uses_hosted_signer(aweb_cloud_db, 
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias)
         VALUES
-            ($1, $2, $3, 'alice'),
-            ($1, 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9' /* z6MkBob */, $4, 'bob')
+            ($1, 'did:aw:alice', $2, 'alice'),
+            ($1, 'did:key:z6MkpaT971acDhK45NmrbxAZj9q2bXnxJFqodxZDH17gZib9' /* z6MkBob */, $3, 'bob')
         """,
         session_id,
-        alice_did,
         alice_agent_id,
         bob_agent_id,
     )
@@ -2211,7 +2209,7 @@ async def test_mcp_chat_send_existing_session_uses_hosted_signer(aweb_cloud_db, 
     assert seen[0]["payload"]["to"] == "bob"
     assert seen[0]["payload"]["to_did"] == named_did_key("z6MkBob")
     row = await aweb_cloud_db.aweb_db.fetch_one("SELECT * FROM {{tables.chat_messages}}")
-    assert row["from_did"] == alice_did
+    assert row["from_did"] == "did:aw:alice"
     assert row["signature"]
     assert row["signed_payload"] == canonical_signed_payload(seen[0]["payload"])
 
@@ -2256,7 +2254,7 @@ async def test_mcp_chat_send_continues_federated_session(aweb_cloud_db, monkeypa
             session_id, did, agent_id, alias, address, delivery_origin, current_did_key
         )
         VALUES
-            ($1, $3, $2, 'alice', 'acme.com/alice', NULL, $3),
+            ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', NULL, $3),
             ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://remote.example', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */)
         """,
         session_id,
@@ -2355,7 +2353,7 @@ async def test_mcp_chat_send_continues_federated_session(aweb_cloud_db, monkeypa
         "SELECT session_id, from_did, from_address, signed_payload FROM {{tables.chat_messages}}"
     )
     assert str(row["session_id"]) == str(session_id)
-    assert row["from_did"] == alice_did
+    assert row["from_did"] == "did:aw:alice"
     assert row["from_address"] == "acme.com/alice"
     assert row["signed_payload"] == canonical_signed_payload(seen[0]["payload"])
 
@@ -2416,7 +2414,7 @@ async def test_mcp_chat_send_rejects_forged_hosted_signature(aweb_cloud_db, monk
 
 
 @pytest.mark.asyncio
-async def test_mcp_check_inbox_reads_both_stable_and_current_dids(aweb_cloud_db, monkeypatch):
+async def test_mcp_global_inbox_does_not_read_or_ack_a_key_only_identity(aweb_cloud_db, monkeypatch):
     now = datetime.now(timezone.utc)
 
     await aweb_cloud_db.aweb_db.execute(
@@ -2447,7 +2445,7 @@ async def test_mcp_check_inbox_reads_both_stable_and_current_dids(aweb_cloud_db,
 
     data = json.loads(await mail_tools.check_inbox(DBInfra(aweb_cloud_db.aweb_db)))
 
-    assert [item["subject"] for item in data["messages"]] == ["stable", "current"]
+    assert [item["subject"] for item in data["messages"]] == ["stable"]
 
     read_rows = await aweb_cloud_db.aweb_db.fetch_all(
         """
@@ -2457,7 +2455,7 @@ async def test_mcp_check_inbox_reads_both_stable_and_current_dids(aweb_cloud_db,
         """
     )
     assert len(read_rows) == 2
-    assert all(row["read_at"] is not None for row in read_rows)
+    assert all((row["read_at"] is not None) == (row["to_did"] == "did:aw:alice") for row in read_rows)
 
 
 @pytest.mark.asyncio
@@ -2589,7 +2587,7 @@ async def test_mcp_check_inbox_decrypts_hosted_custodial_encrypted_mail(aweb_clo
 
 
 @pytest.mark.asyncio
-async def test_mcp_chat_pending_aggregates_across_actor_dids(aweb_cloud_db, monkeypatch):
+async def test_mcp_chat_pending_does_not_expand_global_identity_to_current_key(aweb_cloud_db, monkeypatch):
     session_id = uuid4()
     created_at = datetime.now(timezone.utc) - timedelta(minutes=5)
     bob_message_id = uuid4()
@@ -2637,6 +2635,11 @@ async def test_mcp_chat_pending_aggregates_across_actor_dids(aweb_cloud_db, monk
 
     data = json.loads(await chat_tools.chat_pending(DBInfra(aweb_cloud_db.aweb_db), None))
 
+    assert data["pending"] == []
+    monkeypatch.setattr(chat_tools, "get_auth", lambda: AuthContext(
+        team_id=None, agent_id=None, alias="alice", did_key=named_did_key("z6MkAliceCurrent"),
+    ))
+    data = json.loads(await chat_tools.chat_pending(DBInfra(aweb_cloud_db.aweb_db), None))
     assert len(data["pending"]) == 1
     assert data["pending"][0]["session_id"] == str(session_id)
     assert data["pending"][0]["conversation_id"] == str(session_id)
@@ -2662,7 +2665,7 @@ async def test_mcp_chat_history_decrypts_hosted_custodial_encrypted_chat(aweb_cl
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
         VALUES
-            ($1, 'did:key:z6MkqWCS8v3rqKdSp7eVMLDwCZp4wt43T18F7oe7z5QbnLZ4' /* z6MkAliceCurrent */, 'alice'),
+            ($1, 'did:aw:alice', 'alice'),
             ($1, 'did:aw:bob', 'bob')
         """,
         session_id,
@@ -2737,7 +2740,7 @@ async def test_mcp_chat_history_decrypts_hosted_custodial_encrypted_chat(aweb_cl
 
 
 @pytest.mark.asyncio
-async def test_mcp_chat_history_and_read_accept_alternate_session_participant_did(aweb_cloud_db, monkeypatch):
+async def test_mcp_chat_global_history_and_ack_refuse_key_only_participation(aweb_cloud_db, monkeypatch):
     session_id = uuid4()
     message_id = uuid4()
     created_at = datetime.now(timezone.utc) - timedelta(minutes=3)
@@ -2791,17 +2794,22 @@ async def test_mcp_chat_history_and_read_accept_alternate_session_participant_di
             limit=50,
         )
     )
+    assert history == {"error": "Session not found"}
+    read = json.loads(await chat_tools.chat_read(
+        DBInfra(aweb_cloud_db.aweb_db), session_id=str(session_id), message_ids=[str(message_id)],
+    ))
+    assert read == {"error": "Session not found"}
+    assert await aweb_cloud_db.aweb_db.fetch_val("SELECT count(*) FROM {{tables.chat_message_reads}}") == 0
+    monkeypatch.setattr(chat_tools, "get_auth", lambda: AuthContext(
+        team_id=None, agent_id=None, alias="alice", did_key=named_did_key("z6MkAliceCurrent"),
+    ))
+    history = json.loads(await chat_tools.chat_history(
+        DBInfra(aweb_cloud_db.aweb_db), session_id=str(session_id), unread_only=False, limit=50,
+    ))
     assert [item["body"] for item in history["messages"]] == ["hello"]
-    assert history["conversation_id"] == str(session_id)
-    assert history["messages"][0]["conversation_id"] == str(session_id)
-
-    read = json.loads(
-        await chat_tools.chat_read(
-            DBInfra(aweb_cloud_db.aweb_db),
-            session_id=str(session_id),
-            message_ids=[str(message_id)],
-        )
-    )
+    read = json.loads(await chat_tools.chat_read(
+        DBInfra(aweb_cloud_db.aweb_db), session_id=str(session_id), message_ids=[str(message_id)],
+    ))
     assert read["messages_marked"] == 1
 
 

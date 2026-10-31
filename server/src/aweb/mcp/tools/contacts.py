@@ -6,6 +6,7 @@ import json
 from uuid import UUID
 
 from awid.federation_errors import FederationAuthorityError
+from aweb.identity_auth_deps import participant_dids
 from aweb.mcp.auth import auth_dids, get_auth, primary_auth_did
 from aweb.mcp.signing import HostedMessageEncryptor, HostedMessageSigner
 from aweb.mcp.tools.chat import chat_send
@@ -426,7 +427,7 @@ def _target_refs(target: dict) -> tuple[list[str], list[str]]:
 
 async def _read_mail_messages_from_target(db_infra, *, target: dict, limit: int) -> list[dict]:
     auth = get_auth()
-    actor_dids = auth_dids(auth)
+    actor_dids = participant_dids(auth)
     if not actor_dids:
         return []
     target_dids, target_addresses = _target_refs(target)
@@ -471,7 +472,7 @@ async def _read_mail_messages_from_target(db_infra, *, target: dict, limit: int)
 
 async def _read_chat_messages_from_target(db_infra, *, target: dict, limit: int) -> list[dict]:
     auth = get_auth()
-    actor_dids = auth_dids(auth)
+    actor_dids = participant_dids(auth)
     if not actor_dids:
         return []
     target_dids, target_addresses = _target_refs(target)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from aweb.messaging.participants import messaging_participant_by_alias
 from aweb.messaging.chat_policy import HumanChatRefused, require_agent_chat
+from aweb.identity_auth_deps import participant_dids
 
 from aweb.attachments import readable_attachments
 
@@ -47,7 +48,7 @@ from aweb.messaging.verification import (
     verified_signed_recipient_fields,
 )
 from aweb.messaging.waiting import register_waiting, unregister_waiting
-from aweb.mcp.auth import auth_dids, get_auth, primary_auth_did
+from aweb.mcp.auth import get_auth, primary_auth_did
 from aweb.mcp.mutations import fire_mcp_mutation_hook
 from aweb.events import publish_chat_session_signal
 from aweb.mcp.signing import (
@@ -79,7 +80,7 @@ MAX_TOTAL_WAIT_SECONDS = 600
 
 
 def _actor_dids() -> list[str]:
-    return auth_dids(get_auth())
+    return participant_dids(get_auth())
 
 
 def _actor_did() -> str:
@@ -430,7 +431,7 @@ async def chat_send(
             result.update(replies=replies, timed_out=timed_out)
         return json.dumps(result)
     actor_dids = _actor_dids()
-    actor_did = (auth.did_key or "").strip() if auth.trusted_proxy else (actor_dids[0] if actor_dids else "")
+    actor_did = actor_dids[0] if actor_dids else ""
     actor_agent = await _resolve_actor_agent(db_infra, actor_dids)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
     actor_alias = _actor_alias(actor_agent)
@@ -726,7 +727,7 @@ async def chat_send(
         msg = await send_in_session(
             db_infra,
             session_id=sid,
-            sender_did=signed.from_did if signed else actor_did,
+            sender_did=actor_did,
             sender_agent_id=actor_agent_id,
             sender_address=sender_address,
             body="" if encrypted_envelope is not None else message,
@@ -742,7 +743,7 @@ async def chat_send(
         )
         if msg is None:
             return json.dumps({"error": "Failed to send message"})
-        sent_from_did = signed.from_did if signed else actor_did
+        sent_from_did = actor_did
         federated = bool(target.get("external"))
     else:
         try:

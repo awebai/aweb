@@ -335,7 +335,7 @@ async def ensure_session(
         raise ServiceError("Chat session requires at least two participants")
 
     actor = normalized_participants[0]  # Supplied by the authenticated adapter, never by target resolution.
-    actor_dids = list(dict.fromkeys(d for d in (actor["did"], actor.get("did_key")) if d))
+    actor_dids = [actor["did"]]
     if session_id is not None and await validate_session_id(
         db, session_id=session_id, actor_dids=actor_dids,
     ):
