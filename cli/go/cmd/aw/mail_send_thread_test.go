@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os/exec"
 	"path/filepath"
@@ -36,7 +37,7 @@ func TestAwMailSendToStartsANewThread(t *testing.T) {
 	for _, tc := range []struct {
 		name, flag, target                             string
 		mismatch, conflict, transport, noSubject, cont bool
-		subjectOnCont                                  bool
+		subjectOnCont, text                            bool
 		status                                         int
 	}{
 		{name: "alias", flag: "--to", target: "alice"},
@@ -53,6 +54,8 @@ func TestAwMailSendToStartsANewThread(t *testing.T) {
 		{name: "address_without_subject", flag: "--to-address", target: "test.local/alice", noSubject: true},
 		{name: "continuation", flag: "--conversation-id", target: old, cont: true},
 		{name: "continuation_with_subject", flag: "--conversation-id", target: old, cont: true, subjectOnCont: true},
+		{name: "alias_text", flag: "--to", target: "alice", text: true},
+		{name: "continuation_text", flag: "--conversation-id", target: old, cont: true, text: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var mu sync.Mutex
@@ -111,7 +114,10 @@ func TestAwMailSendToStartsANewThread(t *testing.T) {
 			}))
 			home := t.TempDir()
 			writeSelectionFixtureForTest(t, home, testSelectionFixture{AwebURL: server.URL, TeamID: "devteam:test.local", Alias: "gsk", WorkspaceID: "workspace-1", DID: self, Address: "test.local/gsk", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, SigningKey: priv, CreatedAt: "2026-05-02T00:00:00Z"})
-			args := []string{"mail", "send", tc.flag, tc.target, "--body", "nonce", "--json"}
+			args := []string{"mail", "send", tc.flag, tc.target, "--body", "nonce"}
+			if !tc.text {
+				args = append(args, "--json")
+			}
 			if (!tc.cont && !tc.noSubject) || tc.subjectOnCont {
 				args = append(args, "--subject", "Status")
 			}
@@ -188,6 +194,17 @@ func TestAwMailSendToStartsANewThread(t *testing.T) {
 			}
 			if tc.mismatch && !strings.Contains(stderr.String(), "server does not support new conversations") {
 				t.Fatalf("no compatibility error: %s", &stderr)
+			}
+			if tc.text {
+				// The text result says whether the send started a thread.
+				want := fmt.Sprintf("Started a new thread with alice: \"Status\" (conversation_id=%s, message_id=%s)\n", req.ConversationID, req.MessageID)
+				if tc.cont {
+					want = fmt.Sprintf("Sent mail in conversation %s (message_id=%s)\n", old, req.MessageID)
+				}
+				if stdout.String() != want {
+					t.Fatalf("text result %q, want %q", stdout.String(), want)
+				}
+				return
 			}
 			if !wantFailure {
 				var result awid.SendMessageResponse

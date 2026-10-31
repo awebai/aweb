@@ -865,7 +865,7 @@ func TestAwMailSendAliasToSelfSkipsConversationDiscovery(t *testing.T) {
 	if strings.Contains(string(out), "Acceptance is not delivery") {
 		t.Fatalf("--to path carries the removed boundary notice:\n%s", string(out))
 	}
-	if !strings.Contains(string(out), "Sent mail to gsk") {
+	if !strings.Contains(string(out), "Started a new thread with gsk: \"self\"") {
 		t.Fatalf("unexpected output:\n%s", string(out))
 	}
 	if got.ToAlias != "gsk" {

@@ -151,7 +151,7 @@ func formatMailThreads(v any) string {
 			participants = append(participants, termtext.Line(participant))
 		}
 		sb.WriteString(fmt.Sprintf("  With: %s\n", strings.Join(participants, ", ")))
-		activity := termtext.Line(strings.TrimSpace(thread.LastMessageAt))
+		activity := termtext.Line(threadActivityTime(thread.LastMessageAt))
 		if thread.UnreadCount > 0 {
 			activity += fmt.Sprintf(" · %d unread", thread.UnreadCount)
 		}
@@ -163,7 +163,21 @@ func formatMailThreads(v any) string {
 		sb.WriteString("Continue with: aw mail threads --cursor " + termtext.Line(cursor) + "\n")
 	}
 	sb.WriteString("\n" + mailThreadTeaching + "\n")
+	if len(resp.Conversations) > 0 {
+		sb.WriteString("Continue a thread: aw mail send --conversation-id <conversation_id> --body-file <file>\n")
+	}
 	return sb.String()
+}
+
+// threadActivityTime prints a thread's last activity in UTC to the second;
+// a value that is not a timestamp prints as it is.
+func threadActivityTime(value string) string {
+	value = strings.TrimSpace(value)
+	at, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return value
+	}
+	return at.UTC().Format("2006-01-02T15:04:05Z")
 }
 
 func formatMailInbox(v any) string {

@@ -14,6 +14,7 @@ import (
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/termtext"
 	"github.com/spf13/cobra"
 )
 
@@ -136,6 +137,7 @@ var mailSendCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		recipientLabel := targetValue
 
 		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
@@ -267,7 +269,7 @@ var mailSendCmd = &cobra.Command{
 		} else if targetKind == "conversation" {
 			fmt.Fprintf(commandStdout, "Sent mail in conversation %s (message_id=%s)\n", targetValue, resp.MessageID)
 		} else {
-			fmt.Fprintf(commandStdout, "Sent mail to %s (message_id=%s)\n", targetValue, resp.MessageID)
+			fmt.Fprintf(commandStdout, "Started a new thread with %s: \"%s\" (conversation_id=%s, message_id=%s)\n", termtext.Line(recipientLabel), termtext.Line(strings.TrimSpace(mailSendSubject)), resp.ConversationID, resp.MessageID)
 		}
 		return nil
 	},
@@ -1017,7 +1019,11 @@ var mailThreadsCmd = &cobra.Command{
 		if err := readEncryptedThreadTitles(cmd, ctx, c, sel, resp); err != nil {
 			return err
 		}
-		printOutput(resp, formatMailThreads)
+		if jsonFlag {
+			printOutput(resp, formatMailThreads)
+		} else {
+			printOutput(threadsWithoutSelf(resp, sel), formatMailThreads)
+		}
 		return nil
 	},
 }
@@ -1046,4 +1052,30 @@ func readEncryptedThreadTitles(cmd *cobra.Command, ctx context.Context, c *aweb.
 		thread.Title = first.Messages[0].Subject
 	}
 	return nil
+}
+
+// threadsWithoutSelf is the text listing's view: each thread names the other
+// participants, not you. JSON keeps the server's participant list.
+func threadsWithoutSelf(resp *awid.ConversationsResponse, sel *awconfig.Selection) *awid.ConversationsResponse {
+	self := map[string]bool{}
+	if sel != nil {
+		for _, label := range []string{sel.Alias, selectionAddress(sel)} {
+			if label = strings.TrimSpace(label); label != "" {
+				self[label] = true
+			}
+		}
+	}
+	view := *resp
+	view.Conversations = make([]awid.ConversationItem, len(resp.Conversations))
+	for i, thread := range resp.Conversations {
+		others := make([]string, 0, len(thread.Participants))
+		for _, participant := range thread.Participants {
+			if !self[strings.TrimSpace(participant)] {
+				others = append(others, participant)
+			}
+		}
+		thread.Participants = others
+		view.Conversations[i] = thread
+	}
+	return &view
 }

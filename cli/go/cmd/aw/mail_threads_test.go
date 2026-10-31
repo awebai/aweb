@@ -40,8 +40,8 @@ func TestAwMailThreadsListsEachThreadWithItsTitle(t *testing.T) {
 			query = r.URL.RawQuery
 			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{
 				Conversations: []awid.ConversationItem{
-					{ConversationType: "mail", ConversationID: "11111111-1111-4111-8111-111111111111", Title: "Release plan", FirstMessageID: "msg-1", Subject: "Re: Release plan", Participants: []string{"gsk", "alice"}, LastMessageAt: "2026-10-31T12:00:00Z", UnreadCount: 2},
-					{ConversationType: "mail", ConversationID: "22222222-2222-4222-8222-222222222222", Title: "Release plan", FirstMessageID: "msg-2", Participants: []string{"gsk", "bob"}, LastMessageAt: "2026-10-30T09:00:00Z"},
+					{ConversationType: "mail", ConversationID: "11111111-1111-4111-8111-111111111111", Title: "Release plan", FirstMessageID: "msg-1", Subject: "Re: Release plan", Participants: []string{"gsk", "alice"}, LastMessageAt: "2026-10-31T12:00:00.123456+00:00", UnreadCount: 2},
+					{ConversationType: "mail", ConversationID: "22222222-2222-4222-8222-222222222222", Title: "Release plan", FirstMessageID: "msg-2", Participants: []string{"bob", "gsk"}, LastMessageAt: "2026-10-30T09:00:00Z"},
 				},
 				NextCursor: "cursor-2",
 			})
@@ -70,17 +70,23 @@ func TestAwMailThreadsListsEachThreadWithItsTitle(t *testing.T) {
 	text, _ := run()
 	for _, want := range []string{
 		"Release plan",
-		"With: gsk, alice",
+		"With: alice\n",
 		"Last activity: 2026-10-31T12:00:00Z · 2 unread",
 		"Conversation ID: 11111111-1111-4111-8111-111111111111",
-		"With: gsk, bob",
+		"With: bob\n",
+		"Last activity: 2026-10-30T09:00:00Z\n",
 		"Conversation ID: 22222222-2222-4222-8222-222222222222",
 		"aw mail threads --cursor cursor-2",
 		"Answer in the conversation: aw mail reply <message_id>.",
+		"Continue a thread: aw mail send --conversation-id <conversation_id> --body-file <file>",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("threads output missing %q:\n%s", want, text)
 		}
+	}
+	// The list names the other participants, never you.
+	if strings.Contains(text, "gsk") {
+		t.Fatalf("threads lists you as a participant:\n%s", text)
 	}
 	// Two threads may share a title; the newest subject is not the title.
 	if strings.Contains(text, "Re: Release plan") {
@@ -93,7 +99,9 @@ func TestAwMailThreadsListsEachThreadWithItsTitle(t *testing.T) {
 	stdout, _ := run("--json", "--cursor", "cursor-2")
 	assertOneJSONDocument(t, []byte(stdout))
 	var listed awid.ConversationsResponse
-	if err := json.Unmarshal([]byte(stdout), &listed); err != nil || len(listed.Conversations) != 2 || listed.Conversations[0].Title != "Release plan" || listed.NextCursor != "cursor-2" {
+	// JSON keeps the server's participants and timestamp as they are.
+	if err := json.Unmarshal([]byte(stdout), &listed); err != nil || len(listed.Conversations) != 2 || listed.Conversations[0].Title != "Release plan" || listed.NextCursor != "cursor-2" ||
+		len(listed.Conversations[0].Participants) != 2 || listed.Conversations[0].LastMessageAt != "2026-10-31T12:00:00.123456+00:00" {
 		t.Fatalf("threads --json: %v %s", err, stdout)
 	}
 	if !strings.Contains(query, "cursor=cursor-2") {
