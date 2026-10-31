@@ -653,7 +653,10 @@ type ConversationItem struct {
 	Participants         []string `json:"participants,omitempty"`
 	ParticipantDIDs      []string `json:"participant_dids,omitempty"`
 	ParticipantAddresses []string `json:"participant_addresses,omitempty"`
-	Subject              string   `json:"subject,omitempty"`
+	// ParticipantDetails binds each participant's labels to its identity;
+	// separate participants may share an alias.
+	ParticipantDetails []ConversationParticipant `json:"participant_details,omitempty"`
+	Subject            string                    `json:"subject,omitempty"`
 	// Title is the subject of the conversation's first message, empty when
 	// that message is end-to-end encrypted; FirstMessageID lets a reader
 	// decrypt it.
@@ -663,6 +666,21 @@ type ConversationItem struct {
 	LastMessageFrom    string `json:"last_message_from,omitempty"`
 	LastMessagePreview string `json:"last_message_preview,omitempty"`
 	UnreadCount        int    `json:"unread_count,omitempty"`
+}
+
+// ConversationParticipant is one participant of a conversation: its identity
+// reference, which is null for a historical reference that cannot be parsed,
+// and its display labels.
+type ConversationParticipant struct {
+	ParticipantRef *ParticipantRef `json:"participant_ref"`
+	Alias          string          `json:"alias"`
+	Address        *string         `json:"address"`
+}
+
+// ParticipantRef is a participant's identity: a native DID.
+type ParticipantRef struct {
+	Kind string `json:"kind"`
+	DID  string `json:"did"`
 }
 
 type ConversationsResponse struct {

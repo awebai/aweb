@@ -1030,7 +1030,8 @@ var mailThreadsCmd = &cobra.Command{
 
 // readEncryptedThreadTitles fills the title the server cannot read: an
 // end-to-end encrypted first message's subject, decrypted from that message.
-// A title that cannot be read stays empty.
+// A title whose message cannot be read, is not this thread's first message,
+// or failed verification stays empty. Reading acknowledges nothing.
 func readEncryptedThreadTitles(cmd *cobra.Command, ctx context.Context, c *aweb.Client, sel *awconfig.Selection, resp *awid.ConversationsResponse) error {
 	configured := false
 	for i := range resp.Conversations {
@@ -1046,33 +1047,58 @@ func readEncryptedThreadTitles(cmd *cobra.Command, ctx context.Context, c *aweb.
 			configured = true
 		}
 		first, err := c.Message(ctx, firstID)
-		if err != nil || first == nil || len(first.Messages) == 0 {
+		if err != nil || first == nil || len(first.Messages) != 1 {
 			continue
 		}
-		thread.Title = first.Messages[0].Subject
+		// Only this thread's own first message, with its authenticated
+		// proof intact, names the thread.
+		message := first.Messages[0]
+		if message.MessageID != firstID || message.ConversationID != thread.ConversationID || message.VerificationStatus == awid.Failed {
+			continue
+		}
+		thread.Title = message.Subject
 	}
 	return nil
 }
 
-// threadsWithoutSelf is the text listing's view: each thread names the other
-// participants, not you. JSON keeps the server's participant list.
+// threadsWithoutSelf is the text listing's view: each thread names its other
+// participants by identity, never you. An alias that another participant of
+// the thread shares is shown as that participant's address, or else its DID.
+// JSON keeps the server's participant data.
 func threadsWithoutSelf(resp *awid.ConversationsResponse, sel *awconfig.Selection) *awid.ConversationsResponse {
 	self := map[string]bool{}
 	if sel != nil {
-		for _, label := range []string{sel.Alias, selectionAddress(sel)} {
-			if label = strings.TrimSpace(label); label != "" {
-				self[label] = true
+		for _, did := range []string{sel.DID, sel.StableID} {
+			if did = strings.TrimSpace(did); did != "" {
+				self[did] = true
 			}
 		}
 	}
 	view := *resp
 	view.Conversations = make([]awid.ConversationItem, len(resp.Conversations))
 	for i, thread := range resp.Conversations {
-		others := make([]string, 0, len(thread.Participants))
-		for _, participant := range thread.Participants {
-			if !self[strings.TrimSpace(participant)] {
-				others = append(others, participant)
+		aliases := map[string]int{}
+		for _, participant := range thread.ParticipantDetails {
+			aliases[strings.TrimSpace(participant.Alias)]++
+		}
+		others := make([]string, 0, len(thread.ParticipantDetails))
+		for _, participant := range thread.ParticipantDetails {
+			did := ""
+			if participant.ParticipantRef != nil {
+				did = strings.TrimSpace(participant.ParticipantRef.DID)
 			}
+			if did != "" && self[did] {
+				continue
+			}
+			label := strings.TrimSpace(participant.Alias)
+			if label == "" || aliases[label] > 1 {
+				if participant.Address != nil && strings.TrimSpace(*participant.Address) != "" {
+					label = strings.TrimSpace(*participant.Address)
+				} else if did != "" {
+					label = did
+				}
+			}
+			others = append(others, label)
 		}
 		thread.Participants = others
 		view.Conversations[i] = thread
