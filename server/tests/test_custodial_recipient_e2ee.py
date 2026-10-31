@@ -214,6 +214,49 @@ async def test_verified_managed_sender_can_deliver_hosted_attachment(privacy_app
 
 
 @pytest.mark.asyncio
+async def test_global_managed_dashboard_shape_keeps_attachment_delivery(privacy_app):
+    import base64
+
+    from identity_binding_support import register_global_identity
+    from test_attachments_http import managed_fixture
+    from test_messages_http import _encode_certificate, _make_certificate, _signed_identity_headers
+
+    env = privacy_app
+    _, descriptor, wire, conversation_id = await managed_fixture(env)
+    for name, identity in env.attachment_keys.items():
+        actor = env.actors[name]
+        address = "example.test/" + name
+        stable_id = await register_global_identity(env, actor, address)
+        await env.db.execute(
+            "UPDATE {{tables.agents}} SET identity_scope='global', did_aw=$2, address=$3, did_aw_verified_key=did_key WHERE agent_id=$1",
+            actor.id, stable_id, address,
+        )
+        actor.certificate = _encode_certificate(_make_certificate(
+            env.team_sk, env.team_did, actor.did, team_id=TEAM, alias=name,
+            identity_scope="global", member_did_aw=stable_id, member_address=address,
+        ))
+        identity.update(stable_id=stable_id, address=address)
+        public_key = identity["encryption_key"]["encryption_public_key"]
+        identity["encryption_key"] = build_encryption_key_assertion(
+            signing_key=actor.sk, identity_did=actor.did, identity_stable_id=stable_id,
+            encryption_public_key=base64.b64decode(public_key + "=" * (-len(public_key) % 4)),
+            custody="hosted_custodial", now=datetime.now(timezone.utc),
+        )
+        await _publish(env, name, identity)
+    alice, bob = (env.attachment_keys[name] for name in ("alice", "bob"))
+    wire["encrypted_envelope"] = encrypt_e2ee_message(
+        kind="mail", sender=alice, recipients=[bob], body="attached",
+        attachments=[descriptor], message_id=wire["message_id"], conversation_id=conversation_id,
+    )
+    content = json.dumps(wire).encode()
+    actor = env.actors["alice"]
+    headers = _signed_identity_headers(actor.sk, actor.did, alice["stable_id"], content)
+    response = await env.client.post("/v1/messages", content=content, headers={**headers, "Content-Type": "application/json"})
+    assert response.status_code == 200, response.text
+    assert await env.db.fetch_val("SELECT SUM(binds) FROM {{tables.attachment_test_storage}}") == 1
+
+
+@pytest.mark.asyncio
 async def test_managed_sender_cannot_mix_sender_keys_between_wraps(privacy_app):
     from aweb.e2ee_messages import _envelope_map, _hash_canonical, _key_wrap_map
 
