@@ -117,5 +117,9 @@ async def test_history_keeps_the_individual_http_timeout(privacy_app, tmp_path):
         assert stderr
         assert time.monotonic() - started < 3
         assert observed.history == [{'limit': ['1']}]
-        assert not stdout
+        # Under --json the failure's stdout is its error envelope alone,
+        # carrying the same message as stderr.
+        envelope = json.loads(stdout)
+        assert set(envelope) == {'error'}, stdout
+        assert envelope['error']['message'] and envelope['error']['message'] in stderr.decode(), (stdout, stderr)
         assert not observed.stored
