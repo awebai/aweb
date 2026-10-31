@@ -1765,9 +1765,30 @@ func networkError(err error, target string) error {
 	}
 	code, ok := awid.HTTPStatusCode(err)
 	if ok && code == 404 {
+		switch httpErrorReason(err) {
+		case "recipient_identity_not_found":
+			return fmt.Errorf("%s is not a member of your team or a registered address. Check the name with `aw workspace status`.", target)
+		case "local_recipient_route_missing":
+			return errors.New(awid.UnreachableAddressText(target))
+		}
 		return fmt.Errorf("agent not found: %s", target)
 	}
 	return err
+}
+
+// httpErrorReason returns the stable reason of a server refusal body.
+func httpErrorReason(err error) string {
+	body, ok := awid.HTTPErrorBody(err)
+	if !ok {
+		return ""
+	}
+	var envelope struct {
+		Reason string `json:"reason"`
+	}
+	if json.Unmarshal([]byte(strings.TrimSpace(body)), &envelope) != nil {
+		return ""
+	}
+	return strings.TrimSpace(envelope.Reason)
 }
 
 func httpErrorDetail(err error) string {
