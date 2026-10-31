@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-10-31
+* **Harvest**: OKF proposal from aweb-protocol-expert-who-agent with backing note humans-use-mail.md; the operator's D8 acceptance is source-reported.
+* **Creation**: decision [humans use mail; recipient kind is authoritative](/aweb-protocol-expert/decisions/humans-use-mail.md) (accepted, not yet on main). No supersession of [owner binding needs independent authorities](/aweb-protocol-expert/decisions/owner-binding-needs-independent-authorities.md).
+
 ## 2026-10-29
 * **Harvest**: manual harvest of seat aweb-protocol-expert-acmj-binding from its proposal and three backing notes, task aweb-acmj.19. Public contract decisions and rejected alternatives are retained; application implementation details and mail receipts are omitted.
 * **Creation**: decision [owner binding needs independent authorities](/aweb-protocol-expert/decisions/owner-binding-needs-independent-authorities.md); lessons [local stop is not new binding authority](/aweb-protocol-expert/lessons/local-stop-is-not-new-binding-authority.md) and [frozen vectors need a real consumer](/aweb-protocol-expert/lessons/frozen-vectors-need-a-real-consumer.md).
