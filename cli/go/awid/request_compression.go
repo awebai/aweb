@@ -176,15 +176,21 @@ func compressedServerRequest(client *http.Client, req *http.Request, serverBase 
 }
 
 // ForgetRequestCompression drops what this process learned about whether the
-// server at serverBase accepts gzip request bodies, so the next request to it
-// probes again. One base can be served by different servers over time, such
-// as a test server on a port an earlier one closed.
+// server at serverBase's origin accepts gzip request bodies, for every base
+// mounted on that origin, so the next request to any of them probes again.
+// One origin can be served by different servers over time, such as a test
+// server on a port an earlier one closed.
 func ForgetRequestCompression(serverBase string) {
-	base, err := url.Parse(strings.TrimRight(strings.TrimSpace(serverBase), "/"))
+	origin, err := url.Parse(strings.TrimRight(strings.TrimSpace(serverBase), "/"))
 	if err != nil {
 		return
 	}
-	requestCompressionServers.Delete(base.String())
+	requestCompressionServers.Range(func(key, _ any) bool {
+		if base, err := url.Parse(key.(string)); err == nil && base.Scheme == origin.Scheme && base.Host == origin.Host {
+			requestCompressionServers.Delete(key)
+		}
+		return true
+	})
 }
 
 func serverCompressionSupport(ctx context.Context, client *http.Client, base *url.URL) *requestCompressionSupport {
