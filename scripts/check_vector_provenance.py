@@ -81,6 +81,10 @@ ROOT_CONSUMERS = {
         "id-certificates-v1.json",
         'Path(__file__).resolve().parents[2] / "docs" / "vectors"',
     ),
+    PurePosixPath("awid/tests/test_id_certificate_request.py"): _consumer(
+        "id-certificates-v1.json",
+        'Path(__file__).resolve().parents[2] / "docs/vectors/id-certificates-v1.json"',
+    ),
     PurePosixPath("cli/go/internal/conformance/id_certificates_test.go"): _consumer(
         "id-certificates-v1.json",
         'readRootVector(t, "id-certificates-v1.json")',
