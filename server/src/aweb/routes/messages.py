@@ -1866,9 +1866,25 @@ async def unread_mail_count(
     return UnreadMailCount(unread_count=count)
 
 
-@router.get("/inbox", response_model=InboxResponse)
-async def get_inbox(
+@router.get("/inbox", response_model=InboxResponse, name="get_inbox")
+async def _get_inbox_http(
     request: Request,
+    db=Depends(get_db),
+    limit: int = Query(default=50, ge=1, le=200),
+    cursor: str | None = Query(default=None),
+    unread_only: bool = Query(default=False),
+    message_id: str | None = Query(default=None),
+    auth: MessagingAuth = Depends(get_messaging_auth),
+) -> InboxResponse:
+    # FastAPI injects Request only for the concrete type, not Request | None.
+    return await get_inbox(
+        request, db=db, limit=limit, cursor=cursor, unread_only=unread_only,
+        message_id=message_id, auth=auth,
+    )
+
+
+async def get_inbox(
+    request: Request | None,
     db=Depends(get_db),
     limit: int = Query(default=50, ge=1, le=200),
     cursor: str | None = Query(default=None),

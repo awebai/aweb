@@ -153,6 +153,20 @@ participant-scoped mail index, newest activity first. They return
 Filters narrow participant access; they never grant access. Empty mail
 conversations do not appear until a message exists.
 
+An authenticated embedder can check an exact mail thread without scanning that
+index with `aweb.routes.conversations.require_mail_thread_peer_for_auth(db, auth,
+conversation_id=..., peer_did=...)`. It requires the caller's canonical
+participation and the exact native peer DID in the same mail thread, including
+empty, closed or expired threads. Success returns `None`; every missing binding
+returns the same 404. Grants require `mail.read`. This read-only check does not
+establish the peer's kind or attribute a message to that peer.
+
+The existing `aweb.routes.messages.get_inbox` also accepts `request=None` for
+direct background calls with an already authenticated `MessagingAuth`. Pass all
+query arguments explicitly; FastAPI dependency injection does not run on direct
+calls. Canonical incoming attribution is unchanged, sender membership is
+`unknown` without a request, and the read never acknowledges messages.
+
 Each mail item retains `subject` from the newest message and adds `title`
 from the first message, ordered by server receipt time then message ID.
 `first_message_id` identifies that first message. An encrypted first message

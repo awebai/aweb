@@ -47,16 +47,21 @@ async def test_exact_peer_check_is_read_only_for_empty_and_historical_mail(aweb_
     elif state == "past_expiry":
         # The check must not perform get_conversation's lazy expiry write.
         await db.execute("UPDATE {{tables.conversations}} SET expires_at=NOW()-INTERVAL '1 day' WHERE conversation_id=$1", cid)
+    if state != "empty":
+        await db.execute("""INSERT INTO {{tables.messages}}
+            (message_id,conversation_id,from_did,to_did,from_alias,to_alias,subject,body)
+            VALUES ($1,$2,$3,$4,'peer','human','history','unread')""", uuid4(), cid, PEER, HUMAN)
     snapshots = [
         dict(await db.fetch_one("SELECT * FROM {{tables.conversations}} WHERE conversation_id=$1", cid)),
         [dict(row) for row in await db.fetch_all("SELECT * FROM {{tables.conversation_participants}} WHERE conversation_id=$1 ORDER BY did", cid)],
+        [dict(row) for row in await db.fetch_all("SELECT * FROM {{tables.messages}} WHERE conversation_id=$1", cid)],
     ]
     assert await conversations.require_mail_thread_peer_for_auth(
         _infra(db), AUTH, conversation_id=str(cid), peer_did=PEER,
     ) is None
     assert dict(await db.fetch_one("SELECT * FROM {{tables.conversations}} WHERE conversation_id=$1", cid)) == snapshots[0]
     assert [dict(row) for row in await db.fetch_all("SELECT * FROM {{tables.conversation_participants}} WHERE conversation_id=$1 ORDER BY did", cid)] == snapshots[1]
-    assert await db.fetch_val("SELECT COUNT(*) FROM {{tables.messages}}") == 0
+    assert [dict(row) for row in await db.fetch_all("SELECT * FROM {{tables.messages}} WHERE conversation_id=$1", cid)] == snapshots[2]
 
 
 @pytest.mark.asyncio

@@ -76,6 +76,41 @@ def _grant_conversation_scope_allowed(auth: MessagingAuth, requested_type: str |
         raise HTTPException(status_code=403, detail="outside grant scope")
 
 
+async def require_mail_thread_peer_for_auth(
+    db, auth: MessagingAuth, *, conversation_id: str | UUID, peer_did: str,
+) -> None:
+    """Require canonical caller and exact native peer in this mail thread.
+
+    The embedder authenticates the caller. This read-only check does not select
+    recipients or establish peer kind, and remains valid for historical threads.
+    """
+    _grant_conversation_scope_allowed(auth, "mail")
+    actor_dids = participant_dids(auth)
+    if not actor_dids:
+        raise HTTPException(401, "Authenticated identity is missing a routing DID")
+    try:
+        conversation_uuid = UUID(str(conversation_id))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(422, "Invalid conversation_id format") from exc
+    if native_participant_reference(peer_did) is None:
+        raise HTTPException(422, "peer_did must be a native DID")
+    exists = await db.get_manager("aweb").fetch_val(
+        """
+        SELECT EXISTS (
+            SELECT 1 FROM {{tables.conversations}} c
+            JOIN {{tables.conversation_participants}} own
+              ON own.conversation_id = c.conversation_id
+            JOIN {{tables.conversation_participants}} peer
+              ON peer.conversation_id = c.conversation_id
+            WHERE c.conversation_id = $1 AND c.conversation_type = 'mail'
+              AND own.did = ANY($2::text[]) AND peer.did = $3
+        )
+        """, conversation_uuid, actor_dids, peer_did,
+    )
+    if not exists:
+        raise HTTPException(404, "Mail thread not found")
+
+
 def _participant_detail(did: str | None, alias: str | None, address: str | None = None) -> dict:
     return {
         "participant_ref": native_participant_reference(str(did or "")),
