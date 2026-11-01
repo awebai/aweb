@@ -47,14 +47,18 @@ not an email alias silently attached to the parent namespace.
 
 ## 2. DNS coverage and sending readiness
 
-For each enabled namespace D, require an explicit MX RRset at D pointing to
-its authorized receiver. This includes nested namespaces and names with
-existing DNS records or descendant records. A wildcard MX can assist
-provisioning elsewhere but is not the readiness proof for this profile.
-Do not prohibit `_awid`, DKIM or other legitimate DNS records to preserve a
-wildcard. The operator maintains the explicit MX while adding such records.
-Validate the actual MX answer for each namespace before advertising email as
-ready and after namespace DNS changes.
+Hosted namespaces use one wildcard MX and one matching suffix receipt rule:
+for `aweb.ai`, `*.aweb.ai MX 10 inbound-smtp.us-east-1.amazonaws.com` and one
+SES receipt rule with [recipient condition `.aweb.ai`](https://docs.aws.amazon.com/ses/latest/dg/receiving-email-receipt-rules-console-walkthrough.html).
+The wildcard does not cover `aweb.ai` itself: attach reports email as not ready
+for that apex namespace and leaves its company-mail MX untouched.
+The attach flow checks the actual MX answer for namespace D before advertising
+email as ready. If records at D or below it prevent wildcard synthesis, require
+an explicit MX at D pointing to the authorized receiver. This is a provisioning
+check, not DNS automation; do not prohibit `_awid`, DKIM or other legitimate
+records to preserve a wildcard. BYOT namespaces retain explicit opt-in MX setup
+authorized by their customer. Recheck the actual MX answer after namespace DNS
+changes.
 
 Why: DNS wildcards synthesize from the closest existing ancestor. A name may
 exist without records of its own because it has descendants. Thus adding
