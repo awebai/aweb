@@ -259,7 +259,7 @@ describe.sequential("channel integration", () => {
     await delay(750);
 
     const setupMailBody = `pre-outage channel readiness ${Date.now()}`;
-    const setupMail = await sendMailViaAW(homeDir, aliceDir, server.awidURL, "bob", setupMailBody);
+    const setupMail = await sendMailViaAW(homeDir, aliceDir, server.awidURL, "bob", "Stream outage setup", setupMailBody);
     const setupNotification = await notifications.waitFor(
       (item) => item.meta.type === "mail" && item.meta.message_id === setupMail.message_id,
     ).catch((error) => {
@@ -289,7 +289,7 @@ describe.sequential("channel integration", () => {
     expect(channelStderr).not.toContain("TypeError: fetch failed");
 
     const mailBody = `post-reconnect channel mail ${Date.now()}`;
-    const mail = await sendMailViaAW(homeDir, aliceDir, server.awidURL, "bob", mailBody);
+    const mail = await sendMailViaAW(homeDir, aliceDir, server.awidURL, "bob", "Mail after reconnect", mailBody);
     const mailNotification = await notifications.waitFor(
       (item) => item.meta.type === "mail" && item.meta.message_id === mail.message_id,
     );
@@ -317,7 +317,7 @@ describe.sequential("channel integration", () => {
     await delay(750);
 
     const mailBody = `channel verified mail ${Date.now()}`;
-    const mail = await sendMailViaAW(homeDir, aliceDir, server.awidURL, "bob", mailBody);
+    const mail = await sendMailViaAW(homeDir, aliceDir, server.awidURL, "bob", "Live mail bridge", mailBody);
     const mailNotification = await notifications.waitFor(
       (item) => item.meta.type === "mail" && item.meta.message_id === mail.message_id,
     );
@@ -374,7 +374,7 @@ describe.sequential("channel integration", () => {
   test("verifies a newly joined local sender's first message to a warm receiver", async () => {
     await startChannelIfNeeded();
     const receiverTransport = transport;
-    const warm = await sendMailViaAW(homeDir, aliceDir, server.awidURL, "bob", "warm receiver before local join");
+    const warm = await sendMailViaAW(homeDir, aliceDir, server.awidURL, "bob", "Warm receiver", "warm receiver before local join");
     const readiness = await notifications.waitFor(item => item.meta.message_id === warm.message_id);
     expect(readiness.meta.trust_status).toBe("verified");
 
@@ -385,7 +385,7 @@ describe.sequential("channel integration", () => {
       "--json", "id", "team", "accept-invite", invite.token, "--local", "--name", "finch",
     ]);
     await initWorkspace(homeDir, senderDir, server.awidURL, server.awebURL);
-    const mail = await sendMailViaAW(homeDir, senderDir, server.awidURL, "bob", "new local member's first mail");
+    const mail = await sendMailViaAW(homeDir, senderDir, server.awidURL, "bob", "First mail from a new member", "new local member's first mail");
     const first = await notifications.waitFor(item => item.meta.message_id === mail.message_id);
     expect(first.meta.trust_status, JSON.stringify(first)).toBe("verified");
     expect(first.meta.verified).toBe("true");
@@ -410,7 +410,7 @@ describe.sequential("channel integration", () => {
     expect(oldDID).toBeTruthy();
     await startChannelIfNeeded();
     const receiverTransport = transport;
-    const before = await sendMailViaAW(homeDir, senderDir, server.awidURL, "bob", "local before re-init");
+    const before = await sendMailViaAW(homeDir, senderDir, server.awidURL, "bob", "Local before re-init", "local before re-init");
     const first = await notifications.waitFor(item => item.meta.message_id === before.message_id);
     expect(first.meta.trust_status).toBe("verified");
     expect(first.meta.verified).toBe("true");
@@ -535,7 +535,7 @@ describe.sequential("channel integration", () => {
       }, 45_000, () => `both MCP initialize attempts were not observed\n${stderr}`);
 
       const marker = `aweb-abbs-live-${Date.now()}`;
-      const mail = await sendMailViaAW(homeDir, aliceDir, server.awidURL, "bob", marker);
+      const mail = await sendMailViaAW(homeDir, aliceDir, server.awidURL, "bob", "Fresh session wake", marker);
       const expectedSource = config.expected_source;
       await waitUntil(
         async () => stdout.includes(marker) && stdout.includes(expectedSource),
@@ -1016,6 +1016,7 @@ async function sendMailViaAW(
   workspaceDir: string,
   awidURL: string,
   to: string,
+  subject: string,
   body: string,
 ): Promise<MailSendInfo> {
   return runAwJSON(homeDir, workspaceDir, awidURL, [
@@ -1023,6 +1024,7 @@ async function sendMailViaAW(
     "mail",
     "send",
     "--to", to,
+    "--subject", subject,
     "--body", body,
   ]);
 }
