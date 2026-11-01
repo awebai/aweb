@@ -79,8 +79,10 @@ There are two positive authorization lanes:
 2. **Responsible-human lane:** the actual human session is associated with H;
    the current shared verifier binds S's authenticated current key to H as its
    responsible human; H and S satisfy the operation's current team/access
-   requirements. The exact P8 owner proof comes from the independently pinned
-   ownership authority. Apply the full
+   requirements. Under the ID tree, that ownership proof is the responsible-human
+   result of S's current ID chain verified through AWID (`nearest_human` with
+   `human_id=H`), so a hosted endpoint needs no separate portable owner artifact.
+   Apply the full
    [current-human predicate](human-channel-binding.md#3-full-current-human-predicate-for-bind-and-rebind),
    lines 90–122, including consent, legitimate signing custody and resource
    verification.
