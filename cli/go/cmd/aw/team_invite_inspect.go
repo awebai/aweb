@@ -193,7 +193,7 @@ func readHostedInvitePreview(ctx context.Context, token string, envelope hostedJ
 		fmt.Fprintf(os.Stderr, "AW TRACE invite preview: HTTP %d\n", resp.StatusCode)
 	}
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusUnauthorized {
-		return nil, nil, &inviteInspectError{"unknown_or_invalid", "Invite is unknown or invalid, or this service does not support invite preview.", 1}
+		return nil, nil, &inviteInspectError{"unknown_or_invalid", "Invite is unknown or invalid, or this service does not support invite preview. If this service is too old, ask its operator to upgrade it to a release supporting POST /api/v1/spawn/invite-preview. If preview is supported, request a new invite. No invite was redeemed.", 1}
 	}
 	if resp.StatusCode == http.StatusGone {
 		return nil, nil, &inviteInspectError{"expired_or_revoked", "Invite is expired or revoked; request a new invite. No invite was redeemed.", 1}

@@ -67,6 +67,13 @@ func TestHostedInviteRequiresPinnedPreviewBeforeAccept(t *testing.T) {
 			if tc.status == 404 && errorEnvelope(err, err.Error()).Error.Code != "unknown_or_invalid" {
 				t.Fatal("accept lost the preview refusal code")
 			}
+			if tc.status == 404 {
+				for _, guidance := range []string{"If this service is too old", "upgrade it to a release supporting POST /api/v1/spawn/invite-preview", "request a new invite"} {
+					if !strings.Contains(err.Error(), guidance) {
+						t.Fatalf("hosted acceptance refusal lacks %q: %v", guidance, err)
+					}
+				}
+			}
 			if err == nil || previews != 1 || accepts != 0 {
 				t.Fatalf("err=%v previews=%d accepts=%d", err, previews, accepts)
 			}
