@@ -49,6 +49,10 @@ from test_messages_http import (
 # Avoid channel/key collisions when sharing the gate Redis with other runs.
 TEAM_NAME = f"privacy-{uuid4().hex[:12]}"
 TEAM = f"{TEAM_NAME}:example.test"
+# This module names one team even when its databases are recreated. Preserve
+# that team's authority across fixtures: shared Redis may still cache its key
+# when an ephemeral registry origin is reused.
+_TEAM_SIGNING_KEY, _, _TEAM_DID_KEY = _make_keypair()
 
 
 @pytest_asyncio.fixture
@@ -94,7 +98,7 @@ async def privacy_app(shared_test_pool, monkeypatch):
 
             app.state.on_mutation = observe_mutation
             manager = db.get_manager("aweb")
-            team_sk, _, team_did = _make_keypair()
+            team_sk, team_did = _TEAM_SIGNING_KEY, _TEAM_DID_KEY
             await manager.execute(
                 "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) "
                 "VALUES ($1, 'example.test', $2, $3)", TEAM, TEAM_NAME, team_did,

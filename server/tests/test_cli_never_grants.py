@@ -32,10 +32,12 @@ from test_messages_http import _make_certificate, _make_keypair
 
 
 @asynccontextmanager
-async def registry_listener(env):
+async def registry_listener(env, *, listener_socket: socket.socket | None = None):
+    """Serve real AWID, optionally using an owned listener duplicate."""
     existing = env.app.state.awid_registry_client
-    sock = socket.socket()
-    sock.bind(("127.0.0.1", 0))
+    sock = listener_socket if listener_socket is not None else socket.socket()
+    if listener_socket is None:
+        sock.bind(("127.0.0.1", 0))
     server = uvicorn.Server(uvicorn.Config(existing.transport.app, lifespan="off", log_level="error"))
     serving = asyncio.create_task(server.serve(sockets=[sock]))
     client = None
