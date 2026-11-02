@@ -651,7 +651,7 @@ async def register_address(
     "/claims",
     response_model=AtomicAddressClaimResponse,
     response_model_exclude_none=True,
-    dependencies=[Depends(rate_limit_dep("address_atomic_claim"))],
+    dependencies=[Depends(rate_limit_dep("address_atomic_claim", allow_trusted_service=True))],
 )
 async def claim_identity_address(
     request: Request,

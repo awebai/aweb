@@ -162,19 +162,25 @@ The same credential also exempts the IP limit on these operations:
 
 | Method | Route | Bucket |
 | --- | --- | --- |
+| PUT | `/v1/did/{did_aw}` | `did_update` |
+| POST | `/v1/namespaces/{domain}/reverify` | `namespace_reverify` |
 | PATCH | `/v1/namespaces/{domain}` | `namespace_update` |
 | PUT | `/v1/namespaces/{domain}` | `namespace_rotate` |
+| POST | `/v1/namespaces/{domain}/rotate` | `namespace_rotate` |
+| DELETE | `/v1/namespaces/{domain}` | `namespace_delete` |
+| POST | `/v1/namespaces/{domain}/addresses/claims` | `address_atomic_claim` |
 | PUT | `/v1/namespaces/{domain}/addresses/{name}` | `address_update` |
 | DELETE | `/v1/namespaces/{domain}/addresses/{name}` | `address_delete` |
 | POST | `/v1/namespaces/{domain}/addresses/{name}/reassign` | `address_reassign` |
 | POST | `/v1/a2a/delegations` | `a2a_delegation_publish` |
 | POST | `/v1/a2a/publications` | `a2a_publication_publish` |
+| POST | `/v1/namespaces/{domain}/teams/{name}/rotate` | `team_rotate` |
 | POST | `/v1/id-certificates/status` | `id_certificate_status` (IP only) |
 
 Their existing proofs, controller authorization, validation and responses are
 unchanged. A signed ID-status caller still spends its caller-key budget.
-Other write routes remain rate-limited even with a matching token, including
-POST `/v1/namespaces/{domain}/rotate`, which uses the previous-key exchange.
+Every registry route with an IP limiter accepts this rate-only exemption.
+Missing, wrong or unconfigured service credentials retain the public budgets.
 Public callers keep the existing 10/hour DID, namespace and team creation
 limits and 30/hour encryption-key, certificate and address registration limits.
 Visibility changes and team deletion allow 300/hour and certificate revocation

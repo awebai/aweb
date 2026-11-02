@@ -712,7 +712,7 @@ async def get_log(request: Request, did_aw: str) -> list[DidLogEntry]:
     ]
 
 
-@router.put("/{did_aw}", dependencies=[Depends(rate_limit_dep("did_update"))])
+@router.put("/{did_aw}", dependencies=[Depends(rate_limit_dep("did_update", allow_trusted_service=True))])
 async def update_mapping(request: Request, did_aw: str, req: DidUpdateRequest) -> dict:
     try:
         did_aw = validate_stable_id(did_aw)

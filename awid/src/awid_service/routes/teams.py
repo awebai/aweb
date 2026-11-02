@@ -784,7 +784,7 @@ async def _bounded_rotate_body(request: Request) -> TeamRotateKeyRequest:
 @router.post(
     "/{name}/rotate",
     response_model=TeamRotateResponse,
-    dependencies=[Depends(rate_limit_dep("team_rotate"))],
+    dependencies=[Depends(rate_limit_dep("team_rotate", allow_trusted_service=True))],
 )
 async def rotate_team_key(
     request: Request,

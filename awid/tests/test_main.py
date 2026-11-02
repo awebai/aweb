@@ -276,16 +276,13 @@ _READ_LIMIT_ROUTES = [
     ("revocation_list", "/v1/namespaces/example.com/teams/ops/revocations", 404),
 ]
 
-_WRITE_LIMIT_ROUTES = [
+_SERVICE_WRITE_LIMIT_ROUTES = [
     ("did_update", "PUT", "/v1/did/{did}"),
     ("namespace_reverify", "POST", "/v1/namespaces/example.com/reverify"),
     ("namespace_rotate", "POST", "/v1/namespaces/example.com/rotate"),
     ("namespace_delete", "DELETE", "/v1/namespaces/example.com"),
     ("address_atomic_claim", "POST", "/v1/namespaces/example.com/addresses/claims"),
     ("team_rotate", "POST", "/v1/namespaces/example.com/teams/ops/rotate"),
-]
-
-_SERVICE_WRITE_LIMIT_ROUTES = [
     ("namespace_update", "PATCH", "/v1/namespaces/example.com"),
     ("namespace_rotate", "PUT", "/v1/namespaces/example.com"),
     ("address_update", "PUT", "/v1/namespaces/example.com/addresses/alice"),
@@ -358,30 +355,6 @@ async def test_every_read_bucket_trusted_exemption(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("bucket,method,path", _WRITE_LIMIT_ROUTES, ids=[r[0] for r in _WRITE_LIMIT_ROUTES])
-async def test_service_token_keeps_other_write_buckets_limited(
-    client, fake_redis, monkeypatch, caplog, bucket, method, path
-):
-    token = "trusted-service-token-with-at-least-32-bytes"
-    monkeypatch.setattr(client._transport.app.state, "awid_service_token", token)
-    monkeypatch.setitem(ratelimit_module._BUCKET_DEFAULTS, bucket, (2, 2**31))
-    path = _missing_did_path(path)
-    for attempt in range(3):
-        response = await client.request(method, path, json={}, headers={"X-AWID-Service-Token": token})
-        if attempt < 2:
-            if bucket == "namespace_rotate":
-                assert response.status_code == 400, response.text
-                assert response.json()["detail"]["code"] == "invalid_shape"
-            else:
-                assert response.status_code in (401, 404, 422), response.text
-        else:
-            _assert_limited(response)
-    assert len(fake_redis.eval_calls) == 3
-    assert all(f":{bucket}:" in call[0][2] for call in fake_redis.eval_calls)
-    assert "event=awid_service_exempt" not in caplog.text
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("bucket,method,path", _SERVICE_WRITE_LIMIT_ROUTES, ids=[r[0] for r in _SERVICE_WRITE_LIMIT_ROUTES])
 async def test_cloud_write_ip_exemption_keeps_route_validation(client, fake_redis, monkeypatch, caplog, bucket, method, path):
     token = "trusted-service-token-with-at-least-32-bytes"
@@ -389,10 +362,11 @@ async def test_cloud_write_ip_exemption_keeps_route_validation(client, fake_redi
     app = client._transport.app
     monkeypatch.setattr(app.state, "awid_service_token", token)
     monkeypatch.setitem(ratelimit_module._BUCKET_DEFAULTS, bucket, (60, 2**31))
+    path = _missing_did_path(path)
     # A credential only exempts the IP bucket, never the handler's proofs or body.
     responses = [await client.request(method, path, json={}) for _ in range(60)]
     expected = responses[0]
-    assert expected.status_code in (401, 404, 422), expected.text
+    assert expected.status_code in (400, 401, 404, 422), expected.text
     assert all(r.status_code == expected.status_code and r.json() == expected.json() for r in responses)
     _assert_limited(await client.request(method, path, json={}))
     assert len(fake_redis.eval_calls) == 61
