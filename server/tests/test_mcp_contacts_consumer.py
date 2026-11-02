@@ -120,6 +120,7 @@ def test_mcp_tool_names_include_canonical_and_legacy_compatibility_aliases():
     expected = {
         "send_mail",
         "check_mail",
+        "list_threads",
         "send_chat",
         "check_chats",
         "read_chat",
@@ -177,7 +178,7 @@ async def test_mcp_read_tools_accept_old_new_and_expand_contract_shapes(
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
-        VALUES ($1, 'did:key:alice', 'alice'), ($1, 'did:aw:bob', 'bob')
+        VALUES ($1, 'did:aw:alice', 'alice'), ($1, 'did:aw:bob', 'bob')
         """,
         session_id,
     )
@@ -515,7 +516,8 @@ async def test_mcp_mail_send_to_hosted_handle_uses_canonical_address(aweb_cloud_
     )
     assert row["to_did"] == "did:aw:c3po"
     assert row["to_alias"] == "c3po"
-    assert row["to_agent_id"] is not None
+    # An explicit address selects the identity, not a team membership.
+    assert row["to_agent_id"] is None
 
 
 @pytest.mark.asyncio
@@ -547,7 +549,7 @@ async def test_mcp_chat_send_to_hosted_handle_uses_canonical_address(aweb_cloud_
 
 
 @pytest.mark.asyncio
-async def test_consumer_mcp_send_message_to_identity_contact_reuses_existing_mail_conversation(
+async def test_consumer_mcp_send_message_to_identity_contact_starts_new_mail_conversation(
     aweb_cloud_db,
     monkeypatch,
 ):
@@ -590,7 +592,7 @@ async def test_consumer_mcp_send_message_to_identity_contact_reuses_existing_mai
 
     class NoRegistry:
         async def resolve_address(self, *_args, **_kwargs):
-            raise AssertionError("existing conversation continuation must not rediscover")
+            raise AssertionError("same-team contact send must not rediscover")
 
     result = json.loads(
         await contacts_tools.send_message_to_contact(
@@ -604,10 +606,10 @@ async def test_consumer_mcp_send_message_to_identity_contact_reuses_existing_mai
     )
 
     assert result["status"] == "delivered"
-    assert result["conversation_id"] == existing_conversation_id
-    assert await aweb_cloud_db.aweb_db.fetch_val("SELECT COUNT(*) FROM {{tables.conversations}}") == 1
+    assert result["conversation_id"] != existing_conversation_id
+    assert await aweb_cloud_db.aweb_db.fetch_val("SELECT COUNT(*) FROM {{tables.conversations}}") == 2
     row = await aweb_cloud_db.aweb_db.fetch_one("SELECT conversation_id, body FROM {{tables.messages}}")
-    assert str(row["conversation_id"]) == existing_conversation_id
+    assert str(row["conversation_id"]) == result["conversation_id"]
     assert row["body"] == "hello again"
 
 

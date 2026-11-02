@@ -13,10 +13,12 @@ from aweb.auth_metrics import count_legacy_request_auth
 from aweb.config import require_registered_certificates
 from aweb.deps import get_db
 from aweb.identity_binding import (
+    IdentityBinding,
     refresh_projection_binding,
     verified_projection,
     verify_identity_binding,
 )
+from aweb.id_chain_auth import authenticate_id_chain
 from aweb.team_auth_deps import (
     TeamIdentity,
     _aweb_db,
@@ -51,6 +53,7 @@ class MessagingAuth:
     certificate_id: str | None = None
     verified_team_id: str | None = None
     grant: GrantContext | None = None
+    id_chain: dict | None = None
 
 
 def auth_dids(identity: IdentityAuth | MessagingAuth) -> list[str]:
@@ -59,6 +62,16 @@ def auth_dids(identity: IdentityAuth | MessagingAuth) -> list[str]:
         if value and value not in dids:
             dids.append(value)
     return dids
+
+
+
+def participant_dids(identity: IdentityAuth | MessagingAuth) -> list[str]:
+    """One participant identity: global did:aw, otherwise local did:key.
+
+    auth_dids additionally includes the signing key for cryptographic checks;
+    that key is not a second global participant or continuation authority.
+    """
+    return auth_dids(identity)[:1]
 
 
 def _get_body_sha256(request: Request) -> str:
@@ -95,6 +108,7 @@ async def resolve_identity_auth(request: Request, *, db=None) -> IdentityAuth:
         raise HTTPException(status_code=401, detail="Invalid DIDKey signature") from exc
 
     if not did_aw:
+        await authenticate_id_chain(request, IdentityBinding(did_key=did_key))
         if envelope.version == 1:
             count_legacy_request_auth(request, "identity")
         return IdentityAuth(did_key=did_key, did_aw=None, address=None)
@@ -118,6 +132,7 @@ async def resolve_identity_auth(request: Request, *, db=None) -> IdentityAuth:
         address = f"{first.domain}/{first.name}"
         binding = await verify_identity_binding(request, did_key=did_key, did_aw=did_aw, address=address)
 
+    await authenticate_id_chain(request, binding)
     binding_db = db if db is not None else getattr(request.app.state, "db", None)
     if binding_db is not None:
         await refresh_projection_binding(
@@ -250,6 +265,7 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
             identity_scope=team_identity.identity_scope,
             certificate_id=team_identity.certificate_id,
             verified_team_id=team_identity.team_id,
+            id_chain=getattr(request.state, "id_chain", None),
         )
 
     identity = await resolve_identity_auth(request)
@@ -271,4 +287,5 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
         alias=(row or {}).get("alias") or None,
         agent_id=(str((row or {}).get("agent_id")) if (row or {}).get("agent_id") else None),
         identity_scope=(row or {}).get("identity_scope") or None,
+        id_chain=getattr(request.state, "id_chain", None),
     )

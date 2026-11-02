@@ -22,7 +22,7 @@ class FederationErrorReferenceGeneratorTests(unittest.TestCase):
         specs = generator.canonical_error_specs()
         rendered = generator.render_reference(self.contract)
 
-        self.assertEqual(len(specs), 42)
+        self.assertEqual(len(specs), 43)
         for spec in specs:
             error = {
                 "reason": spec.reason,

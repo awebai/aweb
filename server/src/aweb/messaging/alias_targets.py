@@ -124,5 +124,13 @@ async def get_agent_by_namespace_alias(db, *, namespace: str, alias: str) -> dic
         str(alias or "").strip(),
     )
     if len(rows) > 1:
+        if all(row.get("did_aw") for row in rows):
+            identities = {(row["did_aw"], row["did_key"]) for row in rows}
+            if len(identities) == 1:
+                from aweb.messaging.address_auth import identity_recipient
+                return identity_recipient(rows[0], f"{namespace}/{alias}")
+            # Membership labels cannot disambiguate global identities or keys.
+            # The caller must obtain the authoritative address binding instead.
+            return None
         raise AmbiguousLocalAddressError(f"Address {namespace}/{alias} matches multiple local agents")
     return None if not rows else dict(rows[0])

@@ -132,7 +132,30 @@ type ChainResolver struct {
 	Team                 *TeamRosterResolver
 }
 
+// Resolve answers identifier. AWID answers an address first. An address in
+// the selected team's own namespace that AWID does not know names a local
+// member of that team, which the authenticated team roster answers, as it
+// answers that member's alias.
 func (r *ChainResolver) Resolve(ctx context.Context, identifier string) (*ResolvedIdentity, error) {
+	identity, err := r.resolveIdentifier(ctx, identifier)
+	if err == nil || r.Team == nil {
+		return identity, err
+	}
+	if statusCode, ok := HTTPStatusCode(err); !ok || statusCode != http.StatusNotFound {
+		return nil, err
+	}
+	_, _, qualifiedTeamMember := splitTeamMemberReference(identifier)
+	if _, _, ownNamespace := r.Team.reference(identifier); qualifiedTeamMember || !ownNamespace {
+		return nil, err
+	}
+	member, rosterErr := r.Team.resolve(ctx, identifier, false)
+	if rosterErr != nil {
+		return nil, err
+	}
+	return member, nil
+}
+
+func (r *ChainResolver) resolveIdentifier(ctx context.Context, identifier string) (*ResolvedIdentity, error) {
 	if _, _, ok := splitTeamMemberReference(identifier); ok && r.Team != nil {
 		return r.Team.Resolve(ctx, identifier)
 	}

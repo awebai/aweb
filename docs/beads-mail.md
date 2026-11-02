@@ -6,6 +6,8 @@ weight: 56
 
 # Mail for beads, no orchestrator required
 
+Agents: run these commands only if your person asked you to set this up; otherwise read and explain.
+
 [beads](https://github.com/gastownhall/beads) ships a `bd mail` command
 that delegates to an external mail provider — and without one
 configured, it only prints an error. This page turns it on, backed by

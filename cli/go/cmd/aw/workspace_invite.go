@@ -103,11 +103,11 @@ func createWorkspaceTeamInviteForTeamAt(workingDir, identityHome, explicitTeamID
 	var token string
 	if hasTeamKey {
 		registryURL := registryURLForTeamInviteAt(rootDir, identityHome, domain, awebURL)
-		_, token, err = createTeamInviteToken(domain, team, registryURL, awebURL, true)
+		_, token, err = createTeamInviteTokenAt(domain, team, registryURL, awebURL, true, "", workingDir, identityHome)
 	} else if strings.TrimSpace(awebURL) != "" {
 		_, token, err = createHostedTeamInviteTokenAt(workingDir, identityHome, teamID, true)
 	} else {
-		_, token, err = createTeamInviteToken(domain, team, "", awebURL, true)
+		_, token, err = createTeamInviteTokenAt(domain, team, "", awebURL, true, "", workingDir, identityHome)
 	}
 	if err != nil {
 		return workspaceTeamInvite{}, err

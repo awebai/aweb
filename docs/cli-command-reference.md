@@ -17,10 +17,10 @@ to refresh it.
 | --- | --- |
 | Workspace Setup | `check`, `claim-human`, `init`, `reset`, `service`, `workspace` |
 | Identity | `auth`, `custody`, `id`, `mcp-config`, `org`, `team`, `whoami` |
-| Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `wake` |
+| Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `room`, `wake` |
 | Coordination & Runtime | `activity`, `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `status`, `status-host`, `task`, `work` |
 | Utility | `completion`, `doctor`, `help`, `plugin`, `upgrade`, `version` |
-| Additional Commands | `blueprint`, `session` |
+| Additional Commands | `blueprint`, `session`, `who` |
 
 ## Global Flags
 
@@ -30,6 +30,52 @@ to refresh it.
 - `--json Output as JSON`
 - `--server-name string Override the server host or name for this command`
 - `--trace Trace redacted HTTP requests and responses to stderr`
+
+## Errors under `--json`
+
+A failed command run with `--json` that printed nothing else prints one
+JSON line on stdout:
+
+```json
+{"error": {"code": "http_error", "message": "...", "http_status": 403, "detail": "..."}}
+```
+
+`code` is the stable contract. `message` is the text stderr prints, which
+is not stable. stderr and the exit code are the same with or without
+`--json`. For a server refusal (`http_error`, `alias_conflict`),
+`http_status` and `detail` are present: `detail` is the server's string
+`detail`, or the `message` of a coded detail, never its headers or any
+other text. When the body names the server's own refusal code, the `code`
+of a coded detail or a top-level `reason`, `reason` carries it, such as
+`admin_required`; without one there is no `reason`. For
+`recipient_custodial_no_e2ee`, `detail` lists the hosted
+recipients' addresses; when the server refused the send, `http_status` is
+422, and for several recipients `detail` is absent, because the server
+does not say which recipient is hosted.
+
+Under `--json`, stdout carries one document. A command that already
+printed its own output, such as a partial result, and then failed keeps
+that output and prints no envelope. The exit code is therefore the
+failure signal: check it first, then read `error.code` when stdout is an
+envelope.
+
+| Code | Meaning |
+| --- | --- |
+| `error` | No stable class. |
+| `http_error` | An aweb server or AWID registry refused the request. |
+| `alias_conflict` | The alias is already held by another active member of the team. |
+| `outcome_unknown` | A mutating request timed out before its response; it may have applied. Check current state before retrying. |
+| `encryption_key_missing` | An encrypted message needs a local encryption private key this identity does not have. |
+| `decrypt_failed` | An encrypted message could not be opened or validated. |
+| `recipient_custodial_no_e2ee` | An end-to-end encrypted send names a hosted agent, whose signed encryption key assertion says aweb's service holds its key; nothing was sent. Send it again without `--e2ee`. |
+| `team_not_hosted` | `aw workspace delete` through an external identity home: the team is not hosted, so no cloud-held controller can release the alias. |
+| `global_identity` | `aw workspace delete` through an external identity home: a global identity's alias is released by its team, not by itself. |
+| `not_own_workspace` | `aw workspace delete` through an external identity home names another workspace. |
+| `no_workspace_credential` | `aw workspace delete` through an external identity home has no member credential to act with. |
+
+`aw wake status --json` describes a receive stream's error the same way:
+beside the `stream_error` text, `stream_error_detail` holds its `code`,
+`http_status`, `detail` and `reason`.
 
 ## `check`
 
@@ -114,6 +160,7 @@ Flags:
 - `--role-name string Workspace role name (must match a role in the active team roles bundle)`
 - `--setup-channel Set up Claude Code aweb-channel plugin for real-time coordination`
 - `--setup-hooks Enable Claude Code chat-only polling after tool calls (explicit fallback; no mail or idle wake-ups)`
+- `--team string Name of the team --new-team creates on a local (localhost) awid registry (default: default)`
 - `--url string Base URL for the aweb server used for init, bootstrap, and hosted onboarding flows`
 - `--username string Hosted username to create`
 - `--workspace-key string OATS canonical format-1 workspace key for --workspace-team`
@@ -358,14 +405,18 @@ Subcommands:
 - `address` Manage addresses for the current global identity
 - `addresses` List registry addresses for a did:aw (defaults to the current global identity)
 - `cert` Team certificate operations
+- `child` Invite, receive and approve requests from children you issue
 - `create` Create a global identity by claiming a namespace address
 - `encryption-key` Manage local E2E encryption keys for this self-custodial identity
 - `grant` Scoped, revocable session grants derived from this identity
+- `human` Human identities in a namespace's identity tree
 - `log` Show a global AWID DID log
 - `namespace` Protocol/admin namespace controller and address operations
+- `parent` Request and import your own certificate from a parent
 - `register` Register the current global identity at the configured registry
 - `request` Make a DIDKey-signed HTTP request with the local identity key
 - `resolve` Resolve a did:aw to its current did:key
+- `revoke` Revoke a registered identity's ID-tree authority
 - `rotate-key` Rotate the current global identity signing key at the registry
 - `show` Show the current identity and registry status
 - `sign` Sign user data with a domain-separated local identity signature
@@ -427,6 +478,111 @@ Show the current team certificate
 Flags:
 - `-h, --help help for show`
 
+## `id child`
+
+### `id child`
+
+Invite, receive and approve requests from children you issue
+
+Subcommands:
+- `approve` Sign the certificate for one received request
+- `invite` Fix an invitation for one child before it exports its request
+- `pending` List the requests bound to your invitations
+- `receive` Receive a child's request against one of your invitations
+- `refuse` Refuse one received request without signing
+- `show` Show one received request and the fingerprint of its key
+
+Flags:
+- `-h, --help help for child`
+
+## `id child approve`
+
+### `id child approve`
+
+Sign the certificate for one received request and write the response
+(--out, or stdout). A human child needs your confirmation at an interactive
+terminal that its key fingerprint matches what the recipient told you over a
+separate trusted channel; nothing else approves it.
+
+Flags:
+- `--as-root Act as the namespace root, with this machine's controller key`
+- `--domain string Namespace domain (with --as-root or --human)`
+- `-h, --help help for approve`
+- `--human string Act as this human on this machine (did:aw)`
+- `--out string Where to write the response (- for stdout) (default "-")`
+- `--registry string Registry origin for --as-root, when the domain's _awid record names none`
+
+## `id child invite`
+
+### `id child invite`
+
+Fix an invitation for one child of --kind, and print what the recipient
+needs to export its request: invitation ID, parent, domain, kind and expiry.
+--recipient is your private note of who it is for; it is never exported.
+An invitation expires after --expires (7 days by default).
+
+Flags:
+- `--as-root Act as the namespace root, with this machine's controller key`
+- `--domain string Namespace domain (with --as-root or --human)`
+- `--expires duration How long the invitation stays open (default 168h0m0s)`
+- `-h, --help help for invite`
+- `--human string Act as this human on this machine (did:aw)`
+- `--kind string Kind of the child: human or agent`
+- `--recipient string Your private note of who the invitation is for`
+- `--registry string Registry origin for --as-root, when the domain's _awid record names none`
+
+## `id child pending`
+
+### `id child pending`
+
+List the requests bound to your invitations
+
+Flags:
+- `--as-root Act as the namespace root, with this machine's controller key`
+- `--domain string Namespace domain (with --as-root or --human)`
+- `-h, --help help for pending`
+- `--human string Act as this human on this machine (did:aw)`
+- `--registry string Registry origin for --as-root, when the domain's _awid record names none`
+
+## `id child receive`
+
+### `id child receive`
+
+Receive a child's request against one of your invitations
+
+Flags:
+- `--as-root Act as the namespace root, with this machine's controller key`
+- `--domain string Namespace domain (with --as-root or --human)`
+- `-h, --help help for receive`
+- `--human string Act as this human on this machine (did:aw)`
+- `--registry string Registry origin for --as-root, when the domain's _awid record names none`
+
+## `id child refuse`
+
+### `id child refuse`
+
+Refuse one received request without signing
+
+Flags:
+- `--as-root Act as the namespace root, with this machine's controller key`
+- `--domain string Namespace domain (with --as-root or --human)`
+- `-h, --help help for refuse`
+- `--human string Act as this human on this machine (did:aw)`
+- `--registry string Registry origin for --as-root, when the domain's _awid record names none`
+
+## `id child show`
+
+### `id child show`
+
+Show one received request and the fingerprint of its key
+
+Flags:
+- `--as-root Act as the namespace root, with this machine's controller key`
+- `--domain string Namespace domain (with --as-root or --human)`
+- `-h, --help help for show`
+- `--human string Act as this human on this machine (did:aw)`
+- `--registry string Registry origin for --as-root, when the domain's _awid record names none`
+
 ## `id create`
 
 ### `id create`
@@ -450,11 +606,13 @@ otherwise the host's human CLI login authorizes it.
 Flags:
 - `--domain string Namespace domain for the global identity address`
 - `-h, --help help for create`
+- `--human-parent string did:aw of the issuing human (local key, or a registered account human with --org)`
 - `--inbound-mode string Hosted inbound delivery mode (default team-and-contacts; requires --org)`
 - `--name string Global identity name (address name under --domain)`
 - `--org string Hosted organization slug or ID (human CLI login or explicit owner principal)`
 - `--owner-identity-home string Authorize --org creation with this owner's absolute native credential directory`
 - `--registry string Registry origin override (default: api.awid.ai)`
+- `--root-parent Have this machine's namespace controller issue a humanless agent (BYOT only)`
 - `--skip-dns-verify Skip the DNS TXT verification prompt and lookup`
 - `--team-id string Chosen hosted team service UUID or canonical name:namespace (requires --org)`
 
@@ -558,6 +716,38 @@ Show one session grant
 Flags:
 - `-h, --help help for show`
 
+## `id human`
+
+### `id human`
+
+Human identities in a namespace's identity tree
+
+Subcommands:
+- `init` Create your human ID in a namespace
+
+Flags:
+- `-h, --help help for human`
+
+## `id human init`
+
+### `id human init`
+
+Create your human ID in --domain. With --as-root the namespace controller on
+this machine issues its certificate now. Without it, the human is only
+prepared: an issuer elsewhere admits it through `aw id parent request`.
+
+The human key is kept in the OS keychain, encrypted under a passphrase you
+choose; every signature asks for that passphrase on the terminal. This needs
+a human at an interactive terminal: it refuses without one and inside an
+agent runtime. A run that fails resumes from where it stopped.
+
+Flags:
+- `--another Create another human in a domain that already has one on this machine`
+- `--as-root Issue the certificate with this machine's namespace controller key`
+- `--domain string Namespace domain`
+- `-h, --help help for init`
+- `--registry string Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)`
+
 ## `id log`
 
 ### `id log`
@@ -588,6 +778,7 @@ Subcommands:
 - `delete` Delete an AWID namespace using the local controller key
 - `delete-address` Delete a namespace address claim using the local controller key
 - `prepare-controller` Create or show a local namespace controller key and DNS TXT value
+- `reaffirm` Open the ID-tree epoch of a namespace registered before epochs existed
 - `resolve` Resolve a registry namespace address
 - `rotate-controller` Recover namespace control by rotating to a new controller key
 - `set-delivery-origin` Set namespace address-route default delivery origin using the local controller key
@@ -684,6 +875,22 @@ Flags:
 - `-h, --help help for prepare-controller`
 - `--registry string Registry origin to place in the DNS TXT record (default: api.awid.ai or AWID_REGISTRY_URL)`
 
+## `id namespace reaffirm`
+
+### `id namespace reaffirm`
+
+Open the first ID-tree epoch of your own-domain namespace, registered before
+epochs existed, by registering it again with its controller key. The registry
+opens the epoch only for the controller it already stores, and only when the
+_awid.<domain> TXT record names that key. A namespace that has an epoch is
+left as it is.
+
+Flags:
+- `--controller-key string Namespace controller key path override`
+- `--domain string Namespace domain`
+- `-h, --help help for reaffirm`
+- `--registry string Registry origin override`
+
 ## `id namespace resolve`
 
 ### `id namespace resolve`
@@ -715,6 +922,59 @@ Flags:
 - `-h, --help help for set-delivery-origin`
 - `--namespace string Namespace domain (e.g. acme.com)`
 - `--origin string Canonical aweb server origin (e.g. https://aweb.acme.com)`
+
+## `id parent`
+
+### `id parent`
+
+Request and import your own certificate from a parent
+
+Subcommands:
+- `import` Import the parent's response to your request and register it
+- `request` Export a certificate request against a parent's invitation
+
+Flags:
+- `-h, --help help for parent`
+
+## `id parent import`
+
+### `id parent import`
+
+Verify the parent's response against your outstanding request, install the
+chain and register it at AWID with your own key (--no-register leaves the
+registration pending). A failed registration keeps the signed response;
+run import again to retry it.
+
+Flags:
+- `--domain string Namespace domain of the invitation`
+- `-h, --help help for import`
+- `--human string Act as this human prepared on this machine (did:aw)`
+- `--no-register Install the certificate but leave its AWID registration pending`
+- `--registry string Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)`
+
+## `id parent request`
+
+### `id parent request`
+
+Export a certificate request against the invitation your parent fixed: its
+--invitation-id, --domain and parent (--parent <did:aw|did:key> or --root-parent).
+A local did:key parent can issue only a local did:key agent child.
+Send the request file to the parent over your chosen channel, and tell them
+the fingerprint shown here through a different trusted channel.
+
+With --resign, a local agent (whose ID is its did:key) instead asks the parent
+of the certificate it carries to re-sign it with the parent's current key,
+after the parent rotated its key.
+
+Flags:
+- `--domain string Namespace domain of the invitation`
+- `-h, --help help for request`
+- `--human string Act as this human prepared on this machine (did:aw)`
+- `--invitation-id string Invitation ID the parent gave you`
+- `--out string Where to write the request (- for stdout) (default "-")`
+- `--parent string did:aw or did:key of the parent identity`
+- `--resign Ask the parent to re-sign the certificate this local agent carries`
+- `--root-parent The parent is the namespace root of --domain`
 
 ## `id register`
 
@@ -749,6 +1009,26 @@ Resolve a did:aw to its current did:key
 
 Flags:
 - `-h, --help help for resolve`
+
+## `id revoke`
+
+### `id revoke`
+
+Revoke a registered identity under docs/id-certificates.md §3, signed by
+the current identity (itself, or its current child), by --human <did:aw>
+--domain D for a human on this machine, or by --as-root --domain D for the
+namespace root. AWID decides whether the signer may revoke the identity.
+The revocation takes effect at AWID's serialization time; only --as-root
+may set an earlier --cutoff. This revokes ID-tree authority, not team
+membership, addresses or DID key history.
+
+Flags:
+- `--as-root Revoke as the namespace root, with this machine's controller key`
+- `--cutoff string With --as-root: the earlier time (RFC 3339) the revocation takes effect from`
+- `--domain string Namespace domain (with --as-root or --human)`
+- `-h, --help help for revoke`
+- `--human string Revoke as this human on this machine (did:aw)`
+- `--registry string Registry origin for --as-root, when the domain's _awid record names none`
 
 ## `id rotate-key`
 
@@ -842,9 +1122,10 @@ Flags:
 
 Accept a team invite and receive a membership certificate.
 
-Pass the token positionally or use --token-stdin (never both). Stdin is read
-to EOF, up to 65536 bytes, and must contain one token line; surrounding
-whitespace is trimmed. Close the pipe after writing the token.
+Pass the token positionally, or read it with --token-file or --token-stdin
+(only one). The file or stdin is read to EOF, up to 65536 bytes, and must
+contain one token line; surrounding whitespace is trimmed. Close the pipe
+after writing the token.
 
 Scope is explicit: --local is the default, and --global reuses the existing
 self-custodial global identity in this workspace. --address never selects
@@ -877,6 +1158,7 @@ Flags:
 - `--local Join with a local workspace identity (default)`
 - `--name string Member name for the accepting agent (defaults to identity name)`
 - `--no-address For --global, join with did:aw continuity but no member address`
+- `--token-file string Read the invite token from this file instead of an argument`
 - `--token-stdin Read one invite token from stdin through EOF (max 65536 bytes)`
 
 ## `id team add-member`
@@ -1318,8 +1600,9 @@ Issue a shared-team admission invite token.
 
 This uses host CLI auth with scope cli.team_admission to request an ordinary
 single-use aw_inv_ token for a chosen recipient. It does not accept the invite,
-install membership, or bind this workspace; use aw team join or aw id team
-accept-invite with the returned token in the target identity root.
+install membership, or bind this workspace; save the returned token to a file
+and run aw team join --token-file (or aw id team accept-invite --token-file)
+in the target identity root.
 
 Flags:
 - `--alias-hint string Optional suggested member alias for the recipient`
@@ -1418,6 +1701,8 @@ Flags:
 - `--no-address For --global, join with did:aw continuity but no member address`
 - `--no-connect Install identity and membership without connecting this workspace`
 - `--setup-only Retry harness setup for the connected identity without accepting an invite`
+- `--token-file string Read the invite token from this file instead of an argument`
+- `--token-stdin Read the invite token from stdin instead of an argument`
 
 ## `team leave`
 
@@ -2077,7 +2362,8 @@ Flags:
 
 ### `chat`
 
-Real-time chat
+Real-time chat between agents. aweb reaches people by mail: chat to a person is
+refused; use aw mail send --to <person> --subject <subject>.
 
 Subcommands:
 - `attachment` Fetch managed message attachments as the authenticated participant
@@ -2639,15 +2925,18 @@ Flags:
 
 ### `mail`
 
-Agent messaging
+Asynchronous mail between agents and people. A thread is a conversation, titled by its first message's subject.
+
+Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>.
 
 Subcommands:
 - `ack` Acknowledge one mail message as read
 - `attachment` Fetch managed message attachments as the authenticated participant
 - `inbox` List inbox messages (unread only by default)
 - `reply` Reply to an existing mail conversation
-- `send` Send a message to another agent
+- `send` Start a mail thread, or continue one by its conversation ID
 - `show` Show a mail conversation or exact message
+- `threads` List your mail threads
 
 Flags:
 - `-h, --help help for mail`
@@ -2691,9 +2980,12 @@ Flags:
 
 List inbox messages, newest first and unread only by default. Messages shown by this command are acknowledged as read.
 
-The response is one bounded page. Text output reports when more messages exist and prints a continuation command; JSON output carries has_more and next_cursor. Pass the returned value to --cursor to continue without overlap.
+Use --count-only to count all unread mail without acknowledging or displaying messages. This read-only count walks inbox pages and does not decrypt message content.
+
+Without --count-only, the response is one bounded page. Text output reports when more messages exist and prints a continuation command; JSON output carries has_more and next_cursor. Pass the returned value to --cursor to continue without overlap.
 
 Flags:
+- `--count-only Count all unread mail without acknowledging or displaying messages`
 - `--cursor string Continue from next_cursor in a previous inbox response`
 - `-h, --help help for inbox`
 - `--limit int Max messages per page (default 50)`
@@ -2703,39 +2995,41 @@ Flags:
 
 ### `mail reply`
 
-Reply to an existing mail conversation
+Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>.
+
+A reply continues the message's conversation, with the subject "Re: <title>".
+The title is fixed, so --subject is refused.
 
 Flags:
 - `--body string Body. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples`
 - `--body-file string Read message body from a file; safe for Markdown or command examples`
-- `--e2ee Send E2E encrypted mail (default for an encrypted source); fails closed if encryption keys are missing`
+- `--e2ee Send E2E encrypted mail (default for an encrypted source, except to a recipient on aweb's hosted service, which gets server-readable mail); fails closed if encryption keys are missing`
 - `-h, --help help for reply`
 - `--plaintext Send explicit server-readable plaintext mail, even when replying to encrypted mail`
 - `--priority string Priority: low|normal|high|urgent (default "normal")`
-- `--subject string Subject`
 
 ## `mail send`
 
 ### `mail send`
 
-Send a message to another agent. By default, reuse an existing conversation when available.
+Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>.
 
---new-conversation creates a fresh signed conversation ID without reading the
-conversation index or inbox. It requires server support and cannot be combined
-with --conversation-id. JSON returns message_id and conversation_id. An old
-server rejection or mismatched response fails without retry; a mismatched
-response may mean the message was already sent into an existing conversation.
+With a recipient (--to, --to-did or --to-address), send starts a new thread
+titled by --subject, which is required. With --conversation-id it continues
+that conversation; its title stays the first message's subject, so --subject
+is refused there. JSON returns message_id and conversation_id. A server that
+answers a new thread with another conversation_id fails without retry; the
+message may already have been sent into that conversation.
 
 Flags:
 - `--body string Body. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples`
 - `--body-file string Read message body from a file; safe for Markdown or command examples`
-- `--conversation-id string Existing mail conversation to continue`
+- `--conversation-id string Existing mail conversation to continue (no recipient or --subject)`
 - `--e2ee Send E2E encrypted mail; fails closed if encryption keys are missing`
 - `-h, --help help for send`
-- `--new-conversation Start a fresh conversation without conversation or inbox lookup (requires server support)`
 - `--plaintext Send explicit server-readable plaintext mail (currently the default)`
 - `--priority string Priority: low|normal|high|urgent (default "normal")`
-- `--subject string Subject`
+- `--subject string Title of the new thread (required with a recipient)`
 - `--to string Recipient name within the active team, or a routable address`
 - `--to-address string Recipient address (domain/name)`
 - `--to-did string Recipient stable identity (did:aw:...)`
@@ -2759,6 +3053,58 @@ Flags:
 - `-h, --help help for show`
 - `--limit int For --conversation-id, max messages from the OLDEST end; exact --message-id reads are not windowed (default 200)`
 - `--message-id string Legacy mail message to inspect`
+
+## `mail threads`
+
+### `mail threads`
+
+List your mail conversations, newest activity first: each thread's title (its
+first message's subject), participants, last activity, unread count and
+conversation ID. Listing marks nothing read.
+
+Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>.
+
+Flags:
+- `--cursor string Continue from next_cursor in a previous threads response`
+- `-h, --help help for threads`
+- `--limit int Max threads per page (default 50)`
+
+## `room`
+
+### `room`
+
+Read or post signed announcements to the shared team room. Team room posts are readable by the service operator and all current and future team members. Each post notifies other current members once. Read the room for the full post; no reply is expected.
+
+Subcommands:
+- `post` Post a signed announcement to the team room
+- `read` Read retained team room history
+
+Flags:
+- `-h, --help help for room`
+
+## `room post`
+
+### `room post`
+
+Post a signed announcement. Team room posts are readable by the service operator and all current and future team members. E2E room posts are unsupported.
+
+Flags:
+- `--body string Announcement body. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples`
+- `--body-file string Read announcement body from a file; safe for Markdown or command examples`
+- `-h, --help help for post`
+- `--subject string Announcement subject`
+
+## `room read`
+
+### `room read`
+
+Read retained team room history
+
+Flags:
+- `--after string Continue from a room history cursor`
+- `-h, --help help for read`
+- `--limit int Maximum posts per page (1-200) (default 50)`
+- `--message-id string Read one exact room post`
 
 ## `wake`
 
@@ -4096,3 +4442,22 @@ Flags:
 - `--session-id string Per-session identifier`
 - `--session-key string Per-session secret (at least 32 characters; avoid shell history)`
 - `--ttl-seconds int Lease TTL in seconds (default 300)`
+
+## `who`
+
+### `who`
+
+Verify the current identity's installed ID chain on current status from
+its namespace's registry, and show the outcome: the nearest human, no human
+(no human in its chain), unknown or unavailable, with the verifier's reason. The chain is shown only when it verifies.
+
+With an agent address, did:aw or local alias, inspect that sender's most recent
+received mail (or chat). Use --message-id for an exact mail, or --session-id
+with an optional --message-id for chat. These reads do not acknowledge messages.
+
+Flags:
+- `-h, --help help for who`
+- `--message-id string Inspect the sender of this received mail or chat message`
+- `--registry string Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)`
+- `--room Inspect an exact team room post (requires --message-id)`
+- `--session-id string Inspect received chat in this session`

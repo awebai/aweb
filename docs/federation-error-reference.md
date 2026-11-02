@@ -41,6 +41,7 @@ Security diagnostics may additionally include `did_aw`, `observed_sequence`. The
 | `local_sender_route_mismatch` | 422 | no | no | Local sender address/origin differs from or attempts to create its learned route. |
 | `recipient_address_did_mismatch` | 422 | no | no | Target address resolves to a different stable recipient DID. |
 | `recipient_current_key_mismatch` | 422 | no | no | Target current key differs from authoritative or stored recipient state. |
+| `recipient_custodial_no_e2ee` | 422 | no | no | The verified recipient encryption-key assertion states hosted custody; send explicitly without --e2ee. |
 | `recipient_encryption_assertion_invalid_or_stale` | 422 | no | no | Recipient X25519 assertion is invalid, stale, or bound to the wrong identity/key. |
 | `recipient_encryption_assertion_missing` | 424 | no | no | Recipient has no identity-authorized X25519 assertion after sender authority passes. |
 | `recipient_identity_not_found` | 404 | no | no | Target address/DID or active local recipient projection does not exist. |

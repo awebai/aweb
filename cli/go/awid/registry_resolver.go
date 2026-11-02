@@ -61,10 +61,23 @@ type didKeyEvidenceWire struct {
 }
 
 type didKeyResolutionWire struct {
+	IDTree        json.RawMessage         `json:"id_tree"`
 	DIDAW         string                  `json:"did_aw"`
 	CurrentDIDKey string                  `json:"current_did_key"`
 	LogHead       *didKeyEvidenceWire     `json:"log_head"`
 	EncryptionKey *EncryptionKeyAssertion `json:"encryption_key,omitempty"`
+}
+
+func (w *didKeyResolutionWire) idTreeEnrollment() IDTreeEnrollmentResult {
+	keyResponse := map[string]any{}
+	if w.IDTree != nil {
+		var tree any
+		if json.Unmarshal(w.IDTree, &tree) != nil {
+			tree = nil
+		}
+		keyResponse["id_tree"] = tree
+	}
+	return KeyResponseIDTree(keyResponse)
 }
 
 type registryAddressCacheValue struct {
@@ -567,9 +580,11 @@ func (r *RegistryResolver) resolveKeyFresh(ctx context.Context, registryURL, did
 		return nil, err
 	}
 	res := &DidKeyResolution{
-		DIDAW:         wire.DIDAW,
-		CurrentDIDKey: wire.CurrentDIDKey,
-		EncryptionKey: wire.EncryptionKey,
+		idTree:          wire.idTreeEnrollment(),
+		idTreeFetchedAt: r.now(),
+		DIDAW:           wire.DIDAW,
+		CurrentDIDKey:   wire.CurrentDIDKey,
+		EncryptionKey:   wire.EncryptionKey,
 	}
 	if wire.LogHead != nil {
 		res.LogHead = &DidKeyEvidence{

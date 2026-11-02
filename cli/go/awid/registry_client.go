@@ -68,13 +68,14 @@ type DIDMapping struct {
 }
 
 type RegistryNamespace struct {
-	NamespaceID           string `json:"namespace_id"`
-	Domain                string `json:"domain"`
-	ControllerDID         string `json:"controller_did,omitempty"`
-	VerificationStatus    string `json:"verification_status"`
-	DefaultDeliveryOrigin string `json:"default_delivery_origin,omitempty"`
-	LastVerifiedAt        string `json:"last_verified_at,omitempty"`
-	CreatedAt             string `json:"created_at"`
+	Delegation            map[string]any `json:"delegation,omitempty"`
+	NamespaceID           string         `json:"namespace_id"`
+	Domain                string         `json:"domain"`
+	ControllerDID         string         `json:"controller_did,omitempty"`
+	VerificationStatus    string         `json:"verification_status"`
+	DefaultDeliveryOrigin string         `json:"default_delivery_origin,omitempty"`
+	LastVerifiedAt        string         `json:"last_verified_at,omitempty"`
+	CreatedAt             string         `json:"created_at"`
 }
 
 type RegistryDelivery struct {
@@ -174,9 +175,11 @@ func (c *RegistryClient) ResolveKeyAt(ctx context.Context, registryURL, didAW st
 		return nil, err
 	}
 	res := &DidKeyResolution{
-		DIDAW:         wire.DIDAW,
-		CurrentDIDKey: wire.CurrentDIDKey,
-		EncryptionKey: wire.EncryptionKey,
+		idTree:          wire.idTreeEnrollment(),
+		idTreeFetchedAt: c.now(),
+		DIDAW:           wire.DIDAW,
+		CurrentDIDKey:   wire.CurrentDIDKey,
+		EncryptionKey:   wire.EncryptionKey,
 	}
 	if wire.LogHead != nil {
 		res.LogHead = &DidKeyEvidence{
@@ -297,7 +300,23 @@ func (c *RegistryClient) RegisterIdentity(
 	if pub := signingKey.Public().(ed25519.PublicKey); ComputeDIDKey(pub) != did {
 		return nil, fmt.Errorf("did does not match signing key")
 	}
+	if err := c.RegisterIdentitySigned(ctx, registryURL, did, stableID, KeySigner(signingKey)); err != nil {
+		return nil, err
+	}
+	return c.GetDIDFull(ctx, registryURL, stableID, signingKey)
+}
 
+// RegisterIdentitySigned registers stableID's did:aw key log with did as its
+// first key. sign proves did over the log entry; a human signs through its
+// own prompt, so no private key crosses this call. A registry that already
+// holds stableID refuses with *AlreadyRegisteredError.
+func (c *RegistryClient) RegisterIdentitySigned(ctx context.Context, registryURL, did, stableID string, sign IDCertificateSigner) error {
+	registryURL = strings.TrimSpace(registryURL)
+	did = strings.TrimSpace(did)
+	stableID = strings.TrimSpace(stableID)
+	if !strings.HasPrefix(stableID, "did:aw:") {
+		return fmt.Errorf("stableID must start with did:aw:")
+	}
 	stateHash := stableIdentityStateHash(stableID, did)
 	timestamp := c.now().Format(time.RFC3339)
 	proofPayload := CanonicalDidLogPayload(stableID, &DidKeyEvidence{
@@ -320,23 +339,30 @@ func (c *RegistryClient) RegisterIdentity(
 		Seq:            1,
 		StateHash:      stateHash,
 		Timestamp:      timestamp,
-		Proof:          base64.RawStdEncoding.EncodeToString(ed25519.Sign(signingKey, []byte(proofPayload))),
 	}
+	signer, proof, err := sign([]byte(proofPayload))
+	if err != nil {
+		return err
+	}
+	if signer != did {
+		return fmt.Errorf("did does not match signing key")
+	}
+	payload.Proof = base64.RawStdEncoding.EncodeToString(proof)
 	if err := c.requestJSON(ctx, http.MethodPost, registryURL, "/v1/did", nil, payload, nil); err != nil {
 		var regErr *RegistryError
 		if !errors.As(err, &regErr) || regErr.StatusCode != http.StatusConflict {
-			return nil, err
+			return err
 		}
 		existing, resolveErr := c.ResolveKeyAt(ctx, registryURL, stableID)
 		if resolveErr != nil {
-			return nil, err
+			return err
 		}
-		return nil, &AlreadyRegisteredError{
+		return &AlreadyRegisteredError{
 			DIDAW:          stableID,
 			ExistingDIDKey: strings.TrimSpace(existing.CurrentDIDKey),
 		}
 	}
-	return c.GetDIDFull(ctx, registryURL, stableID, signingKey)
+	return nil
 }
 
 func (c *RegistryClient) PublishEncryptionKey(

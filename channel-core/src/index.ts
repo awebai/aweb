@@ -3,6 +3,7 @@ export { ReceiveStreamReceipt, type ReceiveReceiptOptions } from "./receive.js";
 export { streamAgentEvents, parseAgentEvent, formatEventStreamState, streamErrorCause, type AgentEvent, type AgentEventType, type EventStreamState } from "./api/events.js";
 export { ackMessage, fetchInbox, type InboxMessage } from "./api/mail.js";
 export { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";
+export { fetchRoomMessage, ackRoomNotice, type RoomMessage } from "./api/room.js";
 export {
   DELIVERY_MODE_ENV,
   resolveConfig,
@@ -31,6 +32,36 @@ export {
 } from "./terminal.js";
 export { certificateIdentityScope, loadTeamCertificate, encodeTeamCertificateHeader, type CertificateIdentityScope, type LegacyCertificateLifetime, type TeamCertificate } from "./identity/certificate.js";
 export { verifyMessage, verifySignedPayload, type VerificationStatus } from "./identity/signing.js";
+export {
+  decodeIdChain,
+  decodeIdChainHeader,
+  encodeIdChainHeader,
+  idCertificateId,
+  idCertificateSigningBytes,
+  parseSignedIdCertificate,
+  type IdCertificate,
+  type IdChain,
+  type IdDecodeRefusal,
+  type IdDecodeResult,
+  type IdKind,
+  type SignedIdCertificate,
+} from "./identity/id_certificates.js";
+export {
+  idRequestDisposition,
+  idStatusCacheMode,
+  idStatusRequest,
+  verifyIdChain,
+  type IdDisposition,
+  type IdNamespaceAuthority,
+  type IdRequestDisposition,
+  type IdStatusCacheMode,
+  type IdStatusEvidence,
+  type IdStatusPlan,
+  type IdStatusRequest,
+  type IdSubject,
+  type IdVerification,
+  type IdVerificationReason,
+} from "./identity/id_verification.js";
 export {
   createLocalAWDecryptProvider,
   createLocalAWPinStoreWriter,
@@ -63,3 +94,6 @@ export {
   type RegistryIdentityConfig,
   type SelfIdentity,
 } from "./channel.js";
+
+export { IdStatusClient } from "./identity/id_status.js";
+export { readReceivedIdChain, type ReceivedIdChain } from "./identity/received_id_chain.js";

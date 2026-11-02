@@ -23,6 +23,9 @@ metadata in the trust model and is independent of session confidentiality.
 - Rejected shortcut: deriving custody (or any assurance) from a transport or
   confidentiality property because one path made them coincide.
 
+The [owner-binding decision](/aweb-protocol-expert/decisions/owner-binding-needs-independent-authorities.md)
+applies this separation to responsibility, membership, custody and consent.
+
 Related: [a harness must be shown to fail](/aweb-expert/lessons/a-harness-must-be-shown-to-fail.md).
 
 # Provenance

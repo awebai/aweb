@@ -134,11 +134,12 @@ build: sync-doc-copies
 #
 # These cheap committed-source controls run first on every ordinary test run.
 # The expensive complete release proof is owned by the clean local-Docker gate.
-test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-release-cli-version test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
+test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-identity-primitives test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-release-cli-version test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
 
 test-shipping:
 	python3 scripts/test_shipping.py
 	python3 scripts/test_candidate_cleanup.py
+	python3 scripts/test_candidate_disk_floor.py
 
 # AWID metadata is repeated in every committed Python lock that takes the in-repo
 # awid (awid, server, naapp-lib and each naapp). Check them all without repair,
@@ -154,6 +155,16 @@ test-python-locks:
 test-sot-source-inventories:
 	python3 scripts/check_sot_source_inventories.py
 	python3 -m unittest discover -s scripts -p "test_check_sot_source_inventories.py" -v
+
+.PHONY: test-identity-primitives
+test-identity-primitives:
+	python3 scripts/check_identity_python_inventory.py
+	python3 -m unittest discover -s scripts -p "test_check_identity_python_inventory.py" -v
+	cd cli/go && GOTOOLCHAIN=local go run ./internal/identityinventory ../..
+	cd cli/go && GOTOOLCHAIN=local go test ./internal/identityinventory
+	cd channel-core && npm ci --ignore-scripts --no-audit --no-fund
+	node scripts/check_identity_ts_inventory.mjs
+	node --test scripts/test_check_identity_ts_inventory.mjs
 
 # Public protocol vectors have one repository-root authority. The checker also
 # inventories explicitly local fixture directories and proves each failure mode.
@@ -202,6 +213,12 @@ test-mcp-tools-reference:
 
 regenerate-mcp-tools-reference:
 	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen python ../scripts/regenerate_mcp_reference.py
+
+# Keep private application paths out of every candidate before it can land.
+.PHONY: check-private-boundary
+check-private-boundary:
+	python3 scripts/check-private-boundary.py
+	python3 scripts/check-private-boundary.py --self-test
 
 # Regenerate every committed generated artifact (uv locks, cli reference,
 # reserved-app-ids, resource packs, and the claude-channel + pi bundles) and
@@ -532,6 +549,7 @@ test-naapp-e2e:
 	uv run --no-project python scripts/test_naapp_e2e.py
 
 test-candidate-ledger: test-naapp-e2e
+	bash scripts/candidate-docker-gate.sh --wait-for-disk
 	python3 scripts/test_candidate_gate_ledger.py
 
 _candidate-unit-suites:

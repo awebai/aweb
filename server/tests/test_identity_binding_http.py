@@ -738,7 +738,8 @@ async def test_signed_continuation_after_rotation_keeps_stored_route(
             "SELECT * FROM {{tables.conversation_participants}} WHERE conversation_id=$1::uuid AND did=$2",
             conversation_id, stable,
         )
-        assert participant["agent_id"] == bob.id
+        # A DID selector records the identity, not a membership projection.
+        assert participant["agent_id"] is None
         assert participant["address"] == address
         old_key = bob.did
         new_sk, _, new_key = _make_keypair()
@@ -786,7 +787,7 @@ async def test_signed_continuation_after_rotation_keeps_stored_route(
             stored = await env.db.fetch_one(
                 "SELECT to_agent_id,to_did FROM {{tables.messages}} WHERE message_id=$1::uuid", message_id,
             )
-            assert stored["to_agent_id"] == bob.id
+            assert stored["to_agent_id"] is None
             assert stored["to_did"] == stable
         else:
             assert result.status_code == (503 if evidence == "unavailable" else 403), result.text

@@ -1330,3 +1330,21 @@ func TestAwDoctorLocalOutputDoesNotLeakSecrets(t *testing.T) {
 		t.Fatalf("doctor output did not include sanitized URL forms:\n%s", text)
 	}
 }
+
+// aw check names the team, the agent and the server it checked, so a person
+// can tell which setup a verdict is about without reading the JSON.
+func TestDoctorTextNamesTeamAndServer(t *testing.T) {
+	out := doctorOutput{Status: doctorStatusOK, Mode: doctorModeAuto, Subject: doctorSubject{
+		WorkingDir: "/work/alice", TeamID: "default:acme.aweb.ai", Alias: "alice", AwebURL: "https://app.aweb.ai/api",
+	}}
+	text := formatDoctorOutput(out)
+	for _, want := range []string{"Team:   default:acme.aweb.ai\n", "Agent:  alice\n", "Server: https://app.aweb.ai/api\n"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("text output missing %q:\n%s", want, text)
+		}
+	}
+	bare := formatDoctorOutput(doctorOutput{Status: doctorStatusOK, Mode: doctorModeAuto})
+	if strings.Contains(bare, "Team:") || strings.Contains(bare, "Agent:") || strings.Contains(bare, "Server:") {
+		t.Fatalf("empty team or server printed:\n%s", bare)
+	}
+}

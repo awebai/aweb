@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os/exec"
 	"path/filepath"
@@ -17,7 +18,11 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
-func TestAwMailSendNewConversation(t *testing.T) {
+// aw mail send to a recipient always starts a new thread: a fresh signed
+// conversation ID with new_conversation set, and no conversation index or
+// inbox read. Continuing is by --conversation-id (or aw mail reply), which
+// names no recipient and keeps the conversation's title.
+func TestAwMailSendToStartsANewThread(t *testing.T) {
 	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:1")
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
@@ -30,9 +35,10 @@ func TestAwMailSendNewConversation(t *testing.T) {
 	const old = "11111111-1111-4111-8111-111111111111"
 	seen := map[string]bool{}
 	for _, tc := range []struct {
-		name, flag, target                  string
-		omit, mismatch, conflict, transport bool
-		status                              int
+		name, flag, target                             string
+		mismatch, conflict, transport, noSubject, cont bool
+		subjectOnCont, text                            bool
+		status                                         int
 	}{
 		{name: "alias", flag: "--to", target: "alice"},
 		{name: "did_key", flag: "--to-did", target: peer},
@@ -43,8 +49,13 @@ func TestAwMailSendNewConversation(t *testing.T) {
 		{name: "expired_no_retry", flag: "--to", target: "alice", status: 403},
 		{name: "unavailable_no_retry", flag: "--to", target: "alice", status: 503},
 		{name: "lost_response_no_retry", flag: "--to", target: "alice", transport: true},
-		{name: "conflicting_flags", flag: "--to", target: "alice", conflict: true},
-		{name: "omitted_preserves_lookup", flag: "--to", target: "alice", omit: true},
+		{name: "recipient_and_conversation", flag: "--to", target: "alice", conflict: true},
+		{name: "recipient_without_subject", flag: "--to", target: "alice", noSubject: true},
+		{name: "address_without_subject", flag: "--to-address", target: "test.local/alice", noSubject: true},
+		{name: "continuation", flag: "--conversation-id", target: old, cont: true},
+		{name: "continuation_with_subject", flag: "--conversation-id", target: old, cont: true, subjectOnCont: true},
+		{name: "alias_text", flag: "--to", target: "alice", text: true},
+		{name: "continuation_text", flag: "--conversation-id", target: old, cont: true, text: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var mu sync.Mutex
@@ -92,6 +103,10 @@ func TestAwMailSendNewConversation(t *testing.T) {
 					_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: req.MessageID, ConversationID: id, Status: "delivered"})
 				case "/v1/agents/heartbeat":
 					_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+				case "/v1/messages/conversations/" + old:
+					// A continuation reads its own conversation to sign its
+					// recipient; this fixture has none on record.
+					http.NotFound(w, r)
 				default:
 					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 					http.NotFound(w, r)
@@ -99,9 +114,12 @@ func TestAwMailSendNewConversation(t *testing.T) {
 			}))
 			home := t.TempDir()
 			writeSelectionFixtureForTest(t, home, testSelectionFixture{AwebURL: server.URL, TeamID: "devteam:test.local", Alias: "gsk", WorkspaceID: "workspace-1", DID: self, Address: "test.local/gsk", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, SigningKey: priv, CreatedAt: "2026-05-02T00:00:00Z"})
-			args := []string{"mail", "send", tc.flag, tc.target, "--body", "nonce", "--json"}
-			if !tc.omit {
-				args = append(args, "--new-conversation")
+			args := []string{"mail", "send", tc.flag, tc.target, "--body", "nonce"}
+			if !tc.text {
+				args = append(args, "--json")
+			}
+			if (!tc.cont && !tc.noSubject) || tc.subjectOnCont {
+				args = append(args, "--subject", "Status")
 			}
 			if tc.conflict {
 				args = append(args, "--conversation-id", old)
@@ -115,21 +133,24 @@ func TestAwMailSendNewConversation(t *testing.T) {
 			err := run.Run()
 			mu.Lock()
 			defer mu.Unlock()
-			wantFailure := tc.mismatch || tc.status != 0 || tc.conflict || tc.transport || tc.name == "stable_id"
+			wantFailure := tc.mismatch || tc.status != 0 || tc.conflict || tc.transport || tc.noSubject || tc.subjectOnCont || tc.name == "stable_id"
 			if (err != nil) != wantFailure {
 				t.Fatalf("err=%v stdout=%s stderr=%s", err, &stdout, &stderr)
 			}
-			if tc.conflict {
-				if calls != 0 || !strings.Contains(stderr.String(), "cannot be combined") {
-					t.Fatalf("flag conflict had effects: calls=%d stderr=%s", calls, &stderr)
+			refusals := map[bool]string{
+				tc.conflict:      "cannot be combined",
+				tc.noSubject:     "A new thread needs a title: add --subject",
+				tc.subjectOnCont: "A conversation's title is fixed.",
+			}
+			if want := refusals[true]; want != "" {
+				if exitCode(err) != 2 || calls != 0 || !strings.Contains(stderr.String(), want) {
+					t.Fatalf("refusal had effects or wrong text: exit=%d calls=%d stderr=%s", exitCode(err), calls, &stderr)
 				}
 				return
 			}
-			if !tc.omit && (lookups != 0 || inboxes != 0) {
-				t.Fatalf("fresh send read conversations=%d inbox=%d", lookups, inboxes)
-			}
-			if tc.omit && (lookups == 0 || inboxes == 0) {
-				t.Fatalf("omission lost old lookup/fallback: %d/%d", lookups, inboxes)
+			// Only a continuation reads conversations, and only its own.
+			if !tc.cont && (lookups != 0 || inboxes != 0) {
+				t.Fatalf("new thread read conversations=%d inbox=%d", lookups, inboxes)
 			}
 			if tc.name == "stable_id" {
 				// A fresh UUID is not evidence of a stored route. Preserve the
@@ -144,12 +165,16 @@ func TestAwMailSendNewConversation(t *testing.T) {
 				t.Fatalf("send count=%d, want one; stderr=%s", len(sent), &stderr)
 			}
 			req := sent[0]
-			if req.NewConversation == tc.omit {
-				t.Fatalf("new_conversation=%v omit=%v", req.NewConversation, tc.omit)
+			if req.NewConversation == tc.cont {
+				t.Fatalf("new_conversation=%v for continuation=%v", req.NewConversation, tc.cont)
 			}
-			if !tc.omit {
-				if req.ConversationID == "" || req.ConversationID == old || seen[req.ConversationID] {
-					t.Fatalf("not fresh: %q", req.ConversationID)
+			if tc.cont {
+				if req.ConversationID != old || req.ToAlias != "" || req.ToDID != "" || req.ToStableID != "" || req.ToAddress != "" || req.Subject != "" {
+					t.Fatalf("continuation must name only its conversation: %+v", req)
+				}
+			} else {
+				if req.ConversationID == "" || req.ConversationID == old || seen[req.ConversationID] || req.Subject != "Status" {
+					t.Fatalf("not a fresh titled thread: %+v", req)
 				}
 				seen[req.ConversationID] = true
 			}
@@ -170,6 +195,17 @@ func TestAwMailSendNewConversation(t *testing.T) {
 			if tc.mismatch && !strings.Contains(stderr.String(), "server does not support new conversations") {
 				t.Fatalf("no compatibility error: %s", &stderr)
 			}
+			if tc.text {
+				// The text result says whether the send started a thread.
+				want := fmt.Sprintf("Started a new thread with alice: \"Status\" (conversation_id=%s, message_id=%s)\n", req.ConversationID, req.MessageID)
+				if tc.cont {
+					want = fmt.Sprintf("Sent mail in conversation %s (message_id=%s)\n", old, req.MessageID)
+				}
+				if stdout.String() != want {
+					t.Fatalf("text result %q, want %q", stdout.String(), want)
+				}
+				return
+			}
 			if !wantFailure {
 				var result awid.SendMessageResponse
 				if e := json.Unmarshal(stdout.Bytes(), &result); e != nil {
@@ -178,9 +214,25 @@ func TestAwMailSendNewConversation(t *testing.T) {
 				if result.MessageID != req.MessageID || result.ConversationID != req.ConversationID {
 					t.Fatalf("wrong returned IDs: %+v", result)
 				}
-			} else if stdout.Len() != 0 {
-				t.Fatalf("failure reported success: %s", &stdout)
+			} else {
+				// A --json failure's stdout is its error envelope alone,
+				// never a send result.
+				assertOneJSONDocument(t, stdout.Bytes())
+				var envelope struct {
+					Error     *struct{ Code string } `json:"error"`
+					MessageID string                 `json:"message_id"`
+				}
+				if e := json.Unmarshal(stdout.Bytes(), &envelope); e != nil || envelope.Error == nil || envelope.Error.Code == "" || envelope.MessageID != "" {
+					t.Fatalf("failure reported success: %s", &stdout)
+				}
 			}
 		})
 	}
+}
+
+// sentConversationIDForTest is the conversation ID a decoded send request
+// names; a fixture answers a new thread with it.
+func sentConversationIDForTest(body map[string]any) string {
+	id, _ := body["conversation_id"].(string)
+	return id
 }

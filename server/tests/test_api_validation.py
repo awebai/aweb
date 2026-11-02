@@ -14,6 +14,7 @@ from aweb.api import create_app
 from aweb.deps import get_db
 from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
 from aweb.routes.messages import SendMessageRequest
+from did_key_fixtures import named_did_key
 
 
 def _create_validation_test_app():
@@ -22,7 +23,7 @@ def _create_validation_test_app():
 
     async def _messaging_auth() -> MessagingAuth:
         return MessagingAuth(
-            did_key="did:key:z6MkValidationTest",
+            did_key=named_did_key("z6MkValidationTest"),
             did_aw=None,
             address=None,
         )
@@ -161,10 +162,10 @@ def _federation_validation_payload() -> dict:
             "version": 1,
             "type": "mail",
             "sender_did_aw": "did:aw:sender",
-            "sender_current_did_key": "did:key:sender",
+            "sender_current_did_key": named_did_key("sender"),
             "target_address": "example.com/bob",
             "target_did_aw": "did:aw:bob",
-            "target_current_did_key": "did:key:bob",
+            "target_current_did_key": named_did_key("bob"),
             "target_delivery_origin": "https://example.com",
             "body": "hello",
             "message_id": "11111111-1111-4111-8111-111111111111",

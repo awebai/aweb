@@ -27,6 +27,7 @@ from aweb.awid_error_handling import (
 )
 from aweb.config import require_registered_certificates
 from aweb.deps import get_db
+from aweb.id_chain_auth import authenticate_id_chain
 from aweb.identity_binding import (
     IdentityBinding,
     refresh_projection_binding,
@@ -283,6 +284,7 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
         address=cert_info.get("member_address", ""),
         fresh=fresh,
     )
+    await authenticate_id_chain(request, binding)
     cert_info["identity_binding"] = binding
     cert_info["identity_binding_fresh"] = binding.fresh_observation
     cert_info["verified_member_did_aw"] = binding.did_aw

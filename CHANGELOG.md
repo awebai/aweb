@@ -2,6 +2,210 @@
 
 ## Unreleased
 
+- aw: a mail thread is a conversation, titled by its first message's
+  subject. `aw mail send` to a recipient (`--to`, `--to-did` or
+  `--to-address`) always starts a new thread and requires `--subject`; it no
+  longer continues the correspondent's newest conversation, and
+  `--new-conversation` is removed. Continue a thread with `aw mail reply
+  <message_id>` or `aw mail send --conversation-id <id>`; both refuse
+  `--subject`, because a thread's title is fixed. `aw mail threads` lists your
+  threads with their title, participants, last activity, unread count and
+  conversation ID. `aw beads-mail send` and the Gas City mail provider start a
+  new thread for every fresh send. Mail wakes, the channel plugin and the
+  skills teach one rule: "Answer in the conversation: aw mail reply
+  <message_id>. Start a new thread only for a new topic: aw mail send --to
+  <recipient> --subject <subject>."
+
+- AWID and aweb server: an alias conflict now answers 409 with a coded
+  detail, `{"code": "alias_active", "message": ...}`, the shape AWID already
+  uses for `certificate_already_registered`. The server's connect sends
+  `alias_mismatch` when the key is already bound to another alias. aw reports
+  `alias_active` as the `--json` error code `alias_conflict`.
+
+- Self-hosted compose: aweb and awid are now published on 127.0.0.1 only,
+  because Docker's published ports bypass host firewalls such as ufw.
+  Existing installs reached from other machines on a LAN lose that access
+  after pulling this compose file until `server/.env` sets
+  `AWEB_BIND_ADDRESS=0.0.0.0` (or one interface's address).
+- aw: `aw check` names the team, agent and server; `aw team join` and
+  `aw id team accept-invite` take the invite token from `--token-file` or
+  `--token-stdin`; `aw team invite`, `aw id team invite` and
+  `aw team admission-invite` warn on stderr that the printed token is a
+  credential, say when a hosted invite expires (also as `expires_at` in
+  `--json`) or that a local invite is valid until it is used, and print the
+  join command in its `--token-file` form. The admission invite's
+  `join_command` field no longer embeds the token.
+
+- aw: `aw init --new-team` on a local (localhost) registry refuses a team
+  that already exists instead of adding this workspace to it, and
+  `--team <name>` names another team to create. When the local stack has
+  moved, init records the registry it now uses, so invites carry it. The
+  local-namespace refusals say what to do instead in plain words.
+
+- aw: `aw mail send` and `aw chat` say why a recipient was refused. A name
+  that is not on your team or a registered address says to check it with
+  `aw workspace status`. A local identity in another team says it is
+  reachable only from inside its own team, by alias. Other unknown targets
+  still print `agent not found: <target>`.
+
+- aw: `aw mail inbox` and `aw mail show` list each message's ID under it
+  (`Message ID: <id>`) and end with how to reply: `aw mail reply <message-id>
+  --body-file <file>`. `--json` is unchanged.
+
+- aw: an `--e2ee` mail or chat to a recipient on aweb's hosted service,
+  whose signed encryption key assertion says the service holds its key, is
+  refused before anything is sent: "<address> uses aweb's hosted service,
+  which reads its messages, so end-to-end encryption is not possible. Send
+  it again without --e2ee." `--json` reports code
+  `recipient_custodial_no_e2ee` with the addresses in `detail`. A server's
+  422 refusal with that reason reads the same. `aw mail reply` with no mode
+  flag, which encrypts a reply to encrypted mail, replies server-readable to
+  such a recipient instead. Continuing an encrypted chat with a peer that has a
+  global address now encrypts to the key that address resolves to, when it
+  is the session's same participant, instead of failing for a missing key.
+
+- aw: `aw init` with `AWEB_API_KEY` needs the aweb.ai service release that
+  answers the API key's team read (`GET /api/v1/teams/current`). Against an
+  older service it refuses, saying the service does not support creating
+  agents with an API key (or, for HTTP 401/403, that the key may not be
+  current). This aw is promoted to latest only after that service release
+  is deployed.
+
+- aw: `aw mail reply` without `--subject` uses "Re: <original subject>"
+  instead of "Re", and never adds a second "Re:". `aw beads-mail` and
+  `aw gc-mail` replies follow the same rule, now case-insensitively.
+
+- aw: the `--json` refusal shape changes. A failed command run with `--json`
+  now prints one document on stdout,
+  `{"error": {"code", "message", "http_status", "detail", "reason"}}`, and
+  the server's own refusal code (for example `admin_required`) is in
+  `error.reason`. Scripts that parsed the raw server body's `detail.code` out
+  of stderr must read `error.reason` instead; stderr wording is not a
+  contract. `code` is the stable class (`http_error` for a server refusal),
+  `detail` is the server's message, and `reason` is absent when the server
+  gave no code. stderr and exit codes do not change. The codes are listed in
+  the CLI reference. `aw wake status --json` reports a receive stream's
+  error the same way, as `stream_error_detail` beside `stream_error`.
+
+- aw: accepting a hosted invite works when `AWEB_URL` is the server's base
+  URL. The invite preview treats a base URL and its `/api` mount as the same
+  service; a different scheme, host or port is still refused as
+  `server_mismatch`.
+
+- AWID SDK: `RegistryClient.register_did_with_signer(did_key, *, signer,
+  timestamp=None)` registers a did:aw whose key stays behind a signer
+  callback, as the identity-tree writes do. It asks for one signature, over
+  `log_entry_payload(**awid.log.initial_registration_entry(did_key,
+  timestamp=...))`, checks the answer before sending, and returns AWID's
+  receipt without a signed follow-up read. `register_did(did_key,
+  signing_key)` is unchanged and uses the same entry.
+
+- aw: identity-tree commands for a namespace you control. They are opt-in:
+  `aw id create` without the new flags, and every other existing flow, works
+  as before.
+- aw: `aw id human init --domain D --as-root` creates your human ID in D. The
+  human key stays in the OS keychain, encrypted under a passphrase you choose,
+  and every signature asks for that passphrase. The namespace controller key
+  on this machine issues the human's certificate, which is registered at AWID.
+  It needs a human at an interactive terminal, and refuses without one or
+  inside an agent runtime. A run that fails resumes where it stopped without
+  minting a new human, and a second human in the same domain needs
+  `--another`.
+- aw: `aw id create --human-parent <did:aw>` and `--root-parent` create an
+  agent with its ID chain installed: the named human, or the namespace root
+  for an agent with no human, issues its certificate. A human parent first
+  checks its own chain's current status; the root first checks that the
+  domain's _awid record names this machine's controller. The agent then
+  registers that certificate with its own key. If the parent cannot issue, no
+  agent is created.
+- aw: `aw id child invite`, `receive`, `pending`, `show`, `approve` and
+  `refuse` are the issuer side of certificate requests, run as
+  `--as-root --domain D` or `--human <did:aw>`, or as the current agent for an
+  agent child. You fix an invitation first; a request is received only against
+  it. To approve a human child, you confirm at a terminal that its key
+  fingerprint matches what the recipient told you through a separate trusted
+  channel.
+- aw: `aw id parent request` and `import` are the child side. `request`
+  exports a request against the invitation your parent fixed
+  (`--invitation-id`, `--domain`, and `--parent <did:aw>` or `--root-parent`),
+  as `--human <did:aw>` or as the current agent, and shows a fingerprint for
+  you to tell the parent through a separate trusted channel. An identity that
+  already has an ID chain cannot request. `import` verifies the parent's
+  response against your outstanding request, installs the chain and registers
+  it at AWID with your own key, at the registry the domain's _awid record
+  names. A failed registration keeps the response so `import` can retry it,
+  and `--no-register` leaves the registration pending.
+- aw: `aw id human init --domain D` without `--as-root` only prepares the
+  human: an issuer elsewhere, the namespace root or another human, admits it
+  through `aw id parent request` and `import`.
+- aw: `aw id parent request --resign` lets a local agent, whose ID is its
+  did:key, ask the parent of the certificate it carries to re-sign it after
+  the parent rotated its key. The parent, domain and old certificate come
+  from the installed chain. The issuer receives and approves it with the
+  same `aw id child` commands, and approves it only for a certificate its own
+  issuance record shows it issued. `import` installs the re-signed chain
+  with the same ID and key, and writes nothing to AWID. A request ID names
+  one request per issuer, whether it is a first issue or a re-sign.
+- aw: `aw who` verifies the current identity's ID chain against current
+  status from its namespace's registry, and shows the nearest human, no
+  human (none in its chain), unknown or unavailable, with the verifier's
+  reason. It shows the chain only when the chain verifies.
+- **The app id `who` is reserved** for `aw who`, a stated narrowing: the
+  server refuses it at app registration, in app event types and on lookup,
+  and `aw plugin install` refuses an `aw-who` binary. The hosted Cloud had
+  zero uses of `who` in apps, registry entries, installs, event types,
+  emitted events, subscriptions and hooks when measured on 2026-10-30.
+  Self-hosted servers were not measured: one with an app `who` would no
+  longer be able to read it.
+
+- **Security:** did:key decoding refuses Ed25519 public keys that are small
+  order, non-canonical or of mixed order, in Python (`awid.did`), Go
+  (`cli/go/awid`) and TypeScript (`channel-core`). Every signature check, pin
+  and admission path that decodes a did:key now refuses these keys. AWID and
+  the server refuse such keys in request fields, and a namespace controller
+  key of this kind never opens a namespace epoch.
+
+- Identity tree (`docs/id-certificates.md`): DNS-rooted ID certificates chain
+  an agent or human ID to its namespace through its parents. Python
+  (`awid.id_certificates`), Go (`cli/go/awid`) and TypeScript (`channel-core`)
+  share one pure verifier and one set of vectors. Each decodes
+  `X-AWID-ID-Chain` strictly, verifies certificates under the strict Ed25519
+  acceptance rule, verifies the chain against trusted registry evidence
+  (`verify_id_chain` / `VerifyIDChain` / `verifyIdChain`) and decides a
+  request's disposition (`request_disposition`), with no I/O.
+- AWID: stores registered IDs, their revisions and namespace controller
+  epochs (migration 010). `POST /v1/id-certificates/register` admits a
+  certificate through one atomic gate that verifies the parent's whole chain,
+  and `POST /v1/id-certificates/revoke` revokes an ID and is serialized with
+  that gate. `POST /v1/id-certificates/status` returns a consistent snapshot
+  of exact registered IDs, rate limited per IP and per verified caller key.
+  `POST /v1/namespaces/{domain}/rotate` rotates a namespace controller
+  authorized by the previous key. Registration refuses ancestors admitted
+  before the namespace's latest controller replacement.
+- AWID SDK: `RegistryClient.register_id_certificate`,
+  `revoke_id_certificate` and `rotate_namespace_with_previous_key` send the
+  exact requests that `awid.id_tree_requests` builds, so a host can rebuild
+  a covering payload and check it before it signs.
+  `RegistryClient.registry_audience` names the audience that payload signs.
+- AWID SDK: `awid.id_certificates.sign_id_certificate` signs one certificate
+  through a caller-supplied signer, then checks that the answer names the
+  certificate's issuer key and passes the strict verifier.
+- AWID SDK: did:aw key resolution states identity-tree enrollment
+  (`KeyResolution.id_tree`), parsed by the shared enrollment parser in
+  Python and Go, and states it even when the did:aw has no key.
+- AWID SDK: `CachedRegistryClient.id_chain_evidence` serves identity-tree
+  evidence that is at most 60 seconds old, aged on the shared Redis clock.
+  Concurrent callers of the same request share one refresh of older evidence.
+  If that refresh fails, the evidence is unavailable: there is no outage
+  grace.
+
+- Go SDK: `ExportHumanKeyBackup` and `ImportHumanKeyBackup` write and read a
+  passphrase-encrypted PKCS#8 backup of an Ed25519 human key
+  (PBKDF2-HMAC-SHA256 at 600000 iterations, AES-256-CBC). Both refuse an
+  empty passphrase, and import checks the scheme and work factor before
+  deriving the key. The CLI does not expose it yet. The Go module requires
+  `golang.org/x/crypto` v0.58.0.
+
 - **Security:** build the Go CLI and gateway with Go 1.26.10 and
   `golang.org/x/net` 0.62.0 to fix standard-library, HTTP and HTML advisories,
   including HTML parsing/rendering issues GO-2026-6860 and GO-2026-6866.

@@ -1589,14 +1589,19 @@ func TestTeamInviteJoinConnectsWorkspaceByDefault(t *testing.T) {
 			JoinedAt:    "2026-05-16T00:00:00Z",
 		}},
 	})
+
+	// The connection test uses a genuinely chainless local inviter. Global
+	// absence of enrollment runs against real AWID in the CoreDNS journey.
+	inviterPub, inviterKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(inviterDir), inviterKey); err != nil {
+		t.Fatal(err)
+	}
 	writeIdentityForTest(t, inviterDir, awconfig.WorktreeIdentity{
-		DID:           "did:key:z6MkiR5hWfjt7SeH1Zs3xJMp5YowQbK5xkYH5BXMxHnXj1aA",
-		StableID:      "did:aw:alice",
-		Address:       "acme.com/alice",
-		Custody:       awid.CustodySelf,
-		IdentityScope: awid.IdentityModeGlobal,
-		RegistryURL:   server.URL,
-		CreatedAt:     "2026-05-16T00:00:00Z",
+		DID: awid.ComputeDIDKey(inviterPub), Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal,
+		CreatedAt: "2026-05-16T00:00:00Z",
 	})
 
 	runInvite := exec.CommandContext(ctx, bin, "team", "invite", "--team-id", "backend:acme.com")
@@ -1608,20 +1613,20 @@ func TestTeamInviteJoinConnectsWorkspaceByDefault(t *testing.T) {
 	}
 	token := ""
 	for _, line := range strings.Split(string(inviteOut), "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "Command:") {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) >= 5 && fields[1] == "aw" && fields[2] == "team" && fields[3] == "join" {
-			token = fields[4]
+		if fields := strings.Fields(line); len(fields) == 2 && fields[0] == "Token:" {
+			token = fields[1]
 		}
 	}
-	if token == "" {
-		t.Fatalf("invite output did not include accept command with token:\n%s", string(inviteOut))
+	if token == "" || !strings.Contains(string(inviteOut), "Command:     aw team join --token-file <file> --name <name>\n") {
+		t.Fatalf("invite output did not include the token and the token-file join command:\n%s", string(inviteOut))
+	}
+	tokenFile := filepath.Join(t.TempDir(), "invite.token")
+	if err := os.WriteFile(tokenFile, []byte(token+"\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 
-	runAccept := exec.CommandContext(ctx, bin, "team", "join", token, "--name", "bob", "--json")
+	// Run the printed command, with the saved token file.
+	runAccept := exec.CommandContext(ctx, bin, "team", "join", "--token-file", tokenFile, "--name", "bob", "--json")
 	runAccept.Env = append(testCommandEnv(home), "AWEB_URL=https://ambient-must-not-win.example")
 	runAccept.Dir = acceptDir
 	acceptOut, err := runAccept.CombinedOutput()
@@ -1859,6 +1864,8 @@ func TestTeamInviteHostedUsesCloudAuthorityWithoutLocalTeamKey(t *testing.T) {
 				"namespace":      "gracehosted.aweb.ai",
 				"server_url":     serverURL,
 			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/invite-preview":
+			writeLegacyHostedPreviewForTest(t, w, r, teamID, serverURL)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
 			body, _ := io.ReadAll(r.Body)
 			var req map[string]any
@@ -2112,6 +2119,8 @@ func TestTeamAcceptHostedInviteWithAddressCreatesGlobalIdentity(t *testing.T) {
 			// the E2E encryption-key assertion to the registry.
 			encryptionKeyPublished.Store(true)
 			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/invite-preview":
+			writeLegacyHostedPreviewForTest(t, w, r, teamID, serverURL)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
 			body, _ := io.ReadAll(r.Body)
 			if err := json.Unmarshal(body, &acceptBody); err != nil {
@@ -2316,6 +2325,10 @@ func TestTeamAcceptHostedGlobalInviteRetryReusesPendingSigningKey(t *testing.T) 
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/did" {
 			t.Fatalf("hosted global retry must not use split DID registration")
 		}
+		if r.URL.Path == "/api/v1/spawn/invite-preview" {
+			writeLegacyHostedPreviewForTest(t, w, r, teamID, serverURL)
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/spawn/accept-invite" {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -2410,6 +2423,10 @@ func TestTeamAcceptHostedLocalInviteRetryReusesPendingSigningKey(t *testing.T) {
 	var acceptCalls int
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/spawn/invite-preview" {
+			writeLegacyHostedPreviewForTest(t, w, r, teamID, serverURL)
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/spawn/accept-invite" {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -2537,6 +2554,8 @@ func testHostedLocalAcceptInviteIntoExternalIdentityHome(t *testing.T, tokenStdi
 	var gotConnectPayload connectRequest
 	server := newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/invite-preview":
+			writeLegacyHostedPreviewForTest(t, w, r, teamID, serverURL)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
 			var req awid.SpawnAcceptInviteRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -2714,6 +2733,8 @@ func TestHostedLocalAcceptExternalIdentityHomeReportsRootRecoveryOnConnectFailur
 	}
 	server := newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/invite-preview":
+			writeLegacyHostedPreviewForTest(t, w, r, teamID, serverURL)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
 			var req awid.SpawnAcceptInviteRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -3079,6 +3100,10 @@ func TestHostedGlobalAcceptNoAddressUsesExistingStableID(t *testing.T) {
 			return
 		}
 
+		if r.URL.Path == "/api/v1/spawn/invite-preview" {
+			writeLegacyHostedPreviewForTest(t, w, r, teamID, serverURL)
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/spawn/accept-invite" {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}

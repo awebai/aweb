@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -88,6 +87,9 @@ where a mapped name actually delivered.`,
 			Priority: awid.PriorityNormal,
 		}
 		applyMailRecipientTarget(req, target.Kind, target.Value)
+		if err := startNewThread(req); err != nil {
+			return gcMailError("%v", err)
+		}
 
 		var resp *awid.SendMessageResponse
 		if beadsMailUsesCertSend(target.Kind, "") {
@@ -96,10 +98,10 @@ where a mapped name actually delivered.`,
 			resp, err = c.SendMessageByIdentity(ctx, req)
 		}
 		if err != nil {
-			resp, err = gcMailRetryAsContinuation(ctx, c, target, req, err)
-		}
-		if err != nil {
 			return gcMailError("%v", networkError(err, target.Value))
+		}
+		if err := newThreadAnswered(req, resp); err != nil {
+			return gcMailError("%v", err)
 		}
 
 		delegateMailAppendSendLogs(sel, resp, target.Value, subject, input.Body)
@@ -151,18 +153,7 @@ is no recipient argument to get wrong.`,
 			return gcMailError("message %s is legacy mail without a conversation; send a new message instead", termtext.Line(messageID))
 		}
 
-		subject := strings.TrimSpace(input.Subject)
-		if subject == "" {
-			original := strings.TrimSpace(source.Subject)
-			switch {
-			case original == "":
-				subject = "Re"
-			case strings.HasPrefix(original, "Re: "):
-				subject = original
-			default:
-				subject = "Re: " + original
-			}
-		}
+		subject := replySubject(input.Subject, source.Subject)
 
 		resp, err := c.SendMessageByIdentity(ctx, &awid.SendMessageRequest{
 			ConversationID: conversationID,
@@ -437,7 +428,7 @@ inspectable here instead.`,
 			if target.Mapped {
 				source = addressMap.path
 			}
-			fmt.Printf("%s (%s, %s)\n", delegateMailResolutionNote(target), target.Kind, source)
+			fmt.Fprintf(commandStdout, "%s (%s, %s)\n", delegateMailResolutionNote(target), target.Kind, source)
 			return nil
 		}())
 	},
@@ -472,34 +463,4 @@ func gcMailSelfLabel(sel *awconfig.Selection) string {
 		return ""
 	}
 	return gcMailIdentityLabel(selectionAddress(sel), sel.DID, sel.Alias)
-}
-
-// gcMailRetryAsContinuation mirrors the bd delegate's server-directed
-// continuation (beads-mail record §8): the server keeps one active mail
-// conversation per pair and refuses a fresh one with HTTP 409, and a signed
-// sender structurally cannot use the server's silent-reuse branch because the
-// conversation id is part of what it signs.
-func gcMailRetryAsContinuation(ctx context.Context, c *aweb.Client, target delegateMailTarget, req *awid.SendMessageRequest, sendErr error) (*awid.SendMessageResponse, error) {
-	if code, ok := awid.HTTPStatusCode(sendErr); !ok || code != http.StatusConflict {
-		return nil, sendErr
-	}
-	var conversation mailConversationTarget
-	var err error
-	switch target.Kind {
-	case "address", "did":
-		conversation, err = findUniqueMailConversationForTarget(ctx, c, target.Kind, target.Value)
-	case "alias":
-		if agent, found, findErr := clientAgentForAlias(ctx, c, target.Value); findErr == nil && found {
-			conversation, err = findUniqueMailConversationForAgent(ctx, c, agent)
-		}
-	}
-	if err != nil || conversation.conversationID == "" {
-		return nil, sendErr
-	}
-	return c.SendMessageByIdentity(ctx, &awid.SendMessageRequest{
-		ConversationID: conversation.conversationID,
-		Subject:        req.Subject,
-		Body:           req.Body,
-		Priority:       req.Priority,
-	})
 }

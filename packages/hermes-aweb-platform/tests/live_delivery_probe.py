@@ -143,7 +143,7 @@ async def mail(text, conversation=None, sender=SENDER):
     if conversation:
         args += ["--conversation-id", conversation]
     else:
-        args += ["--to", "hermes", "--new-conversation"]
+        args += ["--to", "hermes", "--subject", "Live delivery probe"]
     return await aw(sender, *args)
 
 

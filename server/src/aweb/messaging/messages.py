@@ -99,10 +99,6 @@ async def resolve_agent_by_did(db, did: str) -> dict | None:
 
 async def policy_rows_for_participant(db, participant: dict) -> list[dict]:
     """Policy evidence for an existing participant, never new routing authority."""
-    if participant.get("agent_id") is not None:
-        row = await get_agent_by_id(db, agent_id=str(participant["agent_id"]))
-        if row is not None:
-            return [row]
     did = str(participant.get("did") or "").strip()
     if not did:
         return []
@@ -306,6 +302,7 @@ async def deliver_message(
     to_agent_id: str | None = None,
     signature: str | None = None,
     signed_payload: str | None = None,
+    id_chain: dict | None = None,
     content_mode: str = "legacy_plaintext_v1",
     message_version: int = 1,
     encrypted_envelope: dict | None = None,
@@ -322,7 +319,7 @@ async def deliver_message(
     if not recipient_did:
         raise ValidationError("Missing to_did")
 
-    recipient = await resolve_agent_by_did(db, recipient_did) or recipient_agent
+    recipient = recipient_agent or await resolve_agent_by_did(db, recipient_did)
     if recipient is None:
         raise NotFoundError("Recipient agent not found")
 
@@ -406,9 +403,9 @@ async def deliver_message(
              conversation_id, message_version, content_mode, encrypted_envelope,
              encrypted_ciphertext, encrypted_key_wraps, encrypted_ciphertext_hash, encrypted_ciphertext_size,
              encrypted_key_wraps_hash, encrypted_inner_header_hash, encrypted_suite, encrypted_signing_key_id,
-             signed_envelope_hash)
+             signed_envelope_hash, id_chain)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-                $17, $18, $19::jsonb, $20, $21::jsonb, $22, $23, $24, $25, $26, $27, $28)
+                $17, $18, $19::jsonb, $20, $21::jsonb, $22, $23, $24, $25, $26, $27, $28, $29::jsonb)
         RETURNING message_id, created_at
         """,
         message_id,
@@ -439,6 +436,7 @@ async def deliver_message(
         encrypted_metadata.get("encrypted_suite"),
         encrypted_metadata.get("encrypted_signing_key_id"),
         encrypted_metadata.get("signed_envelope_hash"),
+        json.dumps(id_chain) if id_chain is not None else None,
     )
     if not row:
         raise ServiceError("Failed to create message")

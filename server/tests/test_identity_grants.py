@@ -20,6 +20,7 @@ from httpx import ASGITransport, AsyncClient
 from nacl.signing import SigningKey
 
 from awid.did import did_from_public_key
+from awid.registry import IDTreeEnrollment
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.api import create_app
 from aweb.auth_context import GRANT_SCOPE_ANY, GRANT_SCOPES, GrantContext
@@ -91,7 +92,10 @@ def _verified_subject_fixture(app):
     # real registry admission/refusal lives in test_identity_binding_http.
     app.state.identity_binding_cache = OrderedDict({
         ("did:aw:alice", SUBJECT_DID_KEY, "acme.com/alice"): (
-            monotonic() + 60, IdentityBinding("did:aw:alice", "acme.com/alice"),
+            monotonic() + 60, IdentityBinding(
+                "did:aw:alice", "acme.com/alice", did_key=SUBJECT_DID_KEY,
+                id_tree=IDTreeEnrollment(False, None),
+            ),
         ),
     })
 
@@ -416,6 +420,11 @@ async def test_scope_enforcement_for_mail_chat_and_roster(aweb_cloud_db):
 def test_required_grant_scope_admits_conversation_index_read_only():
     assert required_grant_scope("GET", "/v1/conversations") is None
     assert required_grant_scope("HEAD", "/v1/conversations") is None
+    assert required_grant_scope("GET", "/v1/conversations/unread-counts") == "mail.read"
+    assert required_grant_scope("HEAD", "/v1/conversations/unread-counts") == "mail.read"
+    with pytest.raises(Exception) as unread_write:
+        required_grant_scope("POST", "/v1/conversations/unread-counts")
+    assert getattr(unread_write.value, "status_code", None) == 403
     with pytest.raises(Exception) as exc_info:
         required_grant_scope("POST", "/v1/conversations")
     assert getattr(exc_info.value, "status_code", None) == 403
@@ -1268,6 +1277,10 @@ def test_route_grant_scope_declarations_are_known_and_reviewable():
         ("GET", "/v1/roles/active", "coord.read"),
         ("GET", "/v1/roles/history", "coord.read"),
         ("GET", "/v1/roles/{team_roles_id}", "coord.read"),
+        ("GET", "/v1/room", "chat.read"),
+        ("GET", "/v1/room/messages", "chat.read"),
+        ("GET", "/v1/room/messages/{message_id}", "chat.read"),
+        ("GET", "/v1/room/notices", "chat.read"),
         ("GET", "/v1/status", "coord.read"),
         ("GET", "/v1/status/stream", "events.read"),
         ("GET", "/v1/tasks", "coord.read"),
@@ -1288,6 +1301,8 @@ def test_route_grant_scope_declarations_are_known_and_reviewable():
         ("POST", "/v1/reservations", "coord.write"),
         ("POST", "/v1/reservations/release", "coord.write"),
         ("POST", "/v1/reservations/renew", "coord.write"),
+        ("POST", "/v1/room/messages", "chat.send"),
+        ("POST", "/v1/room/notices/{message_id}/ack", "chat.read"),
         ("POST", "/v1/tasks", "coord.write"),
         ("POST", "/v1/tasks/{ref}/comments", "coord.write"),
         ("POST", "/v1/tasks/{ref}/deps", "coord.write"),

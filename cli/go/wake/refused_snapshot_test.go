@@ -25,7 +25,7 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 		initialSnapshotDelay time.Duration
 		slowRefusalCycle     bool
 	}{
-		{refusal: "paused"}, {refusal: "shell"}, {refusal: "blocked"},
+		{refusal: "paused"}, {refusal: "shell"}, {refusal: "blocked"}, {refusal: "working"},
 		{refusal: "prelaunch-not-launched"}, {refusal: "prelaunch-stopped"},
 		// Registration age is not snapshot age: slow startup must not spend
 		// the delivery budget before the refusal backoff has elapsed.
@@ -51,8 +51,8 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			setState("working")
-			if refusal == "shell" || refusal == "blocked" {
+			setState("idle")
+			if refusal == "shell" || refusal == "blocked" || refusal == "working" {
 				setState(refusal)
 			}
 			if prelaunch {
@@ -67,9 +67,12 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 			var fetches atomic.Int32
 			var acks atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if serveWakeSender(w, req) {
+					return
+				}
 				if req.Method == http.MethodGet {
 					fetches.Add(1)
-					_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{{"message_id": "mail-1", "from_alias": "bob", "body": "snapshot recovery mail", "created_at": "2026-01-01T00:00:00Z"}}})
+					_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{signedWakeMessage(t, map[string]any{"message_id": "mail-1", "from_alias": "bob", "body": "snapshot recovery mail", "created_at": "2026-01-01T00:00:00Z"})}})
 				} else {
 					acks.Add(1)
 					_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
@@ -240,6 +243,12 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 			if acks.Load() != 0 {
 				t.Fatal("refused message was acknowledged")
 			}
+			if refusal == "working" {
+				cc := instanceByHome(t, broker, home).ChannelCore
+				if !strings.Contains(cc.LastError, "state=working") || len(cc.BindingErrors) != 1 {
+					t.Fatalf("busy mail refusal missing from per-instance status: %#v", cc)
+				}
+			}
 			if data, _ := os.ReadFile(filepath.Join(identity, "channel-delivered-ids-backend_acme.com.json")); strings.Contains(string(data), "mail-1") {
 				t.Fatal("refused message was marked delivered")
 			}
@@ -264,8 +273,8 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 				if acks.Load() != 0 {
 					t.Fatal("prelaunch message was acknowledged")
 				}
-				setState("working")
-			} else if refusal == "shell" || refusal == "blocked" {
+				setState("idle")
+			} else if refusal == "shell" || refusal == "blocked" || refusal == "working" {
 				if inst := instanceByHome(t, broker, home); inst.Phase == PhaseInactive {
 					t.Fatal("shell became inactive")
 				}

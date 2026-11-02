@@ -1193,9 +1193,10 @@ func TestAwMailSendAliasUsesTeamScopedTarget(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"message_id":   "msg-1",
-				"status":       "delivered",
-				"delivered_at": "2026-03-17T12:00:00Z",
+				"message_id":      "msg-1",
+				"conversation_id": sentConversationIDForTest(gotBody),
+				"status":          "delivered",
+				"delivered_at":    "2026-03-17T12:00:00Z",
 			})
 		case "/v1/agents":
 			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{
@@ -1219,7 +1220,7 @@ func TestAwMailSendAliasUsesTeamScopedTarget(t *testing.T) {
 
 	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
-	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext",
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--subject", "Test thread", "--plaintext",
 		"--to", "alice",
 		"--body", "hello",
 		"--json",
@@ -1277,9 +1278,10 @@ func TestAwMailSendToDIDStableFirstContactFailsClosed(t *testing.T) {
 				t.Fatalf("decode request body: %v", err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]string{
-				"message_id":   "msg-1",
-				"status":       "delivered",
-				"delivered_at": "2026-02-22T00:00:00Z",
+				"message_id":      "msg-1",
+				"conversation_id": sentConversationIDForTest(gotBody),
+				"status":          "delivered",
+				"delivered_at":    "2026-02-22T00:00:00Z",
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -1312,7 +1314,7 @@ func TestAwMailSendToDIDStableFirstContactFailsClosed(t *testing.T) {
 		SigningKey:    priv,
 	})
 
-	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext",
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--subject", "Test thread", "--plaintext",
 		"--to-did", recipientDID,
 		"--body", "hello from identity",
 	)
@@ -1351,9 +1353,10 @@ func TestAwMailSendToAddressUsesIdentityAuth(t *testing.T) {
 				t.Fatalf("decode request body: %v", err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]string{
-				"message_id":   "msg-1",
-				"status":       "delivered",
-				"delivered_at": "2026-02-22T00:00:00Z",
+				"message_id":      "msg-1",
+				"conversation_id": sentConversationIDForTest(gotBody),
+				"status":          "delivered",
+				"delivered_at":    "2026-02-22T00:00:00Z",
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -1391,7 +1394,7 @@ func TestAwMailSendToAddressUsesIdentityAuth(t *testing.T) {
 	})
 	writeKnownAgentPinForTest(t, tmp, "test.example/monitor", registryServer.URL)
 
-	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext",
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--subject", "Test thread", "--plaintext",
 		"--to-address", "test.example/monitor",
 		"--body", "hello from address",
 	)
@@ -1473,9 +1476,10 @@ func TestAwMessagingUsesIdentityRegistryURLForRecipientBinding(t *testing.T) {
 				t.Fatalf("decode mail body: %v", err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]string{
-				"message_id":   "mail-1",
-				"status":       "delivered",
-				"delivered_at": "2026-04-25T00:00:00Z",
+				"message_id":      "mail-1",
+				"conversation_id": sentConversationIDForTest(mailBody),
+				"status":          "delivered",
+				"delivered_at":    "2026-04-25T00:00:00Z",
 			})
 		case "/v1/chat/pending":
 			_ = json.NewEncoder(w).Encode(awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{}})
@@ -1530,7 +1534,7 @@ func TestAwMessagingUsesIdentityRegistryURLForRecipientBinding(t *testing.T) {
 	})
 
 	env := append(withoutEnvForTest(testCommandEnv(tmp), "AWID_REGISTRY_URL"), "AWID_REGISTRY_URL=http://127.0.0.1:1")
-	runMail := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext", "--to-address", "example.invalid/randy", "--body", "mail repro")
+	runMail := exec.CommandContext(ctx, bin, "mail", "send", "--subject", "Test thread", "--plaintext", "--to-address", "example.invalid/randy", "--body", "mail repro")
 	runMail.Env = env
 	runMail.Dir = tmp
 	if out, err := runMail.CombinedOutput(); err != nil {
@@ -1586,9 +1590,10 @@ func TestAwMessagingUsesKnownAgentPinWhenRegistryAddressMissing(t *testing.T) {
 				t.Fatalf("decode mail body: %v", err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]string{
-				"message_id":   "mail-1",
-				"status":       "delivered",
-				"delivered_at": "2026-04-26T00:00:00Z",
+				"message_id":      "mail-1",
+				"conversation_id": sentConversationIDForTest(mailBody),
+				"status":          "delivered",
+				"delivered_at":    "2026-04-26T00:00:00Z",
 			})
 		case "/v1/chat/pending":
 			_ = json.NewEncoder(w).Encode(awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{}})
@@ -1651,7 +1656,7 @@ func TestAwMessagingUsesKnownAgentPinWhenRegistryAddressMissing(t *testing.T) {
 	}
 
 	env := withoutEnvForTest(testCommandEnv(tmp), "AWID_REGISTRY_URL")
-	runMail := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext", "--to-address", recipientAddress, "--body", "mail repro")
+	runMail := exec.CommandContext(ctx, bin, "mail", "send", "--subject", "Test thread", "--plaintext", "--to-address", recipientAddress, "--body", "mail repro")
 	runMail.Env = env
 	runMail.Dir = tmp
 	if out, err := runMail.CombinedOutput(); err != nil {
@@ -1842,7 +1847,7 @@ func TestAwMailSendToDIDStandaloneFirstContactFailsClosed(t *testing.T) {
 		t.Fatalf("write signing key: %v", err)
 	}
 
-	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext",
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--subject", "Test thread", "--plaintext",
 		"--to-did", "did:aw:monitor",
 		"--body", "hello from standalone",
 	)
@@ -1865,7 +1870,7 @@ func TestAwMailSendRejectsMultipleRecipientFlags(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 	writeDefaultWorkspaceBindingForTest(t, tmp, "http://127.0.0.1:1")
 
-	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext",
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--subject", "Test thread", "--plaintext",
 		"--to", "alice",
 		"--to-did", "did:aw:alice",
 		"--body", "hello",
@@ -2015,10 +2020,13 @@ func TestAwMailSendWritesCommLog(t *testing.T) {
 		case "/v1/agents":
 			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{}})
 		case "/v1/messages":
+			var posted awid.SendMessageRequest
+			_ = json.NewDecoder(r.Body).Decode(&posted)
 			_ = json.NewEncoder(w).Encode(map[string]string{
-				"message_id":   "msg-log-1",
-				"status":       "delivered",
-				"delivered_at": "2026-02-26T12:00:00Z",
+				"message_id":      "msg-log-1",
+				"conversation_id": posted.ConversationID,
+				"status":          "delivered",
+				"delivered_at":    "2026-02-26T12:00:00Z",
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)

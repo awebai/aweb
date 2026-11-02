@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // SenderMembership is delivery-server attestation, not a signed-envelope claim.
@@ -272,4 +273,52 @@ func (c *Client) receivedLocalSenderTrust(status VerificationStatus, address, di
 		}
 	}
 	return Verified, true
+}
+
+// ReceivedIDTreeEnrollment reuses the selected delivery registry's coherent
+// key snapshot after ordinary sender verification, without inventing an address.
+func (c *Client) ReceivedIDTreeEnrollment(ctx context.Context, stableID, didKey string) IDTreeEnrollmentResult {
+	unknown := IDTreeEnrollmentResult{State: "unknown"}
+	chain, ok := c.resolver.(*ChainResolver)
+	if !ok || chain.Team == nil || chain.DeliveryTeamRegistry == nil {
+		return unknown
+	}
+	_, registry, err := chain.DeliveryTeamRegistry.receivedRegistry(ctx, chain.Team.TeamID)
+	if err != nil {
+		return unknown
+	}
+	key, ok := registry.loadKeyCache(stableID)
+	if !ok {
+		return unknown
+	}
+	return key.IDTreeEnrollmentOf(stableID, didKey, registry.now())
+}
+
+// ReceivedAddressIDTreeEnrollment reads enrollment at the addressed sender's
+// registry after ordinary sender verification. The address selects the key
+// registry; only its fresh, subject-bound key response selects an ID domain.
+func (c *Client) ReceivedAddressIDTreeEnrollment(ctx context.Context, address, stableID, didKey string) IDTreeEnrollmentResult {
+	unknown := IDTreeEnrollmentResult{State: "unknown"}
+	chain, ok := c.resolver.(*ChainResolver)
+	if !ok || chain.Registry == nil {
+		return unknown
+	}
+	domain, name, ok := splitRegistryAddress(address)
+	if !ok {
+		return unknown
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	registry := chain.Registry
+	resolved, err := registry.resolveAddress(ctx, domain, name)
+	if err != nil || resolved.response.DIDAW != stableID {
+		return unknown
+	}
+	reader := NewAWIDRegistryClient(registry.HTTPClient, registry.DNSResolver)
+	reader.Now = registry.Now
+	key, err := reader.ResolveKeyAt(ctx, resolved.authority.RegistryURL, stableID)
+	if err != nil {
+		return unknown
+	}
+	return key.IDTreeEnrollmentOf(stableID, didKey, registry.now())
 }

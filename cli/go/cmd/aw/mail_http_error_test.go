@@ -74,7 +74,7 @@ func TestAwMailSendConciseHTTPError(t *testing.T) {
 			}))
 			home := t.TempDir()
 			writeSelectionFixtureForTest(t, home, testSelectionFixture{AwebURL: server.URL, TeamID: "devteam:test.local", Alias: "gsk", WorkspaceID: "workspace-1", DID: self, Address: "test.local/gsk", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, SigningKey: priv, CreatedAt: "2026-05-02T00:00:00Z"})
-			run := exec.CommandContext(ctx, bin, "mail", "send", "--to", "alice", "--body", "fixture message")
+			run := exec.CommandContext(ctx, bin, "mail", "send", "--subject", "Test thread", "--to", "alice", "--body", "fixture message")
 			run.Env = append(testCommandEnv(home), "AWEB_URL="+server.URL, "AW_TRACE=0")
 			run.Dir = home
 			out, err := run.CombinedOutput()

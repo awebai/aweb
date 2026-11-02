@@ -38,18 +38,21 @@ type teamInviteOutput struct {
 	Status        string `json:"status"`
 	InviteID      string `json:"invite_id"`
 	Token         string `json:"token"`
+	ExpiresAt     string `json:"expires_at,omitempty"`
 	PorcelainJoin bool   `json:"-"`
 }
 
 type teamAcceptInviteOutput struct {
-	HarnessSetup   *joinHarnessResult `json:"harness_setup,omitempty"`
-	Status         string             `json:"status"`
-	TeamID         string             `json:"team_id"`
-	Alias          string             `json:"alias"`
-	CertPath       string             `json:"cert_path"`
-	Connected      *bool              `json:"connected,omitempty"`
-	AwebURL        string             `json:"aweb_url,omitempty"`
-	ConnectCommand string             `json:"connect_command,omitempty"`
+	IDRegistration string              `json:"id_registration,omitempty"`
+	Responsibility *awid.IDChainResult `json:"responsibility,omitempty"`
+	HarnessSetup   *joinHarnessResult  `json:"harness_setup,omitempty"`
+	Status         string              `json:"status"`
+	TeamID         string              `json:"team_id"`
+	Alias          string              `json:"alias"`
+	CertPath       string              `json:"cert_path"`
+	Connected      *bool               `json:"connected,omitempty"`
+	AwebURL        string              `json:"aweb_url,omitempty"`
+	ConnectCommand string              `json:"connect_command,omitempty"`
 }
 
 type teamAddMemberOutput struct {
@@ -231,6 +234,8 @@ type acceptedTeamInvite struct {
 }
 
 type teamAcceptInviteOptions struct {
+	Registry     *awid.RegistryClient
+	TXTResolver  awid.TXTResolver
 	IdentityHome string
 	Name         string
 	Address      string
@@ -397,9 +402,10 @@ var teamAcceptInviteCmd = &cobra.Command{
 	Use:         "accept-invite [token]",
 	Short:       "Accept a team invite and receive a membership certificate",
 	Long: "Accept a team invite and receive a membership certificate.\n\n" +
-		"Pass the token positionally or use --token-stdin (never both). Stdin is read\n" +
-		"to EOF, up to 65536 bytes, and must contain one token line; surrounding\n" +
-		"whitespace is trimmed. Close the pipe after writing the token.\n\n" +
+		"Pass the token positionally, or read it with --token-file or --token-stdin\n" +
+		"(only one). The file or stdin is read to EOF, up to 65536 bytes, and must\n" +
+		"contain one token line; surrounding whitespace is trimmed. Close the pipe\n" +
+		"after writing the token.\n\n" +
 		"Scope is explicit: --local is the default, and --global reuses the existing\n" +
 		"self-custodial global identity in this workspace. --address never selects\n" +
 		"global scope; pass --global when presenting an existing owned address.\n\n" +
@@ -422,10 +428,9 @@ var teamAcceptInviteCmd = &cobra.Command{
 		"`aw id team request`, have the controller run `aw id team add-member`, then\n" +
 		"install with `aw id team fetch-cert` on the joining machine.",
 	Args: func(cmd *cobra.Command, args []string) error {
-		fromStdin, _ := cmd.Flags().GetBool("token-stdin")
-		if fromStdin {
+		if teamJoinTokenFromFlags(cmd) {
 			if len(args) != 0 {
-				return usageError("--token-stdin cannot be combined with a positional token")
+				return usageError("give the invite token as an argument or through --token-file or --token-stdin, not both")
 			}
 			return nil
 		}
@@ -569,6 +574,7 @@ func init() {
 	markDeprecatedHiddenFlag(teamInviteCmd, "persistent", "member-global")
 	teamCmd.AddCommand(teamInviteCmd)
 
+	teamAcceptInviteCmd.Flags().String("token-file", "", "Read the invite token from this file instead of an argument")
 	teamAcceptInviteCmd.Flags().Bool("token-stdin", false, "Read one invite token from stdin through EOF (max 65536 bytes)")
 	teamAcceptInviteCmd.Flags().StringVar(&teamAcceptAlias, "name", "", "Member name for the accepting agent (defaults to identity name)")
 	teamAcceptInviteCmd.Flags().StringVar(&teamAcceptAlias, "alias", "", "Deprecated alias for --name")
@@ -774,30 +780,50 @@ func runTeamInviteWithOutput(cmd *cobra.Command, args []string, porcelainJoin bo
 			return err
 		}
 	}
-	var inviteID, token string
+	var inviteID, token, expiresAt string
 	if hasTeamKey {
 		inviteID, token, err = createTeamInviteToken(domain, team, registryURL, awebURL, localInvite)
 		if err != nil {
 			return err
 		}
 	} else if strings.TrimSpace(awebURL) != "" {
-		inviteID, token, err = createHostedTeamInviteToken(workingDir, awid.BuildTeamID(domain, team), localInvite)
+		created, err := createHostedTeamInvite(workingDir, "", awid.BuildTeamID(domain, team), localInvite)
 		if err != nil {
 			return err
 		}
+		inviteID, token, expiresAt = strings.TrimSpace(created.InviteID), strings.TrimSpace(created.Token), strings.TrimSpace(created.ExpiresAt)
 	} else {
 		inviteID, token, err = createTeamInviteToken(domain, team, registryURL, awebURL, localInvite)
 		if err != nil {
 			return err
 		}
 	}
+	if !jsonFlag {
+		fmt.Fprintln(cmd.ErrOrStderr(), teamInviteTokenWarning(expiresAt))
+	}
 	printOutput(teamInviteOutput{
 		Status:        "created",
 		InviteID:      inviteID,
 		Token:         token,
+		ExpiresAt:     expiresAt,
 		PorcelainJoin: porcelainJoin,
 	}, formatTeamInvite)
 	return nil
+}
+
+// teamInviteTokenWarning goes to stderr with the human output, so the
+// invite's output is unchanged; --json output carries expires_at and writes
+// nothing to stderr.
+// It names only the flags that the printed join command has, and the expiry
+// when the invite carries one; a local invite records none and is valid
+// until it is used.
+func teamInviteTokenWarning(expiresAt string) string {
+	validity := "until it is used"
+	if expiresAt = strings.TrimSpace(expiresAt); expiresAt != "" {
+		validity = "until it is used or until " + expiresAt
+	}
+	return "Warning: the invite token below is a credential: whoever holds it can join the team " + validity + ". " +
+		"Share it privately. On the joining side, save it to a file and run the command below with --token-file, or pipe it to --token-stdin, so it stays out of shell history."
 }
 
 var errTeamInviteTargetHasNoActiveTeam = errors.New("team invite target has no active team")
@@ -996,56 +1022,92 @@ func awebURLForTeamInviteAt(workingDir, identityHome, teamID string) string {
 
 const inviteTokenStdinLimit = 64 * 1024
 
-func readInviteTokenStdin(reader io.Reader) (string, error) {
+// readInviteToken reads one invite token from source. Its refusals never
+// repeat what was read, which may be a credential.
+func readInviteToken(reader io.Reader, source string) (string, error) {
 	data, err := io.ReadAll(io.LimitReader(reader, inviteTokenStdinLimit+1))
 	if err != nil {
-		return "", usageError("cannot read invite token from stdin")
+		return "", usageError("cannot read invite token from %s", source)
 	}
 	if len(data) > inviteTokenStdinLimit {
-		return "", usageError("invite token stdin exceeds 65536 bytes")
+		return "", usageError("invite token %s exceeds 65536 bytes", source)
 	}
 	token := strings.TrimSpace(string(data))
 	if token == "" {
-		return "", usageError("invite token stdin is empty")
+		return "", usageError("invite token %s is empty", source)
 	}
 	if strings.ContainsAny(token, "\r\n") {
-		return "", usageError("stdin must contain one token line")
+		return "", usageError("%s must contain one token line", source)
 	}
 	// All supported wire formats are unpadded base64url or aw_inv_ tokens.
 	// Validate before the acceptance path can write identity state. Never expose
 	// decoder errors, which can include bytes from the supplied secret.
 	for _, c := range token {
 		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
-			return "", usageError("invalid invite token on stdin")
+			return "", usageError("invalid invite token on %s", source)
 		}
 	}
 	if awid.IsHostedSpawnInviteToken(token) {
 		if len(token) <= len("aw_inv_") {
-			return "", usageError("invalid invite token on stdin")
+			return "", usageError("invalid invite token on %s", source)
 		}
 	} else if _, err := awconfig.DecodeInviteToken(token); err != nil {
-		return "", usageError("invalid invite token on stdin")
+		return "", usageError("invalid invite token on %s", source)
 	}
 	if _, _, err := decodeJoinToken(token); err != nil {
-		return "", usageError("invalid invite token on stdin")
+		return "", usageError("invalid invite token on %s", source)
 	}
 	return token, nil
 }
 
-func runTeamAcceptInvite(cmd *cobra.Command, args []string) error {
+// teamJoinTokenArgs returns the invite token argument for aw team join: the
+// positional token, or one read from --token-file or --token-stdin.
+func teamJoinTokenArgs(cmd *cobra.Command, args []string) ([]string, error) {
+	path, _ := cmd.Flags().GetString("token-file")
 	fromStdin, _ := cmd.Flags().GetBool("token-stdin")
+	path = strings.TrimSpace(path)
+	if path == "" && !fromStdin {
+		return args, nil
+	}
+	if path != "" && fromStdin {
+		return nil, usageError("--token-file and --token-stdin cannot be used together")
+	}
+	if len(args) != 0 {
+		return nil, usageError("give the invite token as an argument or through --token-file or --token-stdin, not both")
+	}
 	if fromStdin {
-		// Keep the token in process memory; never construct a child command argv.
-		token, err := readInviteTokenStdin(cmd.InOrStdin())
+		token, err := readInviteToken(cmd.InOrStdin(), "stdin")
 		if err != nil {
-			return err
+			return nil, err
 		}
-		args = []string{token}
+		return []string{token}, nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, usageError("cannot open --token-file %s", path)
+	}
+	defer file.Close()
+	token, err := readInviteToken(file, "--token-file")
+	if err != nil {
+		return nil, err
+	}
+	return []string{token}, nil
+}
+
+func runTeamAcceptInvite(cmd *cobra.Command, args []string) error {
+	// Keep the token in process memory; never construct a child command argv.
+	args, err := teamJoinTokenArgs(cmd, args)
+	if err != nil {
+		return err
 	}
 	return runTeamAcceptInviteWithConnect(cmd, args, false)
 }
 
 func runTeamHumanJoin(cmd *cobra.Command, args []string) error {
+	args, err := teamJoinTokenArgs(cmd, args)
+	if err != nil {
+		return err
+	}
 	if err := validateTeamJoinArgs(cmd, args); err != nil {
 		return err
 	}
@@ -1071,14 +1133,14 @@ func runTeamAcceptInviteWithConnect(cmd *cobra.Command, args []string, connectWo
 	if home.Source == awconfig.IdentityHomeEnvVar && acceptScope == awid.IdentityModeLocal {
 		return usageError("local identity creation requires an explicit fresh --identity-home target; refusing to change inherited identity home %s", home.Root)
 	}
-	if home.External() && acceptScope == awid.IdentityModeLocal {
-		if err := ensureExternalLocalAcceptHomeAvailable(home.Root); err != nil {
-			return err
-		}
-	}
 	rawToken, inviteAwebURL, err := decodeJoinToken(args[0])
 	if err != nil {
 		return err
+	}
+	if home.External() && acceptScope == awid.IdentityModeLocal && !canResumeTeamInviteIDChild(rawToken, home.Root) {
+		if err := ensureExternalLocalAcceptHomeAvailable(home.Root); err != nil {
+			return err
+		}
 	}
 	accepted, err := acceptAndStoreTeamInvite(workingDir, rawToken, teamAcceptInviteOptions{
 		IdentityHome: externalIdentityHomeRoot(home),
@@ -1648,6 +1710,18 @@ func createTeamInviteToken(domain, team, registryURL, awebURL string, local bool
 }
 
 func createTeamInviteTokenWithOperation(domain, team, registryURL, awebURL string, local bool, operationID string) (string, string, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", "", err
+	}
+	home, err := identityHomeForDir(wd)
+	if err != nil {
+		return "", "", err
+	}
+	return createTeamInviteTokenAt(domain, team, registryURL, awebURL, local, operationID, wd, home.Root)
+}
+
+func createTeamInviteTokenAt(domain, team, registryURL, awebURL string, local bool, operationID, workingDir, identityHome string) (string, string, error) {
 	domain = awconfig.NormalizeDomain(domain)
 	team = strings.ToLower(strings.TrimSpace(team))
 	registryURL = strings.TrimSpace(registryURL)
@@ -1689,6 +1763,13 @@ func createTeamInviteTokenWithOperation(domain, team, registryURL, awebURL strin
 		OperationID:   operationID,
 		CreatedAt:     time.Now().UTC().Format(time.RFC3339),
 	}
+	if local {
+		link, err := prepareTeamInviteIDChild(context.Background(), idChildOptions{WorkingDir: workingDir, IdentityHome: identityHome, Now: time.Now})
+		if err != nil {
+			return "", "", err
+		}
+		invite.IDChild = link
+	}
 	if err := awconfig.SaveTeamInvite(invite); err != nil {
 		return "", "", err
 	}
@@ -1704,19 +1785,30 @@ func createHostedTeamInviteToken(workingDir, teamID string, localMember bool) (s
 }
 
 func createHostedTeamInviteTokenAt(workingDir, identityHome, teamID string, localMember bool) (string, string, error) {
+	created, err := createHostedTeamInvite(workingDir, identityHome, teamID, localMember)
+	if err != nil {
+		return "", "", err
+	}
+	return strings.TrimSpace(created.InviteID), strings.TrimSpace(created.Token), nil
+}
+
+// createHostedTeamInvite creates a single-use hosted invite and returns the
+// service's response, which carries its expiry.
+func createHostedTeamInvite(workingDir, identityHome, teamID string, localMember bool) (*awid.SpawnCreateInviteResponse, error) {
 	if !localMember {
-		return "", "", usageError("--member-global is not supported for hosted team invites")
+		return nil, usageError("--member-global is not supported for hosted team invites")
 	}
 	var client *aweb.Client
+	var selected *awconfig.Selection
 	var err error
 	if strings.TrimSpace(identityHome) != "" {
 		home := awconfig.IdentityHome{Root: identityHome, Source: awconfig.IdentityHomeFlag}
-		client, _, err = resolveClientSelectionAtIdentityHomeWithTeamOverride(workingDir, teamID, home)
+		client, selected, err = resolveClientSelectionAtIdentityHomeWithTeamOverride(workingDir, teamID, home)
 	} else {
-		client, _, err = resolveClientSelectionForDirWithTeamOverride(workingDir, teamID)
+		client, selected, err = resolveClientSelectionForDirWithTeamOverride(workingDir, teamID)
 	}
 	if err != nil {
-		return "", "", fmt.Errorf(
+		return nil, fmt.Errorf(
 			"no local team controller key for %s and cloud-hosted invite authority is unavailable: %w",
 			teamID,
 			err,
@@ -1724,17 +1816,42 @@ func createHostedTeamInviteTokenAt(workingDir, identityHome, teamID string, loca
 	}
 	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
+	chain, err := awconfig.LoadInstalledIDChain(selected.IdentityHome)
+	if err != nil {
+		return nil, err
+	}
+	var bundle map[string]any
+	if chain != nil {
+		bundle = chain.Bundle
+		certificates := bundle["certificates"].([]any)
+		leaf := certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)
+		subject := selected.StableID
+		if subject == "" {
+			subject = selected.DID
+		}
+		if leaf["id"] != subject || leaf["kind"] != "agent" {
+			return nil, errors.New("hosted invites require the selected agent's own chain")
+		}
+	}
 	created, err := client.CreateSpawnInvite(ctx, &awid.SpawnCreateInviteRequest{
+		IDChain:    bundle,
 		AccessMode: "open",
 		MaxUses:    1,
 	})
 	if err != nil {
-		return "", "", fmt.Errorf("create hosted team invite: %w", err)
+		return nil, fmt.Errorf("create hosted team invite: %w", err)
+	}
+	if chain != nil {
+		certificates := bundle["certificates"].([]any)
+		leaf := certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)
+		if created.IDTree == nil || created.IDTree.V != 1 || created.IDTree.IssuerID != leaf["id"] || created.IDTree.Domain != leaf["domain"] || created.IDTree.ChildKind != "agent" || (created.IDTree.Mode != "host_managed" && created.IDTree.Mode != "self_custodial") {
+			return nil, errors.New("hosted invite did not retain the selected agent issuer binding")
+		}
 	}
 	if strings.TrimSpace(created.Token) == "" {
-		return "", "", fmt.Errorf("hosted team invite response is missing token")
+		return nil, fmt.Errorf("hosted team invite response is missing token")
 	}
-	return strings.TrimSpace(created.InviteID), strings.TrimSpace(created.Token), nil
+	return created, nil
 }
 
 func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInviteOptions) (*acceptedTeamInvite, error) {
@@ -1773,6 +1890,21 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 	if err != nil {
 		return nil, fmt.Errorf("invite not found (token may be invalid or expired): %w", err)
 	}
+	if invite.IDChild != nil {
+		dir, err := awconfig.DefaultTeamInvitesDir()
+		if err != nil {
+			return nil, err
+		}
+		lock, err := awconfig.LockExclusive(filepath.Join(dir, invite.InviteID+".lock"))
+		if err != nil {
+			return nil, err
+		}
+		defer lock.Close()
+		invite, err = awconfig.LoadTeamInvite(decoded.InviteID)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if invite.Secret != decoded.Secret {
 		return nil, fmt.Errorf("invalid invite token: secret mismatch")
 	}
@@ -1795,6 +1927,17 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
 
+	issueID := false
+	if scope == awid.IdentityModeLocal && invite.IDChild != nil {
+		home := opts.IdentityHome
+		if home == "" {
+			home = awconfig.WorktreeIdentityHome(workingDir)
+		}
+		issueID, err = bindTeamInviteIDChild(ctx, invite, home)
+		if err != nil {
+			return nil, err
+		}
+	}
 	plan, err := resolveTeamMemberEnrollment(ctx, teamMemberEnrollmentResolveOptions{
 		WorkingDir:        workingDir,
 		IdentityHome:      opts.IdentityHome,
@@ -1810,6 +1953,15 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 	})
 	if err != nil {
 		return nil, err
+	}
+	if issueID {
+		if invite.IDChild.ChildDIDKey != "" && invite.IDChild.ChildDIDKey != plan.MemberDIDKey {
+			return nil, fmt.Errorf("invite recipient key changed; restore the original identity")
+		}
+		invite.IDChild.ChildDIDKey = plan.MemberDIDKey
+		if err := awconfig.SaveTeamInvite(invite); err != nil {
+			return nil, err
+		}
 	}
 	var appliedDefaultClaim *awid.AtomicAddressClaimResult
 	if plan.DefaultClaim != nil {
@@ -1837,6 +1989,11 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 
 	if err := registry.RegisterCertificate(ctx, registryURL, invite.Domain, invite.TeamName, cert, teamKey); err != nil {
 		registerErr := fmt.Errorf("register certificate at registry: %w", err)
+		if isAliasConflict(err) {
+			// The invite is deleted only after a successful accept, so it
+			// still works with another name.
+			registerErr = &plainRefusal{text: nameTakenText(plan.Name, teamID, "--name") + " Your invite is still valid.", err: err}
+		}
 		return nil, rollbackDefaultAddressClaimAfterCertificateFailure(
 			registry,
 			registryURL,
@@ -1851,6 +2008,18 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 		return nil, err
 	}
 
+	if issueID {
+		home := opts.IdentityHome
+		if home == "" {
+			home = awconfig.WorktreeIdentityHome(workingDir)
+		}
+		if err := writeExternalLocalIdentityStateIfNeeded(home, cert); err != nil {
+			return nil, err
+		}
+		if err := completeTeamInviteIDChild(ctx, invite, workingDir, home); err != nil {
+			return nil, fmt.Errorf("team membership certificate saved; ID issuance pending (retry this invite in the same identity home): %w", err)
+		}
+	}
 	if err := awconfig.DeleteTeamInvite(invite.InviteID); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to delete consumed invite %s: %v\n", invite.InviteID, err)
 	}
@@ -1959,6 +2128,27 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 		return nil, err
 	}
 
+	home, err := identityHomeForTarget(workingDir, opts.IdentityHome)
+	if err != nil {
+		return nil, err
+	}
+	recoveryPath, err := awconfig.IdentityHomePath(home, hostedInviteRecoveryFile)
+	if err != nil {
+		return nil, err
+	}
+	if err := pathpreflight.PreflightFile(recoveryPath+".lock", "hosted invite recovery lock", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
+		return nil, err
+	}
+	lock, err := awconfig.TryLockExclusive(recoveryPath + ".lock")
+	if err != nil {
+		return nil, fmt.Errorf("hosted invite acceptance already in progress: %w", err)
+	}
+	defer lock.Close()
+	prior, err := loadHostedInviteCreation(recoveryPath)
+	if err != nil {
+		return nil, err
+	}
+
 	var pub ed25519.PublicKey
 	var signingKey ed25519.PrivateKey
 	var didKey string
@@ -1976,7 +2166,18 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 		// Persist the generated signing key to the home BEFORE calling AC, so a retry
 		// after AC has committed presents the SAME key and hits AC's idempotent
 		// re-mint instead of generating a new key (which AC 409s as a mismatch).
-		pub, signingKey, err = hostedAcceptSigningKeyAt(workingDir, opts.IdentityHome)
+		if prior != nil {
+			keyPath, pathErr := awconfig.IdentityHomePath(home, "signing.key")
+			if pathErr != nil {
+				return nil, pathErr
+			}
+			signingKey, err = awid.LoadSigningKey(keyPath)
+			if err == nil {
+				pub = signingKey.Public().(ed25519.PublicKey)
+			}
+		} else {
+			pub, signingKey, err = hostedAcceptSigningKeyAt(workingDir, opts.IdentityHome)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -1995,9 +2196,39 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 
 	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
+	material := workspaceTeamIdentityMaterial{SigningKey: signingKey, PublicKey: pub, DIDKey: didKey, StableID: stableID, IdentityScope: scope}
+	creation, err := prepareHostedInviteCreation(ctx, prior, strings.TrimSpace(token), awebURL, alias, memberAddress, opts.NoAddress, material)
+	if err != nil {
+		return nil, err
+	}
+	if err := creation.save(recoveryPath); err != nil {
+		return nil, err
+	}
+	var treeRequest *awid.IDTreeCreationRequest
+	if creation.ResponseJSON == "" {
+		treeRequest, err = creation.prepareRequest(home.Root, material)
+		if err != nil {
+			return nil, err
+		}
+		if err := creation.save(recoveryPath); err != nil {
+			return nil, err
+		}
+	}
+	registry := opts.Registry
+	if treeRequest != nil && treeRequest.IDChain != nil {
+		if registry == nil {
+			registry, err = newConfiguredRegistryClient(nil, awebURL)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if _, err := finishHostedIDTree(ctx, creation.Tree, awid.IDTreeCreationResponse{FieldsPresent: true, IDChain: awid.ReceivedIDChain(treeRequest.IDChain)}, material, home.Root, registry, opts.TXTResolver); err != nil {
+			return nil, fmt.Errorf("native invite child chain is not currently valid: %w", err)
+		}
+	}
 	registryURL := ""
 	var atomicAddressClaim *awid.AtomicAddressClaimIdentityProof
-	if scope == awid.IdentityModeGlobal && memberAddress != "" {
+	if creation.ResponseJSON == "" && scope == awid.IdentityModeGlobal && memberAddress != "" {
 		registry, err := newConfiguredRegistryClient(nil, awebURL)
 		if err != nil {
 			return nil, err
@@ -2039,6 +2270,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 	}
 
 	req := &awid.SpawnAcceptInviteRequest{
+		IDTree:        treeRequest,
 		Token:         strings.TrimSpace(token),
 		DID:           didKey,
 		PublicKey:     base64.StdEncoding.EncodeToString(pub),
@@ -2053,7 +2285,13 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 	} else {
 		req.Alias = alias
 	}
-	resp, err := client.AcceptSpawnInvite(ctx, req)
+	var resp *awid.SpawnAcceptInviteResponse
+	if creation.ResponseJSON != "" {
+		resp = &awid.SpawnAcceptInviteResponse{}
+		err = json.Unmarshal([]byte(creation.ResponseJSON), resp)
+	} else {
+		resp, err = client.AcceptSpawnInvite(ctx, req)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("accept hosted team invite: %w", err)
 	}
@@ -2061,9 +2299,46 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 	if err != nil {
 		return nil, err
 	}
-	home, err := identityHomeForTarget(workingDir, opts.IdentityHome)
-	if err != nil {
+	if cert.Team != creation.TeamID {
+		return nil, errors.New("hosted membership differs from the preview-selected team")
+	}
+	if err := creation.Tree.retainResponse(resp.IDTreeCreationResponse); err != nil {
 		return nil, err
+	}
+	if creation.Tree.NativeChainHeader != "" {
+		header, headerErr := awid.EncodeIDChainHeader(map[string]any(resp.IDChain))
+		if headerErr != nil || header != creation.Tree.NativeChainHeader || resp.RegistrationRequest != nil {
+			return nil, errors.New("hosted invite changed the original native child chain")
+		}
+	}
+	if creation.ResponseJSON == "" {
+		raw, marshalErr := json.Marshal(resp)
+		if marshalErr != nil {
+			return nil, marshalErr
+		}
+		creation.ResponseJSON = string(raw)
+	}
+	if err := creation.save(recoveryPath); err != nil {
+		return nil, err
+	}
+	if registry == nil && resp.IDChain != nil {
+		registry, err = newConfiguredRegistryClient(nil, awebURL)
+		if err != nil {
+			return nil, err
+		}
+	}
+	responsibility, err := finishHostedIDTree(ctx, creation.Tree, resp.IDTreeCreationResponse, material, home.Root, registry, opts.TXTResolver)
+	if err != nil {
+		return nil, fmt.Errorf("hosted membership accepted; identity attribution incomplete, retry the same invite: %w", err)
+	}
+	registration := "unknown"
+	if responsibility != nil {
+		registration = "registered"
+		if scope == awid.IdentityModeLocal {
+			registration = "not_required"
+		}
+	} else {
+		responsibility = &awid.IDChainResult{Outcome: "unknown", Reason: "legacy_no_chain"}
 	}
 	if scope == awid.IdentityModeGlobal {
 		if err := persistLocalSigningKeyAndCertificateAt(workingDir, home.Root, signingKey, cert); err != nil {
@@ -2078,12 +2353,17 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 		return nil, err
 	}
 
+	if err := os.Remove(recoveryPath); err != nil {
+		return nil, err
+	}
 	return &acceptedTeamInvite{
 		Output: &teamAcceptInviteOutput{
-			Status:   "accepted",
-			TeamID:   cert.Team,
-			Alias:    strings.TrimSpace(cert.Alias),
-			CertPath: awconfig.TeamCertificateRelativePath(cert.Team),
+			IDRegistration: registration,
+			Responsibility: responsibility,
+			Status:         "accepted",
+			TeamID:         cert.Team,
+			Alias:          strings.TrimSpace(cert.Alias),
+			CertPath:       awconfig.TeamCertificateRelativePath(cert.Team),
 		},
 		Certificate: cert,
 		AwebURL:     serverURL,
@@ -2189,8 +2469,10 @@ func ensureHostedAcceptTargetClean(workingDir, identityHome string) error {
 	if err != nil {
 		return err
 	}
-	if len(entries) > 0 {
-		return usageError("refusing to overwrite non-empty identity home %s", root)
+	for _, entry := range entries {
+		if entry.Name() != hostedInviteRecoveryFile+".lock" {
+			return usageError("refusing to overwrite non-empty identity home %s", root)
+		}
 	}
 	return nil
 }
@@ -3462,9 +3744,12 @@ func loadTeamCleanupCloudNamespaceKey(ctx context.Context, domain, path string) 
 		return nil, err
 	}
 	controllerDID := awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))
-	authority, err := awid.VerifyExactDomainAuthority(ctx, teamCleanupCloudTXTResolver, domain)
+	authority, err := awid.DiscoverAuthoritativeRegistry(ctx, teamCleanupCloudTXTResolver, domain)
 	if err != nil {
 		return nil, fmt.Errorf("verify DNS authority for %s: %w", domain, err)
+	}
+	if authority.Inherited || authority.DNSName != awid.AWIDTXTName(domain) {
+		return nil, fmt.Errorf("no own-domain TXT record found at %s", awid.AWIDTXTName(domain))
 	}
 	if strings.TrimSpace(authority.ControllerDID) != controllerDID {
 		return nil, fmt.Errorf("local namespace controller key for %s does not match DNS controller (local=%s, dns=%s)", domain, controllerDID, strings.TrimSpace(authority.ControllerDID))
@@ -3999,6 +4284,11 @@ func bootstrapLocalTeamMemberWithScope(
 		return nil, err
 	}
 	if err := registry.RegisterCertificate(ctx, resolvedRegistryURL, awconfig.NormalizeDomain(domain), strings.ToLower(strings.TrimSpace(teamName)), cert, registration.TeamKey); err != nil {
+		if isAliasConflict(err) {
+			// aw init's local and guided paths call this, and --name sets
+			// their name.
+			return nil, &plainRefusal{text: nameTakenText(strings.TrimSpace(alias), registration.TeamID, "--name"), err: err}
+		}
 		return nil, fmt.Errorf("register certificate at registry: %w", err)
 	}
 	return &localTeamBootstrapResult{

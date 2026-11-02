@@ -98,9 +98,7 @@ func executeReconnectPath(req guidedOnboardingRequest) (*guidedOnboardingResult,
 	if err != nil {
 		return nil, err
 	}
-	printOutput(result, formatConnect)
-
-	if err := runGuidedPostInitSetup(req); err != nil {
+	if err := printInitOutcome(result, &initResult{ServerName: hostFromBaseURL(result.AwebURL), ExportBaseURL: result.AwebURL, Alias: strings.TrimSpace(result.Alias), Path: initPathReconnect}, req.WorkingDir, guidedSetup(req)); err != nil {
 		return nil, err
 	}
 	return &guidedOnboardingResult{}, nil
@@ -183,9 +181,7 @@ func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, er
 			return nil, err
 		}
 	}
-	printOutput(result, formatConnect)
-
-	if err := runGuidedPostInitSetup(req); err != nil {
+	if err := printInitOutcome(result, &initResult{ServerName: hostFromBaseURL(result.AwebURL), ExportBaseURL: result.AwebURL, Alias: strings.TrimSpace(result.Alias), Path: initPathNewTeam}, req.WorkingDir, guidedSetup(req)); err != nil {
 		return nil, err
 	}
 	if req.AskPostCreateSetup && !req.NonInteractive {
@@ -259,8 +255,7 @@ func executeBYODPath(req guidedOnboardingRequest) (*guidedOnboardingResult, erro
 	if err != nil {
 		return nil, err
 	}
-	printOutput(result, formatConnect)
-	if err := runGuidedPostInitSetup(req); err != nil {
+	if err := printInitOutcome(result, &initResult{ServerName: hostFromBaseURL(result.AwebURL), ExportBaseURL: result.AwebURL, Alias: strings.TrimSpace(result.Alias), Path: initPathNewTeam}, req.WorkingDir, guidedSetup(req)); err != nil {
 		return nil, err
 	}
 	return &guidedOnboardingResult{}, nil
@@ -275,30 +270,50 @@ func guidedOnboardingHasReconnectState(workingDir string) bool {
 	return err == nil && len(stored) > 0
 }
 
+// guidedSetup runs the wizard's setup after connecting for printInitOutcome.
+func guidedSetup(req guidedOnboardingRequest) func() (initSetupDone, error) {
+	return func() (initSetupDone, error) {
+		return runGuidedSetup(req)
+	}
+}
+
 func runGuidedPostInitSetup(req guidedOnboardingRequest) error {
+	_, err := runGuidedSetup(req)
+	return err
+}
+
+// runGuidedSetup runs the wizard's setup after connecting and returns what it
+// actually did.
+func runGuidedSetup(req guidedOnboardingRequest) (initSetupDone, error) {
+	var done initSetupDone
 	repoRoot := resolveRepoRoot(req.WorkingDir)
 	if req.InjectAgentDocs && !req.DoNotTouchAgentsMD {
-		printInjectDocsResult(guidedOnboardingInjectDocs(repoRoot))
+		docs := guidedOnboardingInjectDocs(repoRoot)
+		printInjectDocsResult(docs)
+		done.DocsInjected = docsInjected(docs)
 	}
 	if !req.AskPostCreateSetup {
-		return nil
+		return done, nil
 	}
 	if channel, err := promptYesNoWithIO(
 		"Set up Claude Code channel for real-time coordination?\n"+
 			"  (Alternative: install the plugin with claude plugin install aweb-channel@awebai-marketplace)",
 		true, req.PromptIn, req.PromptOut,
 	); err == nil && channel {
-		printChannelMCPResult(guidedOnboardingSetupChannel(repoRoot, false))
+		channelResult := guidedOnboardingSetupChannel(repoRoot, false)
+		printChannelMCPResult(channelResult)
+		done.ChannelSetUp = channelReady(channelResult)
+		done.ChannelGuidancePrinted = channelResult != nil
 	} else if err != nil {
-		return err
+		return done, err
 	} else if !channel {
 		if hooks, err := promptYesNoWithIO("Enable Claude Code polling fallback? (chat only, after tool calls; no mail or idle wake-ups)", false, req.PromptIn, req.PromptOut); err == nil && hooks {
 			printClaudeHooksResult(guidedOnboardingSetupHooks(repoRoot, false))
 		} else if err != nil {
-			return err
+			return done, err
 		}
 	}
-	return nil
+	return done, nil
 }
 
 func promptYesNoWithIO(label string, defaultYes bool, in io.Reader, out io.Writer) (bool, error) {

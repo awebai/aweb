@@ -20,7 +20,9 @@ func ComputeDIDKey(pub ed25519.PublicKey) string {
 	return didKeyPrefix + base58.Encode(buf)
 }
 
-// ExtractPublicKey decodes a did:key DID string to an Ed25519 public key.
+// ExtractPublicKey decodes a did:key DID string to an Ed25519 public key. A
+// small-order, non-canonical or mixed-order key is refused: anyone can sign
+// as one.
 func ExtractPublicKey(did string) (ed25519.PublicKey, error) {
 	if !strings.HasPrefix(did, didKeyPrefix) {
 		return nil, fmt.Errorf("invalid did:key: missing prefix %q", didKeyPrefix)
@@ -40,7 +42,11 @@ func ExtractPublicKey(did string) (ed25519.PublicKey, error) {
 		return nil, fmt.Errorf("invalid did:key: expected Ed25519 multicodec 0xed01, got 0x%02x%02x", decoded[0], decoded[1])
 	}
 
-	return ed25519.PublicKey(decoded[2:]), nil
+	key := ed25519.PublicKey(decoded[2:])
+	if !idCertificatePrimePoint(key) {
+		return nil, fmt.Errorf("invalid did:key: not a canonical prime-order Ed25519 public key")
+	}
+	return key, nil
 }
 
 // ComputeStableID derives the canonical did:aw stable identifier from an

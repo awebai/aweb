@@ -19,15 +19,21 @@ import (
 
 // connectOutput is the JSON output for `aw init` when using certificate auth.
 type connectOutput struct {
-	Status        string `json:"status"`
-	TeamID        string `json:"team_id"`
-	Alias         string `json:"alias"`
-	AwebURL       string `json:"aweb_url"`
-	AgentID       string `json:"-"`
-	WorkspaceID   string `json:"workspace_id,omitempty"`
-	StableID      string `json:"stable_id,omitempty"`
-	Address       string `json:"address,omitempty"`
-	IdentityScope string `json:"identity_scope,omitempty"`
+	IDRegistration string              `json:"id_registration,omitempty"`
+	Responsibility *awid.IDChainResult `json:"responsibility,omitempty"`
+	Status         string              `json:"status"`
+	TeamID         string              `json:"team_id"`
+	Alias          string              `json:"alias"`
+	AwebURL        string              `json:"aweb_url"`
+	AgentID        string              `json:"-"`
+	WorkspaceID    string              `json:"workspace_id,omitempty"`
+	StableID       string              `json:"stable_id,omitempty"`
+	Address        string              `json:"address,omitempty"`
+	IdentityScope  string              `json:"identity_scope,omitempty"`
+	// NextSteps are aw init's next steps for the path it took; Guide is the
+	// page that walks through them.
+	NextSteps []initNextStep `json:"next_steps,omitempty"`
+	Guide     string         `json:"guide,omitempty"`
 }
 
 // connectResponse is the server response from POST /v1/connect.
@@ -266,6 +272,10 @@ func postConnect(ctx context.Context, awebURL string, signingKey ed25519.Private
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		refusal := &awid.APIError{StatusCode: resp.StatusCode, Body: string(respBody)}
+		if text := connectNameRefusalText(awid.RefusalCode(refusal), cert); text != "" {
+			return nil, &plainRefusal{text: text, err: refusal}
+		}
 		return nil, fmt.Errorf("POST /v1/connect returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -274,6 +284,19 @@ func postConnect(ctx context.Context, awebURL string, signingKey ed25519.Private
 		return nil, fmt.Errorf("decode connect response: %w", err)
 	}
 	return &result, nil
+}
+
+// connectNameRefusalText tells a connect refused over its certificate's name,
+// or is "" for any other refusal. The certificate already carries the name, so
+// no flag of this workspace changes it.
+func connectNameRefusalText(code string, cert *awid.TeamCertificate) string {
+	switch code {
+	case "alias_active":
+		return fmt.Sprintf("The name %s is already used by another agent in %s. This workspace's certificate is for that name, so ask a team admin to free the name, or join again with a new invite and another --name.", cert.Alias, cert.Team)
+	case "alias_mismatch":
+		return fmt.Sprintf("This agent is already a member of %s under another name, so its certificate for the name %s cannot connect. Connect with its certificate for that other name, or ask a team admin to retire that membership first.", cert.Team, cert.Alias)
+	}
+	return ""
 }
 
 // hasCertificateForInit checks if at least one team certificate exists in the working directory.
@@ -338,5 +361,9 @@ func formatConnect(v any) string {
 	sb.WriteString(fmt.Sprintf("Team:        %s\n", out.TeamID))
 	sb.WriteString(fmt.Sprintf("Name:        %s\n", out.Alias))
 	sb.WriteString(fmt.Sprintf("Aweb URL:    %s\n", out.AwebURL))
+	if out.IDRegistration != "" {
+		sb.WriteString(fmt.Sprintf("ID registration: %s\n", out.IDRegistration))
+	}
+	sb.WriteString(formatInitNextSteps(out.NextSteps, true))
 	return sb.String()
 }

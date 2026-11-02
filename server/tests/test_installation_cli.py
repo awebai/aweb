@@ -80,7 +80,8 @@ async def test_cli_member_request_admin_install_update_and_refused_update_preser
 
     origin.publish(origin.manifest())
     code, out, error = await cli("install", origin.url)
-    assert code != 0 and "admin_required" in error, out + error
+    assert code != 0 and json.loads(out)["error"]["reason"] == "admin_required", out + error
+    assert "Ask a team administrator" in error
     assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.team_app_installs}}") == 0
     code, out, error = await cli("request", origin.url)
     assert code == 0, out + error
@@ -121,19 +122,21 @@ async def test_cli_member_request_admin_install_update_and_refused_update_preser
     await env.db.execute("DELETE FROM aweb.test_install_admins")
     origin.publish(origin.manifest(version="3.0.0"))
     code, out, error = await cli("update", "fixture")
-    assert code != 0 and "admin_required" in error, out + error
+    assert code != 0 and json.loads(out)["error"]["reason"] == "admin_required", out + error
+    assert "Ask a team administrator" in error
     assert path.read_bytes() == saved
     assert await env.db.fetch_value("SELECT generation FROM {{tables.team_app_installs}}") == 2
 
     # Team uninstall uses the selected resident authority and retains the
     # local bytes/approval, which may also serve another team.
     code, out, error = await cli("uninstall", "fixture")
-    assert code != 0 and "admin_required" in error, out + error
+    assert code != 0 and json.loads(out)["error"]["reason"] == "admin_required", out + error
+    assert "Ask a team administrator" in error
     assert path.read_bytes() == saved
     assert await env.db.fetch_value("SELECT state FROM {{tables.team_app_installs}}") == "active"
     await env.db.execute("INSERT INTO aweb.test_install_admins VALUES ($1,$2)", services.TEAM, env.actors["alice"].did)
     code, out, error = await cli("uninstall", "fixture", "--expected-generation", "1")
-    assert code != 0 and "generation_conflict" in error, out + error
+    assert code != 0 and json.loads(out)["error"]["reason"] == "generation_conflict", out + error
     code, out, error = await cli("uninstall", "fixture")
     assert code == 0, out + error
     retired = json.loads(out)

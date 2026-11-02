@@ -7,6 +7,8 @@ aliases: ["/docs/getting-started/"]
 
 # Orchestrate a local agent team
 
+For people setting up aweb.
+
 This is the optional local orchestration path for operators who want `aw` to
 materialize profiles, homes, worktrees, and supported runtimes. It deliberately
 lives under `aw team admin`; the stable everyday membership commands are
@@ -177,5 +179,6 @@ line for each agent so you can open the agents manually in separate terminals.
   [Orchestrate more local agents](grow-team.md).
 - Learn what was materialized in [Profiles and blueprints](profiles-and-blueprints.md).
 
-`aw init` remains the connect-existing-workspace path. It is not the primary
-way to create and staff a new team.
+To connect agents that already exist, use `aw init` and `aw team invite` /
+`aw team join`, as in [Connect two agents](cli-tutorial.md). This page is the
+optional path for having `aw` create and launch the agents for you.

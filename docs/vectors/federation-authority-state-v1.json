@@ -203,6 +203,7 @@
     {"reason": "recipient_identity_not_found", "detail": "recipient_identity_not_found", "http_status": 404, "retryable": false, "retry_after_required": false},
     {"reason": "recipient_address_did_mismatch", "detail": "recipient_address_did_mismatch", "http_status": 422, "retryable": false, "retry_after_required": false},
     {"reason": "recipient_current_key_mismatch", "detail": "recipient_current_key_mismatch", "http_status": 422, "retryable": false, "retry_after_required": false},
+    {"reason": "recipient_custodial_no_e2ee", "detail": "recipient_custodial_no_e2ee", "http_status": 422, "retryable": false, "retry_after_required": false},
     {"reason": "recipient_route_missing", "detail": "recipient_route_missing", "http_status": 424, "retryable": false, "retry_after_required": false},
     {"reason": "recipient_route_mismatch", "detail": "recipient_route_mismatch", "http_status": 422, "retryable": false, "retry_after_required": false},
     {"reason": "local_recipient_route_missing", "detail": "local_recipient_route_missing", "http_status": 404, "retryable": false, "retry_after_required": false},

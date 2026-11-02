@@ -1,6 +1,10 @@
 package wake
 
-import "time"
+import (
+	"time"
+
+	"github.com/awebai/aw/awid"
+)
 
 // Status is what `aw wake status` reports and what the daemon mirrors into
 // status.json so the CLI can answer while the daemon is down.
@@ -52,12 +56,15 @@ func (s *Status) ClassifyDaemonVersion() {
 
 // StreamStatus is one identity's event stream.
 type StreamStatus struct {
-	IdentityHome string    `json:"identity_home"`
-	TeamID       string    `json:"team_id,omitempty"`
-	Phase        string    `json:"phase"`
-	LastError    string    `json:"last_error,omitempty"`
-	UnreadCount  int       `json:"unread_count,omitempty"`
-	ConnectedAt  time.Time `json:"connected_at,omitempty"`
+	IdentityHome string `json:"identity_home"`
+	TeamID       string `json:"team_id,omitempty"`
+	Phase        string `json:"phase"`
+	LastError    string `json:"last_error,omitempty"`
+	// LastErrorDetail is LastError's stable description; LastError's wording
+	// is not a contract.
+	LastErrorDetail *awid.ErrorDetail `json:"last_error_detail,omitempty"`
+	UnreadCount     int               `json:"unread_count,omitempty"`
+	ConnectedAt     time.Time         `json:"connected_at,omitempty"`
 	// Admitted is false for a registration past the configured stream bound.
 	// Such a registration is reported here, never silently dropped (§4).
 	Admitted bool `json:"admitted"`
@@ -65,17 +72,20 @@ type StreamStatus struct {
 
 // ReceiveIdentityStatus is one broker-owned receive binding for an instance.
 type ReceiveIdentityStatus struct {
-	IdentityHome   string    `json:"identity_home"`
-	TeamID         string    `json:"team_id,omitempty"`
-	Label          string    `json:"label,omitempty"`
-	DeliveryOwner  string    `json:"delivery_owner,omitempty"`
-	EventClasses   []string  `json:"event_classes,omitempty"`
-	Controls       bool      `json:"controls,omitempty"`
-	StreamAdmitted bool      `json:"stream_admitted"`
-	StreamPhase    string    `json:"stream_phase,omitempty"`
-	StreamError    string    `json:"stream_error,omitempty"`
-	UnreadCount    int       `json:"unread_count,omitempty"`
-	ConnectedAt    time.Time `json:"connected_at,omitempty"`
+	IdentityHome   string   `json:"identity_home"`
+	TeamID         string   `json:"team_id,omitempty"`
+	Label          string   `json:"label,omitempty"`
+	DeliveryOwner  string   `json:"delivery_owner,omitempty"`
+	EventClasses   []string `json:"event_classes,omitempty"`
+	Controls       bool     `json:"controls,omitempty"`
+	StreamAdmitted bool     `json:"stream_admitted"`
+	StreamPhase    string   `json:"stream_phase,omitempty"`
+	StreamError    string   `json:"stream_error,omitempty"`
+	// StreamErrorDetail is StreamError's stable description; StreamError's
+	// wording is not a contract.
+	StreamErrorDetail *awid.ErrorDetail `json:"stream_error_detail,omitempty"`
+	UnreadCount       int               `json:"unread_count,omitempty"`
+	ConnectedAt       time.Time         `json:"connected_at,omitempty"`
 }
 
 // InstancePhase is a registration's lifecycle position.

@@ -377,6 +377,30 @@ func TestFourXXQuarantinesOneIdentityAndLeavesOthersStreaming(t *testing.T) {
 		t.Fatalf("the quarantine was not reported:\n%s", logs.all())
 	}
 	// The daemon is still serving: the healthy identity remains live.
+	for _, stream := range broker.Status().Streams {
+		if !strings.HasPrefix(stream.IdentityHome, badHome) {
+			if stream.LastErrorDetail != nil {
+				t.Fatalf("a live stream reports an error detail: %+v", stream.LastErrorDetail)
+			}
+			continue
+		}
+		if stream.LastErrorDetail == nil || stream.LastErrorDetail.Code != "http_error" || stream.LastErrorDetail.HTTPStatus != http.StatusUnauthorized || stream.LastError == "" {
+			t.Fatalf("quarantined stream error %q detail %+v", stream.LastError, stream.LastErrorDetail)
+		}
+	}
+}
+
+// A receive binding reports its stream's error as text and as the stable
+// detail the CLI's --json error envelope uses.
+func TestReceiveIdentityCarriesItsStreamErrorDetail(t *testing.T) {
+	home := tempHome(t, "receiver")
+	detail := &awid.ErrorDetail{Code: "http_error", HTTPStatus: 403, Detail: "grant revoked"}
+	instances := []InstanceStatus{{ReceiveIdentities: []ReceiveIdentityStatus{{IdentityHome: home + "/.aw"}}}}
+	enrichInstancesWithStreamStatus(instances, []StreamStatus{{IdentityHome: home + "/.aw", Phase: string(StreamQuarantined), LastError: "aweb: http 403", LastErrorDetail: detail}})
+	got := instances[0].ReceiveIdentities[0]
+	if got.StreamError != "aweb: http 403" || got.StreamErrorDetail != detail {
+		t.Fatalf("receive binding %+v", got)
+	}
 }
 
 // TestReconnectAfterAnOutageDeliversOnlySnapshotItems: transport recovery is

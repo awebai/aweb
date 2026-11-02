@@ -8,7 +8,7 @@ from dataclasses import dataclass, replace
 from time import monotonic
 
 from awid.did import stable_id_from_did_key
-from awid.registry import RegistryError
+from awid.registry import DIDKeyNotFoundError, IDTreeEnrollment, RegistryError
 from fastapi import HTTPException, Request
 
 logger = logging.getLogger(__name__)
@@ -23,6 +23,7 @@ class IdentityBinding:
     fresh_observation: bool = False
     self_derived: bool = False
     did_key: str = ""
+    id_tree: IDTreeEnrollment | None = None
 
 
 def verified_projection(row):
@@ -46,13 +47,14 @@ async def verify_identity_binding(
     did_aw: str = "",
     address: str = "",
     fresh: bool = False,
+    registry_client=None,
 ) -> IdentityBinding:
     did_aw, address = (did_aw or "").strip(), (address or "").strip()
     if not did_aw and not address:
         return IdentityBinding(did_key=did_key)
     if not did_aw or not did_aw.startswith("did:aw:"):
         raise HTTPException(status_code=403, detail="identity_binding_mismatch")
-    client = getattr(request.app.state, "awid_registry_client", None)
+    client = registry_client if registry_client is not None else getattr(request.app.state, "awid_registry_client", None)
     if client is None:
         raise HTTPException(status_code=503, detail="identity_binding_unavailable")
     cache = getattr(request.app.state, "identity_binding_cache", None)
@@ -60,6 +62,8 @@ async def verify_identity_binding(
         cache = OrderedDict()
         request.app.state.identity_binding_cache = cache
     key = (did_aw, did_key, address)
+    if registry_client is not None:
+        key += (getattr(registry_client, "registry_url", "federation"),)
     observations = getattr(request.state, "identity_binding_observations", None)
     if observations is None:
         observations = {}
@@ -68,7 +72,9 @@ async def verify_identity_binding(
         return observations[key]
     started = monotonic()
     cached = cache.get(key)
-    if not fresh and cached is not None and cached[0] > started:
+    # Unknown enrollment is refetched rather than pinned by this positive cache.
+    if (not fresh and cached is not None and cached[0] > started
+            and cached[1].id_tree is not None):
         return replace(cached[1], fresh_observation=False)
     cache.pop(key, None)
     binding = await observe_identity_binding(client, did_key=did_key, did_aw=did_aw, address=address)
@@ -96,6 +102,7 @@ async def observe_identity_binding(client, *, did_key: str, did_aw: str, address
     if not did_aw or not did_aw.startswith("did:aw:"):
         raise HTTPException(status_code=403, detail="identity_binding_mismatch")
     self_derived = False
+    enrollment = None
     try:
         try:
             # The SDK's ordinary key/address caches have a longer lifetime
@@ -109,9 +116,12 @@ async def observe_identity_binding(client, *, did_key: str, did_aw: str, address
                     status_code=403, detail="identity_binding_mismatch"
                 ) from exc
             self_derived = True
+            # Key absence proves no enrollment only when AWID states it.
+            enrollment = exc.id_tree if isinstance(exc, DIDKeyNotFoundError) else None
         else:
             if resolution.did_aw != did_aw or resolution.current_did_key != did_key:
                 raise HTTPException(status_code=403, detail="identity_binding_mismatch")
+            enrollment = resolution.id_tree
         if address:
             domain, separator, name = address.partition("/")
             if not separator or not domain or not name or "/" in name:
@@ -140,7 +150,10 @@ async def observe_identity_binding(client, *, did_key: str, did_aw: str, address
         raise HTTPException(
             status_code=503, detail="identity_binding_unavailable"
         ) from exc
-    return IdentityBinding(did_aw, address, fresh_observation=True, self_derived=self_derived, did_key=did_key)
+    return IdentityBinding(
+        did_aw, address, fresh_observation=True, self_derived=self_derived,
+        did_key=did_key, id_tree=enrollment,
+    )
 
 
 async def refresh_projection_binding(

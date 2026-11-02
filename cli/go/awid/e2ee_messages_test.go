@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -383,7 +384,36 @@ func TestE2EEMailDecryptRejectsNonRecipientAndTamper(t *testing.T) {
 		PrivateKey:      bob.xPriv,
 	}); err == nil {
 		t.Fatalf("tampered ciphertext should fail")
+	} else if code := decryptionErrorCode(err); code != "decrypt_failed" {
+		t.Fatalf("tampered ciphertext code %q: %v", code, err)
 	}
+	if _, err := DecryptE2EEMessage(env, E2EEDecryptIdentity{
+		Address:         carol.address,
+		DID:             carol.did,
+		StableID:        carol.stableID,
+		EncryptionKeyID: carol.assertion.EncryptionKeyID,
+		PrivateKey:      carol.xPriv,
+	}); decryptionErrorCode(err) != "decrypt_failed" {
+		t.Fatalf("non-recipient code: %v", err)
+	}
+	if _, err := DecryptE2EEMessage(env, E2EEDecryptIdentity{Address: bob.address, DID: bob.did, StableID: bob.stableID}); err == nil || err.Error() != "missing local encryption private key" || decryptionErrorCode(err) != "encryption_key_missing" {
+		t.Fatalf("missing key: %v", err)
+	}
+	keyless, err := New("http://127.0.0.1:1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := keyless.DecryptE2EEEnvelope(env); err == nil || !strings.HasPrefix(err.Error(), "encrypted message requires local encryption private key") || decryptionErrorCode(err) != "encryption_key_missing" {
+		t.Fatalf("keyless client: %v", err)
+	}
+}
+
+func decryptionErrorCode(err error) string {
+	var decryption *DecryptionError
+	if errors.As(err, &decryption) {
+		return decryption.Code
+	}
+	return ""
 }
 
 func TestE2EEMailEncryptRejectsSubstitutedRecipientAssertion(t *testing.T) {

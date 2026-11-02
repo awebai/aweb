@@ -14,7 +14,7 @@ import base64
 from datetime import datetime, timedelta, timezone
 import json
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import logging
 
@@ -421,6 +421,40 @@ async def _subscribed(env, actor):
     async with asyncio.timeout(5):
         while dict(await env.redis.pubsub_numsub(channel))[channel] < 1:
             await asyncio.sleep(0.02)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key_only", [False, True])
+async def test_global_activity_uses_canonical_participation_and_nullable_projection(privacy_app, key_only):
+    env = privacy_app
+    member = await _global_member(env)
+    admitted = await _team_request(env, "dave", "GET", "/v1/agents/me/inbound-mode")
+    assert admitted.status_code == 200, admitted.text
+    session_id = await _session(env, "bob", "dave")
+    participant = await env.db.fetch_one(
+        "SELECT did, agent_id FROM {{tables.chat_participants}} WHERE session_id=$1 AND did=$2",
+        UUID(session_id), member.did_aw,
+    )
+    assert participant and participant["agent_id"] is None
+    if key_only:
+        await env.db.execute(
+            "UPDATE {{tables.chat_participants}} SET did=$2 WHERE session_id=$1 AND did=$3",
+            UUID(session_id), member.did, member.did_aw,
+        )
+        refused = await _publish(env, "dave", _event(env, "dave", session_id=session_id,
+                                                  from_stable_id=member.did_aw))
+        assert refused.status_code == 404, refused.text
+        assert await _latest(env, "dave") is None
+        return
+
+    async with _stream(env, "bob", session_id, include="agent_activity") as response:
+        assert response.status_code == 200
+        await _subscribed(env, "dave")
+        sent = await _publish(env, "dave", _event(env, "dave", session_id=session_id,
+                                               from_stable_id=member.did_aw))
+        assert sent.status_code == 202, sent.text
+        frame = await _Stream(response.aiter_lines()).next("agent_activity")
+    assert frame["agent"] == "dave" and frame["from_did"] == member.did
 
 
 @pytest.mark.asyncio

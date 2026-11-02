@@ -21,6 +21,7 @@ from awid.registry import RegistryClient
 from aweb.config import get_awid_registry_url
 from aweb.db import DatabaseInfra
 from aweb.mcp.auth import MCPAuthMiddleware
+from aweb.mcp.notifications import append_pending_nudge
 from aweb.mcp.signing import HostedMessageDecryptor, HostedMessageEncryptor, HostedMessageSigner
 from aweb.mcp.tools.agents import heartbeat as _heartbeat_impl
 from aweb.mcp.tools.agents import list_agents as _list_agents_impl
@@ -38,7 +39,10 @@ from aweb.mcp.tools.contacts import send_message_to_contact as _send_message_to_
 from aweb.mcp.tools.contacts import read_messages_from_contact as _read_messages_from_contact_impl
 from aweb.mcp.tools.identity import whoami as _whoami_impl
 from aweb.mcp.tools.mail import check_inbox as _check_inbox_impl
+from aweb.mcp.tools.mail import list_threads as _list_threads_impl
 from aweb.mcp.tools.mail import send_mail as _send_mail_impl
+from aweb.mcp.tools.room import room_read as _room_read_impl, room_post as _room_post_impl, room_pending as _room_pending_impl
+from aweb.messaging.room import ROOM_DISCLOSURE
 from aweb.mcp.tools.team_instructions import instructions_history as _instructions_history_impl
 from aweb.mcp.tools.team_instructions import instructions_show as _instructions_show_impl
 from aweb.mcp.tools.team_roles import roles_show as _roles_show_impl
@@ -166,16 +170,54 @@ def register_tools(
     async def whoami() -> str:
         return await _whoami_impl(db_infra)
 
+    # -- Team room --
+
+    @mcp.tool(
+        name="room_pending",
+        description="Check your pending team room notices without acknowledging mail or chat. Read posts with room_read.",
+    )
+    async def room_pending() -> str:
+        return await _room_pending_impl(db_infra)
+
+    @mcp.tool(
+        name="room_read",
+        description=(
+            "Read the shared team room, oldest first. All current members can read retained "
+            "history, including posts made before they joined. Explicit read only; follow "
+            "next_cursor when has_more is true."
+        ),
+    )
+    async def room_read(after: str | None = None, limit: int = 50) -> str:
+        return await _room_read_impl(db_infra, after=after, limit=limit)
+
+    @mcp.tool(
+        name="room_post",
+        description=(
+            "Post a signed announcement to the shared team room. " + ROOM_DISCLOSURE
+            + " Hosted MCP signs as the authenticated actor. Self-custodial callers supply "
+            "signed_post. E2E rooms are unsupported. Other current members receive one notice per post; no reply is expected."
+        ),
+    )
+    async def room_post(
+        body: str = "", subject: str = "", e2ee: bool = False,
+        signed_post: dict[str, Any] | None = None,
+    ) -> str:
+        return await _room_post_impl(
+            db_infra, hosted_signer=hosted_signer, body=body, subject=subject,
+            e2ee=e2ee, signed_post=signed_post,
+        )
+
     # -- Mail --
 
     @mcp.tool(
         name="send_mail",
         description=(
             "Send async mail with a required body by recipient, or continue an existing "
-            "mail conversation by conversation_id. Recipient sends reuse the existing "
-            "active one-to-one conversation when present. Hosted custodial sends encrypt by "
-            "default when the recipient has an E2E key; set plaintext=true only for "
-            "explicit server-readable mail."
+            "mail conversation by conversation_id. A recipient send starts a new thread. "
+            "Use list_threads to find a conversation to continue. Hosted custodial sends use managed "
+            "encryption by default when the recipient has an encryption key. The hosted "
+            "service can read the mail; this is not end-to-end encryption. Set plaintext=true "
+            "to store message content unencrypted."
         ),
     )
     async def send_mail(
@@ -203,10 +245,28 @@ def register_tools(
         )
 
     @mcp.tool(
+        name="list_threads",
+        description=(
+            "List your mail threads without acknowledging messages, newest activity first. "
+            "Returns title (first-message subject; empty for E2EE), first_message_id, "
+            "participants, last activity, unread count and conversation_id. Filters only "
+            "narrow your participant access. Continue a chosen thread with send_mail conversation_id."
+        ),
+    )
+    async def list_threads(
+        limit: int = 50, cursor: str = "", participant_did: str = "",
+        participant_address: str = "",
+    ) -> str:
+        return await _list_threads_impl(
+            db_infra, limit=limit, cursor=cursor, participant_did=participant_did,
+            participant_address=participant_address,
+        )
+
+    @mcp.tool(
         name="check_mail",
         description=(
             "Check hosted mail. The tool marks returned unread messages read before returning. "
-            "Hosted custodial identities decrypt encrypted E2E mail for this MCP session; "
+            "The hosted service decrypts managed encrypted mail for this MCP session; "
             "self-custodial encrypted content remains metadata-only."
         ),
     )
@@ -242,12 +302,14 @@ def register_tools(
     @mcp.tool(
         name="send_chat",
         description=(
-            "Send a real-time chat message. Provide to for a routable address, "
+            "Send a real-time chat message to an agent. Humans are reached by mail; "
+            "chat to an authoritative human refuses recipient_human_mail_only. Provide to for a routable address, "
             "DID, hosted handle, or same-team local alias, or conversation_id "
             "to reply in an existing conversation. Set wait=true to block until "
             "the other agent replies (recommended for conversations). Hosted "
-            "custodial sends encrypt by default; set plaintext=true only for "
-            "explicit server-readable chat."
+            "custodial sends use managed encryption by default. The hosted service can read "
+            "the chat; this is not end-to-end encryption. Set plaintext=true to store "
+            "message content unencrypted."
         ),
     )
     async def send_chat(
@@ -587,8 +649,8 @@ def register_tools(
         name="check_inbox",
         description=(
             "Legacy compatibility alias for check_mail. Prefer check_mail. It marks returned "
-            "unread messages read before returning. Hosted custodial identities decrypt "
-            "encrypted E2E mail for this MCP session."
+            "unread messages read before returning. The hosted service decrypts managed "
+            "encrypted mail for this MCP session; it is readable by that service."
         ),
     )
     async def check_inbox(
@@ -771,6 +833,16 @@ def register_tools(
 
 
 
+class _NudgingFastMCP(FastMCP):
+    def __init__(self, *args, db_infra, **kwargs):
+        self._nudge_db = db_infra
+        super().__init__(*args, **kwargs)
+
+    async def call_tool(self, name, arguments):
+        result = await super().call_tool(name, arguments)
+        return await append_pending_nudge(result, self._nudge_db)
+
+
 def create_mcp_app(
     *,
     db_infra: DatabaseInfra,
@@ -802,8 +874,9 @@ def create_mcp_app(
     if normalized_path != "/" and normalized_path.endswith("/"):
         normalized_path = normalized_path.rstrip("/")
 
-    mcp = FastMCP(
+    mcp = _NudgingFastMCP(
         "aweb",
+        db_infra=db_infra,
         stateless_http=True,
         json_response=True,
         streamable_http_path=normalized_path,

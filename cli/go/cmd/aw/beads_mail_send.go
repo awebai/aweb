@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"strings"
 
@@ -225,21 +224,27 @@ cryptographically verified identity.`,
 			applyMailRecipientTarget(req, target.Kind, target.Value)
 		}
 
+		certSend := beadsMailUsesCertSend(target.Kind, req.ConversationID)
+		if req.ConversationID == "" {
+			if err := startNewThread(req); err != nil {
+				return err
+			}
+		}
 		var resp *awid.SendMessageResponse
-		if beadsMailUsesCertSend(target.Kind, req.ConversationID) {
+		if certSend {
 			resp, err = c.SendMessage(ctx, req)
 		} else {
 			resp, err = c.SendMessageByIdentity(ctx, req)
 		}
-		if err != nil && req.ConversationID == "" {
-			resp, err = beadsMailRetryAsContinuation(ctx, c, target, req, err)
-		}
 		if err != nil {
 			return networkError(err, target.Value)
 		}
+		if err := newThreadAnswered(req, resp); err != nil {
+			return err
+		}
 
 		beadsMailAppendSendLogs(sel, resp, target.Value, beadsMailSendSubject, body)
-		fmt.Printf("sent %s (message_id=%s conversation_id=%s)\n", beadsMailResolutionNote(target), resp.MessageID, resp.ConversationID)
+		fmt.Fprintf(commandStdout, "sent %s (message_id=%s conversation_id=%s)\n", beadsMailResolutionNote(target), resp.MessageID, resp.ConversationID)
 		if mapErr != nil {
 			beadsMailRecordGap("could not read the beads mail configuration: " + mapErr.Error())
 		} else {
@@ -294,17 +299,7 @@ var beadsMailReplyCmd = &cobra.Command{
 		if conversationID == "" {
 			return fmt.Errorf("message %s is legacy mail without a conversation; send a new message instead", messageID)
 		}
-		subject := strings.TrimSpace(beadsMailReplySubject)
-		if subject == "" {
-			original := strings.TrimSpace(source.Subject)
-			if original == "" {
-				subject = "Re"
-			} else if strings.HasPrefix(original, "Re: ") {
-				subject = original
-			} else {
-				subject = "Re: " + original
-			}
-		}
+		subject := replySubject(beadsMailReplySubject, source.Subject)
 
 		req := &awid.SendMessageRequest{
 			ConversationID: conversationID,
@@ -320,7 +315,7 @@ var beadsMailReplyCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "note: reply was sent, but the source message could not be marked read: %s\n", termtext.Line(ackErr.Error()))
 		}
 		beadsMailAppendSendLogs(sel, resp, conversationID, subject, body)
-		fmt.Printf("replied (message_id=%s conversation_id=%s)\n", resp.MessageID, resp.ConversationID)
+		fmt.Fprintf(commandStdout, "replied (message_id=%s conversation_id=%s)\n", resp.MessageID, resp.ConversationID)
 		if cwd, cwdErr := os.Getwd(); cwdErr != nil {
 			beadsMailRecordGap("could not locate the beads repository: " + cwdErr.Error())
 		} else if addressMap, mapErr := loadBeadsMailAddressMap(cwd); mapErr != nil {
@@ -431,39 +426,6 @@ func beadsMailSourceMessage(ctx context.Context, c *aweb.Client, messageID strin
 		return nil, fmt.Errorf("mail message not found: %s", messageID)
 	}
 	return &resp.Messages[0], nil
-}
-
-// beadsMailRetryAsContinuation handles the server refusing a fresh
-// conversation because the pair already has an active one (HTTP 409, found
-// live 2026-09-01). Continuation is server-directed, not opportunistic: the
-// delegate still sends fresh first, and only when the server names the
-// conflict does it look up the pair's unique active conversation and resend
-// into it (design record §8 amendment).
-func beadsMailRetryAsContinuation(ctx context.Context, c *aweb.Client, target beadsMailTarget, req *awid.SendMessageRequest, sendErr error) (*awid.SendMessageResponse, error) {
-	if code, ok := awid.HTTPStatusCode(sendErr); !ok || code != http.StatusConflict {
-		return nil, sendErr
-	}
-	var conversation mailConversationTarget
-	var err error
-	switch target.Kind {
-	case "address", "did":
-		conversation, err = findUniqueMailConversationForTarget(ctx, c, target.Kind, target.Value)
-	case "alias":
-		if agent, found, findErr := clientAgentForAlias(ctx, c, target.Value); findErr == nil && found {
-			conversation, err = findUniqueMailConversationForAgent(ctx, c, agent)
-		}
-	}
-	if err != nil || conversation.conversationID == "" {
-		return nil, sendErr
-	}
-	fmt.Fprintf(os.Stderr, "note: continuing the existing conversation with %s (the server keeps one active conversation per pair)\n", termtext.Line(target.Value))
-	continuation := &awid.SendMessageRequest{
-		ConversationID: conversation.conversationID,
-		Subject:        req.Subject,
-		Body:           req.Body,
-		Priority:       req.Priority,
-	}
-	return c.SendMessageByIdentity(ctx, continuation)
 }
 
 func init() {

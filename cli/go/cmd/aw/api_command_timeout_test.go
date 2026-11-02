@@ -29,7 +29,7 @@ func TestMessagingCommandsRespectAPITimeout(t *testing.T) {
 		args []string
 		path string
 	}{
-		{"mail_send", []string{"mail", "send", "--to-did", awid.ComputeDIDKey(peerPub), "--new-conversation", "--body", "hello"}, "/v1/messages"},
+		{"mail_send", []string{"mail", "send", "--subject", "Test thread", "--to-did", awid.ComputeDIDKey(peerPub), "--body", "hello"}, "/v1/messages"},
 		{"mail_inbox", []string{"mail", "inbox"}, "/v1/messages/inbox"},
 		{"mail_ack", []string{"mail", "ack", "msg-in"}, "/v1/messages/msg-in/ack"},
 		{"chat_send", []string{"chat", "send", "--session-id", "session-1", "--body", "hello"}, "/v1/chat/sessions/session-1/messages"},

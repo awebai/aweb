@@ -26,7 +26,8 @@ OUTPUT = ROOT / "docs" / "mcp-tools-reference.md"
 
 CANONICAL_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Identity", ("whoami",)),
-    ("Mail", ("send_mail", "check_mail")),
+    ("Mail", ("send_mail", "check_mail", "list_threads")),
+    ("Team Room", ("room_read", "room_post", "room_pending")),
     ("Presence", ("list_agents", "heartbeat")),
     ("Chat", ("send_chat", "check_chats", "read_chat", "mark_chat_read")),
     (

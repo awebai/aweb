@@ -56,6 +56,7 @@ def copy_checkout(destination: Path) -> None:
             "server/tests/test_federation_preactivation_harness.py",
             "server/tests/test_mcp_contacts_consumer.py",
             "server/tests/test_awid_registry_client.py",
+            "server/tests/test_local_recipient_address.py",
         ],
         cwd=destination,
         check=True,
@@ -177,12 +178,35 @@ def main() -> None:
             "tests/test_chat_http.py::test_chat_to_external_address_posts_federated_chat_and_projects_locally",
             "tests/test_chat_http.py::test_remote_chat_route_refresh_preserves_stable_authority_error",
             "tests/test_chat_http.py::test_chat_continuation_refreshes_stale_delivery_origin_once",
+            "tests/test_local_recipient_address.py::test_unverified_home_namespace_does_not_supply_authority[mail]",
+            "tests/test_local_recipient_address.py::test_unverified_home_namespace_does_not_supply_authority[chat]",
         )
         activation_baseline = run_server_tests(checkout, *activation_nodes)
         if activation_baseline.returncode != 0:
             raise SystemExit(
                 f"Federation activation mutation baseline failed:\n{activation_baseline.stdout}"
             )
+
+        address_auth = checkout / "server" / "src" / "aweb" / "messaging" / "address_auth.py"
+        original_address_auth = address_auth.read_text(encoding="utf-8")
+        replace_exact(
+            address_auth,
+            """    return bool(
+        namespace and namespace.domain == domain
+        and namespace.verification_status == "verified" and namespace.controller_did
+    )
+""",
+            "    return True\n",
+        )
+        for node in activation_nodes[18:20]:
+            result = run_server_tests(checkout, node)
+            require_killed(result, node.split("::")[-1])
+            if "assert 404 == 503" not in result.stdout:
+                raise SystemExit(
+                    f"namespace authority mutation failed for the wrong reason in {node}:\n"
+                    f"{result.stdout}"
+                )
+        address_auth.write_text(original_address_auth, encoding="utf-8")
 
         authority = checkout / "cli" / "go" / "awid" / "federation_authority.go"
         replace_exact(
@@ -504,6 +528,7 @@ def main() -> None:
         )
 
         chat_service = checkout / "server" / "src" / "aweb" / "messaging" / "chat.py"
+        original_chat_service = chat_service.read_text(encoding="utf-8")
         replace_exact(
             chat_service,
             '                "transport_hint": transport_hint or (\n                    "federation:" + delivery_origin if delivery_origin else "local"\n                ),\n',
@@ -513,12 +538,13 @@ def main() -> None:
             run_server_tests(checkout, activation_nodes[15]),
             "test_chat_to_external_address_posts_federated_chat_and_projects_locally",
         )
+        chat_service.write_text(original_chat_service, encoding="utf-8")
 
         chat_route = checkout / "server" / "src" / "aweb" / "routes" / "chat.py"
         original_chat_route = chat_route.read_text(encoding="utf-8")
         replace_exact(
             chat_route,
-            '                    "_strict_authority_route_current": strict_authority is not None,\n',
+            '                    "_authority_route_current": home_namespace or strict_authority is not None,\n',
             "",
         )
         require_killed(
@@ -553,7 +579,8 @@ def main() -> None:
         "Phase-A gating, identity-bound contacts, Phase-B atomicity, signed-address "
         "extraction, E2E no-downgrade, HTTP/MCP strict composition, contact-conversation "
         "binding, route integrity, outbound continuation projection, refreshed chat "
-        "routes, stable authority errors, fresh local authority, and reassignment "
+        "routes, stable authority errors, shared mail/chat namespace authority, "
+        "fresh local authority, and reassignment "
         "acceptance weakenings were killed"
     )
 

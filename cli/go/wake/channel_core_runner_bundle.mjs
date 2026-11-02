@@ -3365,6 +3365,18 @@ function computeDIDKey(publicKey) {
   buf.set(publicKey, 2);
   return DID_KEY_PREFIX + esm_default2.encode(buf);
 }
+function primeSubgroupPoint(encoded) {
+  if (encoded.length !== 32) return void 0;
+  let point;
+  try {
+    point = Point.fromHex(encoded, false);
+  } catch {
+    return void 0;
+  }
+  if (point.is0() || !point.isTorsionFree()) return void 0;
+  if (Buffer.compare(Buffer.from(point.toRawBytes()), Buffer.from(encoded)) !== 0) return void 0;
+  return point;
+}
 function extractPublicKey(did) {
   if (!did.startsWith(DID_KEY_PREFIX)) {
     throw new Error(`invalid did:key: missing prefix "${DID_KEY_PREFIX}"`);
@@ -3380,7 +3392,11 @@ function extractPublicKey(did) {
       `invalid did:key: expected Ed25519 multicodec 0xed01, got 0x${decoded[0].toString(16).padStart(2, "0")}${decoded[1].toString(16).padStart(2, "0")}`
     );
   }
-  return decoded.slice(2);
+  const publicKey = decoded.slice(2);
+  if (!primeSubgroupPoint(publicKey)) {
+    throw new Error("invalid did:key: not a canonical prime-order Ed25519 public key");
+  }
+  return publicKey;
 }
 function computeStableID(publicKey) {
   const hash2 = createHash("sha256").update(publicKey).digest();
@@ -3932,6 +3948,25 @@ async function verifyChatMessage(msg) {
     return legacyStatus === "verified" ? "verified_legacy" : legacyStatus;
   }
   return status2;
+}
+
+// channel-core/src/api/room.ts
+async function fetchRoomMessage(client, team, room, id) {
+  const message = await client.get(`/v1/room/messages/${encodeURIComponent(id)}`);
+  const status2 = await verifySignedPayload(message.signed_payload || "", message.signature || "", message.from_did || "", message.signing_key_id || "");
+  if (status2 !== "verified") throw new Error("room post signature failed");
+  const signed = JSON.parse(message.signed_payload);
+  if (message.team_id !== team || message.room_id !== room || message.conversation_id !== room || message.message_id !== id || signed.type !== "chat" || signed.to !== `team-room:${team}` || signed.conversation_id !== room || signed.message_id !== id || signed.to_did || signed.to_stable_id || signed.from_did !== message.from_did || message.signing_key_id !== message.from_did || (signed.from_stable_id || "") !== (message.from_stable_id || "") || signed.from !== message.from_alias || signed.subject !== message.subject || signed.body !== message.body || signed.timestamp !== message.timestamp || message.from_address && message.from_address !== signed.from) {
+    throw new Error("room post signed bindings failed");
+  }
+  message.verification_status = status2;
+  message.projected_from_did = message.from_did;
+  message.signed_from = signed.from;
+  message.signed_from_team_id = team;
+  return message;
+}
+async function ackRoomNotice(client, id) {
+  await client.post(`/v1/room/notices/${encodeURIComponent(id)}/ack`, {});
 }
 
 // channel-core/src/config.ts
@@ -7258,8 +7293,765 @@ async function readYAML(path) {
   }
 }
 
-// channel-core/src/identity/registry.ts
+// channel-core/src/identity/canonical.ts
+function canonicalJSONValue(value, unsupported) {
+  if (Array.isArray(value)) return `[${value.map((item) => canonicalJSONValue(item, unsupported)).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const obj = value;
+    return `{${Object.keys(obj).sort().map((key) => `${JSON.stringify(key)}:${canonicalJSONValue(obj[key], unsupported)}`).join(",")}}`;
+  }
+  if (typeof value === "string" || typeof value === "boolean" || value === null || typeof value === "number" && Number.isSafeInteger(value)) return JSON.stringify(value);
+  throw new Error(unsupported);
+}
+
+// channel-core/src/identity/strict_json.ts
+var StrictJSONError = class extends Error {
+  constructor(failure, message) {
+    super(message);
+    this.failure = failure;
+  }
+  failure;
+};
+function parseStrictJSON(text2, maxDepth) {
+  const reader = new Reader(text2, maxDepth);
+  reader.skipWhitespace();
+  const value = reader.value(0);
+  reader.skipWhitespace();
+  if (reader.position !== text2.length) reader.fail("syntax", "trailing data");
+  return value;
+}
+var Reader = class {
+  constructor(text2, maxDepth) {
+    this.text = text2;
+    this.maxDepth = maxDepth;
+  }
+  text;
+  maxDepth;
+  position = 0;
+  fail(failure, message) {
+    throw new StrictJSONError(failure, `${message} at offset ${this.position}`);
+  }
+  skipWhitespace() {
+    while (this.position < this.text.length && " 	\n\r".includes(this.text[this.position])) this.position += 1;
+  }
+  value(depth) {
+    const ch = this.text[this.position];
+    if (ch === "{") return this.object(depth + 1);
+    if (ch === "[") return this.array(depth + 1);
+    if (ch === '"') return this.string();
+    if (ch === "-" || ch >= "0" && ch <= "9") return this.number();
+    for (const [literal, result] of [["true", true], ["false", false], ["null", null]]) {
+      if (this.text.startsWith(literal, this.position)) {
+        this.position += literal.length;
+        return result;
+      }
+    }
+    return this.fail("syntax", "unexpected character");
+  }
+  object(depth) {
+    if (depth > this.maxDepth) this.fail("depth", "nesting too deep");
+    this.position += 1;
+    const result = /* @__PURE__ */ Object.create(null);
+    this.skipWhitespace();
+    if (this.text[this.position] === "}") {
+      this.position += 1;
+      return { ...result };
+    }
+    for (; ; ) {
+      this.skipWhitespace();
+      if (this.text[this.position] !== '"') this.fail("syntax", "expected object key");
+      const key = this.string();
+      if (Object.prototype.hasOwnProperty.call(result, key)) this.fail("syntax", `duplicate key ${JSON.stringify(key)}`);
+      this.skipWhitespace();
+      if (this.text[this.position] !== ":") this.fail("syntax", "expected ':'");
+      this.position += 1;
+      this.skipWhitespace();
+      result[key] = this.value(depth);
+      this.skipWhitespace();
+      const ch = this.text[this.position];
+      this.position += 1;
+      if (ch === "}") return { ...result };
+      if (ch !== ",") this.fail("syntax", "expected ',' or '}'");
+    }
+  }
+  array(depth) {
+    if (depth > this.maxDepth) this.fail("depth", "nesting too deep");
+    this.position += 1;
+    const result = [];
+    this.skipWhitespace();
+    if (this.text[this.position] === "]") {
+      this.position += 1;
+      return result;
+    }
+    for (; ; ) {
+      this.skipWhitespace();
+      result.push(this.value(depth));
+      this.skipWhitespace();
+      const ch = this.text[this.position];
+      this.position += 1;
+      if (ch === "]") return result;
+      if (ch !== ",") this.fail("syntax", "expected ',' or ']'");
+    }
+  }
+  string() {
+    this.position += 1;
+    let result = "";
+    for (; ; ) {
+      if (this.position >= this.text.length) this.fail("syntax", "unterminated string");
+      const ch = this.text[this.position];
+      const code = ch.charCodeAt(0);
+      if (ch === '"') {
+        this.position += 1;
+        return result;
+      }
+      if (code < 32) this.fail("syntax", "control character in string");
+      if (code >= 55296 && code <= 57343) {
+        const next = this.text.charCodeAt(this.position + 1);
+        if (code > 56319 || !(next >= 56320 && next <= 57343)) this.fail("syntax", "lone surrogate");
+        result += this.text.slice(this.position, this.position + 2);
+        this.position += 2;
+        continue;
+      }
+      if (ch !== "\\") {
+        result += ch;
+        this.position += 1;
+        continue;
+      }
+      const escape = this.text[this.position + 1];
+      this.position += 2;
+      const simple = { '"': '"', "\\": "\\", "/": "/", b: "\b", f: "\f", n: "\n", r: "\r", t: "	" };
+      if (escape in simple) {
+        result += simple[escape];
+        continue;
+      }
+      if (escape !== "u") this.fail("syntax", "invalid escape");
+      const unit = this.hexUnit();
+      if (unit >= 56320 && unit <= 57343) this.fail("syntax", "lone surrogate");
+      if (unit >= 55296 && unit <= 56319) {
+        if (this.text.slice(this.position, this.position + 2) !== "\\u") this.fail("syntax", "lone surrogate");
+        this.position += 2;
+        const low = this.hexUnit();
+        if (!(low >= 56320 && low <= 57343)) this.fail("syntax", "lone surrogate");
+        result += String.fromCharCode(unit, low);
+        continue;
+      }
+      result += String.fromCharCode(unit);
+    }
+  }
+  hexUnit() {
+    const digits = this.text.slice(this.position, this.position + 4);
+    if (!/^[0-9A-Fa-f]{4}$/.test(digits)) this.fail("syntax", "invalid \\u escape");
+    this.position += 4;
+    return parseInt(digits, 16);
+  }
+  number() {
+    const match = /^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?/.exec(this.text.slice(this.position));
+    if (!match) return this.fail("syntax", "invalid number");
+    this.position += match[0].length;
+    if (match[2] !== void 0 || match[3] !== void 0) this.fail("number", "number is not an integer");
+    const value = Number(match[0]);
+    if (!Number.isSafeInteger(value)) this.fail("number", "integer out of safe range");
+    return value;
+  }
+};
+
+// channel-core/src/identity/id_certificates.ts
+etc.sha512Sync = (...m) => sha512(etc.concatBytes(...m));
+var ID_CERTIFICATE_PREFIX = "aweb.id-certificate/1\n";
+var ID_CHAIN_MAX_CERTIFICATES = 8;
+var ID_CHAIN_MAX_DECODED_BYTES = 6144;
+var refuse = (reason) => ({ ok: false, reason });
+function idCertificateSigningBytes(certificate) {
+  return new TextEncoder().encode(ID_CERTIFICATE_PREFIX + canonicalJSONValue(certificate, "id certificate is not canonical JSON"));
+}
+function idCertificateId(certificate) {
+  return "sha256:" + Buffer.from(sha256(idCertificateSigningBytes(certificate))).toString("hex");
+}
+function decodeIdChain(bytes) {
+  if (bytes.length > ID_CHAIN_MAX_DECODED_BYTES) return refuse("bundle_too_large");
+  let text2;
+  try {
+    text2 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    return refuse("invalid_json");
+  }
+  let value;
+  try {
+    value = parseStrictJSON(text2, 5);
+  } catch (error) {
+    if (error instanceof StrictJSONError && error.failure !== "syntax") return refuse("invalid_shape");
+    return refuse("invalid_json");
+  }
+  if (canonicalJSONValue(value, "unreachable: strict JSON is canonicalizable") !== text2) return refuse("noncanonical_json");
+  const reason = idChainRefusal(value);
+  return reason ? refuse(reason) : { ok: true, value };
+}
+function idChainRefusal(value) {
+  if (!isRecord(value) || !hasExactKeys(value, ["certificates", "type", "v"])) return "invalid_shape";
+  if (value.v !== 1 || value.type !== "aweb.id-chain" || !Array.isArray(value.certificates)) return "invalid_shape";
+  if (value.certificates.length === 0) return "invalid_shape";
+  if (value.certificates.length > ID_CHAIN_MAX_CERTIFICATES) return "depth_exceeded";
+  for (const signed of value.certificates) {
+    const reason = signedShapeRefusal(signed);
+    if (reason) return reason;
+  }
+  for (const signed of value.certificates) {
+    const reason = signatureRefusal(signed);
+    if (reason) return reason;
+  }
+  return void 0;
+}
+function parseSignedIdCertificate(signed) {
+  const reason = signedShapeRefusal(signed) ?? signatureRefusal(signed);
+  return reason ? refuse(reason) : { ok: true, value: signed };
+}
+function signedShapeRefusal(signed) {
+  if (!isRecord(signed) || !hasExactKeys(signed, ["certificate", "signature"])) return "invalid_shape";
+  if (typeof signed.signature !== "string") return "invalid_shape";
+  return certificateShapeRefusal(signed.certificate);
+}
+function certificateShapeRefusal(certificate) {
+  const fields = ["domain", "id", "issued_at", "issuer_key", "kind", "parent", "type", "v"];
+  if (!isRecord(certificate) || !hasExactKeys(certificate, fields)) return "invalid_shape";
+  const { v, type: type2, id, domain, parent, kind, issuer_key, issued_at } = certificate;
+  if (v !== 1 || type2 !== "aweb.id-certificate") return "invalid_shape";
+  if (typeof domain !== "string" || typeof kind !== "string") return "invalid_shape";
+  if (!isCanonicalDomain(domain)) return "invalid_domain";
+  if (kind !== "human" && kind !== "agent") return "invalid_kind";
+  if (typeof id !== "string" || !isCanonicalIdentityId(id)) return "invalid_shape";
+  if (kind === "human" && !id.startsWith("did:aw:")) return "invalid_shape";
+  if (typeof issuer_key !== "string" || !isCanonicalDidKey(issuer_key)) return "invalid_shape";
+  if (typeof issued_at !== "string" || !isCanonicalSecondTimestamp(issued_at)) return "invalid_shape";
+  if (!isRecord(parent) || !hasExactKeys(parent, ["id", "kind"]) || typeof parent.id !== "string") return "invalid_shape";
+  if (parent.kind === "namespace") {
+    if (parent.id !== domain) return "domain_mismatch";
+  } else if (parent.kind === "identity") {
+    if (!isCanonicalIdentityId(parent.id)) return "invalid_shape";
+  } else {
+    return "invalid_shape";
+  }
+  return void 0;
+}
+function signatureRefusal(signed) {
+  const signature = decodeBase64URL(signed.signature);
+  if (!signature || signature.length !== 64) return "invalid_encoding";
+  const publicKey = extractPublicKey(signed.certificate.issuer_key);
+  const result = idEd25519Verify(publicKey, idCertificateSigningBytes(signed.certificate), signature);
+  return result.accepted ? void 0 : "invalid_signature";
+}
+var GROUP_ORDER = ed25519_CURVE.n;
+function idEd25519Verify(publicKey, message, signature) {
+  const A = primeSubgroupPoint(publicKey);
+  if (!A) return { accepted: false, reason: "invalid_shape" };
+  if (signature.length !== 64) return { accepted: false, reason: "invalid_signature" };
+  const encodedR = signature.subarray(0, 32);
+  const R = primeSubgroupPoint(encodedR);
+  const S = littleEndian(signature.subarray(32));
+  if (!R || S >= GROUP_ORDER) return { accepted: false, reason: "invalid_signature" };
+  const k = littleEndian(sha512(etc.concatBytes(encodedR, publicKey, message))) % GROUP_ORDER;
+  const SB = S === 0n ? Point.ZERO : Point.BASE.multiply(S);
+  const kA = k === 0n ? Point.ZERO : A.multiply(k);
+  return SB.equals(R.add(kA)) ? { accepted: true, reason: null } : { accepted: false, reason: "invalid_signature" };
+}
+function littleEndian(bytes) {
+  let value = 0n;
+  for (let i = bytes.length - 1; i >= 0; i -= 1) value = value << 8n | BigInt(bytes[i]);
+  return value;
+}
+var BASE64URL = /^[A-Za-z0-9_-]*$/;
+function decodeBase64URL(value) {
+  if (!BASE64URL.test(value) || value.length % 4 === 1) return void 0;
+  const bytes = Buffer.from(value, "base64url");
+  if (bytes.toString("base64url") !== value) return void 0;
+  return new Uint8Array(bytes);
+}
+var DOMAIN_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+function isCanonicalDomain(domain) {
+  return domain.length > 0 && domain.length <= 253 && domain.split(".").every((label) => DOMAIN_LABEL.test(label));
+}
+function isCanonicalDidKey(value) {
+  try {
+    const publicKey = extractPublicKey(value);
+    return computeDIDKey(publicKey) === value && primeSubgroupPoint(publicKey) !== void 0;
+  } catch {
+    return false;
+  }
+}
+function isCanonicalDidAw(value) {
+  if (!value.startsWith("did:aw:")) return false;
+  try {
+    const suffix = value.slice("did:aw:".length);
+    const decoded = esm_default2.decode(suffix);
+    return decoded.length === 20 && esm_default2.encode(decoded) === suffix;
+  } catch {
+    return false;
+  }
+}
+function isCanonicalIdentityId(value) {
+  return isCanonicalDidAw(value) || isCanonicalDidKey(value);
+}
+var SECOND_TIMESTAMP = /^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})Z$/;
+function isCanonicalSecondTimestamp(value) {
+  const match = SECOND_TIMESTAMP.exec(value);
+  if (!match) return false;
+  const [year, month, day, hour, minute, second] = match.slice(1).map(Number);
+  const date = /* @__PURE__ */ new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  date.setUTCHours(hour, minute, second, 0);
+  return year >= 1 && date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day && date.getUTCHours() === hour && date.getUTCMinutes() === minute && date.getUTCSeconds() === second;
+}
+function keyResponseIdTree(response) {
+  const malformed = { state: "malformed", domain: null };
+  if (!isRecord(response)) return malformed;
+  if (!Object.prototype.hasOwnProperty.call(response, "id_tree")) return { state: "unknown", domain: null };
+  const tree = response.id_tree;
+  if (!isRecord(tree) || typeof tree.enrolled !== "boolean") return malformed;
+  if (!tree.enrolled) return hasExactKeys(tree, ["enrolled"]) ? { state: "not_enrolled", domain: null } : malformed;
+  const domain = tree.domain;
+  if (!hasExactKeys(tree, ["domain", "enrolled"]) || typeof domain !== "string" || !isCanonicalDomain(domain)) return malformed;
+  return { state: "enrolled", domain };
+}
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function hasExactKeys(value, keys) {
+  const actual = Object.keys(value).sort();
+  return actual.length === keys.length && actual.every((key, index) => key === keys[index]);
+}
+
+// channel-core/src/identity/id_status.ts
 import * as dns from "node:dns/promises";
+
+// channel-core/src/identity/id_verification.ts
+var ID_STATUS_FRESH_SECONDS = 60;
+function idStatusCacheMode(ageSeconds) {
+  if (ageSeconds === null || !Number.isFinite(ageSeconds) || ageSeconds < 0) return "unavailable";
+  return ageSeconds <= ID_STATUS_FRESH_SECONDS ? "fresh" : "unavailable";
+}
+function idStatusRequest(chain, subject, domain) {
+  if (chain === null) {
+    if (!subject.id.startsWith("did:aw:")) return { lookup: "none" };
+    if (domain === void 0) return { lookup: "unavailable" };
+    return { lookup: "status", request: { v: 1, domain, ids: [subject.id] } };
+  }
+  if (idChainRefusal(chain)) return { lookup: "none" };
+  const ids = [];
+  for (const { certificate } of chain.certificates) {
+    if (certificate.id.startsWith("did:aw:") && !ids.includes(certificate.id)) ids.push(certificate.id);
+  }
+  return { lookup: "status", request: { v: 1, domain: chain.certificates[0].certificate.domain, ids } };
+}
+function verifyIdChain(chain, subject, evidence) {
+  try {
+    return verify2(chain, subject, evidence);
+  } catch (error) {
+    if (error instanceof Refusal) return refusal(error.reason);
+    throw error;
+  }
+}
+var Refusal = class extends Error {
+  constructor(reason) {
+    super(reason);
+    this.reason = reason;
+  }
+  reason;
+};
+function refusal(reason) {
+  const unavailable = reason === "status_expired" || reason === "evidence_unavailable";
+  const validityUnknown = unavailable || reason === "legacy_no_chain" || reason === "unregistered_identity";
+  return {
+    outcome: unavailable ? "unavailable" : "unknown",
+    human_id: null,
+    identity_valid: validityUnknown ? null : false,
+    kind: null,
+    reason
+  };
+}
+function verify2(presented, subject, evidence) {
+  let chain = presented;
+  if (chain === null) {
+    if (!subject.id.startsWith("did:aw:")) return refusal("legacy_no_chain");
+    const snapshot2 = trustedSnapshot(evidence, evidence?.namespace_authority.domain);
+    if (snapshot2.missing.has(subject.id)) return refusal("unregistered_identity");
+    chain = currentChain(snapshot2, subject.id);
+  }
+  const bundleRefusal = idChainRefusal(chain);
+  if (bundleRefusal) throw new Refusal(bundleRefusal);
+  const certificates = chain.certificates.map((signed) => signed.certificate);
+  const leaf = certificates[certificates.length - 1];
+  checkSubjectIds(subject, leaf);
+  checkStructure(certificates);
+  const domain = certificates[0].domain;
+  if (certificates.some((certificate) => certificate.domain !== domain)) throw new Refusal("domain_mismatch");
+  checkIssuerKinds(certificates);
+  for (let i = 1; i < certificates.length; i += 1) {
+    if (isRegistered(certificates[i]) && !isRegistered(certificates[i - 1])) throw new Refusal("unregistered_parent");
+  }
+  const snapshot = trustedSnapshot(evidence, domain);
+  for (const certificate of certificates) {
+    if (!isRegistered(certificate)) continue;
+    if (snapshot.missing.has(certificate.id)) throw new Refusal("unregistered_identity");
+    if (!snapshot.identities.has(certificate.id)) throw new Refusal("evidence_unavailable");
+  }
+  if (isRegistered(leaf) && subject.did_key !== snapshot.identities.get(leaf.id).currentKey) {
+    throw new Refusal("subject_mismatch");
+  }
+  for (const signed of chain.certificates) {
+    const { certificate } = signed;
+    if (isRegistered(certificate) && idCertificateId(certificate) !== snapshot.identities.get(certificate.id).head.id) {
+      throw new Refusal("superseded_certificate");
+    }
+  }
+  for (let i = 0; i < certificates.length; i += 1) checkIssuerKey(snapshot, certificates, i);
+  const invalid = invalidity(snapshot, certificates, certificates.length - 1);
+  if (invalid) throw new Refusal(invalid);
+  const human = [...certificates].reverse().find((certificate) => certificate.kind === "human");
+  return {
+    outcome: human ? "nearest_human" : "no_human",
+    human_id: human ? human.id : null,
+    identity_valid: true,
+    kind: leaf.kind,
+    reason: "verified"
+  };
+}
+function isRegistered(certificate) {
+  return certificate.id.startsWith("did:aw:");
+}
+function checkSubjectIds(subject, leaf) {
+  if (subject.id !== leaf.id) throw new Refusal("subject_mismatch");
+  if (subject.team_member_did_aw !== null && subject.team_member_did_aw !== leaf.id) throw new Refusal("subject_mismatch");
+  if (subject.team_member_did_key !== null && subject.team_member_did_key !== subject.did_key) {
+    throw new Refusal("subject_mismatch");
+  }
+  if (!isRegistered(leaf) && subject.did_key !== leaf.id) throw new Refusal("subject_mismatch");
+}
+function checkStructure(certificates) {
+  const ids = certificates.map((certificate) => certificate.id);
+  if (new Set(ids).size !== ids.length) throw new Refusal("duplicate_id");
+  certificates.forEach((certificate, i) => {
+    const { parent } = certificate;
+    const linked = i === 0 ? parent.kind === "namespace" : parent.kind === "identity" && parent.id === ids[i - 1];
+    if (linked) return;
+    throw new Refusal(parent.kind === "identity" && ids.indexOf(parent.id) >= i ? "cycle" : "missing_parent");
+  });
+}
+function checkIssuerKinds(certificates) {
+  for (let i = 1; i < certificates.length; i += 1) {
+    if (certificates[i].kind === "human" && certificates[i - 1].kind === "agent") throw new Refusal("human_issuer_is_agent");
+  }
+}
+var MICROSECOND_TIMESTAMP = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z$/;
+function trustedSnapshot(evidence, domain) {
+  if (evidence === null || domain === void 0) throw new Refusal("evidence_unavailable");
+  if (idStatusCacheMode(evidence.age_seconds) === "unavailable") {
+    const age = evidence.age_seconds;
+    throw new Refusal(age !== null && Number.isFinite(age) && age > ID_STATUS_FRESH_SECONDS ? "status_expired" : "evidence_unavailable");
+  }
+  const authority = evidence.namespace_authority;
+  if (!isRecord(authority) || !hasExactKeys(authority, ["controller_key", "dns_name", "domain", "inherited"]) || authority.domain !== domain || typeof authority.inherited !== "boolean" || !isCanonicalDidKey(authority.controller_key)) {
+    throw new Refusal("evidence_unavailable");
+  }
+  const snapshot = parseSnapshot(evidence.status, domain);
+  if (!snapshot) throw new Refusal("evidence_unavailable");
+  const current = snapshot.epochs[snapshot.epochs.length - 1].didKey;
+  if (authority.inherited) {
+    const delegation = snapshot.delegation;
+    const parent = delegation?.parent_domain;
+    if (!delegation || typeof parent !== "string" || !isCanonicalDomain(parent) || !domain.endsWith(`.${parent}`) || authority.dns_name !== `_awid.${parent}` || delegation.parent_controller_key !== authority.controller_key || delegation.controller_key !== current) {
+      throw new Refusal("evidence_unavailable");
+    }
+  } else if (authority.dns_name !== `_awid.${domain}` || current !== authority.controller_key) {
+    throw new Refusal("evidence_unavailable");
+  }
+  return snapshot;
+}
+function parseSnapshot(status2, domain) {
+  if (!isRecord(status2) || !hasExactKeys(status2, ["domain", "identities", "missing", "namespace", "observed_at", "v"])) return void 0;
+  if (status2.v !== 1 || status2.domain !== domain || !isTimestamp(status2.observed_at)) return void 0;
+  const epochs = parseEpochs(status2.namespace);
+  if (!epochs || !Array.isArray(status2.identities) || !Array.isArray(status2.missing)) return void 0;
+  const identities = /* @__PURE__ */ new Map();
+  for (const row of status2.identities) {
+    const parsed = parseIdentity(row, domain);
+    if (!parsed || identities.has(parsed.id)) return void 0;
+    identities.set(parsed.id, parsed.status);
+  }
+  const missing = /* @__PURE__ */ new Set();
+  for (const id of status2.missing) {
+    if (typeof id !== "string" || !isCanonicalDidAw(id) || identities.has(id) || missing.has(id)) return void 0;
+    missing.add(id);
+  }
+  const replacedAt = epochs.filter((epoch) => epoch.continuity === "replaced").at(-1).registeredAt;
+  const delegation = isRecord(status2.namespace) && isRecord(status2.namespace.delegation) ? status2.namespace.delegation : void 0;
+  return { epochs, replacedAt, identities, missing, delegation };
+}
+function parseEpochs(namespace) {
+  if (!isRecord(namespace) || !(hasExactKeys(namespace, ["epochs"]) || hasExactKeys(namespace, ["delegation", "epochs"])) || !Array.isArray(namespace.epochs)) return void 0;
+  if ("delegation" in namespace && (!isRecord(namespace.delegation) || !hasExactKeys(namespace.delegation, ["controller_key", "parent_controller_key", "parent_domain"]))) return void 0;
+  const epochs = [];
+  for (const [index, row] of namespace.epochs.entries()) {
+    if (!isRecord(row) || !hasExactKeys(row, ["continuity", "did_key", "registered_at", "retired_at", "seq"])) return void 0;
+    const { seq: seq2, did_key, registered_at, retired_at, continuity } = row;
+    if (continuity !== "rotated" && continuity !== "replaced") return void 0;
+    if (!isPositiveInteger(seq2) || typeof did_key !== "string" || !isCanonicalDidKey(did_key)) return void 0;
+    if (!isTimestamp(registered_at) || !(retired_at === null || isTimestamp(retired_at))) return void 0;
+    const previous = epochs[index - 1];
+    if (previous && (seq2 <= previous.seq || previous.retiredAt === null || previous.retiredAt > registered_at)) return void 0;
+    if (retired_at !== null && retired_at <= registered_at) return void 0;
+    if (continuity === "rotated" && (!previous || previous.retiredAt !== registered_at)) return void 0;
+    epochs.push({ seq: seq2, didKey: did_key, registeredAt: registered_at, retiredAt: retired_at, continuity });
+  }
+  if (epochs.length === 0 || epochs[epochs.length - 1].retiredAt !== null) return void 0;
+  return epochs;
+}
+var IDENTITY_FIELDS = ["certificates", "current_certificate_id", "current_key_seq", "id", "key_history", "revocation"];
+var DID_LOG_FIELDS = [
+  "authorized_by",
+  "entry_hash",
+  "new_did_key",
+  "operation",
+  "prev_entry_hash",
+  "previous_did_key",
+  "seq",
+  "signature",
+  "state_hash",
+  "timestamp"
+];
+function parseIdentity(row, domain) {
+  if (!isRecord(row) || !hasExactKeys(row, IDENTITY_FIELDS)) return void 0;
+  const { id, current_certificate_id, current_key_seq, key_history, certificates, revocation } = row;
+  if (typeof id !== "string" || !isCanonicalDidAw(id) || !isPositiveInteger(current_key_seq)) return void 0;
+  if (!Array.isArray(key_history) || key_history.length === 0) return void 0;
+  const entries = [];
+  for (const item of key_history) {
+    if (!isRecord(item) || !hasExactKeys(item, ["entry", "registered_at"]) || !isTimestamp(item.registered_at)) return void 0;
+    if (!isRecord(item.entry) || !hasExactKeys(item.entry, DID_LOG_FIELDS)) return void 0;
+    entries.push(item.entry);
+  }
+  if (verifyDidLogEntries(id, entries, 0).error) return void 0;
+  const keys = new Map(entries.map((entry) => [entry.seq, entry.new_did_key]));
+  if (entries[entries.length - 1].seq !== current_key_seq) return void 0;
+  if (!Array.isArray(certificates) || certificates.length === 0) return void 0;
+  const revisions = [];
+  for (const [index, item] of certificates.entries()) {
+    if (!isRecord(item) || !hasExactKeys(item, ["issuer_key_seq", "registered_at", "signed", "superseded_at"])) return void 0;
+    const { signed, registered_at, superseded_at, issuer_key_seq } = item;
+    if (!isTimestamp(registered_at) || !(superseded_at === null || isTimestamp(superseded_at))) return void 0;
+    if (!isPositiveInteger(issuer_key_seq) || !parseSignedIdCertificate(signed).ok) return void 0;
+    const certificate = signed.certificate;
+    if (certificate.id !== id || certificate.domain !== domain) return void 0;
+    if (revisions.length > 0 && certificate.kind !== revisions[0].certificate.kind) return void 0;
+    const previous = revisions[index - 1];
+    if (previous && (previous.supersededAt === null || previous.supersededAt > registered_at)) return void 0;
+    if (superseded_at !== null && superseded_at <= registered_at) return void 0;
+    revisions.push({
+      id: idCertificateId(certificate),
+      signed,
+      certificate,
+      registeredAt: registered_at,
+      supersededAt: superseded_at,
+      issuerKeySeq: issuer_key_seq
+    });
+  }
+  const head = revisions[revisions.length - 1];
+  if (head.supersededAt !== null || head.id !== current_certificate_id) return void 0;
+  let parsedRevocation = null;
+  if (revocation !== null) {
+    if (!isRecord(revocation) || !hasExactKeys(revocation, ["effective_from", "revoked_at"])) return void 0;
+    if (!isTimestamp(revocation.revoked_at) || !isTimestamp(revocation.effective_from)) return void 0;
+    if (revocation.effective_from > revocation.revoked_at) return void 0;
+    parsedRevocation = { revokedAt: revocation.revoked_at, effectiveFrom: revocation.effective_from };
+  }
+  return { id, status: { keys, currentKey: keys.get(current_key_seq), head, revisions, revocation: parsedRevocation } };
+}
+function currentChain(snapshot, id) {
+  const certificates = [];
+  let next = id;
+  while (next !== void 0) {
+    const identity = snapshot.identities.get(next);
+    if (!identity || certificates.length === ID_CHAIN_MAX_CERTIFICATES) throw new Refusal("evidence_unavailable");
+    certificates.unshift(identity.head.signed);
+    const { parent } = identity.head.certificate;
+    next = parent.kind === "identity" ? parent.id : void 0;
+  }
+  return { v: 1, type: "aweb.id-chain", certificates };
+}
+function checkIssuerKey(snapshot, certificates, i) {
+  const certificate = certificates[i];
+  const parentId = i === 0 ? null : certificates[i - 1].id;
+  if (isRegistered(certificate)) {
+    const revision = snapshot.identities.get(certificate.id).head;
+    if (witnessedIssuerKey(snapshot, parentId, revision) !== certificate.issuer_key) throw new Refusal("evidence_unavailable");
+    return;
+  }
+  if (certificate.issuer_key !== currentKey(snapshot, parentId)) throw new Refusal("stale_issuer_key");
+}
+function witnessedIssuerKey(snapshot, parentId, revision) {
+  if (parentId === null) {
+    const epoch = snapshot.epochs.find((epoch2) => epoch2.seq === revision.issuerKeySeq);
+    if (!epoch || epoch.registeredAt > revision.registeredAt) return void 0;
+    if (epoch.retiredAt !== null && revision.registeredAt >= epoch.retiredAt) return void 0;
+    return epoch.didKey;
+  }
+  return snapshot.identities.get(parentId)?.keys.get(revision.issuerKeySeq);
+}
+function currentKey(snapshot, parentId) {
+  if (parentId === null) return snapshot.epochs[snapshot.epochs.length - 1].didKey;
+  if (!parentId.startsWith("did:aw:")) return parentId;
+  return snapshot.identities.get(parentId).currentKey;
+}
+function invalidity(snapshot, certificates, i) {
+  const certificate = certificates[i];
+  if (isRegistered(certificate)) {
+    const identity = snapshot.identities.get(certificate.id);
+    if (identity.revocation) return "revoked";
+    if (identity.head.registeredAt < snapshot.replacedAt) return "root_replaced";
+  }
+  if (i === 0) return null;
+  if (certificate.kind === "agent") return invalidity(snapshot, certificates, i - 1);
+  const registeredAt = snapshot.identities.get(certificate.id).head.registeredAt;
+  return invalidityAt(snapshot, certificates[i - 1].id, registeredAt, ID_CHAIN_MAX_CERTIFICATES);
+}
+function invalidityAt(snapshot, id, at, depth) {
+  const identity = snapshot.identities.get(id);
+  if (!identity || depth === 0) throw new Refusal("evidence_unavailable");
+  const revision = identity.revisions.find((r) => r.registeredAt < at && (r.supersededAt === null || r.supersededAt > at));
+  if (!revision) throw new Refusal("evidence_unavailable");
+  if (identity.revocation && identity.revocation.effectiveFrom <= at) return "revoked";
+  if (revision.registeredAt < snapshot.replacedAt) return "root_replaced";
+  const { parent } = revision.certificate;
+  const parentId = parent.kind === "identity" ? parent.id : null;
+  if (witnessedIssuerKey(snapshot, parentId, revision) !== revision.certificate.issuer_key) {
+    throw new Refusal("evidence_unavailable");
+  }
+  if (parentId === null) return null;
+  if (snapshot.identities.get(parentId)?.revisions[0].certificate.kind !== "human") throw new Refusal("human_issuer_is_agent");
+  return invalidityAt(snapshot, parentId, revision.registeredAt, depth - 1);
+}
+function isTimestamp(value) {
+  return typeof value === "string" && MICROSECOND_TIMESTAMP.test(value);
+}
+function isPositiveInteger(value) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+function idRequestDisposition(result, subject, originalAuthPassed) {
+  if (!originalAuthPassed) return { ordinary: "refuse", human_required: "refuse" };
+  const human_required = result.outcome === "nearest_human" ? "continue" : "refuse";
+  const localLeaf = !subject.id.startsWith("did:aw:");
+  switch (result.reason) {
+    case "verified":
+    case "legacy_no_chain":
+    case "unregistered_identity":
+      return { ordinary: "continue", human_required };
+    case "stale_issuer_key":
+    case "status_expired":
+    case "evidence_unavailable":
+      return { ordinary: localLeaf ? "continue" : "refuse", human_required };
+    default:
+      return { ordinary: "refuse", human_required };
+  }
+}
+
+// channel-core/src/identity/id_status.ts
+var IdStatusClient = class {
+  constructor(fetchImpl = fetch, resolveTxt3 = dns.resolveTxt, now = Date.now) {
+    this.fetchImpl = fetchImpl;
+    this.resolveTxt = resolveTxt3;
+    this.now = now;
+  }
+  fetchImpl;
+  resolveTxt;
+  now;
+  cache = /* @__PURE__ */ new Map();
+  inflight = /* @__PURE__ */ new Map();
+  enrollment = /* @__PURE__ */ new Map();
+  async enrollmentFor(id, address) {
+    const domain = address.includes("/") ? address.split("/")[0] : "";
+    if (!domain) return { state: "unknown", domain: null };
+    const key = `${domain}/${id}`;
+    const cached = this.enrollment.get(key);
+    if (cached && this.fresh(cached.at)) return cached.value;
+    try {
+      const value = await this.bounded(async (signal) => {
+        const authority = await discoverAuthoritativeRegistry(domain, this.resolveTxt);
+        const response = await this.fetchImpl(`${authority.registryURL}/v1/did/${encodeURIComponent(id)}/key`, { redirect: "error", signal });
+        if (!response.ok && response.status !== 404) throw Error("identity enrollment unavailable");
+        return keyResponseIdTree(await readBoundedJSON(response));
+      });
+      this.trim(this.enrollment);
+      this.enrollment.set(key, { at: this.now(), value });
+      return value;
+    } catch {
+      return { state: "unknown", domain: null };
+    }
+  }
+  async evidence(chain, subject, domain) {
+    const plan = idStatusRequest(chain, subject, domain);
+    if (plan.lookup !== "status") return null;
+    const key = canonicalJSONValue(plan.request, "invalid status request");
+    const cached = this.cache.get(key);
+    if (cached && this.fresh(cached.at)) return { ...cached.evidence, age_seconds: (this.now() - cached.at) / 1e3 };
+    const pending = this.inflight.get(key);
+    if (pending) return pending;
+    const attempt = this.refresh(key, plan.request);
+    this.inflight.set(key, attempt);
+    try {
+      return await attempt;
+    } finally {
+      this.inflight.delete(key);
+    }
+  }
+  fresh(at) {
+    const age = this.now() - at;
+    return age >= 0 && age <= 6e4;
+  }
+  trim(cache) {
+    if (cache.size >= 256) cache.delete(cache.keys().next().value);
+  }
+  async refresh(key, request) {
+    this.cache.delete(key);
+    try {
+      const evidence = await this.bounded(async (signal) => {
+        const authority = await discoverAuthoritativeRegistry(request.domain, this.resolveTxt);
+        if (!authority.controllerDid) throw Error("identity namespace authority unavailable");
+        const response = await this.fetchImpl(`${authority.registryURL}/v1/id-certificates/status`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(request),
+          redirect: "error",
+          signal
+        });
+        if (!response.ok) throw Error("identity status unavailable");
+        const status2 = await readBoundedJSON(response);
+        if (!isRecord(status2)) throw Error("malformed identity status");
+        return { status: status2, namespace_authority: { domain: request.domain, dns_name: authority.dnsName, inherited: authority.inherited, controller_key: authority.controllerDid }, age_seconds: 0 };
+      });
+      this.trim(this.cache);
+      this.cache.set(key, { at: this.now(), evidence });
+      return evidence;
+    } catch {
+      return null;
+    }
+  }
+  async bounded(operation) {
+    const controller = new AbortController();
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(Error("identity status timed out"));
+      }, 5e3);
+    });
+    try {
+      return await Promise.race([operation(controller.signal), timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+};
+
+// channel-core/src/identity/registry.ts
+import * as dns2 from "node:dns/promises";
 import { isIP } from "node:net";
 var import_tldts = __toESM(require_cjs(), 1);
 etc.sha512Sync = (...m) => sha512(etc.concatBytes(...m));
@@ -7274,10 +8066,11 @@ function isValidDidLogSequence(seq2) {
   return Number.isSafeInteger(seq2) && seq2 >= 1;
 }
 var RegistryResolver = class _RegistryResolver {
-  constructor(fetchImpl = fetch, resolveTxtImpl = dns.resolveTxt, now = () => Date.now(), options) {
+  constructor(fetchImpl = fetch, resolveTxtImpl = dns2.resolveTxt, now = () => Date.now(), options) {
     this.fetchImpl = fetchImpl;
     this.resolveTxtImpl = resolveTxtImpl;
     this.now = now;
+    this.idStatus = new IdStatusClient(fetchImpl, resolveTxtImpl, now);
     this.fallbackRegistryURL = options?.fallbackRegistryURL ? canonicalServerOrigin(options.fallbackRegistryURL) : "";
     const identityAddress = (options?.identityAddress || "").trim();
     const splitIdentityAddress = identityAddress ? splitRegistryAddress(identityAddress) : null;
@@ -7289,6 +8082,7 @@ var RegistryResolver = class _RegistryResolver {
   fetchImpl;
   resolveTxtImpl;
   now;
+  idStatus;
   registryCache = /* @__PURE__ */ new Map();
   addressCache = /* @__PURE__ */ new Map();
   keyCache = /* @__PURE__ */ new Map();
@@ -7329,6 +8123,22 @@ var RegistryResolver = class _RegistryResolver {
       return { registryURL, result: await scoped.verifyStableIdentityAtRegistry(registryURL, stableID, did, true) };
     } catch (error) {
       return { registryURL: "", result: { outcome: "OK_DEGRADED", error: String(error) } };
+    }
+  }
+  /** Enrollment from the very key snapshot used to authenticate an addressless sender. */
+  async receivedIdEnrollment(teamID, stableID, did) {
+    const unknown = { state: "unknown", domain: null };
+    const separator = teamID.indexOf(":");
+    if (separator < 1 || teamID.indexOf(":", separator + 1) !== -1) return unknown;
+    try {
+      const registryURL = (await this.discoverRegistry(teamID.slice(separator + 1))).replace(/\/+$/, "");
+      const cached = this.receivedRegistries.get(registryURL)?.keyCache.get(stableID);
+      if (!cached) return unknown;
+      const age = this.now() - (cached.expiresAt - REGISTRY_KEY_TTL_MS);
+      if (age < 0 || age > 6e4 || cached.value.did_aw !== stableID || cached.value.current_did_key !== did) return unknown;
+      return keyResponseIdTree(cached.value);
+    } catch {
+      return unknown;
     }
   }
   async verifyStableIdentityAtRegistry(registryURL, stableID, expectedCurrentDidKey, fresh = false) {
@@ -7546,18 +8356,9 @@ var RegistryResolver = class _RegistryResolver {
     return readBoundedJSON(response);
   }
 };
-async function discoverAuthoritativeRegistry(domain, resolveTxtImpl = dns.resolveTxt) {
-  const authority = await lookupDomainAuthority(domain, true, resolveTxtImpl);
-  return authority ?? {
-    controllerDid: "",
-    registryURL: DEFAULT_AWID_REGISTRY_URL,
-    dnsName: awidTXTName(domain),
-    inherited: false
-  };
-}
-async function lookupDomainAuthority(domain, allowAncestors, resolveTxtImpl) {
+async function discoverAuthoritativeRegistry(domain, resolveTxtImpl = dns2.resolveTxt) {
   const canonical = canonicalizeDomain(domain);
-  const candidates = candidateDomainsForLookup(canonical, allowAncestors);
+  const candidates = candidateDomainsForLookup(canonical);
   for (const candidate of candidates) {
     const qname = awidTXTName(candidate);
     let records;
@@ -7565,15 +8366,13 @@ async function lookupDomainAuthority(domain, allowAncestors, resolveTxtImpl) {
       records = await resolveTxtImpl(qname);
     } catch (error) {
       if (isTxtNotFound(error)) {
-        if (allowAncestors) continue;
-        throw error;
+        continue;
       }
       throw error;
     }
     const awidRecords = records.map((parts) => parts.join("").trim()).filter((record) => record.startsWith("awid="));
     if (awidRecords.length === 0) {
-      if (allowAncestors) continue;
-      throw new Error(`no awid TXT record found at ${qname}`);
+      continue;
     }
     if (awidRecords.length > 1) {
       throw new Error(`multiple awid TXT records found at ${qname}`);
@@ -7584,7 +8383,12 @@ async function lookupDomainAuthority(domain, allowAncestors, resolveTxtImpl) {
       inherited: candidate !== canonical
     };
   }
-  return null;
+  return {
+    controllerDid: "",
+    registryURL: DEFAULT_AWID_REGISTRY_URL,
+    dnsName: awidTXTName(domain),
+    inherited: false
+  };
 }
 function parseAwidTXTRecord(record, dnsName) {
   const fields = /* @__PURE__ */ new Map();
@@ -7619,10 +8423,9 @@ function parseAwidTXTRecord(record, dnsName) {
 function awidTXTName(domain) {
   return `_awid.${canonicalizeDomain(domain)}`;
 }
-function candidateDomainsForLookup(domain, allowAncestors) {
+function candidateDomainsForLookup(domain) {
   const canonical = canonicalizeDomain(domain);
   if (!canonical) return [];
-  if (!allowAncestors) return [canonical];
   const labels = canonical.split(".");
   const boundary = registeredDomainBoundary(canonical);
   const boundaryLabels = boundary.split(".");
@@ -8048,16 +8851,16 @@ var PinStore = class _PinStore {
     this.addresses.set(address, did);
     return true;
   }
-  rekeyPin(currentKey, nextKey) {
-    const pin = this.mutablePins.get(currentKey);
+  rekeyPin(currentKey2, nextKey) {
+    const pin = this.mutablePins.get(currentKey2);
     if (!pin) return { status: "missing" };
-    if (currentKey === nextKey) return { status: "unchanged", pin };
+    if (currentKey2 === nextKey) return { status: "unchanged", pin };
     const occupied = this.mutablePins.get(nextKey);
     if (occupied && occupied !== pin) return { status: "conflict" };
-    this.mutablePins.delete(currentKey);
+    this.mutablePins.delete(currentKey2);
     this.mutablePins.set(nextKey, pin);
     for (const [address, pinKey] of this.addresses) {
-      if (pinKey === currentKey) this.addresses.set(address, nextKey);
+      if (pinKey === currentKey2) this.addresses.set(address, nextKey);
     }
     return { status: "rekeyed", pin };
   }
@@ -8097,8 +8900,8 @@ var PinStore = class _PinStore {
     }
     return removed;
   }
-  bindStableIdentity(currentKey, stableID) {
-    const rekey = this.rekeyPin(currentKey, stableID);
+  bindStableIdentity(currentKey2, stableID) {
+    const rekey = this.rekeyPin(currentKey2, stableID);
     if ("pin" in rekey) rekey.pin.stable_id = stableID;
     return rekey;
   }
@@ -8409,6 +9212,45 @@ function validatePin(key, value) {
   return pin;
 }
 
+// channel-core/src/identity/received_id_chain.ts
+function receivedIdSubject(message) {
+  return { id: message.from_stable_id || message.from_did || "", did_key: message.from_did || "", team_member_did_aw: null, team_member_did_key: null };
+}
+async function readReceivedIdChain(message, authenticated, status2) {
+  const refused = (reason) => ({ outcome: "unknown", human_id: null, identity_valid: false, kind: null, reason });
+  const subject = receivedIdSubject(message);
+  if (!authenticated) return refused("subject_mismatch");
+  let chain = null;
+  if (message.id_chain !== void 0 && message.id_chain !== null) {
+    let decoded;
+    try {
+      decoded = decodeIdChain(new TextEncoder().encode(canonicalJSONValue(message.id_chain, "invalid chain")));
+    } catch {
+      return refused("invalid_shape");
+    }
+    if (!decoded.ok) return refused(decoded.reason);
+    chain = decoded.value;
+    const preflight = verifyIdChain(chain, subject, null);
+    if (preflight.reason !== "evidence_unavailable") return preflight;
+  } else if (!subject.id.startsWith("did:aw:")) {
+    return verifyIdChain(null, subject, null);
+  }
+  let domain;
+  if (chain === null) {
+    const enrollment = await status2.enrollmentFor?.(subject.id, message.from_address || "");
+    if (enrollment?.state === "not_enrolled") return { outcome: "unknown", human_id: null, identity_valid: null, kind: null, reason: "unregistered_identity" };
+    if (enrollment?.state !== "enrolled" || !enrollment.domain) return verifyIdChain(null, subject, null);
+    domain = enrollment.domain;
+  }
+  const evidence = await status2.evidence(chain, subject, domain);
+  const presented = verifyIdChain(chain, subject, evidence);
+  if (chain && subject.id.startsWith("did:aw:") && (presented.outcome === "no_human" || presented.reason === "superseded_certificate" || presented.reason === "stale_issuer_key")) {
+    const current = verifyIdChain(null, subject, evidence);
+    if (current.outcome === "nearest_human") return current;
+  }
+  return presented;
+}
+
 // channel-core/src/identity/trust.ts
 etc.sha512Sync = (...m) => sha512(etc.concatBytes(...m));
 var ANNOUNCEMENT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
@@ -8448,6 +9290,12 @@ var SenderTrustManager = class {
   localMismatchRefreshAfter = /* @__PURE__ */ new Map();
   teamRosterCache;
   teamRosterRequest;
+  verifyResponsibility(message, authenticated) {
+    return readReceivedIdChain(message, authenticated, {
+      evidence: (chain, subject, domain) => this.registry.idStatus.evidence(chain, subject, domain),
+      enrollmentFor: (id, address) => address.includes("/") ? this.registry.idStatus.enrollmentFor(id, address) : this.registry.receivedIdEnrollment(this.teamID, id, message.from_did || "")
+    });
+  }
   async resolveTrustMetadata(verificationStatus, rawAddress, fromStableID, toDID, toStableID, context) {
     const status2 = this.checkRecipientBinding(verificationStatus, toDID, toStableID);
     const trimmedAddress = rawAddress.trim();
@@ -9157,17 +10005,6 @@ function escapeJSON3(s) {
   return result;
 }
 
-// channel-core/src/identity/canonical.ts
-function canonicalJSONValue(value, unsupported) {
-  if (Array.isArray(value)) return `[${value.map((item) => canonicalJSONValue(item, unsupported)).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    const obj = value;
-    return `{${Object.keys(obj).sort().map((key) => `${JSON.stringify(key)}:${canonicalJSONValue(obj[key], unsupported)}`).join(",")}}`;
-  }
-  if (typeof value === "string" || typeof value === "boolean" || value === null || typeof value === "number" && Number.isSafeInteger(value)) return JSON.stringify(value);
-  throw new Error(unsupported);
-}
-
 // channel-core/src/channel.ts
 var import_proper_lockfile2 = __toESM(require_proper_lockfile(), 1);
 import { dirname as dirname2, join as join2 } from "node:path";
@@ -9583,8 +10420,8 @@ function resolveRegistryFallbackURL(identityRegistryURL = "") {
   const configuredRegistryURL = identityRegistryURL.trim();
   return configuredRegistryURL || void 0;
 }
-function createRegistryResolver(config, resolveTxt2) {
-  return new RegistryResolver(fetch, resolveTxt2, void 0, {
+function createRegistryResolver(config, resolveTxt3) {
+  return new RegistryResolver(fetch, resolveTxt3, void 0, {
     fallbackRegistryURL: resolveRegistryFallbackURL(config.registryURL),
     identityAddress: config.address
   });
@@ -9643,7 +10480,7 @@ async function consumeAgentEvents(options, dispatched, events, log = () => {
       emitTrace(options, "lane_job_completed", event, lane);
     }).catch((error) => {
       emitTrace(options, "lane_job_failed", event, lane);
-      if (error instanceof RetryableAwakeningError && (event.type === "mail_message" || event.type === "chat_message") && !options.signal?.aborted) {
+      if (error instanceof RetryableAwakeningError && (event.type === "mail_message" || event.type === "chat_message" || event.type === "room_post") && !options.signal?.aborted) {
         emitTrace(options, "delivery_retry_exhausted", event, lane);
       }
       const detail = error instanceof Error ? error.message : String(error);
@@ -9661,6 +10498,7 @@ async function consumeAgentEvents(options, dispatched, events, log = () => {
 function eventDeliveryIntent(event) {
   switch (event.type) {
     case "mail_message":
+    case "room_post":
       return "wake";
     case "chat_message":
       return event.sender_waiting ? "steer" : "wake";
@@ -9703,6 +10541,8 @@ function eventDispatchLane(event) {
   switch (event.type) {
     case "mail_message":
       return "mail";
+    case "room_post":
+      return "room";
     case "chat_message":
       return `chat:${event.session_id || event.conversation_id || "unknown"}`;
     default:
@@ -9748,6 +10588,9 @@ async function dispatchAgentEvent(options, dispatched, event, log = (message) =>
       await dispatchChatEvent(options, dispatched, event);
       break;
     }
+    case "room_post":
+      await dispatchRoomPostEvent(options, dispatched, event);
+      break;
     case "control_pause":
     case "control_resume":
     case "control_interrupt":
@@ -9884,10 +10727,16 @@ async function dispatchMailEvent(options, dispatched, event, log) {
     );
     emitTrace(options, "trust_completed", messageEvent, "mail");
     msg.verification_status = trust.status;
+    const authenticated = isTrustedVerificationStatus(msg.verification_status);
+    const responsibility = typeof options.trust.verifyResponsibility === "function" ? await options.trust.verifyResponsibility(msg, authenticated) : await readReceivedIdChain(msg, authenticated, { evidence: async () => null });
+    if (authenticated && idRequestDisposition(responsibility, receivedIdSubject(msg), true).ordinary === "refuse") {
+      msg.verification_status = "failed";
+    }
     const meta = {
       type: "mail",
       from,
       message_id: msg.message_id,
+      responsibility: JSON.stringify(responsibility),
       trust_status: msg.verification_status || "unknown",
       verified: String(isTrustedVerificationStatus(msg.verification_status))
     };
@@ -9909,6 +10758,33 @@ async function dispatchMailEvent(options, dispatched, event, log) {
       emitTrace(options, "ack_completed", messageEvent, "mail");
     }
   }
+}
+async function dispatchRoomPostEvent(options, dispatched, event) {
+  if (!options.teamID || event.team_id !== options.teamID || !event.room_id || !event.message_id) {
+    throw new Error("room notice does not match the selected team");
+  }
+  const key = `room:${options.teamID}:${options.self.stableID || options.self.did}:${event.message_id}`;
+  if (dispatched.has(key) || options.deliveryStore?.has(key)) {
+    await ackRoomNotice(options.client, event.message_id);
+    return;
+  }
+  const post = await fetchRoomMessage(options.client, options.teamID, event.room_id, event.message_id);
+  const trust = await normalizeAndPersistMessageTrust(options, post, post.from_alias, post.from_address, void 0, void 0, event, "room");
+  post.verification_status = trust.status;
+  const authenticated = isTrustedVerificationStatus(post.verification_status);
+  const responsibility = typeof options.trust.verifyResponsibility === "function" ? await options.trust.verifyResponsibility(post, authenticated) : await readReceivedIdChain(post, authenticated, { evidence: async () => null });
+  if (!authenticated || idRequestDisposition(responsibility, receivedIdSubject(post), true).ordinary === "refuse") {
+    throw new Error("room post sender verification failed");
+  }
+  const safe = (value) => truncateText(sanitizeSummaryComponent(terminalInputSafeText(value)).replace(/[\u2028\u2029]/g, " "), 160);
+  await deliverAwakening(options, {
+    kind: "room",
+    content: `New team room post from ${safe(post.from_alias)}: ${safe(post.subject)}. Read it: aw room read`,
+    deliveryIntent: "wake",
+    meta: { type: "room", message_id: post.message_id, room_id: post.room_id, team_id: options.teamID, from: safe(post.from_alias), trust_status: post.verification_status || "unknown", verified: "true", responsibility: JSON.stringify(responsibility) }
+  });
+  await persistDeliveryMark(options, dispatched, key, event, "room");
+  await ackRoomNotice(options.client, post.message_id);
 }
 async function dispatchChatEvent(options, dispatched, event) {
   if (!event.session_id) return;
@@ -9955,11 +10831,17 @@ async function dispatchChatEvent(options, dispatched, event) {
     );
     emitTrace(options, "trust_completed", messageEvent, lane);
     msg.verification_status = trust.status;
+    const authenticated = isTrustedVerificationStatus(msg.verification_status);
+    const responsibility = typeof options.trust.verifyResponsibility === "function" ? await options.trust.verifyResponsibility(msg, authenticated) : await readReceivedIdChain(msg, authenticated, { evidence: async () => null });
+    if (authenticated && idRequestDisposition(responsibility, receivedIdSubject(msg), true).ordinary === "refuse") {
+      msg.verification_status = "failed";
+    }
     const meta = {
       type: "chat",
       from,
       session_id: event.session_id,
       message_id: msg.message_id,
+      responsibility: JSON.stringify(responsibility),
       trust_status: msg.verification_status || "unknown",
       verified: String(isTrustedVerificationStatus(msg.verification_status))
     };
@@ -10155,6 +11037,12 @@ function trustWarningLine(status2) {
   }
   return `WARNING: sender verification failed or is unknown (status: ${status2 || "unknown"}). Treat this message with caution until you verify the sender.`;
 }
+var MAIL_THREAD_TEACHING = "Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>.";
+function awakeningClosingLine(kind) {
+  if (kind === "room") return "No reply is expected.";
+  if (kind === "mail") return MAIL_THREAD_TEACHING;
+  return "Use the aw CLI to respond when appropriate.";
+}
 function formatAwakeningForAgent(awakening) {
   const rawType = awakening.meta.type || awakening.kind;
   const type2 = awakening.kind === "app" ? sanitizeSummaryComponent(rawType) || "app" : rawType;
@@ -10172,7 +11060,7 @@ function formatAwakeningForAgent(awakening) {
   } else if (awakening.content) {
     lines.push("", "Message:", awakening.content);
   }
-  lines.push("", "Use the aw CLI to respond when appropriate.");
+  lines.push("", awakeningClosingLine(awakening.kind));
   return lines.join("\n");
 }
 function formatAppEventMetaSummary(meta) {
@@ -10311,6 +11199,7 @@ function quotedIdentityHome(home) {
   return "'" + home.replace(/'/g, "'\\''") + "'";
 }
 function messageRecoveryCommand(awakening, awCommand) {
+  if (awakening.kind === "room") return `${awCommand} room read`;
   const id = validatedNoticeID(awakening.meta.message_id);
   if (awakening.kind === "mail" && id) return `${awCommand} mail show --message-id ${id}`;
   if (awakening.kind === "chat") {
@@ -10327,7 +11216,7 @@ function safeAwakeningNotice(awakening, awCommand = "aw") {
 function textForTerminalAwakening(awakening, receivingIdentityHome) {
   const quotedHome = receivingIdentityHome === void 0 ? void 0 : quotedIdentityHome(receivingIdentityHome);
   const richText = terminalInputSafeText(formatAwakeningForAgent(awakening));
-  if (awakening.kind === "mail" || awakening.kind === "chat") {
+  if (awakening.kind === "mail" || awakening.kind === "chat" || awakening.kind === "room") {
     const recovery = quotedHome ? messageRecoveryCommand(awakening, `aw --identity-home ${quotedHome}`) : void 0;
     return recovery ? `${richText}
 
@@ -10375,6 +11264,7 @@ function rejectItem(item, error) {
 function createTerminalAwakeningHandler(options) {
   const maxAmbient = options.maxAmbient ?? DEFAULT_MAX_AMBIENT;
   const ambient = /* @__PURE__ */ new Map();
+  const heldNotices = /* @__PURE__ */ new Set();
   let ambientDropped = 0;
   let inputTail = Promise.resolve();
   function rejectAll(error) {
@@ -10387,7 +11277,15 @@ function createTerminalAwakeningHandler(options) {
   }
   const handler = (async (awakening, receivingIdentityHome) => {
     throwIfAborted2(options.signal);
-    if (awakening.deliveryIntent === "ambient") {
+    let heldReason;
+    if (awakening.kind === "mail" || awakening.kind === "chat" || awakening.kind === "room") {
+      if (awakening.meta.decrypted === "false") {
+        heldReason = "could not decrypt";
+      } else if (!isTrustedVerificationStatus(awakening.meta.trust_status)) {
+        heldReason = "unverified sender";
+      }
+    }
+    if (awakening.deliveryIntent === "ambient" && !heldReason) {
       return new Promise((resolve2, reject) => {
         const key = ambientKey(awakening);
         const previous = ambient.get(key);
@@ -10405,14 +11303,16 @@ function createTerminalAwakeningHandler(options) {
         }
       });
     }
-    const delivery = inputTail.then(() => present(awakening, receivingIdentityHome));
+    const delivery = inputTail.then(() => present(awakening, receivingIdentityHome, heldReason));
     inputTail = delivery.catch(() => {
     });
     return delivery;
   });
-  async function present(awakening, receivingIdentityHome) {
+  async function present(awakening, receivingIdentityHome, heldReason) {
     throwIfAborted2(options.signal);
     if (options.isPaused?.()) throw new Error("terminal delivery is paused");
+    const heldKey = JSON.stringify([receivingIdentityHome, awakening.kind, awakening.meta.message_id, heldReason]);
+    if (heldReason && heldNotices.has(heldKey)) throw new Error(`terminal delivery held: ${heldReason}`);
     const ambientBatch = [...ambient.values()];
     let inspection;
     try {
@@ -10424,13 +11324,26 @@ function createTerminalAwakeningHandler(options) {
     }
     throwIfAborted2(options.signal);
     const state = normalizeTerminalReadiness(inspection.state ?? inspection.rawState, inspection.present ?? true);
+    if (awakening.kind === "room" && state === "working") {
+      throw new Error("terminal delivery deferred while pane is working");
+    }
     if (state === "blocked" || state === "shell" || state === "stopped" || state === "not-launched") {
       throw new TerminalInactiveError(state);
     }
+    if (awakening.kind === "mail" && state === "working") {
+      throw new Error("terminal mail delivery deferred (state=working)");
+    }
     if (options.isPaused?.()) throw new Error("terminal delivery is paused");
-    const text2 = [...ambientBatch, { awakening, receivingIdentityHome }].map((item) => textForTerminalAwakening(item.awakening, item.receivingIdentityHome)).join("\n\n---\n\n");
+    const quotedHome = receivingIdentityHome === void 0 ? void 0 : quotedIdentityHome(receivingIdentityHome);
+    const command = quotedHome ? `aw --identity-home ${quotedHome}` : "aw";
+    const text2 = heldReason ? `[aweb] 1 message held (${heldReason}). Run: ${command} ${awakening.kind === "mail" ? "mail inbox" : "chat pending"}` : [...ambientBatch, { awakening, receivingIdentityHome }].map((item) => textForTerminalAwakening(item.awakening, item.receivingIdentityHome)).join("\n\n---\n\n");
     throwIfAborted2(options.signal);
     await options.session.input(options.home, text2);
+    if (heldReason) {
+      heldNotices.add(heldKey);
+      if (heldNotices.size > 1e3) heldNotices.delete(heldNotices.values().next().value);
+      throw new Error(`terminal delivery held: ${heldReason}`);
+    }
     for (const item of ambientBatch) {
       if (ambient.get(item.key) === item) ambient.delete(item.key);
       item.resolve();
@@ -10608,6 +11521,11 @@ async function main() {
           continue;
         }
         if ((type2 === "actionable_chat" || type2 === "chat_message") && !capabilities.scopes.has("chat.read")) {
+          lastError = "grant lacks chat.read";
+          status({ binding_id: msg.binding_id, error: lastError });
+          continue;
+        }
+        if ((type2 === "actionable_room_post" || type2 === "room_post") && !capabilities.scopes.has("chat.read")) {
           lastError = "grant lacks chat.read";
           status({ binding_id: msg.binding_id, error: lastError });
           continue;

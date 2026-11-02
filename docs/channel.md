@@ -124,7 +124,8 @@ The channel does not expose outbound tools. Use the `aw` CLI for all responses:
 | Action | Command |
 | --- | --- |
 | Reply to chat | `aw chat send-and-wait <from> "<reply>"` |
-| Send mail | `aw mail send --to <alias> --body "..."` |
+| Start a mail thread | `aw mail send --to <alias> --subject "..." --body "..."` |
+| Answer mail | `aw mail reply <message_id> --body "..."` |
 | Check inbox | `aw mail inbox` (reading marks unread messages as acknowledged) |
 | Check pending chats | `aw chat pending` |
 

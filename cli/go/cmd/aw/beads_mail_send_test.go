@@ -153,6 +153,7 @@ func TestBeadsMailSendAndReplyAgainstLocalServer(t *testing.T) {
 		Body           string `json:"body"`
 		Priority       string `json:"priority"`
 		FromDID        string `json:"from_did"`
+		NewThread      bool   `json:"new_conversation"`
 	}
 	var sends []sentRequest
 	var sendFromDIDs []string
@@ -217,18 +218,11 @@ func TestBeadsMailSendAndReplyAgainstLocalServer(t *testing.T) {
 				if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 					t.Errorf("decode send: %v", err)
 				}
-				if conflictArmed && got.ConversationID != sourceMessage.ConversationID {
-					// The pair "already has" an active conversation: refuse
-					// the fresh one the way the live server does.
-					w.WriteHeader(http.StatusConflict)
-					_ = json.NewEncoder(w).Encode(map[string]string{"detail": "Existing active conversation found; continue that conversation instead"})
-					return
-				}
 				sends = append(sends, got)
 				sendFromDIDs = append(sendFromDIDs, got.FromDID)
 				_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{
 					MessageID:      "55555555-5555-4555-8555-555555555555",
-					ConversationID: "66666666-6666-4666-8666-666666666666",
+					ConversationID: got.ConversationID,
 					Status:         "delivered",
 					DeliveredAt:    "2026-08-31T00:00:00Z",
 				})
@@ -299,7 +293,7 @@ func TestBeadsMailSendAndReplyAgainstLocalServer(t *testing.T) {
 	// (awid/mail.go GenerateUUID4 path); what the design record forbids is
 	// silently continuing an EXISTING conversation.
 	if sent.ToAddress != "acme.example/mayor" || sent.Priority != "high" || sent.Subject != "Water levels" ||
-		sent.ConversationID == "" || sent.ConversationID == sourceMessage.ConversationID {
+		sent.ConversationID == "" || sent.ConversationID == sourceMessage.ConversationID || !sent.NewThread {
 		t.Errorf("send request %+v", sent)
 	}
 	if !strings.Contains(sent.Body, "the well is low") || !strings.Contains(sent.Body, "```beads-mail") ||
@@ -424,19 +418,19 @@ func TestBeadsMailSendAndReplyAgainstLocalServer(t *testing.T) {
 		t.Errorf("external-principal send signed as %q, want principal %q (shadow was %q)", got, principalDID, did)
 	}
 
-	// The server keeps one active conversation per pair: a fresh send that
-	// gets the live 409 must transparently continue the pair's existing
-	// conversation (design record §8, server-directed continuation).
+	// A fresh send to a correspondent that already has a conversation starts
+	// a new thread: it never looks the pair up or continues its conversation.
 	conflictArmed = true
-	out, err = run("send", "mayor/", "-s", "conflict me", "-m", "second message")
+	listedBefore := conversationListCalls
+	out, err = run("send", "mayor/", "-s", "another topic", "-m", "second message")
 	if err != nil {
-		t.Fatalf("conflict-continuation send failed: %v\n%s", err, out)
+		t.Fatalf("second fresh send failed: %v\n%s", err, out)
 	}
-	if got := sends[len(sends)-1]; got.ConversationID != sourceMessage.ConversationID || got.Subject != "conflict me" {
-		t.Errorf("conflict continuation request %+v", got)
+	if got := sends[len(sends)-1]; got.ConversationID == sourceMessage.ConversationID || !got.NewThread || got.Subject != "another topic" {
+		t.Errorf("fresh send continued a conversation: %+v", got)
 	}
-	if !strings.Contains(out, "continuing the existing conversation") {
-		t.Errorf("conflict continuation not disclosed:\n%s", out)
+	if conversationListCalls != listedBefore || strings.Contains(out, "continuing the existing conversation") {
+		t.Errorf("fresh send looked up the pair:\n%s", out)
 	}
 	conflictArmed = false
 

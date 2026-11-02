@@ -107,8 +107,8 @@ var federationVectorPins = map[string]federationVectorPin{
 		sha256: "42fc649d28f097d22073d10e01c800ca653e177ec055a9cd2f40b047eb6a22da",
 	},
 	"federation-authority-state-v1.json": {
-		bytes:  24926,
-		sha256: "dbfae045d87a947ba5e9add41b03832159eb584c1ab1d8644ec5a34f27f8d616",
+		bytes:  25085,
+		sha256: "f47996006465b825a876621468dd651c1d15e8d0177c2e021e63a103c97f4e28",
 	},
 }
 
@@ -275,6 +275,7 @@ func TestFederationAuthorityStateVectorReferencesAndErrors(t *testing.T) {
 		"recipient_current_key_mismatch":                  {422, false},
 		"recipient_encryption_assertion_invalid_or_stale": {422, false},
 		"recipient_encryption_assertion_missing":          {424, false},
+		"recipient_custodial_no_e2ee":                     {422, false},
 		"recipient_identity_not_found":                    {404, false},
 		"recipient_policy_rejected":                       {403, false},
 		"recipient_route_mismatch":                        {422, false},

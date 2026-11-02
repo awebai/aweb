@@ -27,8 +27,11 @@ func TestPersistentRefusalBacksOffAndResumeRecovers(t *testing.T) {
 	oats := writeStateOATS(t, root, inputPath, "shell")
 	var acks atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if serveWakeSender(w, req) {
+			return
+		}
 		if req.Method == http.MethodGet {
-			_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{{"message_id": "mail-1", "from_alias": "bob", "body": "persistent refusal mail", "created_at": "2026-01-01T00:00:00Z"}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{signedWakeMessage(t, map[string]any{"message_id": "mail-1", "from_alias": "bob", "body": "persistent refusal mail", "created_at": "2026-01-01T00:00:00Z"})}})
 		} else {
 			acks.Add(1)
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
@@ -84,7 +87,7 @@ func TestPersistentRefusalBacksOffAndResumeRecovers(t *testing.T) {
 			t.Fatalf("reopen gap%d=%s want >=%s", i, gap, minimum)
 		}
 	}
-	writeStateOATS(t, root, inputPath, "working")
+	writeStateOATS(t, root, inputPath, "idle")
 	if err := broker.SetPaused(home, true); err != nil {
 		t.Fatal(err)
 	}

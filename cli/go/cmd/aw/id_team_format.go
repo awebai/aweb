@@ -29,9 +29,9 @@ func formatTeamInvite(v any) string {
 	sb.WriteString(fmt.Sprintf("Invite ID:   %s\n", out.InviteID))
 	sb.WriteString(fmt.Sprintf("Token:       %s\n", out.Token))
 	if out.PorcelainJoin {
-		sb.WriteString(fmt.Sprintf("Command:     aw team join %s --name <name>\n", out.Token))
+		sb.WriteString("Command:     aw team join --token-file <file> --name <name>\n")
 	} else {
-		sb.WriteString(fmt.Sprintf("Command:     aw id team accept-invite %s --name <name>\n", out.Token))
+		sb.WriteString("Command:     aw id team accept-invite --token-file <file> --name <name>\n")
 	}
 	return sb.String()
 }
@@ -43,6 +43,9 @@ func formatTeamAcceptInvite(v any) string {
 	sb.WriteString(fmt.Sprintf("Team:        %s\n", out.TeamID))
 	sb.WriteString(fmt.Sprintf("Name:        %s\n", out.Alias))
 	sb.WriteString(fmt.Sprintf("Certificate: %s\n", out.CertPath))
+	if out.IDRegistration != "" {
+		sb.WriteString(fmt.Sprintf("ID registration: %s\n", out.IDRegistration))
+	}
 	if out.Connected != nil && *out.Connected {
 		sb.WriteString(fmt.Sprintf("Connected to %s as %s\n", strings.TrimSpace(out.AwebURL), strings.TrimSpace(out.Alias)))
 	} else if strings.TrimSpace(out.ConnectCommand) != "" {

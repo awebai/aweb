@@ -205,6 +205,57 @@ def render_reference(binary: Path) -> str:
     for flag in root_help["flags"]:
         output.append(f"- `{flag}`")
 
+    output.extend(
+        [
+            "",
+            "## Errors under `--json`",
+            "",
+            "A failed command run with `--json` that printed nothing else prints one",
+            "JSON line on stdout:",
+            "",
+            "```json",
+            '{"error": {"code": "http_error", "message": "...", "http_status": 403, "detail": "..."}}',
+            "```",
+            "",
+            "`code` is the stable contract. `message` is the text stderr prints, which",
+            "is not stable. stderr and the exit code are the same with or without",
+            "`--json`. For a server refusal (`http_error`, `alias_conflict`),",
+            "`http_status` and `detail` are present: `detail` is the server's string",
+            "`detail`, or the `message` of a coded detail, never its headers or any",
+            "other text. When the body names the server's own refusal code, the `code`",
+            "of a coded detail or a top-level `reason`, `reason` carries it, such as",
+            "`admin_required`; without one there is no `reason`. For",
+            "`recipient_custodial_no_e2ee`, `detail` lists the hosted",
+            "recipients' addresses; when the server refused the send, `http_status` is",
+            "422, and for several recipients `detail` is absent, because the server",
+            "does not say which recipient is hosted.",
+            "",
+            "Under `--json`, stdout carries one document. A command that already",
+            "printed its own output, such as a partial result, and then failed keeps",
+            "that output and prints no envelope. The exit code is therefore the",
+            "failure signal: check it first, then read `error.code` when stdout is an",
+            "envelope.",
+            "",
+            "| Code | Meaning |",
+            "| --- | --- |",
+            "| `error` | No stable class. |",
+            "| `http_error` | An aweb server or AWID registry refused the request. |",
+            "| `alias_conflict` | The alias is already held by another active member of the team. |",
+            "| `outcome_unknown` | A mutating request timed out before its response; it may have applied. Check current state before retrying. |",
+            "| `encryption_key_missing` | An encrypted message needs a local encryption private key this identity does not have. |",
+            "| `decrypt_failed` | An encrypted message could not be opened or validated. |",
+            "| `recipient_custodial_no_e2ee` | An end-to-end encrypted send names a hosted agent, whose signed encryption key assertion says aweb's service holds its key; nothing was sent. Send it again without `--e2ee`. |",
+            "| `team_not_hosted` | `aw workspace delete` through an external identity home: the team is not hosted, so no cloud-held controller can release the alias. |",
+            "| `global_identity` | `aw workspace delete` through an external identity home: a global identity's alias is released by its team, not by itself. |",
+            "| `not_own_workspace` | `aw workspace delete` through an external identity home names another workspace. |",
+            "| `no_workspace_credential` | `aw workspace delete` through an external identity home has no member credential to act with. |",
+            "",
+            "`aw wake status --json` describes a receive stream's error the same way:",
+            "beside the `stream_error` text, `stream_error_detail` holds its `code`,",
+            "`http_status`, `detail` and `reason`.",
+        ]
+    )
+
     def emit_tree(path: list[str]) -> None:
         parsed = parse_help(run_help(binary, path))
         title = " ".join(path)

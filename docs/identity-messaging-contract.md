@@ -74,6 +74,28 @@ The modes are:
 Rows without an explicit `inbound_mode` require migration and must fail with an
 explicit migration-required diagnostic rather than silently widening to open.
 
+An authenticated global subject participates as its `did:aw`; its current
+`did:key` proves signatures and is not a second participant reference. Local
+subjects participate as their literal `did:key`. Thread visibility, unread/ack
+scope and continuation use that participant reference. Hosted plaintext signing
+keeps the original key in the signed payload without replacing the participant
+or stored author identity with that key.
+
+Migration 045 normalizes historical participant keys to a global DID only from
+an unambiguous current verified key binding. Duplicate participant rows merge
+without losing join/read state; signed message identity fields remain unchanged.
+The normalized participant retains its key as thread-local attribution evidence,
+not as another participant authority. An ambiguous verified mapping aborts the
+migration rather than guessing the owner.
+
+Inside a thread, canonical participant membership authorizes exact message reads
+as well as the whole thread. A message's original sender/recipient matches that
+participant's canonical DID or its own `current_did_key` in that same thread.
+Inbox, unread and acknowledgements use this attribution and exclude own sends;
+acknowledgements remain incoming-only. There is no cross-thread key lookup.
+Pre-thread messages keep literal-DID access. Older rotated keys not retained on
+the participant remain readable through the thread, without unread attribution.
+
 ## Direct Address Send Protocol
 
 For a send to a global address (`domain/name`):
@@ -88,6 +110,14 @@ For a send to a global address (`domain/name`):
    resolved recipient identity binding (`to`, `to_stable_id`, `to_did`).
 4. The aweb server authenticates the sender and validates that behavior-shaping
    outer fields match the signed payload.
+   A thread participant is the identity (`did:aw` for a global identity), not
+   a per-team actor. The address selects that identity and its route, never a
+   different address from a membership projection. `agent_id` is nullable
+   display/admission metadata: explicit-address participants leave it null;
+   a team-scoped alias may record its selected membership. Read access and
+   continuation compare participant DIDs, not actor IDs or address equality.
+   Native admission's actor/team facts are a separate current membership
+   projection for the target identity in the authenticated endpoint team.
 5. Federation delivery uses the resolved delivery origin and the target identity
    binding. The recipient server re-resolves the target address/key and fails
    closed on mismatch.
@@ -198,7 +228,12 @@ those facts do not validate, it reads the address once fresh and repeats the
 same checks before refusing. Successful cached validation requires no extra
 registry read. The refresh happens before database locks; unavailable evidence
 returns retryable 503, while a fresh mismatch retains its specific refusal.
-Local recipient selection still requires the verified projection marker.
+Generic local key/membership selection still requires the verified projection
+marker. After an address has independently resolved to its canonical `did:aw`
+and current key, locality is residence of that exact DID, independent of a
+membership's superseded key or invalidated marker. The address resolution
+supplies the recipient key and route; this residence lookup supplies no actor
+or team authority and does not restore a verification marker.
 
 ## Receiver-Wide Replay And Contact Compatibility
 

@@ -21,11 +21,11 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
-// Encrypted mail to an address that already has a conversation must keep the
-// recipient ADDRESS for AWID key discovery. It previously sent the
-// conversation id as the recipient, which the real registry resolver rejects
-// as an invalid identifier before anything is delivered.
-func TestAwMailSendE2EEToAddressWithExistingConversationResolvesRecipient(t *testing.T) {
+// Encrypted mail to an address that already has a conversation starts a new
+// thread and keeps the recipient ADDRESS for AWID key discovery, never a
+// conversation id, which the registry resolver rejects as an invalid
+// identifier.
+func TestAwMailSendE2EEToAddressStartsANewThreadAndResolvesRecipient(t *testing.T) {
 	t.Parallel()
 
 	senderPub, senderKey, err := ed25519.GenerateKey(nil)
@@ -91,8 +91,8 @@ func TestAwMailSendE2EEToAddressWithExistingConversationResolvesRecipient(t *tes
 			mu.Lock()
 			sent = body
 			mu.Unlock()
-			_ = json.NewEncoder(w).Encode(map[string]string{
-				"message_id": "msg-e2ee", "conversation_id": conversationID,
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"message_id": "msg-e2ee", "conversation_id": body["conversation_id"],
 				"status": "delivered", "delivered_at": "2026-09-24T00:00:01Z",
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/did/"+senderStableID+"/encryption-key":
@@ -133,7 +133,7 @@ func TestAwMailSendE2EEToAddressWithExistingConversationResolvesRecipient(t *tes
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
-		t.Fatalf("e2ee send into existing conversation failed: %v\n%s", err, out)
+		t.Fatalf("e2ee send to an address with an existing conversation failed: %v\n%s", err, out)
 	}
 	if strings.Contains(string(out), "invalid identifier") {
 		t.Fatalf("recipient resolved from the conversation id:\n%s", out)
@@ -144,8 +144,8 @@ func TestAwMailSendE2EEToAddressWithExistingConversationResolvesRecipient(t *tes
 	if sent == nil {
 		t.Fatalf("nothing was sent; resolver saw %v\n%s", resolverPaths, out)
 	}
-	if sent["conversation_id"] != conversationID {
-		t.Fatalf("conversation_id=%v, want %s", sent["conversation_id"], conversationID)
+	if sent["conversation_id"] == conversationID || sent["new_conversation"] != true {
+		t.Fatalf("conversation_id=%v new_conversation=%v, want a new thread", sent["conversation_id"], sent["new_conversation"])
 	}
 	if sent["content_mode"] != awid.ContentModeEncryptedV2 {
 		t.Fatalf("content_mode=%v, want %s (no plaintext fallback)", sent["content_mode"], awid.ContentModeEncryptedV2)
@@ -327,7 +327,8 @@ func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant,
 			}
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{message}})
 		case r.URL.Path == "/v1/agents":
-			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{}})
+			// The real roster always names its team; bob is not a member.
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{TeamID: "backend:acme.com", Agents: []awid.AgentView{}})
 		case r.URL.Path == "/v1/conversations":
 			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{Conversations: []awid.ConversationItem{{
 				ConversationType:     "mail",
@@ -587,9 +588,10 @@ func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant,
 
 }
 
-// Same defect on the alias branch: an E2EE send by team alias that auto-threads
-// into an existing conversation must keep the alias for key discovery.
-func TestAwMailSendE2EEAliasWithExistingConversationResolvesRecipient(t *testing.T) {
+// The alias branch too: an E2EE send by team alias to a correspondent that
+// already has a conversation starts a new thread and keeps the alias for key
+// discovery.
+func TestAwMailSendE2EEAliasStartsANewThreadAndResolvesRecipient(t *testing.T) {
 	t.Parallel()
 
 	senderPub, senderKey, err := ed25519.GenerateKey(nil)
@@ -658,8 +660,8 @@ func TestAwMailSendE2EEAliasWithExistingConversationResolvesRecipient(t *testing
 			mu.Lock()
 			sent = body
 			mu.Unlock()
-			_ = json.NewEncoder(w).Encode(map[string]string{
-				"message_id": "msg-e2ee-alias", "conversation_id": conversationID,
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"message_id": "msg-e2ee-alias", "conversation_id": body["conversation_id"],
 				"status": "delivered", "delivered_at": "2026-09-24T00:00:01Z",
 			})
 		case r.URL.Path == "/v1/agents/heartbeat":
@@ -696,15 +698,15 @@ func TestAwMailSendE2EEAliasWithExistingConversationResolvesRecipient(t *testing
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
-		t.Fatalf("e2ee alias send into existing conversation failed: %v\n%s", err, out)
+		t.Fatalf("e2ee alias send with an existing conversation failed: %v\n%s", err, out)
 	}
 	mu.Lock()
 	defer mu.Unlock()
 	if sent == nil {
 		t.Fatalf("nothing was sent:\n%s", out)
 	}
-	if sent["conversation_id"] != conversationID {
-		t.Fatalf("conversation_id=%v, want %s", sent["conversation_id"], conversationID)
+	if sent["conversation_id"] == conversationID || sent["new_conversation"] != true {
+		t.Fatalf("conversation_id=%v new_conversation=%v, want a new thread", sent["conversation_id"], sent["new_conversation"])
 	}
 	if sent["content_mode"] != awid.ContentModeEncryptedV2 {
 		t.Fatalf("content_mode=%v, want %s", sent["content_mode"], awid.ContentModeEncryptedV2)

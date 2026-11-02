@@ -1,5 +1,7 @@
 from __future__ import annotations
+from aweb.messaging.mail_attribution import incoming_mail_sql, readable_mail_sql
 
+from aweb.identity_auth_deps import participant_dids
 from aweb.attachment_service import prepare_attachment_send, refuse_remote_attachments, attachment_retry, attachment_references
 
 import json
@@ -17,9 +19,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serial
 from awid.federation_errors import FederationAuthorityError
 from awid.registry import RegistryError
 from awid.pagination import decode_cursor, encode_cursor, validate_pagination_params
-from aweb.awid_error_handling import awid_registry_not_configured_exception
+from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS, awid_registry_not_configured_exception
 from aweb.deps import get_db
 from aweb.config import get_settings
+from aweb.messaging.encryption_custody import require_non_custodial_recipients
 from aweb.e2ee_messages import (
     E2EEEnvelopeError,
     encrypted_message_storage_metadata,
@@ -34,6 +37,7 @@ from aweb.federation.envelope import (
 from aweb.federation.mail import FederatedMailDeliveryError, deliver_federated_mail
 from aweb.hooks import fire_mutation_hook
 from aweb.identity_binding import verify_identity_binding
+from aweb.id_chain_auth import stored_id_chain
 from aweb.identity_metadata import lookup_identity_metadata_by_did
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, get_messaging_auth
 from aweb.messaging.sender_address import sender_address as _sender_address
@@ -47,13 +51,15 @@ from aweb.messaging.alias_targets import (
     validate_alias_selector,
 )
 from aweb.messaging.address_auth import (
+    identity_recipient,
+    local_recipient_for_address_binding,
     local_recipient_visible_to_auth,
+    namespace_uses_home_registry,
     requires_registry_address_binding,
     verified_signed_payload_json,
 )
 from aweb.messaging.conversations import (
     create_conversation,
-    find_active_one_to_one_conversation_between,
     get_conversation,
     touch_conversation_activity,
 )
@@ -69,7 +75,6 @@ from aweb.messaging.mail_routing import (
     participant_is_remote,
     recipient_for_conversation_participant,
     remote_recipient_from_participant,
-    with_requested_address as _with_requested_address,
 )
 from aweb.messaging.messages import (
     MessagePriority,
@@ -111,7 +116,7 @@ class SendMessageRequest(BaseModel):
     to_stable_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
     to_address: Optional[str] = Field(default=None, min_length=1, max_length=256)
     conversation_id: Optional[str] = None
-    new_conversation: bool = False
+    new_conversation: bool = False  # Accepted no-op; conversation_id alone selects continuation.
     subject: str = ""
     body: str = ""
     content_mode: Optional[str] = None
@@ -221,6 +226,7 @@ class SendMessageResponse(BaseModel):
 
 
 class InboxMessage(BaseModel):
+    id_chain: dict | None = None
     attachment_refs: list[dict] = Field(default_factory=list)
     sender_membership: SenderMembership | None = None
     message_id: str
@@ -322,6 +328,7 @@ async def _inbox_response_from_rows(
                 to_address=(identity_map.get(to_did, {}).get("address") or None),
                 signature=r.get("signature"),
                 signed_payload=r.get("signed_payload"),
+                id_chain=stored_id_chain(r.get("id_chain")),
                 verification_status=message_verification_status(dict(r)),
             )
         )
@@ -373,7 +380,7 @@ async def get_mail_conversation(
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> MailConversationResponse:
     aweb_db = db.get_manager("aweb")
-    actor_dids = auth_dids(auth)
+    actor_dids = participant_dids(auth)
     if not actor_dids:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 
@@ -422,7 +429,7 @@ async def get_mail_conversation(
             f"""
             SELECT m.team_id, m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
                    m.subject, m.body, m.priority, m.read_at, m.created_at,
-                   m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id,
+                   m.from_did, m.to_did, m.signature, m.signed_payload, m.id_chain, m.conversation_id,
                    m.content_mode, m.message_version, m.encrypted_envelope
             FROM {{{{tables.messages}}}} m
             {where}
@@ -451,7 +458,7 @@ async def get_mail_conversation(
         """
         SELECT m.team_id, m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
                m.subject, m.body, m.priority, m.read_at, m.created_at,
-               m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id,
+               m.from_did, m.to_did, m.signature, m.signed_payload, m.id_chain, m.conversation_id,
                m.content_mode, m.message_version, m.encrypted_envelope
         FROM {{tables.messages}} m
         WHERE m.message_id = $1
@@ -670,16 +677,9 @@ async def _local_recipient_from_address(db, *, domain: str, name: str) -> dict |
 def _recipient_identity_matches(left: dict | None, right: dict | None) -> bool:
     if left is None or right is None:
         return False
-    left_agent_id = str(left.get("agent_id") or "").strip()
-    right_agent_id = str(right.get("agent_id") or "").strip()
-    if left_agent_id and left_agent_id == right_agent_id:
-        return True
-    for field in ("did_aw", "did_key"):
-        left_value = str(left.get(field) or "").strip()
-        right_value = str(right.get(field) or "").strip()
-        if left_value and right_value and left_value == right_value:
-            return True
-    return False
+    left_did = str(left.get("did_aw") or left.get("did_key") or "").strip()
+    right_did = str(right.get("did_aw") or right.get("did_key") or "").strip()
+    return bool(left_did and right_did and left_did == right_did)
 
 
 def _signed_payload_matches_address_binding(
@@ -704,18 +704,6 @@ def _signed_payload_matches_address_binding(
     if signed_to_stable_id and signed_to_stable_id != recipient_stable_id:
         return False
     return bool(recipient_stable_id or recipient_current_did)
-
-
-def _signed_payload_conversation_id(signed_payload: str | None) -> str:
-    if not signed_payload:
-        return ""
-    try:
-        payload = json.loads(signed_payload)
-    except Exception:
-        return ""
-    if not isinstance(payload, dict):
-        return ""
-    return str(payload.get("conversation_id") or "").strip()
 
 
 def _require_remote_mail_signature(payload: SendMessageRequest) -> None:
@@ -863,6 +851,10 @@ async def _deliver_remote_mail_and_project_locally(
         recipient=recipient,
         recipient_did=recipient_did,
     )
+    if encrypted_metadata is not None:
+        await require_non_custodial_recipients(
+            db, payload.encrypted_envelope or {}, [recipient] if recipient else [], sender=auth,
+        )
     is_encrypted = payload.content_mode == "encrypted_v2"
     if not is_encrypted:
         _require_remote_mail_signature(payload)
@@ -936,6 +928,7 @@ async def _deliver_remote_mail_and_project_locally(
             delivery_origin=delivery_origin,
             envelope=envelope,
             signature=federation_signature,
+            id_chain=getattr(getattr(request, "state", None), "id_chain", None),
             transport=getattr(request.app.state, "federation_mail_transport", None),
         )
     except FederatedMailDeliveryError as exc:
@@ -959,8 +952,6 @@ async def _deliver_remote_mail_and_project_locally(
         msg_uuid,
     ) if msg_uuid is not None else None
     if existing_projection:
-        if payload.new_conversation:
-            raise HTTPException(status_code=409, detail="conversation_exists")
         return SendMessageResponse(
             message_id=str(existing_projection["message_id"]),
             conversation_id=str(existing_projection["conversation_id"]),
@@ -978,13 +969,10 @@ async def _deliver_remote_mail_and_project_locally(
             UUID(conversation_id),
         )
         if existing_conversation:
-            if payload.new_conversation:
-                raise HTTPException(status_code=409, detail="conversation_exists")
             conversation = {"conversation_id": str(existing_conversation["conversation_id"])}
         else:
-            conversation = await _create_requested_mail_conversation(
+            conversation = await _create_mail_conversation(
                 db,
-                require_new=payload.new_conversation,
                 conversation_type="mail",
                 created_by_did=sender_did,
                 conversation_id=conversation_id,
@@ -1011,6 +999,7 @@ async def _deliver_remote_mail_and_project_locally(
             )
         local_message_id, local_created_at = await deliver_message(
             db,
+            id_chain=getattr(getattr(request, "state", None), "id_chain", None),
             registry_client=registry_client,
             recipient_agent=recipient,
             team_id=auth.team_id,
@@ -1073,14 +1062,14 @@ async def _deliver_remote_mail_and_project_locally(
     )
 
 
-async def _create_requested_mail_conversation(db, *, require_new: bool, **kwargs):
+async def _create_mail_conversation(db, **kwargs):
     try:
         return await create_conversation(db, **kwargs)
     except (QueryError, asyncpg.exceptions.UniqueViolationError) as exc:
         # The preflight read cannot exclude a concurrent insertion. Creation is
         # transactional: losing that race must refuse rather than reuse or 500.
         cause = exc.__cause__ if isinstance(exc, QueryError) else exc
-        if require_new and isinstance(cause, asyncpg.exceptions.UniqueViolationError):
+        if isinstance(cause, asyncpg.exceptions.UniqueViolationError):
             raise HTTPException(status_code=409, detail="conversation_exists") from exc
         raise
 
@@ -1203,7 +1192,7 @@ async def _send_mail_conversation_continuation(
             db,
             conversation_id=conversation_id,
             sender_did=sender_did,
-            equivalent_dids=auth_dids(auth),
+            equivalent_dids=participant_dids(auth),
         )
         recipient_participant = continuation.recipient_participant
         if participant_is_remote(recipient_participant):
@@ -1247,6 +1236,13 @@ async def _send_mail_conversation_continuation(
                 timestamp=payload.timestamp,
                 conversation_id=conversation_id,
             )
+            if recipient.get("did_aw") and not recipient.get("did_key"):
+                # A canonical stored participant can outlive its key projection.
+                # Even a stable-only signed target needs current key evidence.
+                validation["recipient"] = await _continuation_signature_recipient(
+                    request, participant=recipient_participant, recipient=recipient,
+                    payload=payload, sender_did_key=auth.did_key,
+                )
             try:
                 _validate_signed_mail_payload(**validation)
             except HTTPException as exc:
@@ -1268,14 +1264,19 @@ async def _send_mail_conversation_continuation(
             recipient=recipient,
             recipient_did=recipient_participant["did"],
         )
+        if encrypted_metadata is not None:
+            await require_non_custodial_recipients(
+                db, payload.encrypted_envelope or {}, [recipient] if recipient else [], sender=auth,
+            )
         message_id, server_received_at = await deliver_message(
             db,
+            id_chain=getattr(getattr(request, "state", None), "id_chain", None),
             registry_client=registry_client,
             recipient_agent=recipient,
             team_id=continuation.conversation.get("team_id") or auth.team_id,
             from_agent_id=auth.agent_id,
             from_alias=auth.alias,
-            to_agent_id=recipient_participant.get("agent_id"),
+            to_agent_id=recipient.get("agent_id"),
             to_alias=recipient_participant.get("alias"),
             from_did=sender_did,
             to_did=recipient_participant["did"],
@@ -1362,76 +1363,6 @@ async def _send_federated_mail_conversation_continuation(
     )
 
 
-async def _existing_mail_conversation_for_target(
-    db,
-    *,
-    auth: MessagingAuth,
-    sender_did: str,
-    sender_address: str | None,
-    payload: SendMessageRequest,
-    request: Request | None = None,
-) -> dict | None:
-    target_did = ""
-    target_agent_id = None
-    target_address = None
-
-    if payload.to_stable_id is not None and payload.to_stable_id.strip():
-        target_did = payload.to_stable_id.strip()
-        recipient = await resolve_agent_by_did(db, target_did)
-        if recipient is not None:
-            target_agent_id = recipient.get("agent_id")
-            target_address = (recipient.get("address") or "").strip() or None
-    elif payload.to_did is not None and payload.to_did.strip():
-        target_did = payload.to_did.strip()
-        recipient = await resolve_agent_by_did(db, target_did)
-        if recipient is not None:
-            target_did = (recipient.get("did_aw") or recipient.get("did_key") or target_did).strip()
-            target_agent_id = recipient.get("agent_id")
-            target_address = (recipient.get("address") or "").strip() or None
-    elif payload.to_address is not None and payload.to_address.strip():
-        target_address = payload.to_address.strip()
-        if "/" in target_address:
-            domain, name = target_address.split("/", 1)
-            recipient = await _local_recipient_from_address(db, domain=domain, name=name)
-            if recipient is not None:
-                target_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()
-                target_agent_id = recipient.get("agent_id")
-                target_address = (recipient.get("address") or "").strip() or target_address
-    elif payload.to_agent_id is not None and payload.to_agent_id.strip():
-        target_agent_id = payload.to_agent_id.strip()
-        recipient = await get_agent_by_id(
-            db, team_id=auth.team_id, agent_id=target_agent_id,
-        ) if auth.team_id else await get_agent_by_id(db, agent_id=target_agent_id)
-        if recipient is not None:
-            target_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()
-            target_address = (recipient.get("address") or "").strip() or None
-    elif payload.to_alias is not None and payload.to_alias.strip():
-        recipient = await _resolve_message_alias(db, auth, payload.to_alias.strip(), request=request)
-        if recipient is None:
-            return None
-        target_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()
-        target_agent_id = recipient.get("agent_id")
-        target_address = (recipient.get("address") or "").strip() or None
-
-    if not (target_did or target_agent_id or target_address):
-        return None
-
-    try:
-        return await find_active_one_to_one_conversation_between(
-            db,
-            conversation_type="mail",
-            did_a=sender_did,
-            did_key_a=auth.did_key,
-            agent_id_a=auth.agent_id,
-            address_a=sender_address,
-            did_b=target_did,
-            agent_id_b=target_agent_id,
-            address_b=target_address,
-        )
-    except ConflictError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-
-
 @router.post("", response_model=SendMessageResponse)
 async def send_message(
     request: Request, payload: SendMessageRequest, db=Depends(get_db),
@@ -1479,21 +1410,6 @@ async def send_message(
         )
     )
 
-    if payload.new_conversation:
-        if payload.conversation_id is None or not has_explicit_recipient:
-            raise HTTPException(
-                status_code=422,
-                detail="new_conversation requires a conversation_id and an explicit recipient",
-            )
-        # Do not use get_conversation here: its lazy-expiry update would mutate
-        # the old thread during a request that must only refuse its reuse.
-        existing = await db.get_manager("aweb").fetch_one(
-            "SELECT conversation_id FROM {{tables.conversations}} WHERE conversation_id = $1",
-            UUID(payload.conversation_id),
-        )
-        if existing is not None:
-            raise HTTPException(status_code=409, detail="conversation_exists")
-
     if payload.conversation_id is not None and not has_explicit_recipient:
         return await _send_mail_conversation_continuation(
             request,
@@ -1506,44 +1422,32 @@ async def send_message(
             conversation_id=payload.conversation_id,
         )
 
-    if has_explicit_recipient and not payload.new_conversation:
-        requested_continuation = None
-        if payload.conversation_id is not None:
-            requested_conversation = await get_conversation(db, conversation_id=payload.conversation_id)
-            if requested_conversation is not None:
-                try:
-                    requested_continuation = await mail_continuation_context(
-                        db,
-                        conversation_id=payload.conversation_id,
-                        sender_did=sender_did,
-                        equivalent_dids=auth_dids(auth),
-                    )
-                except (ValidationError, NotFoundError, ForbiddenError, ConflictError) as exc:
-                    raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-                if not explicit_mail_target_matches_participant(
-                    requested_continuation.recipient_participant,
-                    to_agent_id=payload.to_agent_id,
-                    to_alias=payload.to_alias,
-                    to_did=payload.to_did,
-                    to_stable_id=payload.to_stable_id,
-                    to_address=payload.to_address,
-                ):
-                    raise HTTPException(
-                        status_code=409,
-                        detail="conversation_id recipient does not match the requested recipient",
-                    )
-                if not participant_is_remote(requested_continuation.recipient_participant):
-                    return await _send_mail_conversation_continuation(
-                        request,
-                        payload,
-                        db,
-                        auth=auth,
-                        registry_client=registry_client,
-                        sender_address=sender_address,
-                        sender_did=sender_did,
-                        conversation_id=payload.conversation_id,
-                    )
-                return await _send_federated_mail_conversation_continuation(
+    if has_explicit_recipient and payload.conversation_id is not None:
+        requested_conversation = await get_conversation(db, conversation_id=payload.conversation_id)
+        if requested_conversation is not None:
+            try:
+                requested_continuation = await mail_continuation_context(
+                    db,
+                    conversation_id=payload.conversation_id,
+                    sender_did=sender_did,
+                    equivalent_dids=participant_dids(auth),
+                )
+            except (ValidationError, NotFoundError, ForbiddenError, ConflictError) as exc:
+                raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+            if not await explicit_mail_target_matches_participant(
+                db, requested_continuation.recipient_participant,
+                to_agent_id=payload.to_agent_id,
+                to_alias=payload.to_alias,
+                to_did=payload.to_did,
+                to_stable_id=payload.to_stable_id,
+                to_address=payload.to_address,
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail="conversation_id recipient does not match the requested recipient",
+                )
+            if not participant_is_remote(requested_continuation.recipient_participant):
+                return await _send_mail_conversation_continuation(
                     request,
                     payload,
                     db,
@@ -1551,63 +1455,18 @@ async def send_message(
                     registry_client=registry_client,
                     sender_address=sender_address,
                     sender_did=sender_did,
-                    continuation=requested_continuation,
+                    conversation_id=payload.conversation_id,
                 )
-
-        if requested_continuation is None:
-            existing_conversation = await _existing_mail_conversation_for_target(
+            return await _send_federated_mail_conversation_continuation(
+                request,
+                payload,
                 db,
                 auth=auth,
-                sender_did=sender_did,
+                registry_client=registry_client,
                 sender_address=sender_address,
-                payload=payload,
-                request=request,
+                sender_did=sender_did,
+                continuation=requested_continuation,
             )
-            if existing_conversation is not None:
-                existing_conversation_id = existing_conversation["conversation_id"]
-                if payload.conversation_id is not None and payload.conversation_id != existing_conversation_id:
-                    raise HTTPException(
-                        status_code=409,
-                        detail="Existing active conversation found; continue that conversation instead",
-                    )
-                if payload.conversation_id is None:
-                    if payload.signature is not None and _signed_payload_conversation_id(
-                        payload.signed_payload
-                    ) != existing_conversation_id:
-                        raise HTTPException(
-                            status_code=409,
-                            detail="Signed message must bind the existing conversation_id",
-                        )
-                    return await _send_mail_conversation_continuation(
-                        request,
-                        payload,
-                        db,
-                        auth=auth,
-                        registry_client=registry_client,
-                        sender_address=sender_address,
-                        sender_did=sender_did,
-                        conversation_id=existing_conversation_id,
-                    )
-                try:
-                    existing_continuation = await mail_continuation_context(
-                        db,
-                        conversation_id=existing_conversation_id,
-                        sender_did=sender_did,
-                        equivalent_dids=auth_dids(auth),
-                    )
-                except (ValidationError, NotFoundError, ForbiddenError, ConflictError) as exc:
-                    raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-                if not participant_is_remote(existing_continuation.recipient_participant):
-                    return await _send_mail_conversation_continuation(
-                        request,
-                        payload,
-                        db,
-                        auth=auth,
-                        registry_client=registry_client,
-                        sender_address=sender_address,
-                        sender_did=sender_did,
-                        conversation_id=existing_conversation_id,
-                    )
 
     recipient = None
     recipient_did: str | None = None
@@ -1617,6 +1476,8 @@ async def send_message(
     if payload.to_address is None and payload.to_stable_id is not None:
         recipient_did = payload.to_stable_id.strip()
         recipient = await resolve_agent_by_did(db, recipient_did)
+        if recipient is not None:
+            recipient = identity_recipient(recipient)
         if recipient is None:
             if recipient_did.startswith("did:aw:"):
                 _raise_bare_did_first_contact_unsupported()
@@ -1645,12 +1506,14 @@ async def send_message(
             )
             if not _recipient_identity_matches(bound_recipient, recipient):
                 raise HTTPException(status_code=422, detail="to_address must match the to_stable_id recipient")
-            recipient = _with_requested_address(recipient, address)
+            recipient = identity_recipient(recipient, address)
         to_agent_id = str(recipient["agent_id"]) if recipient.get("agent_id") else None
         to_alias = recipient.get("alias")
     elif payload.to_address is None and payload.to_did is not None:
         requested_recipient_did = payload.to_did.strip()
         recipient = await resolve_agent_by_did(db, requested_recipient_did)
+        if recipient is not None:
+            recipient = identity_recipient(recipient)
         if recipient is None:
             if requested_recipient_did.startswith("did:aw:"):
                 _raise_bare_did_first_contact_unsupported()
@@ -1675,7 +1538,7 @@ async def send_message(
             )
             if not _recipient_identity_matches(bound_recipient, recipient):
                 raise HTTPException(status_code=422, detail="to_address must match the to_did recipient")
-            recipient = _with_requested_address(recipient, address)
+            recipient = identity_recipient(recipient, address)
         recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or requested_recipient_did).strip()
         to_agent_id = str(recipient["agent_id"]) if recipient.get("agent_id") else None
         to_alias = recipient.get("alias")
@@ -1686,32 +1549,39 @@ async def send_message(
         domain, name = address.split("/", 1)
         local_candidate = await _local_recipient_from_address(db, domain=domain, name=name)
         if local_candidate is not None:
-            signed_binding = _signed_payload_matches_address_binding(
-                verified_signed_payload_json(
-                    signed_payload=payload.signed_payload,
-                    signature=payload.signature,
-                    did_key=auth.did_key,
-                ),
-                address=address,
-                recipient=local_candidate,
+            signed = verified_signed_payload_json(
+                signed_payload=payload.signed_payload, signature=payload.signature, did_key=auth.did_key,
             )
-            if local_recipient_visible_to_auth(local_candidate, auth) or signed_binding:
+            signed_binding = _signed_payload_matches_address_binding(
+                signed, address=address, recipient=local_candidate,
+            )
+            # Preserve already admitted local sends. A signed current-key claim
+            # that contradicts the projection must instead use registry evidence.
+            needs_current_binding = (
+                requires_registry_address_binding(local_candidate) and signed is not None
+                and bool(signed.get("to_did") or signed.get("to_stable_id")) and not signed_binding
+            )
+            if signed_binding or (local_recipient_visible_to_auth(local_candidate, auth) and not needs_current_binding):
                 recipient_did = str(
                     local_candidate.get("did_aw") or local_candidate.get("did_key") or ""
                 ).strip()
-                canonical_recipient = (
-                    await resolve_agent_by_did(db, recipient_did)
-                    if recipient_did
-                    else None
-                )
-                recipient = _with_requested_address(
-                    canonical_recipient or local_candidate,
-                    address,
-                )
+                recipient = identity_recipient(local_candidate, address)
                 recipient["requires_local_address_authority"] = True
 
         strict_authority = getattr(request.app.state, "federation_authority", None)
-        if recipient is None and strict_authority is not None:
+        home_namespace = recipient is None and await namespace_uses_home_registry(db, registry_client, domain)
+        if home_namespace:
+            try:
+                resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
+            except AWID_DEPENDENCY_ERRORS as exc:
+                logging.getLogger(__name__).warning("Mail home address lookup unavailable for %s", address, exc_info=True)
+                raise FederationAuthorityError("sender_registry_unavailable") from exc
+            if resolved is not None and resolved.did_aw:
+                recipient_did = resolved.did_aw
+                recipient = await local_recipient_for_address_binding(db, resolved, address)
+                if recipient is None:
+                    recipient = _external_recipient_from_address(address, resolved)
+        elif recipient is None and strict_authority is not None:
             try:
                 resolved = await strict_authority.resolve_contact(
                     address,
@@ -1723,7 +1593,7 @@ async def send_message(
                 resolved = None
             if resolved is not None and resolved.did_aw:
                 recipient_did = resolved.did_aw
-                recipient = await resolve_agent_by_did(db, recipient_did)
+                recipient = await local_recipient_for_address_binding(db, resolved, address)
                 if recipient is None:
                     recipient = _external_recipient_from_address(address, resolved)
                 else:
@@ -1734,7 +1604,7 @@ async def send_message(
             resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
             if resolved is not None and resolved.did_aw:
                 recipient_did = resolved.did_aw
-                recipient = await resolve_agent_by_did(db, recipient_did)
+                recipient = await local_recipient_for_address_binding(db, resolved, address)
                 if recipient is None:
                     recipient = _external_recipient_from_address(address, resolved)
 
@@ -1742,7 +1612,7 @@ async def send_message(
             recipient = await _local_recipient_from_address(db, domain=domain, name=name)
             if recipient is None:
                 if await namespace_exists(db, domain):
-                    raise HTTPException(status_code=404, detail="Recipient agent not found")
+                    raise FederationAuthorityError("recipient_identity_not_found")
                 if registry_client is None:
                     raise awid_registry_not_configured_exception(operation="AWID mail recipient address lookup")
                 raise HTTPException(status_code=404, detail="Recipient address not found")
@@ -1760,7 +1630,7 @@ async def send_message(
                     )
                 ):
                     raise HTTPException(status_code=404, detail="Recipient address not found")
-            recipient = _with_requested_address(recipient, address)
+            recipient = identity_recipient(recipient, address)
             recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()
             if not recipient_did:
                 raise HTTPException(status_code=404, detail="Recipient agent not found")
@@ -1878,11 +1748,14 @@ async def send_message(
             recipient=recipient,
             recipient_did=recipient_did or "",
         )
+        if encrypted_metadata is not None:
+            await require_non_custodial_recipients(
+                db, payload.encrypted_envelope or {}, [recipient] if recipient else [], sender=auth,
+            )
         # If an explicit recipient is present, conversation_id is a caller-chosen
         # initial id. Continuations use conversation_id without recipient fields.
-        conversation = await _create_requested_mail_conversation(
+        conversation = await _create_mail_conversation(
             db,
-            require_new=payload.new_conversation,
             conversation_type="mail",
             created_by_did=sender_did,
             conversation_id=payload.conversation_id,
@@ -1908,6 +1781,7 @@ async def send_message(
         )
         message_id, server_received_at = await deliver_message(
             db,
+            id_chain=getattr(getattr(request, "state", None), "id_chain", None),
             registry_client=registry_client,
             recipient_agent=recipient,
             team_id=auth.team_id,
@@ -1932,6 +1806,10 @@ async def send_message(
             skip_policy_check=True,
         )
     except (ValidationError, NotFoundError, ForbiddenError) as exc:
+        if (isinstance(exc, ForbiddenError) and payload.to_address
+                and recipient.get("identity_scope") == "local"
+                and not recipient.get("has_global_claim") and not recipient.get("did_aw")):
+            raise FederationAuthorityError("local_recipient_route_missing") from exc
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     await record_successful_contact_side_effect(
@@ -1969,8 +1847,27 @@ async def send_message(
     )
 
 
-@router.get("/inbox", response_model=InboxResponse)
-async def get_inbox(
+class UnreadMailCount(BaseModel):
+    unread_count: int
+
+
+@router.get("/unread-count", response_model=UnreadMailCount)
+async def unread_mail_count(
+    db=Depends(get_db), auth: MessagingAuth = Depends(get_messaging_auth),
+) -> UnreadMailCount:
+    """Distinct incoming unread mail for this participant; never acknowledges."""
+    dids = participant_dids(auth)
+    if not dids:
+        raise HTTPException(401, "Authenticated identity is missing a routing DID")
+    count = await db.get_manager("aweb").fetch_val(
+        f"""SELECT COUNT(*) FROM {{{{tables.messages}}}} m
+            WHERE {incoming_mail_sql('$1')} AND m.read_at IS NULL""", dids,
+    )
+    return UnreadMailCount(unread_count=count)
+
+
+@router.get("/inbox", response_model=InboxResponse, name="get_inbox")
+async def _get_inbox_http(
     request: Request,
     db=Depends(get_db),
     limit: int = Query(default=50, ge=1, le=200),
@@ -1979,8 +1876,24 @@ async def get_inbox(
     message_id: str | None = Query(default=None),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> InboxResponse:
+    # FastAPI injects Request only for the concrete type, not Request | None.
+    return await get_inbox(
+        request, db=db, limit=limit, cursor=cursor, unread_only=unread_only,
+        message_id=message_id, auth=auth,
+    )
+
+
+async def get_inbox(
+    request: Request | None,
+    db=Depends(get_db),
+    limit: int = Query(default=50, ge=1, le=200),
+    cursor: str | None = Query(default=None),
+    unread_only: bool = Query(default=False),
+    message_id: str | None = Query(default=None),
+    auth: MessagingAuth = Depends(get_messaging_auth),
+) -> InboxResponse:
     aweb_db = db.get_manager("aweb")
-    inbox_dids = auth_dids(auth)
+    inbox_dids = participant_dids(auth)
     if not inbox_dids:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 
@@ -1998,7 +1911,7 @@ async def get_inbox(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    where_clause = "WHERE m.to_did = ANY($1::text[])"
+    where_clause = f"WHERE {incoming_mail_sql('$1')}"
     params: list = [inbox_dids]
     if exact_message_id is not None:
         params.append(exact_message_id)
@@ -2025,7 +1938,7 @@ async def get_inbox(
         f"""
         SELECT m.team_id, m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
                m.subject, m.body, m.priority, m.read_at, m.created_at,
-               m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id,
+               m.from_did, m.to_did, m.signature, m.signed_payload, m.id_chain, m.conversation_id,
                m.content_mode, m.message_version, m.encrypted_envelope
         FROM {{{{tables.messages}}}} m
         {where_clause}
@@ -2067,18 +1980,18 @@ async def get_message(
     except Exception:
         raise HTTPException(status_code=422, detail="Invalid message_id format")
 
-    actor_dids = auth_dids(auth)
+    actor_dids = participant_dids(auth)
     if not actor_dids:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
     row = await db.get_manager("aweb").fetch_one(
-        """
+        f"""
         SELECT m.team_id, m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
                m.subject, m.body, m.priority, m.read_at, m.created_at,
-               m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id,
+               m.from_did, m.to_did, m.signature, m.signed_payload, m.id_chain, m.conversation_id,
                m.content_mode, m.message_version, m.encrypted_envelope
-        FROM {{tables.messages}} m
+        FROM {{{{tables.messages}}}} m
         WHERE m.message_id = $1
-          AND (m.from_did = ANY($2::text[]) OR m.to_did = ANY($2::text[]))
+          AND {readable_mail_sql('$2')}
         """,
         msg_uuid,
         actor_dids,
@@ -2102,15 +2015,15 @@ async def ack_message(
 
     aweb_db = db.get_manager("aweb")
     now = datetime.now(timezone.utc)
-    inbox_dids = auth_dids(auth)
+    inbox_dids = participant_dids(auth)
     if not inbox_dids:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 
     result = await aweb_db.fetch_one(
-        """
-        UPDATE {{tables.messages}}
+        f"""
+        UPDATE {{{{tables.messages}}}} m
         SET read_at = $1
-        WHERE message_id = $2 AND to_did = ANY($3::text[])
+        WHERE m.message_id = $2 AND {incoming_mail_sql('$3')}
           AND read_at IS NULL
         RETURNING message_id, from_alias, subject, content_mode
         """,
@@ -2122,9 +2035,9 @@ async def ack_message(
     if not result:
         # Either already read or not found — check existence
         existing = await aweb_db.fetch_one(
-            """
-            SELECT message_id, read_at, from_alias, subject FROM {{tables.messages}}
-            WHERE message_id = $1 AND to_did = ANY($2::text[])
+            f"""
+            SELECT message_id, read_at, from_alias, subject FROM {{{{tables.messages}}}} m
+            WHERE m.message_id = $1 AND {incoming_mail_sql('$2')}
             """,
             msg_uuid,
             inbox_dids,

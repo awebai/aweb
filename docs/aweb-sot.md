@@ -623,6 +623,9 @@ authority remains the ordered SQL itself; this SOT does not duplicate that DDL.
 - `human_channel_sends`
 - `human_channel_ingress`
 - `human_channel_mutations`
+- `team_rooms`
+- `room_messages`
+- `room_post_notices`
 <!-- END SOURCE INVENTORY: aweb-tables -->
 
 Migrations `035_team_app_installation_identity` and `036_app_installation_management`
@@ -682,6 +685,7 @@ router entry.
 - `identity_grants`
 - `messaging`
 - `messages`
+- `room`
 - `reservations`
 - `session_leases`
 - `service_registration`
@@ -841,15 +845,16 @@ requires an unambiguous active local projection. Delivery then evaluates the
 recipient's `inbound_mode` against the verified sender identity/address and any
 verified shared-team authority.
 
-**Fresh mail conversations:** `POST /v1/messages` accepts additive
-`new_conversation: true` to skip automatic thread reuse. It requires an explicit
-recipient and a supplied `conversation_id` (422 if missing), and refuses an
-already existing conversation ID with 409 `conversation_exists`. False or
-omitted retains the existing behavior. The signed envelope already binds the
-conversation ID; this control does not change the signed payload format or
-recipient authorization. `aw mail send --new-conversation` creates that signed
-UUID without conversation/inbox lookup and rejects a different returned ID.
-See [`mail-and-chat.md`](mail-and-chat.md) for compatibility and retry limits.
+**Fresh mail conversations:** a `POST /v1/messages` with a recipient and no
+existing conversation ID starts a new conversation. An explicit existing
+`conversation_id` continues that conversation, subject to participant and
+recipient checks. The server preserves the sender's signed conversation ID;
+an initial ID collision refuses with 409 `conversation_exists`. The accepted
+`new_conversation` field is a no-op. HTTP, MCP and saved-contact mail all use
+this rule; chat session reuse is unchanged. `aw mail send` to a recipient
+creates a fresh signed UUID without conversation/inbox pair lookup and rejects
+a different returned ID. See [`mail-and-chat.md`](mail-and-chat.md) for thread
+listing and continuation.
 
 **Recipient resolution:** first-contact global mail/chat uses an address
 (`domain/name`) resolved via awid. A bare external `did:aw` is an identity

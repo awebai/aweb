@@ -20,10 +20,13 @@ import (
 // ambient workspace/API-key credential. Its live org authority is checked by
 // the service on every request.
 type hostedOwnerAuthority struct {
-	issuer string
-	apiURL string
-	did    string
-	key    ed25519.PrivateKey
+	issuer      string
+	apiURL      string
+	did         string
+	key         ed25519.PrivateKey
+	home        string
+	stableID    string
+	registryURL string
 }
 
 func loadHostedOwnerAuthority(workingDir string, destination awconfig.IdentityHome, raw string) (*hostedOwnerAuthority, error) {
@@ -83,7 +86,11 @@ func loadHostedOwnerAuthority(workingDir string, destination awconfig.IdentityHo
 	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
 		return nil, usageError("owner root requires its own valid service workspace binding")
 	}
-	return &hostedOwnerAuthority{issuer: parsed.Scheme + "://" + parsed.Host, apiURL: base, did: did, key: key}, nil
+	stableID, registryURL := "", ""
+	if identity != nil {
+		stableID, registryURL = identity.StableID, identity.RegistryURL
+	}
+	return &hostedOwnerAuthority{home: home.Root, stableID: stableID, registryURL: registryURL, issuer: parsed.Scheme + "://" + parsed.Host, apiURL: base, did: did, key: key}, nil
 }
 
 func postHostedOwnerIdentity(ctx context.Context, owner *hostedOwnerAuthority, input any, output any) error {

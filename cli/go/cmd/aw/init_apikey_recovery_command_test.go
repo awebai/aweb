@@ -41,6 +41,11 @@ func TestAPIKeyGlobalRecoveryCommand(t *testing.T) {
 				mu.Lock()
 				defer mu.Unlock()
 				switch {
+				case r.Method == "GET" && r.URL.Path == "/api/v1/teams/current":
+					if r.Header.Get("Authorization") != "Bearer "+provisioningKey {
+						t.Error("team selection did not use original authority")
+					}
+					json.NewEncoder(w).Encode(map[string]any{"team_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": team})
 				case r.Method == "POST" && r.URL.Path == "/v1/did":
 					var body map[string]any
 					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -219,8 +224,24 @@ func TestAPIKeyGlobalRecoveryCommand(t *testing.T) {
 				return stdout, stderr, code
 			}
 			stdout, stderr, code := run(provisioningKey)
-			if code == 0 || stdout != "" || stderr == "" {
+			if code == 0 || stderr == "" {
 				t.Fatalf("expected captured failure, code=%d stdout=%q stderr=%q", code, stdout, stderr)
+			}
+			// Under --json a failure's stdout is its error envelope alone. It
+			// carries the same redacted diagnostic as stderr, never the key or
+			// the hosted body.
+			assertOneJSONDocument(t, []byte(stdout))
+			var envelope struct {
+				Error struct {
+					Code    string `json:"code"`
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal([]byte(stdout), &envelope); err != nil || envelope.Error.Code == "" || !strings.Contains(stderr, envelope.Error.Message) {
+				t.Fatalf("failure envelope %q for stderr %q: %v", stdout, stderr, err)
+			}
+			if strings.Contains(stdout, provisioningKey) || strings.Contains(stdout, "sensitive arbitrary") {
+				t.Fatal("hosted body or key exposed in the error envelope")
 			}
 			partial, err := os.ReadFile(apiKeyPartialInitPath(target))
 			if err != nil {

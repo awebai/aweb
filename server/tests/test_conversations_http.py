@@ -88,7 +88,7 @@ def _build_test_app(aweb_db, registry):
 
 
 @pytest.mark.asyncio
-async def test_conversations_lists_identity_scoped_mail_by_current_did(aweb_cloud_db):
+async def test_conversations_lists_identity_scoped_mail_by_local_did(aweb_cloud_db):
     bob_sk, _, bob_did_key = _make_keypair()
 
     await aweb_cloud_db.aweb_db.execute(
@@ -129,7 +129,7 @@ async def test_conversations_lists_identity_scoped_mail_by_current_did(aweb_clou
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
     seed_verified_bindings(app, ("did:aw:bob", bob_did_key, "acme.com/bob"))
 
-    headers = _signed_identity_headers(bob_sk, bob_did_key, "did:aw:bob")
+    headers = _signed_identity_headers(bob_sk, bob_did_key, "")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/v1/conversations", headers=headers)
 
@@ -143,7 +143,8 @@ async def test_conversations_lists_identity_scoped_mail_by_current_did(aweb_clou
 
 
 @pytest.mark.asyncio
-async def test_conversations_groups_mail_by_conversation_id(aweb_cloud_db):
+@pytest.mark.parametrize("encrypted_first", [False, True])
+async def test_conversations_groups_mail_by_conversation_id(aweb_cloud_db, encrypted_first):
     bob_sk, _, bob_did_key = _make_keypair()
 
     await aweb_cloud_db.aweb_db.execute(
@@ -163,11 +164,11 @@ async def test_conversations_groups_mail_by_conversation_id(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.conversation_participants}} (
-            conversation_id, did, alias, address, transport_hint, role
+            conversation_id, did, alias, address, transport_hint, role, current_did_key
         )
         VALUES
-            ('55555555-5555-4555-8555-555555555555', 'did:aw:alice', 'alice', 'acme.com/alice', 'mail', 'initiator'),
-            ('55555555-5555-4555-8555-555555555555', $1, 'bob', 'acme.com/bob', 'mail', 'participant')
+            ('55555555-5555-4555-8555-555555555555', 'did:aw:alice', 'alice', 'acme.com/alice', 'mail', 'initiator', NULL),
+            ('55555555-5555-4555-8555-555555555555', 'did:aw:bob', 'bob', 'acme.com/bob', 'mail', 'participant', $1)
         """,
         bob_did_key,
     )
@@ -205,6 +206,17 @@ async def test_conversations_groups_mail_by_conversation_id(aweb_cloud_db):
         bob_did_key,
     )
 
+    if encrypted_first:
+        # An encrypted first message has no server-readable title.
+        await aweb_cloud_db.aweb_db.execute(
+            """UPDATE {{tables.messages}} SET content_mode='encrypted_v2', message_version=2,
+               subject='', body='', encrypted_envelope='{}', encrypted_ciphertext='ciphertext',
+               encrypted_key_wraps='[]', encrypted_ciphertext_hash='sha256:fixture', encrypted_ciphertext_size=10,
+               encrypted_key_wraps_hash='sha256:fixture', encrypted_inner_header_hash='sha256:fixture',
+               encrypted_suite='fixture', encrypted_signing_key_id='fixture', signed_envelope_hash='sha256:fixture'
+               WHERE message_id='11111111-1111-1111-1111-111111111111'"""
+        )
+
     registry = AsyncMock()
     registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=bob_did_key))
     registry.list_did_addresses = AsyncMock(
@@ -231,6 +243,8 @@ async def test_conversations_groups_mail_by_conversation_id(aweb_cloud_db):
     conversations = resp.json()["conversations"]
     assert len(conversations) == 1
     assert conversations[0]["conversation_id"] == "55555555-5555-4555-8555-555555555555"
+    assert conversations[0]["title"] == ("" if encrypted_first else "first")
+    assert conversations[0]["first_message_id"] == "11111111-1111-1111-1111-111111111111"
     assert conversations[0]["subject"] == "second"
     assert conversations[0]["last_message_preview"] == "two"
     assert conversations[0]["unread_count"] == 2
@@ -291,7 +305,7 @@ async def test_conversations_lists_legacy_mail_messages_without_conversation_id_
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
     seed_verified_bindings(app, ("did:aw:bob", bob_did_key, "acme.com/bob"))
 
-    headers = _signed_identity_headers(bob_sk, bob_did_key, "did:aw:bob")
+    headers = _signed_identity_headers(bob_sk, bob_did_key, "")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get("/v1/conversations", headers=headers)
 
@@ -327,11 +341,11 @@ async def test_conversations_lists_mail_for_sender_identity(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.conversation_participants}} (
-            conversation_id, did, alias, address, transport_hint, role
+            conversation_id, did, alias, address, transport_hint, role, current_did_key
         )
         VALUES
-            ('55555555-5555-4555-8555-555555555555', $1, 'alice', 'acme.com/alice', 'mail', 'initiator'),
-            ('55555555-5555-4555-8555-555555555555', 'did:aw:bob', 'bob', 'acme.com/bob', 'mail', 'participant')
+            ('55555555-5555-4555-8555-555555555555', 'did:aw:alice', 'alice', 'acme.com/alice', 'mail', 'initiator', $1),
+            ('55555555-5555-4555-8555-555555555555', 'did:aw:bob', 'bob', 'acme.com/bob', 'mail', 'participant', NULL)
         """,
         alice_did_key,
     )
@@ -467,7 +481,7 @@ async def test_conversations_lists_mail_by_authoritative_participant(aweb_cloud_
     async def _auth_override():
         return MessagingAuth(
             did_key="did:key:alice-current",
-            did_aw=None,
+            did_aw="did:aw:alice",
             address="acme.com/alice",
             team_id="ops:acme.com",
             alias="alice",
@@ -827,14 +841,21 @@ async def test_grant_conversations_require_type_specific_read_scopes(aweb_cloud_
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         mail_allowed = await client.get("/v1/conversations?conversation_type=mail")
+        counts_allowed = await client.get("/v1/conversations/unread-counts?participant_did=did:aw:bob")
         chat_denied = await client.get("/v1/conversations?conversation_type=chat")
         unfiltered_denied = await client.get("/v1/conversations")
         grant_scopes = ("mail.read", "chat.read")
         unfiltered_allowed = await client.get("/v1/conversations")
         invalid_type = await client.get("/v1/conversations?conversation_type=task")
+        grant_scopes = ("chat.read",)
+        counts_denied = await client.get("/v1/conversations/unread-counts?participant_did=did:aw:bob")
 
     assert mail_allowed.status_code == 200, mail_allowed.text
     assert [item["conversation_type"] for item in mail_allowed.json()["conversations"]] == ["mail"]
+    assert counts_allowed.status_code == 200, counts_allowed.text
+    assert counts_allowed.json() == {"counts": [{"participant_did": "did:aw:bob", "unread_count": 1}]}
+    assert counts_denied.status_code == 403
+    assert counts_denied.json()["detail"] == "outside grant scope"
     assert chat_denied.status_code == 403
     assert chat_denied.json()["detail"] == "outside grant scope"
     assert unfiltered_denied.status_code == 403
@@ -856,10 +877,10 @@ async def test_conversations_lists_identity_scoped_chat_by_participant_did(aweb_
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
+        INSERT INTO {{tables.chat_participants}} (session_id, did, alias, current_did_key)
         VALUES
-            ('22222222-2222-2222-2222-222222222222', 'did:aw:alice', 'alice'),
-            ('22222222-2222-2222-2222-222222222222', $1, 'bob')
+            ('22222222-2222-2222-2222-222222222222', 'did:aw:alice', 'alice', NULL),
+            ('22222222-2222-2222-2222-222222222222', 'did:aw:bob', 'bob', $1)
         """,
         bob_did_key,
     )

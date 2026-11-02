@@ -15,6 +15,7 @@ from conftest import aw_cli_binary, shared_test_pool  # noqa: F401
 from awid.did import stable_id_from_did_key
 from awid.signing import canonical_json_bytes, sign_message
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
+from test_messages_http import _signed_identity_headers
 
 pytest_plugins = ("pgdbm.fixtures.conftest",)
 ROOT = Path(__file__).resolve().parents[2]
@@ -41,8 +42,23 @@ async def test_sdk_json_and_streaming_v2_against_real_stack(privacy_app, request
     if family == "identity-global":
         await env.app.state.awid_registry_client.register_did(actor.did, actor.sk)
         stable_id = stable_id_from_did_key(actor.did)
-    session = await _request(env, "alice", "POST", "/v1/chat/sessions", {"to_aliases": ["bob"], "message": "real session"})
+    session_body = {"to_aliases": ["bob"], "message": "real session"}
+    if stable_id:
+        # Registration precedes creation: authenticate the setup request as the
+        # same global participant the SDK will use, not as its separate key.
+        content = json.dumps(session_body).encode()
+        headers = _signed_identity_headers(actor.sk, actor.did, stable_id, content)
+        headers["Content-Type"] = "application/json"
+        session = await env.client.post("/v1/chat/sessions", content=content, headers=headers)
+    else:
+        session = await _request(env, "alice", "POST", "/v1/chat/sessions", session_body)
     assert session.status_code == 200, session.text
+    session_id = session.json()["session_id"]
+    for table, column in (("conversation_participants", "conversation_id"), ("chat_participants", "session_id")):
+        participants = await env.db.fetch_all(
+            f"SELECT did FROM {{{{tables.{table}}}}} WHERE {column}=$1::uuid", session_id,
+        )
+        assert {row["did"] for row in participants} == {stable_id or actor.did, env.actors["bob"].did}
     certificate = ""
     if family == "certificate":
         cert = json.loads(base64.b64decode(actor.certificate))
@@ -54,7 +70,7 @@ async def test_sdk_json_and_streaming_v2_against_real_stack(privacy_app, request
     authority.write_text(json.dumps(dict(
         URL=str(env.client.base_url).rstrip("/"), DID=actor.did, StableID=stable_id,
         Key=base64.b64encode(actor.sk).decode(), Certificate=certificate,
-        SessionID=session.json()["session_id"], Recipient=env.actors["bob"].did,
+        SessionID=session_id, Recipient=env.actors["bob"].did,
     )))
     authority.chmod(0o600)
     try:
