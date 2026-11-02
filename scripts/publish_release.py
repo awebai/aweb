@@ -246,7 +246,7 @@ def require_pi_aw_floor(root: Path, timeout_seconds: float = 180) -> str:
         time.sleep(6)
 
 
-def npm_publish_exact(root: Path, directory: str, package: str, profile: str, version: str) -> None:
+def npm_publish_exact(root: Path, directory: str, package: str, profile: str, version: str, *, staged_final: bool = False) -> None:
     token = os.environ.get("NODE_AUTH_TOKEN", "").strip() or os.environ.get("NPM_TOKEN", "").strip()
     if not token:
         raise PublishRefusal("NODE_AUTH_TOKEN or NPM_TOKEN is required")
@@ -300,6 +300,7 @@ def npm_publish_exact(root: Path, directory: str, package: str, profile: str, ve
                 "publish-exact",
                 "--tgz",
                 str(archive),
+                *(["--staged-final"] if staged_final else []),
                 capture=False,
                 env=environment,
             )
@@ -337,7 +338,7 @@ def write_json_version(path: Path, version: str) -> None:
     path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
 
 
-def publish_aw_npm(root: Path, version: str, source_sha: str) -> None:
+def publish_aw_npm(root: Path, version: str, source_sha: str, *, staged_final: bool = False) -> None:
     packages = {
         "linux/amd64": ("aw-linux-x64", "aw", "aweb-a2a-gw"),
         "linux/arm64": ("aw-linux-arm64", "aw", "aweb-a2a-gw"),
@@ -397,6 +398,7 @@ def publish_aw_npm(root: Path, version: str, source_sha: str) -> None:
             "@awebai/" + package_dir,
             "",
             version,
+            staged_final=staged_final,
         )
     print("npm CLI packages published; hosted binary release assets can be resumed later")
 
@@ -487,6 +489,13 @@ def publish_oci(root: Path, prefix: str, version: str, source_sha: str) -> None:
 
 def publish(root: Path, tag: str) -> None:
     prefix, version, source_sha = tag_identity(root, tag)
+    # The annotated release tag carries the choice across the distribution
+    # repository too; an ambient environment override would be lost there.
+    staged_final = False
+    if prefix == "aw-v":
+        channel = run(root, "python3", "cli/go/npm/publication.py", "channel",
+                      "--version", version, "--tag", tag, "--repository", str(root))
+        staged_final = channel == "next" and "-rc." not in version
     with tempfile.TemporaryDirectory(prefix="aweb-publish-") as temporary:
         checkout = Path(temporary) / "source"
         run(root, "git", "worktree", "add", "--detach", str(checkout), source_sha, timeout=120)
@@ -496,7 +505,7 @@ def publish(root: Path, tag: str) -> None:
             elif prefix in NPM_LANES:
                 publish_npm(checkout, prefix, version)
             elif prefix == "aw-v":
-                publish_aw_npm(checkout, version, source_sha)
+                publish_aw_npm(checkout, version, source_sha, staged_final=staged_final)
             else:
                 publish_oci(checkout, prefix, version, source_sha)
         finally:

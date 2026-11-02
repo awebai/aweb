@@ -141,6 +141,7 @@ test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-ide
 
 test-shipping:
 	python3 scripts/test_shipping.py
+	python3 scripts/test_aw_npm_publication.py
 	python3 scripts/test_candidate_cleanup.py
 	python3 scripts/test_candidate_disk_floor.py
 	python3 scripts/test_folio_wakes_gate.py
@@ -566,7 +567,7 @@ candidate-gate: test-candidate-ledger
 
 release-candidate: test-candidate-ledger
 	@test -n "$(TAGS)" || (echo "TAGS='server-vX.Y.Z ...' is required" >&2; exit 2)
-	python3 scripts/release_candidate.py $(TAGS)
+	python3 scripts/release_candidate.py $(if $(filter 1,$(STAGE_AW_FINAL)),--stage-aw-final,) $(TAGS)
 
 release-publish:
 	@test -n "$(TAG)" || (echo "TAG=<artifact-vX.Y.Z> is required" >&2; exit 2)

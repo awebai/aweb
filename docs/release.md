@@ -32,12 +32,52 @@ Python lanes also accept strict `X.Y.ZrcN` versions, with `N >= 1`:
 The coordinator publishes these RCs first. The Cloud candidate pins the exact
 RC versions and must pass its ordinary pin gate against real services before
 OSS final publication and Cloud deployment. Python RCs publish to PyPI. Every
-aw RC npm package publishes with `--tag next`; final packages use `latest`.
+aw RC npm package publishes with `--tag next`; final packages use `latest`
+unless the release explicitly stages the final on `next` as described below.
 The downstream `awebai/aw` workflow accepts `v*`, uses the synced
 `npm/publish.sh`, and GoReleaser's `release.prerelease: auto` marks an RC GitHub
 release as a prerelease. Its workflow needs no separate RC syntax change.
 Runnerless npm publication remains available without GitHub; hosted binary
 assets remain resumable.
+
+### Stage a final CLI before promoting public installations
+
+When a CLI needs a dependent service upgrade first, publish its final version
+on `next`, qualify and deploy the service with that exact final artifact, then
+promote the same npm versions to `latest`. Publishing and promotion are separate;
+never publish to `latest` and move it back during the deployment window.
+
+Create the normal gated candidate with an explicit staging choice:
+
+```sh
+make release-candidate STAGE_AW_FINAL=1 \
+  TAGS='server-v1.27.45 awid-service-v0.5.35 aw-v1.36.53'
+```
+
+This adds `Npm-Publish-Channel: next` to the annotated **aw tag only**. The
+ordinary source identity and whole candidate gate still apply. Both runnerless
+`python3 scripts/publish_release.py aw-v1.36.53` and the tag-triggered publisher
+read that declaration. The source sync carries it to the distribution tag, so
+the wrapper and all six platform packages publish on `next`. Unmarked final
+tags still publish on `latest`; RCs still publish on `next`. The lower-level
+exact-tar publisher and distribution `npm/publish.sh` also accept
+`--staged-final` for explicit final-only publication to `next`.
+
+After the dependent service deploys and its ordinary joining path is verified,
+the coordinator promotes the existing packages:
+
+```sh
+python3 cli/go/npm/publication.py promote-latest --version 1.36.53
+```
+
+Before changing any tag, this reads all seven exact published versions,
+downloads and verifies their SHA-512 integrity and packed name/version, and
+checks that the wrapper pins those same six platform versions. It prints each
+verified integrity and SHA-256. It then moves and reads back each `latest` tag,
+platforms first and wrapper last. It never compiles, packs or republishes.
+An interrupted promotion reports its failure; it does not roll back tags or
+invent replacement versions. A later explicit invocation repeats the same
+checks and same-version tag assignments.
 
 Before final tagging, `release_candidate.py` selects the highest numbered
 existing RC tag for the same artifact and base version. Its commit must be an

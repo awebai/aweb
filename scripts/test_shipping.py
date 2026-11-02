@@ -720,6 +720,31 @@ sdist = { url = "https://files.example/unrelated.tar.gz", hash = "sha256:unchang
 
 
 class NpmRcContractTest(unittest.TestCase):
+    def test_candidate_declares_staged_final_before_publication(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            command(root, "git", "init", "-qb", "main")
+            command(root, "git", "config", "user.name", "fixture")
+            command(root, "git", "config", "user.email", "fixture@example.test")
+            (root / "scripts").mkdir()
+            gate = root / "scripts/candidate-docker-gate.sh"
+            # Replace only the Docker qualification boundary. This checks tag
+            # creation and its CLI_VERSION input, not a successful real gate.
+            gate.write_text('#!/bin/sh\n[ "$CLI_VERSION" = 1.2.3 ]\n')
+            gate.chmod(0o755)
+            package = root / "cli/go/npm/aw/package.json"
+            package.parent.mkdir(parents=True)
+            package.write_text('{"name":"@awebai/aw","version":"1.2.3-rc.1"}')
+            command(root, "git", "add", ".")
+            command(root, "git", "commit", "-qm", "RC")
+            command(root, "git", "tag", "aw-v1.2.3-rc.1")
+            package.write_text('{"name":"@awebai/aw","version":"1.2.3"}')
+            command(root, "git", "commit", "-qam", "final")
+            command(root, "git", "remote", "add", "origin", ".")
+            CANDIDATE.create_candidate(root, ["aw-v1.2.3"], stage_aw_final=True)
+            message = command(root, "git", "tag", "-l", "aw-v1.2.3", "--format=%(contents)")
+            self.assertIn("Npm-Publish-Channel: next", message)
+
     def test_exact_publisher_routes_staged_rc_to_next_and_final_to_latest(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -727,14 +752,14 @@ class NpmRcContractTest(unittest.TestCase):
             npm.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$CAPTURE_NPM"\n')
             npm.chmod(0o755)
             environment = {**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"], "CAPTURE_NPM": str(root / "args")}
-            for version, expected in (("1.2.3-rc.1", "next"), ("1.2.3", "latest")):
+            for version, expected, staged in (("1.2.3-rc.1", "next", False), ("1.2.3", "latest", False), ("1.2.3", "next", True)):
                 archive = root / "staged.tgz"
                 raw = json.dumps({"name": "@awebai/aw", "version": version}).encode()
                 with tarfile.open(archive, "w:gz") as tar:
                     entry = tarfile.TarInfo("package/package.json")
                     entry.size = len(raw)
                     tar.addfile(entry, io.BytesIO(raw))
-                result = subprocess.run(["bash", "scripts/npm-exact-publish.sh", "publish-exact", "--tgz", str(archive)],
+                result = subprocess.run(["bash", "scripts/npm-exact-publish.sh", "publish-exact", "--tgz", str(archive)] + (["--staged-final"] if staged else []),
                                         cwd=ROOT, env=environment, text=True, capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 args = (root / "args").read_text().splitlines()
@@ -749,7 +774,11 @@ class NpmRcContractTest(unittest.TestCase):
             npm_root, artifacts = root / "npm", root / "artifacts"
             npm_root.mkdir()
             artifacts.mkdir()
+            command(root, "git", "init", "-q")
             shutil.copyfile(ROOT / "cli/go/npm/publish.sh", npm_root / "publish.sh")
+            helper = ROOT / "cli/go/npm/publication.py"
+            if helper.exists():
+                shutil.copyfile(helper, npm_root / helper.name)
             platforms = {"linux_amd64": "linux-x64", "linux_arm64": "linux-arm64",
                          "darwin_amd64": "darwin-x64", "darwin_arm64": "darwin-arm64",
                          "windows_amd64": "windows-x64", "windows_arm64": "windows-arm64"}
@@ -778,12 +807,17 @@ class NpmRcContractTest(unittest.TestCase):
             npm = root / "bin/npm"
             npm.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CAPTURE_NPM"\n')
             npm.chmod(0o755)
-            for version, expected in (("1.2.3-rc.1", "next"), ("1.2.3", "latest")):
+            for version, expected, staged in (("1.2.3-rc.1", "next", False), ("1.2.3", "latest", False), ("1.2.3", "next", True), ("1.2.4", "next", "tag")):
                 capture = root / "args"
                 capture.write_text("")
                 environment = {**os.environ, "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"],
                                "CAPTURE_NPM": str(capture), "GITHUB_REF_NAME": "v" + version}
-                result = subprocess.run(["bash", str(npm_root / "publish.sh")], env=environment,
+                if staged == "tag":
+                    command(root, "git", "config", "user.name", "fixture")
+                    command(root, "git", "config", "user.email", "fixture@example.test")
+                    command(root, "git", "commit", "--allow-empty", "-qm", "fixture")
+                    command(root, "git", "tag", "-a", "v" + version, "-m", "release\n\nNpm-Publish-Channel: next")
+                result = subprocess.run(["bash", str(npm_root / "publish.sh")] + (["--staged-final"] if staged is True else []), env=environment,
                                         text=True, capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 calls = capture.read_text().splitlines()
@@ -814,6 +848,7 @@ class NpmRcContractTest(unittest.TestCase):
                 for script in ("release_versions.py", "publish_release.py"):
                     shutil.copyfile(ROOT / "scripts" / script, root / "scripts" / script)
                 (root / "cli/go/npm/aw").mkdir(parents=True)
+                shutil.copyfile(ROOT / "cli/go/npm/publication.py", root / "cli/go/npm/publication.py")
                 manifest = root / "cli/go/npm/aw/package.json"
                 manifest.write_text(json.dumps({"name": "@awebai/aw", "version": "1.36.48-rc.1"}))
                 (root / "implementation.go").write_text("package main\n")
@@ -849,6 +884,58 @@ class NpmRcContractTest(unittest.TestCase):
                 else:
                     self.assertEqual(result.returncode, 86, result.stderr)
                     self.assertEqual(side_effect.read_text(), "clone\n")
+
+    def test_aw_workflow_carries_staged_final_declaration_to_distribution_tag(self):
+        workflow = (ROOT / ".github/workflows/aw-release.yml").read_text()
+        shell = textwrap.dedent(workflow.split("        run: |\n", 1)[1])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            upstream, seed, remote = root / "upstream", root / "seed", root / "remote.git"
+            for repo in (upstream, seed):
+                repo.mkdir()
+                command(repo, "git", "init", "-qb", "main")
+                command(repo, "git", "config", "user.name", "fixture")
+                command(repo, "git", "config", "user.email", "fixture@example.test")
+            (seed / ".github").mkdir()
+            (seed / ".github/fixture").write_text("keep distribution workflows\n")
+            command(seed, "git", "add", ".")
+            command(seed, "git", "commit", "-qm", "distribution")
+            command(root, "git", "clone", "--bare", str(seed), str(remote))
+            (upstream / "scripts").mkdir()
+            for name in ("publish_release.py", "release_versions.py"):
+                shutil.copyfile(ROOT / "scripts" / name, upstream / "scripts" / name)
+            shutil.copytree(ROOT / "cli/go/npm", upstream / "cli/go/npm",
+                            ignore=shutil.ignore_patterns("__pycache__"))
+            manifest = upstream / "cli/go/npm/aw/package.json"
+            package = json.loads(manifest.read_text())
+            package["version"] = "1.2.3-rc.1"
+            manifest.write_text(json.dumps(package))
+            command(upstream, "git", "add", ".")
+            command(upstream, "git", "commit", "-qm", "RC")
+            command(upstream, "git", "tag", "aw-v1.2.3-rc.1")
+            package["version"] = "1.2.3"
+            manifest.write_text(json.dumps(package))
+            command(upstream, "git", "commit", "-qam", "final")
+            command(upstream, "git", "tag", "-a", "aw-v1.2.3", "-m",
+                    "staged final\n\nNpm-Publish-Channel: next")
+            binaries = root / "bin"
+            binaries.mkdir()
+            spy = binaries / "git"
+            spy.write_text('#!/usr/bin/env python3\nimport os,sys\nargs=sys.argv[1:]\n'
+                           'if args[0]=="clone": args=["clone","--branch","main",os.environ["OWN_REMOTE"],args[-1]]\n'
+                           'os.execv(os.environ["REAL_GIT"],[os.environ["REAL_GIT"],*args])\n')
+            spy.chmod(0o755)
+            (root / "runner").mkdir()
+            env = {**os.environ, "PATH": str(binaries) + os.pathsep + os.environ["PATH"],
+                   "REAL_GIT": shutil.which("git"), "OWN_REMOTE": str(remote),
+                   "RUNNER_TEMP": str(root / "runner"), "GITHUB_REF_NAME": "aw-v1.2.3",
+                   "AW_REPO_TOKEN": "fixture-not-a-secret"}
+            result = subprocess.run(["bash", "-c", shell], cwd=upstream, env=env,
+                                    text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            annotation = command(root, "git", "--git-dir", str(remote), "tag", "-l", "v1.2.3", "--format=%(contents)")
+            self.assertIn("Npm-Publish-Channel: next", annotation)
+            self.assertTrue((root / "runner/aw/.github/fixture").exists())
 
     def test_dispatch_refuses_bad_rc_spellings(self):
         for version in ("1.2.3rc1", "1.2.3-rc.0", "1.2.3-rc.01", "01.2.3", "1.2.3-beta.1"):

@@ -5,7 +5,7 @@
 #       npm pack once into <dir>, then refuse unless the tgz declares the
 #       expected version, contains the declared main entry, and every
 #       files[] entry contributed at least one path. Prints the sha256.
-#   publish-exact    --tgz <file>
+#   publish-exact    --tgz <file> [--staged-final]
 #       npm publish of the exact staged tgz. Nothing is repacked.
 #   verify-published --tgz <file> --package <name> --version <X.Y.Z>
 #                    [--observed <file>]
@@ -61,6 +61,7 @@ MODE="${1:-}"; shift || true
 DIR='' VERSION='' OUT='' TGZ='' PACKAGE='' OBSERVED='' PROFILE='' SOURCE_ROOT=''
 MANIFEST='' STAGING='' SHA='' DIGEST='' RUN_ID='' ARTIFACT_ID='' STATUS=''
 POST_ACTION='' DEADLINE_SECONDS='120' BACKOFF_SECONDS='5'
+STAGED_FINAL=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dir) DIR="$2"; shift 2 ;;
@@ -79,6 +80,7 @@ while [[ $# -gt 0 ]]; do
     --run-id) RUN_ID="$2"; shift 2 ;;
     --artifact-id) ARTIFACT_ID="$2"; shift 2 ;;
     --post-action) POST_ACTION="$2"; shift 2 ;;
+    --staged-final) STAGED_FINAL=1; shift ;;
     --deadline-seconds) DEADLINE_SECONDS="$2"; shift 2 ;;
     --backoff-seconds) BACKOFF_SECONDS="$2"; shift 2 ;;
     *) echo "npm-exact-publish: unknown argument $1" >&2; exit 2 ;;
@@ -238,14 +240,16 @@ PY
   publish-exact)
     [[ -n "$TGZ" && -f "$TGZ" ]] || fail "publish-exact requires an existing --tgz"
     # Select from the staged bytes, not caller environment or a filename.
-    dist_tag="$(python3 - "$TGZ" <<'PYTAG'
+    dist_tag="$(python3 - "$TGZ" "$STAGED_FINAL" <<'PYTAG'
 import json, re, sys, tarfile
 with tarfile.open(sys.argv[1]) as archive:
     version = json.load(archive.extractfile("package/package.json"))["version"]
 base = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
 if not isinstance(version, str) or not re.fullmatch(base + r"(?:-rc\.[1-9][0-9]*)?", version):
     sys.exit("REFUSE: npm version must be X.Y.Z or X.Y.Z-rc.N (N >= 1)")
-print("next" if "-rc." in version else "latest")
+if sys.argv[2] == "1" and not re.fullmatch(base, version):
+    sys.exit("REFUSE: staged-final publication requires a final version")
+print("next" if sys.argv[2] == "1" or "-rc." in version else "latest")
 PYTAG
     )"
     npm publish "$TGZ" --ignore-scripts --access public --tag "$dist_tag"

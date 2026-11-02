@@ -7,12 +7,19 @@ if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.[1
   echo "Error: expected vX.Y.Z or vX.Y.Z-rc.N (N >= 1)" >&2
   exit 1
 fi
-DIST_TAG=latest
-[[ "$VERSION" != *-rc.* ]] || DIST_TAG=next
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ARTIFACTS_DIR="$REPO_ROOT/artifacts"
+channel_args=(--version "$VERSION")
+if [[ "${1:-}" == --staged-final && $# == 1 ]]; then
+  channel_args+=(--staged-final)
+elif [[ $# == 0 ]]; then
+  channel_args+=(--tag "$GITHUB_REF_NAME" --repository "$REPO_ROOT")
+else
+  echo 'Usage: npm/publish.sh [--staged-final]' >&2
+  exit 2
+fi
+DIST_TAG="$(python3 "$SCRIPT_DIR/publication.py" channel "${channel_args[@]}")"
 
 echo "Publishing aw v${VERSION} to npm..."
 
