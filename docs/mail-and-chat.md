@@ -499,6 +499,11 @@ kind, or conversation/session fails with
 block later UUID reuse after message deletion; existing local API idempotency
 may still return its row before attempting an insert.
 
+For local plaintext mail, retrying a stored `message_id` with the same sender
+and exact nonempty `signed_payload` returns its original ID and receipt time.
+A different sender or payload (including unsigned ID reuse) returns HTTP 409.
+Delivery admission and signature validation still apply before replay.
+
 Cross-registry failures return `reason`, `retryable`, and `correlation_id` in
 addition to matching `detail`. Retry unchanged input only when `retryable` is
 true; only rate limiting emits `Retry-After: 1`. See the generated

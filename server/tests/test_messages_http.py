@@ -582,6 +582,81 @@ async def test_inbox_pagination_returns_every_message_without_overlap(aweb_cloud
 
 
 @pytest.mark.asyncio
+async def test_signed_human_plaintext_mail_lost_response_retry(aweb_cloud_db):
+    human_sk, human_pk, human_key = _make_keypair()
+    _, agent_pk, agent_key = _make_keypair()
+    human_did = stable_id_from_public_key(human_pk)
+    agent_did = stable_id_from_public_key(agent_pk)
+    team_id = "backend:acme.com"
+    await _insert_team(aweb_cloud_db.aweb_db, team_id)
+    human_id = await _insert_agent(
+        aweb_cloud_db.aweb_db, team_id=team_id, alias="person",
+        did_key=human_key, did_aw=human_did, address="acme.com/person",
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        "UPDATE {{tables.agents}} SET agent_type = 'human' WHERE agent_id = $1",
+        UUID(human_id),
+    )
+    await _insert_agent(
+        aweb_cloud_db.aweb_db, team_id=team_id, alias="agent",
+        did_key=agent_key, did_aw=agent_did, address="acme.com/agent",
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _auth():
+        return MessagingAuth(
+            did_key=human_key, did_aw=human_did, address="acme.com/person",
+            team_id=team_id, alias="person", agent_id=human_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth
+    message_id, conversation_id = str(uuid4()), str(uuid4())
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    def request_body(body):
+        signed = canonical_json_bytes({
+            "type": "mail", "from": "person", "from_did": human_key,
+            "from_stable_id": human_did, "to": agent_did,
+            "to_did": agent_key, "to_stable_id": agent_did,
+            "subject": "Private mail", "body": body, "timestamp": timestamp,
+            "message_id": message_id, "conversation_id": conversation_id,
+        })
+        return {
+            "to_stable_id": agent_did, "subject": "Private mail", "body": body,
+            "timestamp": timestamp, "message_id": message_id,
+            "conversation_id": conversation_id, "new_conversation": True,
+            "from_did": human_key, "signed_payload": signed.decode(),
+            "signature": sign_message(human_sk, signed),
+        }
+
+    original = request_body("hello from the person")
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test",
+    ) as client:
+        first = await client.post("/v1/messages", json=original)
+        assert first.status_code == 200, first.text
+        before = dict(await aweb_cloud_db.aweb_db.fetch_one(
+            "SELECT * FROM {{tables.messages}} WHERE message_id = $1", UUID(message_id),
+        ))
+        # The first response was lost after commit; retry the exact signed request.
+        retry = await client.post("/v1/messages", json=original)
+        changed = await client.post("/v1/messages", json=request_body("changed content"))
+
+    assert retry.status_code == 200, retry.text
+    assert retry.json() == first.json()
+    assert changed.status_code == 409, changed.text
+    after = dict(await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT * FROM {{tables.messages}} WHERE message_id = $1", UUID(message_id),
+    ))
+    assert after == before
+    assert after["signed_payload"] == original["signed_payload"]
+    assert await aweb_cloud_db.aweb_db.fetch_val(
+        "SELECT count(*) FROM {{tables.messages}} WHERE conversation_id = $1",
+        UUID(conversation_id),
+    ) == 1
+
+
+@pytest.mark.asyncio
 async def test_send_encrypted_message_stores_opaque_envelope_only(aweb_cloud_db):
     alice_sk, alice_pk, alice_did_key = _make_keypair()
     _, bob_pk, bob_did_key = _make_keypair()

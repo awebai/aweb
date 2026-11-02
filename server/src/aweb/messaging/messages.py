@@ -377,16 +377,17 @@ async def deliver_message(
         encrypted_metadata = {}
 
     aweb_db = db.get_manager("aweb")
+    existing = await aweb_db.fetch_one(
+        """
+        SELECT message_id, created_at, content_mode, signed_envelope_hash,
+               from_did, signed_payload
+        FROM {{tables.messages}}
+        WHERE message_id = $1
+        """,
+        message_id,
+    )
     if content_mode == "encrypted_v2":
         signed_envelope_hash = str(encrypted_metadata.get("signed_envelope_hash") or "").strip()
-        existing = await aweb_db.fetch_one(
-            """
-            SELECT message_id, created_at, content_mode, signed_envelope_hash
-            FROM {{tables.messages}}
-            WHERE message_id = $1
-            """,
-            message_id,
-        )
         if existing:
             if (
                 str(existing["content_mode"] or "") == "encrypted_v2"
@@ -394,6 +395,15 @@ async def deliver_message(
             ):
                 return UUID(str(existing["message_id"])), existing["created_at"]
             raise ConflictError("message_id already exists with a different encrypted envelope")
+    elif existing:
+        if (
+            existing["content_mode"] == "legacy_plaintext_v1"
+            and existing["from_did"] == sender_did
+            and signed_payload
+            and existing["signed_payload"] == signed_payload
+        ):
+            return UUID(str(existing["message_id"])), existing["created_at"]
+        raise ConflictError("message_id already exists with a different sender or signed payload")
 
     row = await aweb_db.fetch_one(
         """
