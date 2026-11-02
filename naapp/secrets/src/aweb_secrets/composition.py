@@ -34,7 +34,6 @@ from aweb_naapp.runtime.health import CheckResult
 from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty
 from aweb_naapp.signing_key import read_signing_key_file
 from fastapi import APIRouter
-from nacl.signing import SigningKey
 from pgdbm.core import TransactionManager
 
 from aweb_secrets.activity_service import ActivityReads
@@ -145,7 +144,7 @@ async def _compose(
     mailer: Mailer,
     committer: UseCommitter,
     response_key: ResponseKey,
-    runner_key: SigningKey,
+    run_dispatch: Callable[..., RunDispatch],
 ) -> _Services:
     db = runtime.db()
     fence = runtime.installation_fence()
@@ -340,11 +339,10 @@ async def _compose(
             principal=principal, admission=admission, passkeys=passkeys
         ),
     )
-    runs = RunDispatch(
+    runs = run_dispatch(
         db,
         **common,
         passkeys=passkeys,
-        service_key=runner_key,
         origin=settings.public_origin,
         assignment_ttl=timedelta(seconds=settings.runner_assignment_ttl_seconds),
         claim_wait=timedelta(seconds=settings.runner_claim_wait_seconds),
@@ -415,6 +413,7 @@ def create_service(
     )
     response_key = ResponseKey.from_file(settings.response_key_file)
     runner_key = read_signing_key_file(settings.runner_service_key_file)
+    run_dispatch = partial(RunDispatch, service_key=runner_key)
     email = {
         "EMAIL_SMTP_HOST": settings.email_smtp_host,
         "EMAIL_SMTP_PORT": str(settings.email_smtp_port),
@@ -449,7 +448,7 @@ def create_service(
     async def prepare(runtime):
         nonlocal active
         active = await _compose(
-            runtime, settings, provider, mailer, committer, response_key, runner_key
+            runtime, settings, provider, mailer, committer, response_key, run_dispatch
         )
         stop = asyncio.Event()
         recovery = asyncio.create_task(_recover(active, stop, settings.sweep_interval_seconds))
