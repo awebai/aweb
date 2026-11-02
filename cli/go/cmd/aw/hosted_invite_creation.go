@@ -18,6 +18,13 @@ import (
 
 const hostedInviteRecoveryFile = "hosted-invite-creation.json"
 
+// A provisioning caller may complete the existing local parent exchange. Other
+// callers retain the ordinary explicit request/import diagnostic and state.
+type hostedInviteSignaturePendingError struct{ err error }
+
+func (e *hostedInviteSignaturePendingError) Error() string { return e.err.Error() }
+func (e *hostedInviteSignaturePendingError) Unwrap() error { return e.err }
+
 type hostedInviteCreation struct {
 	TokenHash    string                `json:"token_hash"`
 	AwebURL      string                `json:"aweb_url"`
@@ -113,7 +120,7 @@ func (state *hostedInviteCreation) prepareRequest(root string, material workspac
 			return nil, err
 		}
 		if installed == nil && state.Tree.Mode == "self_custodial" {
-			return nil, fmt.Errorf("native agent signature pending: obtain and import an agent child of %s in %s with the existing ID parent exchange, then retry this invite in the same identity home", state.Tree.Parent["id"], state.Tree.Domain)
+			return nil, &hostedInviteSignaturePendingError{err: fmt.Errorf("native agent signature pending: obtain and import an agent child of %s in %s with the existing ID parent exchange, then retry this invite in the same identity home", state.Tree.Parent["id"], state.Tree.Domain)}
 		}
 		if installed != nil {
 			bundle := installed.Bundle

@@ -868,6 +868,13 @@ the parent is `{kind:namespace,id:<exact domain>}`, and the root controller
 holds the fixed self-custodial invitation in its existing local invitation
 record. The approving root operator supplies the human approval described
 below; root-key custody alone never enables unattended human CSR approval.
+When a same-machine constructor (`aw team admin create --agent` or certificate-only
+`aw workspace add-worktree`) selects a self-custodial agent parent, it runs the
+existing child request/receive/approve/import exchange before accepting the
+hosted invite. The retained preview pins the parent and domain; the child keeps
+its original key and request UUID. If issuance refuses, the pending child home
+and request remain available rather than being rolled back. Ordinary invite
+accept across machines still requires the explicit parent exchange.
 Agents can issue agent spawns, never human invites. An untyped new invite from
 an attributed agent is a spawn/inherits or refuses, not an unattributed escape.
 Do not guess a parent from pre-upgrade bearer tokens or local instance names.

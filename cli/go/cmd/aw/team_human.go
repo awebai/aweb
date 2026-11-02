@@ -1624,6 +1624,10 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 			} else {
 				accepted, err := resolveOrCreateTeamMemberIdentity(inviteAnchorDir, plans[i], apiKeyBootstrapMode, opts.APIKey)
 				if err != nil {
+					var pending *hostedInviteSignaturePendingError
+					if errors.As(err, &pending) {
+						return reportRosterFailure(i, err)
+					}
 					homeRollbackErr := rollback.Rollback()
 					return reportRosterFailure(i, addPostJoinRollbackError(err, nil, nil, homeRollbackErr))
 				}
@@ -1637,6 +1641,10 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 		} else {
 			accepted, err := resolveOrCreateTeamMemberIdentity(inviteAnchorDir, plans[i], apiKeyBootstrapMode, opts.APIKey)
 			if err != nil {
+				var pending *hostedInviteSignaturePendingError
+				if errors.As(err, &pending) {
+					return reportRosterFailure(i, err)
+				}
 				homeRollbackErr := rollback.Rollback()
 				return reportRosterFailure(i, addPostJoinRollbackError(err, nil, nil, homeRollbackErr))
 			}
@@ -2379,7 +2387,8 @@ func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, gl
 	if err != nil {
 		return nil, err
 	}
-	accepted, err := acceptTeamInviteWithDetails(homeDir, token, teamAcceptInviteOptions{IdentityHome: awconfig.WorktreeIdentityHome(homeDir), Name: alias, Scope: teamAcceptScopeFromGlobal(global), Address: memberAddress})
+	acceptOpts := teamAcceptInviteOptions{IdentityHome: awconfig.WorktreeIdentityHome(homeDir), Name: alias, Scope: teamAcceptScopeFromGlobal(global), Address: memberAddress}
+	accepted, err := acceptProvisionedTeamInvite(anchorDir, actorHome.Root, homeDir, token, acceptOpts)
 	if err != nil {
 		return nil, err
 	}

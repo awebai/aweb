@@ -215,7 +215,7 @@ func currentAgentIssuer(opts idChildOptions) (*selectedChildIssuer, error) {
 	if err != nil {
 		return nil, err
 	}
-	dir := filepath.Dir(identity.IdentityPath)
+	dir := filepath.Dir(identity.SigningKeyPath)
 	chain, err := awconfig.LoadInstalledIDChain(dir)
 	if err != nil {
 		return nil, err
