@@ -99,7 +99,7 @@ var versionCmd = &cobra.Command{
 		// No-op: version command doesn't require command initialization side-effects.
 	},
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Print(versionReport())
+		fmt.Fprint(commandStdout, versionReport())
 		if automaticUpdateCheckEnabled() {
 			checkLatestVersion(os.Stderr, "")
 		}
@@ -282,7 +282,7 @@ func Execute() {
 	if err != nil {
 		finishHTTPDiagnostics(err)
 		err = normalizeStatusCommandError(os.Args[1:], err)
-		writeCLIError(os.Stderr, err.Error())
+		reportCLIError(err, err.Error(), argsContainJSONFlag(os.Args[1:]))
 		os.Exit(exitCode(err))
 	}
 	defer restorePluginIdentityHome()
@@ -294,6 +294,7 @@ func Execute() {
 		}
 		os.Exit(code)
 	}
+	rootCmd.SetOut(commandStdout)
 	err = rootCmd.Execute()
 	checkVersionFromHeader()
 	finishHTTPDiagnostics(err)
@@ -303,7 +304,7 @@ func Execute() {
 		if hint := checkVerificationRequired(err); hint != "" {
 			msg = hint
 		}
-		writeCLIError(os.Stderr, msg)
+		reportCLIError(err, msg, jsonFlag)
 		os.Exit(exitCode(err))
 	}
 }
@@ -416,6 +417,62 @@ func checkVersionFromHeader() {
 	if compareVersions(current, latest) < 0 {
 		fmt.Fprintf(os.Stderr, "Upgrade available: v%s → v%s (run `aw upgrade`)\n", current, latest)
 	}
+}
+
+// reportCLIError prints a failed command's error on stderr and, under --json,
+// its error envelope on stdout. stdout carries one document: a command that
+// already printed its own output keeps it, without a second document.
+func reportCLIError(err error, msg string, asJSON bool) {
+	msg = codedRefusalText(err, msg)
+	writeCLIError(os.Stderr, msg)
+	if asJSON && !commandStdout.written {
+		writeCLIErrorEnvelope(commandStdout, err, msg)
+	}
+}
+
+// codedRefusalText says a coded server refusal in the server's own words: the
+// refusal's raw text in msg becomes its detail message, keeping any prefix
+// the command added. --debug also prints the raw refusal.
+func codedRefusalText(err error, msg string) string {
+	refusal, message, ok := awid.CodedRefusal(err)
+	if !ok || !strings.Contains(msg, refusal) {
+		return msg
+	}
+	debugLog("%s", refusal)
+	return strings.Replace(msg, refusal, message, 1)
+}
+
+// commandStdout is the stdout every command writes through, so the error
+// report knows whether the command already printed its own output.
+var commandStdout = &trackedStdout{}
+
+type trackedStdout struct {
+	written bool
+}
+
+func (t *trackedStdout) Write(p []byte) (int, error) {
+	if len(p) > 0 {
+		t.written = true
+	}
+	return os.Stdout.Write(p)
+}
+
+// Fd is stdout's file descriptor, for terminal checks.
+func (t *trackedStdout) Fd() uintptr {
+	return os.Stdout.Fd()
+}
+
+// argsContainJSONFlag reads --json before flags are parsed.
+func argsContainJSONFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "--" {
+			return false
+		}
+		if arg == "--json" {
+			return true
+		}
+	}
+	return false
 }
 
 // writeCLIError prints a command's error, which may carry a server's text.

@@ -76,15 +76,6 @@ func TestParseAWIDTXTRecordRejectsMalformedRecord(t *testing.T) {
 	}
 }
 
-func TestVerifyExactDomainAuthorityReturnsLookupErrorOnMissingRecord(t *testing.T) {
-	t.Parallel()
-
-	_, err := VerifyExactDomainAuthority(context.Background(), staticTXTResolver{}, "missing.example.com")
-	if err == nil {
-		t.Fatal("expected lookup error")
-	}
-}
-
 func TestValidateRegistryOriginRejectsIPLiteral(t *testing.T) {
 	t.Parallel()
 

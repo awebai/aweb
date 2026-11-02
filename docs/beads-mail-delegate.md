@@ -304,30 +304,12 @@ to run `bd mail inbox` first.
 - Thread ids **are** aweb `conversation_id`s. (The `thread_id` field in
   the client structs is dead — the server never emits it.)
 - The delegate always controls conversations explicitly: a plain `send`
-  creates a fresh conversation; `reply` and `send --reply-to` continue
-  the source message's conversation by id. The delegate never invokes
-  `aw mail send`'s opportunistic pre-discovery
-  (`cli/go/cmd/aw/mail.go:391-419`). Note precisely what "fresh" means
-  for a signed sender: the shared client MINTS a conversation UUID for
-  every signed send with no explicit conversation
-  (`cli/go/awid/mail.go:95-101`) — this is not an accident to fix but a
-  consequence of signature binding, below.
-- **Server-directed continuation, and why it is the right fix**
-  (amendment 2026-09-01, root cause verified against both ends after
-  the first live exchange): the server keeps one active mail
-  conversation per pair. Its silent-reuse branch fires only when
-  `conversation_id` is absent AND — for signed mail — only when the
-  signed payload already binds the EXISTING conversation id
-  (`server/src/aweb/routes/messages.py:1366-1373`). A signed sender
-  therefore structurally cannot use silent reuse without first
-  discovering the conversation: `conversation_id` is part of the signed
-  envelope, and you cannot sign an id you do not know. So the delegate
-  sends fresh first (zero extra cost on the common first-contact path),
-  and on exactly the HTTP 409 conflict it discovers the pair's unique
-  active conversation, signs a continuation binding it, and resends,
-  noting so on stderr. Removing the client-side minting instead would
-  not help a signed sender and would be a cross-cutting change to the
-  shared mail client; rejected for the record.
+  starts a new thread (`new_conversation: true` with a fresh conversation
+  UUID that the client signs); `reply` and `send --reply-to` continue the
+  source message's conversation by id. A send never looks up or continues
+  the pair's conversation, and a server that answers a new thread with
+  another conversation id fails the send without a retry: the message may
+  already be in that conversation.
 - Source-message lookup for `reply`, `--reply-to`, and `read` uses the
   exact-read endpoint, which the server scopes to sender OR recipient
   (`messages.py:1851`, `WHERE from_did OR to_did`) — the

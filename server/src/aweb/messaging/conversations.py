@@ -177,152 +177,25 @@ async def _get_active_conversation(
     return conversation
 
 
-async def _equivalent_identity_refs(
-    db,
-    did: str,
-    *,
-    did_key: str | None = None,
-    agent_id: str | UUID | None = None,
-) -> tuple[list[str], list[UUID]]:
-    """Return all identity refs (did_aw + did_key) and agent_ids equivalent to the input.
-
-    Walking is anchored on did_key when available: the cryptographic key is
-    collision-resistant. did_aw is name-stable but can collide across distinct
-    cryptographic identities (e.g., post-rotation, adversarial registration);
-    we only walk by did_aw when no did_key is reachable from the inputs.
-    """
-    refs: list[str] = []
-    for value in (did, did_key):
-        normalized = str(value or "").strip()
-        if normalized and normalized not in refs:
-            refs.append(normalized)
-
-    agent_ids: list[UUID] = []
-    agent_uuid = _uuid_or_none(agent_id, field_name="agent_id")
-    if agent_uuid is not None:
-        agent_ids.append(agent_uuid)
-
-    if not refs and agent_uuid is None:
-        return [], []
-
-    aweb_db = db.get_manager("aweb")
-
-    # Anchor the cryptographic identity. If we have agent_id, fetch its
-    # did_key from the agents table so a multi-team agent's other team rows
-    # can be found via did_key match below. seed_did_keys gates the strict
-    # walk; seed_did_aw is captured for the best-effort walk fallback.
-    seed_did_keys: list[str] = []
-    input_did_key = (did_key or "").strip()
-    if input_did_key:
-        seed_did_keys.append(input_did_key)
-    seed_did_aws: list[str] = []
-    input_did = (did or "").strip()
-    if input_did and input_did not in seed_did_keys:
-        seed_did_aws.append(input_did)
-
-    if agent_uuid is not None:
-        seed_row = await aweb_db.fetch_one(
-            """
-            SELECT CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, did_key
-            FROM {{tables.agents}}
-            WHERE deleted_at IS NULL
-              AND agent_id = $1
-            """,
-            agent_uuid,
-        )
-        if seed_row is not None:
-            seed_did_key = str(seed_row.get("did_key") or "").strip()
-            if seed_did_key and seed_did_key not in seed_did_keys:
-                seed_did_keys.append(seed_did_key)
-            seed_did_aw = str(seed_row.get("did_aw") or "").strip()
-            if seed_did_aw and seed_did_aw not in seed_did_aws and seed_did_aw not in seed_did_keys:
-                seed_did_aws.append(seed_did_aw)
-            for value in (seed_did_aw, seed_did_key):
-                if value and value not in refs:
-                    refs.append(value)
-
-    rows: list[dict[str, Any]] = []
-    if seed_did_keys:
-        # Strict cryptographic walk: only matches rows sharing the did_key.
-        # Multi-team agents (same did_key, multiple agent_ids) expand here;
-        # did_aw collisions (different did_keys, same did_aw) do not.
-        rows = await aweb_db.fetch_all(
-            """
-            SELECT agent_id, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, did_key
-            FROM {{tables.agents}}
-            WHERE deleted_at IS NULL
-              AND did_key = ANY($1::text[])
-            """,
-            seed_did_keys,
-        )
-    elif seed_did_aws:
-        # Best-effort name walk for callers without a did_key (external/
-        # unauthenticated). This path can conflate did_aw collisions; trust
-        # of the input is the caller's responsibility.
-        rows = await aweb_db.fetch_all(
-            """
-            SELECT agent_id, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, did_key
-            FROM {{tables.agents}}
-            WHERE deleted_at IS NULL
-              AND did_aw = ANY($1::text[]) AND did_aw_verified_key = did_key
-            """,
-            seed_did_aws,
-        )
-
-    for row in rows:
-        row_agent_id = _uuid_or_none(row.get("agent_id"), field_name="agent_id")
-        if row_agent_id is not None and row_agent_id not in agent_ids:
-            agent_ids.append(row_agent_id)
-        for value in (row.get("did_aw"), row.get("did_key")):
-            normalized = str(value or "").strip()
-            if normalized and normalized not in refs:
-                refs.append(normalized)
-    return refs, agent_ids
-
-
 async def find_active_one_to_one_conversation_between(
     db,
     *,
     conversation_type: ConversationType,
     did_a: str,
     did_b: str,
-    did_key_a: str | None = None,
-    did_key_b: str | None = None,
-    agent_id_a: str | UUID | None = None,
-    agent_id_b: str | UUID | None = None,
-    address_a: str | None = None,
-    address_b: str | None = None,
 ) -> dict[str, Any] | None:
     """Return the unique active 1:1 conversation shared by two identities.
 
     First-contact identity binding is enforced before a conversation exists. Once an
-    active 1:1 conversation exists, participant membership is the routing
+    active 1:1 conversation exists, its recorded participant DIDs are the routing
     authority. If duplicate active rows exist, return the newest one so routing
     remains available; creating duplicates is a data invariant violation, but
     refusing to route strands the participants.
     """
     effective_now = _now_utc()
     normalized_type = _normalize_type(conversation_type)
-    dids_a, agent_ids_a = await _equivalent_identity_refs(
-        db,
-        did_a,
-        did_key=did_key_a,
-        agent_id=agent_id_a,
-    )
-    dids_b, agent_ids_b = await _equivalent_identity_refs(
-        db,
-        did_b,
-        did_key=did_key_b,
-        agent_id=agent_id_b,
-    )
-    # Address is routing/contact metadata, not identity. A later identity that
-    # reuses the same alias/address must not inherit a prior private 1:1 thread;
-    # same-stable-DID/key rotation continuity comes from the DID/agent expansion
-    # above. address_a/address_b remain accepted for callers that already have
-    # routing metadata, but they are not identity equivalence inputs.
-    _ = (address_a, address_b)
-    if not (dids_a or agent_ids_a) or not (dids_b or agent_ids_b):
-        return None
+    did_a = _normalize_did(did_a, field_name="did_a")
+    did_b = _normalize_did(did_b, field_name="did_b")
 
     aweb_db = db.get_manager("aweb")
     # This participation check is intentionally table-authoritative. It must
@@ -339,33 +212,9 @@ async def find_active_one_to_one_conversation_between(
           ON pb.conversation_id = c.conversation_id
         WHERE c.conversation_type = $1
           AND c.status = 'active'
-          AND (c.expires_at IS NULL OR c.expires_at > $6)
-          AND (
-                (
-                    $3::uuid[] <> '{}'::uuid[]
-                    AND (
-                        pa.agent_id = ANY($3::uuid[])
-                        OR (pa.agent_id IS NULL AND pa.did = ANY($2::text[]))
-                    )
-                )
-             OR (
-                    $3::uuid[] = '{}'::uuid[]
-                    AND pa.did = ANY($2::text[])
-                )
-          )
-          AND (
-                (
-                    $5::uuid[] <> '{}'::uuid[]
-                    AND (
-                        pb.agent_id = ANY($5::uuid[])
-                        OR (pb.agent_id IS NULL AND pb.did = ANY($4::text[]))
-                    )
-                )
-             OR (
-                    $5::uuid[] = '{}'::uuid[]
-                    AND pb.did = ANY($4::text[])
-                )
-          )
+          AND (c.expires_at IS NULL OR c.expires_at > $4)
+          AND pa.did = $2
+          AND pb.did = $3
           AND pa.did <> pb.did
           AND (
                 SELECT COUNT(*)::int
@@ -376,10 +225,8 @@ async def find_active_one_to_one_conversation_between(
         LIMIT 2
         """,
         normalized_type,
-        dids_a,
-        agent_ids_a,
-        dids_b,
-        agent_ids_b,
+        did_a,
+        did_b,
         effective_now,
     )
     if not rows:

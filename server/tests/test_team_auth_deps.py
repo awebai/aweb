@@ -19,6 +19,7 @@ from nacl.signing import SigningKey
 
 import aweb.identity_auth_deps as _identity_auth_mod
 from awid.did import did_from_public_key
+from awid.registry import IDTreeEnrollment
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.identity_auth_deps import IdentityAuth, get_messaging_auth
 from aweb.identity_binding import IdentityBinding
@@ -393,7 +394,10 @@ async def test_get_messaging_auth_allows_identity_scoped_persistent_multi_member
     request.app.state.awid_registry_client = object()
     request.app.state.identity_binding_cache = OrderedDict({
         ("did:aw:gsk", "did:key:z6MkGsk", "gsk.aweb.ai/grace"): (
-            monotonic() + 60, IdentityBinding("did:aw:gsk", "gsk.aweb.ai/grace"),
+            monotonic() + 60, IdentityBinding(
+                "did:aw:gsk", "gsk.aweb.ai/grace", did_key="did:key:z6MkGsk",
+                id_tree=IDTreeEnrollment(False, None),
+            ),
         ),
     })
     auth = await get_messaging_auth(request, db)

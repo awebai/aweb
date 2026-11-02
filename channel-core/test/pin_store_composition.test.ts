@@ -195,7 +195,10 @@ describe("last_seen coalescing composed with the bounded CAS retry", () => {
         pinStore: await loadPinStore(storePath),
         trust: new SenderTrustManager(
           rosterClient(did),
-          { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+          {
+            idStatus: { enrollmentFor: async () => ({ state: "not_enrolled", domain: null }) },
+            verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }),
+          } as never,
           TEAM,
           "",
         ),

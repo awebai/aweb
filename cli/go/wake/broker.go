@@ -800,6 +800,7 @@ func enrichInstancesWithStreamStatus(instances []InstanceStatus, streams []Strea
 			instances[i].ReceiveIdentities[j].StreamAdmitted = stream.Admitted
 			instances[i].ReceiveIdentities[j].StreamPhase = stream.Phase
 			instances[i].ReceiveIdentities[j].StreamError = stream.LastError
+			instances[i].ReceiveIdentities[j].StreamErrorDetail = stream.LastErrorDetail
 			instances[i].ReceiveIdentities[j].UnreadCount = stream.UnreadCount
 			instances[i].ReceiveIdentities[j].ConnectedAt = stream.ConnectedAt
 		}

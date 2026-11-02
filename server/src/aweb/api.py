@@ -28,6 +28,7 @@ from .mutation_hooks import create_mutation_handler
 from awid.ratelimit import build_rate_limiter
 from .routing_utils import move_mount_before_spa_fallback
 from .service_errors import ServiceError
+from .messaging.chat_policy import HumanChatRefused
 from .install_admins import install_admin_setup_message
 from .mcp.server import NormalizeMountedMCPPathMiddleware
 from .request_compression import RequestDecompressionFastAPI
@@ -47,6 +48,7 @@ from .routes.events import router as events_router
 from .routes.federation import router as federation_router
 from .routes.identity_grants import router as identity_grants_router
 from .routes.messages import router as messages_router
+from .routes.room import router as room_router
 from .routes.reservations import router as reservations_router
 from .routes.session_leases import router as session_leases_router
 from .routes.service_registration import router as service_registration_router
@@ -508,6 +510,12 @@ def create_app(
             headers=headers,
         )
 
+    @app.exception_handler(HumanChatRefused)
+    async def _human_chat_refused_handler(request: Request, exc: HumanChatRefused):
+        return JSONResponse(status_code=422, content=exc.body(
+            correlation_id=request.headers.get("X-Correlation-ID"),
+        ))
+
     @app.exception_handler(ServiceError)
     async def _service_error_handler(request: Request, exc: ServiceError):
         if exc.status_code >= 500:
@@ -564,6 +572,7 @@ def create_app(
     from aweb.routes.messaging import router as messaging_router
     app.include_router(messaging_router)
     app.include_router(messages_router)
+    app.include_router(room_router)
     app.include_router(reservations_router)
     app.include_router(session_leases_router)
     app.include_router(service_registration_router)

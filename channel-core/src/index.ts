@@ -3,6 +3,7 @@ export { ReceiveStreamReceipt, type ReceiveReceiptOptions } from "./receive.js";
 export { streamAgentEvents, parseAgentEvent, formatEventStreamState, streamErrorCause, type AgentEvent, type AgentEventType, type EventStreamState } from "./api/events.js";
 export { ackMessage, fetchInbox, type InboxMessage } from "./api/mail.js";
 export { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";
+export { fetchRoomMessage, ackRoomNotice, type RoomMessage } from "./api/room.js";
 export {
   DELIVERY_MODE_ENV,
   resolveConfig,
@@ -93,3 +94,6 @@ export {
   type RegistryIdentityConfig,
   type SelfIdentity,
 } from "./channel.js";
+
+export { IdStatusClient } from "./identity/id_status.js";
+export { readReceivedIdChain, type ReceivedIdChain } from "./identity/received_id_chain.js";

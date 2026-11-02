@@ -263,8 +263,13 @@ func loadRunContinueRecap(workingDir string, out io.Writer) string {
 	return formatInteractionRecapStyled(entries, 8, writerSupportsANSI(out), writerDisplayWidth(out))
 }
 
+// terminalWriter is a writer backed by a file descriptor, such as stdout.
+type terminalWriter interface {
+	Fd() uintptr
+}
+
 func writerSupportsANSI(w io.Writer) bool {
-	f, ok := w.(*os.File)
+	f, ok := w.(terminalWriter)
 	if !ok {
 		return false
 	}
@@ -272,7 +277,7 @@ func writerSupportsANSI(w io.Writer) bool {
 }
 
 func writerDisplayWidth(w io.Writer) int {
-	f, ok := w.(*os.File)
+	f, ok := w.(terminalWriter)
 	if !ok {
 		return 80
 	}

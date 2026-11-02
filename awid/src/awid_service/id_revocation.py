@@ -30,7 +30,7 @@ ROOT = "root"
 
 async def revoke_identity(
     db, *, domain: str, subject_id: str, expected_head: str | None, effective_from: datetime | None,
-    signer: str, dns_key: str | None, clock: Clock,
+    signer: str, dns_authority: DomainAuthority | None, clock: Clock,
 ) -> dict:
     """Revoke ``subject_id`` for ``signer``; return its ``{revoked_at, effective_from}``."""
     async with db.transaction() as tx:
@@ -63,14 +63,14 @@ async def revoke_identity(
         if expected_head != head["certificate_id"]:
             raise IdentityTreeRefusal("head_conflict", 409)
 
-        root = await current_root(tx, domain, namespace, dns_key)
+        root = await current_root(tx, domain, namespace, dns_authority)
         actor = await _actor(tx, root, subject_id, parent_did, keys, signer)
         if effective_from is not None and actor != ROOT:
             raise IdentityTreeRefusal("backdate_forbidden", 403)
         if actor == PARENT:
             # The parent may revoke only while its own whole current chain is valid.
             verdict = await verify_parent_chain(
-                tx, domain=domain, parent=parent_did, parent_key=keys[parent_did], dns_key=dns_key, clock=clock,
+                tx, domain=domain, parent=parent_did, parent_key=keys[parent_did], dns_authority=dns_authority, clock=clock,
             )
             if verdict["outcome"] == "unavailable":
                 raise IdentityTreeRefusal("evidence_unavailable", 503)
@@ -131,3 +131,4 @@ async def _actor(tx, root, subject_id, parent_did, keys, signer) -> str:
 
 def _revocation(revoked_at: datetime, effective_from: datetime) -> dict:
     return {"revoked_at": wire_time(revoked_at), "effective_from": wire_time(effective_from)}
+from awid.dns_verify import DomainAuthority

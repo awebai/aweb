@@ -18,8 +18,9 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
+from awid.dns_verify import DomainAuthority
 from awid.id_certificates import IDCertificateError
-
+from awid_service.namespace_epochs import proves_root
 
 
 class IdentityTreeRefusal(Exception):
@@ -71,7 +72,7 @@ async def lock_domain(tx, domain: str):
     await tx.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", f"aweb.id-tree/{domain}")
     return await tx.fetch_one(
         """
-        SELECT namespace_id, controller_did
+        SELECT namespace_id, controller_did, parent_domain, parent_controller_key
         FROM {{tables.dns_namespaces}}
         WHERE domain = $1 AND deleted_at IS NULL
         FOR SHARE
@@ -115,11 +116,11 @@ async def lock_keys_and_subject(
     return {row["did_aw"]: row["current_did_key"] for row in mapped}, subject
 
 
-async def current_root(tx, domain: str, namespace, dns_key: str | None):
+async def current_root(tx, domain: str, namespace, dns_authority: DomainAuthority | None):
     """The domain's open epoch when it has current root authority, else None.
 
-    Authority needs the stored controller, the open epoch's key and the exact
-    DNS key this request observed (before its transaction) to agree; any
+    Authority binds the stored controller and open epoch to found DNS and,
+    for inherited DNS, the verified parent record; any
     disagreement makes it unavailable rather than proof of another root.
     """
     if namespace is None:
@@ -132,7 +133,8 @@ async def current_root(tx, domain: str, namespace, dns_key: str | None):
         """,
         domain,
     )
-    if epoch is None or not epoch["did_key"] == namespace["controller_did"] == dns_key:
+    if (epoch is None or epoch["did_key"] != namespace["controller_did"]
+            or not proves_root(dns_authority, epoch["did_key"], domain=domain, namespace=namespace)):
         return None
     return epoch
 

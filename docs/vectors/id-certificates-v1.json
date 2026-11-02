@@ -8,8 +8,7 @@
     "max_decoded_bundle_bytes": 6144,
     "max_header_bytes": 8192,
     "max_status_response_bytes": 131072,
-    "fresh_seconds": 60,
-    "outage_grace_seconds": 900
+    "fresh_seconds": 60
   },
   "keys": {
     "root": {
@@ -1009,6 +1008,50 @@
       "signing_bytes_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a226578616d706c652e636f6d222c226964223a226469643a61773a3434614b4e5179766f31786838727636546664667a6a546e366e5270222c226973737565645f6174223a22323032362d31302d32365430303a30333a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f6e334e656364364e6b6b79666f476f48786964327a6e476335394c55334b376d756261526346624c664c58222c226b696e64223a226167656e74222c22706172656e74223a7b226964223a226578616d706c652e636f6d222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
       "certificate_id": "sha256:7c102262376782933531f80202cfd4f73675a5ca21f872845571156342f5a563",
       "signer": "root"
+    },
+    "delegated_alice": {
+      "signed": {
+        "certificate": {
+          "v": 1,
+          "type": "aweb.id-certificate",
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "domain": "tenant.aweb.ai",
+          "parent": {
+            "kind": "namespace",
+            "id": "tenant.aweb.ai"
+          },
+          "kind": "human",
+          "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+          "issued_at": "2026-10-26T00:00:00Z"
+        },
+        "signature": "EO9qy5-6OaNs3ttY1pgQpolD0DFSX66Y8XqNRtCaxHrnThAYXCBGZndfn4cJr6qy4U-sYGzY5mKxIQpS-2rMBw"
+      },
+      "canonical_utf8": "{\"domain\":\"tenant.aweb.ai\",\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"issued_at\":\"2026-10-26T00:00:00Z\",\"issuer_key\":\"did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX\",\"kind\":\"human\",\"parent\":{\"id\":\"tenant.aweb.ai\",\"kind\":\"namespace\"},\"type\":\"aweb.id-certificate\",\"v\":1}",
+      "signing_bytes_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a2274656e616e742e617765622e6169222c226964223a226469643a61773a335944414d355a4c524b6737654848315a733673534d776b67613877222c226973737565645f6174223a22323032362d31302d32365430303a30303a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b6f6e334e656364364e6b6b79666f476f48786964327a6e476335394c55334b376d756261526346624c664c58222c226b696e64223a2268756d616e222c22706172656e74223a7b226964223a2274656e616e742e617765622e6169222c226b696e64223a226e616d657370616365227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+      "certificate_id": "sha256:2782d984c3d9154262284e863fc77e837eea40f5a0bc0f4c41f95fc302497403",
+      "signer": "root"
+    },
+    "delegated_coordinator": {
+      "signed": {
+        "certificate": {
+          "v": 1,
+          "type": "aweb.id-certificate",
+          "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+          "domain": "tenant.aweb.ai",
+          "parent": {
+            "kind": "identity",
+            "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"
+          },
+          "kind": "agent",
+          "issuer_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+          "issued_at": "2026-10-26T00:04:00Z"
+        },
+        "signature": "ix_u7vXsN8l0xZu1cIBzGTIm71PTmBjNSUw2sg670AvjH75paKPyOiglmYz8V_zmMebtu1GEmTXqM_tIpvsADg"
+      },
+      "canonical_utf8": "{\"domain\":\"tenant.aweb.ai\",\"id\":\"did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x\",\"issued_at\":\"2026-10-26T00:04:00Z\",\"issuer_key\":\"did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2\",\"kind\":\"agent\",\"parent\":{\"id\":\"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w\",\"kind\":\"identity\"},\"type\":\"aweb.id-certificate\",\"v\":1}",
+      "signing_bytes_hex": "617765622e69642d63657274696669636174652f310a7b22646f6d61696e223a2274656e616e742e617765622e6169222c226964223a226469643a6b65793a7a364d6b6f6e323276777a394a6f4e704744784372475a5267654e4654645254775859594e336676416841334b313978222c226973737565645f6174223a22323032362d31302d32365430303a30343a30305a222c226973737565725f6b6579223a226469643a6b65793a7a364d6b7652584e596345374d4d6475796e575467654b624461543169696a44534338705a71585a6338724850726632222c226b696e64223a226167656e74222c22706172656e74223a7b226964223a226469643a61773a335944414d355a4c524b6737654848315a733673534d776b67613877222c226b696e64223a226964656e74697479227d2c2274797065223a22617765622e69642d6365727469666963617465222c2276223a317d",
+      "certificate_id": "sha256:189d279f38d6db097d68de76557dadd916469d5daa8626bb5451d272addd1460",
+      "signer": "alice"
     }
   },
   "status_fixtures": {
@@ -6086,6 +6129,153 @@
         }
       ],
       "missing": []
+    },
+    "delegated_child": {
+      "v": 1,
+      "domain": "tenant.aweb.ai",
+      "observed_at": "2026-10-26T00:30:00.000000Z",
+      "namespace": {
+        "epochs": [
+          {
+            "seq": 1,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:00:00.000000Z",
+            "retired_at": null,
+            "continuity": "replaced"
+          }
+        ],
+        "delegation": {
+          "parent_domain": "aweb.ai",
+          "parent_controller_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
+          "controller_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
+        }
+      },
+      "identities": [
+        {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "current_certificate_id": "sha256:2782d984c3d9154262284e863fc77e837eea40f5a0bc0f4c41f95fc302497403",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "new_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "f101717425d7c37244133f3c85015836ed22cd5eb43d666f4a9d533edf8d82d4",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "2cf9b9ca49d6d52198137ecd65b4f22115e43686868be41d029e80c7cd60fcf9",
+                "signature": "0mxM7sA/FFflCx7MKD2/WIlu9ik329eWDeNl2x01wH5pO7Ot8ThAzFnNbn64y+hYxsqGqSJZgXTeArk15cHWAw"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+                  "domain": "tenant.aweb.ai",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "tenant.aweb.ai"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:00:00Z"
+                },
+                "signature": "EO9qy5-6OaNs3ttY1pgQpolD0DFSX66Y8XqNRtCaxHrnThAYXCBGZndfn4cJr6qy4U-sYGzY5mKxIQpS-2rMBw"
+              },
+              "registered_at": "2026-10-26T00:01:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        }
+      ],
+      "missing": []
+    },
+    "delegated_child_missing": {
+      "v": 1,
+      "domain": "tenant.aweb.ai",
+      "observed_at": "2026-10-26T00:30:00.000000Z",
+      "namespace": {
+        "epochs": []
+      },
+      "identities": [],
+      "missing": [
+        "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"
+      ]
+    },
+    "delegated_child_unsigned": {
+      "v": 1,
+      "domain": "tenant.aweb.ai",
+      "observed_at": "2026-10-26T00:30:00.000000Z",
+      "namespace": {
+        "epochs": [
+          {
+            "seq": 1,
+            "did_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+            "registered_at": "2026-10-26T00:00:00.000000Z",
+            "retired_at": null,
+            "continuity": "replaced"
+          }
+        ]
+      },
+      "identities": [
+        {
+          "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+          "current_certificate_id": "sha256:2782d984c3d9154262284e863fc77e837eea40f5a0bc0f4c41f95fc302497403",
+          "current_key_seq": 1,
+          "key_history": [
+            {
+              "entry": {
+                "authorized_by": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "new_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2",
+                "operation": "register_did",
+                "prev_entry_hash": null,
+                "previous_did_key": null,
+                "seq": 1,
+                "state_hash": "f101717425d7c37244133f3c85015836ed22cd5eb43d666f4a9d533edf8d82d4",
+                "timestamp": "2026-10-26T00:00:00Z",
+                "entry_hash": "2cf9b9ca49d6d52198137ecd65b4f22115e43686868be41d029e80c7cd60fcf9",
+                "signature": "0mxM7sA/FFflCx7MKD2/WIlu9ik329eWDeNl2x01wH5pO7Ot8ThAzFnNbn64y+hYxsqGqSJZgXTeArk15cHWAw"
+              },
+              "registered_at": "2026-10-26T00:00:00.000000Z"
+            }
+          ],
+          "certificates": [
+            {
+              "signed": {
+                "certificate": {
+                  "v": 1,
+                  "type": "aweb.id-certificate",
+                  "id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+                  "domain": "tenant.aweb.ai",
+                  "parent": {
+                    "kind": "namespace",
+                    "id": "tenant.aweb.ai"
+                  },
+                  "kind": "human",
+                  "issuer_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
+                  "issued_at": "2026-10-26T00:00:00Z"
+                },
+                "signature": "EO9qy5-6OaNs3ttY1pgQpolD0DFSX66Y8XqNRtCaxHrnThAYXCBGZndfn4cJr6qy4U-sYGzY5mKxIQpS-2rMBw"
+              },
+              "registered_at": "2026-10-26T00:01:00.000000Z",
+              "superseded_at": null,
+              "issuer_key_seq": 1
+            }
+          ],
+          "revocation": null
+        }
+      ],
+      "missing": []
     }
   },
   "batch_example": {
@@ -7680,68 +7870,6 @@
         "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
       },
       "expected": {
-        "outcome": "nearest_human",
-        "human_id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
-        "identity_valid": true,
-        "kind": "agent",
-        "reason": "verified"
-      },
-      "cache": {
-        "age_seconds": 61,
-        "refresh": "failed"
-      },
-      "expected_cache_mode": "outage_grace",
-      "original_auth": "passed",
-      "expected_request": {
-        "ordinary": "continue",
-        "human_required": "continue"
-      }
-    },
-    {
-      "name": "cached-status-age-900",
-      "chain": [
-        "alice",
-        "coordinator"
-      ],
-      "status": "normal",
-      "subject": {
-        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
-        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
-        "team_member_did_aw": null,
-        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
-      },
-      "expected": {
-        "outcome": "nearest_human",
-        "human_id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
-        "identity_valid": true,
-        "kind": "agent",
-        "reason": "verified"
-      },
-      "cache": {
-        "age_seconds": 900,
-        "refresh": "failed"
-      },
-      "expected_cache_mode": "outage_grace",
-      "original_auth": "passed",
-      "expected_request": {
-        "ordinary": "continue",
-        "human_required": "continue"
-      }
-    },
-    {
-      "name": "cached-status-age-901",
-      "chain": [
-        "alice",
-        "coordinator"
-      ],
-      "status": "normal",
-      "subject": {
-        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
-        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
-        "team_member_did_aw": null,
-        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
-      },
-      "expected": {
         "outcome": "unavailable",
         "human_id": null,
         "identity_valid": null,
@@ -7749,7 +7877,7 @@
         "reason": "status_expired"
       },
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "expected_cache_mode": "unavailable",
@@ -8061,7 +8189,7 @@
       },
       "auth_lane": "team",
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "tree_lookup": false,
@@ -8128,7 +8256,7 @@
         "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
       },
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8163,7 +8291,7 @@
         "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
       },
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8196,7 +8324,7 @@
       "presented_chain": false,
       "resolve_current_head": true,
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8224,7 +8352,7 @@
       },
       "auth_lane": "identity",
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "tree_lookup": false,
@@ -8291,7 +8419,7 @@
         "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
       },
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8326,7 +8454,7 @@
         "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
       },
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8359,7 +8487,7 @@
       "presented_chain": false,
       "resolve_current_head": true,
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8387,7 +8515,7 @@
       },
       "auth_lane": "grant",
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "tree_lookup": false,
@@ -8454,7 +8582,7 @@
         "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
       },
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8489,7 +8617,7 @@
         "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
       },
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8522,7 +8650,7 @@
       "presented_chain": false,
       "resolve_current_head": true,
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8550,7 +8678,7 @@
       },
       "auth_lane": "federation",
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "tree_lookup": false,
@@ -8617,7 +8745,7 @@
         "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
       },
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8652,7 +8780,7 @@
         "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
       },
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8685,7 +8813,7 @@
       "presented_chain": false,
       "resolve_current_head": true,
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8713,7 +8841,7 @@
       },
       "auth_lane": "hook",
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "tree_lookup": false,
@@ -8780,7 +8908,7 @@
         "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
       },
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8815,7 +8943,7 @@
         "team_member_did_aw": "did:aw:44aKNQyvo1xh8rv6TfdfzjTn6nRp"
       },
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8848,7 +8976,7 @@
       "presented_chain": false,
       "resolve_current_head": true,
       "cache": {
-        "age_seconds": 901,
+        "age_seconds": 61,
         "refresh": "failed"
       },
       "original_auth": "passed",
@@ -8886,7 +9014,7 @@
       }
     },
     {
-      "name": "tree-grace-does-not-extend-original-key-binding",
+      "name": "tree-evidence-does-not-replace-original-key-binding",
       "chain": [
         "alice",
         "coordinator"
@@ -8906,8 +9034,8 @@
         "reason": "verified"
       },
       "cache": {
-        "age_seconds": 61,
-        "refresh": "failed"
+        "age_seconds": 0,
+        "refresh": "not_needed"
       },
       "original_auth": "unavailable",
       "expected_request": {
@@ -9682,12 +9810,12 @@
       }
     },
     {
-      "name": "cached-status-age-61-without-failed-refresh",
+      "name": "delegated-child-authorized",
       "chain": [
-        "alice",
-        "coordinator"
+        "delegated_alice",
+        "delegated_coordinator"
       ],
-      "status": "normal",
+      "status": "delegated_child",
       "subject": {
         "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
         "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
@@ -9695,30 +9823,31 @@
         "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
       },
       "expected": {
-        "outcome": "unavailable",
-        "human_id": null,
-        "identity_valid": null,
-        "kind": null,
-        "reason": "evidence_unavailable"
+        "outcome": "nearest_human",
+        "human_id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+        "identity_valid": true,
+        "kind": "agent",
+        "reason": "verified"
       },
-      "cache": {
-        "age_seconds": 61,
-        "refresh": "not_needed"
-      },
-      "expected_cache_mode": "unavailable",
       "original_auth": "passed",
       "expected_request": {
         "ordinary": "continue",
-        "human_required": "refuse"
+        "human_required": "continue"
+      },
+      "namespace_authority": {
+        "domain": "tenant.aweb.ai",
+        "dns_name": "_awid.aweb.ai",
+        "inherited": true,
+        "controller_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
       }
     },
     {
-      "name": "cached-status-age-901-without-failed-refresh",
+      "name": "delegated-child-without-record",
       "chain": [
-        "alice",
-        "coordinator"
+        "delegated_alice",
+        "delegated_coordinator"
       ],
-      "status": "normal",
+      "status": "delegated_child_missing",
       "subject": {
         "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
         "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
@@ -9732,15 +9861,112 @@
         "kind": null,
         "reason": "evidence_unavailable"
       },
-      "cache": {
-        "age_seconds": 901,
-        "refresh": "not_needed"
-      },
-      "expected_cache_mode": "unavailable",
       "original_auth": "passed",
       "expected_request": {
         "ordinary": "continue",
         "human_required": "refuse"
+      },
+      "namespace_authority": {
+        "domain": "tenant.aweb.ai",
+        "dns_name": "_awid.aweb.ai",
+        "inherited": true,
+        "controller_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+      }
+    },
+    {
+      "name": "delegated-child-parent-unsigned",
+      "chain": [
+        "delegated_alice",
+        "delegated_coordinator"
+      ],
+      "status": "delegated_child_unsigned",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "evidence_unavailable"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      },
+      "namespace_authority": {
+        "domain": "tenant.aweb.ai",
+        "dns_name": "_awid.aweb.ai",
+        "inherited": true,
+        "controller_key": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH"
+      }
+    },
+    {
+      "name": "delegated-child-no-dns-anchor",
+      "chain": [
+        "delegated_alice",
+        "delegated_coordinator"
+      ],
+      "status": "delegated_child",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "unavailable",
+        "human_id": null,
+        "identity_valid": null,
+        "kind": null,
+        "reason": "evidence_unavailable"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "refuse"
+      },
+      "namespace_authority": {
+        "domain": "tenant.aweb.ai",
+        "dns_name": null,
+        "inherited": false,
+        "controller_key": null
+      }
+    },
+    {
+      "name": "delegated-child-exact-record-wins",
+      "chain": [
+        "delegated_alice",
+        "delegated_coordinator"
+      ],
+      "status": "delegated_child",
+      "subject": {
+        "id": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x",
+        "team_member_did_aw": null,
+        "team_member_did_key": "did:key:z6Mkon22vwz9JoNpGDxCrGZRgeNFTdRTwXYYN3fvAhA3K19x"
+      },
+      "expected": {
+        "outcome": "nearest_human",
+        "human_id": "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w",
+        "identity_valid": true,
+        "kind": "agent",
+        "reason": "verified"
+      },
+      "original_auth": "passed",
+      "expected_request": {
+        "ordinary": "continue",
+        "human_required": "continue"
+      },
+      "namespace_authority": {
+        "domain": "tenant.aweb.ai",
+        "dns_name": "_awid.tenant.aweb.ai",
+        "inherited": false,
+        "controller_key": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
       }
     }
   ],
@@ -10977,7 +11203,7 @@
       }
     },
     {
-      "name": "pre-upgrade-parent-authorized-post-no-epoch",
+      "name": "pre-upgrade-parent-authorized-post-opens-epoch",
       "action": "register_namespace",
       "input": {
         "method": "POST",
@@ -10991,9 +11217,11 @@
       },
       "expected": {
         "accepted": true,
-        "epoch_writes": 0,
+        "epoch_writes": 1,
         "namespace_address_team_data_unchanged": true,
-        "history_inferred": false
+        "history_inferred": false,
+        "epoch_seq": 1,
+        "continuity": "replaced"
       }
     },
     {
@@ -11053,7 +11281,7 @@
       }
     },
     {
-      "name": "namespace-put-parent-authorization-no-epoch",
+      "name": "namespace-put-parent-authorization-opens-replaced",
       "action": "replace_namespace",
       "input": {
         "method": "PUT",
@@ -11071,10 +11299,10 @@
       "expected": {
         "accepted": true,
         "stored_controller": "did:key:z6Mko9hTggMwjSTEaJaPUfE6tqcy2xvU6BnNq3e3o8qVBiyH",
-        "epoch_writes": 0,
-        "open_epoch_seq": 1,
+        "epoch_writes": 1,
+        "open_epoch_seq": 2,
         "current_authority": "unavailable",
-        "old_tree_cut_off": false
+        "old_tree_cut_off": true
       }
     },
     {
@@ -11230,7 +11458,7 @@
         "invitation_live": true,
         "token_possession": true,
         "interactive": true,
-        "recipient_key_confirmed": false
+        "confirmed": false
       },
       "expected": {
         "accepted": false,
@@ -11250,7 +11478,7 @@
         "recipient": "fixed privately",
         "invitation_live": true,
         "interactive": false,
-        "recipient_key_confirmed": true
+        "confirmed": true
       },
       "expected": {
         "accepted": false,
@@ -11271,7 +11499,7 @@
         "invitation_live": true,
         "interactive": true,
         "agent_run": true,
-        "recipient_key_confirmed": true
+        "confirmed": true
       },
       "expected": {
         "accepted": false,
@@ -11292,7 +11520,7 @@
         "invitation_live": true,
         "interactive": false,
         "auto_approve": "--yes",
-        "recipient_key_confirmed": true
+        "confirmed": true
       },
       "expected": {
         "accepted": false,
@@ -11302,7 +11530,7 @@
       }
     },
     {
-      "name": "csr-mismatched-confirmed-fingerprint-refuses",
+      "name": "csr-declined-fingerprint-confirmation-refuses",
       "action": "child_request_approve",
       "input": {
         "request": "human-issue",
@@ -11313,40 +11541,15 @@
         "invitation_live": true,
         "interactive": true,
         "agent_run": false,
-        "recipient_key_confirmed": true,
-        "confirmed_fingerprint": "00000000-00000000-00000000-00000000",
-        "out_of_band_channel": true
+        "confirmed": false
       },
       "expected": {
         "accepted": false,
-        "reason": "recipient_key_mismatch",
+        "reason": "human_approval_required",
         "parent_signatures": 0,
         "registration_requests": 0,
-        "invitation_void": true,
-        "request_state": "failed"
-      }
-    },
-    {
-      "name": "csr-approval-must-use-separate-trusted-channel",
-      "action": "child_request_approve",
-      "input": {
-        "request": "human-issue",
-        "mode": "self_custodial",
-        "parent": "alice",
-        "invitation_id": "10000000-0000-4000-8000-000000000001",
-        "recipient": "fixed privately",
-        "invitation_live": true,
-        "interactive": true,
-        "agent_run": false,
-        "recipient_key_confirmed": true,
-        "confirmed_fingerprint": "7599776c-3085e3f9-da0d1307-1eb0b4ab",
-        "out_of_band_channel": false
-      },
-      "expected": {
-        "accepted": false,
-        "reason": "human_approval_required",
-        "parent_signatures": 0,
-        "registration_requests": 0
+        "invitation_void": false,
+        "request_state": "pending"
       }
     },
     {
@@ -11361,11 +11564,8 @@
         "invitation_live": true,
         "interactive": true,
         "agent_run": false,
-        "recipient_key_confirmed": true,
-        "confirmed_fingerprint": "7599776c-3085e3f9-da0d1307-1eb0b4ab",
-        "out_of_band_channel": true,
         "issued_at": "2026-10-26T00:02:00Z",
-        "csr_fingerprint_shown_before_entry": false
+        "confirmed": true
       },
       "expected": {
         "accepted": true,
@@ -11390,11 +11590,9 @@
         "invitation_live": true,
         "interactive": true,
         "agent_run": false,
-        "recipient_key_confirmed": true,
-        "confirmed_fingerprint": "7599776c-3085e3f9-da0d1307-1eb0b4ab",
-        "out_of_band_channel": true,
         "prior_response": "human-issued",
-        "retry": true
+        "retry": true,
+        "confirmed": true
       },
       "expected": {
         "accepted": true,
@@ -11461,9 +11659,12 @@
         "accepted": false,
         "reason": "invitation_conflict",
         "invitation_void": true,
-        "request_state": "failed",
+        "request_state": "issued",
         "parent_signatures": 0,
-        "previous_issued_bytes_retained": true
+        "previous_issued_bytes_retained": true,
+        "issued_certificate_id_visible": true,
+        "invitation_void_visible": true,
+        "issued_response_retrievable": true
       }
     },
     {
@@ -11516,9 +11717,7 @@
         "invitation_live": false,
         "interactive": true,
         "agent_run": false,
-        "recipient_key_confirmed": true,
-        "confirmed_fingerprint": "7599776c-3085e3f9-da0d1307-1eb0b4ab",
-        "out_of_band_channel": true
+        "confirmed": true
       },
       "expected": {
         "accepted": false,
@@ -11539,10 +11738,8 @@
         "invitation_live": true,
         "interactive": true,
         "agent_run": false,
-        "recipient_key_confirmed": true,
-        "confirmed_fingerprint": "7599776c-3085e3f9-da0d1307-1eb0b4ab",
-        "out_of_band_channel": true,
-        "parent_status_after_wait": "alice-revoked-now"
+        "parent_status_after_wait": "alice-revoked-now",
+        "confirmed": true
       },
       "expected": {
         "accepted": false,
@@ -11703,12 +11900,9 @@
         "invitation_live": true,
         "interactive": true,
         "agent_run": false,
-        "recipient_key_confirmed": true,
-        "confirmed_fingerprint": "b62e867f-a2f33afe-62d5d6b1-642e1621",
-        "out_of_band_channel": true,
         "issued_at": "2026-10-26T00:00:00Z",
-        "csr_fingerprint_shown_before_entry": false,
-        "approval_role": "namespace_controller_operator"
+        "approval_role": "namespace_controller_operator",
+        "confirmed": true
       },
       "expected": {
         "accepted": true,
@@ -11733,12 +11927,9 @@
         "invitation_live": true,
         "interactive": true,
         "agent_run": true,
-        "recipient_key_confirmed": true,
-        "confirmed_fingerprint": "b62e867f-a2f33afe-62d5d6b1-642e1621",
-        "out_of_band_channel": true,
         "issued_at": "2026-10-26T00:00:00Z",
-        "csr_fingerprint_shown_before_entry": false,
-        "approval_role": "namespace_controller_operator"
+        "approval_role": "namespace_controller_operator",
+        "confirmed": true
       },
       "expected": {
         "accepted": false,
@@ -11759,12 +11950,9 @@
         "invitation_live": true,
         "interactive": false,
         "agent_run": false,
-        "recipient_key_confirmed": true,
-        "confirmed_fingerprint": "b62e867f-a2f33afe-62d5d6b1-642e1621",
-        "out_of_band_channel": true,
         "issued_at": "2026-10-26T00:00:00Z",
-        "csr_fingerprint_shown_before_entry": false,
-        "approval_role": "namespace_controller_operator"
+        "approval_role": "namespace_controller_operator",
+        "confirmed": true
       },
       "expected": {
         "accepted": false,
@@ -11774,7 +11962,7 @@
       }
     },
     {
-      "name": "csr-root-human-fingerprint-mismatch-voids",
+      "name": "csr-root-human-declined-confirmation-refuses",
       "action": "child_request_approve",
       "input": {
         "request": "root-human-issue",
@@ -11785,46 +11973,17 @@
         "invitation_live": true,
         "interactive": true,
         "agent_run": false,
-        "recipient_key_confirmed": true,
-        "confirmed_fingerprint": "00000000-00000000-00000000-00000000",
-        "out_of_band_channel": true,
         "issued_at": "2026-10-26T00:00:00Z",
-        "csr_fingerprint_shown_before_entry": false,
-        "approval_role": "namespace_controller_operator"
+        "approval_role": "namespace_controller_operator",
+        "confirmed": false
       },
       "expected": {
         "accepted": false,
-        "reason": "recipient_key_mismatch",
+        "reason": "human_approval_required",
         "parent_signatures": 0,
         "registration_requests": 0,
-        "invitation_void": true,
-        "request_state": "failed"
-      }
-    },
-    {
-      "name": "csr-fingerprint-entry-must-precede-display",
-      "action": "child_request_approve",
-      "input": {
-        "request": "root-human-issue",
-        "mode": "self_custodial",
-        "parent": "root",
-        "invitation_id": "10000000-0000-4000-8000-000000000008",
-        "recipient": "fixed privately",
-        "invitation_live": true,
-        "interactive": true,
-        "agent_run": false,
-        "recipient_key_confirmed": true,
-        "confirmed_fingerprint": "b62e867f-a2f33afe-62d5d6b1-642e1621",
-        "out_of_band_channel": true,
-        "issued_at": "2026-10-26T00:00:00Z",
-        "csr_fingerprint_shown_before_entry": true,
-        "approval_role": "namespace_controller_operator"
-      },
-      "expected": {
-        "accepted": false,
-        "reason": "human_approval_required",
-        "parent_signatures": 0,
-        "registration_requests": 0
+        "invitation_void": false,
+        "request_state": "pending"
       }
     },
     {
@@ -11925,6 +12084,45 @@
         "signed_response_retained": true,
         "new_keys": 0,
         "new_parent_signatures": 0,
+        "human_authority": false
+      }
+    },
+    {
+      "name": "csr-root-human-import-registers-by-default",
+      "action": "child_request_import",
+      "input": {
+        "request": "root-human-issue",
+        "response": "root-human-issued",
+        "parent_status": "normal",
+        "no_register": false,
+        "registry_success": true,
+        "current_status": "unavailable"
+      },
+      "expected": {
+        "accepted": true,
+        "registration_requests": 1,
+        "registration_signer": "subject",
+        "id_registration": "registered",
+        "receipt_is_authority": false,
+        "human_authority": false,
+        "same_invitation_id": true
+      }
+    },
+    {
+      "name": "csr-root-human-import-stale-root-key-refuses",
+      "action": "child_request_import",
+      "input": {
+        "request": "root-human-issue",
+        "response": "root-human-issued",
+        "parent_status": "root-rotated",
+        "no_register": false
+      },
+      "expected": {
+        "accepted": false,
+        "reason": "stale_issuer_key",
+        "registration_requests": 0,
+        "outstanding_request_unchanged": true,
+        "old_certificate_unchanged": true,
         "human_authority": false
       }
     }
@@ -13032,8 +13230,7 @@
           "team_member_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2"
         },
         "status": "normal",
-        "cache_age_seconds": 0,
-        "refresh_failed": false
+        "cache_age_seconds": 0
       }
     },
     {
@@ -13315,7 +13512,7 @@
       }
     },
     {
-      "name": "key-response-id-tree-absent-past-grace",
+      "name": "key-response-id-tree-absent-after-expiry",
       "key_response": {},
       "expected_parse": {
         "state": "unknown",
@@ -13328,8 +13525,7 @@
       },
       "omission_context": {
         "original_auth": "passed",
-        "prior_evidence_age_seconds": 901,
-        "refresh_failed": true
+        "prior_evidence_age_seconds": 61
       }
     },
     {
@@ -13358,8 +13554,7 @@
           "team_member_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2"
         },
         "status": "alice-revoked-now",
-        "cache_age_seconds": 0,
-        "refresh_failed": false
+        "cache_age_seconds": 0
       }
     },
     {
@@ -13388,8 +13583,7 @@
           "team_member_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2"
         },
         "status": "root-replaced",
-        "cache_age_seconds": 0,
-        "refresh_failed": false
+        "cache_age_seconds": 0
       }
     },
     {
@@ -13418,8 +13612,7 @@
           "team_member_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2"
         },
         "status": "normal",
-        "cache_age_seconds": 0,
-        "refresh_failed": false
+        "cache_age_seconds": 0
       },
       "cached_key_response": {},
       "expected_key_refetch": true
@@ -13494,8 +13687,7 @@
         },
         "self_derived_key_matches": true,
         "status": "normal",
-        "cache_age_seconds": 0,
-        "refresh_failed": false
+        "cache_age_seconds": 0
       }
     },
     {
@@ -13532,8 +13724,7 @@
         },
         "self_derived_key_matches": true,
         "status": "alice-revoked-now",
-        "cache_age_seconds": 0,
-        "refresh_failed": false
+        "cache_age_seconds": 0
       }
     },
     {
@@ -13570,8 +13761,7 @@
         },
         "self_derived_key_matches": true,
         "status": "root-replaced",
-        "cache_age_seconds": 0,
-        "refresh_failed": false
+        "cache_age_seconds": 0
       }
     },
     {
@@ -13641,7 +13831,7 @@
       }
     },
     {
-      "name": "key-resolution-failed-refresh-age-900",
+      "name": "key-resolution-failed-refresh-age-60",
       "http_status": null,
       "key_response": null,
       "cached_key_response": {
@@ -13650,7 +13840,7 @@
           "domain": "example.com"
         }
       },
-      "cached_age_seconds": 900,
+      "cached_age_seconds": 60,
       "refresh": "failed",
       "expected_enrollment": {
         "state": "enrolled",
@@ -13670,12 +13860,11 @@
           "team_member_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2"
         },
         "status": "normal",
-        "cache_age_seconds": 900,
-        "refresh_failed": true
+        "cache_age_seconds": 60
       }
     },
     {
-      "name": "key-resolution-failed-refresh-age-901",
+      "name": "key-resolution-failed-refresh-age-61",
       "http_status": null,
       "key_response": null,
       "cached_key_response": {
@@ -13684,7 +13873,7 @@
           "domain": "example.com"
         }
       },
-      "cached_age_seconds": 901,
+      "cached_age_seconds": 61,
       "refresh": "failed",
       "expected_enrollment": {
         "state": "unknown",
@@ -13704,8 +13893,7 @@
           "team_member_did_key": "did:key:z6MkvRXNYcE7MMduynWTgeKbDaT1iijDSC8pZqXZc8rHPrf2"
         },
         "status": "normal",
-        "cache_age_seconds": 901,
-        "refresh_failed": true
+        "cache_age_seconds": 61
       }
     },
     {

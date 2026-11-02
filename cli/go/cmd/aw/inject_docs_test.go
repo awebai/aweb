@@ -171,10 +171,10 @@ func TestPublicTeamJoinGuidanceConnectsByDefault(t *testing.T) {
 	if !strings.Contains(legacyFormatted, "aw workspace connect --service '<url>'") {
 		t.Fatalf("legacy membership-only output does not shell-quote its URL placeholder:\n%s", legacyFormatted)
 	}
-	if got := formatTeamInvite(teamInviteOutput{Token: "token", PorcelainJoin: true}); !strings.Contains(got, "aw team join token --name <name>") {
+	if got := formatTeamInvite(teamInviteOutput{Token: "token", PorcelainJoin: true}); !strings.Contains(got, "aw team join --token-file <file> --name <name>") {
 		t.Fatalf("human invite does not print the porcelain join path:\n%s", got)
 	}
-	if got := formatTeamInvite(teamInviteOutput{Token: "token"}); !strings.Contains(got, "aw id team accept-invite token --name <name>") {
+	if got := formatTeamInvite(teamInviteOutput{Token: "token"}); !strings.Contains(got, "aw id team accept-invite --token-file <file> --name <name>") {
 		t.Fatalf("low-level invite no longer prints its membership-only primitive:\n%s", got)
 	}
 }

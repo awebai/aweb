@@ -66,9 +66,10 @@ func TestTeamAdmissionInviteRequiresTeamAdmissionScopeAndDoesNotAcceptInvite(t *
 		t.Fatal(err)
 	}
 
-	var out bytes.Buffer
+	var out, stderr bytes.Buffer
 	cmd := &cobra.Command{Use: "test"}
 	cmd.SetOut(&out)
+	cmd.SetErr(&stderr)
 	if err := runTeamAdmissionInvite(t.Context(), cmd); err != nil {
 		t.Fatalf("runTeamAdmissionInvite: %v", err)
 	}
@@ -79,8 +80,33 @@ func TestTeamAdmissionInviteRequiresTeamAdmissionScopeAndDoesNotAcceptInvite(t *
 	if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
 		t.Fatalf("decode output: %v\n%s", err, out.String())
 	}
-	if decoded.Token != "aw_inv_secret" || !strings.Contains(decoded.JoinCommand, "aw team join aw_inv_secret") || decoded.CanonicalTeamID != "shared:example.aweb.ai" {
+	if decoded.Token != "aw_inv_secret" || decoded.JoinCommand != "aw team join --token-file <file> --name <name>" || decoded.CanonicalTeamID != "shared:example.aweb.ai" {
 		t.Fatalf("output=%+v", decoded)
+	}
+	// Under --json the output is the one JSON document and stderr stays empty.
+	if stderr.Len() != 0 {
+		t.Fatalf("--json admission invite wrote to stderr: %q", stderr.String())
+	}
+
+	// The admission token is the same single-use credential as a team invite:
+	// the human output carries the same warning, with its expiry, and never
+	// the token itself.
+	jsonFlag = false
+	out.Reset()
+	if err := runTeamAdmissionInvite(t.Context(), cmd); err != nil {
+		t.Fatalf("runTeamAdmissionInvite: %v", err)
+	}
+	var expiresAt string
+	for _, line := range strings.Split(out.String(), "\n") {
+		if rest, ok := strings.CutPrefix(line, "expires_at: "); ok {
+			expiresAt = rest
+		}
+	}
+	if want := teamInviteTokenWarning(expiresAt); !strings.Contains(stderr.String(), want) || expiresAt == "" {
+		t.Fatalf("stderr %q does not carry the invite warning %q", stderr.String(), want)
+	}
+	if strings.Contains(stderr.String(), "aw_inv_secret") {
+		t.Fatal("the warning repeats the token")
 	}
 }
 

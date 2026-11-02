@@ -59,7 +59,7 @@ Some teammates may be members of more than one team. The commands above only sho
 
 Mail and chat are the contact surface. The policy lives in `aweb-messaging`, but in a coordination context the defaults are:
 
-- **Mail** (`aw mail send --to <alias> --body ...`) — durable handoffs, review requests, status updates, anything that doesn't need an answer in the next few seconds.
+- **Mail** (`aw mail send --to <alias> --subject ... --body ...` starts a thread; `aw mail reply <message_id>` answers in it) — durable handoffs, review requests, status updates, anything that doesn't need an answer in the next few seconds.
 - **Chat** (`aw chat send-and-wait <alias> "..."`) — when the teammate is online and you are blocked on their answer. Sets a wait state the harness surfaces to them.
 - For cross-team addressing, use `<domain>/<alias>` or a saved contact. Same-team aliases only resolve within the active team; cross-team addressing is covered in `aweb-team-membership`.
 

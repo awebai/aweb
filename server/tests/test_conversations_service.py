@@ -484,11 +484,7 @@ async def test_find_active_conversation_matches_multi_team_agent_via_did_fallbac
         db,
         conversation_type="mail",
         did_a="did:aw:alice",
-        did_key_a="did:key:z6Mkalice",
-        agent_id_a=alice_a,
         did_b="did:aw:bob",
-        did_key_b="did:key:z6Mkbob",
-        agent_id_b=bob_b,
     )
     assert found is not None, (
         "find_active_one_to_one_conversation_between should match via did when "
@@ -499,7 +495,7 @@ async def test_find_active_conversation_matches_multi_team_agent_via_did_fallbac
 
 
 @pytest.mark.asyncio
-async def test_find_active_conversation_does_not_match_different_live_agent_by_did(aweb_cloud_db):
+async def test_find_active_conversation_matches_identity_despite_other_membership_projection(aweb_cloud_db):
     db = _DbShim(aweb_cloud_db.aweb_db)
     await _insert_team(aweb_cloud_db.aweb_db)
     real_alice_agent_id = await _insert_agent(
@@ -548,14 +544,11 @@ async def test_find_active_conversation_does_not_match_different_live_agent_by_d
         db,
         conversation_type="mail",
         did_a="did:aw:alice",
-        did_key_a="did:key:z6Mkalice",
-        agent_id_a=real_alice_agent_id,
         did_b="did:aw:bob",
-        did_key_b="did:key:z6Mkbob",
-        agent_id_b=bob_agent_id,
     )
 
-    assert found is None
+    assert found is not None
+    assert found["created_by_did"] == "did:aw:alice"
 
 
 @pytest.mark.asyncio
@@ -594,10 +587,6 @@ async def test_find_session_between_matches_multi_team_agent_via_did_fallback(aw
         db,
         did_a="did:aw:alice",
         did_b="did:aw:bob",
-        did_key_a="did:key:z6Mkalice",
-        did_key_b="did:key:z6Mkbob",
-        agent_id_a=alice_a,
-        agent_id_b=bob_b,
     )
     assert found_session_id is not None, (
         "find_session_between should match via did when the caller's agent_id "
@@ -685,10 +674,6 @@ async def test_find_active_one_to_one_conversation_between_picks_newest_duplicat
         conversation_type="chat",
         did_a="did:aw:alice",
         did_b="did:aw:bob",
-        agent_id_a=alice_agent_id,
-        agent_id_b=bob_agent_id,
-        address_a="acme.com/alice",
-        address_b="acme.com/bob",
     )
 
     assert found is not None
@@ -747,10 +732,6 @@ async def test_find_session_between_picks_newest_duplicate_legacy_session(
         db,
         did_a="did:aw:alice",
         did_b="did:aw:bob",
-        agent_id_a=alice_agent_id,
-        agent_id_b=bob_agent_id,
-        address_a="acme.com/alice",
-        address_b="acme.com/bob",
     )
 
     assert str(found_session_id) == str(newer["session_id"])

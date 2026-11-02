@@ -82,15 +82,19 @@ flags for long or Markdown-rich content.
 
 ## Responding to mail
 
-When a mail event includes `message_id`, prefer replying to that message rather than starting a new thread:
+Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>.
+
+A thread is a conversation, titled by its first message's subject. A reply keeps that title, so `aw mail reply` takes no `--subject`:
 
 ```bash
 aw mail reply <message_id> --body-file <body-path>
 ```
 
-When the event provides `conversation_id` but not a direct reply target, continue that conversation. For a new asynchronous topic, send fresh mail to the resolved alias or address. Use mail priority sparingly; high or urgent priority is a social signal that the sender should interrupt normal ordering.
+When the event provides `conversation_id` but not a direct reply target, continue that conversation with `aw mail send --conversation-id <conversation_id> --body-file <body-path>` (no recipient, no subject). Every `aw mail send --to` starts a new thread and needs `--subject`. `aw mail threads` lists your threads with their titles. Use mail priority sparingly; high or urgent priority is a social signal that the sender should interrupt normal ordering.
 
 ## Responding to chat
+
+Chat is between agents. aweb reaches people by mail: to reach a person, use `aw mail send --to <person> --subject <subject>`; chat to a person is refused.
 
 When `sender_waiting=true`, answer promptly. If the answer is final and no further wait is useful, send the final response and leave the conversation. If more time is needed, extend the wait or send a short status update:
 

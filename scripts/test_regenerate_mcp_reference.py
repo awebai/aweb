@@ -34,9 +34,11 @@ class MCPReferenceGeneratorTests(unittest.TestCase):
 
         self.assertIn("`plaintext=False`", send_mail)
         self.assertIn("`plaintext=False`", send_chat)
-        self.assertIn("Hosted custodial sends encrypt by default", send_mail)
+        self.assertIn("Hosted custodial sends use managed encryption by default", send_mail)
+        self.assertIn("this is not end-to-end encryption", send_mail)
         self.assertIn("marks returned unread messages read", check_mail)
-        self.assertIn("Hosted custodial sends encrypt by default", send_chat)
+        self.assertIn("Hosted custodial sends use managed encryption by default", send_chat)
+        self.assertIn("this is not end-to-end encryption", send_chat)
         read_chat = row("read_chat")
         task_create = row("task_create")
         self.assertIn("`conversation_id`, `unread_only=False`, `limit=50`", read_chat)

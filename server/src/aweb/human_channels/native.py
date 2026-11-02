@@ -21,10 +21,11 @@ from awid.signing import canonical_json_bytes
 from fastapi import HTTPException
 
 from aweb.attachment_service import prepare_attachment_send
-from aweb.identity_auth_deps import auth_dids
+from aweb.identity_auth_deps import auth_dids, participant_dids
 from aweb.identity_binding import verified_projection
 from aweb.inbound_modes import effective_inbound_mode
 from aweb.messaging.chat import ensure_session, send_in_session
+from aweb.messaging.chat_policy import HumanChatRefused, recipient_label, require_agent_chat
 from aweb.messaging.conversations import create_conversation, get_conversation
 from aweb.messaging.messages import authorize_message_delivery, deliver_message
 
@@ -178,6 +179,8 @@ class NativeMessagingService:
             raise ContractError("authority_unavailable", "authority hook result")
 
     async def _facts(self, auth, row):
+        # Actor/team identify current admission context, never a thread participant.
+        row = await self._row(principal=row["did_aw"] or row["did_key"], team_id=auth.team_id)
         subject = NativeMessagingSubject(
             row["did_aw"] or row["did_key"],
             row["did_key"],
@@ -248,13 +251,15 @@ class NativeMessagingService:
         if target_ref["kind"] != "native":
             raise ContractError("unsupported", "native recipient")
         recipient = await self._row(
-            principal=target_ref["did"], actor_id=requested_target.value.get("actor_id")
+            principal=target_ref["did"], team_id=auth.team_id
         )
         if (
             recipient.get("agent_type") == "human"
             and recipient["team_id"] != auth.team_id
         ):
             raise ContractError("forbidden", "human selected team")
+        if value["kind"] == "chat":
+            await require_agent_chat(self.db, [recipient])
         facts = await self._facts(auth, recipient)
         if canonical_record(facts) != canonical_record(requested_target):
             raise ContractError("stale", "recipient authority")
@@ -699,6 +704,10 @@ class NativeMessagingUnitOfWork:
             ),
         )
         by_id = {str(row["agent_id"]): verified_projection(row) for row in rows}
+        if value["kind"] == "chat":
+            current_recipient = by_id.get(str(retained.recipient["agent_id"]))
+            if current_recipient and current_recipient.get("agent_type") == "human":
+                raise HumanChatRefused(recipient_label(current_recipient))
         for old in (retained.author, retained.recipient):
             row = by_id.get(str(old["agent_id"]))
             if (
@@ -841,6 +850,7 @@ class NativeMessagingUnitOfWork:
             "message_version": payload.message_version,
             "encrypted_envelope": payload.encrypted_envelope,
             "encrypted_metadata": payload.encrypted_metadata,
+            "id_chain": self.auth.id_chain,
             "message_id": UUID(value["message_id"]),
         }
         request = SimpleNamespace(
@@ -861,8 +871,8 @@ class NativeMessagingUnitOfWork:
                         db,
                         conversation_type="mail",
                         created_by_did=_principal(self.auth),
-                        initiator=actor,
-                        recipients=[recipient],
+                        initiator=dict(actor, agent_id=None),
+                        recipients=[dict(recipient, agent_id=None)],
                         conversation_id=cid,
                         team_id=self.auth.team_id,
                     )
@@ -873,7 +883,7 @@ class NativeMessagingUnitOfWork:
                         db,
                         conversation_id=cid,
                         sender_did=_principal(self.auth),
-                        equivalent_dids=auth_dids(self.auth),
+                        equivalent_dids=participant_dids(self.auth),
                     )
                     if route.recipient_participant["did"] != recipient["did"]:
                         raise ContractError(
@@ -900,7 +910,7 @@ class NativeMessagingUnitOfWork:
                 cid = await ensure_session(
                     db,
                     team_id=self.auth.team_id,
-                    participant_rows=[actor, recipient],
+                    participant_rows=[dict(actor, agent_id=None), dict(recipient, agent_id=None)],
                     created_by=_principal(self.auth),
                     session_id=UUID(value["conversation_id"]),
                 )

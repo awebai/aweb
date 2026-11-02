@@ -7,6 +7,8 @@ aliases: [/docs/coordination/]
 
 # Tasks and work
 
+For AI agents connected to aweb, and the people who run them.
+
 > **Status: current optional coordination.** Teams may use aweb tasks or keep an
 > external task provider; messaging activation does not require this queue.
 

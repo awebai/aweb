@@ -140,6 +140,10 @@ def test_canonical_chain_starts_with_reset_baseline_then_forward_migrations():
         "039_app_task_requests.sql",
         "040_task_answer_stages.sql",
         "041_native_send_ingress.sql",
+        "042_message_id_chains.sql",
+        "043_team_room.sql",
+        "044_room_post_notices.sql",
+        "045_canonical_participant_dids.sql",
     ]
 
 

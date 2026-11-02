@@ -8,18 +8,19 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import inspect
 import json
 import re
 import math
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from nacl.bindings import crypto_core_ed25519_is_valid_point
 from nacl.exceptions import BadSignatureError
 from nacl.signing import VerifyKey
 
-from awid.did import did_from_public_key, public_key_from_did, validate_stable_id
+from awid.did import public_key_from_did, validate_stable_id
 from awid.utc_timestamps import parse_utc_seconds
 from awid.identity_log_verify import verify_identity_log
 from awid.federation_errors import FederationAuthorityError
@@ -33,6 +34,7 @@ _LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 _B64URL = re.compile(r"[A-Za-z0-9_-]+")
 _BASE58 = re.compile(r"[1-9A-HJ-NP-Za-km-z]+")
 _ED25519_ORDER = 2**252 + 27742317777372353535851937790883648493
+_STATUS_FRESH_SECONDS = 60
 
 
 class IDCertificateError(ValueError):
@@ -114,9 +116,8 @@ def _id(value: Any, *, key_only: bool = False) -> None:
         if not isinstance(value, str):
             raise ValueError("not text")
         if value.startswith("did:key:"):
-            public = public_key_from_did(value)
-            if did_from_public_key(public) != value or not crypto_core_ed25519_is_valid_point(public):
-                raise ValueError("noncanonical or non-prime-subgroup key")
+            # Decoding refuses non-canonical and non-prime-order keys.
+            public_key_from_did(value)
         elif not key_only and value.startswith("did:aw:"):
             if not _BASE58.fullmatch(value[7:]) or validate_stable_id(value) != value:
                 raise ValueError("noncanonical stable id")
@@ -175,7 +176,8 @@ def strict_did_key(did_key: str) -> bool:
     """Whether a canonical did:key meets the ID family's strict point profile.
 
     This predicate establishes no key ownership, issuance or current authority.
-    Released generic DID decoding retains its own contract.
+    It is did:key decoding itself (awid.did.public_key_from_did), which every
+    released Python decoder shares.
     """
     try:
         _id(did_key, key_only=True)
@@ -219,6 +221,41 @@ def verify_id_certificate(signed: dict[str, Any], *, issuer_key: str) -> None:
     if c["issuer_key"] != issuer_key:
         raise IDCertificateError("invalid_signature")
     verify_ed25519(issuer_key, id_certificate_signing_bytes(c), signature)
+
+
+async def sign_id_certificate(
+    certificate: dict[str, Any],
+    *,
+    signer: Callable[[bytes], tuple[str, bytes] | Awaitable[tuple[str, bytes]]],
+) -> dict[str, Any]:
+    """Sign one shaped certificate through a custody-owning callback.
+
+    Shape is checked before the callback, which is invoked/resolved once. Its
+    answer must name issuer_key and pass the shared strict signature verifier.
+    Malformed answers raise IDCertificateError('invalid_signature'); callback
+    exceptions propagate. This does no I/O and grants no issuance authority:
+    the custody owner must check the intended operation and current authority
+    before decrypting/signing. Pending human keys cannot issue certificates.
+    """
+    # Isolate nested caller data across an await, so the returned artifact is
+    # exactly the certificate whose immutable bytes went to the signer.
+    snapshot = json.loads(_canonical(certificate))
+    _shape({"certificate": snapshot, "signature": ""})
+    payload = id_certificate_signing_bytes(snapshot)
+    answer = signer(payload)
+    if inspect.isawaitable(answer):
+        answer = await answer
+    if (
+        type(answer) is not tuple or len(answer) != 2
+        or type(answer[0]) is not str or answer[0] != snapshot["issuer_key"]
+    ):
+        raise IDCertificateError("invalid_signature")
+    _, signature = answer
+    verify_ed25519(snapshot["issuer_key"], payload, signature)
+    return {
+        "certificate": snapshot,
+        "signature": base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii"),
+    }
 
 
 def _bundle_shape(bundle: Any) -> None:
@@ -283,15 +320,15 @@ class IDChainEvidence:
     status: dict[str, Any]
     namespace_authority: dict[str, Any]
     age_seconds: float | None
-    refresh_failed: bool = False
 
 
-def status_cache_mode(age_seconds: float | None, refresh_failed: bool) -> str:
-    if type(age_seconds) not in (int, float) or not math.isfinite(age_seconds) or age_seconds < 0:
+def status_cache_mode(age_seconds: float | None) -> str:
+    """Fresh through 60 seconds at acquisition; expired evidence is unavailable."""
+    if type(age_seconds) not in (int, float) or age_seconds < 0:
         return 'unavailable'
-    if age_seconds <= 60:
-        return 'fresh'
-    return 'outage_grace' if refresh_failed and age_seconds <= 900 else 'unavailable'
+    if type(age_seconds) is float and not math.isfinite(age_seconds):
+        return 'unavailable'
+    return 'fresh' if age_seconds <= _STATUS_FRESH_SECONDS else 'unavailable'
 
 
 def status_request(bundle: dict[str, Any] | None, subject: dict[str, Any], *, domain: str | None = None) -> dict[str, Any] | None:
@@ -344,6 +381,34 @@ def _witness(value: Any) -> datetime:
         raise IDCertificateError('evidence_unavailable') from exc
 
 
+def namespace_authority_valid(domain: str, authority: dict[str, Any], controller_key: str, delegation: dict[str, Any] | None = None) -> bool:
+    """Bind a namespace controller to independently discovered DNS authority.
+
+    An inherited TXT selects the delegate; its parent-authorized child record
+    grants child authority. A found exact record always takes precedence.
+    """
+    try:
+        _fields(authority, 'domain dns_name inherited controller_key')
+        _domain(domain)
+        _id(controller_key, key_only=True)
+        if authority['domain'] != domain:
+            return False
+        if authority['inherited'] is False:
+            return authority['dns_name'] == '_awid.' + domain and authority['controller_key'] == controller_key
+        if authority['inherited'] is not True:
+            return False
+        _fields(delegation, 'parent_domain parent_controller_key controller_key')
+        parent = delegation['parent_domain']
+        _domain(parent)
+        _id(delegation['parent_controller_key'], key_only=True)
+        return (domain.endswith('.' + parent)
+                and authority['dns_name'] == '_awid.' + parent
+                and authority['controller_key'] == delegation['parent_controller_key']
+                and delegation['controller_key'] == controller_key)
+    except (IDCertificateError, ValueError, TypeError, KeyError):
+        return False
+
+
 class _IDStatus:
     def __init__(self, evidence: IDChainEvidence, domain: str):
         s, authority = evidence.status, evidence.namespace_authority
@@ -354,7 +419,7 @@ class _IDStatus:
             if type(s['v']) is not int or s['v'] != 1 or s['domain'] != domain:
                 raise IDCertificateError('evidence_unavailable')
             self.now = _witness(s['observed_at'])
-            _fields(s['namespace'], 'epochs')
+            _fields(s['namespace'], 'epochs delegation' if 'delegation' in s['namespace'] else 'epochs')
             self.epochs = s['namespace']['epochs']
             if type(self.epochs) is not list or not self.epochs:
                 raise IDCertificateError('evidence_unavailable')
@@ -377,9 +442,7 @@ class _IDStatus:
                         raise IDCertificateError('evidence_unavailable')
             if self.epochs[-1]['retired_at'] is not None:
                 raise IDCertificateError('evidence_unavailable')
-            _fields(authority, 'domain dns_name inherited controller_key')
-            if (authority['domain'] != domain or authority['dns_name'] != '_awid.' + domain
-                or authority['inherited'] is not False or authority['controller_key'] != self.epochs[-1]['did_key']):
+            if not namespace_authority_valid(domain, authority, self.epochs[-1]['did_key'], s['namespace'].get('delegation')):
                 raise IDCertificateError('evidence_unavailable')
             self.cutoff = max(_witness(e['registered_at']) for e in self.epochs if e['continuity'] == 'replaced')
             self.identities: dict[str, dict[str, Any]] = {}
@@ -542,9 +605,9 @@ def _id_chain(bundle: dict[str, Any] | None, subject: dict[str, Any], evidence: 
         raise IDCertificateError('subject_mismatch')
     if evidence is None:
         raise IDCertificateError('evidence_unavailable')
-    if status_cache_mode(evidence.age_seconds, evidence.refresh_failed) == 'unavailable':
-        # Expired grace describes last-known-good evidence after a failed refresh.
-        expired = evidence.refresh_failed and evidence.age_seconds is not None and evidence.age_seconds > 900
+    if status_cache_mode(evidence.age_seconds) == 'unavailable':
+        age = evidence.age_seconds
+        expired = (type(age) is int or type(age) is float and math.isfinite(age)) and age > _STATUS_FRESH_SECONDS
         raise IDCertificateError('status_expired' if expired else 'evidence_unavailable')
     status = _IDStatus(evidence, domain)
     if subject['id'].startswith('did:aw:') and status.current_key(subject['id']) != subject['did_key']:

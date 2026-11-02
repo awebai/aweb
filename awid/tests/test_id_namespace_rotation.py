@@ -217,7 +217,7 @@ async def test_a_validly_signed_legacy_pair_never_rotates(tree, awid_db_infra):
 
 @pytest.mark.parametrize("dns", ["inherited", "other-key", "failed"])
 @pytest.mark.asyncio
-async def test_the_new_key_needs_exact_dns(dns, tree, awid_db_infra):
+async def test_rotation_refuses_unanchored_or_contradictory_authority(dns, tree, awid_db_infra):
     if dns == "inherited":
         tree.dns("root_rotated", inherited=True)
     elif dns == "other-key":

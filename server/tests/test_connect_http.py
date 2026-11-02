@@ -500,6 +500,12 @@ async def test_connect_http_rejects_alias_collision_for_different_agent(connect_
     resp = await client.post("/v1/connect", content=body_bytes, headers={**headers, "Content-Type": "application/json"})
 
     assert resp.status_code == 409
+    assert resp.json() == {
+        "detail": {
+            "code": "alias_active",
+            "message": "alias 'alice' is already in use by another active agent in team backend:acme.com",
+        }
+    }, resp.text
 
     row = await connect_app.db.fetch_one(
         """
@@ -570,6 +576,8 @@ async def test_connect_http_rejects_alias_change_for_same_agent(connect_app):
     resp = await client.post("/v1/connect", content=body_bytes, headers={**headers, "Content-Type": "application/json"})
 
     assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "alias_mismatch", resp.text
+    assert "already bound to alias 'alice'" in resp.json()["detail"]["message"], resp.text
 
     workspace_rows = await connect_app.db.fetch_all(
         """

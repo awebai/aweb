@@ -49,6 +49,7 @@ var federationErrorSpecs = map[string]FederationErrorSpec{
 	"local_sender_route_mismatch":                     {422, false, false},
 	"recipient_address_did_mismatch":                  {422, false, false},
 	"recipient_current_key_mismatch":                  {422, false, false},
+	"recipient_custodial_no_e2ee":                     {422, false, false},
 	"recipient_encryption_assertion_invalid_or_stale": {422, false, false},
 	"recipient_encryption_assertion_missing":          {424, false, false},
 	"recipient_identity_not_found":                    {404, false, false},

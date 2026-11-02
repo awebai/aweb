@@ -1,6 +1,6 @@
 // Pure id-chain verification (docs/id-certificates.md sections 3-5). The
 // caller supplies already trusted facts: the authoritative status snapshot
-// from the production cached client, the independently selected exact-domain
+// from the production cached client, the independently selected DNS-anchored
 // namespace authority, and the cache age. Nothing here reads DNS, HTTP or a
 // cache, and nothing here decides a request; see requestDisposition for that.
 import {
@@ -10,6 +10,7 @@ import {
   idChainRefusal,
   isCanonicalDidAw,
   isCanonicalDidKey,
+  isCanonicalDomain,
   isRecord,
   parseSignedIdCertificate,
   type IdCertificate,
@@ -21,7 +22,6 @@ import {
 import { verifyDidLogEntries, type DidKeyEvidence } from "./registry.js";
 
 export const ID_STATUS_FRESH_SECONDS = 60;
-export const ID_STATUS_OUTAGE_GRACE_SECONDS = 900;
 
 export type IdVerificationReason =
   | IdDecodeRefusal
@@ -58,7 +58,7 @@ export interface IdSubject {
   team_member_did_key: string | null;
 }
 
-/** Exact-domain DNS authority, selected independently of anything the agent presents. */
+/** Found exact or ancestor TXT authority, selected independently of the agent. */
 export interface IdNamespaceAuthority {
   domain: string;
   dns_name: string;
@@ -74,10 +74,9 @@ export interface IdStatusEvidence {
   status: unknown;
   namespace_authority: IdNamespaceAuthority;
   age_seconds: number | null;
-  refresh_failed: boolean;
 }
 
-export type IdStatusCacheMode = "fresh" | "outage_grace" | "unavailable";
+export type IdStatusCacheMode = "fresh" | "unavailable";
 
 export interface IdStatusRequest {
   v: 1;
@@ -91,14 +90,12 @@ export type IdStatusPlan =
   | { lookup: "status"; request: IdStatusRequest };
 
 /**
- * The 60s/900s rule: evidence is fresh to 60 seconds inclusive; past that it
- * serves only while refreshes fail, to 900 seconds inclusive.
+ * Evidence is fresh through 60 seconds inclusive, measured from the
+ * successful fetch; past that it must be refreshed or it is unavailable.
  */
-export function idStatusCacheMode(ageSeconds: number | null, refreshFailed: boolean): IdStatusCacheMode {
+export function idStatusCacheMode(ageSeconds: number | null): IdStatusCacheMode {
   if (ageSeconds === null || !Number.isFinite(ageSeconds) || ageSeconds < 0) return "unavailable";
-  if (ageSeconds <= ID_STATUS_FRESH_SECONDS) return "fresh";
-  if (refreshFailed && ageSeconds <= ID_STATUS_OUTAGE_GRACE_SECONDS) return "outage_grace";
-  return "unavailable";
+  return ageSeconds <= ID_STATUS_FRESH_SECONDS ? "fresh" : "unavailable";
 }
 
 /**
@@ -268,6 +265,7 @@ interface IdentityStatus {
 
 interface Snapshot {
   epochs: Epoch[];
+  delegation?: Record<string, unknown>;
   /** Registered revisions admitted before this time lost their authority to a namespace replacement. */
   replacedAt: string;
   identities: Map<string, IdentityStatus>;
@@ -279,24 +277,26 @@ const MICROSECOND_TIMESTAMP = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-
 /** Evidence that is trusted, current enough and internally consistent, or a refusal. */
 function trustedSnapshot(evidence: IdStatusEvidence | null, domain: string | undefined): Snapshot {
   if (evidence === null || domain === undefined) throw new Refusal("evidence_unavailable");
-  const mode = idStatusCacheMode(evidence.age_seconds, evidence.refresh_failed);
-  // Only last-known-good evidence outliving its outage grace has expired;
-  // stale evidence that was never refreshed is not evidence at all.
-  if (mode === "unavailable") {
-    const expired =
-      evidence.refresh_failed && evidence.age_seconds !== null && evidence.age_seconds > ID_STATUS_OUTAGE_GRACE_SECONDS;
-    throw new Refusal(expired ? "status_expired" : "evidence_unavailable");
+  // Evidence past its fresh age has expired; a missing or invalid age is not
+  // evidence at all.
+  if (idStatusCacheMode(evidence.age_seconds) === "unavailable") {
+    const age = evidence.age_seconds;
+    throw new Refusal(age !== null && Number.isFinite(age) && age > ID_STATUS_FRESH_SECONDS ? "status_expired" : "evidence_unavailable");
   }
   const authority = evidence.namespace_authority;
-  // Only this exact domain's own _awid record is authority; never an ancestor's.
-  if (authority.inherited || authority.domain !== domain || authority.dns_name !== `_awid.${domain}`) {
+  if (!isRecord(authority) || !hasExactKeys(authority, ["controller_key", "dns_name", "domain", "inherited"]) || authority.domain !== domain || typeof authority.inherited !== "boolean" || !isCanonicalDidKey(authority.controller_key)) {
     throw new Refusal("evidence_unavailable");
   }
   const snapshot = parseSnapshot(evidence.status, domain);
   if (!snapshot) throw new Refusal("evidence_unavailable");
-  // DNS and the registry's current epoch must name the same root key; a
-  // disagreement is a contradictory authority snapshot, not a bad proof.
-  if (snapshot.epochs[snapshot.epochs.length - 1].didKey !== authority.controller_key) {
+  const current = snapshot.epochs[snapshot.epochs.length - 1].didKey;
+  if (authority.inherited) {
+    const delegation = snapshot.delegation;
+    const parent = delegation?.parent_domain;
+    if (!delegation || typeof parent !== "string" || !isCanonicalDomain(parent) || !domain.endsWith(`.${parent}`) || authority.dns_name !== `_awid.${parent}` || delegation.parent_controller_key !== authority.controller_key || delegation.controller_key !== current) {
+      throw new Refusal("evidence_unavailable");
+    }
+  } else if (authority.dns_name !== `_awid.${domain}` || current !== authority.controller_key) {
     throw new Refusal("evidence_unavailable");
   }
   return snapshot;
@@ -320,11 +320,13 @@ function parseSnapshot(status: unknown, domain: string): Snapshot | undefined {
     missing.add(id);
   }
   const replacedAt = epochs.filter(epoch => epoch.continuity === "replaced").at(-1)!.registeredAt;
-  return { epochs, replacedAt, identities, missing };
+  const delegation = isRecord(status.namespace) && isRecord(status.namespace.delegation) ? status.namespace.delegation : undefined;
+  return { epochs, replacedAt, identities, missing, delegation };
 }
 
 function parseEpochs(namespace: unknown): Epoch[] | undefined {
-  if (!isRecord(namespace) || !hasExactKeys(namespace, ["epochs"]) || !Array.isArray(namespace.epochs)) return undefined;
+  if (!isRecord(namespace) || !(hasExactKeys(namespace, ["epochs"]) || hasExactKeys(namespace, ["delegation", "epochs"])) || !Array.isArray(namespace.epochs)) return undefined;
+  if ("delegation" in namespace && (!isRecord(namespace.delegation) || !hasExactKeys(namespace.delegation, ["controller_key", "parent_controller_key", "parent_domain"]))) return undefined;
   const epochs: Epoch[] = [];
   for (const [index, row] of namespace.epochs.entries()) {
     if (!isRecord(row) || !hasExactKeys(row, ["continuity", "did_key", "registered_at", "retired_at", "seq"])) return undefined;

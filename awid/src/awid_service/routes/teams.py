@@ -889,7 +889,10 @@ async def register_certificate(
             raise
         constraint_name = getattr(cause, "constraint_name", "")
         if constraint_name == "idx_team_certificates_alias_active":
-            raise HTTPException(status_code=409, detail="Alias already active in team")
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "alias_active", "message": "Alias already active in team"},
+            )
         raise HTTPException(
             status_code=409,
             detail={

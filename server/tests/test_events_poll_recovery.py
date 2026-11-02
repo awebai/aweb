@@ -76,8 +76,13 @@ class PollHarness:
                          "message_version": 1, "created_at": self.origin, "unread_count": 1}]
             return []
 
+        async def fetch_val(query, *args):
+            # This mail/chat fixture has no room notices to refresh.
+            assert "SELECT EXISTS" in query and "{{tables.room_post_notices}}" in query
+            return False
+
         manager = SimpleNamespace(fetch_one=AsyncMock(return_value={"did_key": "did:key:test", "did_aw": ""}),
-                                  fetch_all=fetch_all)
+                                  fetch_all=fetch_all, fetch_val=fetch_val)
         db = SimpleNamespace(get_manager=lambda name="aweb": manager)
         request = SimpleNamespace(is_disconnected=AsyncMock(side_effect=lambda: self.now >= stop_at))
         self.request = request

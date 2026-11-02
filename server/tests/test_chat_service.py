@@ -8,6 +8,7 @@ from nacl.signing import SigningKey
 from uuid import UUID
 
 from awid.did import did_from_public_key
+from aweb.service_errors import NotFoundError
 from aweb.messaging.chat import (
     ensure_session,
     get_pending_conversations,
@@ -201,11 +202,15 @@ async def test_ensure_session_isolates_reused_alias(aweb_cloud_db, replaced_inde
 
 
 @pytest.mark.asyncio
-async def test_legacy_session_survives_key_rotation(aweb_cloud_db):
+async def test_legacy_session_does_not_adopt_a_new_local_key(aweb_cloud_db):
     aweb_db = aweb_cloud_db.aweb_db
     alice, bob = await _setup_team_and_agents(aweb_db)
-    # No conversations row: exercise the legacy lookup, using changed DIDs
-    # and no addresses so only the retained agent_id can establish continuity.
+    # A new local key is a new identity; the retained actor ID grants no continuity.
+    await aweb_db.execute(
+        "UPDATE {{tables.agents}} SET did_aw=NULL, did_aw_verified_key=NULL",
+    )
+    for participant in (alice, bob):
+        participant["did_aw"] = None
     session = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.chat_sessions}} (team_id, created_by)
@@ -227,10 +232,14 @@ async def test_legacy_session_survives_key_rotation(aweb_cloud_db):
             "UPDATE {{tables.agents}} SET did_key = $2, did_aw = NULL WHERE agent_id = $1",
             participant["agent_id"], participant["did_key"],
         )
-    assert await ensure_session(
+    new_session = await ensure_session(
         _DbShim(aweb_db), team_id="backend:acme.com",
         participant_rows=[alice, bob], created_by="alice",
-    ) == session["session_id"]
+    )
+    assert new_session != session["session_id"]
+    with pytest.raises(NotFoundError):
+        await get_message_history(_DbShim(aweb_db), session_id=session["session_id"],
+                                  participant_did=alice["did_key"])
 
 
 @pytest.mark.asyncio
@@ -318,7 +327,7 @@ async def test_send_and_read_message(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_pending_conversations_match_agent_id_when_actor_did_differs(aweb_cloud_db):
+async def test_pending_conversations_require_the_canonical_did_despite_actor_projection(aweb_cloud_db):
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     alice, bob = await _setup_team_and_agents(aweb_cloud_db.aweb_db)
 
@@ -342,6 +351,8 @@ async def test_pending_conversations_match_agent_id_when_actor_did_differs(aweb_
         participant_agent_id=str(bob["agent_id"]),
     )
 
+    assert pending == []
+    pending = await get_pending_conversations(db_shim, participant_did=bob["did_aw"])
     assert len(pending) == 1
     assert pending[0]["session_id"] == str(session_id)
     assert pending[0]["last_message"] == "Hello Bob!"
@@ -417,7 +428,7 @@ async def test_ensure_session_reuses_identity_pair_across_teams(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_ensure_session_reuses_identity_pair_across_stable_and_current_dids(aweb_cloud_db):
+async def test_ensure_session_does_not_promote_a_key_only_participant_from_actor_id(aweb_cloud_db):
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     alice, bob = await _setup_team_and_agents(aweb_cloud_db.aweb_db)
 
@@ -451,11 +462,16 @@ async def test_ensure_session_reuses_identity_pair_across_stable_and_current_did
         created_by="alice",
     )
 
-    assert session_from_current == session_from_stable
+    assert session_from_current != session_from_stable
+    for session, did in ((session_from_current, alice["did_key"]), (session_from_stable, alice["did_aw"])):
+        rows = await aweb_cloud_db.aweb_db.fetch_all(
+            "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1", session,
+        )
+        assert {row["did"] for row in rows} == {did, bob["did_aw"]}
 
 
 @pytest.mark.asyncio
-async def test_ensure_session_does_not_merge_different_agents_sharing_did_aw(aweb_cloud_db):
+async def test_ensure_session_reuses_the_same_identity_across_membership_projections(aweb_cloud_db):
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     _, bob = await _setup_team_and_agents(aweb_cloud_db.aweb_db, team_id="backend:acme.com")
     await aweb_cloud_db.aweb_db.execute(
@@ -519,7 +535,12 @@ async def test_ensure_session_does_not_merge_different_agents_sharing_did_aw(awe
         created_by="alice-new",
     )
 
-    assert new_session != old_session
+    assert new_session == old_session
+    participants = await aweb_cloud_db.aweb_db.fetch_all(
+        "SELECT did, agent_id FROM {{tables.chat_participants}} WHERE session_id=$1", old_session,
+    )
+    assert {row["did"] for row in participants} == {shared_did_aw, bob["did_aw"]}
+    assert next(row["agent_id"] for row in participants if row["did"] == shared_did_aw) == old_row["agent_id"]
 
 
 @pytest.mark.asyncio

@@ -1,0 +1,442 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"crypto/ed25519"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
+	"github.com/creack/pty"
+	"github.com/zalando/go-keyring"
+)
+
+const humanInitDomain = "humans.example.invalid"
+
+// runHumanInitBinary runs the real aw binary with a fresh HOME. With
+// terminal it runs under a pty that becomes its controlling terminal;
+// without, it runs in a new session with no controlling terminal at all.
+func runHumanInitBinary(t *testing.T, terminal bool, env []string, args ...string) (string, error, string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	bin := filepath.Join(t.TempDir(), "aw")
+	buildAwBinary(t, ctx, bin)
+	home := t.TempDir()
+	cmd := exec.CommandContext(ctx, bin, append([]string{"id", "human", "init"}, args...)...)
+	cmd.Dir = t.TempDir()
+	cmd.Env = append(os.Environ(), append([]string{"HOME=" + home, "AW_NO_UPDATE_CHECK=1", "OATS_INSTANCE_HOME=", "OATS_INSTANCE="}, env...)...)
+	var output bytes.Buffer
+	var err error
+	if terminal {
+		var tty *os.File
+		tty, err = pty.Start(cmd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tty.Close()
+		done := make(chan struct{})
+		go func() { _, _ = io.Copy(&output, tty); close(done) }()
+		err = cmd.Wait()
+		<-done
+	} else {
+		cmd.Stdin = nil
+		cmd.Stdout = &output
+		cmd.Stderr = &output
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		err = cmd.Run()
+	}
+	return output.String(), err, home
+}
+
+func assertNoHumanCreated(t *testing.T, home string) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(home, ".awid", "humans")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("human records were written: %v", err)
+	}
+}
+
+func TestHumanInitRefusesWithoutAControllingTerminal(t *testing.T) {
+	out, err, home := runHumanInitBinary(t, false, nil, "--domain", humanInitDomain, "--as-root")
+	if err == nil || !strings.Contains(out, "needs a human at an interactive terminal") {
+		t.Fatalf("err=%v output:\n%s", err, out)
+	}
+	assertNoHumanCreated(t, home)
+}
+
+func TestHumanInitRefusesInsideAnAgentRuntimeEvenAtATerminal(t *testing.T) {
+	for _, marker := range agentRuntimeMarkers {
+		t.Run(marker, func(t *testing.T) {
+			out, err, home := runHumanInitBinary(t, true, []string{marker + "=/somewhere"}, "--domain", humanInitDomain, "--as-root")
+			if err == nil || !strings.Contains(out, "refuses inside an agent runtime") {
+				t.Fatalf("err=%v output:\n%s", err, out)
+			}
+			assertNoHumanCreated(t, home)
+		})
+	}
+}
+
+func TestHumanInitHasNoFlagThatApproves(t *testing.T) {
+	for _, flag := range []string{"--yes", "--confirm", "--passphrase=correct horse battery", "--non-interactive"} {
+		out, err, home := runHumanInitBinary(t, true, nil, "--domain", humanInitDomain, "--as-root", flag)
+		if err == nil || !strings.Contains(out, "unknown flag") {
+			t.Fatalf("%s: err=%v output:\n%s", flag, err, out)
+		}
+		assertNoHumanCreated(t, home)
+	}
+}
+
+// humanInitHarness runs the command in-process against the real AWID
+// fixture, with the human's passphrase typed by answers. The keychain is
+// go-keyring's in-memory store; the shared journey uses a real one.
+type humanInitHarness struct {
+	t             *testing.T
+	home          string
+	registryURL   string
+	controllerKey ed25519.PrivateKey
+	resolver      staticTXTResolver
+	answers       []string
+	prompts       []string
+	prepareOnly   bool
+	another       bool
+	away          bool
+}
+
+func newHumanInitHarness(t *testing.T) *humanInitHarness {
+	t.Helper()
+	keyring.MockInit()
+	h := &humanInitHarness{t: t, home: t.TempDir(), registryURL: realAWIDFixture(t)}
+	t.Setenv("HOME", h.home)
+	t.Setenv("AW_CONFIG_PATH", "")
+	pub, key, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveControllerKey(humanInitDomain, key); err != nil {
+		t.Fatal(err)
+	}
+	h.controllerKey = key
+	h.resolver = staticTXTResolver{"_awid." + humanInitDomain: {idCreateDNSRecordValue(awid.ComputeDIDKey(pub), "")}}
+	return h
+}
+
+func (h *humanInitHarness) run(answers ...string) (idHumanInitOutput, error) {
+	h.answers = append(h.answers, answers...)
+	return executeIDHumanInit(context.Background(), idHumanInitOptions{
+		Domain:      humanInitDomain,
+		AsRoot:      !h.prepareOnly,
+		Another:     h.another,
+		RegistryURL: h.registryURL,
+		HumanAtTerminal: func() error {
+			if h.away {
+				return &awid.IDCertificateError{Code: "human_approval_required"}
+			}
+			return nil
+		},
+		Keychain: awconfig.HumanKeychain{},
+		Prompt: func(prompt string) ([]byte, error) {
+			h.prompts = append(h.prompts, prompt)
+			if len(h.answers) == 0 {
+				return nil, errors.New("no answer left for " + prompt)
+			}
+			answer := h.answers[0]
+			h.answers = h.answers[1:]
+			return []byte(answer), nil
+		},
+		TXTResolver: h.resolver,
+		Now:         time.Now,
+	})
+}
+
+func (h *humanInitHarness) records() []*awconfig.HumanRecord {
+	h.t.Helper()
+	records, err := awconfig.HumanRecords(humanInitDomain)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return records
+}
+
+const humanPassphrase = "correct horse battery"
+
+// assertNamespaceRefused checks that err is AWID refusing the namespace and
+// that AWID holds no namespace for the domain afterwards.
+func (h *humanInitHarness) assertNamespaceRefused(err error) {
+	h.t.Helper()
+	if _, ok := registryStatusCode(err); !ok {
+		h.t.Fatalf("err=%v", err)
+	}
+	registry := awid.NewAWIDRegistryClient(nil, nil)
+	_, _, lookup := registry.GetNamespaceAt(context.Background(), h.registryURL, humanInitDomain)
+	if code, ok := registryStatusCode(lookup); !ok || code != http.StatusNotFound {
+		h.t.Fatalf("namespace lookup: %v", lookup)
+	}
+}
+
+func TestHumanInitRefusesADNSControllerOtherThanThisMachines(t *testing.T) {
+	h := newHumanInitHarness(t)
+	_, other, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ours := h.resolver["_awid."+humanInitDomain]
+	h.resolver["_awid."+humanInitDomain] = []string{idCreateDNSRecordValue(awid.ComputeDIDKey(other.Public().(ed25519.PublicKey)), "")}
+	if _, err := h.run(humanPassphrase, humanPassphrase); err == nil {
+		t.Fatal("initialised under another controller")
+	}
+	if len(h.records()) != 0 || len(h.prompts) != 0 {
+		t.Fatalf("records=%d prompts=%d", len(h.records()), len(h.prompts))
+	}
+	// With this machine's controller in DNS the same run goes on to ask for
+	// the passphrase.
+	h.resolver["_awid."+humanInitDomain] = ours
+	h.answers = nil
+	if _, err := h.run(); err == nil || len(h.prompts) != 1 {
+		t.Fatalf("err=%v prompts=%d", err, len(h.prompts))
+	}
+}
+
+func TestHumanInitMismatchedPassphrasesCreateNothing(t *testing.T) {
+	h := newHumanInitHarness(t)
+	if _, err := h.run(humanPassphrase, humanPassphrase+"!"); err == nil || len(h.prompts) != 2 {
+		t.Fatalf("err=%v prompts=%d", err, len(h.prompts))
+	}
+	if len(h.records()) != 0 {
+		t.Fatal("a record was written")
+	}
+	// Typing the same passphrase twice creates the human.
+	_, err := h.run(humanPassphrase, humanPassphrase, humanPassphrase)
+	h.assertNamespaceRefused(err)
+	if len(h.records()) != 1 {
+		t.Fatal("matching passphrases created no human")
+	}
+}
+
+// Against the real AWID fixture the human's did:aw registers, then the
+// namespace step stops: the fixture's domain has no _awid record AWID can
+// resolve, so AWID admits no namespace and no certificate is issued. The
+// retry resumes the same human and never mints again. The namespace-rooted
+// registration itself runs in the shared CoreDNS journey.
+func TestHumanInitRegistersTheDIDThenResumesTheSameHuman(t *testing.T) {
+	h := newHumanInitHarness(t)
+	_, err := h.run(humanPassphrase, humanPassphrase, humanPassphrase)
+	h.assertNamespaceRefused(err)
+	records := h.records()
+	if len(records) != 1 || records[0].State != awconfig.HumanDIDRegistered || records[0].CertificateID != "" {
+		t.Fatalf("records %+v", records)
+	}
+	human := records[0]
+	blob, err := awconfig.HumanKeychain{}.LoadHumanKey(human.StableID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := awid.ImportHumanKeyBackup(blob, []byte(humanPassphrase))
+	if err != nil || awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)) != human.DIDKey {
+		t.Fatalf("keychain key: %v", err)
+	}
+	registry := awid.NewAWIDRegistryClient(nil, nil)
+	resolved, err := registry.ResolveKeyAt(context.Background(), h.registryURL, human.StableID)
+	if err != nil || resolved.CurrentDIDKey != human.DIDKey {
+		t.Fatalf("AWID resolves %+v (%v)", resolved, err)
+	}
+	dir, err := awconfig.ControllerIssuanceDir(humanInitDomain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry, err := (awconfig.IDIssuanceFileStore{Dir: dir}).EntryForSubject(human.StableID); err != nil || entry != nil {
+		t.Fatalf("a certificate was issued without evidence: %v %v", entry, err)
+	}
+
+	prompts := len(h.prompts)
+	_, err = h.run()
+	h.assertNamespaceRefused(err)
+	if after := h.records(); len(after) != 1 || *after[0] != *human {
+		t.Fatalf("the retry changed the human: %+v", after)
+	}
+	if len(h.prompts) != prompts {
+		t.Fatalf("the retry asked %d more times", len(h.prompts)-prompts)
+	}
+}
+
+// A second human in a domain is a deliberate act: rerunning init after it
+// succeeded does not quietly mint another.
+func TestHumanInitDoesNotQuietlyCreateASecondHuman(t *testing.T) {
+	h := newHumanInitHarness(t)
+	done := &awconfig.HumanRecord{StableID: "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w", DIDKey: "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX", Domain: humanInitDomain, RegistryURL: h.registryURL, State: awconfig.HumanRegistered}
+	if err := awconfig.SaveHumanRecord(done); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.run(humanPassphrase, humanPassphrase); exitCode(err) != 2 {
+		t.Fatalf("err=%v", err)
+	}
+	if records := h.records(); len(records) != 1 || len(h.prompts) != 0 {
+		t.Fatalf("records=%d prompts=%d", len(records), len(h.prompts))
+	}
+	h.another = true
+	h.answers = nil
+	if _, err := h.run(); err == nil || len(h.prompts) != 1 {
+		t.Fatalf("--another: err=%v prompts=%d", err, len(h.prompts))
+	}
+}
+
+func TestHumanInitRefusesARegistryThatContradictsDNS(t *testing.T) {
+	h := newHumanInitHarness(t)
+	controller := h.resolver["_awid."+humanInitDomain][0]
+	h.resolver["_awid."+humanInitDomain] = []string{strings.TrimSuffix(controller, ";") + "; registry=https://registry.other.example;"}
+	if _, err := h.run(humanPassphrase, humanPassphrase); exitCode(err) != 2 {
+		t.Fatalf("err=%v", err)
+	}
+	if len(h.records()) != 0 || len(h.prompts) != 0 {
+		t.Fatalf("records=%d prompts=%d", len(h.records()), len(h.prompts))
+	}
+}
+
+// One unfinished human is resumed, which needs its key from the keychain;
+// two are refused before either is touched.
+func TestHumanInitRefusesToGuessBetweenUnfinishedHumans(t *testing.T) {
+	for _, ids := range [][]string{
+		{"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"},
+		{"did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w", "did:aw:2e2SPDJNyxg5Dt6EFJX3Tcn8Tauj"},
+	} {
+		h := newHumanInitHarness(t)
+		for _, id := range ids {
+			if err := awconfig.SaveHumanRecord(&awconfig.HumanRecord{StableID: id, DIDKey: "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX", Domain: humanInitDomain, RegistryURL: h.registryURL, State: awconfig.HumanPrepared, Path: awconfig.HumanPathRoot}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		_, err := h.run(humanPassphrase, humanPassphrase)
+		if resumed := errors.Is(err, awid.ErrHumanKeyNotFound); err == nil || resumed != (len(ids) == 1) {
+			t.Fatalf("%d unfinished: err=%v", len(ids), err)
+		}
+		if len(h.records()) != len(ids) || len(h.prompts) != 0 {
+			t.Fatalf("%d unfinished: records=%d prompts=%d", len(ids), len(h.records()), len(h.prompts))
+		}
+	}
+}
+
+// The frozen human-init refusals, by name, on the real binary: an agent run
+// and a run with no controlling terminal both refuse human_approval_required
+// with no parent signature and no registration request.
+func TestHumanInitFrozenRefusals(t *testing.T) {
+	raw, err := os.ReadFile("../../../../docs/vectors/id-certificates-v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v struct {
+		Cases []struct {
+			Name  string `json:"name"`
+			Input struct {
+				Interactive bool `json:"interactive"`
+				AgentRun    bool `json:"agent_run"`
+			} `json:"input"`
+			Expected struct {
+				Accepted bool   `json:"accepted"`
+				Reason   string `json:"reason"`
+			} `json:"expected"`
+		} `json:"operation_cases"`
+	}
+	if err := json.Unmarshal(raw, &v); err != nil {
+		t.Fatal(err)
+	}
+	found := 0
+	for _, c := range v.Cases {
+		if c.Name != "human-init-agent-run-root-refuses" && c.Name != "human-init-noninteractive-root-refuses" {
+			continue
+		}
+		found++
+		t.Run(c.Name, func(t *testing.T) {
+			var env []string
+			if c.Input.AgentRun {
+				env = []string{"OATS_INSTANCE_HOME=/somewhere"}
+			}
+			out, err, home := runHumanInitBinary(t, c.Input.Interactive, env, "--domain", humanInitDomain, "--as-root")
+			if c.Expected.Accepted || err == nil || !strings.Contains(out, c.Expected.Reason) {
+				t.Fatalf("err=%v output:\n%s", err, out)
+			}
+			assertNoHumanCreated(t, home)
+			if _, err := os.Stat(filepath.Join(home, ".awid", "controllers")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("the controller's records were touched")
+			}
+		})
+	}
+	if found != 2 {
+		t.Fatalf("found %d frozen human-init refusals", found)
+	}
+}
+
+// Without --as-root, init only prepares a human for an issuer elsewhere: its
+// key in the keychain and a record on the request path. Nothing is
+// registered or issued, and a rerun returns the same human.
+func TestHumanInitWithoutAsRootOnlyPrepares(t *testing.T) {
+	h := newHumanInitHarness(t)
+	h.prepareOnly = true
+	out, err := h.run(humanPassphrase, humanPassphrase)
+	if err != nil || out.Status != "prepared" {
+		t.Fatalf("out=%+v err=%v", out, err)
+	}
+	records := h.records()
+	if len(records) != 1 || records[0].State != awconfig.HumanPrepared || records[0].Path != awconfig.HumanPathRequest || records[0].StableID != out.ID {
+		t.Fatalf("records %+v", records)
+	}
+	if _, err := (awconfig.HumanKeychain{}).LoadHumanKey(out.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := awid.NewAWIDRegistryClient(nil, nil).ResolveKeyAt(context.Background(), h.registryURL, out.ID); err == nil {
+		t.Fatal("a prepared human was registered")
+	}
+	dir, err := awconfig.ControllerIssuanceDir(humanInitDomain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("the controller issued for a prepared human")
+	}
+	prompts := len(h.prompts)
+	again, err := h.run()
+	if err != nil || again.ID != out.ID || len(h.prompts) != prompts || len(h.records()) != 1 {
+		t.Fatalf("rerun %+v (%v) prompts=%d", again, err, len(h.prompts)-prompts)
+	}
+	// The root path never resumes a human prepared for the request exchange.
+	h.prepareOnly = false
+	if _, err := h.run(humanPassphrase, humanPassphrase, humanPassphrase); err == nil {
+		t.Fatal("expected the root run to stop at the fixture's namespace step")
+	}
+	if records := h.records(); len(records) != 2 {
+		t.Fatalf("the root run resumed the prepared human: %d records", len(records))
+	}
+}
+
+// Prepare-only is still the human's act, and still one human unless
+// --another asks for a second.
+func TestHumanInitPrepareOnlyNeedsTheHumanAndRefusesAQuietSecond(t *testing.T) {
+	h := newHumanInitHarness(t)
+	h.prepareOnly, h.away = true, true
+	if _, err := h.run(humanPassphrase, humanPassphrase); awid.IDCertificateErrorCode(err) != "human_approval_required" {
+		t.Fatalf("without the human: %v", err)
+	}
+	if len(h.records()) != 0 || len(h.prompts) != 0 {
+		t.Fatalf("records=%d prompts=%d", len(h.records()), len(h.prompts))
+	}
+	h.away = false
+	done := &awconfig.HumanRecord{StableID: "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w", DIDKey: "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX", Domain: humanInitDomain, RegistryURL: h.registryURL, State: awconfig.HumanRegistered, Path: awconfig.HumanPathRoot}
+	if err := awconfig.SaveHumanRecord(done); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.run(humanPassphrase, humanPassphrase); exitCode(err) != 2 {
+		t.Fatalf("a quiet second human: %v", err)
+	}
+	if len(h.records()) != 1 || len(h.prompts) != 0 {
+		t.Fatalf("records=%d prompts=%d", len(h.records()), len(h.prompts))
+	}
+}

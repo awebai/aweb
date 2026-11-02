@@ -150,6 +150,15 @@ using the same original selection and an explicitly reviewed single operation.
 No automatic loop, absent-partial fresh fallback, manual state rewrite or borrowed
 key is supplied by this reference.
 
+Once a complete validated constructor response is saved, continuation uses that
+original membership result without another Cloud creation POST. This applies to
+person/native-owner identity creation and API-key workspace initialization.
+Credential and selected-parent/team checks still run, and attribution registration
+and fresh public verification must finish before the chain is installed. Recovery
+retains the original key, request UUID, chain and registration arguments. A lost
+response that was never saved still requires the original idempotent request;
+chain-only recovery data does not establish that a complete response was saved.
+
 **Identity mismatch:** a successful hosted response containing a different
 nonempty DID is refused. The client renames the partial signing material to a
 unique timestamped `.aw/partial-init.yaml.<UTC timestamp>.<suffix>.rejected`

@@ -23,7 +23,8 @@ The boundary is intentionally the same one documented in
   and readiness status.
 - **Channel-core presents content.** For mail/chat wake and steer events it immediately fetches the exact unread item(s), decrypts/verifies,
   formats the awakening and calls the terminal adapter. The terminal adapter
-  calls OATS `input(home, text)` and resolves after OATS reports `submitted:true`.
+  inspects first, defers known-working mail, calls OATS `input(home, text)`
+  when permitted, and resolves after OATS reports `submitted:true`.
 - **Terminal submission is the read point.** After OATS reports submission,
   channel-core writes its durable delivery mark and marks mail/chat read where
   the identity's capabilities permit. Today this means tmux accepted paste and
@@ -92,22 +93,31 @@ proof that the agent completed the work.
 
 ## Immediate presentation and safety
 
-Mail and chat are delivered on arrival, including while the harness reports
-working or unknown. Readiness gating, coalescing and rate limiting were
-removed pending an architecture rethink. Legacy `--coalesce` and `--rate-limit`
-options are accepted but ignored.
+Mail defers while the existing OATS inspection reports a known working state
+(`working`, `busy` or `running`). Each attempt re-fetches unread content and
+inspects again before input; refusal sends no text or Enter and creates no
+local delivery mark or server acknowledgement. When inspection later permits
+input, the existing unread snapshot retry presents the message. Chat, including
+waiting-sender steer, still delivers while working.
 
-The serialized terminal adapter inspects only for safety before input. A raw
+Unknown readiness retains its released behavior and delivers. Some terminal
+backends cannot identify an idle prompt; refusing unknown would strand those
+receivers. Submission in that state remains a known transport limitation: it
+cannot establish that the agent consumed the text. Legacy `--coalesce` and
+`--rate-limit` options remain accepted but ignored.
+
+The serialized terminal adapter inspects readiness and safety before input. A raw
 shell, `blocked` modal, stopped/not-launched harness, `present:false`, or failed inspect refuses
-input and leaves the message unread for bounded retry and fresh-snapshot recovery. Exhausted mail/chat presentation
-requests one coalesced stream re-open after five seconds. Stopped/not-launched observations mark the instance inactive only after the
-child has observed `present:true`; a prelaunch home stays pending and retries
+input and leaves the message unread for bounded retry and fresh-snapshot recovery.
+Each lane makes at most four attempts (initial, then after 100, 250 and 500 ms).
+Exhausted mail/chat presentation requests one coalesced stream re-open after
+five seconds. Stopped/not-launched observations mark the instance inactive only
+after the child has observed `present:true`; a prelaunch home stays pending and retries
 through unread snapshots without needing re-registration.
 
 The `blocked` refusal prevents wake text and Enter from answering a modal such
-as a permission prompt or AskUserQuestion. It does not defer ordinary working
-sessions. It relies on inspection identifying the modal; `unknown` still
-delivers, and a modal appearing between inspection and input requires protection
+as a permission prompt or AskUserQuestion. It relies on inspection identifying
+the modal; `unknown` still delivers, and a modal appearing between inspection and input requires protection
 in the session/harness transport. A submitted-input receipt is not evidence of
 model consumption.
 
@@ -297,7 +307,27 @@ read.
 `aw wake status` reports the running daemon's lifecycle, readiness and delivery
 status. The daemon reports its own build in `daemon_version` and `daemon_commit`;
 a CLI must not substitute its own version for an older daemon that does not
-report these fields.
+report these fields. Per-instance `channel_core.last_error` and
+`channel_core.binding_errors` expose delivery refusals and input errors;
+`readiness_state` and `readiness_error` expose inspection results. A lane that
+exhausts its four attempts leaves mail unread and the error visible while
+coalesced snapshot recovery backs off. No new delivery receipt is introduced.
+
+For a current unread-mail count without acknowledging messages, use the
+selected identity's read-only command:
+
+```bash
+aw mail inbox --count-only --json
+aw --identity-home /absolute/joined-identity mail inbox --count-only --json
+```
+
+It returns `{"unread_count": N}` by walking existing unread inbox pages, without
+decrypting, displaying, logging or acknowledging their messages. A failed page
+returns an error instead of a partial count. Concurrent mail changes can affect
+this paginated observation; it is not an atomic snapshot. `--count-only` cannot
+be combined with `--show-all`, `--limit` or `--cursor`. Older servers need no
+new endpoint. Stream status counts remain observations from the last event,
+not a replacement for this current query.
 
 ## Runtime prerequisite
 

@@ -3,7 +3,7 @@
 import json
 from copy import deepcopy
 from datetime import UTC, datetime
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import pytest
 import pytest_asyncio
@@ -253,6 +253,10 @@ async def complete(env, prepared, *, fail=None, key=None):
 @pytest.mark.parametrize("kind", ["mail", "chat"])
 async def test_native_send_and_host_result_commit_once(native_send, kind):
     env = native_send
+    if kind == "chat":
+        # D8: this is the valid agent-chat neighbour; mail still reaches a human.
+        await env["db"].execute("UPDATE {{tables.agents}} SET agent_type='agent' WHERE agent_id=$1", UUID(env["b"]))
+
     prepared = await env["prepared"](kind)
     result = await complete(env, prepared)
     assert canonical_record(await complete(env, prepared)) == canonical_record(result)
@@ -389,6 +393,10 @@ async def test_native_http_ingress_headers_recover_without_resend(native_send, k
     from aweb.routes.messaging import router as messaging_router
 
     env = native_send
+    if kind == "chat":
+        # D8: this is the valid agent-chat neighbour; mail still reaches a human.
+        await env["db"].execute("UPDATE {{tables.agents}} SET agent_type='agent' WHERE agent_id=$1", UUID(env["b"]))
+
     app = env["app"]
     app.include_router(chat_router)
     app.include_router(messaging_router)
@@ -531,6 +539,10 @@ async def test_prepared_native_v2_preserves_exact_envelope_and_hosted_label(
     from awid.e2ee_keys import build_encryption_key_assertion
 
     env = native_send
+    if kind == "chat":
+        # D8: this is the valid agent-chat neighbour; mail still reaches a human.
+        await env["db"].execute("UPDATE {{tables.agents}} SET agent_type='agent' WHERE agent_id=$1", UUID(env["b"]))
+
     identities = []
     for actor, did, principal, sk, custody in (
         (env["a"], env["auth"].did_key, "did:aw:agent", env["signing_key"], "self"),
@@ -682,6 +694,10 @@ async def test_real_mcp_native_ingress_commits_before_reply_and_replays(
     from aweb.mcp.signing import HostedMessageSigningResult, canonical_signed_payload
 
     env = native_send
+    if kind == "chat":
+        # D8: this is the valid agent-chat neighbour; mail still reaches a human.
+        await env["db"].execute("UPDATE {{tables.agents}} SET agent_type='agent' WHERE agent_id=$1", UUID(env["b"]))
+
     await env["db"].execute(
         "INSERT INTO {{tables.workspaces}} (workspace_id,team_id,agent_id,alias,workspace_type) VALUES ($1,$2,$3,'agent','hosted_mcp')",
         uuid4(),
@@ -817,6 +833,16 @@ async def test_real_mcp_native_ingress_commits_before_reply_and_replays(
                     ))["n"] == 0
                 return
             assert "error" not in first, first
+            ingress_namespace = canonical_json_bytes({
+                "issuer": "did:aw:agent", "namespace": "mcp", "key": "event1",
+            }).decode()
+            assert first["message_id"] == str(uuid5(
+                NAMESPACE_URL, "aweb-native-ingress-message:" + ingress_namespace,
+            ))
+            if kind == "chat":
+                assert first["session_id"] == str(uuid5(
+                    NAMESPACE_URL, "aweb-native-ingress-conversation:" + ingress_namespace,
+                ))
             again = await call(arguments)
             assert again == first
             assert len(signatures) == (1 if arguments["plaintext"] else 0)
@@ -828,17 +854,37 @@ async def test_real_mcp_native_ingress_commits_before_reply_and_replays(
                 }
             )
             assert changed["error"] == "replay_conflict"
+            # Another source event is a new mail intent, while chat keeps its session.
+            headers["X-AWEB-Ingress-Key"] = "event2"
+            second = await call(arguments)
+            assert "error" not in second, second
+            if kind == "mail":
+                assert UUID(first["conversation_id"]).version == 4
+                assert second["conversation_id"] != first["conversation_id"]
+            else:
+                assert second["session_id"] == first["session_id"]
+            assert await call(arguments) == second
+            headers["X-AWEB-Ingress-Key"] = "event3"
+            continuation = {**arguments}
+            continuation.pop("to" if kind == "mail" else "to_alias")
+            continuation["conversation_id" if kind == "mail" else "session_id"] = first["conversation_id"]
+            continued = await call(continuation)
+            assert "error" not in continued, continued
+            assert continued["conversation_id"] == first["conversation_id"]
+            assert await call(continuation) == continued
+
+
     finally:
         await mcp.shutdown()
     table = "messages" if kind == "mail" else "chat_messages"
     assert (
         await env["db"].fetch_one("SELECT count(*) n FROM {{tables." + table + "}}")
-    )["n"] == 1
+    )["n"] == 3
     assert (
         await env["db"].fetch_one(
             "SELECT count(*) n FROM {{tables.human_channel_ingress}}"
         )
-    )["n"] == 1
+    )["n"] == 3
 
 
 @pytest.mark.asyncio
@@ -956,3 +1002,17 @@ async def test_identity_policy_lock_spans_outer_commit(native_send):
         if update and not update.done():
             update.cancel()
             await asyncio.gather(update, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_native_facts_project_identity_in_endpoint_team(native_send):
+    env = native_send
+    await _insert_team(env['db'], 'partner:partner.test')
+    other = await _insert_agent(env['db'], team_id='partner:partner.test', alias='same-human',
+        did_key=env['recipient_did'], did_aw='did:aw:human', address='partner.test/same-human')
+    # Even a valid projection elsewhere is not the endpoint team's admission context.
+    row = await env['service']._row(actor_id=other)
+    facts = await env['service']._facts(env['auth'], row)
+    assert facts.value['principal'] == {'kind': 'native', 'did': 'did:aw:human'}
+    assert facts.value['actor_id'] == env['b']
+    assert facts.value['team_id'] == env['auth'].team_id

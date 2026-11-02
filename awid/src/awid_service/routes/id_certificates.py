@@ -12,7 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from awid.controller_request import verify_controller_json_request
-from awid.dns_verify import DnsVerificationError, DomainVerifier
+from awid.dns_verify import DnsVerificationError, DomainVerifier, DomainAuthority
 from awid.id_certificates import IDCertificateError, decode_id_chain_header, strict_did_key, verify_id_certificate
 from awid.did import validate_stable_id
 from awid.ratelimit import enforce_rate_limit, ip_bucket_key, rate_limit_dep
@@ -23,7 +23,6 @@ from awid_service.id_revocation import revoke_identity
 from awid_service.id_status import status_snapshot
 from awid_service.id_tree_gate import IdentityTreeRefusal, strict_json_object
 from awid_service.id_tree_clock import app_clock
-from awid_service.namespace_epochs import is_exact
 
 router = APIRouter(prefix="/v1/id-certificates", tags=["id-certificates"])
 
@@ -134,8 +133,8 @@ async def _status_caller(request: Request, domain: str) -> str | None:
     return caller
 
 
-async def _exact_dns_key(verify_domain: DomainVerifier, domain: str) -> str | None:
-    """The controller key exact DNS proves for ``domain`` right now, or None.
+async def _dns_authority(verify_domain: DomainVerifier, domain: str) -> DomainAuthority | None:
+    """The existing exact-first ancestor discovery result, or no DNS anchor.
 
     Looked up before the transaction so no network call happens under its
     locks. The skip-DNS bypass proves nothing.
@@ -146,7 +145,7 @@ async def _exact_dns_key(verify_domain: DomainVerifier, domain: str) -> str | No
         authority = await verify_domain(domain)
     except DnsVerificationError:
         return None
-    return authority.controller_did if is_exact(authority) else None
+    return authority
 
 
 async def _covering_signer(request: Request, *, domain: str, operation: str) -> str:
@@ -189,10 +188,10 @@ async def register_id_certificate(
     db = db_infra.get_manager("aweb")
     try:
         check_chain_structure(chain)
-        dns_key = await _exact_dns_key(verify_domain, cert["domain"])
+        dns_authority = await _dns_authority(verify_domain, cert["domain"])
         return await register_certificate(
             db, chain=chain, expected_head=expected_head, invitation_id=invitation_id,
-            signer=signer, dns_key=dns_key, clock=app_clock(request.app),
+            signer=signer, dns_authority=dns_authority, clock=app_clock(request.app),
         )
     except IdentityTreeRefusal as refused:
         raise _refusal(refused.code, refused.status) from refused
@@ -213,11 +212,11 @@ async def revoke_id_certificate(
     signer = await _covering_signer(request, domain=domain, operation="revoke_id_certificate")
 
     db = db_infra.get_manager("aweb")
-    dns_key = await _exact_dns_key(verify_domain, domain)
+    dns_authority = await _dns_authority(verify_domain, domain)
     try:
         return await revoke_identity(
             db, domain=domain, subject_id=id_, expected_head=expected_head, effective_from=effective_from,
-            signer=signer, dns_key=dns_key, clock=app_clock(request.app),
+            signer=signer, dns_authority=dns_authority, clock=app_clock(request.app),
         )
     except IdentityTreeRefusal as refused:
         raise _refusal(refused.code, refused.status) from refused
@@ -244,9 +243,9 @@ async def id_certificate_status(
     caller = await _status_caller(request, domain)
     if caller is not None:
         await enforce_rate_limit(request, response, bucket="id_certificate_status", key=f"did:{caller}")
-    dns_key = await _exact_dns_key(verify_domain, domain)
+    dns_authority = await _dns_authority(verify_domain, domain)
     db = db_infra.get_manager("aweb")
     try:
-        return await status_snapshot(db, domain=domain, ids=ids, dns_key=dns_key, clock=app_clock(request.app))
+        return await status_snapshot(db, domain=domain, ids=ids, dns_authority=dns_authority, clock=app_clock(request.app))
     except IdentityTreeRefusal as refused:
         raise _refusal(refused.code, refused.status) from refused

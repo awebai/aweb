@@ -85,7 +85,9 @@ func TestExternalIdentityHomeOutboundMessagingSignsAsPrincipal(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/messages/inbox":
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{{MessageID: "message-1", ConversationID: "conversation-1", FromAlias: "recipient", FromDID: recipientDID, FromAddress: "aweb.test/recipient", ToDID: principalDID, ToAddress: "aweb.test/principal", Subject: "hello", Body: "body"}}})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/messages":
-			_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "message-out", ConversationID: "conversation-1", Status: "delivered"})
+			var sent awid.SendMessageRequest
+			_ = json.NewDecoder(r.Body).Decode(&sent)
+			_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "message-out", ConversationID: sent.ConversationID, Status: "delivered"})
 		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/messages/") && strings.HasSuffix(r.URL.Path, "/ack"):
 			_ = json.NewEncoder(w).Encode(awid.AckResponse{MessageID: "message-1", AcknowledgedAt: "2026-07-26T00:00:00Z"})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/chat/pending":
@@ -132,9 +134,9 @@ func TestExternalIdentityHomeOutboundMessagingSignsAsPrincipal(t *testing.T) {
 		args []string
 	}{
 		{name: "mail-send-conversation", args: []string{"mail", "send", "--conversation-id", "conversation-1", "--body", "hello"}},
-		{name: "mail-send-alias", args: []string{"mail", "send", "--to", "recipient", "--body", "hello"}},
-		{name: "mail-send-did", args: []string{"mail", "send", "--to-did", recipientDID, "--body", "hello"}},
-		{name: "mail-send-address", args: []string{"mail", "send", "--to-address", "aweb.test/recipient", "--body", "hello"}},
+		{name: "mail-send-alias", args: []string{"mail", "send", "--subject", "Test thread", "--to", "recipient", "--body", "hello"}},
+		{name: "mail-send-did", args: []string{"mail", "send", "--subject", "Test thread", "--to-did", recipientDID, "--body", "hello"}},
+		{name: "mail-send-address", args: []string{"mail", "send", "--subject", "Test thread", "--to-address", "aweb.test/recipient", "--body", "hello"}},
 		{name: "mail-reply", args: []string{"mail", "reply", "message-1", "--body", "hello"}},
 		{name: "mail-ack", args: []string{"mail", "ack", "message-1"}},
 		{name: "chat-send-and-wait", args: []string{"chat", "send-and-wait", "--wait", "0", "--start-conversation", "recipient", "hello"}},
@@ -185,7 +187,7 @@ func TestExternalIdentityHomeOutboundMessagingSignsAsPrincipal(t *testing.T) {
 			name string
 			args []string
 		}{
-			{name: "mail-send-e2ee", args: []string{"mail", "send", "--e2ee", "--to", "recipient", "--body", "secret"}},
+			{name: "mail-send-e2ee", args: []string{"mail", "send", "--subject", "Test thread", "--e2ee", "--to", "recipient", "--body", "secret"}},
 			{name: "mail-reply-e2ee", args: []string{"mail", "reply", "message-1", "--e2ee", "--body", "secret"}},
 			{name: "chat-send-and-wait-e2ee", args: []string{"chat", "send-and-wait", "--e2ee", "--wait", "0", "--start-conversation", "recipient", "secret"}},
 			{name: "chat-send-and-leave-e2ee", args: []string{"chat", "send-and-leave", "--e2ee", "--start-conversation", "recipient", "secret"}},
@@ -325,7 +327,9 @@ func TestExternalMultiTeamAliasEnumeratesPrincipalMemberships(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{})
 		case "/v1/messages":
 			terminalTeam = teamID
-			_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "message-out", Status: "delivered"})
+			var sent awid.SendMessageRequest
+			_ = json.NewDecoder(r.Body).Decode(&sent)
+			_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "message-out", ConversationID: sent.ConversationID, Status: "delivered"})
 		default:
 			http.NotFound(w, r)
 		}
@@ -349,7 +353,7 @@ func TestExternalMultiTeamAliasEnumeratesPrincipalMemberships(t *testing.T) {
 	writeMessagingPrincipalForTest(t, instance, server.URL, "shadow", did, key)
 	bin := filepath.Join(root, "aw")
 	buildAwBinary(t, ctx, bin)
-	command := exec.CommandContext(ctx, bin, "--identity-home", filepath.Join(principalRoot, ".aw"), "mail", "send", "--to", "recipient", "--body", "hello")
+	command := exec.CommandContext(ctx, bin, "--identity-home", filepath.Join(principalRoot, ".aw"), "mail", "send", "--subject", "Test thread", "--to", "recipient", "--body", "hello")
 	command.Dir = instance
 	command.Env = append(testCommandEnv(filepath.Join(root, "home")), "AWID_REGISTRY_URL="+server.URL)
 	if out, err := command.CombinedOutput(); err != nil {

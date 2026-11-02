@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -14,12 +14,22 @@ import (
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/termtext"
 	"github.com/spf13/cobra"
 )
+
+// mailThreadTeaching is the one wording every mail surface uses to teach
+// the thread model: a thread is a conversation, continued by reply.
+const mailThreadTeaching = "Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>."
+
+// mailTitleFixedText refuses a subject on a continuation: a conversation's
+// title is its first message's subject.
+const mailTitleFixedText = "A conversation's title is fixed. To change the subject, start a new thread: aw mail send --to <recipient> --subject <subject>"
 
 var mailCmd = &cobra.Command{
 	Use:   "mail",
 	Short: "Agent messaging",
+	Long:  "Asynchronous mail between agents and people. A thread is a conversation, titled by its first message's subject.\n\n" + mailThreadTeaching,
 }
 
 // mail send
@@ -33,249 +43,10 @@ var (
 	mailSendBodyFile        string
 	mailSendPriority        string
 	mailSendConversationID  string
-	mailSendNewConversation bool
 	mailSendE2EE            bool
 	mailSendLegacyPlaintext bool
 	mailSendPlaintext       bool
 )
-
-func mailIdentityMatchesTarget(msg awid.InboxMessage, targetKind, targetValue string) bool {
-	targetValue = strings.TrimSpace(targetValue)
-	if targetValue == "" {
-		return false
-	}
-	values := []string{
-		msg.FromAddress,
-		msg.ToAddress,
-		msg.FromDID,
-		msg.ToDID,
-		msg.FromStableID,
-		msg.ToStableID,
-	}
-	switch targetKind {
-	case "address":
-		for _, value := range values {
-			if strings.EqualFold(strings.TrimSpace(value), targetValue) {
-				return true
-			}
-		}
-	case "did":
-		for _, value := range values {
-			if strings.EqualFold(strings.TrimSpace(value), targetValue) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func mailConversationMatchesTarget(conv awid.ConversationItem, targetKind, targetValue string) bool {
-	targetValue = strings.TrimSpace(targetValue)
-	if targetValue == "" || conv.ConversationType != "mail" || strings.TrimSpace(conv.ConversationID) == "" {
-		return false
-	}
-	status := strings.TrimSpace(conv.Status)
-	if status != "" && status != "active" {
-		return false
-	}
-	var values []string
-	switch targetKind {
-	case "address":
-		values = conv.ParticipantAddresses
-	case "did":
-		values = conv.ParticipantDIDs
-	default:
-		return false
-	}
-	for _, value := range values {
-		if strings.EqualFold(strings.TrimSpace(value), targetValue) {
-			return true
-		}
-	}
-	return false
-}
-
-func uniqueMailConversationTarget(conversations map[string]mailConversationTarget, targetValue string) (mailConversationTarget, error) {
-	if len(conversations) == 0 {
-		return mailConversationTarget{}, nil
-	}
-	if len(conversations) != 1 {
-		// An inbox sample cannot establish exact group membership.
-		return mailConversationTarget{}, nil
-	}
-	for _, target := range conversations {
-		return target, nil
-	}
-	return mailConversationTarget{}, nil
-}
-
-// mailConversationIsExactPair requires both self and target, not merely a
-// shared peer in a group. Participant aliases are display metadata only.
-func mailConversationIsExactPair(c *awid.Client, conv awid.ConversationItem, kind, value string) bool {
-	if c == nil || len(conv.ParticipantDIDs) > 2 || len(conv.ParticipantAddresses) > 2 {
-		return false
-	}
-	var participants, self []string
-	if kind == "did" {
-		participants, self = conv.ParticipantDIDs, []string{c.ParticipantDID(), c.StableID()}
-	} else {
-		participants, self = conv.ParticipantAddresses, []string{c.Address()}
-	}
-	if len(participants) != 2 {
-		return false
-	}
-	for i, participant := range participants {
-		if !strings.EqualFold(strings.TrimSpace(participant), strings.TrimSpace(value)) {
-			continue
-		}
-		other := strings.TrimSpace(participants[1-i])
-		if strings.EqualFold(other, strings.TrimSpace(value)) {
-			continue
-		}
-		for _, own := range self {
-			if own != "" && strings.EqualFold(other, own) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// Only the send endpoint's exact expiry refusal permits a fresh-conversation
-// retry. Transport ambiguity and other authorization failures do not.
-func mailConversationExpired(err error) bool {
-	var apiErr *awid.APIError
-	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusForbidden {
-		return false
-	}
-	var body struct {
-		Detail string `json:"detail"`
-	}
-	return json.Unmarshal([]byte(apiErr.Body), &body) == nil && body.Detail == "Conversation is expired"
-}
-
-type mailConversationTarget struct {
-	conversationID string
-	kind           string
-	value          string
-}
-
-func mailConversationParticipantTarget(c *awid.Client, conv awid.ConversationItem, fallbackKind, fallbackValue string) mailConversationTarget {
-	target := mailConversationTarget{
-		conversationID: strings.TrimSpace(conv.ConversationID),
-		kind:           fallbackKind,
-		value:          strings.TrimSpace(fallbackValue),
-	}
-	if target.conversationID == "" {
-		return target
-	}
-	if c != nil {
-		otherDIDs, otherAddresses := awid.OtherConversationParticipants(
-			conv.ParticipantDIDs,
-			conv.ParticipantAddresses,
-			c.StableID(),
-			c.ParticipantDID(),
-			c.Address(),
-		)
-		if len(otherDIDs) == 1 {
-			target.kind = "did"
-			target.value = otherDIDs[0]
-			return target
-		}
-		if len(otherAddresses) == 1 {
-			target.kind = "address"
-			target.value = otherAddresses[0]
-			return target
-		}
-	}
-	return target
-}
-
-func mailInboxMessageParticipantTarget(c *awid.Client, msg awid.InboxMessage, fallbackKind, fallbackValue string) mailConversationTarget {
-	target := mailConversationTarget{
-		conversationID: strings.TrimSpace(msg.ConversationID),
-		kind:           fallbackKind,
-		value:          strings.TrimSpace(fallbackValue),
-	}
-	if candidate := mailMatchedMessageParticipantTarget(msg, fallbackKind, fallbackValue); candidate.value != "" {
-		candidate.conversationID = target.conversationID
-		return candidate
-	}
-	if c == nil {
-		return target
-	}
-	selfStableID := strings.TrimSpace(c.StableID())
-	selfDID := strings.TrimSpace(c.ParticipantDID())
-	selfAddress := strings.TrimSpace(c.Address())
-	for _, participant := range []struct {
-		stableID string
-		did      string
-		address  string
-	}{
-		{stableID: msg.FromStableID, did: msg.FromDID, address: msg.FromAddress},
-		{stableID: msg.ToStableID, did: msg.ToDID, address: msg.ToAddress},
-	} {
-		stableID := strings.TrimSpace(participant.stableID)
-		did := strings.TrimSpace(participant.did)
-		address := strings.TrimSpace(participant.address)
-		isSelf := (selfStableID != "" && strings.EqualFold(stableID, selfStableID)) ||
-			(selfDID != "" && strings.EqualFold(did, selfDID)) ||
-			(selfAddress != "" && strings.EqualFold(address, selfAddress))
-		if isSelf {
-			continue
-		}
-		if stableID != "" {
-			target.kind = "did"
-			target.value = stableID
-			return target
-		}
-		if did != "" {
-			target.kind = "did"
-			target.value = did
-			return target
-		}
-		if address != "" {
-			target.kind = "address"
-			target.value = address
-			return target
-		}
-	}
-	return target
-}
-
-func mailMatchedMessageParticipantTarget(msg awid.InboxMessage, targetKind, targetValue string) mailConversationTarget {
-	targetValue = strings.TrimSpace(targetValue)
-	if targetValue == "" {
-		return mailConversationTarget{}
-	}
-	for _, participant := range []struct {
-		stableID string
-		did      string
-		address  string
-	}{
-		{stableID: msg.FromStableID, did: msg.FromDID, address: msg.FromAddress},
-		{stableID: msg.ToStableID, did: msg.ToDID, address: msg.ToAddress},
-	} {
-		stableID := strings.TrimSpace(participant.stableID)
-		did := strings.TrimSpace(participant.did)
-		address := strings.TrimSpace(participant.address)
-		matched := (targetKind == "address" && strings.EqualFold(address, targetValue)) ||
-			(targetKind == "did" && (strings.EqualFold(stableID, targetValue) || strings.EqualFold(did, targetValue)))
-		if !matched {
-			continue
-		}
-		if stableID != "" {
-			return mailConversationTarget{kind: "did", value: stableID}
-		}
-		if did != "" {
-			return mailConversationTarget{kind: "did", value: did}
-		}
-		if address != "" {
-			return mailConversationTarget{kind: "address", value: address}
-		}
-	}
-	return mailConversationTarget{}
-}
 
 func applyMailRecipientTarget(req *awid.SendMessageRequest, kind, value string) {
 	value = strings.TrimSpace(value)
@@ -297,26 +68,6 @@ func mailRecipientTargetApplied(req *awid.SendMessageRequest) bool {
 	return req.ToAlias != "" || req.ToDID != "" || req.ToStableID != "" || req.ToAddress != ""
 }
 
-func findUniqueMailConversationForAgent(ctx context.Context, c *aweb.Client, agent awid.AgentView) (mailConversationTarget, error) {
-	for _, target := range []struct {
-		kind  string
-		value string
-	}{
-		{kind: "did", value: strings.TrimSpace(agent.DIDAW)},
-		{kind: "did", value: strings.TrimSpace(agent.DIDKey)},
-		{kind: "address", value: strings.TrimSpace(agent.Address)},
-	} {
-		if target.value == "" {
-			continue
-		}
-		conversation, err := findUniqueMailConversationForTarget(ctx, c, target.kind, target.value)
-		if err != nil || conversation.conversationID != "" {
-			return conversation, err
-		}
-	}
-	return mailConversationTarget{}, nil
-}
-
 func resolveMailMessagingClientSelection() (*aweb.Client, *awconfig.Selection, error) {
 	if strings.TrimSpace(teamFlag) != "" {
 		return resolveClientSelection()
@@ -329,119 +80,50 @@ func resolveMailMessagingClientSelection() (*aweb.Client, *awconfig.Selection, e
 	return resolveIdentityMessagingClientSelection()
 }
 
-func agentMatchesSelection(agent awid.AgentView, sel *awconfig.Selection) bool {
-	if sel == nil {
-		return false
-	}
-	for _, pair := range []struct {
-		agentValue string
-		selfValue  string
-	}{
-		{agentValue: agent.DIDAW, selfValue: sel.StableID},
-		{agentValue: agent.DIDKey, selfValue: sel.DID},
-		{agentValue: agent.Address, selfValue: sel.Address},
-	} {
-		agentValue := strings.TrimSpace(pair.agentValue)
-		selfValue := strings.TrimSpace(pair.selfValue)
-		if agentValue != "" && selfValue != "" && strings.EqualFold(agentValue, selfValue) {
-			return true
-		}
-	}
-	return false
-}
-
-func findUniqueMailConversationForTarget(ctx context.Context, c *aweb.Client, targetKind, targetValue string) (mailConversationTarget, error) {
-	if c == nil || (targetKind != "address" && targetKind != "did") {
-		return mailConversationTarget{}, nil
-	}
-	params := awid.ConversationListParams{
-		Limit:            100,
-		ConversationType: "mail",
-	}
-	if targetKind == "did" {
-		params.ParticipantDID = targetValue
-	} else {
-		params.ParticipantAddress = targetValue
-	}
-	conversationsResp, err := c.ListConversationsWithParams(ctx, params)
-	if err == nil {
-		conversations := map[string]mailConversationTarget{}
-		var newest mailConversationTarget
-		var newestTime time.Time
-		for _, conv := range conversationsResp.Conversations {
-			conversationID := strings.TrimSpace(conv.ConversationID)
-			if conversationID == "" || !mailConversationMatchesTarget(conv, targetKind, targetValue) {
-				continue
-			}
-			conversations[conversationID] = mailConversationParticipantTarget(c.Client, conv, targetKind, targetValue)
-			if mailConversationIsExactPair(c.Client, conv, targetKind, targetValue) {
-				// RFC3339 offsets/fractions compare as instants, not lexical strings.
-				// Missing/invalid timestamps sort oldest; ties use descending ID, as the
-				// server's mail index does, independently of response or map order.
-				at, _ := time.Parse(time.RFC3339Nano, conv.LastMessageAt)
-				if newest.conversationID == "" || at.After(newestTime) || (at.Equal(newestTime) && conversationID > newest.conversationID) {
-					newest, newestTime = conversations[conversationID], at
-				}
-			}
-		}
-		if len(conversations) > 1 {
-			return newest, nil
-		}
-		if conversation, err := uniqueMailConversationTarget(conversations, targetValue); err != nil || conversation.conversationID != "" {
-			return conversation, err
-		}
-		return mailConversationTarget{}, nil
-	}
-
-	// Older servers do not expose participant identities on /v1/conversations.
-	// Fall back to inbox only when the conversation index is unavailable.
-	resp, err := c.Inbox(ctx, awid.InboxParams{
-		UnreadOnly: false,
-		Limit:      200,
-	})
+// startNewThread makes req start a new thread: a fresh client-signed
+// conversation ID that the server must not merge into another conversation.
+func startNewThread(req *awid.SendMessageRequest) error {
+	id, err := awid.GenerateUUID4()
 	if err != nil {
-		// Auto-threading is opportunistic; the send endpoint remains authoritative.
-		return mailConversationTarget{}, nil
+		return err
 	}
-	conversations := map[string]mailConversationTarget{}
-	for _, msg := range resp.Messages {
-		conversationID := strings.TrimSpace(msg.ConversationID)
-		if conversationID == "" || !mailIdentityMatchesTarget(msg, targetKind, targetValue) {
-			continue
-		}
-		conversations[conversationID] = mailInboxMessageParticipantTarget(c.Client, msg, targetKind, targetValue)
-	}
-	return uniqueMailConversationTarget(conversations, targetValue)
+	req.NewConversation, req.ConversationID = true, id
+	return nil
 }
 
-// Explicit fresh sends must not consult either the conversation index or its
-// inbox fallback. Keep the shared lookup helpers unchanged for other callers.
-func findMailSendConversationForTarget(ctx context.Context, c *aweb.Client, kind, value string) (mailConversationTarget, error) {
-	if mailSendNewConversation {
-		return mailConversationTarget{}, nil
+// newThreadAnswered refuses a server that answered a new thread with another
+// conversation: the message may already be in that conversation, so the
+// sender must not retry.
+func newThreadAnswered(req *awid.SendMessageRequest, resp *awid.SendMessageResponse) error {
+	if req.NewConversation && resp.ConversationID != req.ConversationID {
+		return fmt.Errorf("server does not support new conversations: returned a different conversation_id; the message may already have been sent; do not retry automatically")
 	}
-	return findUniqueMailConversationForTarget(ctx, c, kind, value)
-}
-
-func findMailSendConversationForAgent(ctx context.Context, c *aweb.Client, agent awid.AgentView) (mailConversationTarget, error) {
-	if mailSendNewConversation {
-		return mailConversationTarget{}, nil
-	}
-	return findUniqueMailConversationForAgent(ctx, c, agent)
+	return nil
 }
 
 var mailSendCmd = &cobra.Command{
 	Use:   "send",
-	Short: "Send a message to another agent",
-	Long: "Send a message to another agent. By default, reuse an existing conversation when available.\n\n" +
-		"--new-conversation creates a fresh signed conversation ID without reading the\n" +
-		"conversation index or inbox. It requires server support and cannot be combined\n" +
-		"with --conversation-id. JSON returns message_id and conversation_id. An old\n" +
-		"server rejection or mismatched response fails without retry; a mismatched\n" +
-		"response may mean the message was already sent into an existing conversation.",
+	Short: "Start a mail thread, or continue one by its conversation ID",
+	Long: mailThreadTeaching + "\n\n" +
+		"With a recipient (--to, --to-did or --to-address), send starts a new thread\n" +
+		"titled by --subject, which is required. With --conversation-id it continues\n" +
+		"that conversation; its title stays the first message's subject, so --subject\n" +
+		"is refused there. JSON returns message_id and conversation_id. A server that\n" +
+		"answers a new thread with another conversation_id fails without retry; the\n" +
+		"message may already have been sent into that conversation.",
 	Args: func(cmd *cobra.Command, args []string) error {
-		if mailSendNewConversation && cmd.Flags().Changed("conversation-id") {
-			return usageError("--new-conversation and --conversation-id cannot be combined")
+		recipient := strings.TrimSpace(mailSendTo+mailSendToDID+mailSendToAddress) != ""
+		if strings.TrimSpace(mailSendConversationID) != "" {
+			if recipient {
+				return usageError("--conversation-id cannot be combined with recipient flags")
+			}
+			if cmd.Flags().Changed("subject") {
+				return usageError("%s", mailTitleFixedText)
+			}
+			return nil
+		}
+		if recipient && strings.TrimSpace(mailSendSubject) == "" {
+			return usageError("A new thread needs a title: add --subject. To continue a conversation instead: aw mail reply <message_id>")
 		}
 		return nil
 	},
@@ -455,6 +137,7 @@ var mailSendCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		recipientLabel := targetValue
 
 		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
@@ -468,10 +151,8 @@ var mailSendCmd = &cobra.Command{
 			Priority:       awid.MessagePriority(mailSendPriority),
 			ConversationID: strings.TrimSpace(mailSendConversationID),
 		}
-		if mailSendNewConversation {
-			req.NewConversation = true
-			req.ConversationID, err = awid.GenerateUUID4()
-			if err != nil {
+		if targetKind != "conversation" {
+			if err := startNewThread(req); err != nil {
 				return err
 			}
 		}
@@ -486,42 +167,12 @@ var mailSendCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			if agent, found, findErr := clientAgentForAlias(ctx, c, targetValue); findErr != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: recipient lookup failed; automatic mail threading unavailable: %v\n", findErr)
+			// /v1/agents lists the team's agents; a name it lacks may be a
+			// human on the live roster, which binds the member's current key.
+			if _, found, findErr := clientAgentForAlias(ctx, c, targetValue); findErr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: recipient lookup failed: %v\n", findErr)
 				req.ToAlias = targetValue
-			} else if found {
-				if agentMatchesSelection(agent, sel) {
-					req.ToAlias = targetValue
-				} else if conversation, findErr := findMailSendConversationForAgent(ctx, c, agent); findErr != nil {
-					return findErr
-				} else if conversation.conversationID != "" {
-					// E2EE key discovery needs the recipient alias, not the
-					// conversation id that replaces targetValue below.
-					recipientAlias := targetValue
-					targetKind = "conversation"
-					targetValue = conversation.conversationID
-					req.ConversationID = conversation.conversationID
-					if sendEncryptE2EE {
-						req.ToAlias = recipientAlias
-					} else {
-						applyMailRecipientTarget(req, conversation.kind, conversation.value)
-						if !mailRecipientTargetApplied(req) {
-							applyMailRecipientTarget(req, "did", strings.TrimSpace(agent.DIDAW))
-						}
-						if !mailRecipientTargetApplied(req) {
-							applyMailRecipientTarget(req, "did", strings.TrimSpace(agent.DIDKey))
-						}
-						if !mailRecipientTargetApplied(req) {
-							applyMailRecipientTarget(req, "address", strings.TrimSpace(agent.Address))
-						}
-						if !mailRecipientTargetApplied(req) {
-							applyMailRecipientTarget(req, "alias", strings.TrimSpace(agent.Alias))
-						}
-					}
-				} else {
-					req.ToAlias = targetValue
-				}
-			} else if sendEncryptE2EE {
+			} else if found || sendEncryptE2EE {
 				// Key discovery for a human is scoped to the selected team,
 				// using its original identity-signed assertion.
 				req.ToAlias = targetValue
@@ -549,42 +200,13 @@ var mailSendCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			recipientDID := targetValue
-			if conversation, findErr := findMailSendConversationForTarget(ctx, c, targetKind, targetValue); findErr != nil {
-				return findErr
-			} else if conversation.conversationID != "" {
-				targetKind = "conversation"
-				targetValue = conversation.conversationID
-				req.ConversationID = conversation.conversationID
-				applyMailRecipientTarget(req, conversation.kind, conversation.value)
-				if req.ToDID == "" && req.ToStableID == "" {
-					applyMailRecipientTarget(req, "did", recipientDID)
-				}
-			} else {
-				req.ToDID = targetValue
-			}
+			req.ToDID = targetValue
 		case "address":
 			c, sel, err = resolveMailMessagingClientSelection()
 			if err != nil {
 				return err
 			}
-			if conversation, findErr := findMailSendConversationForTarget(ctx, c, targetKind, targetValue); findErr != nil {
-				return findErr
-			} else if conversation.conversationID != "" {
-				// E2EE key discovery needs the recipient address, not the
-				// conversation id that replaces targetValue below.
-				recipientAddress := targetValue
-				targetKind = "conversation"
-				targetValue = conversation.conversationID
-				req.ConversationID = conversation.conversationID
-				if sendEncryptE2EE {
-					req.ToAddress = recipientAddress
-				} else {
-					applyMailRecipientTarget(req, conversation.kind, conversation.value)
-				}
-			} else {
-				req.ToAddress = targetValue
-			}
+			req.ToAddress = targetValue
 		default:
 			return usageError("missing required recipient flag")
 		}
@@ -605,23 +227,14 @@ var mailSendCmd = &cobra.Command{
 			resp, err = c.SendMessageByIdentity(ctx, req)
 		}
 
-		if err != nil && !mailSendNewConversation && strings.TrimSpace(mailSendConversationID) == "" && req.ConversationID != "" && mailConversationExpired(err) {
-			// The rejected request was not accepted. Keep its resolved recipient and
-			// selected identity, but let the library generate and sign fresh IDs.
-			req.ConversationID = ""
-			resp, err = c.SendMessageByIdentity(ctx, req)
-			if err == nil {
-				targetValue = resp.ConversationID
-			}
-		}
 		if err != nil {
 			if targetKind == "conversation" {
 				return err
 			}
 			return networkError(err, targetValue)
 		}
-		if mailSendNewConversation && resp.ConversationID != req.ConversationID {
-			return fmt.Errorf("server does not support new conversations: returned a different conversation_id; the message may already have been sent; do not retry automatically")
+		if err := newThreadAnswered(req, resp); err != nil {
+			return err
 		}
 		logsDir := defaultLogsDir()
 		from := preferredIdentityDisplayLabel(
@@ -654,9 +267,9 @@ var mailSendCmd = &cobra.Command{
 		if jsonFlag {
 			printJSON(resp)
 		} else if targetKind == "conversation" {
-			fmt.Printf("Sent mail in conversation %s (message_id=%s)\n", targetValue, resp.MessageID)
+			fmt.Fprintf(commandStdout, "Sent mail in conversation %s (message_id=%s)\n", targetValue, resp.MessageID)
 		} else {
-			fmt.Printf("Sent mail to %s (message_id=%s)\n", targetValue, resp.MessageID)
+			fmt.Fprintf(commandStdout, "Started a new thread with %s: \"%s\" (conversation_id=%s, message_id=%s)\n", termtext.Line(recipientLabel), termtext.Line(strings.TrimSpace(mailSendSubject)), resp.ConversationID, resp.MessageID)
 		}
 		return nil
 	},
@@ -675,7 +288,13 @@ var (
 var mailReplyCmd = &cobra.Command{
 	Use:   "reply <message-id>",
 	Short: "Reply to an existing mail conversation",
+	Long: mailThreadTeaching + "\n\n" +
+		"A reply continues the message's conversation, with the subject \"Re: <title>\".\n" +
+		"The title is fixed, so --subject is refused.",
 	Args: func(cmd *cobra.Command, args []string) error {
+		if cmd.Flags().Changed("subject") {
+			return usageError("%s", mailTitleFixedText)
+		}
 		if len(args) != 1 {
 			return usageError("usage: aw mail reply <message-id>")
 		}
@@ -745,16 +364,14 @@ var mailReplyCmd = &cobra.Command{
 		if conversationID == "" {
 			return fmt.Errorf("message %s is legacy mail without a conversation; send a new message instead", messageID)
 		}
-		subject := mailReplySubject
-		if strings.TrimSpace(subject) == "" {
-			subject = "Re"
-		}
+		subject := replySubject("", inbox.Messages[0].Subject)
 		req := &awid.SendMessageRequest{
 			ConversationID: conversationID,
 			Subject:        subject,
 			Body:           body,
 			Priority:       awid.MessagePriority(mailReplyPriority),
 			EncryptE2EE:    encryptReply,
+			E2EEInherited:  encryptReply && !cmd.Flags().Changed("e2ee"),
 		}
 		if encryptReply && inbox.Messages[0].Encrypted != nil {
 			source := inbox.Messages[0]
@@ -808,7 +425,7 @@ var mailReplyCmd = &cobra.Command{
 		if jsonFlag {
 			printJSON(resp)
 		} else {
-			fmt.Printf("Sent mail in conversation %s (message_id=%s)\n", conversationID, resp.MessageID)
+			fmt.Fprintf(commandStdout, "Sent mail in conversation %s (message_id=%s)\n", conversationID, resp.MessageID)
 		}
 		return nil
 	},
@@ -1031,10 +648,43 @@ func e2eeAssertionIdentityForSelection(sel *awconfig.Selection) *awconfig.Resolv
 // mail inbox
 
 var (
-	mailInboxShowAll bool
-	mailInboxLimit   int
-	mailInboxCursor  string
+	mailInboxCountOnly bool
+	mailInboxShowAll   bool
+	mailInboxLimit     int
+	mailInboxCursor    string
 )
+
+// countUnreadMail walks read-only inbox pages without decrypting, verifying,
+// presenting, logging or acknowledging their content. Older servers need no
+// new endpoint; a failed continuation never becomes a partial successful count.
+func countUnreadMail(ctx context.Context, client *aweb.Client) (int, error) {
+	count := 0
+	cursor := ""
+	seen := map[string]bool{}
+	for {
+		path := "/v1/messages/inbox?unread_only=true&limit=200"
+		if cursor != "" {
+			path += "&cursor=" + url.QueryEscape(cursor)
+		}
+		var page struct {
+			Messages   []json.RawMessage `json:"messages"`
+			HasMore    bool              `json:"has_more"`
+			NextCursor string            `json:"next_cursor"`
+		}
+		if err := client.Get(ctx, path, &page); err != nil {
+			return 0, err
+		}
+		count += len(page.Messages)
+		if !page.HasMore {
+			return count, nil
+		}
+		cursor = strings.TrimSpace(page.NextCursor)
+		if cursor == "" || seen[cursor] {
+			return 0, errors.New("unread mail count: invalid inbox continuation")
+		}
+		seen[cursor] = true
+	}
+}
 
 func presentAndAcknowledgeMailInbox(
 	ctx context.Context,
@@ -1058,7 +708,22 @@ var mailInboxCmd = &cobra.Command{
 	Use:   "inbox",
 	Short: "List inbox messages (unread only by default)",
 	Long: "List inbox messages, newest first and unread only by default. Messages shown by this command are acknowledged as read.\n\n" +
-		"The response is one bounded page. Text output reports when more messages exist and prints a continuation command; JSON output carries has_more and next_cursor. Pass the returned value to --cursor to continue without overlap.",
+		"Use --count-only to count all unread mail without acknowledging or displaying messages. This read-only count walks inbox pages and does not decrypt message content.\n\n" +
+		"Without --count-only, the response is one bounded page. Text output reports when more messages exist and prints a continuation command; JSON output carries has_more and next_cursor. Pass the returned value to --cursor to continue without overlap.",
+	PreRunE: func(cmd *cobra.Command, args []string) error {
+		if cmd.Flags().Changed("count-only") {
+			for _, flag := range []string{"show-all", "limit", "cursor"} {
+				if cmd.Flags().Changed(flag) {
+					scope := "every page"
+					if flag == "show-all" {
+						scope = "unread messages"
+					}
+					return fmt.Errorf("--count-only counts %s, so it cannot be combined with --%s.", scope, flag)
+				}
+			}
+		}
+		return nil
+	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
@@ -1066,6 +731,22 @@ var mailInboxCmd = &cobra.Command{
 		c, sel, err := resolveClientSelection()
 		if err != nil {
 			return err
+		}
+		if mailInboxCountOnly {
+			count, err := countUnreadMail(ctx, c)
+			if err != nil {
+				return err
+			}
+			result := struct {
+				UnreadCount int `json:"unread_count"`
+			}{count}
+			return writeOutput(cmd.OutOrStdout(), result, func(any) string {
+				unit := "messages"
+				if count == 1 {
+					unit = "message"
+				}
+				return fmt.Sprintf("%d unread %s\n", count, unit)
+			})
 		}
 		if err := configureClientE2EEForRead(cmd, ctx, c, sel); err != nil {
 			return err
@@ -1257,32 +938,170 @@ func init() {
 	mailSendCmd.Flags().StringVar(&mailSendTo, "to", "", "Recipient name within the active team, or a routable address")
 	mailSendCmd.Flags().StringVar(&mailSendToDID, "to-did", "", "Recipient stable identity (did:aw:...)")
 	mailSendCmd.Flags().StringVar(&mailSendToAddress, "to-address", "", "Recipient address (domain/name)")
-	mailSendCmd.Flags().StringVar(&mailSendSubject, "subject", "", "Subject")
+	mailSendCmd.Flags().StringVar(&mailSendSubject, "subject", "", "Title of the new thread (required with a recipient)")
 	mailSendCmd.Flags().StringVar(&mailSendBody, "body", "", shellExpandedInlineHelp("Body", "--body-file"))
 	mailSendCmd.Flags().StringVar(&mailSendBodyFile, "body-file", "", safeFileInputHelp("message body"))
 	mailSendCmd.Flags().StringVar(&mailSendPriority, "priority", "normal", "Priority: low|normal|high|urgent")
-	mailSendCmd.Flags().StringVar(&mailSendConversationID, "conversation-id", "", "Existing mail conversation to continue")
-	mailSendCmd.Flags().BoolVar(&mailSendNewConversation, "new-conversation", false, "Start a fresh conversation without conversation or inbox lookup (requires server support)")
+	mailSendCmd.Flags().StringVar(&mailSendConversationID, "conversation-id", "", "Existing mail conversation to continue (no recipient or --subject)")
 	mailSendCmd.Flags().BoolVar(&mailSendPlaintext, "plaintext", false, "Send explicit server-readable plaintext mail (currently the default)")
 	mailSendCmd.Flags().BoolVar(&mailSendE2EE, "e2ee", false, "Send E2E encrypted mail; fails closed if encryption keys are missing")
 	mailSendCmd.Flags().BoolVar(&mailSendLegacyPlaintext, "legacy-plaintext", false, "Deprecated alias for --plaintext")
 	_ = mailSendCmd.Flags().MarkHidden("legacy-plaintext")
 
+	mailInboxCmd.Flags().BoolVar(&mailInboxCountOnly, "count-only", false, "Count all unread mail without acknowledging or displaying messages")
 	mailInboxCmd.Flags().BoolVar(&mailInboxShowAll, "show-all", false, "Show all messages including already-read")
 	mailInboxCmd.Flags().IntVar(&mailInboxLimit, "limit", 50, "Max messages per page")
 	mailInboxCmd.Flags().StringVar(&mailInboxCursor, "cursor", "", "Continue from next_cursor in a previous inbox response")
-	mailReplyCmd.Flags().StringVar(&mailReplySubject, "subject", "", "Subject")
+	// Kept only to refuse it in words: a conversation's title is fixed.
+	mailReplyCmd.Flags().StringVar(&mailReplySubject, "subject", "", "Refused: a conversation's title is fixed")
+	_ = mailReplyCmd.Flags().MarkHidden("subject")
 	mailReplyCmd.Flags().StringVar(&mailReplyBody, "body", "", shellExpandedInlineHelp("Body", "--body-file"))
 	mailReplyCmd.Flags().StringVar(&mailReplyBodyFile, "body-file", "", safeFileInputHelp("message body"))
 	mailReplyCmd.Flags().StringVar(&mailReplyPriority, "priority", "normal", "Priority: low|normal|high|urgent")
 	mailReplyCmd.Flags().BoolVar(&mailReplyPlaintext, "plaintext", false, "Send explicit server-readable plaintext mail, even when replying to encrypted mail")
-	mailReplyCmd.Flags().BoolVar(&mailReplyE2EE, "e2ee", false, "Send E2E encrypted mail (default for an encrypted source); fails closed if encryption keys are missing")
+	mailReplyCmd.Flags().BoolVar(&mailReplyE2EE, "e2ee", false, "Send E2E encrypted mail (default for an encrypted source, except to a recipient on aweb's hosted service, which gets server-readable mail); fails closed if encryption keys are missing")
 	mailReplyCmd.Flags().BoolVar(&mailReplyLegacyPlaintext, "legacy-plaintext", false, "Deprecated alias for --plaintext")
 	_ = mailReplyCmd.Flags().MarkHidden("legacy-plaintext")
 	mailShowCmd.Flags().StringVar(&mailShowConversationID, "conversation-id", "", "Mail conversation to inspect")
 	mailShowCmd.Flags().StringVar(&mailShowMessageID, "message-id", "", "Legacy mail message to inspect")
 	mailShowCmd.Flags().IntVar(&mailShowLimit, "limit", 200, "For --conversation-id, max messages from the OLDEST end; exact --message-id reads are not windowed")
 
-	mailCmd.AddCommand(mailSendCmd, mailReplyCmd, mailInboxCmd, mailShowCmd, mailAckCmd)
+	mailThreadsCmd.Flags().IntVar(&mailThreadsLimit, "limit", 50, "Max threads per page")
+	mailThreadsCmd.Flags().StringVar(&mailThreadsCursor, "cursor", "", "Continue from next_cursor in a previous threads response")
+	mailCmd.AddCommand(mailSendCmd, mailReplyCmd, mailInboxCmd, mailShowCmd, mailAckCmd, mailThreadsCmd)
 	rootCmd.AddCommand(mailCmd)
+}
+
+// replySubject is the subject of a reply: the explicit one when given,
+// otherwise "Re: <original>", never prefixed twice.
+func replySubject(explicit, original string) string {
+	if subject := strings.TrimSpace(explicit); subject != "" {
+		return subject
+	}
+	original = strings.TrimSpace(original)
+	switch {
+	case original == "":
+		return "Re"
+	case len(original) >= 3 && strings.EqualFold(original[:3], "re:"):
+		return original
+	default:
+		return "Re: " + original
+	}
+}
+
+var (
+	mailThreadsLimit  int
+	mailThreadsCursor string
+)
+
+var mailThreadsCmd = &cobra.Command{
+	Use:   "threads",
+	Short: "List your mail threads",
+	Long: "List your mail conversations, newest activity first: each thread's title (its\n" +
+		"first message's subject), participants, last activity, unread count and\n" +
+		"conversation ID. Listing marks nothing read.\n\n" + mailThreadTeaching,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx, cancel := commandAPIContext(cmd)
+		defer cancel()
+		c, sel, err := resolveMailMessagingClientSelection()
+		if err != nil {
+			return err
+		}
+		resp, err := c.ListConversationsWithParams(ctx, awid.ConversationListParams{
+			Limit:            mailThreadsLimit,
+			Cursor:           strings.TrimSpace(mailThreadsCursor),
+			ConversationType: "mail",
+		})
+		if err != nil {
+			return err
+		}
+		if err := readEncryptedThreadTitles(cmd, ctx, c, sel, resp); err != nil {
+			return err
+		}
+		if jsonFlag {
+			printOutput(resp, formatMailThreads)
+		} else {
+			printOutput(threadsWithoutSelf(resp, sel), formatMailThreads)
+		}
+		return nil
+	},
+}
+
+// readEncryptedThreadTitles fills the title the server cannot read: an
+// end-to-end encrypted first message's subject, decrypted from that message.
+// A title whose message cannot be read, is not this thread's first message,
+// or failed verification stays empty. Reading acknowledges nothing.
+func readEncryptedThreadTitles(cmd *cobra.Command, ctx context.Context, c *aweb.Client, sel *awconfig.Selection, resp *awid.ConversationsResponse) error {
+	configured := false
+	for i := range resp.Conversations {
+		thread := &resp.Conversations[i]
+		firstID := strings.TrimSpace(thread.FirstMessageID)
+		if strings.TrimSpace(thread.Title) != "" || firstID == "" {
+			continue
+		}
+		if !configured {
+			if err := configureClientE2EEForRead(cmd, ctx, c, sel); err != nil {
+				return err
+			}
+			configured = true
+		}
+		first, err := c.Message(ctx, firstID)
+		if err != nil || first == nil || len(first.Messages) != 1 {
+			continue
+		}
+		// Only this thread's own first message, with its authenticated
+		// proof intact, names the thread.
+		message := first.Messages[0]
+		if message.MessageID != firstID || message.ConversationID != thread.ConversationID || message.VerificationStatus == awid.Failed {
+			continue
+		}
+		thread.Title = message.Subject
+	}
+	return nil
+}
+
+// threadsWithoutSelf is the text listing's view: each thread names its other
+// participants by identity, never you. An alias that another participant of
+// the thread shares is shown as that participant's address, or else its DID.
+// JSON keeps the server's participant data.
+func threadsWithoutSelf(resp *awid.ConversationsResponse, sel *awconfig.Selection) *awid.ConversationsResponse {
+	self := map[string]bool{}
+	if sel != nil {
+		for _, did := range []string{sel.DID, sel.StableID} {
+			if did = strings.TrimSpace(did); did != "" {
+				self[did] = true
+			}
+		}
+	}
+	view := *resp
+	view.Conversations = make([]awid.ConversationItem, len(resp.Conversations))
+	for i, thread := range resp.Conversations {
+		aliases := map[string]int{}
+		for _, participant := range thread.ParticipantDetails {
+			aliases[strings.TrimSpace(participant.Alias)]++
+		}
+		others := make([]string, 0, len(thread.ParticipantDetails))
+		for _, participant := range thread.ParticipantDetails {
+			did := ""
+			if participant.ParticipantRef != nil {
+				did = strings.TrimSpace(participant.ParticipantRef.DID)
+			}
+			if did != "" && self[did] {
+				continue
+			}
+			label := strings.TrimSpace(participant.Alias)
+			if label == "" || aliases[label] > 1 {
+				if participant.Address != nil && strings.TrimSpace(*participant.Address) != "" {
+					label = strings.TrimSpace(*participant.Address)
+				} else if did != "" {
+					label = did
+				}
+			}
+			others = append(others, label)
+		}
+		thread.Participants = others
+		view.Conversations[i] = thread
+	}
+	return &view
 }

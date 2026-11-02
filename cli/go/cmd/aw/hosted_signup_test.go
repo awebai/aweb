@@ -314,6 +314,9 @@ func TestInitSelfCustodialGlobalCLIThenAddWorktreeTwiceUsesStoredWorkspaceAPIKey
 
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveAPIKeyCreationTeamRead(w, r, teamID) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{

@@ -5,7 +5,7 @@ import * as ed from "@noble/ed25519";
 import { sha256, sha512 } from "@noble/hashes/sha2.js";
 import bs58 from "bs58";
 import { canonicalJSONValue } from "./canonical.js";
-import { computeDIDKey, extractPublicKey } from "./did.js";
+import { computeDIDKey, extractPublicKey, primeSubgroupPoint } from "./did.js";
 import { parseStrictJSON, StrictJSONError } from "./strict_json.js";
 
 ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
@@ -198,21 +198,6 @@ export function idEd25519Verify(publicKey: Uint8Array, message: Uint8Array, sign
   return SB.equals(R.add(kA)) ? { accepted: true, reason: null } : { accepted: false, reason: "invalid_signature" };
 }
 
-/** A canonical, nonidentity point of the prime-order subgroup, or undefined. */
-function primeSubgroupPoint(encoded: Uint8Array): InstanceType<typeof ed.ExtendedPoint> | undefined {
-  if (encoded.length !== 32) return undefined;
-  let point: InstanceType<typeof ed.ExtendedPoint>;
-  try {
-    point = ed.ExtendedPoint.fromHex(encoded, false);
-  } catch {
-    return undefined;
-  }
-  if (point.is0() || !point.isTorsionFree()) return undefined;
-  // Re-encoding catches y >= p and the x = 0 sign-bit alias.
-  if (Buffer.compare(Buffer.from(point.toRawBytes()), Buffer.from(encoded)) !== 0) return undefined;
-  return point;
-}
-
 function littleEndian(bytes: Uint8Array): bigint {
   let value = 0n;
   for (let i = bytes.length - 1; i >= 0; i -= 1) value = (value << 8n) | BigInt(bytes[i]);
@@ -279,6 +264,28 @@ function isCanonicalSecondTimestamp(value: string): boolean {
     date.getUTCMinutes() === minute &&
     date.getUTCSeconds() === second
   );
+}
+
+export interface IdTreeEnrollment {
+  state: "enrolled" | "not_enrolled" | "unknown" | "malformed";
+  domain: string | null;
+}
+
+/**
+ * Parses the id_tree projection of a key response. It performs no I/O and
+ * grants nothing: absent evidence is unknown and malformed evidence is never
+ * proven not enrolled.
+ */
+export function keyResponseIdTree(response: unknown): IdTreeEnrollment {
+  const malformed: IdTreeEnrollment = { state: "malformed", domain: null };
+  if (!isRecord(response)) return malformed;
+  if (!Object.prototype.hasOwnProperty.call(response, "id_tree")) return { state: "unknown", domain: null };
+  const tree = response.id_tree;
+  if (!isRecord(tree) || typeof tree.enrolled !== "boolean") return malformed;
+  if (!tree.enrolled) return hasExactKeys(tree, ["enrolled"]) ? { state: "not_enrolled", domain: null } : malformed;
+  const domain = tree.domain;
+  if (!hasExactKeys(tree, ["domain", "enrolled"]) || typeof domain !== "string" || !isCanonicalDomain(domain)) return malformed;
+  return { state: "enrolled", domain };
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
