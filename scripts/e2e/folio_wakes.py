@@ -130,8 +130,10 @@ with tempfile.TemporaryDirectory(prefix='awfw-', dir='/tmp') as td:
         if name == 'alice':
             aw(name, 'id', 'team', 'set-server', '--team', 'dev', '--namespace', namespace, '--url', SERVER, '--registry', REGISTRY)
     configure_manifest('0.0.0', events=False)
-    refused = aw('alice', 'plugin', 'install', FOLIO, check=False)
-    assert refused.returncode and 'admin_required' in refused.stderr, refused.stderr
+    refused = aw('alice', '--json', 'plugin', 'install', FOLIO, check=False)
+    assert refused.returncode, refused.stdout
+    refusal = json.loads(refused.stdout)['error']
+    assert refusal['reason'] == 'admin_required' and refusal['http_status'] == 403, refusal
     requested = data('alice', 'plugin', 'request', FOLIO)
     assert requested['state'] == 'pending', requested
     assert get('alice', '/v1/apps/installed?team_id=' + team)['apps'] == []
