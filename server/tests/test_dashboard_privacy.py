@@ -18,6 +18,7 @@ import httpx
 import pytest
 import pytest_asyncio
 from redis.asyncio import Redis
+from redis.asyncio.client import PubSub
 from starlette.requests import Request
 import uvicorn
 
@@ -396,7 +397,7 @@ async def test_status_stream_keeps_mail_private_and_team_tasks_visible(privacy_a
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("colliding_workspace", [False, True])
-async def test_embedded_public_status_reader_never_gets_messaging(privacy_app, colliding_workspace):
+async def test_embedded_public_status_reader_never_gets_messaging(privacy_app, colliding_workspace, monkeypatch):
     """Exercise the real embedded route with its host-supplied public identity.
 
     The standalone app does not authenticate public principals. The host's
@@ -416,6 +417,28 @@ async def test_embedded_public_status_reader_never_gets_messaging(privacy_app, c
             "INSERT INTO {{tables.workspaces}} (workspace_id, team_id, agent_id, alias) "
             "VALUES ($1, $2, $3, 'public-collision')", UUID(workspace_id), TEAM, UUID(actor_id),
         )
+    # Observe this stream's own server acknowledgement, not a second
+    # connection's count. Redis transport and the route's filters stay real.
+    channel = f"events:{workspace_id}"
+    subscribed = asyncio.Event()
+    subscribe = PubSub.subscribe
+    handle_message = PubSub.handle_message
+
+    async def delayed_subscribe(pubsub, *channels, **kwargs):
+        if not colliding_workspace and channel in channels:
+            # Reproduce a cold start beyond the old five-second poll budget.
+            await asyncio.sleep(6)
+        return await subscribe(pubsub, *channels, **kwargs)
+
+    async def observe_ack(pubsub, response, *args, **kwargs):
+        result = await handle_message(pubsub, response, *args, **kwargs)
+        if response[0] in ("subscribe", b"subscribe") and response[1] in (channel, channel.encode()):
+            subscribed.set()
+        return result
+
+    monkeypatch.setattr(PubSub, "subscribe", delayed_subscribe)
+    monkeypatch.setattr(PubSub, "handle_message", observe_ack)
+
     header = build_internal_auth_header_value(
         secret="disposable-embedding-test-secret", team_id=TEAM,
         principal_type="p", principal_id="anonymous", actor_id=actor_id,
@@ -435,10 +458,13 @@ async def test_embedded_public_status_reader_never_gets_messaging(privacy_app, c
     )
     stream = response.body_iterator
     next_item = asyncio.create_task(anext(stream))
+    subscription_ready = asyncio.create_task(subscribed.wait())
     try:
-        async with asyncio.timeout(5):
-            while not (await env.redis.pubsub_numsub(f"events:{workspace_id}"))[0][1]:
-                await asyncio.sleep(0.01)
+        done, _ = await asyncio.wait(
+            {next_item, subscription_ready}, return_when=asyncio.FIRST_COMPLETED,
+        )
+        if next_item in done:
+            pytest.fail(f"Stream ended before its subscription acknowledgement: {next_item.result()!r}")
         for event in (
             MessageDeliveredEvent(workspace_id=workspace_id, subject="private subject"),
             ChatMessageEvent(workspace_id=workspace_id, session_id="private-session"),
@@ -450,9 +476,10 @@ async def test_embedded_public_status_reader_never_gets_messaging(privacy_app, c
         assert event["type"] == "task.created"
         assert event["task_ref"] == "public-control"
     finally:
-        if not next_item.done():
-            next_item.cancel()
-            await asyncio.gather(next_item, return_exceptions=True)
+        for task in (next_item, subscription_ready):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(next_item, subscription_ready, return_exceptions=True)
         await stream.aclose()
 
 
