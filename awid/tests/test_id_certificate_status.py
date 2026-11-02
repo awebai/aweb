@@ -49,6 +49,7 @@ from id_tree_support import (
 
 STATUS_PATH = "/v1/id-certificates/status"
 OBSERVED_AT = at("2026-10-26T00:30:00Z")
+SERVICE_TOKEN = "status-service-token-with-at-least-32-bytes"
 
 
 @pytest_asyncio.fixture
@@ -147,6 +148,43 @@ async def test_status_rate_limit(case, tree, one_rate_window):
 
     assert statuses[:-1] == [200] * (case["input"]["requests_in_minute"] - 1)
     assert statuses[-1] == case["expected"]["http_status"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("credential", ["valid", "missing", "wrong", "unconfigured"])
+async def test_status_service_token_skips_only_the_ip_budget(tree, monkeypatch, one_rate_window, credential):
+    app = tree.client.app
+    monkeypatch.setattr(app.state, "awid_service_token", None if credential == "unconfigured" else SERVICE_TOKEN)
+    headers = {} if credential == "missing" else {
+        "X-AWID-Service-Token": "wrong-status-service-token-at-least-32-bytes" if credential == "wrong" else SERVICE_TOKEN,
+    }
+    responses = [await _status(tree, _request("alice"), headers=headers) for _ in range(61)]
+    assert [r.status_code for r in responses] == [200] * 60 + [200 if credential == "valid" else 429]
+    assert all(r.json() == responses[0].json() for r in responses[:60])
+    if credential == "valid":
+        assert responses[-1].json() == responses[0].json()
+        # Exempt calls do not consume the ordinary public IP allowance.
+        for _ in range(60):
+            assert (await _status(tree, _request("alice"))).status_code == 200
+    assert (await _status(tree, _request("alice"))).status_code == 429
+    monkeypatch.setattr(app.state, "awid_service_token", SERVICE_TOKEN)
+    assert (await _status(tree, _request("alice"), headers={"X-AWID-Service-Token": SERVICE_TOKEN})).status_code == 200
+    # Nor do exempt calls reset an exhausted public window.
+    assert (await _status(tree, _request("alice"))).status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_status_service_token_keeps_signed_caller_budget_and_validation(tree, monkeypatch, one_rate_window):
+    monkeypatch.setattr(tree.client.app.state, "awid_service_token", SERVICE_TOKEN)
+    headers = {"X-AWID-Service-Token": SERVICE_TOKEN}
+    responses = [await _status(tree, _request("alice"), signer="bob", headers=headers) for _ in range(61)]
+    assert [r.status_code for r in responses] == [200] * 60 + [429]
+    # A different signed caller still works from the same IP.
+    assert (await _status(tree, _request("alice"), signer="alice", headers=headers)).status_code == 200
+    bad_body = await _status(tree, {"v": 1, "domain": DOMAIN, "ids": ["prefix*"]}, headers=headers)
+    assert bad_body.status_code == 400
+    bad_proof = await _status(tree, _request("alice"), headers={**headers, "Authorization": "DIDKey invalid invalid"})
+    assert bad_proof.status_code == 401
 
 
 def _from_ip(monkeypatch, address: str) -> dict:

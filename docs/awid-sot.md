@@ -158,7 +158,23 @@ custodial deployment's backfill is not throttled; the team-controller signature
 is still required. Signed team-server record publication (PUT
 `/v1/namespaces/{domain}/teams/{name}/server`) is also exempt from its
 `team_server_publish` bucket; the current team-key signature remains required.
-All other write buckets remain rate-limited even with a matching token.
+The same credential also exempts the IP limit on these operations:
+
+| Method | Route | Bucket |
+| --- | --- | --- |
+| PATCH | `/v1/namespaces/{domain}` | `namespace_update` |
+| PUT | `/v1/namespaces/{domain}` | `namespace_rotate` |
+| PUT | `/v1/namespaces/{domain}/addresses/{name}` | `address_update` |
+| DELETE | `/v1/namespaces/{domain}/addresses/{name}` | `address_delete` |
+| POST | `/v1/namespaces/{domain}/addresses/{name}/reassign` | `address_reassign` |
+| POST | `/v1/a2a/delegations` | `a2a_delegation_publish` |
+| POST | `/v1/a2a/publications` | `a2a_publication_publish` |
+| POST | `/v1/id-certificates/status` | `id_certificate_status` (IP only) |
+
+Their existing proofs, controller authorization, validation and responses are
+unchanged. A signed ID-status caller still spends its caller-key budget.
+Other write routes remain rate-limited even with a matching token, including
+POST `/v1/namespaces/{domain}/rotate`, which uses the previous-key exchange.
 Public callers keep the existing 10/hour DID, namespace and team creation
 limits and 30/hour encryption-key, certificate and address registration limits.
 Visibility changes and team deletion allow 300/hour and certificate revocation
@@ -1180,11 +1196,11 @@ The body is exactly `{v: 1, domain, ids}` with 0–8 distinct canonical did:aw
 strings; any other field (a prefix, a search) is `invalid_shape`. An
 authenticated caller signs the covering-v2 request
 (`operation="read_id_certificate_status"`) with a strict-profile key. Supplied
-but invalid proof, or the legacy form, is 401, never anonymous. Every request
-is charged to its source IP's `id_certificate_status` bucket, and a verified
-caller also to its key's (keys cost nothing to mint, so a key bucket alone is
-no limit). Each allows 60 requests per minute, with no service exemption, and
-both are charged before the DNS lookup and any database read. The domain is
+but invalid proof, or the legacy form, is 401, never anonymous. Public requests
+are charged to their source IP's `id_certificate_status` bucket, and a verified
+caller also to its key's. Each allows 60 requests per minute. The configured
+service token skips only the IP budget; the verified caller-key budget remains.
+Limits are checked before the DNS lookup and any database read. The domain is
 canonicalized (lowercase, no trailing dot) and must be a valid name.
 
 The response is one coherent snapshot, read in a single read-only REPEATABLE

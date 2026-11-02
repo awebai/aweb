@@ -1034,7 +1034,7 @@ async def list_addresses(
 @router.put(
     "/{name}",
     response_model=AddressResponse,
-    dependencies=[Depends(rate_limit_dep("address_update"))],
+    dependencies=[Depends(rate_limit_dep("address_update", allow_trusted_service=True))],
 )
 async def update_address(
     request: Request,
@@ -1100,7 +1100,7 @@ async def update_address(
     )
 
 
-@router.delete("/{name}", dependencies=[Depends(rate_limit_dep("address_delete"))])
+@router.delete("/{name}", dependencies=[Depends(rate_limit_dep("address_delete", allow_trusted_service=True))])
 async def delete_address(
     request: Request,
     domain: str,
@@ -1190,7 +1190,7 @@ async def delete_address(
 @router.post(
     "/{name}/reassign",
     response_model=AddressResponse,
-    dependencies=[Depends(rate_limit_dep("address_reassign"))],
+    dependencies=[Depends(rate_limit_dep("address_reassign", allow_trusted_service=True))],
 )
 async def reassign_address(
     request: Request,

@@ -452,7 +452,7 @@ def _row_delegation_digest(row) -> str:
 @router.post(
     "/a2a/delegations",
     response_model=A2AWriteResponse,
-    dependencies=[Depends(rate_limit_dep("a2a_delegation_publish"))],
+    dependencies=[Depends(rate_limit_dep("a2a_delegation_publish", allow_trusted_service=True))],
 )
 async def publish_a2a_delegation(
     request: Request,
@@ -615,7 +615,7 @@ async def publish_a2a_delegation(
 @router.post(
     "/a2a/publications",
     response_model=A2AWriteResponse,
-    dependencies=[Depends(rate_limit_dep("a2a_publication_publish"))],
+    dependencies=[Depends(rate_limit_dep("a2a_publication_publish", allow_trusted_service=True))],
 )
 async def publish_a2a_route(
     request: Request,

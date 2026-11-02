@@ -473,7 +473,7 @@ async def get_namespace(domain: str, db_infra=Depends(get_db)) -> NamespaceRespo
 @router.patch(
     "/{domain}",
     response_model=NamespaceResponse,
-    dependencies=[Depends(rate_limit_dep("namespace_update"))],
+    dependencies=[Depends(rate_limit_dep("namespace_update", allow_trusted_service=True))],
 )
 async def update_namespace(
     request: Request,
@@ -529,7 +529,7 @@ async def update_namespace(
 @router.put(
     "/{domain}",
     response_model=NamespaceResponse,
-    dependencies=[Depends(rate_limit_dep("namespace_rotate"))],
+    dependencies=[Depends(rate_limit_dep("namespace_rotate", allow_trusted_service=True))],
 )
 async def rotate_namespace_controller(
     request: Request,
