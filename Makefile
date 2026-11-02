@@ -104,7 +104,7 @@ help:
 	@echo "  release-publish TAG=<tag>             publish one local tag without GitHub Actions"
 	@echo "  clean        Remove all build artifacts and caches"
 
-.PHONY: e2e-naapp naapp-e2e-packages
+.PHONY: e2e-naapp e2e-folio-wakes naapp-e2e-packages
 # A new package joins the integration gate by joining this list.
 NAAPP_E2E_PACKAGES := naapp/folio naapp/library
 
@@ -127,6 +127,9 @@ e2e-naapp:
 		fi; \
 	done
 
+e2e-folio-wakes:
+	bash scripts/e2e-folio-wakes.sh
+
 build: sync-doc-copies
 	cd cli/go && $(MAKE) build
 
@@ -140,6 +143,7 @@ test-shipping:
 	python3 scripts/test_shipping.py
 	python3 scripts/test_candidate_cleanup.py
 	python3 scripts/test_candidate_disk_floor.py
+	python3 scripts/test_folio_wakes_gate.py
 
 # AWID metadata is repeated in every committed Python lock that takes the in-repo
 # awid (awid, server, naapp-lib and each naapp). Check them all without repair,

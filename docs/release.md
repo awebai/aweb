@@ -80,6 +80,14 @@ missing stages; a fully passed tree returns without building. Only after all
 stages pass does it create the requested annotated tags locally on the exact tested
 SHA.
 
+Integration includes `make e2e-folio-wakes`, the same real document-change and
+browser-wake acceptance script run by Folio CI. Its services share a private
+network namespace and publish no host ports. In the candidate it reuses the
+gate's bounded builder, scopes its Compose project, images and fixture volume
+to that run, and retains its evidence under the integration log directory's
+`folio-wakes/`. Standalone runs can select a project with `FOLIO_WAKES_PROJECT`;
+they create and remove their own bounded builder when none is supplied.
+
 `make candidate-gate`, direct `scripts/candidate-docker-gate.sh` calls and the
 release command use that same ledger. The key includes the source tree,
 effective CLI/A2A versions, external Library/blueprint revisions, and non-default

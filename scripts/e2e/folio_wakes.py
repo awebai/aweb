@@ -20,7 +20,8 @@ AW = Path(os.environ['AW_BIN']).resolve()
 REGISTRY = 'http://awid:8010'
 SERVER = 'http://127.0.0.1:38000'
 FOLIO = os.environ['FOLIO_WAKES_ORIGIN']
-COMPOSE = ['docker', 'compose', '-p', 'abrm-folio', '--project-directory', str(ROOT), '-f', str(ROOT / 'scripts/e2e/folio-wakes.compose.yml')]
+PROJECT = os.environ.get('FOLIO_WAKES_PROJECT', 'abrm-folio')
+COMPOSE = ['docker', 'compose', '-p', PROJECT, '--project-directory', str(ROOT), '-f', str(ROOT / 'scripts/e2e/folio-wakes.compose.yml')]
 
 def run(args, **kw):
     result = subprocess.run(args, text=True, capture_output=True, **kw)
@@ -33,7 +34,7 @@ def configure_manifest(version, events=True, manifest_version=1, extra_emitter=N
     # emitter. No substitute HTTP server or auth bypass. Version 2 declares the
     # emitter as an app-event app key and adds a hook-only tool, whose scope
     # install must not grant.
-    arguments = ['docker', 'run', '--rm', '--entrypoint', '/app/.venv/bin/python', '-v', 'abrm-folio-fixture:/fixture:ro', '-e', 'FOLIO_WAKES_ORIGIN', 'abrm-folio-folio', '/fixture/e2e/folio_wakes_manifest.py', version, 'true' if events else 'false', str(manifest_version)]
+    arguments = ['docker', 'run', '--rm', '--entrypoint', '/app/.venv/bin/python', '-v', PROJECT + '-fixture:/fixture:ro', '-e', 'FOLIO_WAKES_ORIGIN', PROJECT + '-folio', '/fixture/e2e/folio_wakes_manifest.py', version, 'true' if events else 'false', str(manifest_version)]
     if extra_emitter:
         arguments.append(extra_emitter)
     manifest = run(arguments)

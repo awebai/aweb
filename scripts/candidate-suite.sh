@@ -72,6 +72,7 @@ integration() {
   run test-federation-e2e
   run cli-e2e
   run e2e-naapp
+  run e2e-folio-wakes
   run test-npm-exact-publish
   run test-pypi-exact-publish
   run test-oci-exact-publish
