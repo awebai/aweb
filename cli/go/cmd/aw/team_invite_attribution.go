@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/awebai/aw/awconfig"
@@ -54,6 +55,37 @@ func identityKeyRoute(ctx context.Context, identity *awconfig.ResolvedIdentity, 
 	return registry.ResolveKeyAt(ctx, registryURL, identity.StableID)
 }
 
+// Membership routing never replaces an issuer's own home registry. With no
+// saved pin, the operation route can fill the same namespace's missing routing
+// information, subject to its independently discovered registry constraint.
+func teamInviteIssuerRegistry(ctx context.Context, opts idChildOptions, identity *awconfig.ResolvedIdentity, domain string) (string, error) {
+	if own := strings.TrimSpace(identity.RegistryURL); own != "" {
+		return own, nil
+	}
+	if selected := strings.TrimSpace(opts.RegistryURL); selected != "" {
+		return selected, nil
+	}
+	if fallback := strings.TrimSpace(opts.TeamRegistryURL); fallback != "" && domain != "" && domain == opts.TeamRegistryDomain {
+		authority, err := awid.DiscoverAuthoritativeRegistry(ctx, opts.TXTResolver, domain)
+		if err != nil {
+			return "", err
+		}
+		return domainRegistryURL(authority, fallback)
+	}
+	registry, err := resolveIdentityRegistryClient(identity)
+	if err != nil {
+		return "", err
+	}
+	if opts.TXTResolver != nil {
+		registry.Resolver.DNSResolver = opts.TXTResolver
+	}
+	// An installed chain fixes the issuer namespace independently of any
+	// address or team membership. The selector does not mutate identity state.
+	own := *identity
+	own.Domain = domain
+	return currentIdentityRegistryURL(ctx, &own, registry)
+}
+
 // No chain is the legacy path only when current evidence establishes absence.
 // A team key is never an ID-parent credential.
 func prepareTeamInviteIDChild(ctx context.Context, opts idChildOptions) (*awconfig.TeamInviteIDChild, error) {
@@ -69,10 +101,19 @@ func prepareTeamInviteIDChild(ctx context.Context, opts idChildOptions) (*awconf
 	if err != nil {
 		return nil, err
 	}
+	if chain == nil && identity.StableID == "" {
+		return nil, nil
+	}
+	domain := identity.Domain
+	if chain != nil {
+		certificates := chain.Bundle["certificates"].([]any)
+		domain = certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)["domain"].(string)
+	}
+	opts.RegistryURL, err = teamInviteIssuerRegistry(ctx, opts, identity, domain)
+	if err != nil {
+		return nil, fmt.Errorf("inviter cannot select its identity registry: %w", err)
+	}
 	if chain == nil {
-		if identity.StableID == "" {
-			return nil, nil
-		}
 		resolution, err := identityKeyRoute(ctx, identity, opts.RegistryURL)
 		if err != nil {
 			return nil, fmt.Errorf("inviter cannot issue: evidence_unavailable; check the inviter's identity registry connection and retry: %w", err)
@@ -110,7 +151,7 @@ func prepareTeamInviteIDChild(ctx context.Context, opts idChildOptions) (*awconf
 	if err := issuer.invitations.PutInvitation(inv); err != nil {
 		return nil, err
 	}
-	return &awconfig.TeamInviteIDChild{InvitationID: out.InvitationID, Parent: out.Parent["id"].(string), Domain: out.Domain, IssuerHome: home}, nil
+	return &awconfig.TeamInviteIDChild{InvitationID: out.InvitationID, Parent: out.Parent["id"].(string), Domain: out.Domain, IssuerHome: home, RegistryURL: issuer.registryURL}, nil
 }
 
 func checkSelectedTeamInviteIssuer(ctx context.Context, issuer *selectedChildIssuer) error {
@@ -134,7 +175,15 @@ func checkSelectedTeamInviteIssuer(ctx context.Context, issuer *selectedChildIss
 }
 
 func linkedTeamInviteIssuer(ctx context.Context, link *awconfig.TeamInviteIDChild) (idChildOptions, *selectedChildIssuer, error) {
-	opts := idChildOptions{IdentityHome: link.IssuerHome, Now: time.Now}
+	opts := idChildOptions{IdentityHome: link.IssuerHome, TeamRegistryURL: link.RegistryURL, TeamRegistryDomain: link.Domain, Now: time.Now}
+	identity, err := resolveIDExchangeIdentity("", link.IssuerHome)
+	if err != nil {
+		return opts, nil, err
+	}
+	opts.RegistryURL, err = teamInviteIssuerRegistry(ctx, opts, identity, link.Domain)
+	if err != nil {
+		return opts, nil, err
+	}
 	issuer, err := selectChildIssuer(ctx, opts)
 	if err != nil {
 		return opts, nil, err
@@ -170,7 +219,7 @@ func completeTeamInviteIDChild(ctx context.Context, invite *awconfig.TeamInvite,
 	} else {
 		raw = []byte(outgoing.Request)
 	}
-	issuerOpts, _, err := linkedTeamInviteIssuer(ctx, link)
+	issuerOpts, issuer, err := linkedTeamInviteIssuer(ctx, link)
 	if err != nil {
 		return err
 	}
@@ -182,6 +231,7 @@ func completeTeamInviteIDChild(ctx context.Context, invite *awconfig.TeamInvite,
 	if err != nil {
 		return err
 	}
+	childOpts.RegistryURL = issuer.registryURL
 	_, err = executeIDParentImport(ctx, childOpts, response)
 	return err
 }

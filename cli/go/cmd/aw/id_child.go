@@ -118,6 +118,10 @@ type idChildOptions struct {
 	Confirm         awid.ConfirmPrompt
 	Show            io.Writer
 	Now             func() time.Time
+
+	// Team routing is a fallback only for an issuer in that same namespace.
+	TeamRegistryURL    string
+	TeamRegistryDomain string
 }
 
 func idChildOptionsFromFlags() idChildOptions {

@@ -875,6 +875,15 @@ hosted invite. The retained preview pins the parent and domain; the child keeps
 its original key and request UUID. If issuance refuses, the pending child home
 and request remain available rather than being rolled back. Ordinary invite
 accept across machines still requires the explicit parent exchange.
+For a local-team invitation, the inviter's own saved registry remains its
+identity registry. When that pin is absent, the already-resolved team registry
+(including service discovery) is a routing fallback only for an inviter in that
+same namespace, and must not contradict that namespace's discovered registry.
+A differently homed inviter uses its own identity/namespace registry selection.
+The existing private invitation link retains the selected issuer registry for
+later rechecks and import; the current identity pin and namespace checks still
+apply. Routing metadata grants no parent-signing authority: the current key,
+enrollment and chain checks are unchanged.
 Agents can issue agent spawns, never human invites. An untyped new invite from
 an attributed agent is a spawn/inherits or refuses, not an unattributed escape.
 Do not guess a parent from pre-upgrade bearer tokens or local instance names.
