@@ -63,6 +63,13 @@ tags still publish on `latest`; RCs still publish on `next`. The lower-level
 exact-tar publisher and distribution `npm/publish.sh` also accept
 `--staged-final` for explicit final-only publication to `next`.
 
+In GitHub Actions, the distribution publisher first fetches the exact tag from
+`origin` again. `actions/checkout` can replace its local annotated tag with the
+event's peeled commit even with full history, losing the channel declaration.
+This fetch restores the tag object before channel selection; failure stops
+publication. Runnerless publication continues to use its local tag or explicit
+staging option.
+
 After the dependent service deploys and its ordinary joining path is verified,
 the coordinator promotes the existing packages:
 

@@ -14,6 +14,12 @@ channel_args=(--version "$VERSION")
 if [[ "${1:-}" == --staged-final && $# == 1 ]]; then
   channel_args+=(--staged-final)
 elif [[ $# == 0 ]]; then
+  if [[ "${GITHUB_ACTIONS:-}" == true ]]; then
+    # checkout@v4 can replace an annotated tag with the event's peeled commit,
+    # even with fetch-depth: 0. Recover the remote tag before reading its channel.
+    git -C "$REPO_ROOT" fetch --force --no-tags origin \
+      "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+  fi
   channel_args+=(--tag "$GITHUB_REF_NAME" --repository "$REPO_ROOT")
 else
   echo 'Usage: npm/publish.sh [--staged-final]' >&2

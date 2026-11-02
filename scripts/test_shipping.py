@@ -807,22 +807,50 @@ class NpmRcContractTest(unittest.TestCase):
             npm = root / "bin/npm"
             npm.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CAPTURE_NPM"\n')
             npm.chmod(0o755)
-            for version, expected, staged in (("1.2.3-rc.1", "next", False), ("1.2.3", "latest", False), ("1.2.3", "next", True), ("1.2.4", "next", "tag")):
+            origin = root / "origin.git"
+            command(root, "git", "init", "--bare", "-q", str(origin))
+            command(root, "git", "remote", "add", "origin", str(origin))
+            for version, expected, staged in (
+                ("1.2.3-rc.1", "next", False), ("1.2.3", "latest", False),
+                ("1.2.3", "next", True), ("1.2.4", "next", "tag"),
+                ("1.2.5", "next", "checkout"), ("1.2.6", "latest", "ci-final"),
+                ("1.2.7-rc.1", "next", "ci-rc"), ("1.2.8", None, "ci-missing"),
+            ):
                 capture = root / "args"
                 capture.write_text("")
                 environment = {**os.environ, "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"],
-                               "CAPTURE_NPM": str(capture), "GITHUB_REF_NAME": "v" + version}
-                if staged == "tag":
+                               "CAPTURE_NPM": str(capture), "GITHUB_REF_NAME": "v" + version,
+                               "GITHUB_ACTIONS": "false"}
+                tag = "v" + version
+                if staged in ("tag", "checkout", "ci-final", "ci-rc"):
                     command(root, "git", "config", "user.name", "fixture")
                     command(root, "git", "config", "user.email", "fixture@example.test")
                     command(root, "git", "commit", "--allow-empty", "-qm", "fixture")
-                    command(root, "git", "tag", "-a", "v" + version, "-m", "release\n\nNpm-Publish-Channel: next")
+                    marker = "\n\nNpm-Publish-Channel: next" if staged in ("tag", "checkout") else ""
+                    command(root, "git", "tag", "-a", tag, "-m", "release" + marker)
+                if staged in ("checkout", "ci-final", "ci-rc"):
+                    command(root, "git", "push", "-q", "origin", "refs/tags/" + tag)
+                    if staged == "checkout":
+                        # Actual checkout@v4 sequence from release run41529254431:
+                        # its commit-specific fetch replaces the fetched annotation.
+                        commit = command(root, "git", "rev-parse", tag + "^{commit}")
+                        command(root, "git", "fetch", "--force", "--no-tags", "origin",
+                                "+" + commit + ":refs/tags/" + tag)
+                        self.assertEqual(command(root, "git", "cat-file", "-t", "refs/tags/" + tag), "commit")
+                if staged in ("checkout", "ci-final", "ci-rc", "ci-missing"):
+                    environment["GITHUB_ACTIONS"] = "true"
                 result = subprocess.run(["bash", str(npm_root / "publish.sh")] + (["--staged-final"] if staged is True else []), env=environment,
                                         text=True, capture_output=True)
+                if staged == "ci-missing":
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertEqual(capture.read_text(), "", "missing CI tag reached npm")
+                    continue
                 self.assertEqual(result.returncode, 0, result.stderr)
                 calls = capture.read_text().splitlines()
                 self.assertEqual(len(calls), 7)
                 self.assertTrue(all(call.endswith("--tag " + expected) for call in calls), calls)
+                if staged == "checkout":
+                    self.assertEqual(command(root, "git", "cat-file", "-t", "refs/tags/" + tag), "tag")
                 wrapper = json.loads((npm_root / "aw/package.json").read_text())
                 self.assertEqual(set(wrapper["optionalDependencies"].values()), {version})
 
