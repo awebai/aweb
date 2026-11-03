@@ -112,7 +112,7 @@ func TestPresenceHeartbeatUsesFreshInspectAndStopsOnDeregister(t *testing.T) {
 		t.Fatal("missing runner")
 	}
 	pending = nextInspect() // Hold an inspect in flight while deregistering.
-	if err := broker.Deregister(home); err != nil {
+	if _, err := broker.Deregister(home); err != nil {
 		t.Fatal(err)
 	}
 	select {
