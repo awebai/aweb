@@ -38,7 +38,7 @@ async def registry_listener(env, *, listener_socket: socket.socket | None = None
     sock = listener_socket if listener_socket is not None else socket.socket()
     if listener_socket is None:
         sock.bind(("127.0.0.1", 0))
-    server = uvicorn.Server(uvicorn.Config(existing.transport.app, lifespan="off", log_level="error"))
+    server = uvicorn.Server(uvicorn.Config(existing.transport.app, lifespan="off", log_level="error", ws="none"))
     serving = asyncio.create_task(server.serve(sockets=[sock]))
     client = None
     try:
