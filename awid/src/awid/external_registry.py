@@ -152,6 +152,36 @@ class StrictExternalRegistry:
             self._clients[key] = client
         return client, approved
 
+    async def fetch_team_object(
+        self, team_id: str, suffix: str, *, authority: RegistryAuthority,
+        not_found_reason: str,
+    ) -> dict[str, Any]:
+        """Anonymous team evidence through the same DNS-selected pinned transport.
+
+        ``suffix`` is constructed by the caller from escaped protocol fields;
+        neither the certificate nor its sender supplies a registry URL.
+        """
+        from awid.team_ids import parse_team_id
+        domain, name = parse_team_id(team_id)
+        try:
+            async with asyncio.timeout(self.deadline_seconds):
+                client, _ = await self._client(authority, 1)
+                namespace = await self._object(
+                    client, f"/v1/namespaces/{escaped_path_component(domain)}",
+                    bypass_cache=True, not_found_reason=not_found_reason,
+                )
+                if (namespace.get("domain") != domain
+                        or namespace.get("controller_did") != authority.controller_did
+                        or namespace.get("verification_status") != "verified"):
+                    raise FederationAuthorityError("sender_registry_protocol_invalid")
+                return await self._object(
+                    client,
+                    f"/v1/namespaces/{escaped_path_component(domain)}/teams/{escaped_path_component(name)}/{suffix}",
+                    bypass_cache=True, not_found_reason=not_found_reason,
+                )
+        except TimeoutError as exc:
+            raise FederationAuthorityError("sender_registry_unavailable") from exc
+
     async def fetch_evidence(
         self,
         address: str,

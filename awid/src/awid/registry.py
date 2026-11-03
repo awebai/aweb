@@ -844,6 +844,23 @@ class RegistryClient:
             )
         )
 
+    async def get_home_namespace(self, domain: str) -> Namespace | None:
+        """Read only this configured registry, without discovery or fallback."""
+        from awid.external_http import escaped_path_component
+        data = await self._request_optional_json(
+            "GET", f"/v1/namespaces/{escaped_path_component(domain)}",
+            registry_url=self.registry_url,
+        )
+        return None if data is None else _namespace_from_json(data)
+
+    async def get_home_team_object(self, domain: str, name: str, suffix: str) -> dict[str, Any]:
+        """Read anonymous public team facts at this explicitly selected registry."""
+        from awid.external_http import escaped_path_component
+        return await self._request_json(
+            "GET", f"/v1/namespaces/{escaped_path_component(domain)}/teams/{escaped_path_component(name)}/{suffix}",
+            registry_url=self.registry_url,
+        )
+
     async def get_namespace(self, domain: str) -> Namespace | None:
         data = await self._request_optional_json(
             "GET",

@@ -94,6 +94,8 @@ async def local_recipient_for_own_route(db, route: Mapping[str, Any], *, request
         from aweb.messaging.messages import resolve_agent_by_did
         recipient = await resolve_agent_by_did(db, did)
     if recipient is None:
+        if route.get("route_team_id"):
+            raise FederationAuthorityError("local_recipient_route_missing")
         refuse_same_origin_nonresident(origin, origins=origins)
     if did.startswith("did:aw:"):
         # As with a stable-only signed continuation, discover the current key

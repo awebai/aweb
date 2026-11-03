@@ -483,3 +483,310 @@ async def test_hosted_hook_retains_exact_certificate(kind, encrypted):
                         signature=payload["signature"], sender_certificate=certificate)
         result = await sign_hosted_message(auth=auth, signer=signer, message_type=kind, payload=submitted.fields)
     assert result.sender_certificate == certificate
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+@pytest.mark.parametrize("encrypted", [False, True], ids=["plaintext", "v2"])
+async def test_recipient_reads_team_vouched_author(route_pair, kind, encrypted):
+    from test_messages_http import _signed_identity_headers
+    pair, target = route_pair, route_pair.target.global_actor
+    response, submitted = await _send(pair.source.local, target, kind, encrypted=encrypted)
+    assert response.status_code == 200, response.text
+    path = "/v1/messages/inbox" if kind == "mail" else f"/v1/chat/sessions/{submitted.cid}/messages"
+    read = await target.node.client.get(path, headers=_signed_identity_headers(target.sk, target.did, target.stable))
+    assert read.status_code == 200, read.text
+    message = next(item for item in read.json()["messages"] if item["message_id"] == str(submitted.mid))
+    assert message["from_did"] == pair.source.local.did
+    assert message["sender_membership"] == dict(team_id=pair.source.team_id, member_did_aw=None, state="active")
+    assert message.get("from_alias", message.get("from_agent")) == pair.source.local.alias
+    assert not message.get("from_address")
+    if not encrypted:
+        assert message["body"] == submitted.fields["body"]
+        assert json.loads(message["signed_payload"]) == submitted.fields
+    else:
+        assert message["encrypted_envelope"] == submitted.envelope
+
+
+async def _expire_team_evidence(node):
+    # Delete only this fixture's real shared cache; no resolver/clock substitution.
+    await node.db.execute("DELETE FROM {{tables.federation_authority_results}} WHERE scope_key LIKE 'team-route:%'")
+
+
+async def _route_rows(node, cid, did):
+    return [await node.db.fetch_one(
+        "SELECT did,address,delivery_origin,route_team_id,route_certificate_id,route_certificate "
+        "FROM {{tables." + table + "}} WHERE " + key + "=$1 AND did=$2", cid, did,
+    ) for table, key in (("conversation_participants", "conversation_id"), ("chat_participants", "session_id"))]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+@pytest.mark.parametrize("label", ["alias", "legacy-address"])
+async def test_released_local_labels_still_deliver_locally(route_pair, kind, label):
+    node = route_pair.source
+    sender, target = node.local, node.global_actor
+    path, payload, sent = _submission(sender, target, kind)
+    sent.fields["from"] = sender.alias if label == "alias" else f"{node.domain}/{sender.alias}"
+    payload["signed_payload"] = canonical_json_bytes(sent.fields).decode()
+    payload["signature"] = sign_message(sender.sk, payload["signed_payload"].encode())
+    raw = json.dumps(payload).encode()
+    response = await node.client.post(path, content=raw, headers={
+        **_signed_team_headers(sender.sk, sender.did, node.team_id, sender.encoded_certificate, raw),
+        "Content-Type": "application/json",
+    })
+    assert response.status_code == 200, response.text
+    await _stored(target, kind, sent)
+    assert ("POST", "/v1/federation/messages") not in node.calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+@pytest.mark.parametrize("encrypted", [False, True], ids=["plaintext", "v2"])
+@pytest.mark.parametrize("fault", ["revoked", "record-gone", "own-nonresident"])
+async def test_reply_revalidates_team_route_without_effects(route_pair, kind, encrypted, fault):
+    source, target = route_pair.source, route_pair.target
+    response, first = await _send(source.local, target.global_actor, kind, encrypted=encrypted)
+    assert response.status_code == 200, response.text
+    if fault == "revoked":
+        await source.registry.revoke(source.local.certificate["certificate_id"])
+    else:
+        await source.registry.db.execute("DELETE FROM {{tables.team_server_records}}")
+        if fault == "own-nonresident":
+            record = build_team_server_record(source.team_id, source.team_did, target.origin, datetime.now(timezone.utc))
+            await source.registry_client.publish_team_server_record(
+                source.domain, "members", record, sign_team_server_record(source.team_sk, record),
+            )
+    await _expire_team_evidence(target)
+    before = await _effects(target), await _effects(source)
+    routes = await _route_rows(target, first.cid, source.local.did)
+    posts = (source.calls.count(("POST", "/v1/federation/messages")), target.calls.count(("POST", "/v1/federation/messages")))
+    response, _ = await _send(target.global_actor, source.local, kind, encrypted=encrypted, continuation=str(first.cid))
+    assert response.status_code == 404, response.text
+    assert response.json().get("reason") == "local_recipient_route_missing", response.text
+    assert response.json()["retryable"] is False
+    assert (await _effects(target), await _effects(source)) == before
+    assert await _route_rows(target, first.cid, source.local.did) == routes
+    assert (source.calls.count(("POST", "/v1/federation/messages")), target.calls.count(("POST", "/v1/federation/messages"))) == posts
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+@pytest.mark.parametrize("encrypted", [False, True], ids=["plaintext", "v2"])
+async def test_same_origin_certificate_reissue_persists_exact_proof(route_pair, kind, encrypted):
+    source, target = route_pair.source, route_pair.target
+    response, first = await _send(source.local, target.global_actor, kind, encrypted=encrypted)
+    assert response.status_code == 200, response.text
+    old = source.local.certificate
+    await source.registry.revoke(old["certificate_id"])
+    cert = _make_certificate(source.team_sk, source.team_did, source.local.did,
+        team_id=source.team_id, alias=source.local.alias, identity_scope="local", certificate_id=str(uuid4()))
+    encoded = _encode_certificate(cert)
+    await source.registry_client.register_team_certificate(
+        source.domain, "members", team_controller_signing_key=source.team_sk,
+        certificate_id=cert["certificate_id"], member_did_key=source.local.did,
+        member_did_aw=None, member_address=None, alias=source.local.alias, identity_scope="local", certificate=encoded,
+    )
+    source.local.certificate, source.local.encoded_certificate = cert, encoded
+    await _expire_team_evidence(source)
+    await _expire_team_evidence(target)
+    response, renewed = await _send(source.local, target.global_actor, kind, encrypted=encrypted, continuation=str(first.cid))
+    assert response.status_code == 200, response.text
+    await _stored(target.global_actor, kind, renewed)
+    for row in await _route_rows(target, first.cid, source.local.did):
+        if row is None:
+            assert kind == "mail"
+            continue
+        assert row["route_certificate_id"] == cert["certificate_id"]
+        assert row["route_certificate"] == encoded
+        assert row["delivery_origin"] == source.origin
+    response, reply = await _send(target.global_actor, source.local, kind, encrypted=encrypted, continuation=str(first.cid))
+    assert response.status_code == 200, response.text
+    await _stored(source.local, kind, reply)
+
+
+async def _publish_server(node, origin):
+    await node.registry.db.execute("DELETE FROM {{tables.team_server_records}}")
+    record = build_team_server_record(node.team_id, node.team_did, origin, datetime.now(timezone.utc))
+    await node.registry_client.publish_team_server_record(
+        node.domain, "members", record, sign_team_server_record(node.team_sk, record),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+@pytest.mark.parametrize("encrypted", [False, True], ids=["plaintext", "v2"])
+async def test_reply_follows_moved_server_and_persists_only_on_acceptance(route_pair, kind, encrypted):
+    source, target = route_pair.source, route_pair.target
+    response, first = await _send(source.local, target.global_actor, kind, encrypted=encrypted)
+    assert response.status_code == 200, response.text
+    sock = _socket()
+    moved = _origin(sock)
+    # Same deployment under a new public URL: real listener, same stored thread.
+    source.server.app.state.federation_public_origins = [moved]
+    async with _listener(source.server.app, sock):
+        await _publish_server(source, moved)
+        await _expire_team_evidence(target)
+        response, reply = await _send(target.global_actor, source.local, kind, encrypted=encrypted, continuation=str(first.cid))
+        assert response.status_code == 200, response.text
+        await _stored(source.local, kind, reply)
+        for row in await _route_rows(target, first.cid, source.local.did):
+            if row is None:
+                assert kind == "mail"
+                continue
+            assert row["delivery_origin"] == moved
+            assert row["route_certificate"] == source.local.encoded_certificate
+        assert source.calls.count(("POST", "/v1/federation/messages")) == 1
+        assert target.calls.count(("POST", "/v1/federation/messages")) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+@pytest.mark.parametrize("encrypted", [False, True], ids=["plaintext", "v2"])
+async def test_reply_own_team_route_resident_delivers_and_reads_locally(route_pair, kind, encrypted):
+    from test_messages_http import _signed_identity_headers
+    source, target = route_pair.source, route_pair.target
+    response, first = await _send(source.local, target.global_actor, kind, encrypted=encrypted)
+    assert response.status_code == 200, response.text
+    # Admit the exact key on this deployment; historical remote actor stays NULL.
+    resident_id = uuid4()
+    await target.db.execute(
+        "INSERT INTO {{tables.agents}} (agent_id,team_id,alias,did_key,identity_scope,inbound_mode) "
+        "VALUES ($1,$2,'moved',$3,'local','open')", resident_id, target.team_id, source.local.did,
+    )
+    await _insert_agent_encryption_assertion(target.db, agent_id=resident_id, team_id=target.team_id,
+                                             assertion=source.local.encryption_key)
+    moved_cert = _make_certificate(target.team_sk, target.team_did, source.local.did,
+        team_id=target.team_id, alias="moved", identity_scope="local", certificate_id=str(uuid4()))
+    moved_encoded = _encode_certificate(moved_cert)
+    await target.registry_client.register_team_certificate(
+        target.domain, "members", team_controller_signing_key=target.team_sk,
+        certificate_id=moved_cert["certificate_id"], member_did_key=source.local.did,
+        member_did_aw=None, member_address=None, alias="moved", identity_scope="local", certificate=moved_encoded,
+    )
+    await _publish_server(source, target.origin)
+    await _expire_team_evidence(target)
+    response, reply = await _send(target.global_actor, source.local, kind, encrypted=encrypted, continuation=str(first.cid))
+    assert response.status_code == 200, response.text
+    await _stored(SimpleNamespace(node=target), kind, reply)
+    path = "/v1/messages/inbox" if kind == "mail" else f"/v1/chat/sessions/{first.cid}/messages"
+    read = await target.client.get(path, headers=_signed_team_headers(source.local.sk, source.local.did, target.team_id, moved_encoded))
+    assert read.status_code == 200, read.text
+    assert any(message["message_id"] == str(reply.mid) for message in read.json()["messages"])
+    assert ("POST", "/v1/federation/messages") not in source.calls
+    assert target.calls.count(("POST", "/v1/federation/messages")) == 1
+    for row in await _route_rows(target, first.cid, source.local.did):
+        if row is not None:
+            assert row["delivery_origin"] == target.origin
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+@pytest.mark.parametrize("encrypted", [False, True], ids=["plaintext", "v2"])
+@pytest.mark.parametrize("mode", ["team_and_contacts", "contacts_only"])
+async def test_team_route_continuation_rechecks_open_policy(route_pair, kind, encrypted, mode):
+    source, target = route_pair.source, route_pair.target
+    response, first = await _send(source.local, target.global_actor, kind, encrypted=encrypted)
+    assert response.status_code == 200, response.text
+    await target.db.execute("UPDATE {{tables.agents}} SET inbound_mode=$1 WHERE agent_id=$2", mode, target.global_actor.id)
+    before = await _effects(target)
+    routes = await _route_rows(target, first.cid, source.local.did)
+    response, _ = await _send(source.local, target.global_actor, kind, encrypted=encrypted, continuation=str(first.cid))
+    assert response.status_code == 403, response.text
+    assert "recipient_policy_rejected" in response.text
+    assert await _effects(target) == before
+    assert await _route_rows(target, first.cid, source.local.did) == routes
+
+
+async def _hosted_mcp_send(sender, target, kind, *, encrypted, continuation=None):
+    from aweb.internal_auth import build_internal_auth_header_value
+    from aweb.mcp.server import create_mcp_app
+    node = sender.node
+    async def signer(**kwargs):
+        raw = canonical_json_bytes(kwargs["payload"]).decode()
+        return dict(from_did=sender.did, signed_payload=raw, signature=sign_message(sender.sk, raw.encode()),
+                    sender_certificate=sender.encoded_certificate)
+    async def encryptor(**kwargs):
+        fields = kwargs["payload"]
+        def identity(actor):
+            return dict(did=actor.did, stable_id=actor.stable, address=actor.address,
+                        team_id=actor.node.team_id, signing_key=actor.sk, encryption_key=actor.encryption_key)
+        envelope = encrypt_e2ee_message(kind=kind, sender=identity(sender), recipients=[identity(target)],
+            body=fields["body"], subject=fields.get("subject", ""), message_id=fields["message_id"],
+            conversation_id=fields["conversation_id"],
+            created_at=datetime.fromisoformat(fields["timestamp"].replace("Z", "+00:00")))
+        return dict(content_mode="encrypted_v2", message_version=2, encrypted_envelope=envelope,
+                    sender_certificate=sender.encoded_certificate)
+    mcp = create_mcp_app(db_infra=node.server.db, redis=node.server.app.state.redis,
+        registry_client=node.server.app.state.awid_registry_client,
+        federation_authority=node.server.app.state.federation_authority,
+        hosted_signer=signer, hosted_encryptor=encryptor, public_origin=node.origin)
+    mount = "/actf-mcp-" + uuid4().hex
+    node.server.app.mount(mount, mcp)
+    await mcp.startup()
+    try:
+        args = dict(body="Hosted team route", plaintext=not encrypted) if kind == "mail" else dict(message="Hosted team route", plaintext=not encrypted, leaving=True)
+        if continuation:
+            args["conversation_id" if kind == "mail" else "session_id"] = continuation
+        else:
+            args["to" if kind == "mail" else "to_address"] = target.address
+        raw = json.dumps(dict(jsonrpc="2.0", id=1, method="tools/call", params=dict(
+            name="send_mail" if kind == "mail" else "chat_send", arguments=args))).encode()
+        principal = str(uuid4())
+        response = await node.client.post(mount+"/", content=raw, headers={
+            "X-Team-ID": node.team_id, "X-User-ID": principal, "X-AWEB-Actor-ID": str(sender.id),
+            "X-AWEB-Auth": build_internal_auth_header_value(secret="disposable-actf-proxy-secret", team_id=node.team_id,
+                principal_type="u", principal_id=principal, actor_id=str(sender.id)),
+            "Content-Type": "application/json", "Accept": "application/json, text/event-stream",
+        })
+        assert response.status_code == 200, response.text
+        result = response.json()["result"]
+        assert not result.get("isError"), result
+        return json.loads(result["content"][0]["text"])
+    finally:
+        await mcp.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+@pytest.mark.parametrize("encrypted", [False, True], ids=["plaintext", "v2"])
+async def test_hosted_mcp_team_route_round_trip(route_pair, monkeypatch, kind, encrypted):
+    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
+    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", "disposable-actf-proxy-secret")
+    source, target = route_pair.source, route_pair.target
+    first = await _hosted_mcp_send(source.local, target.global_actor, kind, encrypted=encrypted)
+    assert "error" not in first, first
+    cid = first["conversation_id"]
+    table = "messages" if kind == "mail" else "chat_messages"
+    received = await target.db.fetch_one("SELECT * FROM {{tables."+table+"}} WHERE message_id=$1", UUID(first["message_id"]))
+    assert received["from_did"] == source.local.did
+    if not encrypted:
+        assert json.loads(received["signed_payload"])["from"] == f"{source.team_id}/{source.local.alias}"
+    reply = await _hosted_mcp_send(target.global_actor, source.local, kind, encrypted=encrypted, continuation=cid)
+    assert "error" not in reply, reply
+    received = await source.db.fetch_one("SELECT * FROM {{tables."+table+"}} WHERE message_id=$1", UUID(reply["message_id"]))
+    assert received["from_did"] == target.global_actor.stable
+    answer = await _hosted_mcp_send(source.local, target.global_actor, kind, encrypted=encrypted, continuation=cid)
+    assert "error" not in answer, answer
+    assert await target.db.fetch_value("SELECT count(*) FROM {{tables."+table+"}} WHERE message_id=$1", UUID(answer["message_id"])) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+@pytest.mark.parametrize("encrypted", [False, True], ids=["plaintext", "v2"])
+async def test_hosted_mcp_reply_refuses_revoked_route_with_typed_error(route_pair, monkeypatch, kind, encrypted):
+    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
+    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", "disposable-actf-proxy-secret")
+    source, target = route_pair.source, route_pair.target
+    response, first = await _send(source.local, target.global_actor, kind, encrypted=encrypted)
+    assert response.status_code == 200, response.text
+    await source.registry.revoke(source.local.certificate["certificate_id"])
+    await _expire_team_evidence(target)
+    before = await _effects(source), await _effects(target)
+    routes = await _route_rows(target, first.cid, source.local.did)
+    reply = await _hosted_mcp_send(target.global_actor, source.local, kind, encrypted=encrypted, continuation=str(first.cid))
+    assert reply.get("reason") == "local_recipient_route_missing", reply
+    assert reply["retryable"] is False
+    assert (await _effects(source), await _effects(target)) == before
+    assert await _route_rows(target, first.cid, source.local.did) == routes
+    assert not source.calls.count(("POST", "/v1/federation/messages"))

@@ -46,6 +46,7 @@ class FederationEnvelope(BaseModel):
     sender_current_did_key: str = Field(..., min_length=1, max_length=256)
     sender_address: str | None = Field(default=None, min_length=1, max_length=256)
     sender_delivery_origin: str | None = Field(default=None, min_length=1, max_length=512)
+    sender_certificate: str | None = Field(default=None, max_length=8192)
     # Deprecated v1 compatibility fields accepted only to tolerate old senders
     # during a bounded rollout window. They are intentionally ignored by all
     # routing, lookup, authorization, and delivery checks.

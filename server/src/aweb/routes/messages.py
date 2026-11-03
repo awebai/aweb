@@ -43,6 +43,7 @@ from aweb.id_chain_auth import stored_id_chain
 from aweb.identity_metadata import lookup_identity_metadata_by_did
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, get_messaging_auth
 from aweb.messaging.sender_address import sender_address as _sender_address
+from aweb.federation.team_routes import authorize_local_sender, outbound_certificate, persist_accepted_team_route
 from aweb.messaging.alias_targets import (
     AmbiguousLocalAddressError,
     derive_team_address,
@@ -310,7 +311,7 @@ async def _inbox_response_from_rows(
         messages.append(
             InboxMessage(
                 attachment_refs=await attachment_references(db, "mail", r["message_id"]) if content_mode == "encrypted_v2" else [],
-                sender_membership=memberships[(str(r.get("team_id") or ""), str(r.get("from_agent_id") or ""))],
+                sender_membership=memberships[str(r["message_id"])],
                 message_id=str(r["message_id"]),
                 conversation_id=(str(r["conversation_id"]) if r.get("conversation_id") else None),
                 from_agent_id=(str(r["from_agent_id"]) if r.get("from_agent_id") else None),
@@ -510,6 +511,7 @@ def _validate_signed_mail_payload(
     from_alias: str | None,
     from_address: str | None,
     from_stable_id: str | None,
+    from_team_id: str | None = None,
     priority: MessagePriority,
     subject: str,
     body: str,
@@ -535,6 +537,7 @@ def _validate_signed_mail_payload(
             str(from_address or "").strip(),
             str(from_did or "").strip(),
             str(from_stable_id or "").strip(),
+            f"{from_team_id}/{from_alias}" if from_team_id and from_alias and not from_stable_id else "",
         )
         if value
     }
@@ -850,11 +853,13 @@ async def _deliver_remote_mail_and_project_locally(
         )
     local = await local_recipient_for_own_route(db, recipient, request=request, origins=public_origins(request))
     if local is not None:
-        return await _send_mail_conversation_continuation(
+        delivered = await _send_mail_conversation_continuation(
             request, payload, db, auth=auth, registry_client=registry_client,
             sender_address=sender_address, sender_did=sender_did,
             conversation_id=payload.conversation_id, local_recipient=local,
         )
+        await persist_accepted_team_route(db, recipient, payload.conversation_id)
+        return delivered
     encrypted_metadata = _validate_encrypted_payload(
         payload,
         auth=auth,
@@ -901,7 +906,8 @@ async def _deliver_remote_mail_and_project_locally(
             type="mail",
             sender_did_aw=sender_routing_did,
             sender_current_did_key=sender_current_did,
-            sender_address=sender_address,
+            sender_address=sender_address if auth.did_aw else None,
+            sender_certificate=outbound_certificate(request) if not auth.did_aw else None,
             sender_delivery_origin=_local_public_origin(request),
             target_address=target_address,
             target_did_aw=target_stable_id,
@@ -933,6 +939,9 @@ async def _deliver_remote_mail_and_project_locally(
         )
     except FederationEnvelopeError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    if not auth.did_aw:
+        await authorize_local_sender(request, envelope, outbound=True)
 
     try:
         remote = await deliver_federated_mail(
@@ -1037,6 +1046,8 @@ async def _deliver_remote_mail_and_project_locally(
         )
     except (ValidationError, NotFoundError, ForbiddenError) as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+    await persist_accepted_team_route(db, recipient, conversation_id)
 
     await record_successful_contact_side_effect(
         db,
@@ -1241,6 +1252,7 @@ async def _send_mail_conversation_continuation(
                 from_alias=auth.alias,
                 from_address=sender_address,
                 from_stable_id=auth.did_aw,
+                from_team_id=auth.team_id,
                 priority=payload.priority,
                 subject=payload.subject,
                 body=payload.body,
@@ -1354,7 +1366,7 @@ async def _send_federated_mail_conversation_continuation(
     refuse_remote_attachments()
     recipient_participant = continuation.recipient_participant
     try:
-        recipient = await remote_recipient_from_participant(registry_client, recipient_participant)
+        recipient = await remote_recipient_from_participant(registry_client, recipient_participant, request=request)
     except (ValidationError, ServiceError) as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     msg_uuid = UUID(payload.message_id) if payload.message_id else None
@@ -1719,6 +1731,7 @@ async def send_message(
             from_alias=auth.alias,
             from_address=sender_address,
             from_stable_id=auth.did_aw,
+            from_team_id=auth.team_id,
             priority=payload.priority,
             subject=payload.subject,
             body=payload.body,
