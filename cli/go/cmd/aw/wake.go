@@ -101,6 +101,7 @@ var wakeRunCmd = &cobra.Command{
 			Session:     &session.ExecClient{Bin: strings.TrimSpace(wakeOatsBin)},
 			ChannelCore: wake.NewChannelCoreRunner(store),
 			OpenStream:  wakeStreamOpener,
+			Heartbeat:   wakeHeartbeat,
 			MaxStreams:  wakeMaxStreams,
 			Version:     version,
 			Commit:      daemonCommitForStatus(),
@@ -440,9 +441,26 @@ func wakeStore() (*wake.Store, error) {
 // Credentials stay explicit per client and authentication is never
 // re-implemented: this resolves the identity home through the same selection
 // path every other identity-home-aware command uses. The broker needs
-// stream-read authority and nothing else — it never opens a message, so it
-// never needs decryption material for any identity.
+// stream-read and presence authority — it never opens a message, so it never
+// needs decryption material for any identity.
 func wakeStreamOpener(identityHome, teamID string) (run.EventStreamOpener, error) {
+	client, err := wakeIdentityClient(context.Background(), identityHome, teamID)
+	if err != nil {
+		return nil, err
+	}
+	return run.NewEventStreamOpener(client.Client), nil
+}
+
+func wakeHeartbeat(ctx context.Context, identityHome, teamID string) error {
+	client, err := wakeIdentityClient(ctx, identityHome, teamID)
+	if err != nil {
+		return err
+	}
+	_, err = client.Heartbeat(ctx)
+	return err
+}
+
+func wakeIdentityClient(ctx context.Context, identityHome, teamID string) (*aweb.Client, error) {
 	identityHome = strings.TrimSpace(identityHome)
 	if identityHome == "" || !filepath.IsAbs(identityHome) {
 		return nil, fmt.Errorf("identity home must be an absolute path, got %q", identityHome)
@@ -458,14 +476,18 @@ func wakeStreamOpener(identityHome, teamID string) (run.EventStreamOpener, error
 		if err := validateGrantHomeTeam(home.Root, teamID); err != nil {
 			return nil, err
 		}
-		client, _, err = resolveGrantClientSelection(workingDir, home)
+		client, _, err = buildGrantClientSelectionForTeam(ctx, workingDir, home, teamID)
 	} else {
-		client, _, err = resolveClientSelectionAtIdentityHomeWithTeamOverride(workingDir, teamID, home)
+		var selection *awconfig.Selection
+		selection, err = resolveSelectionAtIdentityHome(workingDir, teamID, home)
+		if err == nil {
+			client, _, err = buildClientForSelectionAtIdentityHome(ctx, workingDir, externalIdentityHomeRoot(home), selection)
+		}
 	}
 	if err != nil {
 		return nil, err
 	}
-	return run.NewEventStreamOpener(client.Client), nil
+	return client, nil
 }
 
 func validateGrantHomeTeam(identityHome, teamID string) error {

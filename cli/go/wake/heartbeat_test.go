@@ -65,7 +65,12 @@ func TestPresenceHeartbeatUsesFreshInspectAndStopsOnDeregister(t *testing.T) {
 	home := tempHome(t, "session")
 	identity := filepath.Join(tempHome(t, "identity"), ".aw")
 	writeWakeTestTeamState(t, identity, "dev:example.com")
-	if err := broker.Register(Registration{Home: home, IdentityHome: identity, Delivery: DeliverySession}); err != nil {
+	joined := filepath.Join(tempHome(t, "joined"), ".aw")
+	writeWakeTestTeamState(t, joined, "ops:example.com")
+	if err := broker.Register(Registration{Home: home, RuntimeDelivery: RuntimeDeliveryExternalSession, ReceiveIdentities: []ReceiveIdentity{
+		{IdentityHome: identity, TeamID: "dev:example.com", DeliveryOwner: ReceiveOwnerSessionHints, Controls: true},
+		{IdentityHome: joined, TeamID: "ops:example.com", DeliveryOwner: ReceiveOwnerSessionHints},
+	}}); err != nil {
 		t.Fatal(err)
 	}
 	nextInspect := func() chan heartbeatInspectAnswer {
@@ -80,13 +85,17 @@ func TestPresenceHeartbeatUsesFreshInspectAndStopsOnDeregister(t *testing.T) {
 	}
 	expectBeat := func() {
 		t.Helper()
-		select {
-		case got := <-requests:
-			if got != identity+"|dev:example.com" {
-				t.Fatalf("heartbeat identity=%s", got)
+		want := map[string]bool{identity + "|dev:example.com": true, joined + "|ops:example.com": true}
+		for len(want) > 0 {
+			select {
+			case got := <-requests:
+				if !want[got] {
+					t.Fatalf("unexpected or repeated heartbeat identity=%s", got)
+				}
+				delete(want, got)
+			case <-time.After(2 * time.Second):
+				t.Fatal("present session did not heartbeat each identity")
 			}
-		case <-time.After(2 * time.Second):
-			t.Fatal("present session did not heartbeat")
 		}
 	}
 	noBeat := func() {
@@ -102,7 +111,7 @@ func TestPresenceHeartbeatUsesFreshInspectAndStopsOnDeregister(t *testing.T) {
 	nextInspect() <- heartbeatInspectAnswer{present: false}
 	pending := nextInspect()
 	noBeat()
-	pending <- heartbeatInspectAnswer{err: errors.New("inspect unavailable")}
+	pending <- heartbeatInspectAnswer{present: true, err: errors.New("inspect unavailable")}
 	pending = nextInspect()
 	noBeat()
 	pending <- heartbeatInspectAnswer{present: true}

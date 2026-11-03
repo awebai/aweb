@@ -28,11 +28,14 @@ test.each(["team", "grant"] as const)("presence timer sends real %s-auth HTTP he
   });
   const abort = new AbortController();
   const stop = startPresenceHeartbeat(client, abort.signal);
+  let deadline: ReturnType<typeof setTimeout> | undefined;
   try {
     vi.advanceTimersByTime(299999);
     expect(count).toBe(0);
     vi.advanceTimersByTime(1);
-    await arrival;
+    await Promise.race([arrival, new Promise((_, reject) => {
+      deadline = setTimeout(() => reject(new Error("heartbeat did not reach HTTP server")), 2000);
+    })]);
     expect(count).toBe(1);
     abort.abort();
     vi.advanceTimersByTime(600000);
@@ -40,7 +43,43 @@ test.each(["team", "grant"] as const)("presence timer sends real %s-auth HTTP he
     expect(count).toBe(1);
   } finally {
     abort.abort(); stop();
+    clearTimeout(deadline);
     server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}, 3000);
+
+test("a failed heartbeat retries next tick and abort cancels a stalled request", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  let count = 0;
+  let failed: () => void = () => {}, stalled: () => void = () => {}, closed: () => void = () => {};
+  const failure = new Promise<void>((r) => { failed = r; });
+  const arrival = new Promise<void>((r) => { stalled = r; });
+  const disconnect = new Promise<void>((r) => { closed = r; });
+  const server = createServer((_req, res) => {
+    count++;
+    if (count === 1) { res.writeHead(503); res.end("unavailable"); return; }
+    res.once("close", closed);
+    stalled();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("no address");
+  const abort = new AbortController();
+  const stop = startPresenceHeartbeat(new APIClient(`http://127.0.0.1:${address.port}`, {
+    did:"did:key:z6Mktest", stableID:"", signingKey:new Uint8Array(32).fill(1), teamID:"dev:example.com", teamCertificateHeader:"cert",
+  }), abort.signal, failed);
+  try {
+    vi.advanceTimersByTime(300000);
+    await failure;
+    vi.advanceTimersByTime(300000);
+    await arrival;
+    abort.abort();
+    await disconnect;
+    expect(count).toBe(2);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    stop(); server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 }, 3000);

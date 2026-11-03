@@ -15,6 +15,22 @@ A long-lived channel-core child owns delivery: immediate exact fetch,
 local decrypt/trust, formatting, terminal input, durable delivered IDs, mail
 acknowledgement and chat read marking.
 
+The daemon also sends presence heartbeats every five minutes for each
+registration's explicit receive identities. Each tick first performs a fresh
+`session inspect` of that registration's home. Only `present:true` permits the
+heartbeats; an absent result or inspect error skips that tick. No cached
+inspection establishes liveness. Deregistration and daemon shutdown cancel the
+timer and any in-flight inspect or heartbeat. The existing identity-home/team
+credential selection supplies root, team or session-grant authentication to
+`POST /v1/agents/heartbeat`.
+
+The Claude channel and pi extension use the same heartbeat endpoint every five
+minutes during their running sessions, including external-delivery mode. Their
+shutdown signal stops the timer and cancels an in-flight request. Ordinary CLI
+calls and the event stream itself do not refresh presence. Operators must
+upgrade and restart these runtimes before enabling stale-claim takeover on the
+server.
+
 The boundary is intentionally the same one documented in
 [channel-core-terminal-adapter.md](channel-core-terminal-adapter.md):
 

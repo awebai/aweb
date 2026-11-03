@@ -57,7 +57,9 @@ type Config struct {
 	// OpenStream builds the event stream source for one identity home. It is
 	// injected so the broker can be tested with no server and no credentials,
 	// and so credential resolution stays in cmd/aw where it already lives.
-	OpenStream        func(identityHome, teamID string) (run.EventStreamOpener, error)
+	OpenStream func(identityHome, teamID string) (run.EventStreamOpener, error)
+	// Heartbeat uses the same explicit identity/team selection as OpenStream.
+	// The runner calls it only after this tick's fresh inspect says present.
 	Heartbeat         func(ctx context.Context, identityHome, teamID string) error
 	HeartbeatInterval time.Duration
 

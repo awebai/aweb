@@ -148,6 +148,15 @@ func resolveGrantClientSelection(workingDir string, home awconfig.IdentityHome) 
 }
 
 func resolveGrantClientSelectionForTeam(workingDir string, home awconfig.IdentityHome, requestedTeam string) (*aweb.Client, *awconfig.Selection, error) {
+	c, sel, err := buildGrantClientSelectionForTeam(context.Background(), workingDir, home, requestedTeam)
+	if err != nil {
+		return nil, nil, err
+	}
+	lastClient = c
+	return c, sel, nil
+}
+
+func buildGrantClientSelectionForTeam(ctx context.Context, workingDir string, home awconfig.IdentityHome, requestedTeam string) (*aweb.Client, *awconfig.Selection, error) {
 	grant, err := awconfig.LoadGrantHome(home.Root)
 	if err != nil {
 		return nil, nil, err
@@ -163,7 +172,7 @@ func resolveGrantClientSelectionForTeam(workingDir string, home awconfig.Identit
 	if err != nil {
 		return nil, nil, fmt.Errorf("load grant session key: %w", err)
 	}
-	baseURL, err := resolveAuthenticatedBaseURL(grant.AwebURL)
+	baseURL, err := resolveAuthenticatedBaseURLContext(ctx, grant.AwebURL)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -196,7 +205,7 @@ func resolveGrantClientSelectionForTeam(workingDir string, home awconfig.Identit
 	if socketPath := strings.TrimSpace(grant.Custody.SocketPath); socketPath != "" {
 		if grant.ExpiresAt == "never" {
 			// Custody status is a short local authority probe, not a normal API request.
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			defer cancel()
 			var status custodyStatusReport
 			if err := custodyHTTP(ctx, socketPath, http.MethodGet, "/status", nil, &status); err != nil {
@@ -212,7 +221,6 @@ func resolveGrantClientSelectionForTeam(workingDir string, home awconfig.Identit
 		return nil, nil, err
 	}
 
-	lastClient = c
 	return c, sel, nil
 }
 

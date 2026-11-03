@@ -17,6 +17,7 @@ import {
   type EventStreamState,
   SenderTrustManager,
   startChannelLoop,
+  startPresenceHeartbeat,
 } from "@awebai/channel-core";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
@@ -346,6 +347,7 @@ export default function awebPiExtension(pi: ExtensionAPI) {
     try {
       config = await loadChannelConfig(ctx.cwd);
       client = createChannelClient(config);
+      startPresenceHeartbeat(client, abortController.signal, (message) => console.warn(message));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       pi.sendMessage({

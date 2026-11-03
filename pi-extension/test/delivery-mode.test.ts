@@ -99,6 +99,28 @@ test("an unknown AWEB_DELIVERY warns once and still opens the event stream", asy
   }
 });
 
+for (const delivery of ["session", undefined]) {
+  test(`Pi presence heartbeats in ${delivery || "channel"} mode and stops at shutdown`, async (t) => {
+    t.mock.timers.enable({ apis: ["setInterval"] });
+    const harness = await startSession(delivery);
+    try {
+      if (!delivery) await harness.waitForRequest();
+      t.mock.timers.tick(299999);
+      assert.equal(harness.requests.filter((p) => p === "/v1/agents/heartbeat").length, 0);
+      t.mock.timers.tick(1);
+      const deadline = Date.now() + 2000;
+      while (Date.now() < deadline && !harness.requests.includes("/v1/agents/heartbeat")) await settle(10);
+      assert.equal(harness.requests.filter((p) => p === "/v1/agents/heartbeat").length, 1);
+      await harness.close();
+      t.mock.timers.tick(600000);
+      assert.equal(harness.requests.filter((p) => p === "/v1/agents/heartbeat").length, 1);
+    } finally {
+      await harness.close();
+      t.mock.timers.reset();
+    }
+  });
+}
+
 test("a stopped channel reports to the operator without injecting a model turn", async () => {
   const harness = await startSession(undefined, true);
   try {
@@ -172,6 +194,7 @@ async function startSession(delivery: string | undefined, corruptDeliveryStore =
   assert.ok(sessionStart, "extension did not register a session_start handler");
   await sessionStart({}, ctx);
 
+  let closed = false;
   return {
     receiptPath: join(workdir, ".aw/receive/stream.json"),
     messages,
@@ -184,6 +207,8 @@ async function startSession(delivery: string | undefined, corruptDeliveryStore =
       assert.ok(requests.length > 0, "the Pi extension never opened the event stream");
     },
     close: async () => {
+      if (closed) return;
+      closed = true;
       const shutdown = handlers.get("session_shutdown");
       if (shutdown) await shutdown({}, ctx);
       if (originalDelivery === undefined) {
@@ -203,6 +228,14 @@ async function startSession(delivery: string | undefined, corruptDeliveryStore =
 async function startProbeServer(requests: string[]): Promise<Server> {
   const server = createServer((request: IncomingMessage, response) => {
     requests.push(request.url || "");
+    if (request.url === "/v1/agents/heartbeat") {
+      assert.equal(request.method, "POST");
+      assert.match(String(request.headers.authorization), /^DIDKey /);
+      assert.ok(request.headers["x-awid-team-certificate"]);
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+      return;
+    }
     response.writeHead(200, {
       "cache-control": "no-cache",
       connection: "keep-alive",

@@ -54,6 +54,19 @@ describe("resolveChannelDelivery", () => {
 });
 
 describe("packaged Claude channel delivery mode", () => {
+  test.each(["session", undefined])("packaged channel heartbeats while running in %s mode", async (delivery) => {
+    const dir = mkdtempSync(join(tmpdir(), "channel-presence-clock-"));
+    const clock = join(dir, "clock.cjs");
+    // Accelerate only the production five-minute interval in this child.
+    writeFileSync(clock, "const real = global.setInterval; global.setInterval = (fn, ms, ...args) => real(fn, ms === 300000 ? 50 : ms, ...args);\n");
+    const launched = await launchFixtureChild(delivery, { NODE_OPTIONS: `--require=${clock}` });
+    await vi.waitFor(() => expect(probe?.requests, launched.stderr()).toContain("/v1/agents/heartbeat"));
+    const stopped = new Promise<void>((resolve) => child!.once("exit", () => resolve()));
+    child!.stdin.end();
+    child!.kill("SIGTERM");
+    await stopped;
+  }, 10000);
+
   test("AWEB_DELIVERY=session opens no event stream and registers no channel", async () => {
     const launched = await launchFixtureChild("session");
 
@@ -95,7 +108,7 @@ describe("packaged Claude channel delivery mode", () => {
   }, 20_000);
 });
 
-async function launchFixtureChild(delivery: string | undefined) {
+async function launchFixtureChild(delivery: string | undefined, environment: NodeJS.ProcessEnv = {}) {
   const { workdir } = await createShadowedPrincipalFixture();
   receiptPath = join(workdir, ".aw/receive/stream.json");
   probe = await startProbeServer();
@@ -106,6 +119,7 @@ async function launchFixtureChild(delivery: string | undefined) {
 
   const launched = await launchPackagedMCPChild(channelRoot, workdir, {
     AWEB_DELIVERY: process.env.AWEB_DELIVERY,
+    ...environment,
   });
   child = launched.child;
   return launched;
@@ -125,6 +139,14 @@ async function startProbeServer(): Promise<ProbeServer> {
   const requests: string[] = [];
   const server = createServer((request: IncomingMessage, response) => {
     requests.push(request.url || "");
+    if (request.url === "/v1/agents/heartbeat") {
+      expect(request.method).toBe("POST");
+      expect(request.headers.authorization).toMatch(/^DIDKey /);
+      expect(request.headers["x-awid-team-certificate"]).toBeTruthy();
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+      return;
+    }
     response.writeHead(200, {
       "cache-control": "no-cache",
       connection: "keep-alive",

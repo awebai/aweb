@@ -325,6 +325,15 @@ func (r *instanceRunner) run(ctx context.Context) {
 	}
 	startChild()
 	defer stopChild()
+	if r.broker.cfg.Heartbeat != nil {
+		heartbeatCtx, cancelHeartbeat := context.WithCancel(ctx)
+		heartbeatDone := make(chan struct{})
+		go func() {
+			defer close(heartbeatDone)
+			r.runHeartbeats(heartbeatCtx)
+		}()
+		defer func() { cancelHeartbeat(); <-heartbeatDone }()
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -395,6 +404,46 @@ func (r *instanceRunner) run(ctx context.Context) {
 			if child != nil {
 				child.Offer(offer.binding, offer.event)
 			}
+		}
+	}
+}
+
+func (r *instanceRunner) runHeartbeats(ctx context.Context) {
+	ticker := time.NewTicker(r.broker.cfg.HeartbeatInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			r.heartbeat(ctx)
+		}
+	}
+}
+
+func (r *instanceRunner) heartbeat(ctx context.Context) {
+	reg := r.registrationSnapshot()
+	inspectCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	inspection, err := r.broker.cfg.Session.Inspect(inspectCtx, reg.Home)
+	cancel()
+	if err != nil {
+		if ctx.Err() == nil {
+			r.broker.cfg.Log("presence inspect failed home=%s err=%v", reg.Home, err)
+		}
+		return
+	}
+	if !inspection.Present || ctx.Err() != nil {
+		return
+	}
+	for _, binding := range reg.ReceiveBindings() {
+		if ctx.Err() != nil {
+			return
+		}
+		beatCtx, stop := context.WithTimeout(ctx, 5*time.Second)
+		err := r.broker.cfg.Heartbeat(beatCtx, binding.IdentityHome, binding.TeamID)
+		stop()
+		if err != nil && ctx.Err() == nil {
+			r.broker.cfg.Log("presence heartbeat failed identity_home=%s team=%s err=%v", binding.IdentityHome, binding.TeamID, err)
 		}
 	}
 }

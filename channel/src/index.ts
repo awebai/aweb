@@ -30,6 +30,7 @@ import {
   type EventStreamState,
   SenderTrustManager,
   startChannelLoop,
+  startPresenceHeartbeat,
 } from "@awebai/channel-core";
 import { startClaudeActivity } from "./activity.js";
 
@@ -140,6 +141,12 @@ export function createChannelTraceSink(
 async function main() {
   const workdir = process.cwd();
   const config = await loadChannelConfig(workdir);
+  const client = createChannelClient(config);
+  const abort = new AbortController();
+  process.once("SIGINT", () => abort.abort());
+  process.once("SIGTERM", () => abort.abort());
+  process.stdin.once("end", () => abort.abort());
+  startPresenceHeartbeat(client, abort.signal, console.error);
 
   // Agent activity runs in either delivery mode; it is attributed only when
   // this plugin presents the chat wake itself. When Claude Code closes the
@@ -174,7 +181,6 @@ async function main() {
     return;
   }
 
-  const client = createChannelClient(config);
   // Fail closed: a corrupt/unreadable trust store must abort startup, never
   // silently start with a discarded (empty) store.
   const pinStore = await loadSessionPinStore((message) => {
@@ -211,10 +217,6 @@ Control events (type="control") are operational signals. On "pause", stop curren
 
   const transport = new StdioServerTransport();
   await mcp.connect(transport);
-
-  const abort = new AbortController();
-  process.on("SIGINT", () => abort.abort());
-  process.on("SIGTERM", () => abort.abort());
 
   const traceSink = createChannelTraceSink(
     process.env.AWEB_CHANNEL_DEBUG || "",

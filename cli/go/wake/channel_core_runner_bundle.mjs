@@ -3458,18 +3458,18 @@ var APIClient = class {
   async getFresh(path) {
     return this.request("GET", path, void 0, true);
   }
-  async post(path, body) {
-    return this.request("POST", path, body);
+  async post(path, body, signal) {
+    return this.request("POST", path, body, false, signal);
   }
   /** POST to a route that answers without a body, such as a 202. */
   async postAccepted(path, body) {
     const resp = await this.send("POST", path, body);
     await resp.body?.cancel();
   }
-  async request(method, path, body, noCache = false) {
-    return readBoundedJSON(await this.send(method, path, body, noCache));
+  async request(method, path, body, noCache = false, signal) {
+    return readBoundedJSON(await this.send(method, path, body, noCache, signal));
   }
-  async send(method, path, body, noCache = false) {
+  async send(method, path, body, noCache = false, signal) {
     const url = this.baseURL + path;
     const bodyText = body === void 0 ? "" : JSON.stringify(body);
     const headers = {
@@ -3481,7 +3481,7 @@ var APIClient = class {
       method,
       headers,
       redirect: "error",
-      signal: AbortSignal.timeout(3e4)
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(3e4)]) : AbortSignal.timeout(3e4)
     };
     if (body !== void 0) {
       headers["Content-Type"] = "application/json";
@@ -3580,6 +3580,9 @@ var APIError = class extends Error {
 function retryAfterSeconds(header) {
   return header !== null && /^\d+$/.test(header.trim()) ? Number(header.trim()) : void 0;
 }
+
+// channel-core/src/presence.ts
+var PRESENCE_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1e3;
 
 // channel-core/src/receive.ts
 var import_proper_lockfile = __toESM(require_proper_lockfile(), 1);
