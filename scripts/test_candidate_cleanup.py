@@ -2,6 +2,8 @@
 """Host measurement parsing and recovery behavior."""
 import importlib.util
 import json
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -23,11 +25,82 @@ class HostPressureTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             pressure.lsof_counts('')
 
-    def test_absolute_bounds_and_numeric_rows_are_only_evidence(self):
+    def test_host_wide_growth_does_not_fail_clean_vm_recovery(self):
         baseline = self.sample()
-        self.assertEqual(pressure.compare(baseline, self.sample(**{'kern.num_files': 15000, 'vm_lsof_rows': 5020, 'vm_numeric_fd_rows': 20000}))['status'], 'passed')
-        for field, value in [('kern.num_files', 15001), ('vm_lsof_rows', 5021)]:
-            self.assertEqual(pressure.compare(baseline, self.sample(**{field: value}))['status'], 'failed')
+        # Reported e9ef2394 gate samples: unrelated host growth above 30k,
+        # only 60 additional VM lsof rows and no additional numeric FDs.
+        for host_delta in (30489, 30613):
+            result = pressure.compare(baseline, self.sample(**{
+                'kern.num_files': baseline['kern.num_files'] + host_delta,
+                'vm_lsof_rows': baseline['vm_lsof_rows'] + 60,
+            }))
+            self.assertEqual(result['status'], 'passed')
+            self.assertEqual(result['deltas']['kern.num_files'], host_delta)
+            self.assertNotIn('kern.num_files', result['bounds'])
+
+    def test_vm_row_bound_and_numeric_rows_are_only_evidence(self):
+        baseline = self.sample()
+        self.assertEqual(pressure.compare(baseline, self.sample(
+            vm_lsof_rows=5020, vm_numeric_fd_rows=20000))['status'], 'passed')
+        self.assertEqual(pressure.compare(baseline, self.sample(
+            vm_lsof_rows=5021))['status'], 'failed')
+
+    @unittest.skipUnless(sys.platform == 'darwin', 'macOS lsof recovery measurement')
+    def test_real_owned_descriptor_leak_fails_then_recovers(self):
+        # Exercise the actual counter/parser and comparison CLI on an owned
+        # child, without allocating files in the shared Docker VM. Only the
+        # measurement subject is supplied here; VM discovery has its own tests.
+        child_source = """
+import os, sys
+held = []
+print('ready', flush=True)
+for action in sys.stdin:
+    if action.strip() == 'leak':
+        held = [os.open(sys.argv[1], os.O_RDONLY) for _ in range(5001)]
+    else:
+        for fd in held:
+            os.close(fd)
+        held = []
+    print(len(held), flush=True)
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / 'owned-leak.txt'
+            target.touch()
+            child = subprocess.Popen([sys.executable, '-u', '-c', child_source, str(target)],
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+            try:
+                self.assertEqual(child.stdout.readline().strip(), 'ready')
+                def snapshot(path):
+                    raw = pressure.command('lsof', '-nP', '-p', str(child.pid))
+                    rows, numeric = pressure.lsof_counts(raw)
+                    path.with_suffix('.lsof.txt').write_text(raw)
+                    path.write_text(json.dumps(self.sample(vm_pids=[child.pid],
+                        vm_lsof_rows=rows, vm_numeric_fd_rows=numeric)))
+                    return rows, numeric
+                baseline = root / 'before.json'
+                initial_rows, initial_numeric = snapshot(baseline)
+                for action, expected_fds, expected_status in (
+                    ('leak', 5001, 'failed'), ('release', 0, 'passed'),
+                ):
+                    child.stdin.write(action + '\n')
+                    child.stdin.flush()
+                    self.assertEqual(child.stdout.readline().strip(), str(expected_fds))
+                    after = root / (action + '.json')
+                    rows, numeric = snapshot(after)
+                    if expected_fds:
+                        self.assertGreater(rows - initial_rows, 5000)
+                        self.assertEqual(numeric - initial_numeric, expected_fds)
+                    receipt = root / 'recovery.json'
+                    result = subprocess.run([sys.executable,
+                        str(ROOT / 'scripts/candidate-host-pressure.py'), 'compare',
+                        str(baseline), str(after), str(receipt)],
+                        text=True, capture_output=True, timeout=30)
+                    self.assertEqual(result.returncode, int(expected_status == 'failed'), result.stderr)
+                    self.assertEqual(json.loads(receipt.read_text())['status'], expected_status)
+            finally:
+                child.terminate()
+                child.communicate(timeout=10)
 
     def test_missing_or_restarted_vm_cannot_pass(self):
         self.assertEqual(pressure.compare(self.sample(), self.sample(vm_pids=[13]))['status'], 'failed')
@@ -82,14 +155,14 @@ class HostPressureTests(unittest.TestCase):
                     self.assertTrue(dest.with_suffix('.vm-50000.lsof.txt').exists())
 
     def test_settle_retries_preserves_samples_and_reports_the_passing_one(self):
-        for levels, expected in [([16000, 16000, 10000], 'passed'), ([16000] * 4, 'failed')]:
+        for levels, expected in [([6020, 6020, 20], 'passed'), ([6020] * 4, 'failed')]:
             with self.subTest(levels=levels), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 baseline = root / 'host-before.json'
                 baseline.write_text(json.dumps(self.sample()))
                 pending = iter(levels)
                 def capture_sample(path):
-                    result = self.sample(**{'kern.num_files': next(pending)})
+                    result = self.sample(vm_lsof_rows=next(pending))
                     path.write_text(json.dumps(result))
                     path.with_suffix('.raw.txt').write_text('retained raw evidence')
                     return result

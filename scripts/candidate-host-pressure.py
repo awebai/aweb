@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keep macOS kernel-file counts distinct from Docker VM lsof rows."""
+"""Check Docker VM recovery; retain host-wide counts only as diagnostics."""
 from __future__ import annotations
 
 import argparse
@@ -94,8 +94,10 @@ def compare(before: dict, after: dict) -> dict:
     # operator receipt, not an automatic passing comparison to a new process.
     same_vm = before["vm_pids"] == after["vm_pids"]
     deltas = {key: after[key] - before[key] for key in ("kern.num_files", "vm_lsof_rows", "vm_numeric_fd_rows")}
-    return {"status": "passed" if same_vm and all(deltas[k] <= 5000 for k in ("kern.num_files", "vm_lsof_rows")) else "failed",
-            "same_vm": same_vm, "deltas": deltas, "bounds": {"kern.num_files": 5000, "vm_lsof_rows": 5000}}
+    # kern.num_files includes every session on a shared host. It cannot
+    # attribute a leak to this run; retain its delta without gating on it.
+    return {"status": "passed" if same_vm and deltas["vm_lsof_rows"] <= 5000 else "failed",
+            "same_vm": same_vm, "deltas": deltas, "bounds": {"vm_lsof_rows": 5000}}
 
 
 def settle(before_path: Path, directory: Path) -> dict:
