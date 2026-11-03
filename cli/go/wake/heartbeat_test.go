@@ -169,3 +169,55 @@ func TestPresenceHeartbeatAtStartDoesNotWaitForTicker(t *testing.T) {
 		t.Fatalf("startup inspect=%v", got)
 	}
 }
+
+func TestPresenceHeartbeatNativeChannelWithPresenceOnly(t *testing.T) {
+	reg := presenceRegistration(t)
+	reg.RuntimeDelivery = RuntimeDeliveryNativeChannel
+	reg.Delivery = RuntimeDeliveryNativeChannel
+	if len(reg.ReceiveIdentities) != 0 {
+		t.Fatal("fixture must have no receive identities")
+	}
+	want := reg.PresenceIdentities[0].IdentityHome + "|team:poll"
+	requests := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/agents/heartbeat" {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		requests <- r.Header.Get("X-Test-Identity")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	inspect := session.NewFake(session.Inspection{Present: true})
+	broker, _ := liveBroker(t, Config{
+		Store: tempStore(t), Session: inspect, HeartbeatInterval: time.Hour,
+		Heartbeat: func(ctx context.Context, home, team string) error {
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/agents/heartbeat", nil)
+			if err != nil {
+				return err
+			}
+			req.Header.Set("X-Test-Identity", home+"|"+team)
+			resp, err := server.Client().Do(req)
+			if err == nil {
+				resp.Body.Close()
+			}
+			return err
+		},
+	})
+	if err := broker.Register(reg); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-requests:
+		if got != want {
+			t.Fatalf("native presence heartbeat=%q want %q", got, want)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("native registration with only presence identities did not heartbeat")
+	}
+	if got := inspect.Inspects(); len(got) != 1 || got[0] != reg.Home {
+		t.Fatalf("native presence inspect=%v", got)
+	}
+	if got := broker.Status(); len(got.Streams) != 0 || len(got.Instances) != 1 || len(got.Instances[0].ReceiveIdentities) != 0 {
+		t.Fatalf("presence-only registration acquired receive state: %+v", got)
+	}
+}
