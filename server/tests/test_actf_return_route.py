@@ -893,8 +893,14 @@ def _reader_home(actor, root):
     (home / "identity.yaml").write_text(json.dumps(dict(
         did=actor.did, stable_id=actor.stable, address=actor.address,
         custody="self", identity_scope="global" if actor.stable else "local")))
-    (home / "certificate.json").write_text(json.dumps(actor.certificate))
-    membership = dict(team_id=actor.node.team_id, alias=actor.alias, cert_path="certificate.json")
+    # Match awconfig.TeamCertificateRelativePath: custody enumerates this
+    # directory independently of the workspace membership's cert_path.
+    encoded_team = actor.node.team_id.strip().replace("__", "____").replace(":", "__")
+    cert_path = f"team-certs/{encoded_team}.pem"
+    (home / "team-certs").mkdir(mode=0o700)
+    (home / cert_path).write_text(json.dumps(actor.certificate))
+    (home / cert_path).chmod(0o600)
+    membership = dict(team_id=actor.node.team_id, alias=actor.alias, cert_path=cert_path)
     (home / "teams.yaml").write_text(json.dumps(dict(active_team=actor.node.team_id, memberships=[membership])))
     (home / "workspace.yaml").write_text(json.dumps(dict(aweb_url=actor.node.origin,
         memberships=[dict(membership, workspace_id=str(actor.workspace))])))
