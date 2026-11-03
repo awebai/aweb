@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 import json
 import os
 import socket
@@ -182,6 +183,12 @@ async def _actor(node, alias, *, global_identity):
         member_did_aw=stable, member_address=address, identity_scope="global" if stable else "local",
         certificate_id=str(uuid4()),
     )
+    if not global_identity:
+        # Match the released Go certificate serialization: absent optional
+        # global fields, rather than signed empty strings it cannot preserve.
+        for field in ("signature", "member_did_aw", "member_address"):
+            certificate.pop(field)
+        certificate["signature"] = sign_message(node.team_sk, canonical_json_bytes(certificate))
     encoded = _encode_certificate(certificate)
     await node.registry_client.register_team_certificate(
         node.domain, "members", team_controller_signing_key=node.team_sk,
@@ -446,6 +453,11 @@ async def test_team_route_ingress_refuses_without_effects(route_pair, kind, encr
     assert response.status_code == status, response.text
     assert response.json().get("reason") == reason, response.text
     assert response.json()["retryable"] is False
+    if fault != "policy":
+        next_steps = {"missing": "Upgrade aw", "invalid": "fetch-cert", "team-swap": "fetch-cert",
+                      "revoked": "no longer a member", "old-team-key": "reissue", "no-record": "set-server",
+                      "self-record": "show-server"}
+        assert next_steps[fault] in response.json()["detail"], response.text
     assert await _effects(target) == before
     assert ("POST", "/v1/federation/messages") not in source.calls
 
@@ -790,3 +802,228 @@ async def test_hosted_mcp_reply_refuses_revoked_route_with_typed_error(route_pai
     assert (await _effects(source), await _effects(target)) == before
     assert await _route_rows(target, first.cid, source.local.did) == routes
     assert not source.calls.count(("POST", "/v1/federation/messages"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+@pytest.mark.parametrize("encrypted", [False, True], ids=["plaintext", "v2"])
+async def test_reply_move_without_conversation_refuses_no_backfill(route_pair, test_db_factory, monkeypatch, kind, encrypted):
+    source, target = route_pair.source, route_pair.target
+    response, first = await _send(source.local, target.global_actor, kind, encrypted=encrypted)
+    assert response.status_code == 200, response.text
+    db = await test_db_factory.create_db(suffix="actf_moved_empty")
+    await db.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public")
+    sock = _socket()
+    origin = _origin(sock)
+    monkeypatch.setenv("AWID_REGISTRY_URL", source.registry_client.registry_url)
+    async with running_server(db.config.get_dsn(), source.server.app.state.redis,
+                              awid_transport=httpx.AsyncHTTPTransport(), public_origin=origin) as server:
+        calls = _observe(server.app)
+        async with _listener(server.app, sock):
+            moved = SimpleNamespace(db=server.db.get_manager("aweb"))
+            before_moved = await _effects(moved)
+            await _publish_server(source, origin)
+            await _expire_team_evidence(target)
+            routes = await _route_rows(target, first.cid, source.local.did)
+            before = await _effects(target)
+            response, _ = await _send(target.global_actor, source.local, kind, encrypted=encrypted, continuation=str(first.cid))
+            assert response.status_code == 404, response.text
+            assert response.json().get("reason") == "local_recipient_route_missing", response.text
+            assert response.json()["retryable"] is False
+            assert await _effects(moved) == before_moved
+            assert await _effects(target) == before
+            assert await _route_rows(target, first.cid, source.local.did) == routes
+            assert calls.count(("POST", "/v1/federation/messages")) == 1
+            assert not source.calls.count(("POST", "/v1/federation/messages"))
+
+
+@pytest.mark.asyncio
+async def test_team_evidence_expiring_during_real_database_wait_is_reread(route_pair):
+    source, target = route_pair.source, route_pair.target
+    packet, first = _federation_packet(source.local, target.global_actor, "mail")
+    response = await target.client.post("/v1/federation/messages", json=packet)
+    assert response.status_code == 200, response.text
+    status_path = f"/v1/namespaces/{source.domain}/teams/members/certificates/{source.local.certificate['certificate_id']}/status"
+    reads = source.registry_calls.count(("GET", status_path))
+    # A new message uses warm proof while still repeating signature and policy.
+    warm, _ = _federation_packet(source.local, target.global_actor, "mail", continuation=str(first.cid))
+    response = await target.client.post("/v1/federation/messages", json=warm)
+    assert response.status_code == 200, response.text
+    assert source.registry_calls.count(("GET", status_path)) == reads
+    before = await _effects(target)
+    routes = await _route_rows(target, first.cid, source.local.did)
+    next_packet, _ = _federation_packet(source.local, target.global_actor, "mail", continuation=str(first.cid))
+    # Age the real evidence first; the lock itself stays within the ordinary
+    # five-second database limit while spanning the sixty-second cache bound.
+    await asyncio.sleep(58)
+    pending = None
+    try:
+        async with target.db.transaction() as lock:
+            await lock.fetch_one("SELECT conversation_id FROM {{tables.conversations}} WHERE conversation_id=$1 FOR UPDATE", first.cid)
+            pending = asyncio.create_task(target.client.post("/v1/federation/messages", json=next_packet, timeout=85))
+            for _ in range(200):
+                waiting = await target.db.fetch_value(
+                    "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() "
+                    "AND wait_event_type='Lock' AND query LIKE '%conversations%' AND pid<>pg_backend_pid()")
+                if waiting:
+                    break
+                await asyncio.sleep(.05)
+            assert waiting, "the real admission never reached the held conversation lock"
+            await source.registry.revoke(source.local.certificate["certificate_id"])
+            # Actual wall time: no clock replacement or fabricated authority evidence.
+            await asyncio.sleep(3)
+        response = await pending
+        assert response.status_code == 403, response.text
+        assert response.json()["reason"] == "local_sender_certificate_revoked"
+        assert source.registry_calls.count(("GET", status_path)) > reads
+        assert await _effects(target) == before
+        assert await _route_rows(target, first.cid, source.local.did) == routes
+    finally:
+        if pending is not None and not pending.done():
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+
+
+
+def _reader_home(actor, root):
+    from test_cli_human_reply import _pem
+    home = root / ".aw"
+    home.mkdir(parents=True, mode=0o700)
+    _pem(home / "signing.key", "ED25519 PRIVATE KEY", actor.sk)
+    (home / "identity.yaml").write_text(json.dumps(dict(
+        did=actor.did, stable_id=actor.stable, address=actor.address,
+        custody="self", identity_scope="global" if actor.stable else "local")))
+    (home / "certificate.json").write_text(json.dumps(actor.certificate))
+    membership = dict(team_id=actor.node.team_id, alias=actor.alias, cert_path="certificate.json")
+    (home / "teams.yaml").write_text(json.dumps(dict(active_team=actor.node.team_id, memberships=[membership])))
+    (home / "workspace.yaml").write_text(json.dumps(dict(aweb_url=actor.node.origin,
+        memberships=[dict(membership, workspace_id=str(actor.workspace))])))
+    _pem(home / "encryption.key", "X25519 PRIVATE KEY", actor.encryption_private)
+    assertion = actor.encryption_key
+    (home / "assertion.json").write_text(json.dumps(assertion))
+    (home / "encryption.yaml").write_text(json.dumps(dict(active_key_id=assertion["encryption_key_id"], keys=[dict(
+        key_id=assertion["encryption_key_id"], public_key=assertion["encryption_public_key"],
+        private_key_path="encryption.key", assertion_path="assertion.json",
+        **{key: assertion[key] for key in ("created_at", "not_before", "expires_at")})])))
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("AW_", "AWEB_", "AWID_", "OATS_"))}
+    env.update(HOME=str(root), XDG_CONFIG_HOME=str(root / "config"), AW_NO_UPDATE_CHECK="1",
+               AWEB_IDENTITY_HOME=str(home), AWID_REGISTRY_URL=actor.node.registry_client.registry_url)
+    return home, env
+
+
+async def _cli(binary, home, env, *args):
+    process = await asyncio.create_subprocess_exec(str(binary), "--identity-home", str(home), *args,
+        cwd=home.parent, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    out, err = await asyncio.wait_for(process.communicate(), 30)
+    assert process.returncode == 0, out.decode() + err.decode()
+    return json.loads(out)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+@pytest.mark.parametrize("encrypted", [False, True], ids=["plaintext", "v2"])
+@pytest.mark.parametrize("reader", ["source", "released"])
+async def test_cli_reads_team_vouched_message_as_verified(route_pair, request, tmp_path, kind, encrypted, reader):
+    if reader == "released":
+        binary = os.environ.get("AW_TEST_RELEASED_CLI_BINARY")
+        if not binary:
+            pytest.skip("set AW_TEST_RELEASED_CLI_BINARY to a pre-actf release")
+    else:
+        binary = request.getfixturevalue("source_cli_binary")
+    source, target = route_pair.source, route_pair.target
+    response, first = await _send(source.local, target.global_actor, kind, encrypted=encrypted)
+    assert response.status_code == 200, response.text
+    home, env = _reader_home(target.global_actor, tmp_path)
+    args = ["mail", "inbox"] if kind == "mail" else ["chat", "history", "--session-id", str(first.cid)]
+    result = await _cli(binary, home, env, *args, "--json")
+    message = next(item for item in result["messages"] if item["message_id"] == str(first.mid))
+    assert message["verification_status"] == "verified", message
+    assert message["body"] == first.fields["body"]
+    assert message["from_did"] == source.local.did
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+@pytest.mark.parametrize("encrypted", [False, True], ids=["plaintext", "v2"])
+async def test_released_channel_presents_team_vouched_message_as_verified(route_pair, tmp_path, kind, encrypted):
+    package = os.environ.get("AW_TEST_RELEASED_CHANNEL_ROOT")
+    binary = os.environ.get("AW_TEST_RELEASED_CLI_BINARY")
+    if not package or not binary:
+        pytest.skip("set AW_TEST_RELEASED_CHANNEL_ROOT and AW_TEST_RELEASED_CLI_BINARY to released artifacts")
+    source, target = route_pair.source, route_pair.target
+    home, env = _reader_home(target.global_actor, tmp_path)
+    env.update(AWEB_DELIVERY="channel", AW_BIN=binary)
+    process = await asyncio.create_subprocess_exec("node", str(Path(package) / "dist/index.js"),
+        cwd=tmp_path, env=env, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE)
+    errors = asyncio.create_task(process.stderr.read())
+    async def write(value):
+        process.stdin.write((json.dumps(value)+"\n").encode())
+        await process.stdin.drain()
+    async def read():
+        line = await asyncio.wait_for(process.stdout.readline(), 20)
+        assert line, (await errors).decode()
+        return json.loads(line)
+    try:
+        await write(dict(jsonrpc="2.0", id=1, method="initialize", params=dict(
+            protocolVersion="2024-11-05", capabilities={}, clientInfo=dict(name="actf-real-reader", version="1"))))
+        initialized = await read()
+        assert initialized.get("id") == 1 and "result" in initialized, initialized
+        await write(dict(jsonrpc="2.0", method="notifications/initialized"))
+        response, first = await _send(source.local, target.global_actor, kind, encrypted=encrypted)
+        assert response.status_code == 200, response.text
+        while True:
+            notification = await read()
+            if notification.get("method") != "notifications/claude/channel":
+                continue
+            params = notification["params"]
+            if params.get("meta", {}).get("message_id") == str(first.mid):
+                break
+        assert params["meta"]["verified"] == "true", params
+        assert params["meta"]["trust_status"] == "verified", params
+        assert params["content"] == first.fields["body"], params
+    finally:
+        if process.returncode is None:
+            process.stdin.close()
+            process.terminate()
+            try:
+                await asyncio.wait_for(process.wait(), 2)
+            except TimeoutError:
+                process.kill()
+        await process.wait()
+        stderr = (await errors).decode()
+        assert "fatal:" not in stderr, stderr
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+@pytest.mark.parametrize("encrypted", [False, True], ids=["plaintext", "v2"])
+async def test_real_cli_team_route_first_reply_answer(route_pair, source_cli_binary, tmp_path, kind, encrypted):
+    source, target = route_pair.source, route_pair.target
+    home, env = _reader_home(source.local, tmp_path / "sender")
+    # CLI target discovery uses the target's actual public registry. Servers
+    # still select the sender's separate registry through actual _awid DNS.
+    env["AWID_REGISTRY_URL"] = target.registry_client.registry_url
+    body = tmp_path / "body.txt"
+    body.write_text("Real CLI team-vouched first contact")
+    args = (["mail", "send", "--to-address", target.global_actor.address, "--subject", "CLI"]
+            if kind == "mail" else ["chat", "send-and-leave", target.global_actor.address])
+    if not encrypted:
+        args.append("--plaintext")
+    sent = await _cli(source_cli_binary, home, env, *args, "--body-file", str(body), "--json")
+    cid = sent.get("conversation_id", sent.get("session_id"))
+    assert cid, sent
+    response, reply = await _send(target.global_actor, source.local, kind, encrypted=encrypted, continuation=cid)
+    assert response.status_code == 200, response.text
+    read_args = ["mail", "inbox"] if kind == "mail" else ["chat", "history", "--session-id", cid]
+    read = await _cli(source_cli_binary, home, env, *read_args, "--json")
+    message = next(row for row in read["messages"] if row["message_id"] == str(reply.mid))
+    assert message["verification_status"] == "verified", message
+    body.write_text("Real CLI continued answer")
+    args = (["mail", "send", "--conversation-id", cid] if kind == "mail"
+            else ["chat", "send", "--session-id", cid])
+    if not encrypted:
+        args.append("--plaintext")
+    answer = await _cli(source_cli_binary, home, env, *args, "--body-file", str(body), "--json")
+    table = "messages" if kind == "mail" else "chat_messages"
+    assert await target.db.fetch_value("SELECT count(*) FROM {{tables."+table+"}} WHERE message_id=$1", UUID(answer["message_id"])) == 1

@@ -12,7 +12,7 @@ from awid.log import canonical_server_origin
 from awid.signing import verify_did_key_signature
 from aweb.identity_binding import verify_identity_binding
 from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
-from aweb.federation.errors import RecipientNotResidentError
+from aweb.federation.errors import RecipientNotResidentError, TeamRouteError
 from aweb.federation.origins import is_own_origin
 from aweb.messaging.alias_targets import namespace_exists
 
@@ -95,7 +95,7 @@ async def local_recipient_for_own_route(db, route: Mapping[str, Any], *, request
         recipient = await resolve_agent_by_did(db, did)
     if recipient is None:
         if route.get("route_team_id"):
-            raise FederationAuthorityError("local_recipient_route_missing")
+            raise TeamRouteError("local_recipient_route_missing")
         refuse_same_origin_nonresident(origin, origins=origins)
     if did.startswith("did:aw:"):
         # As with a stable-only signed continuation, discover the current key

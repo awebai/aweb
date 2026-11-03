@@ -229,9 +229,11 @@ var mailSendCmd = &cobra.Command{
 
 		if err != nil {
 			if targetKind == "conversation" {
-				return err
+				if _, typed := awid.FederationErrorSpecFor(httpErrorReason(err)); !typed {
+					return err
+				}
 			}
-			return networkError(err, targetValue)
+			return networkError(err, targetValue, sel != nil && sel.StableID == "")
 		}
 		if err := newThreadAnswered(req, resp); err != nil {
 			return err

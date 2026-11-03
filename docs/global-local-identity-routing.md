@@ -418,9 +418,15 @@ encrypted-v2, mail and chat. Reads through the CLI, channel and wake.
 11. Mixed versions: new sender to an old receiver gets the mapped refusal; old
     sender to a new receiver gets `local_sender_certificate_required`. The
     released CLI, channel and wake readers read new plaintext and encrypted-v2
-    messages as `verified` through an upgraded server, and as
-    `verification_stale` through a server without `sender_membership`. No
-    compatibility path strips the team binding or falls back to plaintext.
+    messages as `verified` through an upgraded server. Through a server without
+    `sender_membership`, readers never report `verified`: mail (plaintext and
+    encrypted-v2) and encrypted-v2 chat report `verification_stale`; plaintext
+    chat reports `failed`, because that server's chat history projection
+    replaces the signed `<team_id>/<alias>` sender with the alias. This is a
+    fail-closed legacy limitation, reachable only when a server older than actf
+    serves rows accepted by an actf server (a downgrade or mixed-version rolling
+    deploy). No compatibility path strips the team binding or falls back to
+    plaintext.
 12. Encrypted-v2 integrity:
     - tampering with `from.team_id` or the label fails the signature;
     - the inner header mirrors `from.team_id`;

@@ -26,7 +26,7 @@ from aweb.federation.envelope import (
     FederationEnvelopeError,
     verify_federation_envelope,
 )
-from aweb.federation.errors import authority_error_body
+from aweb.federation.errors import authority_error_body, TeamRouteError
 from aweb.messaging.messages import resolve_agent_by_did
 from aweb.identity_binding import verify_identity_binding
 from aweb.id_chain_auth import authenticate_id_chain
@@ -118,6 +118,8 @@ async def _stored_route_participants(
         [envelope.sender_did_aw, envelope.target_did_aw],
     )
     by_did = {row["did"]: dict(row) for row in rows}
+    if _is_local_did_key(envelope.target_did_aw) and envelope.target_did_aw not in by_did:
+        raise TeamRouteError("local_recipient_route_missing")
     if set(by_did) != {envelope.sender_did_aw, envelope.target_did_aw}:
         raise FederationAuthorityError("federation_conversation_invalid")
     _validate_stored_current_keys(envelope, by_did)
@@ -138,6 +140,8 @@ async def _stored_route_participants(
             [envelope.sender_did_aw, envelope.target_did_aw],
         )
         chat_by_did = {row["did"]: dict(row) for row in chat_rows}
+        if _is_local_did_key(envelope.target_did_aw) and envelope.target_did_aw not in chat_by_did:
+            raise TeamRouteError("local_recipient_route_missing")
         if set(chat_by_did) != {envelope.sender_did_aw, envelope.target_did_aw}:
             raise FederationAuthorityError("federation_conversation_invalid")
         _validate_stored_current_keys(envelope, chat_by_did)
@@ -468,6 +472,9 @@ async def receive_federated_message(
             )
             return result
 
+        if _is_local_did_key(envelope.target_did_aw) and not stored_route:
+            raise TeamRouteError("local_recipient_route_missing")
+
         await _resolve_target_identity(
             registry_client,
             envelope,
@@ -479,6 +486,8 @@ async def receive_federated_message(
                 db, envelope.target_current_did_key
             )
         if recipient is None:
+            if _is_local_did_key(envelope.target_did_aw):
+                raise TeamRouteError("local_recipient_route_missing")
             raise FederationAuthorityError("recipient_identity_not_found")
         if (
             str(recipient.get("did_key") or "").strip()
@@ -486,8 +495,6 @@ async def receive_federated_message(
             != envelope.target_current_did_key
         ):
             raise FederationAuthorityError("recipient_current_key_mismatch")
-        if _is_local_did_key(envelope.target_did_aw) and not stored_route:
-            raise FederationAuthorityError("local_recipient_route_missing")
         async def require_current_team_route():
             nonlocal team_route
             if team_route is not None and team_route.expires_at <= datetime.now(timezone.utc):
@@ -523,4 +530,7 @@ async def receive_federated_message(
             )
         return result
     except FederationAuthorityError as exc:
+        if (payload.envelope.sender_did_aw.startswith("did:key:")
+                and exc.reason == "recipient_policy_rejected") or exc.reason == "local_recipient_route_missing":
+            exc = TeamRouteError(exc.reason)
         return _stable_error_response(request, exc)

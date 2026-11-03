@@ -25,6 +25,7 @@ from awid.team_ids import build_team_id, parse_team_id
 from awid.team_server_record import TeamServerRecordError, verify_team_server_record
 
 from .origins import public_origins
+from .errors import TeamRouteError
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ class VerifiedTeamRoute:
 
 def _certificate(encoded: str | None) -> dict:
     if not encoded:
-        raise FederationAuthorityError("local_sender_certificate_required")
+        raise TeamRouteError("local_sender_certificate_required")
     try:
         cert = decode_team_certificate(encoded)
         team = cert.get("team_id")
@@ -56,29 +57,29 @@ def _certificate(encoded: str | None) -> dict:
             raise ValueError("invalid local certificate")
         return cert
     except (TeamCertificateError, ValueError, TypeError, AttributeError, FederationAuthorityError) as exc:
-        raise FederationAuthorityError("local_sender_certificate_invalid") from exc
+        raise TeamRouteError("local_sender_certificate_invalid") from exc
 
 
 def _check_signed_binding(envelope, cert: dict) -> None:
     if cert.get("member_did_key") != envelope.sender_current_did_key:
-        raise FederationAuthorityError("local_sender_certificate_invalid")
+        raise TeamRouteError("local_sender_certificate_invalid")
     if envelope.content_mode == "encrypted_v2":
         sender = (envelope.encrypted_envelope or {}).get("from") or {}
         team = sender.get("team_id")
         if not team:
-            raise FederationAuthorityError("local_sender_certificate_required")
+            raise TeamRouteError("local_sender_certificate_required")
         if team != cert["team_id"]:
-            raise FederationAuthorityError("local_sender_certificate_invalid")
+            raise TeamRouteError("local_sender_certificate_invalid")
         label = sender.get("address")
         if label and label != f'{cert["team_id"]}/{cert["alias"]}':
-            raise FederationAuthorityError("local_sender_certificate_invalid")
+            raise TeamRouteError("local_sender_certificate_invalid")
     else:
         signed = json.loads(envelope.signed_payload)
         label = signed.get("from") or ""
         if "/" not in label or ":" not in label.split("/", 1)[0]:
-            raise FederationAuthorityError("local_sender_certificate_required")
+            raise TeamRouteError("local_sender_certificate_required")
         if label != f'{cert["team_id"]}/{cert["alias"]}':
-            raise FederationAuthorityError("local_sender_certificate_invalid")
+            raise TeamRouteError("local_sender_certificate_invalid")
 
 
 async def _cached(work, key: str, read, *, fresh: bool = False):
@@ -92,11 +93,11 @@ async def _cached(work, key: str, read, *, fresh: bool = False):
     if not lease.acquired:
         result = await work.wait_for_result(key, deadline_seconds=5)
         if result is None:
-            raise FederationAuthorityError("federation_authority_coordination_unavailable")
+            raise TeamRouteError("federation_authority_coordination_unavailable")
         observed = datetime.fromisoformat(result.evidence["observed_at"])
         expires = min(result.expires_at, observed + timedelta(seconds=60))
         if expires <= datetime.now(timezone.utc):
-            raise FederationAuthorityError("federation_authority_coordination_unavailable")
+            raise TeamRouteError("federation_authority_coordination_unavailable")
         return result.evidence["value"], expires
     try:
         # Start the bound before the network read and any publication wait.
@@ -118,19 +119,19 @@ async def verify_team_route(request, certificate: str, *, fresh: bool = False, m
     registry = getattr(request.app.state, "awid_registry_client", None)
     authority = getattr(request.app.state, "federation_authority", None)
     if registry is None or authority is None:
-        raise FederationAuthorityError("federation_authority_coordination_unavailable")
+        raise TeamRouteError("federation_authority_coordination_unavailable")
     try:
         home = await registry.get_home_namespace(domain)
         if home is not None:
             if home.domain != domain or home.verification_status != "verified" or not home.controller_did:
-                raise FederationAuthorityError("sender_registry_protocol_invalid")
+                raise TeamRouteError("sender_registry_protocol_invalid")
             origin = canonical_server_origin(registry.registry_url)
             async def read(suffix, reason):
                 try:
                     return await registry.get_home_team_object(domain, name, suffix)
                 except RegistryError as exc:
                     if exc.status_code == 404:
-                        raise FederationAuthorityError(reason) from exc
+                        raise TeamRouteError(reason) from exc
                     raise
         else:
             selected = await authority._discover_registry_authority(domain)
@@ -148,17 +149,17 @@ async def verify_team_route(request, certificate: str, *, fresh: bool = False, m
             fresh=fresh,
         )
         if not isinstance(status, dict) or status.get("team_id") != team:
-            raise FederationAuthorityError("sender_registry_protocol_invalid")
+            raise TeamRouteError("sender_registry_protocol_invalid")
         if status.get("status") == "revoked":
-            raise FederationAuthorityError("local_sender_certificate_revoked")
+            raise TeamRouteError("local_sender_certificate_revoked")
         if status.get("status") != "active":
-            raise FederationAuthorityError("sender_registry_protocol_invalid")
+            raise TeamRouteError("sender_registry_protocol_invalid")
         if status.get("team_did_key") != cert["team_did_key"]:
-            raise FederationAuthorityError("local_sender_team_key_stale")
+            raise TeamRouteError("local_sender_team_key_stale")
         try:
             verify_team_certificate_signature(cert, status["team_did_key"])
         except TeamCertificateError as exc:
-            raise FederationAuthorityError("local_sender_certificate_invalid") from exc
+            raise TeamRouteError("local_sender_certificate_invalid") from exc
         if membership_only:
             return VerifiedTeamRoute(team, cert_id, certificate, cert["member_did_key"], cert["alias"], "", status_expiry)
         record, record_expiry = await _cached(
@@ -171,32 +172,32 @@ async def verify_team_route(request, certificate: str, *, fresh: bool = False, m
                 current_team_did_key=status["team_did_key"], now=datetime.now(timezone.utc),
             )
         except (TeamServerRecordError, AttributeError) as exc:
-            raise FederationAuthorityError("local_sender_team_server_missing") from exc
+            raise TeamRouteError("local_sender_team_server_missing") from exc
         return VerifiedTeamRoute(
             team, cert_id, certificate, cert["member_did_key"], cert["alias"],
             canonical_server_origin(verified.server_url), min(status_expiry, record_expiry),
         )
-    except FederationAuthorityError:
-        raise
+    except FederationAuthorityError as exc:
+        raise TeamRouteError(exc.reason, team=team, domain=domain) from exc
     except Exception as exc:
         logger.warning("Team return-route registry dependency failed", exc_info=True)
-        raise FederationAuthorityError("sender_registry_unavailable") from exc
+        raise TeamRouteError("sender_registry_unavailable") from exc
 
 
 async def authorize_local_sender(request, envelope, *, stored_team_id=None, outbound=False, fresh=False):
     cert = _certificate(envelope.sender_certificate)
     _check_signed_binding(envelope, cert)
     if stored_team_id and cert["team_id"] != stored_team_id:
-        raise FederationAuthorityError("local_sender_route_mismatch")
+        raise TeamRouteError("local_sender_route_mismatch")
     route = await verify_team_route(request, envelope.sender_certificate, fresh=fresh)
     origins = public_origins(request)
     if outbound:
         if route.delivery_origin not in origins:
-            raise FederationAuthorityError("local_sender_team_server_missing")
+            raise TeamRouteError("local_sender_team_server_missing")
     elif route.delivery_origin in origins:
-        raise FederationAuthorityError("local_sender_route_mismatch")
+        raise TeamRouteError("local_sender_route_mismatch")
     if envelope.sender_delivery_origin and envelope.sender_delivery_origin != route.delivery_origin:
-        raise FederationAuthorityError("local_sender_route_mismatch")
+        raise TeamRouteError("local_sender_route_mismatch")
     return route
 
 
@@ -214,10 +215,10 @@ async def refresh_recipient_team_route(request, participant: dict) -> dict:
         did = participant.get("did") or participant.get("did_aw") or participant.get("did_key")
         if (route.team_id != participant["route_team_id"] or route.member_did_key != did
                 or route.certificate_id != participant.get("route_certificate_id")):
-            raise FederationAuthorityError("local_recipient_route_missing")
+            raise TeamRouteError("local_recipient_route_missing")
     except FederationAuthorityError as exc:
         if not exc.retryable:
-            raise FederationAuthorityError("local_recipient_route_missing") from exc
+            raise TeamRouteError("local_recipient_route_missing") from exc
         raise
     return {**participant, "delivery_origin": route.delivery_origin,
             "_route_previous_origin": participant.get("_route_previous_origin", participant.get("delivery_origin")),

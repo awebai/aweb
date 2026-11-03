@@ -183,7 +183,7 @@ var chatSendAndWaitCmd = &cobra.Command{
 			EncryptE2EE:       chatSendAndWaitE2EE,
 		})
 		if err != nil {
-			return networkError(err, args[0])
+			return networkError(err, args[0], sel != nil && sel.StableID == "")
 		}
 		logsDir := defaultLogsDir()
 		myAddr := selectionAddress(sel)
@@ -238,7 +238,7 @@ var chatSendAndLeaveCmd = &cobra.Command{
 			EncryptE2EE:       chatSendAndLeaveE2EE,
 		})
 		if err != nil {
-			return networkError(err, args[0])
+			return networkError(err, args[0], sel != nil && sel.StableID == "")
 		}
 		logsDir := defaultLogsDir()
 		appendCommLog(logsDir, commLogNameForSelection(sel), &CommLogEntry{

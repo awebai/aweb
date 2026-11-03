@@ -30,3 +30,18 @@ func TestLocalTeamRouteSignedLabel(t *testing.T) {
 		t.Fatalf("global address label = %q", got)
 	}
 }
+
+func TestTeamRouteErrorVocabulary(t *testing.T) {
+	for reason, status := range map[string]int{
+		"local_sender_certificate_required": 422,
+		"local_sender_certificate_invalid":  422,
+		"local_sender_certificate_revoked":  403,
+		"local_sender_team_key_stale":       409,
+		"local_sender_team_server_missing":  424,
+	} {
+		spec, ok := FederationErrorSpecFor(reason)
+		if !ok || spec.HTTPStatus != status || spec.Retryable || spec.RetryAfterRequired {
+			t.Fatalf("%s: %+v found=%v", reason, spec, ok)
+		}
+	}
+}

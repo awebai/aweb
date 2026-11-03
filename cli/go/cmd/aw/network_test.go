@@ -745,3 +745,36 @@ func TestDirectoryGetByAddress(t *testing.T) {
 		t.Fatalf("org_slug=%v", got["org_slug"])
 	}
 }
+
+func TestNetworkErrorPreservesTeamRouteRecovery(t *testing.T) {
+	for _, reason := range []string{"local_sender_certificate_required", "local_sender_certificate_invalid", "local_sender_certificate_revoked", "local_sender_team_key_stale", "local_sender_team_server_missing", "local_recipient_route_missing", "local_sender_route_mismatch"} {
+		spec, ok := awid.FederationErrorSpecFor(reason)
+		if !ok {
+			t.Fatal(reason)
+		}
+		body, _ := json.Marshal(map[string]any{"detail": "Check the team's messaging setup.", "reason": reason, "retryable": false})
+		err := &awid.APIError{StatusCode: spec.HTTPStatus, Body: string(body)}
+		got := networkError(err, "recipient.test/bob")
+		if got.Error() != "Check the team's messaging setup." || awid.DescribeError(got) != awid.DescribeError(err) {
+			t.Fatalf("%s lost recovery or metadata: %v", reason, got)
+		}
+	}
+}
+
+func TestLocalSenderOldReceiverHintRetainsReason(t *testing.T) {
+	for _, reason := range []string{"federation_envelope_invalid", "local_sender_route_mismatch"} {
+		body, _ := json.Marshal(map[string]any{"detail": reason, "reason": reason, "retryable": false})
+		err := &awid.APIError{StatusCode: 422, Body: string(body)}
+		got := networkError(err, "recipient.test/bob", true)
+		if !strings.Contains(got.Error(), reason) || !strings.Contains(got.Error(), "recipient's server may not yet accept first messages from team-only agents") {
+			t.Fatalf("old receiver hint missing: %v", got)
+		}
+		if awid.DescribeError(got) != awid.DescribeError(err) {
+			t.Fatal("lost reason/status")
+		}
+		global := networkError(err, "recipient.test/bob", false)
+		if strings.Contains(global.Error(), "team-only agents") {
+			t.Fatal("local hint shown to global sender")
+		}
+	}
+}
