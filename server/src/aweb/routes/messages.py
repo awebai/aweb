@@ -21,7 +21,7 @@ from awid.registry import RegistryError
 from awid.pagination import decode_cursor, encode_cursor, validate_pagination_params
 from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS, awid_registry_not_configured_exception
 from aweb.deps import get_db
-from aweb.config import get_settings
+from aweb.config import get_public_origin
 from aweb.messaging.encryption_custody import require_non_custodial_recipients
 from aweb.e2ee_messages import (
     E2EEEnvelopeError,
@@ -55,6 +55,7 @@ from aweb.messaging.address_auth import (
     local_recipient_for_address_binding,
     local_recipient_visible_to_auth,
     namespace_uses_home_registry,
+    refuse_same_origin_nonresident,
     requires_registry_address_binding,
     verified_signed_payload_json,
 )
@@ -772,7 +773,7 @@ def _local_public_origin(request: Request) -> str:
     configured = str(getattr(request.app.state, "public_origin", "") or "").strip()
     if configured:
         return configured
-    return get_settings().public_origin
+    return get_public_origin()
 
 
 def _concrete_contact_address(recipient: dict | None) -> str:
@@ -1607,6 +1608,11 @@ async def send_message(
                 recipient = await local_recipient_for_address_binding(db, resolved, address)
                 if recipient is None:
                     recipient = _external_recipient_from_address(address, resolved)
+
+        if recipient is not None and recipient.get("external"):
+            refuse_same_origin_nonresident(
+                recipient["delivery_origin"], public_origin=_local_public_origin(request),
+            )
 
         if recipient is None:
             recipient = await _local_recipient_from_address(db, domain=domain, name=name)

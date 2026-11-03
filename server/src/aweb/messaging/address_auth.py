@@ -8,6 +8,7 @@ from awid.federation_errors import FederationAuthorityError
 from awid.log import canonical_server_origin
 from awid.signing import verify_did_key_signature
 from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
+from aweb.federation.errors import RecipientNotResidentError
 from aweb.messaging.alias_targets import namespace_exists
 
 
@@ -56,6 +57,21 @@ async def local_recipient_for_address_binding(db, resolution: Any, address: str)
 
 def requires_registry_address_binding(row: Mapping[str, Any] | None) -> bool:
     return str((row or {}).get("identity_scope") or "").strip().lower() == "global"
+
+
+def refuse_same_origin_nonresident(delivery_origin: str, *, public_origin: str) -> None:
+    """After an exact-DID residence miss, an own-origin route is not external."""
+    if not delivery_origin:
+        return  # The existing route validation owns missing/invalid origins.
+    try:
+        target_origin = canonical_server_origin(delivery_origin)
+    except ValueError:
+        return
+    if target_origin == canonical_server_origin(public_origin):
+        logging.getLogger(__name__).warning(
+            "Refusing same-origin nonresident recipient: recipient_identity_not_found"
+        )
+        raise RecipientNotResidentError()
 
 
 def unreachable_address_refusal(address: str) -> str:

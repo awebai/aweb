@@ -30,7 +30,7 @@ from aweb.awid_error_handling import (
     awid_dependency_http_exception,
     awid_registry_not_configured_exception,
 )
-from aweb.config import get_settings
+from aweb.config import get_public_origin
 from aweb.deps import get_db, get_redis
 from aweb.events import chat_session_channel_name, publish_chat_session_signal
 from aweb.messaging.encryption_custody import require_non_custodial_recipients
@@ -66,6 +66,7 @@ from aweb.messaging.address_auth import (
     local_recipient_for_address_binding,
     local_recipient_visible_to_auth,
     namespace_uses_home_registry,
+    refuse_same_origin_nonresident,
     requires_registry_address_binding,
     verified_signed_payload_json,
 )
@@ -357,7 +358,7 @@ def _local_public_origin(request: Request) -> str:
     configured = str(getattr(request.app.state, "public_origin", "") or "").strip()
     if configured:
         return configured
-    return get_settings().public_origin
+    return get_public_origin()
 
 
 def _target_delivery_origin(row: dict[str, Any] | None) -> str:
@@ -1021,6 +1022,9 @@ async def _resolve_chat_targets(
                     getattr(resolution, "delivery_origin", None)
                     or getattr(delivery, "origin", "")
                     or ""
+                )
+                refuse_same_origin_nonresident(
+                    str(delivery_origin), public_origin=_local_public_origin(request),
                 )
                 row = {
                     "agent_id": None,

@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from awid.federation_errors import FederationAuthorityError
+from aweb.config import get_public_origin
+from aweb.federation.errors import RecipientNotResidentError
 from aweb.awid_error_handling import awid_dependency_error_detail
 from aweb.messaging.chat import (
     HANG_ON_EXTENSION_SECONDS,
@@ -38,6 +40,7 @@ from aweb.messaging.address_auth import (
     identity_recipient,
     local_recipient_for_address_binding,
     local_recipient_visible_to_auth,
+    refuse_same_origin_nonresident,
     unreachable_address_refusal,
 )
 from aweb.messaging.contacts import resolve_local_namespace_controller_did
@@ -515,6 +518,13 @@ async def chat_send(
                 if resolved is not None and resolved.did_aw:
                     target = await local_recipient_for_address_binding(db_infra, resolved, to_address.strip())
                     if not target:
+                        try:
+                            refuse_same_origin_nonresident(
+                                registry_delivery_origin(resolved),
+                                public_origin=public_origin or get_public_origin(),
+                            )
+                        except RecipientNotResidentError as exc:
+                            return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
                         target = {
                             "agent_id": None,
                             "team_id": None,

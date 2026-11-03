@@ -235,6 +235,14 @@ membership's superseded key or invalidated marker. The address resolution
 supplies the recipient key and route; this residence lookup supplies no actor
 or team authority and does not restore a verification marker.
 
+If that exact identity is not resident and the resolved delivery origin is this
+server's configured public origin, mail and chat refuse with
+`recipient_identity_not_found` (404, non-retryable), before federation. The
+caller is directed to ask the recipient or operator to check the address and
+messaging enrollment. A matching alias for a different DID does not supply
+residence; a foreign-origin route remains eligible for federation. Resident
+delivery still applies the recipient's delivery-time inbound policy.
+
 ## Receiver-Wide Replay And Contact Compatibility
 
 Every accepted mail or chat message—local or federated, plaintext or encrypted—

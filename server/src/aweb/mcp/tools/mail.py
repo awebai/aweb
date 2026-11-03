@@ -17,6 +17,8 @@ from fastapi import HTTPException
 
 from awid.federation_errors import FederationAuthorityError
 from aweb.awid_error_handling import awid_registry_not_configured_detail
+from aweb.config import get_public_origin
+from aweb.federation.errors import RecipientNotResidentError
 from aweb.mcp.auth import auth_dids, get_auth, primary_auth_did
 from aweb.mcp.mutations import fire_mcp_mutation_hook
 from aweb.mcp.signing import (
@@ -47,6 +49,7 @@ from aweb.messaging.address_auth import (
     identity_recipient,
     local_recipient_for_address_binding,
     local_recipient_visible_to_auth,
+    refuse_same_origin_nonresident,
     unreachable_address_refusal,
 )
 from aweb.messaging.contacts import resolve_local_namespace_controller_did
@@ -519,6 +522,13 @@ async def send_mail(
                 recipient_did = resolved.did_aw
                 recipient = await local_recipient_for_address_binding(db_infra, resolved, recipient_ref)
                 if recipient is None:
+                    try:
+                        refuse_same_origin_nonresident(
+                            registry_delivery_origin(resolved),
+                            public_origin=public_origin or get_public_origin(),
+                        )
+                    except RecipientNotResidentError as exc:
+                        return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
                     recipient = _external_recipient_from_address(recipient_ref, resolved)
         if recipient is None:
             if await namespace_exists(db_infra, domain):
