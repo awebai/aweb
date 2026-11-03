@@ -1,6 +1,6 @@
 {
   "name": "@awebai/claude-channel",
-  "version": "1.8.1",
+  "version": "1.8.2",
   "mcpName": "io.github.awebai/channel",
   "license": "MIT",
   "type": "module",
