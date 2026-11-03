@@ -168,7 +168,10 @@ host snapshots, `host-before.json`, `host-after.json`, and
 `host-recovery.json`. On macOS, cleanup passes only if Docker VM total `lsof`
 rows return to at most their baseline plus 5,000. The host-wide `kern.num_files`
 count and its delta are diagnostic evidence only: unrelated sessions on a shared
-host can change that count without a gate leak.
+host can change that count without a gate leak. The VM check observes host-side
+file-sharing rows, not guest descriptors inside containers. Retained containers
+and their guest resources are covered by the gate's labeled-resource removal
+and absence checks.
 The measured process must be exactly one Apple `VirtualMachine` or legacy
 `hyperkit` process whose open files include Docker's container/group-container
 data. The launcher is excluded. Zero, multiple, or incompletely observed
@@ -181,6 +184,13 @@ Recovery keeps up to four numbered samples (`host-after-1.json` through
 `host-after-4.json`, with their raw snapshots), 15 seconds apart. It stops at
 the first passing sample and records its number in `host-recovery.json`;
 `host-after.json` mirrors the last sample. Four failures make recovery fail.
+The focused macOS control uses an installed `python:3.12-slim` image and an owned
+bind mount to hold host files through the production discovery/settle path:
+`AWEB_TEST_DOCKER_VM_RECOVERY=1 python3 scripts/test_candidate_cleanup.py`.
+It requires failure while files are held and recovery after guest close/unlink
+and container removal. Set `AWEB_VM_RECOVERY_EVIDENCE` to an empty directory to
+retain its raw snapshots and receipts. This control never pulls images or
+restarts shared Docker.
 For interruption, signal the gate's process group: a signal sent only to the
 Bash PID can wait for its foreground Docker command before running the trap.
 A cleanup or recovery failure makes the gate fail even when the suite passes;

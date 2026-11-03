@@ -2,6 +2,10 @@
 """Host measurement parsing and recovery behavior."""
 import importlib.util
 import json
+import os
+import subprocess
+import sys
+import uuid
 from pathlib import Path
 import tempfile
 import unittest
@@ -42,6 +46,86 @@ class HostPressureTests(unittest.TestCase):
             vm_lsof_rows=5020, vm_numeric_fd_rows=20000))['status'], 'passed')
         self.assertEqual(pressure.compare(baseline, self.sample(
             vm_lsof_rows=5021))['status'], 'failed')
+
+    @unittest.skipUnless(sys.platform == 'darwin' and
+                         os.environ.get('AWEB_TEST_DOCKER_VM_RECOVERY') == '1',
+                         'opt-in macOS Docker file-sharing control')
+    def test_docker_file_sharing_leak_fails_then_recovers(self):
+        # The cheap parser tests do not establish VM observability. This control
+        # uses real Docker, host files, discovery, lsof and all settle samples.
+        # Use an already installed image; never pull or restart shared Docker.
+        guest = """
+import json, os, sys
+paths = ['/owned/' + str(i) for i in range(5001)]
+held = [os.open(path, os.O_RDONLY) for path in paths]
+for fd in held:
+    os.read(fd, 1)
+print(json.dumps({'held': len(held)}), flush=True)
+sys.stdin.readline()
+for fd in held:
+    os.close(fd)
+# Unlink through the same guest sharing path so its cached inode references
+# are released too, rather than leaving deleted host files cached in the VM.
+for path in paths:
+    os.unlink(path)
+print(json.dumps({'remaining_files': os.listdir('/owned')}), flush=True)
+"""
+        with tempfile.TemporaryDirectory(prefix='aweb-vm-recovery-') as directory:
+            evidence = Path(os.environ.get('AWEB_VM_RECOVERY_EVIDENCE', directory))
+            evidence.mkdir(parents=True, exist_ok=True)
+            subprocess.run(['bash', str(ROOT / 'scripts/candidate-docker-gate.sh'),
+                            '--wait-for-disk'], check=True)
+            source = evidence / 'host-files'
+            source.mkdir()
+            for index in range(5001):
+                (source / str(index)).write_bytes(b'x')
+            baseline = evidence / 'host-before.json'
+            before = pressure.capture(baseline)
+            self.assertEqual(before['status'], 'measured')
+            name = 'aweb-actd-control-' + uuid.uuid4().hex[:12]
+            child = subprocess.Popen(['docker', 'run', '--rm', '-i', '--name', name,
+                '--label', 'aweb.candidate-gate=' + name, '--pull=never',
+                '--network=none', '--memory=64m', '--cpus=0.25', '--pids-limit=32',
+                '--read-only', '--ulimit', 'nofile=8192:8192',
+                '--mount', 'type=bind,src=' + str(source.resolve()) + ',dst=/owned',
+                'python:3.12-slim', 'python', '-u', '-c', guest],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                self.assertEqual(json.loads(child.stdout.readline()), {'held': 5001})
+                held = evidence / 'held'
+                held.mkdir()
+                result = subprocess.run([sys.executable,
+                    str(ROOT / 'scripts/candidate-host-pressure.py'), 'settle',
+                    str(baseline), str(held)], text=True, capture_output=True, timeout=120)
+                receipt = json.loads((held / 'host-recovery.json').read_text())
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertEqual(len(receipt['samples']), 4)
+                for sample in receipt['samples']:
+                    self.assertEqual(sample['status'], 'failed')
+                    self.assertTrue(sample['same_vm'])
+                    self.assertGreater(sample['deltas']['vm_lsof_rows'], 5000)
+            finally:
+                try:
+                    output, errors = child.communicate('release\n', timeout=30)
+                    self.assertEqual(child.returncode, 0, errors)
+                    self.assertEqual(json.loads(output), {'remaining_files': []})
+                finally:
+                    subprocess.run(['docker', 'rm', '-f', name],
+                                   capture_output=True, timeout=30)
+            self.assertNotEqual(subprocess.run(['docker', 'container', 'inspect', name],
+                capture_output=True, timeout=30).returncode, 0)
+            source.rmdir()
+            released = evidence / 'released'
+            released.mkdir()
+            result = subprocess.run([sys.executable,
+                str(ROOT / 'scripts/candidate-host-pressure.py'), 'settle',
+                str(baseline), str(released)], text=True, capture_output=True, timeout=120)
+            receipt = json.loads((released / 'host-recovery.json').read_text())
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(receipt['status'], 'passed')
+            self.assertTrue(receipt['same_vm'])
+            self.assertLessEqual(receipt['deltas']['vm_lsof_rows'], 5000)
+            print('Docker VM control:', evidence, 'held FAILED; released PASSED')
 
     def test_missing_or_restarted_vm_cannot_pass(self):
         self.assertEqual(pressure.compare(self.sample(), self.sample(vm_pids=[13]))['status'], 'failed')
