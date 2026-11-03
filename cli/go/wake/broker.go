@@ -44,7 +44,8 @@ const (
 	// DefaultReconcile is how often the daemon re-reads registry.d, so a
 	// registration written by the socket fallback while the daemon was busy is
 	// picked up without a restart.
-	DefaultReconcile = 10 * time.Second
+	DefaultReconcile         = 10 * time.Second
+	DefaultHeartbeatInterval = 5 * time.Minute
 )
 
 // Config configures a Broker.
@@ -56,7 +57,9 @@ type Config struct {
 	// OpenStream builds the event stream source for one identity home. It is
 	// injected so the broker can be tested with no server and no credentials,
 	// and so credential resolution stays in cmd/aw where it already lives.
-	OpenStream func(identityHome, teamID string) (run.EventStreamOpener, error)
+	OpenStream        func(identityHome, teamID string) (run.EventStreamOpener, error)
+	Heartbeat         func(ctx context.Context, identityHome, teamID string) error
+	HeartbeatInterval time.Duration
 
 	MaxStreams    int
 	Coalesce      time.Duration // Deprecated: ignored.
@@ -79,6 +82,9 @@ type Config struct {
 }
 
 func (c *Config) applyDefaults() {
+	if c.HeartbeatInterval <= 0 {
+		c.HeartbeatInterval = DefaultHeartbeatInterval
+	}
 	if c.MaxStreams <= 0 {
 		c.MaxStreams = DefaultMaxStreams
 	}
