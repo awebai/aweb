@@ -481,6 +481,12 @@ Omission rules:
   is a stored local/team route that is not address-based.
 - `team_id` is included only when it is part of the sender or recipient routing
   context.
+- A local (`did:key`) sender writing to another server includes
+  `certificate_id` in `from`: its active team certificate's id, which binds
+  the vouched return route in
+  [global-local-identity-routing.md](global-local-identity-routing.md#local-outbound-to-global).
+  `team_id` must then equal the certificate's team. Other senders omit
+  `certificate_id`.
 - For local recipients, `routing.to_did` and recipient `did` carry the recipient
   binding; `routing.to_stable_id`, address, and recipient stable id are omitted.
 
