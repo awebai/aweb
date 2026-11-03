@@ -1,4 +1,6 @@
 """Claim transitions against real storage and the public task HTTP handlers."""
+import asyncio
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -8,7 +10,7 @@ from httpx import ASGITransport, AsyncClient
 
 from aweb.service_errors import ServiceError
 from tests.test_tasks_http import (
-    TEAM_ID, _DbShim, _build_tasks_app, _insert_task, _seed_team,
+    TEAM_ID, _DbShim, _build_tasks_app, _fake_team_identity, _insert_task, _seed_team,
 )
 from aweb.coordination.tasks_service import list_ready_tasks, update_task
 
@@ -31,14 +33,17 @@ async def seed_claim(db, *, fresh=False, grant=None, app_request=False):
             workspaces[alias], TEAM_ID, agents[alias], alias, seen if alias == "bob" else now,
         )
     task_id = uuid4()
-    await _insert_task(db, task_id=task_id, task_number=1, root_task_seq=1,
-                       suffix="aaaa", title="Recover work", status="in_progress", assignee_alias="bob")
     if app_request:
         # The fixed target is the real holder; a generic claim must never adopt it.
         await db.execute(
-            """UPDATE {{tables.tasks}} SET assignee_did='did:key:zbob',
-               app_request='{}'::jsonb WHERE task_id=$1""", task_id,
+            """INSERT INTO {{tables.tasks}} (task_id,team_id,task_number,root_task_seq,
+               task_ref_suffix,title,status,assignee_alias,assignee_did,app_request)
+               VALUES ($1,$2,1,1,'aaaa','Fixed request','in_progress','bob','did:key:zbob','{}')""",
+            task_id, TEAM_ID,
         )
+    else:
+        await _insert_task(db, task_id=task_id, task_number=1, root_task_seq=1,
+                           suffix="aaaa", title="Recover work", status="in_progress", assignee_alias="bob")
     await db.execute(
         """INSERT INTO {{tables.task_claims}} (team_id,workspace_id,alias,task_ref,claimed_at)
            VALUES ($1,$2,'bob','backend-aaaa',$3)""", TEAM_ID, workspaces["bob"], seen,
@@ -63,8 +68,14 @@ async def seed_claim(db, *, fresh=False, grant=None, app_request=False):
     return task_id, workspaces, seen
 
 
-def http_client(db):
+def http_client(db, alias="alice"):
     app = _build_tasks_app(db)
+
+    async def identity():
+        return replace(await _fake_team_identity(), alias=alias)
+
+    for key in app.dependency_overrides:
+        app.dependency_overrides[key] = identity
 
     @app.exception_handler(ServiceError)
     async def service_error(request, exc):
@@ -74,7 +85,7 @@ def http_client(db):
 
 
 @pytest.mark.asyncio
-async def test_stale_takeover_records_and_rejects_displaced_holder(aweb_cloud_db):
+async def test_stale_takeover_records_and_reclaim_names_current_holder(aweb_cloud_db):
     db = aweb_cloud_db.aweb_db
     task_id, ws, seen = await seed_claim(db)
     async with http_client(db) as client:
@@ -91,15 +102,19 @@ async def test_stale_takeover_records_and_rejects_displaced_holder(aweb_cloud_db
     comments = await db.fetch_all("SELECT body FROM {{tables.task_comments}} WHERE task_id=$1", task_id)
     assert len(comments) == 1
     assert all(s in comments[0]["body"] for s in ("alice", "bob", seen.isoformat()))
-    for changes in ({"notes": "late edit"}, {"status": "closed"}):
-        from aweb.service_errors import ConflictError
-        with pytest.raises(ConflictError, match="alice"):
-            await update_task(_DbShim(db), team_id=TEAM_ID, ref="backend-aaaa", actor_alias="bob", **changes)
-    # General team edits remain allowed; only a displaced holder is fenced.
+    async with http_client(db, "bob") as client:
+        response = await client.patch("/v1/tasks/backend-aaaa", json={"status": "in_progress"})
+        assert response.status_code == 409
+        assert "alice" in response.json()["detail"]
+        claimed_at = await db.fetch_value("SELECT claimed_at FROM {{tables.task_claims}}")
+        assert claimed_at.isoformat() in response.json()["detail"]
+    # Athena88b41c93: displaced holders retain the general member edit policy.
+    await update_task(_DbShim(db), team_id=TEAM_ID, ref="backend-aaaa", actor_alias="bob", notes="late edit")
     await update_task(_DbShim(db), team_id=TEAM_ID, ref="backend-aaaa", actor_alias="carol", notes="reviewed")
     row = await db.fetch_one("SELECT status,notes FROM {{tables.tasks}} WHERE task_id=$1", task_id)
     assert row["status"] == "in_progress" and row["notes"] == "reviewed"
     assert await list_ready_tasks(_DbShim(db), team_id=TEAM_ID) == []
+    await update_task(_DbShim(db), team_id=TEAM_ID, ref="backend-aaaa", actor_alias="bob", status="closed")
 
 
 @pytest.mark.asyncio
@@ -114,6 +129,22 @@ async def test_live_holder_is_not_ready_and_keeps_claim(aweb_cloud_db, fresh, gr
         assert "bob" in response.json()["detail"]
     assert await db.fetch_value("SELECT workspace_id FROM {{tables.task_claims}}") == ws["bob"]
     assert await db.fetch_value("SELECT count(*) FROM {{tables.task_comments}}") == 0
+
+
+@pytest.mark.asyncio
+async def test_concurrent_takeovers_have_one_winner(aweb_cloud_db):
+    db = aweb_cloud_db.aweb_db
+    await seed_claim(db)
+    async with http_client(db, "alice") as alice, http_client(db, "carol") as carol:
+        responses = await asyncio.gather(*[
+            c.patch("/v1/tasks/backend-aaaa", json={"status": "in_progress"})
+            for c in (alice, carol)
+        ])
+    assert sorted(r.status_code for r in responses) == [200,409]
+    winner = next(r.json()["assignee_alias"] for r in responses if r.status_code == 200)
+    assert winner in next(r.json()["detail"] for r in responses if r.status_code == 409)
+    assert await db.fetch_value("SELECT alias FROM {{tables.task_claims}}") == winner
+    assert await db.fetch_value("SELECT count(*) FROM {{tables.task_comments}}") == 1
 
 
 @pytest.mark.asyncio
