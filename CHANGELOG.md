@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- AWID SDK: `awid.id_certificate_request` builds and reads the child request
+  exchange as `aw` does. `build_id_certificate_request` writes the signed
+  request file for a first certificate, through a `PayloadSigner`;
+  `id_certificate_request_signing_bytes` returns the bytes it signs; and
+  `parse_id_certificate_response(raw, request=...)` reads the parent's
+  response against the request it answers. A host can run the exchange
+  against `aw id child invite` and `aw id child approve` without copying the
+  wire format.
+
 - AWID SDK: a `RegistryClient` request that gets no answer (a connection,
   protocol or read failure, or no complete answer within `timeout_seconds`)
   now raises `RegistryError` with status 503 and code `unavailable`, the

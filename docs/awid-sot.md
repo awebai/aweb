@@ -1318,6 +1318,31 @@ body digest is never checked alone. `RegistryClient.registry_audience(domain)`
 is the `aud` a write for that domain signs: the canonical origin of the
 registry it is routed to, resolved exactly as the write resolves it.
 
+### Child request exchange
+
+`awid.id_certificate_request` reads and writes the child request and response
+files of docs/id-certificates.md §6 exactly as `aw` does, byte for byte, as the
+shared vectors in `docs/vectors/id-certificates-v1.json` pin. It is pure: no
+registry calls.
+
+- `build_id_certificate_request(*, request_id, invitation_id, id, domain,
+  parent, kind, subject_key, signer)` is `aw id parent request` for a first
+  certificate. The invitation ID, domain and parent are what the parent's
+  invitation fixed; the parent is `{"kind": "identity", "id": ...}` or
+  `{"kind": "namespace", "id": domain}` for the namespace root. The caller
+  chooses `request_id` and resends the returned bytes on retry; it never
+  rebuilds them. The request is checked as the receiver checks it before the
+  signer, a `PayloadSigner` holding `subject_key`, is asked once to sign it.
+- `id_certificate_request_signing_bytes(request)` is the exact bytes that
+  signer signs.
+- `parse_id_certificate_request(raw)` reads a request and checks its key proof.
+- `parse_id_certificate_response(raw, *, request)` is `aw id parent import`'s
+  local check: the strict response shape with every certificate's signature,
+  then the request file it answers, the same `request_id`, and a leaf with the
+  requested `id`, `domain`, `parent` and `kind` (`request_binding_mismatch`).
+  The chain still needs `verify_id_chain` on current status, and a did:aw leaf
+  its own registration, before it carries authority.
+
 ---
 
 ## awid database schema
