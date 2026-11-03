@@ -54,12 +54,8 @@ describe("resolveChannelDelivery", () => {
 });
 
 describe("packaged Claude channel delivery mode", () => {
-  test.each(["session", undefined])("packaged channel heartbeats while running in %s mode", async (delivery) => {
-    const dir = mkdtempSync(join(tmpdir(), "channel-presence-clock-"));
-    const clock = join(dir, "clock.cjs");
-    // Accelerate only the production five-minute interval in this child.
-    writeFileSync(clock, "const real = global.setInterval; global.setInterval = (fn, ms, ...args) => real(fn, ms === 300000 ? 50 : ms, ...args);\n");
-    const launched = await launchFixtureChild(delivery, { NODE_OPTIONS: `--require=${clock}` });
+  test.each(["session", undefined])("packaged channel heartbeats at start in %s mode", async (delivery) => {
+    const launched = await launchFixtureChild(delivery);
     await vi.waitFor(() => expect(probe?.requests, launched.stderr()).toContain("/v1/agents/heartbeat"));
     const stopped = new Promise<void>((resolve) => child!.once("exit", () => resolve()));
     child!.stdin.end();
@@ -77,7 +73,7 @@ describe("packaged Claude channel delivery mode", () => {
     // The whole point of the opt-out: the external wake path owns the one
     // per-identity stream, so this process must never open it.
     await settle(1_500);
-    expect(probe?.requests).toEqual([]);
+    expect(probe?.requests.filter(p => p !== "/v1/agents/heartbeat")).toEqual([]);
     expect(existsSync(receiptPath)).toBe(false);
   }, 20_000);
 
@@ -108,7 +104,7 @@ describe("packaged Claude channel delivery mode", () => {
   }, 20_000);
 });
 
-async function launchFixtureChild(delivery: string | undefined, environment: NodeJS.ProcessEnv = {}) {
+async function launchFixtureChild(delivery: string | undefined) {
   const { workdir } = await createShadowedPrincipalFixture();
   receiptPath = join(workdir, ".aw/receive/stream.json");
   probe = await startProbeServer();
@@ -119,7 +115,6 @@ async function launchFixtureChild(delivery: string | undefined, environment: Nod
 
   const launched = await launchPackagedMCPChild(channelRoot, workdir, {
     AWEB_DELIVERY: process.env.AWEB_DELIVERY,
-    ...environment,
   });
   child = launched.child;
   return launched;
@@ -128,10 +123,10 @@ async function launchFixtureChild(delivery: string | undefined, environment: Nod
 async function expectStreamOpened(stderr: () => string): Promise<void> {
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
-    if (probe && probe.requests.length > 0) break;
+    if (probe?.requests.some(p => p.startsWith("/v1/events/stream?"))) break;
     await settle(50);
   }
-  expect(probe?.requests[0], `channel did not open the event stream\n${stderr()}`)
+  expect(probe?.requests.find(p => p.startsWith("/v1/events/stream?")), `channel did not open the event stream\n${stderr()}`)
     .toMatch(/^\/v1\/events\/stream\?deadline=/);
 }
 

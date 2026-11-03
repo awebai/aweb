@@ -30,17 +30,23 @@ test.each(["team", "grant"] as const)("presence timer sends real %s-auth HTTP he
   const stop = startPresenceHeartbeat(client, abort.signal);
   let deadline: ReturnType<typeof setTimeout> | undefined;
   try {
-    vi.advanceTimersByTime(299999);
-    expect(count).toBe(0);
-    vi.advanceTimersByTime(1);
     await Promise.race([arrival, new Promise((_, reject) => {
-      deadline = setTimeout(() => reject(new Error("heartbeat did not reach HTTP server")), 2000);
+      deadline = setTimeout(() => reject(new Error("no startup heartbeat")), 2000);
     })]);
+    clearTimeout(deadline);
     expect(count).toBe(1);
+    vi.advanceTimersByTime(299999);
+    expect(count).toBe(1);
+    const second = new Promise<void>((resolve) => { arrived = resolve; });
+    vi.advanceTimersByTime(1);
+    await Promise.race([second, new Promise((_, reject) => {
+      deadline = setTimeout(() => reject(new Error("no periodic heartbeat")), 2000);
+    })]);
+    expect(count).toBe(2);
     abort.abort();
     vi.advanceTimersByTime(600000);
     expect(vi.getTimerCount()).toBe(0);
-    expect(count).toBe(1);
+    expect(count).toBe(2);
   } finally {
     abort.abort(); stop();
     clearTimeout(deadline);
@@ -70,7 +76,6 @@ test("a failed heartbeat retries next tick and abort cancels a stalled request",
     did:"did:key:z6Mktest", stableID:"", signingKey:new Uint8Array(32).fill(1), teamID:"dev:example.com", teamCertificateHeader:"cert",
   }), abort.signal, failed);
   try {
-    vi.advanceTimersByTime(300000);
     await failure;
     vi.advanceTimersByTime(300000);
     await arrival;

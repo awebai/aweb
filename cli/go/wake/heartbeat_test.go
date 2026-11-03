@@ -131,3 +131,40 @@ func TestPresenceHeartbeatUsesFreshInspectAndStopsOnDeregister(t *testing.T) {
 	}
 	noBeat()
 }
+
+func TestPresenceHeartbeatAtStartDoesNotWaitForTicker(t *testing.T) {
+	arrived := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/v1/agents/heartbeat" {
+			t.Errorf("unexpected heartbeat %s %s", r.Method, r.URL.Path)
+		}
+		arrived <- struct{}{}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	inspect := session.NewFake(session.Inspection{Present: true})
+	broker, _ := liveBroker(t, Config{Store: tempStore(t), Session: inspect, HeartbeatInterval: time.Hour,
+		Heartbeat: func(ctx context.Context, home, team string) error {
+			req, _ := http.NewRequestWithContext(ctx, "POST", server.URL+"/v1/agents/heartbeat", nil)
+			res, err := server.Client().Do(req)
+			if err == nil {
+				res.Body.Close()
+			}
+			return err
+		},
+	})
+	home := tempHome(t, "startup")
+	identity := filepath.Join(tempHome(t, "identity"), ".aw")
+	writeWakeTestTeamState(t, identity, "dev:example.com")
+	if err := broker.Register(Registration{Home: home, IdentityHome: identity, Delivery: DeliverySession}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-arrived:
+	case <-time.After(2 * time.Second):
+		t.Fatal("startup heartbeat waited for ticker")
+	}
+	if got := inspect.Inspects(); len(got) != 1 || got[0] != home {
+		t.Fatalf("startup inspect=%v", got)
+	}
+}

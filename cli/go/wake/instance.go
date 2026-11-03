@@ -411,6 +411,7 @@ func (r *instanceRunner) run(ctx context.Context) {
 func (r *instanceRunner) runHeartbeats(ctx context.Context) {
 	ticker := time.NewTicker(r.broker.cfg.HeartbeatInterval)
 	defer ticker.Stop()
+	r.heartbeat(ctx)
 	for {
 		select {
 		case <-ctx.Done():
