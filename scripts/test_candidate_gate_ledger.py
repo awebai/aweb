@@ -96,7 +96,7 @@ candidate-gate:
         checked(repo, "git", "commit", "-qm", "small real gate stages")
         checked(repo, "git", "remote", "add", "origin", str(repo))
         env = {key: value for key, value in os.environ.items()
-               if key == "AWEB_GATE_MIN_FREE_GB"
+               if key in {"AWEB_GATE_MIN_FREE_GB", "AWEB_GATE_RESERVE_GB"}
                or not key.startswith(("AWEB_CANDIDATE_", "AWEB_GATE_", "CANDIDATE_", "GATE_", "LIBRARY_E2E_"))}
         env.update(AWEB_GATE_LEDGER=str(evidence / "ledger.tsv"),
                    AWEB_GATE_LOG_DIR=str(evidence / "logs"),

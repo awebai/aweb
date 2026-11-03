@@ -152,6 +152,17 @@ result retains that reason. Cleanup failures also block reuse.
 
 `main` may move while the gate runs. The tested SHA and its local tags do not.
 
+Before allocating Docker resources, the gate waits for the critical free-space
+floor plus one gate's peak budget on Docker's backing host filesystem. Defaults
+are `AWEB_GATE_MIN_FREE_GB=50` and `AWEB_GATE_RESERVE_GB=30`, requiring 80 GiB
+free. The reserve covers the measured 20–28 GB peak of the private builder cache,
+tool/suite images, workspace and runner; it is separate from the critical floor.
+Both settings accept nonnegative integer GiB values, including a smaller reserve
+for a deliberately smaller fixture. The same check serves make prerequisites.
+This is startup headroom, not a disk quota or a shared admission lock. Concurrent
+gates remain possible; their operator must leave capacity for all outstanding
+gate budgets before starting another run.
+
 Each gate owns its builder, BuildKit cache, service data, and workspace volume.
 The checkout and exact Git input snapshots are copied through the Docker API;
 dependency caches stay in Docker storage. Only the Docker socket, run logs, and

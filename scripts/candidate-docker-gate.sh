@@ -8,9 +8,11 @@ refuse() { printf 'candidate gate refused: %s\n' "$*" >&2; exit 2; }
 
 # Probe the backing host filesystem without pulling an image or starting a
 # container. Desktop's Linux DockerRootDir lives inside its sparse disk image.
+# Keep the critical floor free after this gate's measured peak allocation.
 wait_for_disk() {
-  local floor="${AWEB_GATE_MIN_FREE_GB:-50}" path available
+  local floor="${AWEB_GATE_MIN_FREE_GB:-50}" reserve="${AWEB_GATE_RESERVE_GB:-30}" path available
   [[ "$floor" =~ ^[0-9]+$ ]] || refuse "AWEB_GATE_MIN_FREE_GB must be a nonnegative integer"
+  [[ "$reserve" =~ ^[0-9]+$ ]] || refuse "AWEB_GATE_RESERVE_GB must be a nonnegative integer"
   path="$(docker info --format '{{.DockerRootDir}}')" || refuse "docker daemon is unavailable"
   if [[ "$(uname -s)" == Darwin ]]; then
     path="$(python3 - <<'PY'
@@ -31,11 +33,11 @@ PY
     available="$(df -Pk "$path" | awk 'NR == 2 {print $4}')" \
       || refuse "could not measure Docker's data volume"
     [[ "$available" =~ ^[0-9]+$ ]] || refuse "could not measure Docker's data volume"
-    if awk -v free="$available" -v floor="$floor" 'BEGIN {exit !(free >= floor * 1024 * 1024)}'; then
+    if awk -v free="$available" -v floor="$floor" -v reserve="$reserve" 'BEGIN {exit !(free >= (floor + reserve) * 1024 * 1024)}'; then
       return
     fi
-    awk -v free="$available" -v floor="$floor" -v path="$path" \
-      'BEGIN {printf "candidate gate waiting: Docker data volume %s has %.1f GiB free; need %s GiB (AWEB_GATE_MIN_FREE_GB); retrying in 60s\n", path, free / 1024 / 1024, floor}'
+    awk -v free="$available" -v floor="$floor" -v reserve="$reserve" -v path="$path" \
+      'BEGIN {printf "candidate gate waiting: Docker data volume %s has %.1f GiB free; need %.0f GiB (%s critical + %s gate reserve); retrying in 60s\n", path, free / 1024 / 1024, floor + reserve, floor, reserve}'
     sleep 60
   done
 }
