@@ -436,26 +436,32 @@ class RegistryClient:
             == canonical_server_origin(self.registry_url)
         ):
             request_headers[AWID_SERVICE_TOKEN_HEADER] = self.service_token
-        async with asyncio.timeout(self.timeout_seconds):
-            async with self._http_client.stream(
-                method,
-                f"{self._resolved_base_url(registry_url=registry_url)}{path}",
-                headers=request_headers,
-                json=json,
-                content=content,
-            ) as response:
-                succeeded = 200 <= response.status_code < 300
-                max_bytes = MAX_REGISTRY_RESPONSE_BYTES if succeeded else MAX_REGISTRY_ERROR_BYTES
-                try:
-                    content = await _read_bounded_response(response, max_bytes)
-                except ValueError as exc:
-                    if succeeded:
-                        raise
-                    # An unreadable error page is still this refusal.
-                    raise RegistryError(
-                        f"unreadable HTTP {response.status_code} response",
-                        status_code=response.status_code,
-                    ) from exc
+        try:
+            async with asyncio.timeout(self.timeout_seconds):
+                async with self._http_client.stream(
+                    method,
+                    f"{self._resolved_base_url(registry_url=registry_url)}{path}",
+                    headers=request_headers,
+                    json=json,
+                    content=content,
+                ) as response:
+                    succeeded = 200 <= response.status_code < 300
+                    max_bytes = MAX_REGISTRY_RESPONSE_BYTES if succeeded else MAX_REGISTRY_ERROR_BYTES
+                    try:
+                        content = await _read_bounded_response(response, max_bytes)
+                    except ValueError as exc:
+                        if succeeded:
+                            raise
+                        # An unreadable error page is still this refusal.
+                        raise RegistryError(
+                            f"unreadable HTTP {response.status_code} response",
+                            status_code=response.status_code,
+                        ) from exc
+        except (httpx.TransportError, TimeoutError) as exc:
+            # No answer, or none in time: a write may or may not have been
+            # applied. The original error stays the cause.
+            unavailable = f"AWID registry unavailable ({type(exc).__name__})"
+            raise RegistryError(unavailable, status_code=503, code="unavailable") from exc
         if not 200 <= response.status_code < 300:
             detail = None
             code = None

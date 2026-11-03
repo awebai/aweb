@@ -493,8 +493,9 @@ async def test_a_rotation_whose_answer_is_lost_leaves_no_cached_namespace():
     registry.on_rotate = commit_then_lose_the_answer
     try:
         assert (await client.get_namespace(DOMAIN)).controller_did == did_key("root")
-        with pytest.raises(httpx.ReadTimeout):
+        with pytest.raises(RegistryError) as lost:
             await _rotate(client)
+        assert lost.value.code == "unavailable"
         assert (await client.get_namespace(DOMAIN)).controller_did == did_key("root_rotated")
     finally:
         await client.aclose()
@@ -700,8 +701,9 @@ async def test_a_write_whose_answer_is_lost_leaves_no_cached_evidence(cached, pr
         raise httpx.ReadTimeout("answer lost after the registry committed")
 
     cached.transport.on_write = commit_then_lose_the_answer
-    with pytest.raises(httpx.ReadTimeout):
+    with pytest.raises(RegistryError) as lost:
         await write.send()
+    assert lost.value.code == "unavailable"
 
     assert (await _verified(cached, *write.after))["reason"] == write.reasons[1]
 

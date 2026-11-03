@@ -1302,7 +1302,11 @@ strict profile (`awid.id_certificates.verify_ed25519`). A signer that raises,
 or answers with a malformed result, a key outside the profile, a signature
 that does not verify or the wrong role's key, sends nothing. A refusal raises
 `RegistryError` with `status_code`, `detail`, and `code` when the registry
-sent a coded refusal.
+sent a coded refusal. Any `RegistryClient` request that gets no answer (a
+connection, protocol or read failure, or no complete answer within
+`timeout_seconds`) raises `RegistryError` with `status_code` 503 and `code`
+`unavailable`, with the transport error as its `__cause__`. A write that fails
+this way may or may not have been applied.
 
 The request bytes come only from `awid.id_tree_requests`, a pure module with
 no I/O: `REGISTER_PATH`, `REVOKE_PATH` and `rotate_path(domain)`; the

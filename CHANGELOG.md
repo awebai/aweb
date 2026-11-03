@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- AWID SDK: a `RegistryClient` request that gets no answer (a connection,
+  protocol or read failure, or no complete answer within `timeout_seconds`)
+  now raises `RegistryError` with status 503 and code `unavailable`, the
+  transport error as its cause, instead of the raw `httpx` error or
+  `TimeoutError`. Callers catch one exception type. The aweb server reports
+  it with the same 503 detail as before.
+
 - AWID SDK: `CachedRegistryClient` reads its own identity-tree writes.
   `register_id_certificate` and `revoke_id_certificate` drop the cached
   `id_chain_evidence` entries of the written domain, so the next read fetches

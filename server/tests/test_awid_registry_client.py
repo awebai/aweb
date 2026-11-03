@@ -994,8 +994,9 @@ async def test_base_url_override_is_used_when_provided():
 
     assert client._resolved_base_url() == "http://override.test"
 
-    with pytest.raises(httpx.ConnectError):
+    with pytest.raises(RegistryError) as unavailable:
         await client.health()
+    assert isinstance(unavailable.value.__cause__, httpx.ConnectError)
 
 
 @pytest.mark.asyncio

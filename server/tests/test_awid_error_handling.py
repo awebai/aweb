@@ -41,12 +41,24 @@ def test_awid_dependency_http_exception_distinguishes_connect_failure():
 
 
 def test_a_registry_request_deadline_is_a_dependency_error_and_retryable_503():
-    # RegistryClient bounds each request with asyncio.timeout, which raises the builtin TimeoutError.
+    # A caller's own asyncio.timeout around a registry call raises the builtin TimeoutError.
     assert issubclass(TimeoutError, AWID_DEPENDENCY_ERRORS)
     err = awid_dependency_http_exception(TimeoutError(), operation="AWID team key resolution")
 
     assert err.status_code == 503
     assert err.detail == "AWID team key resolution upstream unavailable (TimeoutError)"
+
+
+def test_an_unavailable_registry_is_classified_by_the_transport_failure_behind_it():
+    for cause, expected in (
+        (httpx.ConnectError("connection refused"), "AWID did:aw resolution upstream unavailable (ConnectError): connection refused"),
+        (TimeoutError(), "AWID did:aw resolution upstream unavailable (TimeoutError)"),
+    ):
+        try:
+            raise RegistryError("AWID registry unavailable", status_code=503, code="unavailable") from cause
+        except RegistryError as unavailable:
+            err = awid_dependency_http_exception(unavailable, operation="AWID did:aw resolution")
+        assert (err.status_code, err.detail) == (503, expected)
 
 
 def test_awid_dependency_http_exception_caps_registry_unactionable_4xx_to_bad_gateway():
