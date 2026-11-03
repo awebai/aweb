@@ -8,6 +8,7 @@ The observer records requests without replacing transport or handler results.
 import asyncio
 from datetime import datetime, timezone
 import json
+import os
 import socket
 from types import SimpleNamespace
 from uuid import UUID, uuid4
@@ -23,6 +24,7 @@ from aweb.mcp.server import create_mcp_app
 from aweb.testing import running_server
 from identity_binding_support import register_global_identity
 from test_cli_never_grants import registry_listener
+from test_cli_human_reply import _pem
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_messages_http import (
     _encode_certificate, _make_certificate, _make_keypair, _signed_team_headers,
@@ -407,3 +409,73 @@ async def test_foreign_origin_still_reaches_real_receiver(same_origin, foreign_r
         assert {p["did"] for p in participants} == {
             same_origin.target_did, submitted.signed["from_stable_id"],
         }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+@pytest.mark.parametrize("route", ["resident", "nonresident", "foreign"])
+async def test_real_cli_address_delivery(same_origin, foreign_receiver, source_cli_binary, tmp_path, kind, route):
+    env = same_origin.env
+    if route != "foreign":
+        await env.registry_db.execute(
+            "UPDATE {{tables.dns_namespaces}} SET default_delivery_origin=$1 "
+            "WHERE domain='recipient.test'", env.app.state.public_origin,
+        )
+    if route == "resident":
+        await same_origin.resident()
+    actor = env.actors["alice"]
+    cert = _make_certificate(env.team_sk, env.team_did, actor.did, team_id=TEAM, alias="alice", identity_scope="local")
+    for field in ("signature", "member_did_aw", "member_address"):
+        cert.pop(field)
+    cert["signature"] = sign_message(env.team_sk, canonical_json_bytes(cert))
+    identity_home = tmp_path / "sender" / ".aw"
+    identity_home.mkdir(parents=True, mode=0o700)
+    _pem(identity_home / "signing.key", "ED25519 PRIVATE KEY", actor.sk)
+    (identity_home / "identity.yaml").write_text(json.dumps(dict(did=actor.did, custody="self", identity_scope="local")))
+    (identity_home / "certificate.json").write_text(json.dumps(cert))
+    membership = dict(team_id=TEAM, alias="alice", cert_path="certificate.json")
+    (identity_home / "teams.yaml").write_text(json.dumps(dict(active_team=TEAM, memberships=[membership])))
+    (identity_home / "workspace.yaml").write_text(json.dumps(dict(
+        aweb_url=str(env.client.base_url), memberships=[dict(membership, workspace_id=str(actor.workspace))],
+    )))
+    child_env = {k: v for k, v in os.environ.items() if not k.startswith(("AW_", "AWEB_", "AWID_", "OATS_"))}
+    child_env.update(HOME=str(tmp_path), XDG_CONFIG_HOME=str(tmp_path / "config"), AW_NO_UPDATE_CHECK="1",
+                     AWID_REGISTRY_URL=env.app.state.awid_registry_client.registry_url)
+    body_file = tmp_path / "message.txt"
+    body_file.write_text("Real CLI address delivery")
+    args = (
+        ["mail", "send", "--to-address", "recipient.test/recipient", "--subject", "Routing control"]
+        if kind == "mail" else ["chat", "send-and-leave", "recipient.test/recipient"]
+    )
+    before = await same_origin.effects()
+    process = await asyncio.create_subprocess_exec(
+        str(source_cli_binary), "--identity-home", str(identity_home), *args, "--body-file", str(body_file),
+        cwd=tmp_path, env=child_env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+    )
+    data, _ = await asyncio.wait_for(process.communicate(), 30)
+    output = data.decode()
+    assert not same_origin.ingress, output
+    assert bool(foreign_receiver.ingress) == (route == "foreign"), output
+    if route == "resident":
+        assert process.returncode == 0, output
+        table = "messages" if kind == "mail" else "chat_messages"
+        row = await env.db.fetch_one("SELECT * FROM {{tables." + table + "}}")
+        assert row is not None
+        assert row["body"] == body_file.read_text()
+        signed = json.loads(row["signed_payload"])
+        assert str(row["message_id"]) == signed["message_id"]
+        assert signed["to_stable_id"] == same_origin.target_did
+        if kind == "mail":
+            assert row["to_did"] == same_origin.target_did
+        else:
+            participants = await env.db.fetch_all(
+                "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1", row["session_id"],
+            )
+            assert {p["did"] for p in participants} == {actor.did, same_origin.target_did}
+    else:
+        assert process.returncode != 0, output
+        assert await same_origin.effects() == before
+        if route == "nonresident":
+            assert "Ask the recipient or server operator" in output
+        else:
+            assert "local_sender_route_mismatch" in output

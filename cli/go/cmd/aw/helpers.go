@@ -1770,6 +1770,9 @@ func networkError(err error, target string) error {
 	if ok && code == 404 {
 		switch httpErrorReason(err) {
 		case "recipient_identity_not_found":
+			if detail := awid.DescribeError(err).Detail; detail != "" && detail != "recipient_identity_not_found" {
+				return &plainRefusal{text: termtext.Line(detail), err: err}
+			}
 			return fmt.Errorf("%s is not a member of your team or a registered address. Check the name with `aw workspace status`.", target)
 		case "local_recipient_route_missing":
 			return errors.New(awid.UnreachableAddressText(target))
