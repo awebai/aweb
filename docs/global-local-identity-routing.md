@@ -117,7 +117,7 @@ existing facts:
   `did:key`, alias, and team;
 - the team's `aweb.team-server/1` record, signed by the team's current key,
   naming the team's server; and
-- the sender's message signature, which binds the certificate to this message.
+- the sender's message signature, which binds the team to this message.
 
 aweb services have no registry-anchored identity, so a service-signed assertion
 would add a new trust root. It would also let a compromised sending service
@@ -127,16 +127,30 @@ where the team's server is. Partial-service compromise is in scope of the trust
 model. Under this design, a compromised sending service can route only keys
 its team certified, and only to the server the team key named.
 
-**Sender binding.** The sender's signed message binds `from_certificate_id`:
-the `certificate_id` of its active team certificate.
-- For plaintext it is a field of `signed_payload`.
-- For encrypted-v2 it is a field of the protected `from` object.
+**Sender binding.** The sender's signed message binds its **full canonical team
+ID**, for example `backend:example.com`. Certificate IDs are unique only within
+a team. Two teams in one namespace can each certify the same `did:key` under the
+same alias and the same certificate ID, so the team domain and a certificate ID
+together do not select a certificate.
+- **Plaintext:** the signed `from` label is `<team_id>/<alias>`, taken from the
+  certificate, for example `backend:example.com/alice`. Received-local-sender
+  clients already accept a label that names the team ID. Because of the `:`, the
+  label is not a valid address.
+- **Encrypted-v2:** the protected `from.team_id` is the certificate's team ID,
+  and is required on this path. Any `from` label follows the plaintext rule.
+  `from.team_id` is already part of the signed identity map in the released
+  Python and Go verifiers, so no new protected field is added.
 
-The signed `from` label is `<team domain>/<alias>` taken from that
-certificate. It is a display label and is never resolved as an address. Without
-this binding, a team that certified the same `did:key` without its consent
-could have its own certificate substituted onto the sender's message. Replies
-would then go to that team's server and show its label.
+Inside the bound team, any certificate a relay could substitute must be signed
+by the same team key, name the same `did:key` and alias, and be `active`. The team
+controller is already the authority for that membership and for the team-server
+record, so binding a certificate ID as well would stop no additional attack.
+
+The label is display-only. It is never resolved, never pinned as an address,
+never stored as a participant `address`, and never matched against contacts.
+When a federated plaintext `from` contains `/`, the envelope parser projects it
+into `sender_address`. For a local `did:key` sender, ingress clears that value
+after the label check, before any storage or policy use.
 
 **Sending server.**
 - It attaches the certificate the sender authenticated with as
@@ -145,60 +159,96 @@ would then go to that team's server and show its label.
 - The field is part of the federation envelope hash.
 - Before federating, the sending server checks three things:
   - the certificate's `member_did_key` is the signer;
-  - its `certificate_id` equals the signed `from_certificate_id`;
+  - its `team_id` and `alias` equal the signed team binding;
   - the team's current team-server record verifies and names this server's
     public origin.
 - A failure is refused locally (see Refusals). Nothing is sent to the recipient.
 
-**Receiving server.** At ingress, after the message signature verifies and
-before receipts and recipient policy:
+**Receiving server.** These steps run in order. The envelope signature,
+recipient binding and the 300-second timestamp skew are verified first, as
+today. A message outside the skew is refused before any receipt lookup.
 
-1. Decode `sender_certificate` and check its fields:
+1. **Receipt.** Look up the receiver-wide `message_id` receipt. The lookup does
+   not depend on the vouched route:
+   - **Exact established receipt:** same kind and same envelope hash (the hash
+     covers the signature and `sender_certificate`). Return the stored result.
+     There is no certificate-status or team-server read, no route update, and no
+     message, participant or event effect. This holds after a revocation, after
+     a server move, and while AWID or DNS is unavailable. These exact bytes were
+     already admitted, and refusing them now would report a delivered message
+     as refused.
+   - **Same `message_id` with any other kind or hash:**
+     `federation_message_replay_conflict`.
+   - **No receipt:** a new admission. Continue.
+2. Decode `sender_certificate` and check its fields:
    - `member_did_key` equals the sender `did:key`;
    - `identity_scope` is `local`, and `member_did_aw` and `member_address` are
      empty;
-   - `certificate_id` equals the signed `from_certificate_id`;
-   - the signed `from` label names the certificate's team domain and alias.
-2. Select the team's registry from the team ID's domain, the same way strict
+   - its `team_id` and `alias` equal the signed binding (plaintext label;
+     encrypted `from.team_id` and any label).
+3. Select the team's registry from the team ID's domain, the same way strict
    sender authority selects from a signed address domain:
    - use the receiver's home registry when it serves that namespace;
    - otherwise use the domain's `_awid` record through the strict external
      path, with no fallback.
 
    A registry URL supplied by the sender is never consulted.
-3. Read the certificate status (anonymous, also for private teams).
+4. Read the certificate status by `(team_id, certificate_id)`. The read is
+   anonymous, also for private teams.
    - It must be `active`.
    - Its current `team_did_key` must equal the certificate's `team_did_key`.
    - The certificate signature must verify under that key.
-4. Read the team-server record (anonymous) and verify it under the same current
+5. Read the team-server record (anonymous) and verify it under the same current
    team key.
    - Its `server_url` is the sender's return route.
    - A supplied `sender_delivery_origin` must equal it.
    - If it names this server, the sender is resident here, so arriving by
      federation is refused.
-5. Cache the status and the record for at most 60 seconds each, and fail
-   closed. A registry or dependency failure is retryable.
-6. Apply the receiver-wide receipt and replay rules, then recipient policy
-   (`open` only).
-7. On acceptance, store the sender's participant route (see Storage). The
+6. Cache entries are keyed by registry and `(team_id, certificate_id)` for
+   status, and by registry and `team_id` for the record. Each entry is reused
+   for at most 60 seconds. A cached entry never answers a different key. A
+   registry, DNS or coordination failure is retryable and fails closed. If the
+   evidence reaches its 60 seconds during a later wait (for a lock or a database
+   call), re-read it after the last such wait and before the write.
+7. Apply recipient policy: a local sender is admitted only under `open`. This
+   holds for first contact and for every continuation, mail and chat,
+   plaintext and encrypted-v2.
+8. On acceptance, store the sender's participant route (see Storage). The
    recipient's reads report `sender_membership` from the stored certificate,
    with the certificate status read again under the same cache. Clients
    keep the "Received cross-team local senders" rules in the messaging contract
    unchanged.
 
+**Continuations from a team-vouched sender.** A stored participant with a team
+route (`route_team_id` set) is not held to strict equality with its stored
+origin. Each new message from it repeats steps 2-7 with its own certificate:
+- the certificate's `team_id` must equal the stored `route_team_id`; a
+  different team is `local_sender_route_mismatch`;
+- the certificate may be a reissue, for example after a team key rotation;
+- the supplied `sender_delivery_origin` must equal the freshly verified record,
+  not the stored row.
+
+If the verified `server_url` differs from the stored `delivery_origin`, the
+stored route is updated to the new origin and certificate in the same
+transaction that stores the message. An unverified change, meaning a missing,
+invalid or unverifiable certificate or record, is refused with the first-contact
+codes and changes nothing.
+
+Participants without a team route are unchanged: legacy learned local routes,
+same-server participants and `did:aw` participants keep strict equality with
+the stored row.
+
 **Freshness and replay.** The vouched route has no lifetime of its own. It is
 the current AWID state read at acceptance, by the receiver's clock, so
-membership is checked when the message is accepted, not at a time the sender
-chooses. Replay protection is the existing machinery:
+membership is checked when a new message is admitted, not at a time the sender
+chooses. Replay protection is the existing machinery: the timestamp skew, the
+receipt order above, and the signed recipient binding, so a captured message
+cannot be redirected to another recipient. There is no separate assertion
+nonce.
 
-- the 300-second message timestamp skew;
-- the receiver-wide `message_id` receipt (an exact retry returns the stored
-  result; the same id with any changed envelope, including a different
-  certificate, conflicts);
-- the signed recipient binding, so a captured message cannot be redirected to
-  another recipient.
-
-There is no separate assertion nonce.
+As with address authority, 60 seconds is a receiver reuse bound, not a global
+revocation guarantee. An authoritative registry or DNS source that keeps serving
+an older valid state can delay a revocation the receiver has not yet seen.
 
 There is no allowlist of origins. Any server a team's current key names is that
 team's server. Abuse control stays where it is: rate limits and recipient
@@ -216,18 +266,24 @@ chat participant rows store:
 - `did` = the sender `did:key`;
 - `address` = NULL;
 - `delivery_origin` = the verified team-server URL;
-- `route_team_id` and `route_certificate_id`, both set for this kind of
-  participant and NULL for every other kind.
+- `route_team_id`, `route_certificate_id`, and `route_certificate`, which is the
+  exact certificate as received. All three are set for this kind of participant
+  and NULL for every other kind.
 
-Each later accepted message from that sender replaces the route with its newly
-verified one.
+The route columns live on the participant row, not on a message. Message
+garbage collection never removes the certificate a reply needs for validation.
 
-**Before each reply**, the replying server re-reads the certificate status and
-the team-server record, under the same 60-second caches:
+**Before each reply**, the replying server re-reads the status of
+`(route_team_id, route_certificate_id)` and the team-server record, under the
+same 60-second caches:
 
-- **Active, current team key:** send to the record's current `server_url`. If
-  the team moved servers, the reply follows the newer record and updates the
-  stored `delivery_origin`.
+- **Active, current team key equal to the stored certificate's
+  `team_did_key`:** send to the record's current `server_url`. Update the stored
+  `delivery_origin` only when that server accepts the reply.
+- **The record names the replying server itself:** do not federate.
+  - If the target `did:key` is resident here, deliver locally as a stored-route
+    continuation.
+  - Otherwise refuse with `local_recipient_route_missing`.
 - **Revoked, unknown, or deleted team; old team key; missing or unverifiable
   record:** refuse locally and send nothing.
 - **Registry unavailable:** retryable. The stored route is kept.
@@ -245,8 +301,18 @@ only as a stored-route continuation:
 - the replying sender is a stored participant, verified by the existing strict
   global-sender authority.
 
-A local target needs no address. There is no first contact to a local
-`did:key`.
+A local target needs no address, and there is no first contact to a local
+`did:key`. A server that lacks the conversation or the resident participant
+refuses with `local_recipient_route_missing` and stores nothing. It never
+treats the reply as a new conversation.
+
+**Server moves.** A newer team-server record redirects the route, but it does
+not move the conversation.
+- **The conversation and its resident participants are present at the new
+  origin** (for example, the same deployment under a new public URL): replies
+  follow the record, and the sender's own next message updates the route.
+- **They are not present at the new origin:** the new server refuses as above.
+  The sender's agent can start again by writing a new message.
 
 **What changes end a route:**
 
@@ -254,8 +320,8 @@ A local target needs no address. There is no first contact to a local
 | --- | --- |
 | Sender identity replaced (a local `did:key` cannot rotate in place; a new key is a new identity and a new certificate) | Old certificate revoked: route ends. The new identity can write again. |
 | Sender removed from its team, or the team deleted | Status revoked or not found: route ends. |
-| Team key rotated | Certificates under the old key no longer verify, so the route ends until the sender writes again with its reissued certificate. |
-| Team moves to another server | A newer team-server record: replies follow it. |
+| Team key rotated | Certificates under the old key no longer verify, so replies are refused until the sender writes again with its reissued certificate. That message renews the route. |
+| Team moves to another server | Replies follow the newer record if the new server holds the conversation. Otherwise the new server refuses with `local_recipient_route_missing` and the sender writes again. |
 | AWID unavailable | Retryable; the route is kept. |
 
 #### Refusals
@@ -268,16 +334,16 @@ Every refusal tells the person what to do next.
 
 | Reason | HTTP | Retry | When | Text shown to the sender |
 | --- | ---: | :---: | --- | --- |
-| `local_sender_certificate_required` (new) | 422 | no | Cross-server message from a local sender without `sender_certificate` or a signed `from_certificate_id` | "This team-only agent's message did not carry its team certificate. Upgrade aw and resend." |
-| `local_sender_certificate_invalid` (new) | 422 | no | Malformed certificate, bad signature, or key, scope, id or label disagreement | "This agent's team certificate does not match it. Reinstall it with `aw id team fetch-cert` and resend." |
+| `local_sender_certificate_required` (new) | 422 | no | Cross-server message from a local sender without `sender_certificate` or without the signed team binding | "This team-only agent's message did not carry its team certificate. Upgrade aw and resend." |
+| `local_sender_certificate_invalid` (new) | 422 | no | Malformed certificate, bad signature, or disagreement on key, scope, team or alias | "This agent's team certificate does not match it. Reinstall it with `aw id team fetch-cert` and resend." |
 | `local_sender_certificate_revoked` (new) | 403 | no | Status revoked, or certificate/team not found | "This agent is no longer a member of team <team>, so it cannot write outside it." |
 | `local_sender_team_key_stale` (new) | 409 | no | Certificate signed by a superseded team key | "Team <team> rotated its key. Its controller must reissue this agent's certificate." |
 | `local_sender_team_server_missing` (new) | 424 | no | No team-server record, or it does not verify under the current key, or it names another server than the sending one | "Team <team> has not published its server at AWID, so replies could not reach this agent. The team controller runs `aw id team set-server`; hosted teams publish automatically: contact support." |
-| `local_sender_route_mismatch` | 422 | no | Supplied `sender_delivery_origin` disagrees with the record, or the record names the receiver itself | "This agent's server does not match its team's published server. Check `aw id team show-server`." |
+| `local_sender_route_mismatch` | 422 | no | Supplied `sender_delivery_origin` disagrees with the record; the record names the receiver itself; or a continuation's certificate names a different team than the stored route | "This agent's server does not match its team's published server. Check `aw id team show-server`." |
 | `sender_registry_unresolvable` and the other `sender_registry_*` discovery reasons | as today | as today | The team domain's registry cannot be discovered or validated | "<domain> has no AWID record, so other servers cannot check this agent's team. Publish an `_awid` record for <domain>, or write from an agent with a public address (`aw init --global`)." |
 | `sender_registry_unavailable`, `federation_authority_coordination_unavailable` | 503 | yes | Registry or coordination dependency failure | "The recipient's server could not reach AWID. Retry shortly." |
 | `recipient_policy_rejected` | 403 | no | Recipient `inbound_mode` is not `open` | "<address> accepts first messages only from its team and contacts. A team-only agent cannot be a contact; write from an agent with a public address (`aw init --global`)." |
-| `local_recipient_route_missing` | 404 | no | Replying to a learned local route that has ended (revoked, team deleted, old team key, record gone) | "<label> can no longer receive replies here: its team membership ended or changed. It can write to you again." |
+| `local_recipient_route_missing` | 404 | no | Replying to a learned local route that has ended (revoked, team deleted, old team key, record gone), or the route's current server does not hold the conversation | "<label> can no longer receive replies here: its team membership or server changed. It can write to you again." |
 
 A client sending as a local identity to another server gets
 `federation_envelope_invalid` or `local_sender_route_mismatch` from a receiver
@@ -298,32 +364,69 @@ encrypted-v2, mail and chat. Reads through the CLI, channel and wake.
 4. Hosted to hosted, different servers sharing one registry: delivered; reply
    works.
 5. Policy: `team_and_contacts` and `contacts_only` targets refuse with
-   `recipient_policy_rejected`; no message or route is stored.
+   `recipient_policy_rejected`; no message or route is stored. A recipient that
+   changes to `team_and_contacts` mid-thread refuses the next continuation, in
+   both formats and both kinds.
 6. Forged:
    - a certificate under another key;
    - another member's certificate;
-   - a substituted certificate from a second team that certified the same
-     `did:key` (signed id mismatch);
+   - **the same namespace, the same certificate ID, the same alias:** a second
+     team `attacker:example.test` certifies the same `did:key`, and its
+     certificate is substituted on an unchanged message signed for
+     `honest:example.test`. It is refused on the team binding, in plaintext and
+     encrypted-v2;
    - a label mismatch;
+   - an encrypted `from.team_id` that disagrees with the certificate;
    - a foreign `sender_delivery_origin`;
-   - a sender-supplied registry URL, which is ignored.
+   - a sender-supplied registry URL, which is ignored;
+   - the label used as a contact or an address target, which matches and
+     resolves nothing.
 7. Stale:
    - certificate revoked before send;
    - revoked after the first message (reply refused locally, nothing sent);
-   - team key rotated without reissue;
-   - team moved server (reply follows);
+   - team key rotated without reissue (refused), then the same identity writes
+     with its reissued certificate (accepted, route renewed);
+   - team moved server with the conversation present (reply follows, and the
+     sender's next message updates the stored origin);
+   - team moved server without the conversation (new server refuses with
+     `local_recipient_route_missing`, nothing stored, no first contact to the
+     `did:key`);
+   - a continuation whose certificate names another team
+     (`local_sender_route_mismatch`);
    - record missing (sender-side refusal);
    - AWID down (retryable, then success after recovery).
-8. Replayed:
-   - exact retry returns the stored result without duplicates;
+8. Replayed, all within the 300-second window:
+   - an exact retry returns the stored result with zero new message,
+     participant, route or event rows, including after the certificate is
+     revoked and the cache has expired, after a server move, and while AWID or
+     DNS is down;
    - the same `message_id` with a changed certificate or body conflicts;
+   - a new `message_id` after revocation is refused;
    - a captured message sent to another recipient fails recipient binding;
    - a timestamp beyond 300 seconds is refused.
-9. Self-federation: a federated message whose sender's team server is the
-   receiver is refused, and no send path federates to its own origin.
-10. Mixed versions: new sender to an old receiver gets the mapped refusal; old
-    sender to a new receiver gets `local_sender_certificate_required`.
-11. Every refusal text names its next step.
+9. Self-federation:
+   - a federated message whose sender's team server is the receiver is
+     refused;
+   - no send path federates to its own origin;
+   - a reply whose revalidated record names the replying server delivers
+     locally to a resident target, refuses a nonresident one, and makes zero
+     federation requests.
+10. Caches: a warm entry is reused within 60 seconds and re-read after it; one
+    team's or certificate's entry never answers another; DNS and registry
+    failures are retryable; evidence that expires during a database wait is
+    re-read before the write.
+11. Mixed versions: new sender to an old receiver gets the mapped refusal; old
+    sender to a new receiver gets `local_sender_certificate_required`. The
+    released CLI, channel and wake readers read new plaintext and encrypted-v2
+    messages as `verified` through an upgraded server, and as
+    `verification_stale` through a server without `sender_membership`. No
+    compatibility path strips the team binding or falls back to plaintext.
+12. Encrypted-v2 integrity:
+    - tampering with `from.team_id` or the label fails the signature;
+    - the inner header mirrors `from.team_id`;
+    - builders refuse to send without it on this path;
+    - the existing goldens for messages without a team route are unchanged.
+13. Every refusal text names its next step.
 
 ### Unknown local first contact fails
 

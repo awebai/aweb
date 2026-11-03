@@ -193,14 +193,18 @@ contact checks target address, DID, current key, and origin. Stored continuation
 requires exact active conversation/session participants and target current-key
 compatibility. Local `did:key` continuation remains separate: it requires that
 exact learned participant route, and supplied address/origin fields may only
-equal it. Unknown local first contact (to a local `did:key` target) and route
-injection fail closed. A local sender's first contact to a global address is
-supported. On the same server it is resident delivery and never federates to
-the server's own origin. Across servers, the sender's team vouches for the
-return route through its team certificate and `aweb.team-server/1` record,
-bound by a signed `from_certificate_id`. Recipient policy still admits a local
-sender only under `open`. The normative rules, refusals and evidence matrix
-are in
+equal it. One narrow exception applies to a team-vouched route: its origin
+follows the team-server record freshly verified for that sender's own new
+message, under the same team. The exception does not apply to unvouched
+routes or unsigned edits. Unknown local first contact (to a local `did:key`
+target) and route injection fail closed. A local sender's first contact to a
+global address is supported. On the same server it is resident delivery and
+never federates to the server's own origin. Across servers, the sender's team
+vouches for the return route through its team certificate and
+`aweb.team-server/1` record, bound by the signed full team ID. An exact retry
+of an already established message returns its stored result before any new
+admission. Recipient policy still admits a local sender only under `open`. The
+normative rules, refusals and evidence matrix are in
 [global-local-identity-routing.md](global-local-identity-routing.md#local-outbound-to-global).
 Target
 registry or PostgreSQL/lease publication dependency failure uses
