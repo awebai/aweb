@@ -112,6 +112,14 @@ Pi is the other maintained wake-up path: `pi install npm:@awebai/pi@latest`,
 then start `pi` in the workspace. Mail and chat wake the session, with the
 sender's verification shown.
 
+The extension includes the CLI, with skills installed separately. For a standalone
+Pi agent, add the guidance with `pi install npm:@awebai/claude-skills@latest`, then
+`/reload` or restart Pi. OATS agents use their per-home skills when supplied by
+their composition; they do not need a machine-wide skills install. Messaging
+works without skills using `aw workspace status`, `aw mail inbox`,
+`aw chat pending`, and the team's `aw instructions show`. Task tracking remains
+the team's choice; installing either package does not opt into aweb tasks.
+
 ## Pi package lifecycle
 
 `aw team admin up` installs `@awebai/pi` when missing but does not auto-update
@@ -129,8 +137,12 @@ Any runtime that can execute the CLI can participate in a team by polling:
 ```bash
 aw mail inbox
 aw chat pending
-aw work ready
 ```
+
+If your team uses aweb tasks (it has tasks, or its instructions say so), run
+`aw work ready` after checking messages and follow the `aweb-tasks` skill when
+installed. Otherwise use the team's own tracker. Creating the first aweb task
+is the opt-in.
 
 This is functional coordination but not automatic real-time wake-up. The human
 or runtime wrapper must decide when the AI session is prompted again.

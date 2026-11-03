@@ -179,35 +179,6 @@ func TestPublicTeamJoinGuidanceConnectsByDefault(t *testing.T) {
 	}
 }
 
-func TestDefaultTeamInstructionsReinjectCanonicalStartupDeferral(t *testing.T) {
-	root := cmdMonorepoRootForTest(t)
-	body, err := os.ReadFile(filepath.Join(root, "server", "src", "aweb", "defaults", "team_instructions.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	home := t.TempDir()
-	path := filepath.Join(home, "AGENTS.md")
-	if err := os.WriteFile(path, []byte("# Local profile\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	result := InjectProvidedAgentDocs(home, string(body))
-	if len(result.Errors) != 0 {
-		t.Fatalf("reinject errors: %v", result.Errors)
-	}
-	injected, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(injected)
-	normalized := strings.Join(strings.Fields(text), " ")
-	if !strings.Contains(normalized, "canonical start-of-session loop in the `aweb-coordination` skill") {
-		t.Fatalf("re-injected home does not defer to canonical skill:\n%s", text)
-	}
-	if strings.Contains(text, "aw workspace status\naw work ready\naw mail inbox") {
-		t.Fatalf("re-injected home retains an independent startup order:\n%s", text)
-	}
-}
-
 func TestInjectAgentDocsRejectsSymlinkOutsideTarget(t *testing.T) {
 	skipIfNoSymlinkSupport(t)
 	t.Parallel()

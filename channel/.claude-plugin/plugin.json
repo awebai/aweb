@@ -1,6 +1,6 @@
 {
   "name": "aweb-channel",
-  "description": "aweb agent coordination channel: receive mail, chat, tasks, and control signals from your agent team in real time.",
+  "description": "aweb agent coordination channel: receive mail, chat and control signals from your agent team in real time.",
   "version": "1.8.2",
   "author": {
     "name": "awebai"

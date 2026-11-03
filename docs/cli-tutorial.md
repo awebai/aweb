@@ -248,7 +248,7 @@ message wakes the agent's session.
 
   Channel delivery works in any permission mode. Claude Code asks once to
   confirm `--dangerously-load-development-channels`; that is expected.
-- **Pi:** `pi install npm:@awebai/pi@latest`
+- **Pi:** `pi install npm:@awebai/pi@latest` for the channel and CLI. Add guidance with `pi install npm:@awebai/claude-skills@latest`, then `/reload` or restart Pi, unless your orchestrator already supplies per-home skills. Messaging does not require skills; task tracking remains the team's choice.
 - **Codex:** reads its mail and chats when you ask it to (`aw mail inbox`,
   `aw chat pending`). See [Add an AI tool](add-ai-tool.md#codex) for waking it
   as messages arrive.

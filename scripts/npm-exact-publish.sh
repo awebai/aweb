@@ -43,10 +43,9 @@
 # wrapper with the exact aweb-channel server name; pi:
 # pi-extension/scripts/check-package-dist.mjs markers - including the
 # authenticated trust boundary and the bundled channel-core deadline,
-# byte-inactivity watchdog, and settled-backoff listener cleanup - plus the five
-# skill directories; skills:
-# plugin version equals the package version and exactly the five skill
-# directories).
+# byte-inactivity watchdog, and settled-backoff listener cleanup - with no
+# bundled skills; skills: plugin version equals the package version, Pi skills
+# discovery metadata, and exactly the six skill directories).
 
 set -euo pipefail
 
@@ -108,7 +107,7 @@ PYTGZ
   fi
 fi
 
-EXPECTED_SKILLS="aweb-bootstrap aweb-coordination aweb-identity aweb-messaging aweb-team-membership"
+EXPECTED_SKILLS="aweb-bootstrap aweb-coordination aweb-tasks aweb-identity aweb-messaging aweb-team-membership"
 
 profile_inspect() {
   local tgz="$1"
@@ -117,6 +116,7 @@ profile_inspect() {
   tar -xzf "$tgz" -C "$unpack"
   case "$PROFILE" in
     channel)
+      [[ ! -d "$unpack/package/skills" ]] || fail "channel tgz must not bundle skills"
       node "$SOURCE_ROOT/channel/scripts/check-package-dist.mjs" \
         --dist "$unpack/package/dist/index.js" \
         || fail "channel package-dist contract (markers/sentinel/version) failed"
@@ -150,15 +150,13 @@ PYPLUGIN
       node "$SOURCE_ROOT/pi-extension/scripts/check-package-dist.mjs" \
         --dist "$unpack/package/dist/index.js" \
         || fail "pi package-dist contract (bundled channel-core markers) failed"
-      local s actual expected
-      for s in $EXPECTED_SKILLS; do
-        [[ -d "$unpack/package/skills/$s" ]] \
-          || fail "pi tgz lacks expected skill directory skills/$s"
-      done
-      actual="$(ls "$unpack/package/skills" 2>/dev/null | sort | tr '\n' ' ')"
-      expected="$(tr ' ' '\n' <<<"$EXPECTED_SKILLS" | sort | tr '\n' ' ')"
-      [[ "$actual" == "$expected" ]] \
-        || fail "pi tgz skill set is [$actual], expected exactly [$expected]"
+      [[ ! -d "$unpack/package/skills" ]] || fail "pi tgz must not bundle skills"
+      python3 - "$unpack/package/package.json" <<'PYPI'
+import json, sys
+pkg = json.load(open(sys.argv[1]))
+if pkg.get("pi", {}).get("skills") != []:
+    sys.exit("REFUSE: pi runtime must disable automatic skills discovery with pi.skills=[]")
+PYPI
       ;;
     skills)
       python3 - "$unpack/package/.claude-plugin/plugin.json" "$VERSION" <<'PYPLUG'
@@ -171,6 +169,12 @@ if plugin.get("version") != sys.argv[2]:
     sys.exit(f"REFUSE: skills plugin version {plugin.get('version')} "
              f"does not equal the package version {sys.argv[2]}")
 PYPLUG
+      python3 - "$unpack/package/package.json" <<'PYSKILLS'
+import json, sys
+pkg = json.load(open(sys.argv[1]))
+if pkg.get("pi", {}).get("skills") != ["./skills"]:
+    sys.exit("REFUSE: optional skills package must expose pi.skills=[./skills]")
+PYSKILLS
       local actual expected
       actual="$(ls "$unpack/package/skills" 2>/dev/null | sort | tr '\n' ' ')"
       expected="$(tr ' ' '\n' <<<"$EXPECTED_SKILLS" | sort | tr '\n' ' ')"

@@ -14,9 +14,10 @@ Do not treat `cli/go/skills/` as canonical. The old seed packs from that directo
 
 ## V1 skill set
 
-V1 ships five default skills:
+The optional skills package ships six skills (task tracking split on 2026-11-03):
 
-- `aweb-coordination`: session/work-loop policy for coordinating with an aweb team.
+- `aweb-coordination`: session coordination without task tracking.
+- `aweb-tasks`: sharing and claiming work only when the team has aweb tasks or its instructions say it uses them. Creating the first task is the opt-in.
 - `aweb-messaging`: mail/chat/channel-awakening response policy.
 - `aweb-identity`: keypair, `did:key`/`did:aw`, AWID registry, local vs global identity, custodial vs self-custodial custody, what `aw init` does, addressability, inbound mode, contacts, key rotation, identity-level diagnostics.
 - `aweb-team-membership`: team certificates, joining flows organized by team authority (hosted vs BYOT), the custody × authority matrix, accept-invite vs fetch-cert, multiple memberships, fresh BYOT setup. (Identity foundations split out into `aweb-identity` 2026-05-24.)
@@ -34,8 +35,8 @@ documented in `docs/running-agents.md`, `docs/runtime-support.md`, and
 `cli/go/cmd/aw/team_up.go` / `team_human.go` with their tests.
 
 The packaging contract survives it. Every canonical skill directory must be
-either in the five-skill default set or in the explicit internal set, so adding
-a sixth directory cannot silently ship nowhere. The release guards still name
+either in the six-skill set or in the explicit internal set, so adding
+another directory cannot silently ship nowhere. The release guards still name
 `aweb-agent-instantiation` as the sentinel for that check; those occurrences
 detect a forbidden publication, they do not reference this removed skill.
 

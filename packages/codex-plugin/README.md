@@ -2,7 +2,7 @@
 
 Codex plugin packaging for the canonical aweb skill bodies.
 
-This directory is **not** the source of truth. The five skill bodies live at
+This directory is **not** the source of truth. The six skill bodies live at
 [`aweb/skills/`](../../skills/). The `skills/` subdirectory here holds
 generated copies of those bodies, produced by [`sync-skills.sh`](./sync-skills.sh)
 and committed to Git so the marketplace's `git-subdir` install delivers a
@@ -10,9 +10,10 @@ self-contained plugin.
 
 ## What this plugin ships
 
-Five skills, auto-discovered from the bundled `skills/` directory:
+Six skills, auto-discovered from the bundled `skills/` directory:
 
-- **`aweb-coordination`** — session/work-loop policy.
+- **`aweb-coordination`** — session coordination policy.
+- **`aweb-tasks`** — task sharing and claims, only if the team has aweb tasks or its instructions say it uses them. Creating the first task is the opt-in.
 - **`aweb-identity`** — identity custody, addressability and key lifecycle.
 - **`aweb-messaging`** — mail/chat policy + channel-awakening response.
 - **`aweb-team-membership`** — joining, BYOT, custody, addressability,
