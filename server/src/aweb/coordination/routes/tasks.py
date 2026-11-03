@@ -182,7 +182,7 @@ async def list_ready_tasks_route(
     identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
 ) -> dict[str, Any]:
     tasks = await list_ready_tasks(db_infra, team_id=identity.team_id)
-    unclaimed = [t for t in tasks if t.get("assignee_alias") is None]
+    unclaimed = [t for t in tasks if t.get("assignee_alias") is None or t.get("stale")]
     return {"tasks": unclaimed}
 
 
@@ -311,7 +311,9 @@ async def update_task_route(
     )
 
     old_status = result.pop("old_status", None)
-    if old_status is not None:
+    claim_preacquired = result.pop("claim_preacquired", False)
+    released_claims = result.pop("released_claims", [])
+    if old_status is not None or released_claims:
         await fire_mutation_hook(
             request,
             "task.status_changed",
@@ -320,14 +322,15 @@ async def update_task_route(
                 "team_id": identity.team_id,
                 "task_ref": result["task_ref"],
                 "title": result["title"],
-                "old_status": old_status,
+                "old_status": old_status or result["status"],
                 "new_status": result["status"],
                 "assignee_alias": result["assignee_alias"],
                 "parent_task_id": result["parent_task_id"],
                 "actor_agent_id": identity.agent_id,
                 "actor_alias": identity.alias,
                 "actor_did_aw": identity.did_aw,
-                "claim_preacquired": result.pop("claim_preacquired", False),
+                "claim_preacquired": claim_preacquired,
+                "released_claims": released_claims,
             },
         )
     else:

@@ -17,7 +17,7 @@ var workCmd = &cobra.Command{
 
 var workReadyCmd = &cobra.Command{
 	Use:   "ready",
-	Short: "List ready tasks that are not already claimed by other workspaces",
+	Short: "List ready tasks, including stale claims available for takeover",
 	RunE:  runWorkReady,
 }
 
@@ -34,6 +34,7 @@ var workBlockedCmd = &cobra.Command{
 }
 
 type workListItem struct {
+	Stale                   bool    `json:"stale,omitempty"`
 	TaskRef                 string  `json:"task_ref"`
 	Title                   string  `json:"title"`
 	TaskType                string  `json:"task_type"`
@@ -87,15 +88,19 @@ func runWorkReady(cmd *cobra.Command, args []string) error {
 
 	items := make([]workListItem, 0, len(resp.Tasks))
 	for _, task := range resp.Tasks {
-		if claimedByOthers[task.TaskRef] {
+		if claimedByOthers[task.TaskRef] && !task.Stale {
 			continue
 		}
 		items = append(items, workListItem{
-			TaskRef:  task.TaskRef,
-			Title:    task.Title,
-			TaskType: task.TaskType,
-			Priority: task.Priority,
-			Status:   task.Status,
+			TaskRef:         task.TaskRef,
+			Title:           task.Title,
+			TaskType:        task.TaskType,
+			Priority:        task.Priority,
+			Status:          task.Status,
+			Stale:           task.Stale,
+			OwnerAlias:      task.OwnerAlias,
+			OwnerLastSeenAt: task.OwnerLastSeenAt,
+			ClaimedAt:       task.ClaimedAt,
 		})
 	}
 
@@ -270,6 +275,13 @@ func formatWorkList(v any) string {
 		}
 		if item.ClaimedAt != nil && strings.TrimSpace(*item.ClaimedAt) != "" {
 			sb.WriteString(fmt.Sprintf(" (claim age: %s)", coordinationAgeBand(*item.ClaimedAt)))
+		}
+		if item.Stale {
+			seen := valueOrEmpty(item.OwnerLastSeenAt)
+			if seen == "" {
+				seen = "unknown"
+			}
+			sb.WriteString(fmt.Sprintf(" [stale; last seen: %s]", seen))
 		}
 		sb.WriteString("\n")
 	}

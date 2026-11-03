@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from aweb.mcp.mutations import fire_mcp_mutation_hook
 from aweb.coordination.tasks_service import (
     add_comment,
     create_task,
@@ -180,6 +181,15 @@ async def task_update(
         return json.dumps({"error": exc.detail})
 
     task.pop("old_status", None)
+    claim_preacquired = task.pop("claim_preacquired", False)
+    released_claims = task.pop("released_claims", [])
+    if released_claims:
+        await fire_mcp_mutation_hook("task.status_changed", {
+            "team_id": auth.team_id, "actor_agent_id": auth.agent_id,
+            "task_ref": task["task_ref"], "title": task["title"],
+            "old_status": task["status"], "new_status": task["status"],
+            "claim_preacquired": claim_preacquired, "released_claims": released_claims,
+        })
     return json.dumps(task)
 
 

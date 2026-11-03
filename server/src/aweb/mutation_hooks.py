@@ -297,6 +297,14 @@ async def _cascade_task_status_changed(
     team_id = str(workspace["team_id"])
     alias = workspace["alias"]
     if new_status == "in_progress":
+        for released in context.get("released_claims", []):
+            await publish_event(redis, TaskUnclaimedEvent(
+                workspace_id=released["workspace_id"], task_ref=task_ref,
+                alias=released["alias"], title=title,
+            ))
+            await publish_team_event(redis, TeamTaskUnclaimedEvent(
+                team_id=team_id, task_ref=task_ref, alias=released["alias"], title=title or "",
+            ))
         if not claim_preacquired:
             conflict = await upsert_claim(
                 db_infra,

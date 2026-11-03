@@ -4,12 +4,14 @@ import logging
 import re
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
 from awid.team_ids import team_slug
-from ..claims import claim_focus_task_ref, resolve_task_claim_apex_on
+from ..claims import claim_focus_task_ref, release_task_claims_on, resolve_task_claim_apex_on
+from ..grant_liveness import valid_grant_liveness_by_workspace
+from ..presence import DEFAULT_PRESENCE_TTL_SECONDS
 from ..service_errors import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from ..team_auth_deps import TeamIdentity
 
@@ -999,21 +1001,54 @@ async def list_active_work(db, *, team_id: str) -> list[dict[str, Any]]:
     return items
 
 
+async def _task_claims_on(db, *, team_id: str, task_refs: list[str], lock: bool = False):
+    # Raw grant timestamps are display facts only. Admission below uses the
+    # shared reader, which validates the backing grant, expiry and revocation.
+    return await db.fetch_all(
+        """
+        SELECT c.task_ref, c.workspace_id, c.alias, c.claimed_at,
+               a.agent_type AS holder_type,
+               w.last_seen_at AS workspace_last_seen_at,
+               GREATEST(w.last_seen_at, l.last_seen_at) AS owner_last_seen_at
+        FROM {{tables.task_claims}} c
+        LEFT JOIN {{tables.workspaces}} w
+          ON w.workspace_id=c.workspace_id AND w.team_id=c.team_id AND w.deleted_at IS NULL
+        LEFT JOIN {{tables.agents}} a ON a.agent_id=w.agent_id AND a.team_id=w.team_id
+        LEFT JOIN LATERAL (
+            SELECT last_seen_at FROM {{tables.identity_grant_liveness}}
+            WHERE workspace_id=w.workspace_id AND team_id=w.team_id AND subject_agent_id=w.agent_id
+            ORDER BY last_seen_at DESC LIMIT 1
+        ) l ON TRUE
+        WHERE c.team_id=$1 AND c.task_ref=ANY($2::text[])
+        ORDER BY c.claimed_at DESC, c.workspace_id
+        """ + (" FOR UPDATE OF c" if lock else ""),
+        team_id, task_refs,
+    )
+
+
+async def _live_claim_workspaces(db, claims) -> set[str]:
+    grants = await valid_grant_liveness_by_workspace(db, [str(c["workspace_id"]) for c in claims])
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=DEFAULT_PRESENCE_TTL_SECONDS)
+    return {
+        str(c["workspace_id"]) for c in claims
+        if c["holder_type"] == "human" or str(c["workspace_id"]) in grants
+        or (c["workspace_last_seen_at"] is not None and c["workspace_last_seen_at"] >= cutoff)
+    }
+
+
 async def list_ready_tasks(db, *, team_id: str, unclaimed: bool = False) -> list[dict[str, Any]]:
     slug = _get_team_slug(team_id)
     aweb_db = db.get_manager("aweb")
-    unclaimed_filter = "AND t.assignee_alias IS NULL" if unclaimed else ""
 
     rows = await aweb_db.fetch_all(
         f"""
         SELECT t.task_id, t.task_number, t.task_ref_suffix, t.title, t.status, t.priority, t.task_type,
                t.assignee_alias, t.created_by_alias, t.parent_task_id, t.labels,
-               t.created_at, t.updated_at
+               t.created_at, t.updated_at, t.app_request
         FROM {{{{tables.tasks}}}} t
         WHERE t.team_id = $1
-          AND t.status = 'open'
+          AND t.status IN ('open', 'in_progress')
           AND t.deleted_at IS NULL
-          {unclaimed_filter}
           AND NOT EXISTS (
               SELECT 1 FROM {{{{tables.task_dependencies}}}} d
               JOIN {{{{tables.tasks}}}} blocker ON blocker.task_id = d.depends_on_id
@@ -1025,10 +1060,28 @@ async def list_ready_tasks(db, *, team_id: str, unclaimed: bool = False) -> list
         """,
         team_id,
     )
-    return [
-        {
+    claims = await _task_claims_on(
+        aweb_db, team_id=team_id,
+        task_refs=[format_task_ref(slug, r["task_ref_suffix"]) for r in rows],
+    )
+    live = await _live_claim_workspaces(aweb_db, claims)
+    by_ref: dict[str, list] = {}
+    for claim in claims:
+        by_ref.setdefault(claim["task_ref"], []).append(claim)
+    items = []
+    for r in rows:
+        task_ref = format_task_ref(slug, r["task_ref_suffix"])
+        holders = by_ref.get(task_ref, [])
+        stale = bool(holders) and all(str(c["workspace_id"]) not in live for c in holders)
+        if r["status"] != "open" and not stale:
+            continue
+        if stale and r["app_request"] is not None:
+            continue
+        if unclaimed and r["assignee_alias"] is not None and not stale:
+            continue
+        item = {
             "task_id": str(r["task_id"]),
-            "task_ref": format_task_ref(slug, r["task_ref_suffix"]),
+            "task_ref": task_ref,
             "task_number": r["task_number"],
             "title": r["title"],
             "status": r["status"],
@@ -1041,8 +1094,13 @@ async def list_ready_tasks(db, *, team_id: str, unclaimed: bool = False) -> list
             "created_at": r["created_at"].isoformat(),
             "updated_at": r["updated_at"].isoformat() if r.get("updated_at") else None,
         }
-        for r in rows
-    ]
+        if stale:
+            holder = holders[0]
+            item.update(stale=True, owner_alias=holder["alias"],
+                        owner_last_seen_at=holder["owner_last_seen_at"].isoformat() if holder["owner_last_seen_at"] else None,
+                        claimed_at=holder["claimed_at"].isoformat())
+        items.append(item)
+    return items
 
 
 async def list_blocked_tasks(db, *, team_id: str) -> list[dict[str, Any]]:
@@ -1113,6 +1171,7 @@ async def update_task(
     resolved_assignee_alias: str | None | object = _UNSET
     resolved_parent_task_id: UUID | None | object = _UNSET
     claim_preacquired = False
+    released_claims = []
 
     if parent_task_id is not _UNSET:
         if parent_task_id:
@@ -1241,19 +1300,28 @@ async def update_task(
                     team_id,
                 )
                 if workspace is not None:
-                    conflicting_claim = await tx.fetch_one(
-                        """
-                        SELECT workspace_id, alias
-                        FROM {{tables.task_claims}}
-                        WHERE team_id = $1 AND task_ref = $2 AND workspace_id != $3
-                        LIMIT 1
-                        """,
-                        team_id,
-                        task_ref,
-                        workspace["workspace_id"],
-                    )
-                    if conflicting_claim:
-                        raise ConflictError("Task is already in progress by another agent")
+                    claims = await _task_claims_on(tx, team_id=team_id, task_refs=[task_ref], lock=True)
+                    conflicting = [c for c in claims if c["workspace_id"] != workspace["workspace_id"]]
+                    live = await _live_claim_workspaces(tx, conflicting)
+                    for c in conflicting:
+                        if str(c["workspace_id"]) in live or current["app_request"] is not None:
+                            raise ConflictError(
+                                f"Task is claimed by {c['alias']} since {c['claimed_at'].isoformat()}"
+                            )
+                    for c in conflicting:
+                        await release_task_claims_on(tx, team_id=team_id, task_ref=task_ref,
+                                                     workspace_id=str(c["workspace_id"]))
+                        seen = c["owner_last_seen_at"].isoformat() if c["owner_last_seen_at"] else "unknown"
+                        await tx.execute(
+                            """INSERT INTO {{tables.task_comments}} (task_id,team_id,author_alias,body)
+                               VALUES ($1,$2,$3,$4)""",
+                            task_id, team_id, actor_alias,
+                            f"{actor_alias} took over the stale claim from {c['alias']} (last seen: {seen}).",
+                        )
+                        released_claims.append({"workspace_id": str(c["workspace_id"]), "alias": c["alias"]})
+
+                    now = datetime.now(timezone.utc)
+                    params[1] = now
 
                     await tx.execute(
                         """
@@ -1388,6 +1456,8 @@ async def update_task(
         result["old_status"] = old_status
     if claim_preacquired:
         result["claim_preacquired"] = True
+    if released_claims:
+        result["released_claims"] = released_claims
     return result
 
 

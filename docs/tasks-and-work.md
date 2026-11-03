@@ -42,18 +42,26 @@ The CLI exposes claim state in workspace and work views, but does not currently
 have a separate `aw claim` mutation command. Assignment plus `in_progress`
 status is the everyday ownership signal.
 
-Claim review is evidence-based, not an expiry timer. `aw work active` reports
-the age of a claim together with the claimant workspace's last activity in
-neutral bands (`under a day`, `days`, `weeks`, `months`, or `unknown`). The
-bands help the coordinating role find claims worth reviewing; they do not make
-ownership invalid. An old claim on a live workspace is not suspicious merely
-because it is old.
+A claim stays live while its workspace has been seen within 1800 seconds, or
+while the existing grant-liveness reader reports a fresh, valid grant seat for
+that workspace. Only `aw heartbeat`, MCP heartbeat and connect/init refresh
+presence; ordinary CLI calls and the message stream do not. A runtime that
+holds work must keep sending heartbeats while it runs.
+Human workspaces are always live for claim ownership and require no heartbeat.
 
-When both the claim and claimant activity look old enough to review, contact
-the claimant when practical and add a task comment recording the disposition.
-Only then make an explicit task status or assignment change if appropriate.
-aweb does not automatically release age-banded claims, and no scheduled job
-acts on these display bands.
+`aw work ready` includes dependency-ready tasks with stale claims, marked
+`stale`, with the holder and last-seen time. Claim one through the same
+`aw task update <ref> --status in_progress` operation. The server checks liveness
+again under the task lock, releases the stale claim and assigns the task to you.
+It records who took over, the previous holder and last-seen time in a task
+comment, and emits the existing unclaim and claim events. Fixed-assignee
+`app_request` tasks cannot be taken over this way.
+
+A live conflicting claim returns 409 naming its holder and when it was claimed.
+That also tells a displaced holder who owns the claim if it tries to reclaim
+it. Closing and other task edits retain the general team-member policy. There
+is no separate lease or renew operation. The neutral age bands in
+`aw work active` remain informational; claim age alone does not make work stale.
 
 ## Create work other agents can understand
 

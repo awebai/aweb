@@ -3961,7 +3961,7 @@ Discover coordination-aware work
 Subcommands:
 - `active` List active in-progress work across the team
 - `blocked` List blocked tasks
-- `ready` List ready tasks that are not already claimed by other workspaces
+- `ready` List ready tasks, including stale claims available for takeover
 
 Flags:
 - `-h, --help help for work`
@@ -3989,7 +3989,7 @@ Flags:
 
 ### `work ready`
 
-List ready tasks that are not already claimed by other workspaces
+List ready tasks, including stale claims available for takeover
 
 Flags:
 - `-h, --help help for ready`

@@ -44,19 +44,23 @@ type Task struct {
 }
 
 type TaskSummary struct {
-	TaskID         string   `json:"task_id"`
-	TaskRef        string   `json:"task_ref"`
-	TaskNumber     int      `json:"task_number"`
-	Title          string   `json:"title"`
-	Status         string   `json:"status"`
-	Priority       int      `json:"priority"`
-	TaskType       string   `json:"task_type"`
-	AssigneeAlias  *string  `json:"assignee_alias"`
-	CreatedByAlias *string  `json:"created_by_alias"`
-	ParentTaskID   *string  `json:"parent_task_id"`
-	Labels         []string `json:"labels,omitempty"`
-	CreatedAt      string   `json:"created_at"`
-	UpdatedAt      string   `json:"updated_at"`
+	Stale           bool     `json:"stale,omitempty"`
+	OwnerAlias      *string  `json:"owner_alias,omitempty"`
+	OwnerLastSeenAt *string  `json:"owner_last_seen_at,omitempty"`
+	ClaimedAt       *string  `json:"claimed_at,omitempty"`
+	TaskID          string   `json:"task_id"`
+	TaskRef         string   `json:"task_ref"`
+	TaskNumber      int      `json:"task_number"`
+	Title           string   `json:"title"`
+	Status          string   `json:"status"`
+	Priority        int      `json:"priority"`
+	TaskType        string   `json:"task_type"`
+	AssigneeAlias   *string  `json:"assignee_alias"`
+	CreatedByAlias  *string  `json:"created_by_alias"`
+	ParentTaskID    *string  `json:"parent_task_id"`
+	Labels          []string `json:"labels,omitempty"`
+	CreatedAt       string   `json:"created_at"`
+	UpdatedAt       string   `json:"updated_at"`
 }
 
 // Request/response types

@@ -1,7 +1,9 @@
 """Claim transitions against real storage and the public task HTTP handlers."""
 import asyncio
+import json
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -13,6 +15,9 @@ from tests.test_tasks_http import (
     TEAM_ID, _DbShim, _build_tasks_app, _fake_team_identity, _insert_task, _seed_team,
 )
 from aweb.coordination.tasks_service import list_ready_tasks, update_task
+from aweb import mutation_hooks
+from aweb.mcp import mutations
+from aweb.mcp.tools import tasks as mcp_tasks, work as mcp_work
 
 
 async def seed_claim(db, *, fresh=False, grant=None, app_request=False):
@@ -68,14 +73,16 @@ async def seed_claim(db, *, fresh=False, grant=None, app_request=False):
     return task_id, workspaces, seen
 
 
-def http_client(db, alias="alice"):
+def http_client(db, alias="alice", callback=None):
     app = _build_tasks_app(db)
 
     async def identity():
-        return replace(await _fake_team_identity(), alias=alias)
+        agent_id = await db.fetch_value("SELECT agent_id FROM {{tables.agents}} WHERE team_id=$1 AND alias=$2", TEAM_ID, alias)
+        return replace(await _fake_team_identity(), alias=alias, agent_id=str(agent_id))
 
     for key in app.dependency_overrides:
         app.dependency_overrides[key] = identity
+    app.state.on_mutation = callback
 
     @app.exception_handler(ServiceError)
     async def service_error(request, exc):
@@ -148,6 +155,20 @@ async def test_concurrent_takeovers_have_one_winner(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+async def test_human_holder_never_requires_heartbeat(aweb_cloud_db):
+    db = aweb_cloud_db.aweb_db
+    _, ws, _ = await seed_claim(db)
+    await db.execute("UPDATE {{tables.agents}} SET agent_type='human' WHERE alias='bob'")
+    async with http_client(db) as client:
+        assert (await client.get("/v1/tasks/ready")).json()["tasks"] == []
+        response = await client.patch("/v1/tasks/backend-aaaa", json={"status":"in_progress"})
+        assert response.status_code == 409
+        assert "bob" in response.json()["detail"]
+    assert await db.fetch_value("SELECT workspace_id FROM {{tables.task_claims}}") == ws["bob"]
+    assert await db.fetch_value("SELECT count(*) FROM {{tables.task_comments}}") == 0
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("grant", ["stale", "revoked", "expired"])
 async def test_invalid_grant_does_not_keep_claim_alive(aweb_cloud_db, grant):
     db = aweb_cloud_db.aweb_db
@@ -169,3 +190,44 @@ async def test_app_request_excludes_takeover(aweb_cloud_db):
     assert await db.fetch_value("SELECT workspace_id FROM {{tables.task_claims}}") == ws["bob"]
     assert await db.fetch_value("SELECT assignee_did FROM {{tables.tasks}}") == "did:key:zbob"
     assert await db.fetch_value("SELECT count(*) FROM {{tables.task_comments}}") == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("adapter", ["http", "mcp"])
+async def test_takeover_emits_existing_unclaim_and_claim_events(aweb_cloud_db, monkeypatch, adapter):
+    db = aweb_cloud_db.aweb_db
+    _, ws, _ = await seed_claim(db, grant="revoked")
+    workspace_events, team_events = [], []
+
+    async def capture_workspace(redis, event):
+        workspace_events.append(event)
+
+    async def capture_team(redis, event):
+        team_events.append(event)
+
+    monkeypatch.setattr(mutation_hooks, "publish_event", capture_workspace)
+    monkeypatch.setattr(mutation_hooks, "publish_team_event", capture_team)
+    callback = mutation_hooks.create_mutation_handler(redis=None, db_infra=_DbShim(db))
+    if adapter == "http":
+        async with http_client(db, callback=callback) as client:
+            response = await client.patch("/v1/tasks/backend-aaaa", json={"status":"in_progress"})
+            assert response.status_code == 200, response.text
+            result = response.json()
+    else:
+        auth = SimpleNamespace(team_id=TEAM_ID, alias="alice", workspace_id=str(ws["alice"]),
+                               agent_id=str(await db.fetch_value("SELECT agent_id FROM {{tables.workspaces}} WHERE workspace_id=$1", ws["alice"])))
+        for module in (mcp_work, mcp_tasks):
+            monkeypatch.setattr(module, "require_team_context", lambda: (auth, None))
+        assert json.loads(await mcp_work.work_ready(_DbShim(db)))["tasks"][0]["stale"]
+        token = mutations.set_mutation_callback(callback)
+        try:
+            result = json.loads(await mcp_tasks.task_claim(_DbShim(db), ref="backend-aaaa"))
+        finally:
+            mutations.reset_mutation_callback(token)
+    assert "released_claims" not in result and "claim_preacquired" not in result
+    assert [(e.type,e.alias) for e in team_events if e.type in ("task.unclaimed","task.claimed")] == [
+        ("task.unclaimed","bob"), ("task.claimed","alice")]
+    assert [(e.type,e.workspace_id) for e in workspace_events if e.type in ("task.unclaimed","task.claimed")] == [
+        ("task.unclaimed",str(ws["bob"])), ("task.claimed",str(ws["alice"]))]
+    grant_seen = await db.fetch_value("SELECT last_seen_at FROM {{tables.identity_grant_liveness}}")
+    assert grant_seen.isoformat() in await db.fetch_value("SELECT body FROM {{tables.task_comments}}")

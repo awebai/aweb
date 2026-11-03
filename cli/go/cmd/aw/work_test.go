@@ -23,6 +23,7 @@ func TestAwWorkReadyFiltersClaimsHeldByOthers(t *testing.T) {
 		case "/v1/claims":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"claims": []map[string]any{
+					{"bead_id": "TASK-003", "workspace_id": otherID, "alias": "carol"},
 					{
 						"bead_id":      "TASK-002",
 						"workspace_id": otherID,
@@ -38,6 +39,7 @@ func TestAwWorkReadyFiltersClaimsHeldByOthers(t *testing.T) {
 				"tasks": []map[string]any{
 					{"task_ref": "TASK-001", "title": "Unclaimed ready task", "priority": 1, "task_type": "task", "status": "open"},
 					{"task_ref": "TASK-002", "title": "Claimed elsewhere", "priority": 2, "task_type": "bug", "status": "open"},
+					{"task_ref": "TASK-003", "title": "Abandoned work", "priority": 2, "task_type": "task", "status": "in_progress", "stale": true, "owner_alias": "carol", "owner_last_seen_at": "2026-03-10T10:00:00Z"},
 				},
 			})
 		case "/v1/agents/heartbeat":
@@ -68,6 +70,31 @@ func TestAwWorkReadyFiltersClaimsHeldByOthers(t *testing.T) {
 	}
 	if strings.Contains(text, "TASK-002") {
 		t.Fatalf("ready output should filter claimed task:\n%s", text)
+	}
+	for _, want := range []string{"TASK-003", "stale", "carol", "2026-03-10T10:00:00Z"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("ready output missing %q:\n%s", want, text)
+		}
+	}
+	run = exec.CommandContext(ctx, bin, "work", "ready", "--json")
+	run.Env, run.Dir = testCommandEnv(tmp), tmp
+	out, err = run.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var page struct {
+		Items []struct {
+			TaskRef string `json:"task_ref"`
+			Stale   bool   `json:"stale"`
+			Owner   string `json:"owner_alias"`
+			Seen    string `json:"owner_last_seen_at"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(out, &page); err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 2 || !page.Items[1].Stale || page.Items[1].Owner != "carol" || page.Items[1].Seen != "2026-03-10T10:00:00Z" {
+		t.Fatalf("ready JSON: %s", out)
 	}
 }
 

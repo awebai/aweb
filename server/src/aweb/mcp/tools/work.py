@@ -41,7 +41,7 @@ async def work_ready(db_infra) -> str:
     }
 
     tasks = await list_ready_tasks(db_infra, team_id=auth.team_id)
-    items = [task for task in tasks if task["task_ref"] not in claimed_by_others]
+    items = [task for task in tasks if task["task_ref"] not in claimed_by_others or task.get("stale")]
     return json.dumps({"kind": "ready", "tasks": items})
 
 
