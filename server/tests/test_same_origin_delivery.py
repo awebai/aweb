@@ -8,7 +8,7 @@ The observer records requests without replacing transport or handler results.
 from datetime import datetime, timezone
 import json
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
@@ -58,15 +58,15 @@ async def same_origin(privacy_app, monkeypatch):
         )
         env.app.state.federation_authority = authority
 
-        async def resident(*, human=False, deleted=False):
+        async def resident(*, human=False, deleted=False, inbound_mode="open"):
             await env.db.execute(
                 "INSERT INTO {{tables.agents}} "
                 "(agent_id, team_id, alias, did_key, did_aw, did_aw_verified_key, "
                 "address, identity_scope, inbound_mode, agent_type, deleted_at) "
-                "VALUES ($1,$2,'recipient',$3,$4,$3,$5,'global','open',$6, "
+                "VALUES ($1,$2,'recipient',$3,$4,$3,$5,'global',$8,$6, "
                 "CASE WHEN $7 THEN clock_timestamp() ELSE NULL END)",
                 target.id, target_team, target.did, stable, address,
-                "human" if human else "agent", deleted,
+                "human" if human else "agent", deleted, inbound_mode,
             )
 
         async def send_message(kind, sender_kind="local"):
@@ -117,9 +117,13 @@ async def same_origin(privacy_app, monkeypatch):
             headers = _signed_team_headers(
                 actor.sk, actor.did, TEAM, _encode_certificate(certificate), raw,
             )
-            return await env.client.post(path, content=raw, headers={
+            response = await env.client.post(path, content=raw, headers={
                 **headers, "Content-Type": "application/json",
             })
+            return response, SimpleNamespace(
+                message_id=UUID(mid), conversation_id=UUID(cid), signed=signed,
+                signed_payload=encoded, signature=payload["signature"],
+            )
 
         async def effects():
             tables = ("messages", "chat_messages", "conversations", "chat_sessions",
@@ -131,7 +135,7 @@ async def same_origin(privacy_app, monkeypatch):
 
         try:
             yield SimpleNamespace(env=env, resident=resident, send=send_message,
-                                  ingress=ingress, effects=effects)
+                                  ingress=ingress, effects=effects, target_did=stable)
         finally:
             env.app.middleware_stack = stack
             await authority.aclose()
@@ -145,7 +149,7 @@ async def test_same_origin_nonresident_refuses_without_federating(same_origin, k
     if deleted:
         await same_origin.resident(deleted=True)
     before = await same_origin.effects()
-    response = await same_origin.send(kind, sender_kind)
+    response, _ = await same_origin.send(kind, sender_kind)
     after = await same_origin.effects()
     assert after == before, response.text
     assert not same_origin.ingress, (
@@ -162,7 +166,7 @@ async def test_same_origin_nonresident_refuses_without_federating(same_origin, k
 async def test_same_origin_resident_delivery_and_human_chat_policy(same_origin, kind, human):
     await same_origin.resident(human=human)
     before = await same_origin.effects()
-    response = await same_origin.send(kind)
+    response, submitted = await same_origin.send(kind)
     assert not same_origin.ingress, response.text
     if kind == "chat" and human:
         assert response.status_code == 422, response.text
@@ -172,3 +176,56 @@ async def test_same_origin_resident_delivery_and_human_chat_policy(same_origin, 
         assert response.status_code == 200, response.text
         after = await same_origin.effects()
         assert after["messages" if kind == "mail" else "chat_messages"] == 1
+        db = same_origin.env.db
+        table = "messages" if kind == "mail" else "chat_messages"
+        row = await db.fetch_one(
+            "SELECT * FROM {{tables." + table + "}} WHERE message_id=$1",
+            submitted.message_id,
+        )
+        assert row is not None
+        assert row["from_did"] == submitted.signed["from_did"]
+        assert row["body"] == submitted.signed["body"]
+        assert row["signed_payload"] == submitted.signed_payload
+        assert row["signature"] == submitted.signature
+        link = "conversation_id" if kind == "mail" else "session_id"
+        assert row[link] == submitted.conversation_id
+        if kind == "mail":
+            assert row["to_did"] == same_origin.target_did
+            assert row["subject"] == submitted.signed["subject"]
+        else:
+            session = await db.fetch_one(
+                "SELECT session_id FROM {{tables.chat_sessions}} WHERE session_id=$1",
+                submitted.conversation_id,
+            )
+            assert session is not None
+        conversation = await db.fetch_one(
+            "SELECT conversation_type FROM {{tables.conversations}} WHERE conversation_id=$1",
+            submitted.conversation_id,
+        )
+        assert conversation is not None
+        assert conversation["conversation_type"] == kind
+        participant_tables = [("conversation_participants", "conversation_id")]
+        if kind == "chat":
+            participant_tables.append(("chat_participants", "session_id"))
+        for participant_table, link in participant_tables:
+            participants = await db.fetch_all(
+                "SELECT did FROM {{tables." + participant_table + "}} WHERE " + link + "=$1",
+                submitted.conversation_id,
+            )
+            assert {p["did"] for p in participants} == {
+                submitted.signed["from_did"], same_origin.target_did,
+            }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+@pytest.mark.parametrize("inbound_mode", ["team_and_contacts", "contacts_only"])
+async def test_same_origin_resident_policy_refuses_cross_team_noncontact(same_origin, kind, inbound_mode):
+    await same_origin.resident(inbound_mode=inbound_mode)
+    before = await same_origin.effects()
+    assert before["contacts"] == 0
+    response, _ = await same_origin.send(kind)
+    assert response.status_code == 403, response.text
+    assert "exact active contacts" in response.text
+    assert not same_origin.ingress, response.text
+    assert await same_origin.effects() == before
