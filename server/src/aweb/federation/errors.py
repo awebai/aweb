@@ -11,8 +11,9 @@ class RecipientNotResidentError(FederationAuthorityError):
     """An admitted address routes here but its exact identity is not resident."""
 
     detail = (
-        "Recipient identity is not available for messaging at this server. "
-        "Ask the recipient or server operator to check the address and messaging enrollment."
+        "The recipient is not set up for messaging on the server this address points to. "
+        "Ask the recipient or the person who manages that server to check the address "
+        "and the recipient's messaging setup."
     )
 
     def __init__(self) -> None:

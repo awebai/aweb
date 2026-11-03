@@ -11,7 +11,6 @@ from awid.federation_errors import FederationAuthorityError
 from awid.log import canonical_server_origin
 
 from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
-from aweb.config import get_settings
 from aweb.deps import get_db
 from aweb.federation.authority import AuthorityClaim
 from aweb.federation.delivery import (
@@ -30,23 +29,11 @@ from aweb.messaging.messages import resolve_agent_by_did
 from aweb.identity_binding import verify_identity_binding
 from aweb.id_chain_auth import authenticate_id_chain
 
+from aweb.federation.origins import public_origins as _public_origins
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/federation", tags=["aweb-federation"])
-
-
-def _public_origins(request: Request) -> set[str]:
-    origins = {
-        canonical_server_origin(value)
-        for value in getattr(request.app.state, "federation_public_origins", [])
-        if str(value or "").strip()
-    }
-    configured = str(getattr(request.app.state, "public_origin", "") or "").strip()
-    if configured:
-        origins.add(canonical_server_origin(configured))
-    if not origins:
-        origins.add(get_settings().public_origin)
-    return origins
 
 
 def _split_address(address: str) -> tuple[str, str]:

@@ -17,7 +17,7 @@ from fastapi import HTTPException
 
 from awid.federation_errors import FederationAuthorityError
 from aweb.awid_error_handling import awid_registry_not_configured_detail
-from aweb.config import get_public_origin
+from aweb.federation.origins import public_origins
 from aweb.federation.errors import RecipientNotResidentError
 from aweb.mcp.auth import auth_dids, get_auth, primary_auth_did
 from aweb.mcp.mutations import fire_mcp_mutation_hook
@@ -50,6 +50,7 @@ from aweb.messaging.address_auth import (
     local_recipient_for_address_binding,
     local_recipient_visible_to_auth,
     refuse_same_origin_nonresident,
+    local_recipient_for_own_route,
     unreachable_address_refusal,
 )
 from aweb.messaging.contacts import resolve_local_namespace_controller_did
@@ -306,6 +307,12 @@ async def send_mail(
                     registry_client,
                     recipient_participant,
                 )
+                await local_recipient_for_own_route(
+                    db_infra, remote_recipient,
+                    origins=public_origins(auth.request, public_origin=public_origin),
+                )
+        except RecipientNotResidentError as exc:
+            return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
         except (ValidationError, NotFoundError, ForbiddenError) as exc:
             return json.dumps({"error": exc.detail})
         except ServiceError as exc:
@@ -393,7 +400,7 @@ async def send_mail(
                 )
                 response = await _deliver_remote_mail_and_project_locally(
                     mcp_federation_request(
-                        public_origin=public_origin,
+                        public_origin=public_origin, request=auth.request,
                         mail_transport=federation_transport,
                     ),
                     payload,
@@ -444,6 +451,8 @@ async def send_mail(
                 stored_route_continuation=True,
             )
             await touch_conversation_activity(db_infra, conversation_id=conversation_ref)
+        except RecipientNotResidentError as exc:
+            return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
         except Exception as exc:
             detail = getattr(exc, "detail", None)
             return json.dumps({"error": detail or str(exc)})
@@ -525,7 +534,7 @@ async def send_mail(
                     try:
                         refuse_same_origin_nonresident(
                             registry_delivery_origin(resolved),
-                            public_origin=public_origin or get_public_origin(),
+                            origins=public_origins(auth.request, public_origin=public_origin),
                         )
                     except RecipientNotResidentError as exc:
                         return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
@@ -653,7 +662,7 @@ async def send_mail(
             )
             response = await _deliver_remote_mail_and_project_locally(
                 mcp_federation_request(
-                    public_origin=public_origin,
+                    public_origin=public_origin, request=auth.request,
                     mail_transport=federation_transport,
                 ),
                 payload,
@@ -725,6 +734,8 @@ async def send_mail(
             conversation_id=conversation["conversation_id"],
             skip_policy_check=True,
         )
+    except RecipientNotResidentError as exc:
+        return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
     except Exception as exc:
         detail = getattr(exc, "detail", None)
         return json.dumps({"error": detail or str(exc)})

@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any, Mapping
+from types import SimpleNamespace
 
 from awid.federation_errors import FederationAuthorityError
 from awid.log import canonical_server_origin
 from awid.signing import verify_did_key_signature
 from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
 from aweb.federation.errors import RecipientNotResidentError
+from aweb.federation.origins import is_own_origin
 from aweb.messaging.alias_targets import namespace_exists
 
 
@@ -59,19 +61,38 @@ def requires_registry_address_binding(row: Mapping[str, Any] | None) -> bool:
     return str((row or {}).get("identity_scope") or "").strip().lower() == "global"
 
 
-def refuse_same_origin_nonresident(delivery_origin: str, *, public_origin: str) -> None:
+def refuse_same_origin_nonresident(delivery_origin: str, *, origins: set[str]) -> None:
     """After an exact-DID residence miss, an own-origin route is not external."""
-    if not delivery_origin:
-        return  # The existing route validation owns missing/invalid origins.
-    try:
-        target_origin = canonical_server_origin(delivery_origin)
-    except ValueError:
-        return
-    if target_origin == canonical_server_origin(public_origin):
+    if is_own_origin(delivery_origin, origins):
         logging.getLogger(__name__).warning(
             "Refusing same-origin nonresident recipient: recipient_identity_not_found"
         )
         raise RecipientNotResidentError()
+
+
+async def local_recipient_for_own_route(db, route: Mapping[str, Any], *, origins: set[str]) -> dict | None:
+    """Classify a stored/refreshed route before forwarding or persisting it.
+
+    The admitted route supplies the identity/key; residence and delivery policy
+    remain separate. A foreign route is unchanged.
+    """
+    origin = str(route.get("delivery_origin") or "")
+    if not is_own_origin(origin, origins):
+        return None
+    did = str(route.get("did_aw") or route.get("did") or route.get("did_key") or "")
+    if did.startswith("did:aw:"):
+        recipient = await local_recipient_for_address_binding(
+            db, SimpleNamespace(did_aw=did, current_did_key=route.get("current_did_key") or route.get("did_key")),
+            str(route.get("address") or ""),
+        )
+    else:
+        # A did:key return route is already an established participant; this
+        # does not create bare-key first-contact authority.
+        from aweb.messaging.messages import resolve_agent_by_did
+        recipient = await resolve_agent_by_did(db, did)
+    if recipient is None:
+        refuse_same_origin_nonresident(origin, origins=origins)
+    return recipient
 
 
 def unreachable_address_refusal(address: str) -> str:

@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+from aweb.federation.origins import public_origins
 from aweb.messaging.mail_attribution import incoming_mail_sql, readable_mail_sql
 
 from aweb.identity_auth_deps import participant_dids
@@ -56,6 +58,7 @@ from aweb.messaging.address_auth import (
     local_recipient_visible_to_auth,
     namespace_uses_home_registry,
     refuse_same_origin_nonresident,
+    local_recipient_for_own_route,
     requires_registry_address_binding,
     verified_signed_payload_json,
 )
@@ -845,6 +848,13 @@ async def _deliver_remote_mail_and_project_locally(
             status_code=424,
             detail="Recipient address has no federated delivery origin",
         )
+    local = await local_recipient_for_own_route(db, recipient, origins=public_origins(request))
+    if local is not None:
+        return await _send_mail_conversation_continuation(
+            request, payload, db, auth=auth, registry_client=registry_client,
+            sender_address=sender_address, sender_did=sender_did,
+            conversation_id=payload.conversation_id, local_recipient=local,
+        )
     encrypted_metadata = _validate_encrypted_payload(
         payload,
         auth=auth,
@@ -931,6 +941,7 @@ async def _deliver_remote_mail_and_project_locally(
             signature=federation_signature,
             id_chain=getattr(getattr(request, "state", None), "id_chain", None),
             transport=getattr(request.app.state, "federation_mail_transport", None),
+            own_origins=public_origins(request),
         )
     except FederatedMailDeliveryError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
@@ -1185,6 +1196,7 @@ async def _send_mail_conversation_continuation(
     sender_address: str | None,
     sender_did: str,
     conversation_id: str,
+    local_recipient: dict | None = None,
 ) -> SendMessageResponse:
     msg_uuid = UUID(payload.message_id) if payload.message_id else None
 
@@ -1196,7 +1208,7 @@ async def _send_mail_conversation_continuation(
             equivalent_dids=participant_dids(auth),
         )
         recipient_participant = continuation.recipient_participant
-        if participant_is_remote(recipient_participant):
+        if local_recipient is None and participant_is_remote(recipient_participant):
             return await _send_federated_mail_conversation_continuation(
                 request,
                 payload,
@@ -1207,7 +1219,7 @@ async def _send_mail_conversation_continuation(
                 sender_did=sender_did,
                 continuation=continuation,
             )
-        recipient = await recipient_for_conversation_participant(db, recipient_participant)
+        recipient = local_recipient or await recipient_for_conversation_participant(db, recipient_participant)
         if payload.signature is not None:
             if payload.from_did is None or not payload.from_did.strip():
                 raise HTTPException(status_code=422, detail="from_did is required when signature is provided")
@@ -1611,7 +1623,7 @@ async def send_message(
 
         if recipient is not None and recipient.get("external"):
             refuse_same_origin_nonresident(
-                recipient["delivery_origin"], public_origin=_local_public_origin(request),
+                recipient["delivery_origin"], origins=public_origins(request),
             )
 
         if recipient is None:

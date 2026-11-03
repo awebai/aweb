@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.federation.origins import public_origins
+
 from aweb.attachment_service import prepare_attachment_send, refuse_remote_attachments, attachment_retry, attachment_references
 
 from aweb.messaging.participants import messaging_participant_by_alias, messaging_participants_by_aliases
@@ -67,6 +69,7 @@ from aweb.messaging.address_auth import (
     local_recipient_visible_to_auth,
     namespace_uses_home_registry,
     refuse_same_origin_nonresident,
+    local_recipient_for_own_route,
     requires_registry_address_binding,
     verified_signed_payload_json,
 )
@@ -540,6 +543,16 @@ async def _resolve_remote_chat_route(
     delivery_origin = resolved_origin or _target_delivery_origin(recipient)
     if not delivery_origin:
         raise HTTPException(status_code=424, detail="Recipient address has no federated delivery origin")
+    local = await local_recipient_for_own_route(
+        db, {"did_aw": target_stable_id, "current_did_key": target_current_did,
+             "address": address, "delivery_origin": delivery_origin},
+        origins=public_origins(request),
+    )
+    if local is not None:
+        # Do not persist an own-origin remote route. The shared delivery helper
+        # applies local chat/policy checks and the caller stores the message.
+        return {"address": address, "did_aw": target_stable_id,
+                "current_did_key": target_current_did, "delivery_origin": delivery_origin}
     if resolved_origin and (
         resolved_origin != _target_delivery_origin(recipient)
         or target_current_did
@@ -695,6 +708,7 @@ async def _deliver_federated_chat(
     request: Request,
     payload: CreateSessionRequest | SendMessageRequest,
     *,
+    db,
     auth: MessagingAuth,
     sender_address: str | None,
     route: dict[str, Any],
@@ -756,6 +770,20 @@ async def _deliver_federated_chat(
     except FederationEnvelopeError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    local = await local_recipient_for_own_route(db, route, origins=public_origins(request))
+    if local is not None:
+        await require_agent_chat(db, [local], registry_client=getattr(request.app.state, "awid_registry_client", None))
+        try:
+            await authorize_message_delivery(
+                db, recipient_agent=local, sender_did=sender_routing_did,
+                sender_address=sender_address, sender_team_id=auth.team_id,
+                sender_verified_team_id=auth.verified_team_id, sender_verified_dids=auth_dids(auth),
+                stored_route_continuation=True,
+            )
+        except (ValidationError, NotFoundError, ForbiddenError) as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        return {"conversation_id": session_id, "message_id": str(payload.message_id)}
+
     try:
         return await deliver_federated_message(
             delivery_origin=route["delivery_origin"],
@@ -763,6 +791,7 @@ async def _deliver_federated_chat(
             signature=federation_signature,
             id_chain=getattr(getattr(request, "state", None), "id_chain", None),
             transport=_federation_transport(request),
+            own_origins=public_origins(request),
         )
     except FederatedMailDeliveryError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
@@ -1024,7 +1053,7 @@ async def _resolve_chat_targets(
                     or ""
                 )
                 refuse_same_origin_nonresident(
-                    str(delivery_origin), public_origin=_local_public_origin(request),
+                    str(delivery_origin), origins=public_origins(request),
                 )
                 row = {
                     "agent_id": None,
@@ -1528,7 +1557,7 @@ async def create_or_send(
         remote = await _deliver_federated_chat(
             request,
             payload,
-            auth=auth,
+            db=db, auth=auth,
             sender_address=sender_address,
             route=route,
             session_id=str(requested_session_id),
@@ -2776,7 +2805,7 @@ async def send_message(
             remote = await _deliver_federated_chat(
                 request,
                 payload,
-                auth=auth,
+                db=db, auth=auth,
                 sender_address=sender_address,
                 route=route,
                 session_id=str(session_uuid),
@@ -2803,7 +2832,7 @@ async def send_message(
             remote = await _deliver_federated_chat(
                 request,
                 payload,
-                auth=auth,
+                db=db, auth=auth,
                 sender_address=sender_address,
                 route=remote_recipients[0],
                 session_id=str(session_uuid),

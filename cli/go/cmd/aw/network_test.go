@@ -568,8 +568,8 @@ func TestNetworkErrorMapsTypedRecipientRefusals(t *testing.T) {
 	}{
 		{"typo in the team", "local/bbo", typed("recipient_identity_not_found"),
 			"local/bbo is not a member of your team or a registered address. Check the name with `aw workspace status`."},
-		{"registered but not resident", "acme.test/person", &awid.APIError{StatusCode: http.StatusNotFound, Body: `{"detail":"Ask the recipient or server operator to check messaging enrollment.","reason":"recipient_identity_not_found","retryable":false}`},
-			"Ask the recipient or server operator to check messaging enrollment."},
+		{"registered but not resident", "acme.test/person", &awid.APIError{StatusCode: http.StatusNotFound, Body: `{"detail":"The recipient is not set up for messaging on the server this address points to. Ask the recipient or the person who manages that server to check the address and the recipient's messaging setup.","reason":"recipient_identity_not_found","retryable":false}`},
+			"The recipient is not set up for messaging on the server this address points to. Ask the recipient or the person who manages that server to check the address and the recipient's messaging setup."},
 		{"local identity in another team", "acme.test/grace", typed("local_recipient_route_missing"),
 			awid.UnreachableAddressText("acme.test/grace")},
 		{"other 404", "aweb/merlin", &awid.APIError{StatusCode: http.StatusNotFound, Body: `{"detail":"Target not found"}`},
@@ -583,7 +583,7 @@ func TestNetworkErrorMapsTypedRecipientRefusals(t *testing.T) {
 
 func TestNetworkErrorPreservesSpecificRecipientRefusalMetadata(t *testing.T) {
 	t.Parallel()
-	err := &awid.APIError{StatusCode: http.StatusNotFound, Body: `{"detail":"Check messaging enrollment.","reason":"recipient_identity_not_found","retryable":false}`}
+	err := &awid.APIError{StatusCode: http.StatusNotFound, Body: `{"detail":"Check messaging setup.","reason":"recipient_identity_not_found","retryable":false}`}
 	got := awid.DescribeError(networkError(err, "acme.test/person"))
 	if got != awid.DescribeError(err) {
 		t.Fatalf("recipient refusal lost structured metadata: %+v", got)

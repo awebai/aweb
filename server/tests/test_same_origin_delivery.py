@@ -21,6 +21,8 @@ import uvicorn
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.federation.activation import build_federation_authority_activation
 from aweb.mcp.server import create_mcp_app
+from aweb.internal_auth import build_internal_auth_header_value
+from aweb.mcp.signing import HostedMessageSigningResult, canonical_signed_payload
 from aweb.testing import running_server
 from identity_binding_support import register_global_identity
 from test_cli_never_grants import registry_listener
@@ -34,6 +36,8 @@ from test_messages_http import (
 @pytest_asyncio.fixture
 async def same_origin(privacy_app, monkeypatch):
     env = privacy_app
+    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
+    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", "disposable-acst-proxy-secret")
     target_team = "recipients:recipient.test"
     await env.db.execute(
         "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) "
@@ -83,11 +87,13 @@ async def same_origin(privacy_app, monkeypatch):
                 "human" if human else "agent", deleted, inbound_mode,
             )
 
-        async def send_message(kind, sender_kind="local"):
+        async def send_message(kind, sender_kind="local", *, continuation=None):
             actor = env.actors["alice"]
             sender_stable = ""
             sender_address = "example.test/alice"
-            if sender_kind != "local":
+            if continuation is not None:
+                sender_stable = continuation.signed.get("from_stable_id", "")
+            elif sender_kind != "local":
                 sender_stable = await register_global_identity(env, actor, sender_address)
                 await env.registry_db.execute(
                     "UPDATE {{tables.dns_namespaces}} SET default_delivery_origin=$1 "
@@ -104,7 +110,7 @@ async def same_origin(privacy_app, monkeypatch):
                 identity_scope="global" if sender_stable else "local",
                 member_did_aw=sender_stable, member_address=sender_address if sender_stable else "",
             )
-            mid, cid = str(uuid4()), str(uuid4())
+            mid, cid = str(uuid4()), str(continuation.conversation_id) if continuation else str(uuid4())
             timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
             signed = dict(
                 type=kind, from_did=actor.did, to=address,
@@ -124,6 +130,9 @@ async def same_origin(privacy_app, monkeypatch):
                 payload = dict(to_addresses=[address], message=signed["body"],
                                session_id=cid, leaving=True)
                 path = "/v1/chat/sessions"
+                if continuation is not None:
+                    payload = dict(body=signed["body"], leaving=True)
+                    path += f"/{cid}/messages"
             encoded = canonical_json_bytes(signed).decode()
             payload.update(from_did=signed["from_did"], message_id=mid, timestamp=timestamp,
                            signed_payload=encoded, signature=sign_message(actor.sk, encoded.encode()))
@@ -172,7 +181,7 @@ async def test_same_origin_nonresident_refuses_without_federating(same_origin, k
     assert response.status_code == 404, response.text
     assert response.json()["reason"] == "recipient_identity_not_found"
     assert response.json()["retryable"] is False
-    assert "Ask the recipient or server operator" in response.json()["detail"]
+    assert "Ask the recipient or the person who manages that server" in response.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -326,7 +335,7 @@ async def test_same_origin_mcp_nonresident_refusal(same_origin, kind):
         refusal = json.loads(result["content"][0]["text"])
         assert refusal["reason"] == "recipient_identity_not_found", refusal
         assert refusal["retryable"] is False
-        assert "Ask the recipient or server operator" in refusal["error"]
+        assert "Ask the recipient or the person who manages that server" in refusal["error"]
         assert not same_origin.ingress
         assert await same_origin.effects() == before
     finally:
@@ -353,12 +362,19 @@ async def foreign_receiver(same_origin, test_db_factory, monkeypatch):
             "WHERE domain='recipient.test'", origin,
         )
         ingress = []
+        statuses = []
         stack = receiver.app.build_middleware_stack()
 
         async def observe(scope, receive, send):
             if scope.get("type") == "http" and scope.get("path") == "/v1/federation/messages":
                 ingress.append(scope["path"])
-            await stack(scope, receive, send)
+                async def observed_send(message):
+                    if message["type"] == "http.response.start":
+                        statuses.append(message["status"])
+                    await send(message)
+                await stack(scope, receive, observed_send)
+            else:
+                await stack(scope, receive, send)
 
         receiver.app.middleware_stack = observe
         server = uvicorn.Server(uvicorn.Config(receiver.app, lifespan="off", log_level="error", ws="none"))
@@ -369,7 +385,7 @@ async def foreign_receiver(same_origin, test_db_factory, monkeypatch):
                     break
                 await asyncio.sleep(.02)
             assert server.started
-            yield SimpleNamespace(db=manager, ingress=ingress)
+            yield SimpleNamespace(db=manager, ingress=ingress, statuses=statuses, origin=origin, app=receiver.app)
         finally:
             server.should_exit = True
             await asyncio.wait_for(serving, 5)
@@ -476,6 +492,237 @@ async def test_real_cli_address_delivery(same_origin, foreign_receiver, source_c
         assert process.returncode != 0, output
         assert await same_origin.effects() == before
         if route == "nonresident":
-            assert "Ask the recipient or server operator" in output
+            assert "Ask the recipient or the person who manages that server" in output
         else:
             assert "local_sender_route_mismatch" in output
+
+
+@pytest.mark.asyncio
+async def test_chat_route_refresh_to_nonresident_own_origin_has_no_effects(same_origin, foreign_receiver):
+    env = same_origin.env
+    response, first = await same_origin.send("chat", "global")
+    assert response.status_code == 200, response.text
+    # The identity moves away from the old receiver. The old receiver remains
+    # reachable, but its real ingress now refuses the nonresident target (404).
+    await foreign_receiver.db.execute(
+        "UPDATE {{tables.agents}} SET deleted_at=clock_timestamp() WHERE did_aw=$1",
+        same_origin.target_did,
+    )
+    await env.registry_db.execute(
+        "UPDATE {{tables.dns_namespaces}} SET default_delivery_origin=$1 WHERE domain='recipient.test'",
+        env.app.state.public_origin,
+    )
+    async def routes():
+        return [dict(row) for table, column in (
+            ("chat_participants", "session_id"), ("conversation_participants", "conversation_id"),
+        ) for row in await env.db.fetch_all(
+            "SELECT did, delivery_origin, current_did_key FROM {{tables." + table + "}} WHERE " + column + "=$1 ORDER BY did",
+            first.conversation_id,
+        )]
+    before_routes = await routes()
+    before = await same_origin.effects()
+    response, submitted = await same_origin.send("chat", "global", continuation=first)
+    assert foreign_receiver.ingress == ["/v1/federation/messages"] * 2, response.text
+    assert foreign_receiver.statuses == [200, 404]
+    assert await same_origin.effects() == before, response.text
+    assert await foreign_receiver.db.fetch_value(
+        "SELECT count(*) FROM {{tables.chat_messages}} WHERE message_id=$1", submitted.message_id,
+    ) == 0
+    assert not same_origin.ingress, response.text
+    assert await routes() == before_routes
+    assert response.status_code == 404, response.text
+    assert response.json()["reason"] == "recipient_identity_not_found"
+    assert response.json()["retryable"] is False
+
+
+async def _mcp_continue(same_origin, first, kind):
+    env = same_origin.env
+    actor = env.actors["alice"]
+
+    async def signer(**kwargs):
+        payload = canonical_signed_payload(kwargs["payload"])
+        return HostedMessageSigningResult(
+            from_did=actor.did, signed_payload=payload,
+            signature=sign_message(actor.sk, payload.encode()), signing_key_id=actor.did,
+        )
+
+    mcp = create_mcp_app(
+        db_infra=env.infra, redis=env.redis,
+        registry_client=env.app.state.awid_registry_client,
+        federation_authority=env.app.state.federation_authority,
+        hosted_signer=signer, public_origin=env.app.state.public_origin,
+    )
+    env.app.mount("/continuation-mcp", mcp)
+    await mcp.startup()
+    try:
+        arguments = (
+            dict(conversation_id=str(first.conversation_id), body="MCP continuation", plaintext=True)
+            if kind == "mail" else
+            dict(session_id=str(first.conversation_id), message="MCP continuation", plaintext=True)
+        )
+        raw = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+            "name": "send_mail" if kind == "mail" else "chat_send", "arguments": arguments,
+        }}).encode()
+        principal = str(uuid4())
+        response = await env.client.post("/continuation-mcp/", content=raw, headers={
+            "X-Team-ID": TEAM, "X-User-ID": principal, "X-AWEB-Actor-ID": str(actor.id),
+            "X-AWEB-Auth": build_internal_auth_header_value(
+                secret="disposable-acst-proxy-secret", team_id=TEAM,
+                principal_type="u", principal_id=principal, actor_id=str(actor.id),
+            ),
+            "Content-Type": "application/json", "Accept": "application/json, text/event-stream",
+        })
+        assert response.status_code == 200, response.text
+        result = response.json()["result"]
+        assert not result.get("isError"), result
+        return json.loads(result["content"][0]["text"])
+    finally:
+        await mcp.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+@pytest.mark.parametrize("api", ["http", "mcp"])
+@pytest.mark.parametrize("route", ["own", "own_alias", "foreign"])
+async def test_stored_continuation_routes(same_origin, foreign_receiver, kind, api, route):
+    env = same_origin.env
+    response, first = await same_origin.send(kind, "global")
+    assert response.status_code == 200, response.text
+    if route == "own":
+        for table, column in (("conversation_participants", "conversation_id"), ("chat_participants", "session_id")):
+            await env.db.execute(
+                "UPDATE {{tables." + table + "}} SET delivery_origin=$1 WHERE " + column + "=$2 AND did=$3",
+                env.app.state.public_origin, first.conversation_id, same_origin.target_did,
+            )
+    elif route == "own_alias":
+        # The transport destination is a real listener, so an omitted alias
+        # guard would deliver there. Ingress and sends must share this set.
+        env.app.state.federation_public_origins = [foreign_receiver.origin + "/"]
+    before = await same_origin.effects()
+    before_routes = [dict(row) for table, column in (
+        ("conversation_participants", "conversation_id"), ("chat_participants", "session_id"),
+    ) for row in await env.db.fetch_all(
+        "SELECT did, delivery_origin, current_did_key FROM {{tables." + table + "}} WHERE " + column + "=$1 ORDER BY did",
+        first.conversation_id,
+    )]
+    if api == "http":
+        response, submitted = await same_origin.send(kind, "global", continuation=first)
+        result = response.json()
+    else:
+        result = await _mcp_continue(same_origin, first, kind)
+    assert not same_origin.ingress, result
+    if route == "foreign":
+        assert "error" not in result, result
+        if api == "http":
+            assert response.status_code == 200, response.text
+        assert len(foreign_receiver.ingress) == 2
+        table = "messages" if kind == "mail" else "chat_messages"
+        stored = await foreign_receiver.db.fetch_one(
+            "SELECT * FROM {{tables." + table + "}} WHERE message_id=$1", UUID(result["message_id"]),
+        )
+        assert stored is not None
+        assert stored["conversation_id" if kind == "mail" else "session_id"] == first.conversation_id
+        assert stored["from_did"] == first.signed["from_stable_id"]
+        if kind == "mail":
+            assert stored["to_did"] == same_origin.target_did
+    else:
+        assert result.get("reason") == "recipient_identity_not_found", result
+        assert result["retryable"] is False
+        if api == "http":
+            assert response.status_code == 404
+        assert await same_origin.effects() == before
+        assert len(foreign_receiver.ingress) == 1
+        after_routes = [dict(row) for table, column in (
+            ("conversation_participants", "conversation_id"), ("chat_participants", "session_id"),
+        ) for row in await env.db.fetch_all(
+            "SELECT did, delivery_origin, current_did_key FROM {{tables." + table + "}} WHERE " + column + "=$1 ORDER BY did",
+            first.conversation_id,
+        )]
+        assert after_routes == before_routes
+
+
+@pytest.mark.asyncio
+async def test_chat_refresh_to_changed_foreign_origin_still_delivers(same_origin, foreign_receiver):
+    env = same_origin.env
+    response, first = await same_origin.send("chat", "global")
+    assert response.status_code == 200, response.text
+    # One actual receiver under a new public origin: old URL returns its real
+    # 421 target_route_mismatch; the refreshed URL reaches the same live app.
+    moved_origin = foreign_receiver.origin.replace("127.0.0.1", "localhost")
+    foreign_receiver.app.state.public_origin = moved_origin
+    await env.registry_db.execute(
+        "UPDATE {{tables.dns_namespaces}} SET default_delivery_origin=$1 WHERE domain='recipient.test'", moved_origin,
+    )
+    response, submitted = await same_origin.send("chat", "global", continuation=first)
+    assert response.status_code == 200, response.text
+    assert foreign_receiver.statuses == [200, 421, 200]
+    assert not same_origin.ingress
+    stored = await foreign_receiver.db.fetch_one(
+        "SELECT * FROM {{tables.chat_messages}} WHERE message_id=$1", submitted.message_id,
+    )
+    assert stored["signed_payload"] == submitted.signed_payload
+    assert stored["signature"] == submitted.signature
+    assert stored["session_id"] == first.conversation_id
+    for table, column in (("conversation_participants", "conversation_id"), ("chat_participants", "session_id")):
+        assert await env.db.fetch_value(
+            "SELECT delivery_origin FROM {{tables." + table + "}} WHERE " + column + "=$1 AND did=$2",
+            first.conversation_id, same_origin.target_did,
+        ) == moved_origin
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+@pytest.mark.parametrize("api", ["http", "mcp"])
+@pytest.mark.parametrize("recipient", ["open", "contacts_only", "human"])
+async def test_stored_own_route_resident_uses_local_policy(same_origin, foreign_receiver, kind, api, recipient):
+    env = same_origin.env
+    response, first = await same_origin.send(kind, "global")
+    assert response.status_code == 200, response.text
+    await same_origin.resident(human=recipient == "human", inbound_mode="contacts_only" if recipient == "contacts_only" else "open")
+    for table, column in (("conversation_participants", "conversation_id"), ("chat_participants", "session_id")):
+        await env.db.execute(
+            "UPDATE {{tables." + table + "}} SET delivery_origin=$1 WHERE " + column + "=$2 AND did=$3",
+            env.app.state.public_origin, first.conversation_id, same_origin.target_did,
+        )
+    before = await same_origin.effects()
+    if api == "http":
+        response, submitted = await same_origin.send(kind, "global", continuation=first)
+        result = response.json()
+    else:
+        result = await _mcp_continue(same_origin, first, kind)
+    assert not same_origin.ingress, result
+    assert len(foreign_receiver.ingress) == 1, result
+    if recipient == "contacts_only" or (kind == "chat" and recipient == "human"):
+        assert "error" in result or "detail" in result, result
+        if api == "http":
+            assert response.status_code == (422 if recipient == "human" else 403), result
+        assert await same_origin.effects() == before
+    else:
+        assert "error" not in result, result
+        if api == "http":
+            assert response.status_code == 200, result
+        table = "messages" if kind == "mail" else "chat_messages"
+        stored = await env.db.fetch_one(
+            "SELECT * FROM {{tables." + table + "}} WHERE message_id=$1", UUID(result["message_id"]),
+        )
+        assert stored is not None
+        assert stored["conversation_id" if kind == "mail" else "session_id"] == first.conversation_id
+        assert stored["from_did"] == first.signed["from_stable_id"]
+        if kind == "mail":
+            assert stored["to_did"] == same_origin.target_did
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+async def test_first_contact_accepted_origin_alias_is_local(same_origin, kind):
+    env = same_origin.env
+    original = env.app.state.public_origin
+    env.app.state.public_origin = original.replace("127.0.0.1", "localhost")
+    env.app.state.federation_public_origins = [original + "/"]
+    before = await same_origin.effects()
+    response, _ = await same_origin.send(kind)
+    assert response.status_code == 404, response.text
+    assert response.json()["reason"] == "recipient_identity_not_found"
+    assert response.json()["retryable"] is False
+    assert not same_origin.ingress
+    assert await same_origin.effects() == before

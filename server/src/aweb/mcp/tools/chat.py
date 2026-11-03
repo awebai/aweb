@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from awid.federation_errors import FederationAuthorityError
-from aweb.config import get_public_origin
+from aweb.federation.origins import public_origins
 from aweb.federation.errors import RecipientNotResidentError
 from aweb.awid_error_handling import awid_dependency_error_detail
 from aweb.messaging.chat import (
@@ -41,6 +41,7 @@ from aweb.messaging.address_auth import (
     local_recipient_for_address_binding,
     local_recipient_visible_to_auth,
     refuse_same_origin_nonresident,
+    local_recipient_for_own_route,
     unreachable_address_refusal,
 )
 from aweb.messaging.contacts import resolve_local_namespace_controller_did
@@ -521,7 +522,7 @@ async def chat_send(
                         try:
                             refuse_same_origin_nonresident(
                                 registry_delivery_origin(resolved),
-                                public_origin=public_origin or get_public_origin(),
+                                origins=public_origins(auth.request, public_origin=public_origin),
                             )
                         except RecipientNotResidentError as exc:
                             return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
@@ -718,15 +719,17 @@ async def chat_send(
             try:
                 remote = await _deliver_federated_chat(
                     mcp_federation_request(
-                        public_origin=public_origin,
+                        public_origin=public_origin, request=auth.request,
                         chat_transport=federation_transport,
                     ),
                     payload,
-                    auth=mcp_messaging_auth(auth),
+                    db=db_infra, auth=mcp_messaging_auth(auth),
                     sender_address=sender_address,
                     route=route,
                     session_id=str(sid),
                 )
+            except RecipientNotResidentError as exc:
+                return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
             except HumanChatRefused as exc:
                 return json.dumps({"error": exc.detail, **exc.body()})
             except Exception as exc:
@@ -790,6 +793,15 @@ async def chat_send(
         sender_attested_at = datetime.now(timezone.utc).replace(microsecond=0)
         pre_message_id = uuid_mod.uuid4()
         recipient_rows = await _session_recipient_rows(db_infra, session_id=sid, actor_dids=actor_dids)
+        try:
+            for recipient in recipient_rows:
+                local = await local_recipient_for_own_route(
+                    db_infra, recipient, origins=public_origins(auth.request, public_origin=public_origin),
+                )
+                if local is not None:
+                    recipient.update(local, delivery_origin=None, external=False)
+        except RecipientNotResidentError as exc:
+            return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
         try:
             await require_agent_chat(db_infra, recipient_rows, registry_client=registry_client)
         except HumanChatRefused as exc:
@@ -908,15 +920,17 @@ async def chat_send(
             try:
                 remote = await _deliver_federated_chat(
                     mcp_federation_request(
-                        public_origin=public_origin,
+                        public_origin=public_origin, request=auth.request,
                         chat_transport=federation_transport,
                     ),
                     payload,
-                    auth=mcp_messaging_auth(auth),
+                    db=db_infra, auth=mcp_messaging_auth(auth),
                     sender_address=sender_address,
                     route=recipient_rows[0],
                     session_id=str(sid),
                 )
+            except RecipientNotResidentError as exc:
+                return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
             except HumanChatRefused as exc:
                 return json.dumps({"error": exc.detail, **exc.body()})
             except Exception as exc:
