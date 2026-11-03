@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- AWID SDK: `CachedRegistryClient` reads its own identity-tree writes.
+  `register_id_certificate` and `revoke_id_certificate` drop the cached
+  `id_chain_evidence` entries of the written domain, so the next read fetches
+  the new state instead of serving evidence up to 60 seconds old (for
+  example a cached `root_replaced` after the identity was re-registered).
+
 - aw: a mail thread is a conversation, titled by its first message's
   subject. `aw mail send` to a recipient (`--to`, `--to-did` or
   `--to-address`) always starts a new thread and requires `--subject`; it no

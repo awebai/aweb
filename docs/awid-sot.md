@@ -1265,6 +1265,13 @@ which raises.
   no outage grace, and nothing older than 60 seconds is presented. The next
   request makes its own attempt. Each domain's entries are independent of
   every other domain's.
+- The same client reads its own identity-tree writes. Its
+  `register_id_certificate` and `revoke_id_certificate` remove every entry for
+  the written domain before the write is sent and again after it succeeds, so
+  the next read in that domain fetches. One entry covers a whole list of IDs,
+  so a write to one ID may change any entry in its domain. Removing the entry
+  before the write also covers a write whose answer is lost after AWID
+  committed it. Other domains' entries are kept.
 
 ### Public identity-tree write client
 
