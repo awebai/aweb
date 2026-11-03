@@ -1,0 +1,140 @@
+"""Claim transitions against real storage and the public task HTTP handlers."""
+from datetime import datetime, timedelta, timezone
+from uuid import uuid4
+
+import pytest
+from fastapi.responses import JSONResponse
+from httpx import ASGITransport, AsyncClient
+
+from aweb.service_errors import ServiceError
+from tests.test_tasks_http import (
+    TEAM_ID, _DbShim, _build_tasks_app, _insert_task, _seed_team,
+)
+from aweb.coordination.tasks_service import list_ready_tasks, update_task
+
+
+async def seed_claim(db, *, fresh=False, grant=None, app_request=False):
+    await _seed_team(db)
+    now = datetime.now(timezone.utc)
+    seen = now - timedelta(seconds=10 if fresh else 1801)
+    agents, workspaces = {}, {}
+    for alias in ("alice", "bob", "carol"):
+        agents[alias], workspaces[alias] = uuid4(), uuid4()
+        await db.execute(
+            """INSERT INTO {{tables.agents}} (agent_id, team_id, alias, did_key)
+               VALUES ($1,$2,$3,$4)""", agents[alias], TEAM_ID, alias, f"did:key:z{alias}",
+        )
+        await db.execute(
+            """INSERT INTO {{tables.workspaces}}
+               (workspace_id, team_id, agent_id, alias, last_seen_at)
+               VALUES ($1,$2,$3,$4,$5)""",
+            workspaces[alias], TEAM_ID, agents[alias], alias, seen if alias == "bob" else now,
+        )
+    task_id = uuid4()
+    await _insert_task(db, task_id=task_id, task_number=1, root_task_seq=1,
+                       suffix="aaaa", title="Recover work", status="in_progress", assignee_alias="bob")
+    if app_request:
+        # The fixed target is the real holder; a generic claim must never adopt it.
+        await db.execute(
+            """UPDATE {{tables.tasks}} SET assignee_did='did:key:zbob',
+               app_request='{}'::jsonb WHERE task_id=$1""", task_id,
+        )
+    await db.execute(
+        """INSERT INTO {{tables.task_claims}} (team_id,workspace_id,alias,task_ref,claimed_at)
+           VALUES ($1,$2,'bob','backend-aaaa',$3)""", TEAM_ID, workspaces["bob"], seen,
+    )
+    if grant:
+        gid = uuid4()
+        grant_seen = now - timedelta(seconds=1801 if grant == "stale" else 5)
+        await db.execute(
+            """INSERT INTO {{tables.identity_session_grants}}
+               (grant_id,team_id,subject_agent_id,grant_did_key,scopes,issued_at,expires_at,revoked_at)
+               VALUES ($1,$2,$3,'did:key:zsession',ARRAY['coord.write'],$4,$5,$6)""",
+            gid, TEAM_ID, agents["bob"], now-timedelta(hours=1),
+            now+timedelta(hours=1) if grant != "expired" else now-timedelta(seconds=1),
+            now if grant == "revoked" else None,
+        )
+        await db.execute(
+            """INSERT INTO {{tables.identity_grant_liveness}}
+               (grant_id,team_id,subject_agent_id,workspace_id,alias,session_did_key,last_seen_at,expires_at)
+               VALUES ($1,$2,$3,$4,'bob','did:key:zsession',$5,$6)""",
+            gid, TEAM_ID, agents["bob"], workspaces["bob"], grant_seen, now+timedelta(hours=1),
+        )
+    return task_id, workspaces, seen
+
+
+def http_client(db):
+    app = _build_tasks_app(db)
+
+    @app.exception_handler(ServiceError)
+    async def service_error(request, exc):
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+    return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+
+
+@pytest.mark.asyncio
+async def test_stale_takeover_records_and_rejects_displaced_holder(aweb_cloud_db):
+    db = aweb_cloud_db.aweb_db
+    task_id, ws, seen = await seed_claim(db)
+    async with http_client(db) as client:
+        ready = (await client.get("/v1/tasks/ready")).json()["tasks"]
+        assert len(ready) == 1
+        assert ready[0]["stale"] is True
+        assert ready[0]["owner_alias"] == "bob"
+        assert datetime.fromisoformat(ready[0]["owner_last_seen_at"]) == seen
+        response = await client.patch("/v1/tasks/backend-aaaa", json={"status": "in_progress"})
+        assert response.status_code == 200, response.text
+        assert response.json()["assignee_alias"] == "alice"
+    claims = await db.fetch_all("SELECT workspace_id,alias FROM {{tables.task_claims}}")
+    assert [(r["workspace_id"], r["alias"]) for r in claims] == [(ws["alice"], "alice")]
+    comments = await db.fetch_all("SELECT body FROM {{tables.task_comments}} WHERE task_id=$1", task_id)
+    assert len(comments) == 1
+    assert all(s in comments[0]["body"] for s in ("alice", "bob", seen.isoformat()))
+    for changes in ({"notes": "late edit"}, {"status": "closed"}):
+        from aweb.service_errors import ConflictError
+        with pytest.raises(ConflictError, match="alice"):
+            await update_task(_DbShim(db), team_id=TEAM_ID, ref="backend-aaaa", actor_alias="bob", **changes)
+    # General team edits remain allowed; only a displaced holder is fenced.
+    await update_task(_DbShim(db), team_id=TEAM_ID, ref="backend-aaaa", actor_alias="carol", notes="reviewed")
+    row = await db.fetch_one("SELECT status,notes FROM {{tables.tasks}} WHERE task_id=$1", task_id)
+    assert row["status"] == "in_progress" and row["notes"] == "reviewed"
+    assert await list_ready_tasks(_DbShim(db), team_id=TEAM_ID) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fresh,grant", [(True,None), (False,"fresh")])
+async def test_live_holder_is_not_ready_and_keeps_claim(aweb_cloud_db, fresh, grant):
+    db = aweb_cloud_db.aweb_db
+    _, ws, _ = await seed_claim(db, fresh=fresh, grant=grant)
+    async with http_client(db) as client:
+        assert (await client.get("/v1/tasks/ready")).json()["tasks"] == []
+        response = await client.patch("/v1/tasks/backend-aaaa", json={"status": "in_progress"})
+        assert response.status_code == 409
+        assert "bob" in response.json()["detail"]
+    assert await db.fetch_value("SELECT workspace_id FROM {{tables.task_claims}}") == ws["bob"]
+    assert await db.fetch_value("SELECT count(*) FROM {{tables.task_comments}}") == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("grant", ["stale", "revoked", "expired"])
+async def test_invalid_grant_does_not_keep_claim_alive(aweb_cloud_db, grant):
+    db = aweb_cloud_db.aweb_db
+    await seed_claim(db, grant=grant)
+    async with http_client(db) as client:
+        assert (await client.get("/v1/tasks/ready")).json()["tasks"][0]["stale"]
+        response = await client.patch("/v1/tasks/backend-aaaa", json={"status": "in_progress"})
+        assert response.status_code == 200, response.text
+
+
+@pytest.mark.asyncio
+async def test_app_request_excludes_takeover(aweb_cloud_db):
+    db = aweb_cloud_db.aweb_db
+    _, ws, _ = await seed_claim(db, app_request=True)
+    async with http_client(db) as client:
+        assert (await client.get("/v1/tasks/ready")).json()["tasks"] == []
+        response = await client.patch("/v1/tasks/backend-aaaa", json={"status": "in_progress"})
+        assert response.status_code in (403,409)
+    assert await db.fetch_value("SELECT workspace_id FROM {{tables.task_claims}}") == ws["bob"]
+    assert await db.fetch_value("SELECT assignee_did FROM {{tables.tasks}}") == "did:key:zbob"
+    assert await db.fetch_value("SELECT count(*) FROM {{tables.task_comments}}") == 0
