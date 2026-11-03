@@ -67,7 +67,9 @@ func TestPresenceHeartbeatUsesFreshInspectAndStopsOnDeregister(t *testing.T) {
 	writeWakeTestTeamState(t, identity, "dev:example.com")
 	joined := filepath.Join(tempHome(t, "joined"), ".aw")
 	writeWakeTestTeamState(t, joined, "ops:example.com")
-	if err := broker.Register(Registration{Home: home, RuntimeDelivery: RuntimeDeliveryExternalSession, ReceiveIdentities: []ReceiveIdentity{
+	poll := filepath.Join(tempHome(t, "poll-only"), ".aw")
+	writeWakeTestTeamState(t, poll, "team:poll")
+	if err := broker.Register(Registration{Home: home, PresenceIdentities: []PresenceIdentity{{IdentityHome: poll}}, RuntimeDelivery: RuntimeDeliveryExternalSession, ReceiveIdentities: []ReceiveIdentity{
 		{IdentityHome: identity, TeamID: "dev:example.com", DeliveryOwner: ReceiveOwnerSessionHints, Controls: true},
 		{IdentityHome: joined, TeamID: "ops:example.com", DeliveryOwner: ReceiveOwnerSessionHints},
 	}}); err != nil {
@@ -85,14 +87,13 @@ func TestPresenceHeartbeatUsesFreshInspectAndStopsOnDeregister(t *testing.T) {
 	}
 	expectBeat := func() {
 		t.Helper()
-		want := map[string]bool{identity + "|dev:example.com": true, joined + "|ops:example.com": true}
-		for len(want) > 0 {
+		want := []string{identity + "|dev:example.com", joined + "|ops:example.com", poll + "|team:poll"}
+		for _, expected := range want {
 			select {
 			case got := <-requests:
-				if !want[got] {
-					t.Fatalf("unexpected or repeated heartbeat identity=%s", got)
+				if got != expected {
+					t.Fatalf("heartbeat identity=%s want %s in receive-then-presence order", got, expected)
 				}
-				delete(want, got)
 			case <-time.After(2 * time.Second):
 				t.Fatal("present session did not heartbeat each identity")
 			}

@@ -130,6 +130,13 @@ type ReceiveIdentity struct {
 	Controls      bool     `json:"controls,omitempty"`
 }
 
+// PresenceIdentity is an explicit heartbeat target, with no receive or delivery
+// authority. Poll-only joined identities use it to keep their workspace present.
+type PresenceIdentity struct {
+	IdentityHome string `json:"identity_home"`
+	TeamID       string `json:"team_id"`
+}
+
 // Registration is what the OATS spawn hook records. The legacy shape is one
 // IdentityHome with Delivery=session. The multi-identity shape keeps the same
 // instance Home and supplies explicit broker-owned receive identities.
@@ -137,14 +144,15 @@ type Registration struct {
 	// True only for an accepted normalized in-memory snapshot. Reconciliation
 	// validates fresh disk state; dispatch must retain this last-good snapshot.
 	bindingsNormalized  bool
-	Home                string            `json:"home"`
-	IdentityHome        string            `json:"identity_home"`
-	Delivery            string            `json:"delivery"`
-	RuntimeDelivery     string            `json:"runtime_delivery,omitempty"`
-	PrimaryIdentityHome string            `json:"primary_identity_home,omitempty"`
-	ReceiveIdentities   []ReceiveIdentity `json:"receive_identities,omitempty"`
-	Backend             string            `json:"backend,omitempty"`
-	RegisteredAt        time.Time         `json:"registered_at"`
+	Home                string             `json:"home"`
+	IdentityHome        string             `json:"identity_home"`
+	Delivery            string             `json:"delivery"`
+	RuntimeDelivery     string             `json:"runtime_delivery,omitempty"`
+	PrimaryIdentityHome string             `json:"primary_identity_home,omitempty"`
+	ReceiveIdentities   []ReceiveIdentity  `json:"receive_identities,omitempty"`
+	PresenceIdentities  []PresenceIdentity `json:"presence_identities,omitempty"`
+	Backend             string             `json:"backend,omitempty"`
+	RegisteredAt        time.Time          `json:"registered_at"`
 }
 
 // Validate enforces explicit receive ownership, no double-consumed identity
@@ -200,7 +208,7 @@ func (r Registration) normalized() (Registration, error) {
 		}
 	}
 
-	legacy := len(r.ReceiveIdentities) == 0
+	legacy := len(r.ReceiveIdentities) == 0 && (runtime == RuntimeDeliveryExternalSession || len(r.PresenceIdentities) == 0)
 	if legacy {
 		if !strings.EqualFold(strings.TrimSpace(r.Delivery), DeliverySession) {
 			return Registration{}, fmt.Errorf(
@@ -223,6 +231,9 @@ func (r Registration) normalized() (Registration, error) {
 			DeliveryOwner: ReceiveOwnerSessionHints,
 			Controls:      true,
 		}}
+		if err := r.normalizePresenceIdentities(); err != nil {
+			return Registration{}, err
+		}
 		r.bindingsNormalized = true
 		return r, nil
 	}
@@ -311,8 +322,63 @@ func (r Registration) normalized() (Registration, error) {
 	if strings.TrimSpace(r.IdentityHome) == "" && len(r.ReceiveIdentities) > 0 {
 		r.IdentityHome = r.ReceiveIdentities[0].IdentityHome
 	}
+	if err := r.normalizePresenceIdentities(); err != nil {
+		return Registration{}, err
+	}
 	r.bindingsNormalized = true
 	return r, nil
+}
+
+func (r *Registration) normalizePresenceIdentities() error {
+	if len(r.PresenceIdentities) == 0 {
+		return nil
+	}
+	primary := ""
+	if strings.TrimSpace(r.PrimaryIdentityHome) != "" {
+		var err error
+		primary, err = CanonicalHome(r.PrimaryIdentityHome)
+		if err != nil {
+			return err
+		}
+	}
+	receiveHomes := map[string]bool{}
+	for _, binding := range r.ReceiveIdentities {
+		receiveHomes[binding.IdentityHome] = true
+	}
+	seen := map[string]bool{}
+	for i := range r.PresenceIdentities {
+		binding := &r.PresenceIdentities[i]
+		label := fmt.Sprintf("presence_identities[%d]", i)
+		home, err := canonicalReadableIdentityHome(binding.IdentityHome, label+".identity_home")
+		if err != nil {
+			return err
+		}
+		if binding.IdentityHome != home {
+			return fmt.Errorf("%s.identity_home must be canonical: %s", label, home)
+		}
+		if _, err := os.ReadDir(home); err != nil {
+			return fmt.Errorf("%s.identity_home is not readable: %w", label, err)
+		}
+		if home == primary {
+			return fmt.Errorf("%s overlaps primary_identity_home", label)
+		}
+		if receiveHomes[home] {
+			return fmt.Errorf("%s overlaps receive identity_home %s", label, home)
+		}
+		binding.TeamID, err = effectiveTeamID(home, binding.TeamID)
+		if err != nil {
+			return fmt.Errorf("%s.team_id: %w", label, err)
+		}
+		if binding.TeamID == "" {
+			return fmt.Errorf("%s requires an effective team", label)
+		}
+		key, _ := bindingKey(home, binding.TeamID)
+		if seen[key] {
+			return fmt.Errorf("duplicate presence identity_home=%s team=%s", home, binding.TeamID)
+		}
+		seen[key] = true
+	}
+	return nil
 }
 
 type teamStateYAML struct {
@@ -421,6 +487,7 @@ func onlyMailChat(classes []string) bool {
 
 func (r Registration) clone() Registration {
 	out := r
+	out.PresenceIdentities = append([]PresenceIdentity(nil), r.PresenceIdentities...)
 	if r.ReceiveIdentities != nil {
 		out.ReceiveIdentities = make([]ReceiveIdentity, len(r.ReceiveIdentities))
 		for i, binding := range r.ReceiveIdentities {

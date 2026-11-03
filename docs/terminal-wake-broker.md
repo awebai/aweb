@@ -16,13 +16,36 @@ local decrypt/trust, formatting, terminal input, durable delivered IDs, mail
 acknowledgement and chat read marking.
 
 The daemon also sends presence heartbeats at start and every five minutes for
-each registration's explicit receive identities. Each beat first performs a fresh
+each registration's explicit receive identities, followed by its presence
+identities. Each beat first performs a fresh
 `session inspect` of that registration's home. Only `present:true` permits the
 heartbeats; an absent result or inspect error skips that tick. No cached
 inspection establishes liveness. Deregistration and daemon shutdown cancel the
 timer and any in-flight inspect or heartbeat. The existing identity-home/team
 credential selection supplies root, team or session-grant authentication to
 `POST /v1/agents/heartbeat`.
+
+Registrations may add `presence_identities` alongside `receive_identities` for
+joined identities whose messages are polled by the host:
+
+```json
+"presence_identities": [
+  {"identity_home": "/absolute/canonical/identity-home", "team_id": "team:example.com"}
+]
+```
+
+These entries are heartbeat targets only. They create no stream, child binding,
+event subscription, delivery or acknowledgement. In particular, an empty
+`event_classes` on a native receive binding defaults to mail and chat; it must
+not represent a presence-only identity. Each presence home must already be a
+canonical, readable directory. A nonempty explicit team or the home's effective
+team is required and pinned on registration. A home cannot repeat the primary
+identity home or any receive home, even for another team; duplicate presence
+(home, team) pairs are refused. Distinct teams at one presence home are allowed.
+Native-channel and native-pi registrations can contain presence identities with
+no receive identities. `aw wake status` lists presence targets separately from
+receive bindings, including when the daemon is down. The complete registration
+JSON is accepted through `aw wake register --registration-json`.
 
 The Claude channel and pi extension use the same heartbeat endpoint immediately
 at start and every five minutes during their running sessions, including

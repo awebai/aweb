@@ -588,6 +588,9 @@ func formatWakeStatus(v any) string {
 			}
 			b.WriteString(line + "\n")
 		}
+		for _, identity := range inst.PresenceIdentities {
+			fmt.Fprintf(&b, "    presence identity_home=%s team=%s\n", identity.IdentityHome, identity.TeamID)
+		}
 		fmt.Fprintf(&b, "    last_state=%s last_inspect=%s\n",
 			dashIfEmpty(inst.LastState), stampOrDash(inst.LastInspectAt))
 		if strings.TrimSpace(inst.ConflictHome) != "" {

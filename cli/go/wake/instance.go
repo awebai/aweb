@@ -436,7 +436,12 @@ func (r *instanceRunner) heartbeat(ctx context.Context) {
 	if !inspection.Present || ctx.Err() != nil {
 		return
 	}
+	targets := make([]PresenceIdentity, 0, len(reg.ReceiveIdentities)+len(reg.PresenceIdentities))
 	for _, binding := range reg.ReceiveBindings() {
+		targets = append(targets, PresenceIdentity{IdentityHome: binding.IdentityHome, TeamID: binding.TeamID})
+	}
+	targets = append(targets, reg.PresenceIdentities...)
+	for _, binding := range targets {
 		if ctx.Err() != nil {
 			return
 		}
@@ -646,6 +651,7 @@ func (r *instanceRunner) snapshot() InstanceStatus {
 		RuntimeDelivery:     r.reg.RuntimeDelivery,
 		PrimaryIdentityHome: r.reg.PrimaryIdentityHome,
 		ReceiveIdentities:   receive,
+		PresenceIdentities:  append([]PresenceIdentity(nil), r.reg.PresenceIdentities...),
 		Backend:             r.reg.Backend,
 		Delivery:            r.reg.Delivery,
 		RegisteredAt:        r.reg.RegisteredAt,

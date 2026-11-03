@@ -624,7 +624,8 @@ func TestWakeCommandsFallBackToFilesWhenTheDaemonIsDown(t *testing.T) {
 	joinedHome := filepath.Join(root, "joined-home")
 	primaryHome := filepath.Join(root, "primary-home")
 	multiHome := filepath.Join(root, "multi-agent-home")
-	for _, home := range []string{joinedHome, primaryHome, multiHome} {
+	pollHome := filepath.Join(root, "poll-only-home")
+	for _, home := range []string{joinedHome, primaryHome, multiHome, pollHome} {
 		if err := os.MkdirAll(filepath.Join(home, ".aw"), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -635,6 +636,7 @@ func TestWakeCommandsFallBackToFilesWhenTheDaemonIsDown(t *testing.T) {
 		Delivery:            wake.RuntimeDeliveryNativePi,
 		RuntimeDelivery:     wake.RuntimeDeliveryNativePi,
 		PrimaryIdentityHome: filepath.Join(primaryHome, ".aw"),
+		PresenceIdentities:  []wake.PresenceIdentity{{IdentityHome: filepath.Join(pollHome, ".aw"), TeamID: "team:poll"}},
 		ReceiveIdentities: []wake.ReceiveIdentity{{
 			IdentityHome:  filepath.Join(joinedHome, ".aw"),
 			TeamID:        "team:joined",
@@ -665,6 +667,9 @@ func TestWakeCommandsFallBackToFilesWhenTheDaemonIsDown(t *testing.T) {
 	}
 
 	out := run("wake", "status", "--state-dir", stateDir)
+	if !strings.Contains(out, "presence identity_home="+filepath.Join(pollHome, ".aw")+" team=team:poll") {
+		t.Fatalf("presence-only identity absent from CLI status:\n%s", out)
+	}
 	if !strings.Contains(out, "not running") || !strings.Contains(out, instanceHome) {
 		t.Fatalf("status with the daemon down did not read the files:\n%s", out)
 	}

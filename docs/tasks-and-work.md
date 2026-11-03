@@ -34,7 +34,9 @@ aw work active
 The native Claude channel and pi extension heartbeat only their selected team's
 workspace. When stale-claim takeover is enabled, claims in other teams can still
 become stale unless a daemon registration or explicit heartbeat covers those
-teams. The wake daemon heartbeats each of its registered receive identities.
+teams. The wake daemon heartbeats each of its registered receive identities and
+its explicit `presence_identities`; poll-only teams use the latter without
+adding a receive binding.
 
 Choose one task that fits your role. Inspect it before assigning it to yourself:
 
