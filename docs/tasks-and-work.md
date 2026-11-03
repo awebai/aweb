@@ -42,7 +42,8 @@ The CLI exposes claim state in workspace and work views, but does not currently
 have a separate `aw claim` mutation command. Assignment plus `in_progress`
 status is the everyday ownership signal.
 
-A claim stays live while its workspace has been seen within 1800 seconds, or
+A claim stays live for 1800 seconds after it is made, while its workspace has
+been seen within 1800 seconds, or
 while the existing grant-liveness reader reports a fresh, valid grant seat for
 that workspace. Only `aw heartbeat`, MCP heartbeat and connect/init refresh
 presence; ordinary CLI calls and the message stream do not. A runtime that

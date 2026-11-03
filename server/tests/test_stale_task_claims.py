@@ -169,6 +169,20 @@ async def test_human_holder_never_requires_heartbeat(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+async def test_new_claim_is_live_without_recent_workspace_heartbeat(aweb_cloud_db):
+    db = aweb_cloud_db.aweb_db
+    _, ws, _ = await seed_claim(db)
+    await db.execute("UPDATE {{tables.task_claims}} SET claimed_at=NOW()")
+    async with http_client(db) as client:
+        assert (await client.get("/v1/tasks/ready")).json()["tasks"] == []
+        response = await client.patch("/v1/tasks/backend-aaaa", json={"status":"in_progress"})
+        assert response.status_code == 409
+        assert "bob" in response.json()["detail"]
+    assert await db.fetch_value("SELECT workspace_id FROM {{tables.task_claims}}") == ws["bob"]
+    assert await db.fetch_value("SELECT count(*) FROM {{tables.task_comments}}") == 0
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("grant", ["stale", "revoked", "expired"])
 async def test_invalid_grant_does_not_keep_claim_alive(aweb_cloud_db, grant):
     db = aweb_cloud_db.aweb_db

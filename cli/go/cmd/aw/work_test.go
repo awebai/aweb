@@ -71,7 +71,7 @@ func TestAwWorkReadyFiltersClaimsHeldByOthers(t *testing.T) {
 	if strings.Contains(text, "TASK-002") {
 		t.Fatalf("ready output should filter claimed task:\n%s", text)
 	}
-	for _, want := range []string{"TASK-003", "stale", "carol", "2026-03-10T10:00:00Z"} {
+	for _, want := range []string{"TASK-003", "[stale: held by carol, last seen 2026-03-10T10:00:00Z]"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("ready output missing %q:\n%s", want, text)
 		}

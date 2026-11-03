@@ -1032,6 +1032,7 @@ async def _live_claim_workspaces(db, claims) -> set[str]:
     return {
         str(c["workspace_id"]) for c in claims
         if c["holder_type"] == "human" or str(c["workspace_id"]) in grants
+        or c["claimed_at"] >= cutoff
         or (c["workspace_last_seen_at"] is not None and c["workspace_last_seen_at"] >= cutoff)
     }
 

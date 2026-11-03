@@ -281,7 +281,7 @@ func formatWorkList(v any) string {
 			if seen == "" {
 				seen = "unknown"
 			}
-			sb.WriteString(fmt.Sprintf(" [stale; last seen: %s]", seen))
+			sb.WriteString(fmt.Sprintf(" [stale: held by %s, last seen %s]", valueOrEmpty(item.OwnerAlias), seen))
 		}
 		sb.WriteString("\n")
 	}
