@@ -40,6 +40,7 @@ from aweb.e2ee_messages import (
     E2EEEnvelopeError,
     encrypted_message_storage_metadata,
     validate_e2ee_message_envelope,
+    verify_e2ee_message_envelope_signature,
 )
 from aweb.federation.envelope import (
     FederationEnvelope,
@@ -349,6 +350,65 @@ def _signed_payload_conversation_id(signed_payload: str | None) -> str:
     if not isinstance(payload, dict):
         return ""
     return str(payload.get("conversation_id") or "").strip()
+
+
+def _sender_bound_fresh_session(payload: CreateSessionRequest, auth: MessagingAuth, session_id: UUID | None) -> bool:
+    """Authorize replacement before any close; ciphertext needs verified binding."""
+    if session_id is None:
+        return False
+    if not _payload_is_encrypted(payload):
+        return (payload.signature is not None
+                and _signed_payload_conversation_id(payload.signed_payload) == str(session_id))
+    envelope = payload.encrypted_envelope or {}
+    sender = envelope.get("from")
+    if (not isinstance(sender, dict) or sender.get("did") not in auth_dids(auth)
+            or envelope.get("conversation_id") != str(session_id)):
+        return False
+    try:
+        verify_e2ee_message_envelope_signature(envelope)
+    except (E2EEEnvelopeError, ValueError, TypeError):
+        return False
+    return True
+
+
+async def _chat_create_retry(db, payload: CreateSessionRequest, *, actor_dids: list[str], target_dids: list[str]):
+    """Acknowledge an exact accepted message without replacing a later session."""
+    if payload.message_id is None:
+        return None
+    manager = db.get_manager("aweb")
+    row = await manager.fetch_one(
+        "SELECT * FROM {{tables.chat_messages}} WHERE message_id=$1", UUID(payload.message_id),
+    )
+    if row is None:
+        return None
+    envelope = row.get("encrypted_envelope")
+    if isinstance(envelope, str):
+        envelope = json.loads(envelope)
+    matches = (
+        row["from_did"] in actor_dids
+        and str(row["session_id"]) == payload.session_id
+        and row["body"] == payload.message
+        and row.get("signature") == payload.signature
+        and row.get("signed_payload") == payload.signed_payload
+        and envelope == payload.encrypted_envelope
+        and row["content_mode"] == payload.content_mode
+        and row["message_version"] == payload.message_version
+        and bool(row["sender_leaving"]) == payload.leaving
+        and (str(row["reply_to"]) if row.get("reply_to") else None) == payload.reply_to
+    )
+    signed = envelope if envelope is not None else json.loads(row.get("signed_payload") or "{}")
+    timestamp = signed.get("created_at" if envelope is not None else "timestamp")
+    signer = (signed.get("from") or {}).get("did") if envelope is not None else signed.get("from_did")
+    matches = (matches and payload.timestamp == timestamp
+               and (payload.from_did == signer or (envelope is not None and payload.from_did is None))
+               and payload.wait_seconds == (None if envelope is not None else signed.get("wait_seconds")))
+    participants = await manager.fetch_all(
+        "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1", row["session_id"],
+    )
+    matches = matches and {p["did"] for p in participants} == set(actor_dids) | set(target_dids)
+    if not matches:
+        raise HTTPException(status_code=409, detail="message_id already exists with different chat content")
+    return row
 
 
 def _actor_did(auth: MessagingAuth) -> str:
@@ -1481,12 +1541,16 @@ async def create_or_send(
         for row in target_rows
     ]
 
-    validation_conversation_id = str(requested_session_id) if requested_session_id is not None else None
-    signed_requested_session_id = (
-        requested_session_id is not None
-        and payload.signature is not None
-        and _signed_payload_conversation_id(payload.signed_payload) == str(requested_session_id)
+    existing_message = await _chat_create_retry(
+        db, payload, actor_dids=actor_dids, target_dids=target_dids,
     )
+    if existing_message is not None:
+        return await _create_session_response(
+            db, redis, session_id=existing_message["session_id"],
+            message_id=str(existing_message["message_id"]), target_dids=target_dids,
+        )
+    validation_conversation_id = str(requested_session_id) if requested_session_id is not None else None
+    signed_requested_session_id = _sender_bound_fresh_session(payload, auth, requested_session_id)
     if len(participant_rows) == 2:
         try:
             existing_session_id = await find_session_between(
