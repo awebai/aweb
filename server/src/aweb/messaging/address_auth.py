@@ -6,8 +6,11 @@ from typing import Any, Mapping
 from types import SimpleNamespace
 
 from awid.federation_errors import FederationAuthorityError
+from awid.registry import RegistryError
+from fastapi import HTTPException
 from awid.log import canonical_server_origin
 from awid.signing import verify_did_key_signature
+from aweb.identity_binding import verify_identity_binding
 from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
 from aweb.federation.errors import RecipientNotResidentError
 from aweb.federation.origins import is_own_origin
@@ -70,11 +73,11 @@ def refuse_same_origin_nonresident(delivery_origin: str, *, origins: set[str]) -
         raise RecipientNotResidentError()
 
 
-async def local_recipient_for_own_route(db, route: Mapping[str, Any], *, origins: set[str]) -> dict | None:
+async def local_recipient_for_own_route(db, route: Mapping[str, Any], *, request, origins: set[str]) -> dict | None:
     """Classify a stored/refreshed route before forwarding or persisting it.
 
-    The admitted route supplies the identity/key; residence and delivery policy
-    remain separate. A foreign route is unchanged.
+    The stored route supplies identity, never current-key evidence. Residence
+    and delivery policy remain separate. A foreign route is unchanged.
     """
     origin = str(route.get("delivery_origin") or "")
     if not is_own_origin(origin, origins):
@@ -82,7 +85,7 @@ async def local_recipient_for_own_route(db, route: Mapping[str, Any], *, origins
     did = str(route.get("did_aw") or route.get("did") or route.get("did_key") or "")
     if did.startswith("did:aw:"):
         recipient = await local_recipient_for_address_binding(
-            db, SimpleNamespace(did_aw=did, current_did_key=route.get("current_did_key") or route.get("did_key")),
+            db, SimpleNamespace(did_aw=did, current_did_key=None),
             str(route.get("address") or ""),
         )
     else:
@@ -92,6 +95,27 @@ async def local_recipient_for_own_route(db, route: Mapping[str, Any], *, origins
         recipient = await resolve_agent_by_did(db, did)
     if recipient is None:
         refuse_same_origin_nonresident(origin, origins=origins)
+    if did.startswith("did:aw:"):
+        # As with a stable-only signed continuation, discover the current key
+        # through the existing binding authority, outside database transactions.
+        # This validation context never repairs a participant or agent marker.
+        try:
+            client = request.app.state.awid_registry_client
+            resolution = await client.resolve_key_fresh(did)
+        except Exception as exc:
+            mismatch = isinstance(exc, RegistryError) and exc.status_code == 404
+            if not mismatch:
+                logging.getLogger(__name__).warning("Own-route recipient binding unavailable", exc_info=True)
+            raise HTTPException(
+                status_code=403 if mismatch else 503,
+                detail="identity_binding_mismatch" if mismatch else "identity_binding_unavailable",
+            ) from exc
+        address = str(route.get("address") or "")
+        binding = await verify_identity_binding(
+            request, did_key=resolution.current_did_key, did_aw=did,
+            address=address if "/" in address else "", fresh=True,
+        )
+        recipient["did_key"] = binding.did_key
     return recipient
 
 

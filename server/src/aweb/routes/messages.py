@@ -848,7 +848,7 @@ async def _deliver_remote_mail_and_project_locally(
             status_code=424,
             detail="Recipient address has no federated delivery origin",
         )
-    local = await local_recipient_for_own_route(db, recipient, origins=public_origins(request))
+    local = await local_recipient_for_own_route(db, recipient, request=request, origins=public_origins(request))
     if local is not None:
         return await _send_mail_conversation_continuation(
             request, payload, db, auth=auth, registry_client=registry_client,

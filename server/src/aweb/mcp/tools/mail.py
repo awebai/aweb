@@ -307,10 +307,14 @@ async def send_mail(
                     registry_client,
                     recipient_participant,
                 )
-                await local_recipient_for_own_route(
-                    db_infra, remote_recipient,
+                local = await local_recipient_for_own_route(
+                    db_infra, remote_recipient, request=auth.request,
                     origins=public_origins(auth.request, public_origin=public_origin),
                 )
+                if local is not None:
+                    remote_recipient["did_key"] = local["did_key"]
+        except HTTPException as exc:
+            return json.dumps({"error": exc.detail})
         except RecipientNotResidentError as exc:
             return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
         except (ValidationError, NotFoundError, ForbiddenError) as exc:

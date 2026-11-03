@@ -546,7 +546,7 @@ async def _resolve_remote_chat_route(
     local = await local_recipient_for_own_route(
         db, {"did_aw": target_stable_id, "current_did_key": target_current_did,
              "address": address, "delivery_origin": delivery_origin},
-        origins=public_origins(request),
+        request=request, origins=public_origins(request),
     )
     if local is not None:
         # Do not persist an own-origin remote route. The shared delivery helper
@@ -770,8 +770,10 @@ async def _deliver_federated_chat(
     except FederationEnvelopeError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    local = await local_recipient_for_own_route(db, route, origins=public_origins(request))
+    local = await local_recipient_for_own_route(db, route, request=request, origins=public_origins(request))
     if local is not None:
+        if envelope.target_current_did_key != local.get("did_key"):
+            raise HTTPException(status_code=403, detail="identity_binding_mismatch")
         await require_agent_chat(db, [local], registry_client=getattr(request.app.state, "awid_registry_client", None))
         try:
             await authorize_message_delivery(
@@ -2697,6 +2699,10 @@ async def send_message(
     if not actor_did:
         raise HTTPException(status_code=404, detail="Session not found")
     recipient_rows = await _resolve_session_recipient_rows(db, session_id=session_uuid, actor_dids=actor_dids)
+    for row in recipient_rows:
+        local = await local_recipient_for_own_route(db, row, request=request, origins=public_origins(request))
+        if local is not None:
+            row.update(local, delivery_origin=None, current_did_key=local.get("did_key"))
     await require_agent_chat(db, recipient_rows, registry_client=getattr(request.app.state, "awid_registry_client", None))
     for row in recipient_rows:
         if (

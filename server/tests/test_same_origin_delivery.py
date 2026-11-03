@@ -19,6 +19,8 @@ import httpx
 import uvicorn
 
 from awid.signing import canonical_json_bytes, sign_message
+from awid.e2ee_keys import build_encryption_key_assertion
+from aweb.e2ee_messages import encrypt_e2ee_message, generate_x25519_keypair
 from aweb.federation.activation import build_federation_authority_activation
 from aweb.mcp.server import create_mcp_app
 from aweb.internal_auth import build_internal_auth_header_value
@@ -29,7 +31,7 @@ from test_cli_never_grants import registry_listener
 from test_cli_human_reply import _pem
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_messages_http import (
-    _encode_certificate, _make_certificate, _make_keypair, _signed_team_headers,
+    _encode_certificate, _make_certificate, _make_keypair, _signed_team_headers, _signed_identity_headers,
 )
 
 
@@ -87,7 +89,7 @@ async def same_origin(privacy_app, monkeypatch):
                 "human" if human else "agent", deleted, inbound_mode,
             )
 
-        async def send_message(kind, sender_kind="local", *, continuation=None):
+        async def send_message(kind, sender_kind="local", *, continuation=None, target_key=None, target_sk=None, encrypted=False):
             actor = env.actors["alice"]
             sender_stable = ""
             sender_address = "example.test/alice"
@@ -114,8 +116,9 @@ async def same_origin(privacy_app, monkeypatch):
             timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
             signed = dict(
                 type=kind, from_did=actor.did, to=address,
-                to_did=target.did, to_stable_id=stable, message_id=mid,
-                conversation_id=cid, timestamp=timestamp, body="Same-origin delivery",
+                to_did=target_key or target.did, to_stable_id=stable, message_id=mid,
+                conversation_id=cid, timestamp=timestamp,
+                body="Same-origin continuation" if continuation else "Same-origin delivery",
             )
             signed["from"] = sender_address
             if sender_stable:
@@ -136,6 +139,18 @@ async def same_origin(privacy_app, monkeypatch):
             encoded = canonical_json_bytes(signed).decode()
             payload.update(from_did=signed["from_did"], message_id=mid, timestamp=timestamp,
                            signed_payload=encoded, signature=sign_message(actor.sk, encoded.encode()))
+            if encrypted:
+                envelope = _encrypted_continuation(
+                    kind, actor, sender_stable, signed,
+                    target_key or target.did, target_sk or target.sk, stable,
+                )
+                payload.pop("signature")
+                payload.pop("signed_payload")
+                payload.update(content_mode="encrypted_v2", message_version=2, encrypted_envelope=envelope)
+                if kind == "mail":
+                    payload.update(body="", subject="")
+                else:
+                    payload["body" if continuation else "message"] = ""
             raw = json.dumps(payload).encode()
             headers = _signed_team_headers(
                 actor.sk, actor.did, TEAM, _encode_certificate(certificate), raw,
@@ -145,7 +160,7 @@ async def same_origin(privacy_app, monkeypatch):
             })
             return response, SimpleNamespace(
                 message_id=UUID(mid), conversation_id=UUID(cid), signed=signed,
-                signed_payload=encoded, signature=payload["signature"],
+                signed_payload=encoded, signature=payload.get("signature"),
             )
 
         async def effects():
@@ -158,7 +173,7 @@ async def same_origin(privacy_app, monkeypatch):
 
         try:
             yield SimpleNamespace(env=env, resident=resident, send=send_message,
-                                  ingress=ingress, effects=effects, target_did=stable)
+                                  ingress=ingress, effects=effects, target_did=stable, target=target)
         finally:
             env.app.middleware_stack = stack
             await authority.aclose()
@@ -535,30 +550,62 @@ async def test_chat_route_refresh_to_nonresident_own_origin_has_no_effects(same_
     assert response.json()["retryable"] is False
 
 
-async def _mcp_continue(same_origin, first, kind):
+def _encrypted_continuation(kind, actor, sender_stable, fields, target_key, target_sk, target_stable):
+    def identity(did, stable, address, sk):
+        _, public_key = generate_x25519_keypair()
+        return dict(
+            did=did, stable_id=stable, address=address, signing_key=sk,
+            encryption_key=build_encryption_key_assertion(
+                signing_key=sk, identity_did=did, identity_stable_id=stable,
+                encryption_public_key=public_key, custody="hosted_custodial",
+                now=datetime.now(timezone.utc),
+            ),
+        )
+    return encrypt_e2ee_message(
+        kind=kind, sender=identity(actor.did, sender_stable, "example.test/alice", actor.sk),
+        recipients=[identity(target_key, target_stable, "recipient.test/recipient", target_sk)],
+        body=fields["body"], subject=fields.get("subject", ""),
+        message_id=fields["message_id"], conversation_id=fields["conversation_id"],
+        created_at=datetime.fromisoformat(fields["timestamp"].replace("Z", "+00:00")),
+    )
+
+
+async def _mcp_continue(same_origin, first, kind, *, target_key=None, target_sk=None, encrypted=False):
     env = same_origin.env
     actor = env.actors["alice"]
 
     async def signer(**kwargs):
-        payload = canonical_signed_payload(kwargs["payload"])
+        fields = dict(kwargs["payload"])
+        if target_key is not None:
+            # A real custodian signature can still bind an obsolete target.
+            # The hosted-signing contract must refuse a stale signer result.
+            fields["to_did"] = target_key
+        payload = canonical_signed_payload(fields)
         return HostedMessageSigningResult(
             from_did=actor.did, signed_payload=payload,
             signature=sign_message(actor.sk, payload.encode()), signing_key_id=actor.did,
         )
 
+    async def encryptor(**kwargs):
+        envelope = _encrypted_continuation(
+            kind, actor, first.signed["from_stable_id"], kwargs["payload"],
+            target_key or same_origin.target.did, target_sk or same_origin.target.sk, same_origin.target_did,
+        )
+        return dict(content_mode="encrypted_v2", message_version=2, encrypted_envelope=envelope)
+
     mcp = create_mcp_app(
         db_infra=env.infra, redis=env.redis,
         registry_client=env.app.state.awid_registry_client,
         federation_authority=env.app.state.federation_authority,
-        hosted_signer=signer, public_origin=env.app.state.public_origin,
+        hosted_signer=signer, hosted_encryptor=encryptor, public_origin=env.app.state.public_origin,
     )
     env.app.mount("/continuation-mcp", mcp)
     await mcp.startup()
     try:
         arguments = (
-            dict(conversation_id=str(first.conversation_id), body="MCP continuation", plaintext=True)
+            dict(conversation_id=str(first.conversation_id), body="MCP continuation", plaintext=not encrypted)
             if kind == "mail" else
-            dict(session_id=str(first.conversation_id), message="MCP continuation", plaintext=True)
+            dict(session_id=str(first.conversation_id), message="MCP continuation", plaintext=not encrypted)
         )
         raw = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
             "name": "send_mail" if kind == "mail" else "chat_send", "arguments": arguments,
@@ -710,6 +757,7 @@ async def test_stored_own_route_resident_uses_local_policy(same_origin, foreign_
         assert stored["from_did"] == first.signed["from_stable_id"]
         if kind == "mail":
             assert stored["to_did"] == same_origin.target_did
+        await _assert_recipient_can_read(same_origin, kind, stored)
 
 
 @pytest.mark.asyncio
@@ -726,3 +774,185 @@ async def test_first_contact_accepted_origin_alias_is_local(same_origin, kind):
     assert response.json()["retryable"] is False
     assert not same_origin.ingress
     assert await same_origin.effects() == before
+
+
+async def _assert_recipient_can_read(same_origin, kind, stored):
+    """Read using the recipient's actual identity, with no participant repair."""
+    env, target = same_origin.env, same_origin.target
+    conversation_id = str(stored["conversation_id" if kind == "mail" else "session_id"])
+    if kind == "chat":
+        assert await env.db.fetch_value(
+            "SELECT agent_id FROM {{tables.chat_participants}} WHERE session_id=$1 AND did=$2",
+            UUID(conversation_id), same_origin.target_did,
+        ) is None  # Retain the exact remote-participant shape under review.
+
+    async def http_read(path):
+        response = await env.client.get(path, headers=_signed_identity_headers(
+            target.sk, target.did, same_origin.target_did,
+        ))
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    mcp = create_mcp_app(
+        db_infra=env.infra, redis=env.redis,
+        registry_client=env.app.state.awid_registry_client,
+        public_origin=env.app.state.public_origin,
+    )
+    env.app.mount("/recipient-mcp", mcp)
+    await mcp.startup()
+    try:
+        async def mcp_read(tool, **arguments):
+            raw = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+                "name": tool, "arguments": arguments,
+            }}).encode()
+            response = await env.client.post("/recipient-mcp/", content=raw, headers={
+                **_signed_identity_headers(target.sk, target.did, same_origin.target_did, raw),
+                "Content-Type": "application/json", "Accept": "application/json, text/event-stream",
+            })
+            assert response.status_code == 200, response.text
+            result = response.json()["result"]
+            assert not result.get("isError"), result
+            data = json.loads(result["content"][0]["text"])
+            assert "error" not in data, data
+            return data
+
+        if kind == "mail":
+            reads = [await http_read("/v1/messages/inbox?unread_only=true"), await mcp_read("check_mail")]
+        else:
+            for pending in [await http_read("/v1/chat/pending"), await mcp_read("check_chats")]:
+                session = next((row for row in pending["pending"] if row["session_id"] == conversation_id), None)
+                assert session is not None, pending
+                assert session["unread_count"] > 0
+                assert session["last_message"] == stored["body"]
+            reads = [await http_read(f"/v1/chat/sessions/{conversation_id}/messages"),
+                     await mcp_read("read_chat", conversation_id=conversation_id)]
+        for data in reads:
+            message = next((row for row in data["messages"] if row["message_id"] == str(stored["message_id"])), None)
+            assert message is not None, data
+            assert message["conversation_id"] == conversation_id
+            assert message["body"] == stored["body"]
+            assert message["signed_payload"] == stored["signed_payload"]
+            assert message["signature"] == stored["signature"]
+    finally:
+        await mcp.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+@pytest.mark.parametrize("api", ["http", "mcp"])
+@pytest.mark.parametrize("key", ["obsolete", "current"])
+@pytest.mark.parametrize("encrypted", [False, True], ids=["plaintext", "encrypted"])
+async def test_stored_own_route_rotation_requires_current_target(same_origin, foreign_receiver, kind, api, key, encrypted):
+    env, target = same_origin.env, same_origin.target
+    response, first = await same_origin.send(kind, "global")
+    assert response.status_code == 200, response.text
+    new_sk, _, new_key = _make_keypair()
+    await env.app.state.awid_registry_client.rotate_key(same_origin.target_did, new_key, target.sk, new_sk)
+    # Admit the exact DID locally, but retain its stale projection and marker.
+    # Residence must not depend on either; neither may become current evidence.
+    await same_origin.resident()
+    await env.db.execute(
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=NULL WHERE did_aw=$1", same_origin.target_did,
+    )
+    await env.registry_db.execute(
+        "UPDATE {{tables.dns_namespaces}} SET default_delivery_origin=$1 WHERE domain='recipient.test'", env.app.state.public_origin,
+    )
+    for table, column in (("conversation_participants", "conversation_id"), ("chat_participants", "session_id")):
+        await env.db.execute(
+            "UPDATE {{tables." + table + "}} SET delivery_origin=$1 WHERE " + column + "=$2 AND did=$3",
+            env.app.state.public_origin, first.conversation_id, same_origin.target_did,
+        )
+    async def state():
+        return [dict(row) for table, where, value in (
+            ("agents", "did_aw", same_origin.target_did),
+            ("conversation_participants", "conversation_id", first.conversation_id),
+            ("chat_participants", "session_id", first.conversation_id),
+        ) for row in await env.db.fetch_all("SELECT * FROM {{tables." + table + "}} WHERE " + where + "=$1", value)]
+    before = await same_origin.effects()
+    before_state = await state()
+    chosen_key = target.did if key == "obsolete" else new_key
+    if api == "http":
+        response, submitted = await same_origin.send(kind, "global", continuation=first, target_key=chosen_key, target_sk=target.sk if key == "obsolete" else new_sk, encrypted=encrypted)
+        result = response.json()
+    else:
+        result = await _mcp_continue(same_origin, first, kind, target_key=chosen_key, target_sk=target.sk if key == "obsolete" else new_sk, encrypted=encrypted)
+    assert not same_origin.ingress
+    assert len(foreign_receiver.ingress) == 1
+    if key == "obsolete":
+        assert "error" in result or "detail" in result, result
+        expected = (
+            "encrypted envelope recipient did mismatch" if encrypted else
+            "hosted custodial signer returned signed_payload for different fields" if api == "mcp" else
+            "identity_binding_mismatch" if kind == "mail" else
+            "signed_payload recipient must match the chat target"
+        )
+        assert result.get("error", result.get("detail")) == expected, result
+        if api == "http":
+            assert response.status_code in (403, 422), result
+        assert await same_origin.effects() == before
+        assert await state() == before_state
+    else:
+        assert "error" not in result, result
+        if api == "http":
+            assert response.status_code == 200, result
+        table = "messages" if kind == "mail" else "chat_messages"
+        stored = await env.db.fetch_one(
+            "SELECT * FROM {{tables." + table + "}} WHERE message_id=$1", UUID(result["message_id"]),
+        )
+        assert stored is not None
+        if encrypted:
+            envelope = stored["encrypted_envelope"]
+            envelope = json.loads(envelope) if isinstance(envelope, str) else envelope
+            assert envelope["recipients"][0]["did"] == new_key
+        else:
+            assert json.loads(stored["signed_payload"])["to_did"] == new_key
+        assert stored["conversation_id" if kind == "mail" else "session_id"] == first.conversation_id
+        assert await env.db.fetch_value(
+            "SELECT did_aw_verified_key FROM {{tables.agents}} WHERE did_aw=$1", same_origin.target_did,
+        ) is None
+
+
+@pytest.mark.asyncio
+async def test_own_route_current_binding_unavailable_refuses(same_origin, foreign_receiver):
+    """A real connection failure cannot promote even a marked resident key.
+
+    Exercise the shared classification boundary directly so sender auth cannot
+    consume the dependency failure before recipient validation is reached.
+    """
+    from awid.registry import RegistryClient
+    from fastapi import HTTPException
+    from aweb.messaging.address_auth import local_recipient_for_own_route
+
+    env = same_origin.env
+    response, first = await same_origin.send("mail", "global")
+    assert response.status_code == 200, response.text
+    await same_origin.resident()
+    route = dict(await env.db.fetch_one(
+        "SELECT * FROM {{tables.conversation_participants}} WHERE conversation_id=$1 AND did=$2",
+        first.conversation_id, same_origin.target_did,
+    ))
+    route["delivery_origin"] = env.app.state.public_origin
+    before = await same_origin.effects()
+    before_agent = dict(await env.db.fetch_one(
+        "SELECT * FROM {{tables.agents}} WHERE did_aw=$1", same_origin.target_did,
+    ))
+    # Reserve but do not listen: real HTTP connect refusal, no fake authority.
+    with socket.socket() as unavailable:
+        unavailable.bind(("127.0.0.1", 0))
+        client = RegistryClient(f"http://127.0.0.1:{unavailable.getsockname()[1]}", timeout_seconds=0.2)
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(awid_registry_client=client)), state=SimpleNamespace())
+        try:
+            with pytest.raises(HTTPException) as refused:
+                await local_recipient_for_own_route(
+                    env.infra, route, request=request, origins={env.app.state.public_origin},
+                )
+        finally:
+            await client.aclose()
+    assert refused.value.status_code == 503
+    assert refused.value.detail == "identity_binding_unavailable"
+    assert not same_origin.ingress
+    assert len(foreign_receiver.ingress) == 1
+    assert await same_origin.effects() == before
+    assert dict(await env.db.fetch_one(
+        "SELECT * FROM {{tables.agents}} WHERE did_aw=$1", same_origin.target_did,
+    )) == before_agent

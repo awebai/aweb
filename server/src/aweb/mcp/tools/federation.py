@@ -42,7 +42,7 @@ def mcp_federation_request(
         on_mutation=current_mutation_callback(),
     )
     app = SimpleNamespace(state=state)
-    return SimpleNamespace(app=app, headers={})
+    return SimpleNamespace(app=app, headers={}, state=SimpleNamespace())
 
 
 def registry_delivery_origin(resolution) -> str:

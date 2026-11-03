@@ -242,7 +242,12 @@ and chat refuse with
 caller is directed to ask the recipient or operator to check the address and
 messaging setup. This also applies to stored routes and route refreshes: refuse
 before persisting an own-origin remote route or retrying federation. A resident
-identity is handled locally with the same delivery-time policy. A matching alias
+identity is handled locally with the same delivery-time policy. For a global
+stored route, the historical participant key is not current binding evidence:
+local handoff requires current AWID binding and validates the signed/encrypted
+target against it before delivery. This validation does not rewrite participant
+routes or membership verification markers; unavailable evidence refuses with
+503. A matching alias
 for a different DID does not supply residence; a foreign-origin route remains
 eligible for federation.
 

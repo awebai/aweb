@@ -15,6 +15,8 @@ import uuid as uuid_mod
 from datetime import datetime, timezone
 from uuid import UUID
 
+from fastapi import HTTPException
+
 from awid.federation_errors import FederationAuthorityError
 from aweb.federation.origins import public_origins
 from aweb.federation.errors import RecipientNotResidentError
@@ -77,6 +79,7 @@ from aweb.routes.chat import (
     SendMessageRequest as ChatSendMessageRequest,
     _deliver_federated_chat,
     _resolve_stored_remote_chat_route,
+    _validate_encrypted_chat_payload,
 )
 from aweb.service_errors import ServiceError
 from aweb.e2ee_messages import encrypted_message_storage_metadata
@@ -793,15 +796,19 @@ async def chat_send(
         sender_attested_at = datetime.now(timezone.utc).replace(microsecond=0)
         pre_message_id = uuid_mod.uuid4()
         recipient_rows = await _session_recipient_rows(db_infra, session_id=sid, actor_dids=actor_dids)
+        localized_own_route = False
         try:
             for recipient in recipient_rows:
                 local = await local_recipient_for_own_route(
-                    db_infra, recipient, origins=public_origins(auth.request, public_origin=public_origin),
+                    db_infra, recipient, request=auth.request, origins=public_origins(auth.request, public_origin=public_origin),
                 )
                 if local is not None:
-                    recipient.update(local, delivery_origin=None, external=False)
+                    localized_own_route = True
+                    recipient.update(local, delivery_origin=None, external=False, current_did_key=local.get("did_key"))
         except RecipientNotResidentError as exc:
             return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
+        except HTTPException as exc:
+            return json.dumps({"error": exc.detail})
         try:
             await require_agent_chat(db_infra, recipient_rows, registry_client=registry_client)
         except HumanChatRefused as exc:
@@ -902,7 +909,7 @@ async def chat_send(
             except HostedMessageSigningError as exc:
                 return json.dumps({"error": str(exc)})
 
-        if remote_recipients:
+        if remote_recipients or (localized_own_route and encrypted_envelope is not None):
             payload = ChatSendMessageRequest(
                 body="" if encrypted_envelope is not None else message,
                 content_mode=content_mode,
@@ -917,6 +924,18 @@ async def chat_send(
                 signature=signed.signature if signed else None,
                 signed_payload=signed.signed_payload if signed else None,
             )
+            if localized_own_route:
+                # Local handoff must retain the encrypted-target validation
+                # that the federation receiver would have performed.
+                try:
+                    _validate_encrypted_chat_payload(
+                        payload, auth=mcp_messaging_auth(auth), actor_did=session_actor_did,
+                        session_id=str(sid), recipient_rows=recipient_rows,
+                    )
+                except HTTPException as exc:
+                    return json.dumps({"error": exc.detail})
+
+        if remote_recipients:
             try:
                 remote = await _deliver_federated_chat(
                     mcp_federation_request(
