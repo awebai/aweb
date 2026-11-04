@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from aweb.agent_wake import record_did_wakes
 from aweb.messaging.chat_policy import HumanChatRefused, recipient_label
 from aweb.messaging.messages import _is_global_recipient
 
@@ -934,6 +935,9 @@ async def _deliver_federated_phase_b(
                 preserve_existing_route=stored_route_continuation,
             )
             message = await _store_chat(tx, envelope, signature, id_chain)
+        # Wake the recipient row this delivery resolved and locked, never the
+        # envelope's target or the stored to_did.
+        record_did_wakes((recipient.get("did_aw"), recipient.get("did_key")), envelope.type)
 
         created_at: datetime = message["created_at"]
         result: dict[str, object] = {

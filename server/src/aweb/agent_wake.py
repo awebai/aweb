@@ -184,13 +184,23 @@ class AgentWakePublisher:
             delay = PUBLISH_RETRY_INITIAL_SECONDS
 
     async def _send(self, wakes: Mapping[str, set[str]]) -> None:
-        pipe = self._redis.pipeline(transaction=False)
-        for key, kinds in wakes.items():
-            for kind in kinds:
-                pipe.incr(wake_mark(key, kind))
-                pipe.expire(wake_mark(key, kind), WAKE_MARK_TTL_SECONDS)
-            pipe.publish(wake_channel(key), json.dumps({"kinds": sorted(kinds)}))
-        await pipe.execute()
+        await send_agent_wakes(self._redis, wakes)
+
+
+async def send_agent_wakes(redis, wakes: Mapping[str, Iterable[str]]) -> None:
+    """Count and publish wakes in one pipeline; raises when Redis does not take them.
+
+    For callers that already run after commit with their own retry, such as a
+    durable outbox. Request paths use a scope and the publisher instead.
+    """
+    pipe = redis.pipeline(transaction=False)
+    for key, kinds in wakes.items():
+        kinds = sorted(set(kinds))
+        for kind in kinds:
+            pipe.incr(wake_mark(key, kind))
+            pipe.expire(wake_mark(key, kind), WAKE_MARK_TTL_SECONDS)
+        pipe.publish(wake_channel(key), json.dumps({"kinds": kinds}))
+    await pipe.execute()
 
 
 async def read_wake_marks(redis, keys: Iterable[str]) -> dict[tuple[str, str], str | None]:

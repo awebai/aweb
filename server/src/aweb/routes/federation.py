@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from awid.federation_errors import FederationAuthorityError
 from awid.log import canonical_server_origin
 
+from aweb.agent_wake import agent_wake_publisher, agent_wake_scope
 from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
 from aweb.deps import get_db
 from aweb.federation.authority import AuthorityClaim
@@ -442,15 +443,16 @@ async def receive_federated_message(
                 await authenticate_id_chain(request, binding, registry_client=foreign_registry)
 
         if established_replay is not None:
-            result = await deliver_federated_phase_b(
-                db,
-                envelope=envelope,
-                signature=payload.signature,
-                id_chain=getattr(request.state, "id_chain", None),
-                recipient={},
-                authority_token=authority_token,
-                envelope_hash_override=ingress_envelope_hash,
-            )
+            with agent_wake_scope(agent_wake_publisher(request.app.state)):
+                result = await deliver_federated_phase_b(
+                    db,
+                    envelope=envelope,
+                    signature=payload.signature,
+                    id_chain=getattr(request.state, "id_chain", None),
+                    recipient={},
+                    authority_token=authority_token,
+                    envelope_hash_override=ingress_envelope_hash,
+                )
             return result
 
         await _resolve_target_identity(
@@ -473,17 +475,18 @@ async def receive_federated_message(
             raise FederationAuthorityError("recipient_current_key_mismatch")
         if _is_local_did_key(envelope.target_did_aw) and not stored_route:
             raise FederationAuthorityError("local_recipient_route_missing")
-        result = await deliver_federated_phase_b(
-            db,
-            envelope=envelope,
-            signature=payload.signature,
-            id_chain=getattr(request.state, "id_chain", None),
-            recipient=recipient,
-            authority_token=authority_token,
-            stored_route_continuation=stored_route,
-            stored_route_snapshot=stored_route_snapshot,
-            envelope_hash_override=ingress_envelope_hash,
-        )
+        with agent_wake_scope(agent_wake_publisher(request.app.state)):
+            result = await deliver_federated_phase_b(
+                db,
+                envelope=envelope,
+                signature=payload.signature,
+                id_chain=getattr(request.state, "id_chain", None),
+                recipient=recipient,
+                authority_token=authority_token,
+                stored_route_continuation=stored_route,
+                stored_route_snapshot=stored_route_snapshot,
+                envelope_hash_override=ingress_envelope_hash,
+            )
         try:
             await replay_federation_mutation_outbox(
                 request.app,
