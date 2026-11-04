@@ -111,6 +111,24 @@ class DatabaseInfra:
         return self._manager
 
 
+class TransactionInfra:
+    """A DatabaseInfra whose aweb manager is an open transaction.
+
+    Service functions take a db and call db.get_manager("aweb"); handing them
+    this runs their statements in the caller's transaction, and a nested
+    .transaction() becomes a savepoint of it.
+    """
+
+    def __init__(self, original: Any, transaction: Any) -> None:
+        self.original, self.transaction = original, transaction
+
+    def get_manager(self, name: str = "aweb") -> Any:
+        return self.transaction if name == "aweb" else self.original.get_manager(name)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.original, name)
+
+
 db_infra = DatabaseInfra()
 
 

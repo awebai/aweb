@@ -15,6 +15,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, Request
 from starlette.responses import Response
 from awid.signing import canonical_json_bytes
+from aweb.db import TransactionInfra
 from aweb.attachments import (AttachmentBinding, AttachmentParticipant, AttachmentRef,
                               AttachmentDescriptor, AttachmentError, MAX_FILE_BYTES, refs)
 from aweb.deps import get_db
@@ -75,17 +76,6 @@ def refuse_remote_attachments():
         raise AttachmentError("request_invalid").http()
 
 
-class _TxInfra:
-    def __init__(self, original, tx):
-        self.original, self.tx = original, tx
-
-    def get_manager(self, name="aweb"):
-        return self.tx if name == "aweb" else self.original.get_manager(name)
-
-    def __getattr__(self, name):
-        return getattr(self.original, name)
-
-
 def attachment_transaction(kind):
     """Wrap the existing DB-only message persistence operation, not routing I/O."""
     def decorate(function):
@@ -100,7 +90,7 @@ def attachment_transaction(kind):
                         await tx.execute("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", reference.id)
                     context.inside = True
                     try:
-                        result = await function(_TxInfra(db, tx), *args, **kwargs)
+                        result = await function(TransactionInfra(db, tx), *args, **kwargs)
                     finally:
                         context.inside = False
                     message_id = str(result[0] if kind == "mail" else result["message_id"])

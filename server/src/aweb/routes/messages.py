@@ -96,6 +96,7 @@ from aweb.messaging.signatures import (
 from aweb.messaging.verification import (
     message_verification_status,
 )
+from aweb.db import TransactionInfra
 from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL, ConflictError, ForbiddenError, NotFoundError, ServiceError, ValidationError
 
 from aweb.messaging.participants import messaging_participant_by_alias
@@ -1872,61 +1873,65 @@ async def send_message(
         stored, message_is_new = await _stored_exact_send(db, payload=payload, sender_did=sender_did)
         if stored is not None:
             return stored
-        # If an explicit recipient is present, conversation_id is a caller-chosen
-        # initial id. Continuations use conversation_id without recipient fields.
-        conversation = await _create_mail_conversation(
-            db,
-            conversation_type="mail",
-            created_by_did=sender_did,
-            conversation_id=payload.conversation_id,
-            initiator={
-                "did": sender_did,
-                "agent_id": auth.agent_id,
-                "alias": auth.alias or sender_address or sender_did,
-                "address": sender_address,
-                "current_did_key": (auth.did_key or "").strip() or None,
-                "transport_hint": "local",
-            },
-            recipients=[
-                {
-                    "did": recipient_did or "",
-                    "agent_id": to_agent_id,
-                    "alias": to_alias or (recipient or {}).get("alias") or recipient_did or "",
-                    "address": _recipient_conversation_address(recipient, payload),
-                    "current_did_key": (recipient or {}).get("did_key"),
+        # The conversation and its first message commit together: a refused
+        # delivery leaves no conversation behind.
+        async with db.get_manager("aweb").transaction() as tx:
+            send_db = TransactionInfra(db, tx)
+            # If an explicit recipient is present, conversation_id is a caller-chosen
+            # initial id. Continuations use conversation_id without recipient fields.
+            conversation = await _create_mail_conversation(
+                send_db,
+                conversation_type="mail",
+                created_by_did=sender_did,
+                conversation_id=payload.conversation_id,
+                initiator={
+                    "did": sender_did,
+                    "agent_id": auth.agent_id,
+                    "alias": auth.alias or sender_address or sender_did,
+                    "address": sender_address,
+                    "current_did_key": (auth.did_key or "").strip() or None,
                     "transport_hint": "local",
-                }
-            ],
-            team_id=auth.team_id,
-        )
-        message_id, server_received_at = await deliver_message(
-            db,
-            id_chain=getattr(getattr(request, "state", None), "id_chain", None),
-            registry_client=registry_client,
-            recipient_agent=recipient,
-            team_id=auth.team_id,
-            from_agent_id=auth.agent_id,
-            from_alias=auth.alias,
-            to_agent_id=to_agent_id,
-            to_alias=to_alias,
-            from_did=sender_did,
-            to_did=recipient_did or "",
-            sender_address=sender_address,
-            subject=payload.subject,
-            body=payload.body,
-            priority=payload.priority,
-            signature=payload.signature,
-            signed_payload=payload.signed_payload,
-            content_mode=payload.content_mode or "legacy_plaintext_v1",
-            message_version=payload.message_version or 1,
-            encrypted_envelope=payload.encrypted_envelope,
-            encrypted_metadata=encrypted_metadata,
-            message_id=msg_uuid,
-            conversation_id=conversation["conversation_id"],
-            skip_policy_check=True,
-            known_new=message_is_new,
-        )
-    except (ValidationError, NotFoundError, ForbiddenError) as exc:
+                },
+                recipients=[
+                    {
+                        "did": recipient_did or "",
+                        "agent_id": to_agent_id,
+                        "alias": to_alias or (recipient or {}).get("alias") or recipient_did or "",
+                        "address": _recipient_conversation_address(recipient, payload),
+                        "current_did_key": (recipient or {}).get("did_key"),
+                        "transport_hint": "local",
+                    }
+                ],
+                team_id=auth.team_id,
+            )
+            message_id, server_received_at = await deliver_message(
+                send_db,
+                id_chain=getattr(getattr(request, "state", None), "id_chain", None),
+                registry_client=registry_client,
+                recipient_agent=recipient,
+                team_id=auth.team_id,
+                from_agent_id=auth.agent_id,
+                from_alias=auth.alias,
+                to_agent_id=to_agent_id,
+                to_alias=to_alias,
+                from_did=sender_did,
+                to_did=recipient_did or "",
+                sender_address=sender_address,
+                subject=payload.subject,
+                body=payload.body,
+                priority=payload.priority,
+                signature=payload.signature,
+                signed_payload=payload.signed_payload,
+                content_mode=payload.content_mode or "legacy_plaintext_v1",
+                message_version=payload.message_version or 1,
+                encrypted_envelope=payload.encrypted_envelope,
+                encrypted_metadata=encrypted_metadata,
+                message_id=msg_uuid,
+                conversation_id=conversation["conversation_id"],
+                skip_policy_check=True,
+                known_new=message_is_new,
+            )
+    except (ValidationError, NotFoundError, ForbiddenError, ConflictError) as exc:
         if (isinstance(exc, ForbiddenError) and payload.to_address
                 and recipient.get("identity_scope") == "local"
                 and not recipient.get("has_global_claim") and not recipient.get("did_aw")):
