@@ -531,12 +531,16 @@ async def test_a_send_that_commits_then_fails_still_wakes_the_recipient(wake_app
         record_did_wakes(dids, kind)
         raise RuntimeError("failed after the message committed")
 
+    first = await _send_mail(env, subject="opening")
+    await _request(env, "bob", "POST", f"/v1/messages/{first['message_id']}/ack")
+    # A first send commits its conversation and message together, so a
+    # failure inside it commits nothing; a continuation's message commits alone.
     monkeypatch.setattr(messages_module, "record_did_wakes", record_then_fail)
     async with agent_stream(env, "bob") as next_event:
         await _quiet(next_event)
         started = time.monotonic()
         response = await _request(env, "alice", "POST", "/v1/messages", {
-            "to_did": env.actors["bob"].did, "subject": "committed", "body": "then failed",
+            "conversation_id": first["conversation_id"], "subject": "committed", "body": "then failed",
         })
         assert response.status_code == 500
         event = await _expect_within_bound(next_event, started, "actionable_mail")
