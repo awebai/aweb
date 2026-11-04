@@ -121,7 +121,7 @@ The command requires a clean commit on `origin/main`. It runs the explicit
 product-test list in `scripts/candidate-suite.sh`—all unit, integration,
 packaging, image, audit, and E2E journeys—in isolated local Docker. There is no
 artifact scoping. The Docker entry point locks the source tree before allocating
-resources and records each passing stage (checks, unit, artifacts, integration)
+resources and records each passing stage (checks, user-paths, unit, artifacts, integration)
 in one host ledger, `~/.cache/aweb-oss/candidate-gate-ledger.tsv`. It runs only
 missing stages; a fully passed tree returns without building. Only after all
 stages pass does it create the requested annotated tags locally on the exact tested
@@ -143,7 +143,7 @@ another key. `AWEB_GATE_LEDGER` and `AWEB_GATE_LOG_DIR` relocate the ledger and
 retained logs; all callers must share them.
 
 For focused pre-landing checks, use `AWEB_CANDIDATE_STAGES='checks unit' make
-candidate-gate`. Release candidates always require all four stages, even if that
+candidate-gate`. Release candidates always require all five stages, even if that
 environment variable is set. Passes are reused across callers with equal inputs.
 A recorded failure blocks every stage for those inputs: fix the code and gate
 the changed tree. For infrastructure failures only, the coordinator removes the

@@ -11,8 +11,8 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-STAGES = "checks unit artifacts integration"
-# The targets the fixture gives real recipes: the four stage assertions below
+STAGES = "checks user-paths unit artifacts integration"
+# The targets the fixture gives real recipes: the stage assertions below
 # use real tools and services, never a replacement runner.
 REAL_RECIPES = frozenset({
     "test-shipping", "_candidate-node-deps", "build", "_candidate-unit-suites",
@@ -57,7 +57,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="aweb-ledger-proof.") as temporary:
         repo = Path(temporary)
         for name in ("candidate-docker-gate.sh", "candidate-suite.sh", "candidate-cleanup.sh",
-                     "candidate-host-pressure.py", "next_tag_version.py", "release_candidate.py", "release_versions.py"):
+                     "candidate-host-pressure.py", "fetch_released_aw.py", "next_tag_version.py", "release_candidate.py", "release_versions.py"):
             destination = repo / "scripts" / name
             destination.parent.mkdir(exist_ok=True)
             shutil.copy2(ROOT / "scripts" / name, destination)
@@ -134,7 +134,7 @@ candidate-gate:
         assert len(rows) == 1 and rows[0].split("\t")[1:3] == ["checks", "passed"]
         invoke("missing-only", "make", "candidate-gate")
         rows = ledger.read_text().splitlines()
-        assert len(rows) == 4 and {row.split("\t")[1] for row in rows} == set(STAGES.split())
+        assert len(rows) == len(STAGES.split()) and {row.split("\t")[1] for row in rows} == set(STAGES.split())
         assert all(row.split("\t")[2] == "passed" for row in rows)
         assert "no stages run" in invoke("same-tree-direct", *gate)
         # New commit metadata with the identical tree does not invalidate proof.
@@ -148,19 +148,19 @@ candidate-gate:
         checked(repo, "git", "tag", "aw-v1.2.3-rc.1")
         # The real RC must require all stages despite an inherited focused selector.
         output = invoke("rc-reuse", sys.executable, "scripts/release_candidate.py", "aw-v1.2.3", stages="checks")
-        assert "no stages run" in output and "checks unit artifacts integration" in output
+        assert "no stages run" in output and "checks user-paths unit artifacts integration" in output
         assert checked(repo, "git", "rev-parse", "aw-v1.2.3^{commit}") == checked(repo, "git", "rev-parse", "HEAD")
         assert ledger.read_text().splitlines() == rows
         # An effective version is an external input, even with an unchanged tree.
         env["CLI_VERSION"] = "1.2.4"
         invoke("version-input", *gate, stages="checks")
         version_rows = ledger.read_text().splitlines()
-        assert len(version_rows) == 5 and version_rows[-1].split("\t")[0] != rows[0].split("\t")[0]
+        assert len(version_rows) == len(rows) + 1 and version_rows[-1].split("\t")[0] != rows[0].split("\t")[0]
         env["CLI_VERSION"] = "1.2.3"
         (repo / "Makefile").write_text(recipes.replace("6 * 7 == 42", "7 * 6 == 42"))
         checked(repo, "git", "commit", "-qam", "changed tree")
         invoke("changed-tree", *gate, stages="checks")
-        assert len(ledger.read_text().splitlines()) == 6
+        assert len(ledger.read_text().splitlines()) == len(version_rows) + 1
         (repo / "Makefile").write_text(recipes.replace("6 * 7 == 42", "6 * 7 == 43"))
         checked(repo, "git", "commit", "-qam", "real failing stage")
         invoke("failed-tree", *gate, stages="checks", success=False)

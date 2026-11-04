@@ -84,7 +84,7 @@ LOG_DIR="/tmp/aweb-candidate-gate-$SOURCE_SHA"
 # Focused pre-landing proof uses the same stages and ledger. Release candidates
 # always request the complete list and retain the origin/main requirement.
 STAGES="${AWEB_CANDIDATE_STAGES:-}"
-REQUESTED="${STAGES:-checks unit artifacts integration}"
+REQUESTED="${STAGES:-checks user-paths unit artifacts integration}"
 if [[ -z "$STAGES" ]]; then
   git -C "$ROOT" fetch --quiet origin main
   git -C "$ROOT" merge-base --is-ancestor "$SOURCE_SHA" origin/main \
@@ -98,7 +98,17 @@ A2A_GATEWAY_VERSION="${A2A_GATEWAY_VERSION:-$(python3 "$ROOT/scripts/next_tag_ve
 # stage history. Version defaults depend on tags, so their effective values
 # are external inputs even when the caller did not supply an override.
 TREE="$(git -C "$ROOT" rev-parse 'HEAD^{tree}')"
+LEDGER="${AWEB_GATE_LEDGER:-$HOME/.cache/aweb-oss/candidate-gate-ledger.tsv}"
 external_inputs="CLI_VERSION=$CLI_VERSION"$'\n'"A2A_GATEWAY_VERSION=$A2A_GATEWAY_VERSION"$'\n'
+# The same tree must be requalified when the released client changes. Resolve
+# latest exactly once here, for every stage selection. Focused and full callers
+# must share a key so the full gate can reuse their completed stages.
+resolve_started=$SECONDS
+USER_PATHS_LATEST_METADATA="$(python3 "$ROOT/scripts/fetch_released_aw.py" --freeze-latest "$(dirname "$LEDGER")/released-aw-inputs")"
+USER_PATHS_RESOLVE_SECONDS=$((SECONDS - resolve_started))
+released_identity="$(python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$USER_PATHS_LATEST_METADATA")"
+USER_PATHS_LATEST_SHA256="$released_identity"
+external_inputs+="RELEASED_AW=$released_identity"$'\n'
 input_identity() {
   local name="$1" path="$2" default="$3" repo sha relative
   repo="$(git -C "$path" rev-parse --show-toplevel)"
@@ -138,9 +148,15 @@ gate_setting AWEB_CANDIDATE_SIBLING_CPUS 2
 gate_setting AWEB_CANDIDATE_SIBLING_MEMORY 4g
 gate_setting AWEB_CANDIDATE_SIBLING_PIDS 1024
 KEY="$TREE-$(printf '%s' "$external_inputs" | python3 -c 'import hashlib,sys;print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')"
-LEDGER="${AWEB_GATE_LEDGER:-$HOME/.cache/aweb-oss/candidate-gate-ledger.tsv}"
 LEDGER_LOGS="${AWEB_GATE_LOG_DIR:-$(dirname "$LEDGER")/gate-logs}"
-OWNER="${GATE_OWNER:-${OATS_INSTANCE:-$(id -un)}}"
+# The runner uses the host UID without requiring a container passwd entry.
+# Owner is a ledger label, so its numeric UID is sufficient in that case.
+OWNER="${GATE_OWNER:-${OATS_INSTANCE:-}}"
+if [[ -z "$OWNER" ]]; then
+  # GNU id may print a numeric UID before failing its name lookup. Assign each
+  # attempt separately so that failed stdout cannot enter the ledger field.
+  OWNER="$(id -un 2>/dev/null)" || OWNER="$(id -u)"
+fi
 mkdir -p "$(dirname "$LEDGER")/gate-locks" "$LEDGER_LOGS"
 touch "$LEDGER"
 # Hold through cleanup and recording, including concurrent direct/RC calls.
@@ -158,9 +174,13 @@ if [[ -n "$failed" ]]; then
 fi
 pending=""
 for stage in $REQUESTED; do
-  case "$stage" in checks|unit|artifacts|integration) ;; *) refuse "unknown stage '$stage'" ;; esac
+  case "$stage" in checks|user-paths|unit|artifacts|integration) ;; *) refuse "unknown stage '$stage'" ;; esac
   if [[ "$(recorded "$stage" | cut -f3)" == passed ]]; then
     printf 'gate: tree %s already passed %s; original log %s\n' "$TREE" "$stage" "$(recorded "$stage" | cut -f6)"
+    if [[ "$stage" == user-paths ]]; then
+      # Reusing the proof must not hide its coverage gap in an otherwise green gate.
+      grep -E 'NOT COVERED: pending aweb-actu$|^incomplete: human paths not covered$' "$(recorded "$stage" | cut -f6)" || true
+    fi
   elif [[ " $pending " != *" $stage "* ]]; then
     pending="${pending:+$pending }$stage"
   fi
@@ -224,6 +244,14 @@ source "$ROOT/scripts/candidate-cleanup.sh"
 trap 'cleanup "$?"' EXIT
 trap 'cleanup 130' INT
 trap 'cleanup 143' TERM
+# The content-addressed input lives outside the resettable run logs. Retain a
+# checked copy in the mounted logs so the runner consumes the ledger's bytes.
+if [[ -n "${USER_PATHS_LATEST_METADATA:-}" ]]; then
+  cp "$USER_PATHS_LATEST_METADATA" "$LOG_DIR/released-aw.json"
+  USER_PATHS_LATEST_METADATA="$LOG_DIR/released-aw.json"
+  [[ "$(python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$USER_PATHS_LATEST_METADATA")" == "$USER_PATHS_LATEST_SHA256" ]] \
+    || refuse "released aw metadata changed after the ledger lookup"
+fi
 checkout="$work/aweb"
 git clone --local --no-hardlinks "$ROOT" "$checkout" >/dev/null
 git -C "$checkout" checkout --detach "$SOURCE_SHA" >/dev/null
@@ -270,6 +298,7 @@ docker update --cpus "$builder_cpus" --memory "$builder_memory" --memory-swap "$
   || refuse "could not apply candidate builder resource limits"
 
 BUILDX_CONFIG="$buildx_config" docker buildx build --builder "$builder_name" --load --pull \
+  --build-arg USER_PATHS_SOURCE_TREE="$TREE" \
   --label "aweb.candidate-gate=$resource_label" \
   -f "$checkout/candidate-gate/Dockerfile" -t "$IMAGE" "$checkout" \
   2>&1 | tee "$LOG_DIR/docker-build.log"
@@ -418,6 +447,9 @@ docker run --rm --init \
   -e A2A_GATEWAY_VERSION="${A2A_GATEWAY_VERSION:-}" \
   -e LIBRARY_E2E_BLUEPRINT_SRC="$LIBRARY_E2E_BLUEPRINT_SRC" \
   -e CANDIDATE_LOG_DIR="$LOG_DIR" \
+  -e USER_PATHS_LATEST_METADATA="${USER_PATHS_LATEST_METADATA:-}" \
+  -e USER_PATHS_LATEST_SHA256="${USER_PATHS_LATEST_SHA256:-}" \
+  -e USER_PATHS_RESOLVE_SECONDS="${USER_PATHS_RESOLVE_SECONDS:-0}" \
   -e CANDIDATE_RESOURCE_MANIFEST="$LOG_DIR/owned-resources.tsv" \
   -e BUILDX_CONFIG="$buildx_config" \
   -e BUILDX_BUILDER="$builder_name" \
