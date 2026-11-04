@@ -199,7 +199,8 @@ async def test_plaintext_mail_continues_after_human_succession(
 
 
 @pytest.mark.asyncio
-async def test_retired_human_chat_continuation_has_mail_refusal(route_pair):
+@pytest.mark.parametrize("different_team", [False, True])
+async def test_retired_human_chat_continuation_has_mail_refusal(route_pair, different_team):
     node = route_pair.source
     old, agent = node.local, node.global_actor
     # Historical chat was created before authoritative human kind became known.
@@ -208,6 +209,17 @@ async def test_retired_human_chat_continuation_has_mail_refusal(route_pair):
     response = await _post(agent, opening)
     first = opening[2]
     assert response.status_code == 200, response.text
+    retired_team = node.team_id
+    if different_team:
+        retired_team = f"retired-human:{node.domain}"
+        await node.db.execute(
+            "INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) "
+            "SELECT $1,namespace,'retired-human',team_did_key FROM {{tables.teams}} WHERE team_id=$2",
+            retired_team, node.team_id,
+        )
+        await node.db.execute(
+            "UPDATE {{tables.agents}} SET team_id=$2 WHERE agent_id=$1", old.id, retired_team
+        )
     await _human(old)
     await _retire(old)
     before = await _effects(node)
@@ -215,6 +227,7 @@ async def test_retired_human_chat_continuation_has_mail_refusal(route_pair):
     assert response.status_code == 410, response.text
     assert response.json()["detail"]["code"] == "participant_retired"
     assert "mail" in response.json()["detail"]["message"]
+    assert response.json()["detail"]["message"].endswith(f"in {retired_team}")
     assert await _effects(node) == before
     # A recorded mail succession must leave these old chat rows untouched.
     successor = await _actor(node, "account-human", global_identity=True)
@@ -266,6 +279,7 @@ async def test_retired_human_chat_continuation_has_mail_refusal(route_pair):
         refusal = json.loads(result["content"][0]["text"])
         assert refusal["error"]["code"] == "participant_retired"
         assert "mail" in refusal["error"]["message"]
+        assert refusal["error"]["message"].endswith(f"in {retired_team}")
         assert await _state(node) == before
     finally:
         await mcp.shutdown()

@@ -813,7 +813,7 @@ async def chat_send(
         try:
             for recipient in recipient_rows:
                 if not recipient.get("delivery_origin"):
-                    await _require_live_mail_participant(db_infra, recipient, {"team_id": auth.team_id})
+                    await _require_live_mail_participant(db_infra, recipient, {}, human_only=True)
             await require_agent_chat(db_infra, recipient_rows, registry_client=registry_client)
         except HumanChatRefused as exc:
             return json.dumps({"error": exc.detail, **exc.body()})

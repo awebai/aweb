@@ -23,16 +23,31 @@ class ParticipantRetiredError(ValidationError):
         })
 
 
-async def _require_live_mail_participant(db, participant: dict, conversation: dict) -> None:
+async def _require_live_mail_participant(
+    db, participant: dict, conversation: dict, *, human_only: bool = False
+) -> None:
     did = participant["did"]
     rows = await db.get_manager("aweb").fetch_all(
-        """SELECT deleted_at FROM {{tables.agents}}
-           WHERE COALESCE(CASE WHEN did_aw_verified_key=did_key THEN NULLIF(did_aw,'') END, did_key)=$1""",
+        """SELECT agent_id, agent_type, alias, team_id, deleted_at FROM {{tables.agents}}
+           WHERE COALESCE(CASE WHEN did_aw_verified_key=did_key THEN NULLIF(did_aw,'') END, did_key)=$1
+           ORDER BY team_id, agent_id""",
         did,
     )
     # Unknown/remote residence is not retirement. A deleted actor projection
     # cannot retire a DID that still has a live membership elsewhere.
     if rows and all(row["deleted_at"] is not None for row in rows):
+        if human_only:
+            # Chat retains its existing handling of retired agents. Only a
+            # retired human needs the mail-directed refusal; use that human's
+            # projection, never the authenticated sender's team.
+            humans = [row for row in rows if row["agent_type"] == "human"]
+            if not humans:
+                return
+            human = next(
+                (row for row in humans if str(row["agent_id"]) == str(participant.get("agent_id"))),
+                humans[0],
+            )
+            raise ParticipantRetiredError(str(human["alias"]), str(human["team_id"]))
         alias = str(participant.get("alias") or did)
         team = str(conversation.get("team_id") or "the original team")
         raise ParticipantRetiredError(alias, team)
