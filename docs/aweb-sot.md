@@ -1059,9 +1059,14 @@ failed batch cannot starve later healthy work. Operation-specific replay may
 retry its own rows immediately after an outer commit. Delivery is at-least-once
 across a process crash: a crash after Redis accepted an effect but before
 `delivered_at` commits may replay it. Lifecycle events remain wake/state-change
-hints; consumers read PostgreSQL state as truth. Failed rows stay durable for a
-later request/startup replay, and startup/embedded request paths trigger
-canonical replay without a host-specific outbox protocol.
+hints; consumers read PostgreSQL state as truth. Failed rows stay durable
+until outbox recovery delivers them: `aweb.outbox_recovery.recover_outboxes`
+replays undelivered lifecycle and federation outbox rows in bounded batches.
+The standalone and library lifespans run it at startup and every
+`OUTBOX_RECOVERY_INTERVAL_SECONDS` (15 s). No request path replays outboxes, so
+an embedding host that mounts aweb without running its lifespan must run
+`recover_outboxes` on the same cycle from its own scheduler, passing the aweb
+manager, Redis and the host's mutation handler.
 
 ### Dashboard routes
 
@@ -1769,9 +1774,9 @@ aweb starts up in this order:
    embedded awid mode — aweb always talks to a real awid instance over
    HTTP.
 6. Mount the FastAPI app and the `/mcp` MCP server.
-7. Schedule replay of committed lifecycle side-effect outbox rows; embedded
-   mounts also trigger bounded replay from their request path because mounted
-   sub-applications do not receive lifespan events.
+7. Start outbox recovery (`recover_outboxes` at startup and every 15 s).
+   Mounted sub-applications do not receive lifespan events, so an embedding
+   host runs `recover_outboxes` from its own scheduler; no request path does.
 8. Begin serving.
 
 Shutdown reverses the order: stop accepting requests, close Redis,
