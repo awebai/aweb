@@ -337,3 +337,47 @@ async def test_an_exhausted_pool_in_a_middleware_is_a_retryable_503_not_a_500(sm
 
     assert response.status_code == 503
     assert response.json() == {"detail": {"code": "database_unavailable", "retryable": True}}
+
+
+@pytest.mark.asyncio
+async def test_a_request_memo_lives_until_its_response_starts():
+    from aweb.connection_scope import request_memo
+
+    assert request_memo() is None
+    seen_after_close = asyncio.Event()
+    after_close: list = []
+
+    async def outlives_the_request():
+        await seen_after_close.wait()
+        after_close.append(request_memo())
+
+    async with connection_scope():
+        request_memo()["billing"] = "read once"
+        assert request_memo()["billing"] == "read once"
+        task = asyncio.create_task(outlives_the_request())
+    seen_after_close.set()
+    await task
+
+    assert after_close == [None]
+    assert request_memo() is None
+
+
+@pytest.mark.asyncio
+async def test_a_request_memo_is_gone_for_its_streaming_body():
+    from aweb.connection_scope import request_memo
+
+    app = FastAPI()
+
+    @app.get("/stream")
+    async def stream():
+        request_memo()["billing"] = "read once"
+
+        async def body():
+            yield str(request_memo() is None)
+
+        return StreamingResponse(body(), media_type="text/plain")
+
+    app.add_middleware(ConnectionScopeMiddleware)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/stream")
+    assert response.text == "True"
