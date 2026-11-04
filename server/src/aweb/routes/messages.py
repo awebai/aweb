@@ -288,6 +288,7 @@ async def _inbox_response_from_rows(
     *,
     has_more: bool = False,
     next_cursor: str | None = None,
+    sender_member_rows: list[dict] | None = None,
 ) -> InboxResponse:
     identity_map = await lookup_identity_metadata_by_did(
         db,
@@ -299,7 +300,7 @@ async def _inbox_response_from_rows(
         ],
     )
 
-    memberships = await sender_memberships(request, db, rows)
+    memberships = await sender_memberships(request, db, rows, member_rows=sender_member_rows)
     messages = []
     for r in rows:
         from_did = (r.get("from_did") or "").strip()
@@ -1995,8 +1996,13 @@ async def get_inbox(
         SELECT m.team_id, m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
                m.subject, m.body, m.priority, m.read_at, m.created_at,
                m.from_did, m.to_did, m.signature, m.signed_payload, m.id_chain, m.conversation_id,
-               m.content_mode, m.message_version, m.encrypted_envelope
+               m.content_mode, m.message_version, m.encrypted_envelope,
+               sender.agent_id AS sender_agent_id, sender.team_id AS sender_team_id,
+               CASE WHEN sender.did_aw_verified_key = sender.did_key THEN sender.did_aw END AS sender_did_aw,
+               sender.status AS sender_status, sender.deleted_at AS sender_deleted_at,
+               sender.certificate_id AS sender_certificate_id
         FROM {{{{tables.messages}}}} m
+        LEFT JOIN {{{{tables.agents}}}} sender ON sender.agent_id = m.from_agent_id
         {where_clause}
         ORDER BY m.created_at DESC, m.message_id DESC
         LIMIT ${len(params) + 1}
@@ -2004,6 +2010,17 @@ async def get_inbox(
         *params,
         query_limit,
     )
+    # The senders' agent rows, read with the page for their membership state.
+    sender_columns = ("agent_id", "team_id", "did_aw", "status", "deleted_at", "certificate_id")
+    sender_member_rows = list({
+        str(row["sender_agent_id"]): {column: row[f"sender_{column}"] for column in sender_columns}
+        for row in rows
+        if row["sender_agent_id"] is not None
+    }.values())
+    rows = [
+        {key: value for key, value in row.items() if not key.startswith("sender_")}
+        for row in rows
+    ]
 
     has_more = exact_message_id is None and len(rows) > page_limit
     rows = rows[:page_limit]
@@ -2021,6 +2038,7 @@ async def get_inbox(
         rows,
         has_more=has_more,
         next_cursor=next_cursor,
+        sender_member_rows=sender_member_rows,
     )
 
 
