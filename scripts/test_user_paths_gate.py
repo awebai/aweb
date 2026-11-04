@@ -324,12 +324,13 @@ class ExactMessageAssertions(unittest.TestCase):
                     event['meta']['session_id']=cid
                     inbox=dict(pending=[dict(last_message=body,last_from_address=lane.actors[sender]['address'], session_id=cid)])
                     history=dict(session_id=cid,messages=[copy.deepcopy(message)])
-                    sent=dict(message_id=mid,session_id=cid)
+                    sent=(dict(message_id=mid,session_id=cid) if turn == 0 else
+                          dict(message_id=mid,delivered=True,extends_wait_seconds=0))
                 records.append(dict(event=event,inbox=inbox,history=history,sent=sent))
             if mutate:
                 mutate(records)
             current = -1
-            def command(actor, *args):
+            def command(actor, *args, **kwargs):
                 nonlocal current
                 if args[1] in ['send','send-and-wait','reply']:
                     current+=1
@@ -347,6 +348,51 @@ class ExactMessageAssertions(unittest.TestCase):
             for encrypted in [False,True]:
                 with self.subTest(kind=kind, encrypted=encrypted):
                     self.exercise(kind,encrypted)
+
+    def test_chat_create_requires_its_own_message_and_session_ids(self):
+        for field in ['message_id', 'session_id']:
+            with self.subTest(field=field):
+                with self.assertRaises(KeyError):
+                    self.exercise('chat', False, lambda records: records[0]['sent'].pop(field))
+
+    def test_continuation_checks_any_returned_thread(self):
+        for field in ['session_id', 'conversation_id']:
+            with self.subTest(field=field):
+                with self.assertRaises(AssertionError):
+                    self.exercise('chat', False, lambda records: records[1]['sent'].update({field:'wrong-thread'}))
+
+    def test_failed_case_keeps_exact_initial_reply_and_continuation_output(self):
+        import io
+        import json
+        import sys
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        spec = importlib.util.spec_from_file_location('user_paths', ROOT / 'scripts/e2e/user_paths.py')
+        paths = importlib.util.module_from_spec(spec)
+        with patch.dict(sys.modules, {'user_paths_result': result_model}):
+            spec.loader.exec_module(paths)
+        with tempfile.TemporaryDirectory() as directory:
+            lane = paths.Lane.__new__(paths.Lane)
+            lane.name, lane.version, lane.root = 'head', None, Path(directory)
+            lane.binary, lane.environment = '/fixture/aw', {}
+            lane.results, lane.failures, lane.outcomes = [], [], []
+            lane.actors = {actor: dict(home=Path(directory), address='') for actor in ['g1','g2']}
+            outputs = ['{"session_id":"thread","message_id":"first"}\n',
+                       '{"message_id":"reply","delivered":true}\n',
+                       '{"message_id":"last","delivered":true}\n']
+            results = [subprocess.CompletedProcess([], 0, value, 'stderr-'+str(i)) for i,value in enumerate(outputs)]
+            def operation():
+                for phase in ['initial-send','reply','continuation']:
+                    lane.command('g1', 'chat', 'send-and-wait' if phase=='initial-send' else 'send', phase=phase)
+                raise AssertionError('post-send assertion')
+            with redirect_stdout(io.StringIO()), patch.object(paths.subprocess, 'run', side_effect=results):
+                lane.run_case('head/capture', operation)
+            captured = json.loads((Path(directory)/'failure-head_capture/commands.json').read_text())
+            self.assertEqual([row['stdout'] for row in captured], outputs)
+            self.assertEqual([row['stderr'] for row in captured], ['stderr-0','stderr-1','stderr-2'])
+            self.assertEqual([row['phase'] for row in captured], ['initial-send','reply','continuation'])
+            self.assertEqual([row['exit'] for row in captured], [0,0,0])
+            self.assertEqual(lane.outcomes[0]['status'], 'FAILED')
 
     def test_each_turn_rejects_message_thread_or_mode_substitution(self):
         for kind in ['mail','chat']:
@@ -399,7 +445,7 @@ class ReleasedKnownIssueBudget(unittest.TestCase):
             lane.results, lane.outcomes, lane.failures = [], [], []
             lane.actors = {actor: dict(address='') for actor in ['t1','t2']}
             sent = iter([dict(message_id='message-'+str(turn), session_id='same-session') for turn in range(3)])
-            lane.command = lambda *args: next(sent)
+            lane.command = lambda *args, **kwargs: next(sent)
             deliveries = []
             lane.assert_message = lambda *args: deliveries.append(args)
             case = name+'/t1->t2/chat/v2'
@@ -429,8 +475,9 @@ class ReleasedKnownIssueBudget(unittest.TestCase):
             for name, expected in [('released', 'KNOWN_ISSUE'), ('head', 'FAILED')]:
                 lane = paths.Lane.__new__(paths.Lane)
                 lane.name, lane.version, lane.binary, lane.environment = name, '1.36.53', '/fixture/aw', {}
+                lane.root = Path(directory)
                 lane.results, lane.outcomes, lane.failures = [], [], []
-                lane.actors = {actor: dict(address='', home=directory) for actor in ['t1','t2']}
+                lane.actors = {actor: dict(address='', home=Path(directory)) for actor in ['t1','t2']}
                 case = name+'/t1->t2/chat/v2'
                 failure = known_failure(case)
                 response = subprocess.CompletedProcess([], 1, json.dumps(failure['response'])+'\n', failure['stderr'])

@@ -38,10 +38,16 @@ def rows(value):
 def sent_identity(sent, kind, conversation=None):
     """Use the send result as the expected identity, never the delivered DTO."""
     message_id = sent['message_id']
-    thread = sent['conversation_id' if kind == 'mail' else 'session_id']
+    # An exact-session chat send returns a message receipt, not a create DTO.
+    # Its expected thread is the explicit --session-id used for the command.
+    thread = conversation if kind == 'chat' and conversation is not None else sent['conversation_id' if kind == 'mail' else 'session_id']
     assert isinstance(message_id, str) and message_id, sent
     assert isinstance(thread, str) and thread, sent
     assert conversation is None or thread == conversation, ('send result thread', conversation, sent)
+    if kind == 'chat':
+        for field in ['session_id', 'conversation_id']:
+            if field in sent:
+                assert sent[field] == thread, ('send result thread', thread, sent)
     return message_id, thread
 
 
@@ -93,12 +99,17 @@ class Lane:
 
     def run_case(self, case, operation, diagnostic=None):
         started = time.monotonic()
+        self.case_commands = []
         try:
             operation()
         except Exception as error:
             record = dict(case=case, status='FAILED', error=str(error))
             if isinstance(error, CLICommandError):
                 record['failure'] = error.failure
+            if self.case_commands:
+                directory = self.root / ('failure-' + case.replace('/', '_').replace('->', '-'))
+                directory.mkdir(exist_ok=True)
+                (directory / 'commands.json').write_text(json.dumps(self.case_commands, indent=2))
             if diagnostic:
                 try:
                     self.capture_failure(case, *diagnostic)
@@ -126,12 +137,29 @@ class Lane:
         record['seconds'] = round(time.monotonic() - started, 3)
         self.outcomes.append(record)
 
-    def command(self, actor, *args, check=True, wait=True):
+    def identity_snapshot(self, actor):
+        home = self.actors[actor]['home'] / '.aw'
+        return dict(identity_home=str(home), process_uid=os.geteuid(),
+                    owner_uid=home.stat().st_uid if home.exists() else None)
+
+    def record_command(self, actor, args, result, phase):
+        if hasattr(self, 'case_commands'):
+            self.case_commands.append(dict(actor=actor, args=list(args), phase=phase,
+                exit=result.returncode, stdout=result.stdout, stderr=result.stderr,
+                identity=self.identity_snapshot(actor)))
+
+    def command(self, actor, *args, check=True, wait=True, phase=None):
         work = self.actors[actor]['home']
         cmd = [self.binary, '--json', *args]
         if not wait:
             return subprocess.Popen(cmd, cwd=work, env=self.environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        existed = (work / '.aw').exists()
         result = subprocess.run(cmd, cwd=work, env=self.environment, capture_output=True, text=True, timeout=25)
+        if not existed and (work / '.aw').exists():
+            with (self.root / 'identity-creation.jsonl').open('a') as output:
+                output.write(json.dumps(dict(actor=actor, command=list(args[:3]),
+                    **self.identity_snapshot(actor))) + '\n')
+        self.record_command(actor, args, result, phase)
         if check and result.returncode:
             raise CLICommandError(self.name, actor, args, result)
         if not check:
@@ -256,19 +284,24 @@ class Lane:
     def waiting_chat(self):
         body = self.name + '/real-wait/' + uuid.uuid4().hex
         waiting = self.command('g1', 'chat', 'send-and-wait', self.actors['g2']['address'], body,
-                               '--plaintext', '--wait', '15', wait=False)
+                               '--plaintext', '--wait', '15', wait=False, phase='initial-waiting-send')
+        captured = False
         try:
             event = self.delivered('g2', body)
             conversation = event['meta'].get('session_id', event['meta'].get('conversation_id'))
             assert conversation, event
             self.assert_message('g2', 'g1', 'chat', body, conversation, event['meta']['message_id'], False)
             reply = body + '/reply'
-            sent_reply = self.command('g2', 'chat', 'send', '--session-id', conversation, '--plaintext', '--body', reply)
+            sent_reply = self.command('g2', 'chat', 'send', '--session-id', conversation, '--plaintext', '--body', reply, phase='reply')
             reply_id, _ = sent_identity(sent_reply, 'chat', conversation)
             stdout, stderr = waiting.communicate(timeout=20)
+            self.record_command('g1', ['chat', 'send-and-wait', self.actors['g2']['address'], body,
+                '--plaintext', '--wait', '15'], subprocess.CompletedProcess(waiting.args, waiting.returncode, stdout, stderr), 'initial-waiting-send')
+            captured = True
             assert waiting.returncode == 0, (stdout, stderr)
             result = json.loads(stdout)
-            sent_id, _ = sent_identity(result, 'chat', conversation)
+            sent_id, returned_conversation = sent_identity(result, 'chat')
+            assert returned_conversation == conversation, result
             assert sent_id == event['meta']['message_id'], result
             assert result['status'] == 'replied' and result['reply'] == reply, result
             events = [row for row in result['events'] if row.get('body') == reply]
@@ -277,7 +310,10 @@ class Lane:
         finally:
             if waiting.poll() is None:
                 waiting.terminate()
-                waiting.communicate(timeout=5)
+            if not captured:
+                stdout, stderr = waiting.communicate(timeout=5)
+                self.record_command('g1', ['chat', 'send-and-wait', self.actors['g2']['address'], body,
+                    '--plaintext', '--wait', '15'], subprocess.CompletedProcess(waiting.args, waiting.returncode, stdout, stderr), 'initial-waiting-send')
 
     def fresh_chat_modes(self):
         sessions = []
@@ -369,27 +405,27 @@ class Lane:
         target = self.actors[receiver]['address'] or receiver
         if kind == 'mail':
             target_flag = '--to-address' if self.actors[receiver]['address'] else '--to'
-            sent = self.command(sender, 'mail', 'send', mode, target_flag, target, '--subject', case, '--body', body)
+            sent = self.command(sender, 'mail', 'send', mode, target_flag, target, '--subject', case, '--body', body, phase='initial-send')
         else:
             # Explicit zero wait leaves presentation to the channel on all three
             # turns. A concurrently waiting CLI would legitimately read the
             # reply before channel-core's unread reader. The real-wait control
             # below exercises that different, ordinary consumer path separately.
-            sent = self.command(sender, 'chat', 'send-and-wait', target, body, mode, '--wait', '0')
+            sent = self.command(sender, 'chat', 'send-and-wait', target, body, mode, '--wait', '0', phase='initial-send')
         first_id, conversation = sent_identity(sent, kind)
         self.assert_message(receiver, sender, kind, body, conversation, first_id, encrypted)
         reply_body = body + '/reply'
         if kind == 'mail':
-            reply = self.command(receiver, 'mail', 'reply', first_id, mode, '--body', reply_body)
+            reply = self.command(receiver, 'mail', 'reply', first_id, mode, '--body', reply_body, phase='reply')
         else:
-            reply = self.command(receiver, 'chat', 'send', '--session-id', conversation, mode, '--body', reply_body)
+            reply = self.command(receiver, 'chat', 'send', '--session-id', conversation, mode, '--body', reply_body, phase='reply')
         reply_id, _ = sent_identity(reply, kind, conversation)
         self.assert_message(sender, receiver, kind, reply_body, conversation, reply_id, encrypted)
         continuation = body + '/continuation'
         if kind == 'mail':
-            continued = self.command(sender, 'mail', 'reply', reply_id, mode, '--body', continuation)
+            continued = self.command(sender, 'mail', 'reply', reply_id, mode, '--body', continuation, phase='continuation')
         else:
-            continued = self.command(sender, 'chat', 'send', '--session-id', conversation, mode, '--body', continuation)
+            continued = self.command(sender, 'chat', 'send', '--session-id', conversation, mode, '--body', continuation, phase='continuation')
         continuation_id, _ = sent_identity(continued, kind, conversation)
         self.assert_message(receiver, sender, kind, continuation, conversation, continuation_id, encrypted)
         self.results.append(case)
