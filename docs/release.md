@@ -238,9 +238,9 @@ registry remains uncertain until the deadline; none permits another publish.
 A package identity, integrity or tarball mismatch refuses immediately. Success
 requires the staged bytes, SHA-512 integrity and intended `next` or `latest` tag.
 
-The aw distribution publisher packs each of its six platform packages and the
-wrapper once, publishes those exact archives, and verifies all seven with one
-shared 25-minute readback deadline. The verifier lives at
+Both the aw distribution workflow and runnerless aw publisher pack each of
+the six platform packages and the wrapper once, publish or adopt those exact
+archives, and then verify all seven with one shared 25-minute readback deadline. The verifier lives at
 `cli/go/npm/readback.py`; the other npm lanes call it through
 `scripts/npm-exact-publish.sh verify-published-bounded`. The aw release workflow
 is maintained at `cli/go/.github/workflows/release.yml` and copied into
