@@ -1,7 +1,7 @@
 # `@awebai/claude-skills`
 
-Content-only skills package for Claude Code and Pi, shipping six canonical
-aweb skills: `aweb-coordination`, `aweb-tasks`, `aweb-messaging`,
+Content-only skills package for Claude Code and Pi, shipping the canonical
+aweb skills from [`skills/shipped.json`](../../skills/shipped.json): `aweb-coordination`, `aweb-tasks`, `aweb-messaging`,
 `aweb-team-membership`, `aweb-bootstrap`, and `aweb-identity`.
 
 `aweb-tasks` applies only when the team has aweb tasks or its instructions say

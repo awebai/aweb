@@ -45,7 +45,7 @@
 # authenticated trust boundary and the bundled channel-core deadline,
 # byte-inactivity watchdog, and settled-backoff listener cleanup - with no
 # bundled skills; skills: plugin version equals the package version, Pi skills
-# discovery metadata, and exactly the six skill directories).
+# discovery metadata, and exactly the shipped skill directories).
 
 set -euo pipefail
 
@@ -106,8 +106,6 @@ PYTGZ
     fail "--tgz must name an existing regular file: $supplied_tgz"
   fi
 fi
-
-EXPECTED_SKILLS="aweb-bootstrap aweb-coordination aweb-tasks aweb-identity aweb-messaging aweb-team-membership"
 
 profile_inspect() {
   local tgz="$1"
@@ -176,8 +174,10 @@ if pkg.get("pi", {}).get("skills") != ["./skills"]:
     sys.exit("REFUSE: optional skills package must expose pi.skills=[./skills]")
 PYSKILLS
       local actual expected
+      local expected_skills
+      expected_skills="$(node "$SOURCE_ROOT/scripts/skill-packaging.mjs" list)"
       actual="$(ls "$unpack/package/skills" 2>/dev/null | sort | tr '\n' ' ')"
-      expected="$(tr ' ' '\n' <<<"$EXPECTED_SKILLS" | sort | tr '\n' ' ')"
+      expected="$(tr ' ' '\n' <<<"$expected_skills" | sort | tr '\n' ' ')"
       [[ "$actual" == "$expected" ]] \
         || fail "skills tgz skill set is [$actual], expected exactly [$expected]"
       ;;

@@ -14,7 +14,9 @@ Do not treat `cli/go/skills/` as canonical. The old seed packs from that directo
 
 ## V1 skill set
 
-The optional skills package ships six skills (task tracking split on 2026-11-03):
+The optional skills package ships the skills listed in `skills/shipped.json`
+(task tracking split on 2026-11-03). This shared list drives npm packaging,
+Codex copies, Claude.ai ZIPs, and exact-name release checks:
 
 - `aweb-coordination`: session coordination without task tracking.
 - `aweb-tasks`: sharing and claiming work only when the team has aweb tasks or its instructions say it uses them. Creating the first task is the opt-in.
@@ -35,7 +37,7 @@ documented in `docs/running-agents.md`, `docs/runtime-support.md`, and
 `cli/go/cmd/aw/team_up.go` / `team_human.go` with their tests.
 
 The packaging contract survives it. Every canonical skill directory must be
-either in the six-skill set or in the explicit internal set, so adding
+either in the shipped set or in the explicit internal set, so adding
 another directory cannot silently ship nowhere. The release guards still name
 `aweb-agent-instantiation` as the sentinel for that check; those occurrences
 detect a forbidden publication, they do not reference this removed skill.

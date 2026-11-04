@@ -2,7 +2,7 @@
 
 Codex plugin packaging for the canonical aweb skill bodies.
 
-This directory is **not** the source of truth. The six skill bodies live at
+This directory is **not** the source of truth. The skill bodies live at
 [`aweb/skills/`](../../skills/). The `skills/` subdirectory here holds
 generated copies of those bodies, produced by [`sync-skills.sh`](./sync-skills.sh)
 and committed to Git so the marketplace's `git-subdir` install delivers a
@@ -10,7 +10,7 @@ self-contained plugin.
 
 ## What this plugin ships
 
-Six skills, auto-discovered from the bundled `skills/` directory:
+Skills from [`skills/shipped.json`](../../skills/shipped.json), auto-discovered from the bundled `skills/` directory:
 
 - **`aweb-coordination`** — session coordination policy.
 - **`aweb-tasks`** — task sharing and claims, only if the team has aweb tasks or its instructions say it uses them. Creating the first task is the opt-in.
@@ -44,9 +44,9 @@ runtime copies before committing:
 make sync-doc-copies
 ```
 
-The target calls `sync-skills.sh` to discover every `skills/*/SKILL.md` and copy
-its entire directory into `packages/codex-plugin/skills/`. New skills are
-included automatically; removed skills and obsolete supporting files disappear
+The target calls `sync-skills.sh` to copy each skill named in
+`skills/shipped.json` into `packages/codex-plugin/skills/`. Add new shipped skills
+to that shared list; removed skills and obsolete supporting files disappear
 on the next sync. `skills/DECISIONS.md` is not a skill and is not copied.
 The copies must be
 checked in: Codex's plugin installer treats `skills:` paths as relative to the

@@ -165,7 +165,7 @@ function sleep(ms, signal) {
 }
 { name: "aweb-channel", version: "0.1.0" }'
 SENTINEL='aweb-channel-core-security/did-log-genesis-bound-v2+full-log-v1+pinstore-fail-closed-v1'
-SKILLS='aweb-bootstrap aweb-coordination aweb-tasks aweb-identity aweb-messaging aweb-team-membership'
+SKILLS="$(node "$ROOT/scripts/skill-packaging.mjs" list)"
 
 make_profile_fixture() {
   # $1 profile, then flags: --no-sentinel, --drop-skill <name>, --extra-skill <name>
@@ -291,7 +291,7 @@ profile_case "pi profile refuses trust-field overwrite merge" pi refuse "overwri
 profile_case "pi profile refuses missing local stream deadline" pi refuse "local event-stream deadline" --drop-local-deadline
 profile_case "pi profile refuses missing inactivity watchdog" pi refuse "byte-inactivity watchdog" --drop-inactivity-watchdog
 profile_case "pi profile refuses missing settled backoff cleanup" pi refuse "backoff abort-listener cleanup" --drop-backoff-cleanup
-profile_case "skills profile accepts exact six" skills ok ""
+profile_case "skills profile accepts shipped set" skills ok ""
 profile_case "skills profile refuses missing tasks skill" skills refuse "skill set" --drop-skill aweb-tasks
 profile_case "channel profile refuses configure skill" channel refuse "skills" --extra-skill configure
 profile_case "skills profile refuses an extra skill dir" skills refuse "skill set" --extra-skill extra-skill
@@ -458,18 +458,12 @@ NODE
 ok "committed channel/skills plugin versions equal package versions"
 
 python3 - "$ROOT" <<'PYSKILLS'
+import json
 import os
 import sys
 
 root = sys.argv[1]
-default = {
-    "aweb-bootstrap",
-    "aweb-coordination",
-    "aweb-tasks",
-    "aweb-identity",
-    "aweb-messaging",
-    "aweb-team-membership",
-}
+default = set(json.load(open(os.path.join(root, "skills", "shipped.json"))))
 # No internal-only skills remain; every canonical directory ships in the default
 # set. The gate still requires each one to be classified explicitly, so a new
 # directory cannot silently ship nowhere.
@@ -491,7 +485,9 @@ PYSKILLS
 ok "every canonical skill is explicitly default-shipped or internal"
 
 ziproot="$tmp/zip-repo"
-mkdir -p "$ziproot/packages/claude-ai-skills" "$ziproot/skills"
+mkdir -p "$ziproot/packages/claude-ai-skills" "$ziproot/skills" "$ziproot/scripts"
+cp "$ROOT/skills/shipped.json" "$ziproot/skills/"
+cp "$ROOT/scripts/skill-packaging.mjs" "$ziproot/scripts/"
 cp "$ROOT/packages/claude-ai-skills/build-zips.sh" "$ziproot/packages/claude-ai-skills/"
 for skill in $SKILLS; do
   mkdir -p "$ziproot/skills/$skill/references"
@@ -500,9 +496,9 @@ for skill in $SKILLS; do
 done
 (cd "$ziproot/packages/claude-ai-skills" && ./build-zips.sh >/dev/null)
 python3 - "$ziproot" <<'PYZIP'
-import os, sys, zipfile
+import json, os, sys, zipfile
 root = sys.argv[1]
-expected = {"aweb-bootstrap", "aweb-coordination", "aweb-tasks", "aweb-identity", "aweb-messaging", "aweb-team-membership"}
+expected = set(json.load(open(os.path.join(root, "skills", "shipped.json"))))
 dist = os.path.join(root, "packages", "claude-ai-skills", "dist")
 names = {name[:-4] for name in os.listdir(dist) if name.endswith(".zip")}
 if names != expected:
@@ -519,7 +515,7 @@ for skill in expected:
     if actual != wanted:
         raise SystemExit(f"ZIP {skill} bytes differ from canonical source")
 PYZIP
-ok "exact six ZIP names and bytes equal the six default skill sources"
+ok "exact ZIP names and bytes equal the shipped skill sources"
 rm -rf "$ziproot/skills/aweb-identity"
 if (cd "$ziproot/packages/claude-ai-skills" && ./build-zips.sh >/dev/null 2>&1); then
   fail "ZIP build accepted a missing canonical skill source"
@@ -529,5 +525,8 @@ mkdir -p "$ziproot/skills/aweb-identity/references"
 printf '%s\n' aweb-identity > "$ziproot/skills/aweb-identity/SKILL.md"
 printf '%s\n' aweb-identity-ref > "$ziproot/skills/aweb-identity/references/ref.md"
 (cd "$ziproot/packages/claude-ai-skills" && ./build-zips.sh >/dev/null)
+
+node --test "$ROOT/scripts/test-skill-packaging.mjs"
+ok "shipping-list consumers and exact ZIP name mutations"
 
 printf 'SELFTEST OK: %d assertions\n' "$PASS"

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,9 +37,10 @@ test('the optional skills artifact exposes every canonical skill to Pi', () => {
   execFileSync('npm', ['run', 'sync-skills'], { cwd: join(root, 'pi-extension') });
   pack('packages/claude-skills', (manifest, files) => {
     assert.deepEqual(manifest.pi.skills, ['./skills']);
-    for (const name of ['coordination', 'tasks', 'messaging', 'team-membership', 'bootstrap', 'identity']) {
-      assert.ok(files.includes(`skills/aweb-${name}/SKILL.md`), `missing ${name}`);
-    }
+    const shipped = JSON.parse(readFileSync(join(root, 'skills/shipped.json'), 'utf8'));
+    const actual = [...new Set(files.filter(path => path.startsWith('skills/')).map(path => path.split('/')[1]))].sort();
+    assert.deepEqual(actual, [...shipped].sort());
+    for (const name of shipped) assert.ok(files.includes(`skills/${name}/SKILL.md`));
     assert.equal(manifest.pi.extensions, undefined);
   });
 });

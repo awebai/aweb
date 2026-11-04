@@ -19,7 +19,7 @@
   "interface": {
     "displayName": "aweb skills",
     "shortDescription": "Agent coordination for Codex via aweb",
-    "longDescription": "Six canonical aweb skills for coordination, optional task tracking, messaging, identity, membership and bootstrap. Task guidance applies only when the team has aweb tasks or its instructions say it uses them. Requires the aw CLI: npm install -g @awebai/aw",
+    "longDescription": "Canonical aweb skills for coordination, optional task tracking, messaging, identity, membership and bootstrap. Task guidance applies only when the team has aweb tasks or its instructions say it uses them. Requires the aw CLI: npm install -g @awebai/aw",
     "developerName": "aweb",
     "category": "Productivity",
     "websiteURL": "https://aweb.ai",
