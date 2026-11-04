@@ -23,7 +23,7 @@ from awid.log_config import configure_logging
 from .federation.activation import build_federation_authority_activation
 from .federation.errors import authority_error_body
 from .mutation_hooks import create_mutation_handler
-from .outbox_recovery import start_outbox_recovery, stop_outbox_recovery
+from .outbox_recovery import OutboxRecoveryStarter, start_outbox_recovery, stop_outbox_recovery
 from awid.ratelimit import build_rate_limiter
 from .routing_utils import move_mount_before_spa_fallback
 from .service_errors import ServiceError
@@ -282,6 +282,7 @@ def create_app(
     attachment_backend=None,
     public_origin: str | None = None,
     awid_transport: httpx.AsyncBaseTransport | None = None,
+    host_runs_outbox_recovery: bool = False,
 ) -> FastAPI:
     """Create the aweb coordination FastAPI application.
 
@@ -295,6 +296,10 @@ def create_app(
         awid_transport: The transport the AWID registry client uses (library
                         mode only), such as a host's in-process AWID. The
                         startup health check and every AWID call go through it.
+        host_runs_outbox_recovery: The host runs aweb.outbox_recovery's
+                        recover_outboxes on its own scheduler. Otherwise an app
+                        that receives no lifespan (a mount) starts the recovery
+                        loop on its first request.
 
     Library mode requires both db_infra and redis to be provided.
     Standalone mode requires neither (will create its own).
@@ -490,6 +495,8 @@ def create_app(
     app.include_router(workspaces_router)
     app.include_router(repos_router)
 
+    if not host_runs_outbox_recovery:
+        app.add_middleware(OutboxRecoveryStarter)
     # Added last, so it is outermost: one connection for every statement a
     # request runs before its response starts, middleware included.
     app.add_middleware(ConnectionScopeMiddleware)

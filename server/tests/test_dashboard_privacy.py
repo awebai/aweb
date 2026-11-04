@@ -23,6 +23,7 @@ from starlette.requests import Request
 import uvicorn
 
 from aweb.api import create_app
+from aweb.outbox_recovery import stop_outbox_recovery
 from aweb.db import DatabaseInfra
 from aweb.events import MessageDeliveredEvent, ChatMessageEvent, TaskCreatedEvent, publish_event, team_events_channel_name
 from aweb.mutation_hooks import create_mutation_handler
@@ -147,6 +148,7 @@ async def privacy_app(shared_test_pool, monkeypatch):
                 server.should_exit = True
                 await asyncio.wait_for(serving, 5)
                 sock.close()
+                await stop_outbox_recovery(app)
                 await registry.aclose()
         await registry_db.close()
         await db.close()

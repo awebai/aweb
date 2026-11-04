@@ -4,13 +4,17 @@ Writers deliver their own outbox rows right after commit: lifecycle side
 effects in lifecycle.py, federation mutations in routes/federation.py. Rows
 remain only when a delivery failed or the process stopped between commit and
 delivery. This loop retries them on a fixed cycle, so no request pays for it.
-A host that does not run the aweb lifespan (an embedding application) runs
-recover_outboxes from its own scheduler instead.
+
+The aweb lifespans start the loop. A mounted app receives no lifespan, so its
+first request starts it instead (OutboxRecoveryStarter): later requests only
+see it running. A host that runs recover_outboxes from its own scheduler
+creates the app with host_runs_outbox_recovery=True and no request starts it.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 from typing import Any, Awaitable, Callable, Optional
 
@@ -53,8 +57,34 @@ async def _run_outbox_recovery(app: Any, interval_seconds: float) -> None:
         await asyncio.sleep(interval_seconds)
 
 
-def start_outbox_recovery(app: Any, *, interval_seconds: float = OUTBOX_RECOVERY_INTERVAL_SECONDS) -> None:
-    app.state.outbox_recovery_task = asyncio.create_task(_run_outbox_recovery(app, interval_seconds))
+def start_outbox_recovery(app: Any, *, interval_seconds: float | None = None) -> None:
+    # A fresh context: the loop outlives whatever request or startup started it.
+    app.state.outbox_recovery_task = asyncio.create_task(
+        _run_outbox_recovery(app, OUTBOX_RECOVERY_INTERVAL_SECONDS if interval_seconds is None else interval_seconds),
+        context=contextvars.Context(),
+    )
+
+
+def ensure_outbox_recovery(app: Any) -> None:
+    """Start the loop unless it runs, once the app has its database and Redis."""
+    task = getattr(app.state, "outbox_recovery_task", None)
+    if task is not None and not task.done():
+        return
+    if getattr(app.state, "db", None) is None or getattr(app.state, "redis", None) is None:
+        return
+    start_outbox_recovery(app)
+
+
+class OutboxRecoveryStarter:
+    """Start outbox recovery on a request to an app whose lifespan did not."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
+        if scope["type"] == "http" and scope.get("app") is not None:
+            ensure_outbox_recovery(scope["app"])
+        await self.app(scope, receive, send)
 
 
 async def stop_outbox_recovery(app: Any) -> None:
