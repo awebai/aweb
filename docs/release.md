@@ -231,6 +231,24 @@ exact tagged source, publish or adopt exact bytes, verify registry readback,
 and stop. They do not run product suites, move a branch, infer changed
 artifacts, create another aweb tag, or contact AC.
 
+Npm readback allows **25 minutes** after publishing or adopting exact staged
+bytes: registry propagation has taken about 19 minutes, so the window includes
+six minutes of margin. Missing metadata, a stale dist-tag, or an unavailable
+registry remains uncertain until the deadline; none permits another publish.
+A package identity, integrity or tarball mismatch refuses immediately. Success
+requires the staged bytes, SHA-512 integrity and intended `next` or `latest` tag.
+
+The aw distribution publisher packs each of its six platform packages and the
+wrapper once, publishes those exact archives, and verifies all seven with one
+shared 25-minute readback deadline. The verifier lives at
+`cli/go/npm/readback.py`; the other npm lanes call it through
+`scripts/npm-exact-publish.sh verify-published-bounded`. The aw release workflow
+is maintained at `cli/go/.github/workflows/release.yml` and copied into
+`awebai/aw` by the existing source sync. Both npm publishing workflows allow
+60 minutes for build, publication and readback. A successful publish command
+alone is not a successful release.
+
+
 The Claude marketplace does not duplicate channel or skills versions. Its npm
 sources omit `version`, so Claude resolves npm's public `latest`; the packaged
 `.claude-plugin/plugin.json` supplies the installed version and the candidate

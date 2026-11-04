@@ -62,11 +62,12 @@ class PublicationTest(unittest.TestCase):
         self.assertIn("final version", result.stderr)
 
     def test_runnerless_publishes_and_checks_seven_exact_staged_tarballs(self):
-        # Real pack/inspect/publish/read-back logic; only the compiler and
-        # registry boundaries are fixtures. No binary/runtime claim is made.
+        # Real pack/inspect/publish/read-back logic with a fixture compiler
+        # and an owned HTTP registry. No binary/runtime claim is made.
         sys.path.insert(0, str(ROOT / "scripts"))
         import publish_release as publisher
-        with tempfile.TemporaryDirectory() as directory:
+        from test_npm_readback import Registry
+        with tempfile.TemporaryDirectory() as directory, Registry().serve() as registry:
             root = Path(directory)
             shutil.copytree(ROOT / "cli/go/npm", root / "cli/go/npm",
                             ignore=shutil.ignore_patterns("__pycache__"))
@@ -78,36 +79,20 @@ class PublicationTest(unittest.TestCase):
 import pathlib, sys
 pathlib.Path(sys.argv[sys.argv.index("-o")+1]).write_bytes(b"fixture compiler output")
 ''')
-            (binaries / "npm").write_text('''#!/usr/bin/env python3
-import json, os, pathlib, shutil, sys, tarfile
-args = sys.argv[1:]
-if args[0] != "publish": os.execv(os.environ["FIXTURE_REAL_NPM"], [os.environ["FIXTURE_REAL_NPM"], *args])
-with tarfile.open(args[1]) as f: package=json.load(f.extractfile("package/package.json"))
-root=pathlib.Path(os.environ["PUBLICATION_FIXTURE"])
-shutil.copyfile(args[1],root/(package["name"].split("/")[1]+".tgz"))
-with (root/"published").open("a") as f: f.write(json.dumps([package,args])+"\\n")
-''')
-            (binaries / "curl").write_text('''#!/usr/bin/env python3
-import json, os, pathlib, sys, urllib.parse
-args=sys.argv[1:]; root=pathlib.Path(os.environ["PUBLICATION_FIXTURE"])
-if args[-1].startswith("file:"): os.execv(os.environ["FIXTURE_REAL_CURL"],[os.environ["FIXTURE_REAL_CURL"],*args])
-name=urllib.parse.unquote(urllib.parse.urlparse(args[-1]).path).split("/")[-2]
-path=root/(name+".tgz")
-pathlib.Path(args[args.index("-o")+1]).write_text(json.dumps({"dist":{"tarball":path.as_uri()}}))
-print("200",end="")
-''')
             for path in binaries.iterdir():
                 path.chmod(0o755)
+            config = root / "npmrc"
+            config.write_text(f"registry={registry.url}\n//{registry.url.split('//')[1]}/:_authToken=disposable-fixture\n")
             env = {"PATH": str(binaries) + os.pathsep + os.environ["PATH"],
-                   "PUBLICATION_FIXTURE": str(root), "NODE_AUTH_TOKEN": "fixture-not-a-secret",
-                   "FIXTURE_REAL_NPM": shutil.which("npm"), "FIXTURE_REAL_CURL": shutil.which("curl")}
+                   "NPM_CONFIG_REGISTRY": registry.url, "NPM_CONFIG_USERCONFIG": str(config),
+                   "NODE_AUTH_TOKEN": "disposable-fixture"}
+            # The pre-publish existence decision is isolated; npm PUTs and
+            # every version, tag and tarball read use the actual local server.
             with mock.patch.dict(os.environ, env), mock.patch.object(publisher, "request_json", return_value=(404, {})):
                 publisher.publish_aw_npm(root, "1.2.3", "a" * 40, staged_final=True)
-            published = [json.loads(s) for s in (root / "published").read_text().splitlines()]
-            self.assertEqual([p[0]["name"] for p in published], ["@awebai/" + p for p in PACKAGES])
-            self.assertTrue(all(p[1][-2:] == ["--tag", "next"] for p in published))
-            for package in PACKAGES:
-                self.assertTrue((root / (package + ".tgz")).is_file())
+            self.assertEqual([name for name, _, _ in registry.published], ["@awebai/" + p for p in PACKAGES])
+            self.assertTrue(all(tags == {"next": "1.2.3"} for _, _, tags in registry.published))
+            self.assertEqual(registry.reads, {("@awebai/" + p, kind) for p in PACKAGES for kind in ("version", "tag")})
 
     def promotion_fixture(self, root, base):
         metadata = {}

@@ -73,18 +73,20 @@ done
 main_pkg="$SCRIPT_DIR/aw/package.json"
 sed -i "s/\"@awebai\/aw-\([^\"]*\)\": \"[^\"]*\"/\"@awebai\/aw-\1\": \"$VERSION\"/" "$main_pkg"
 
-# Step 3: Publish platform packages first (so they exist when main package is installed)
-for pkg_dir in aw-linux-x64 aw-linux-arm64 aw-darwin-x64 aw-darwin-arm64 aw-windows-x64 aw-windows-arm64; do
+# Pack once, then publish and verify those exact bytes. The platform packages
+# precede the wrapper, while one shared deadline covers readback of all seven.
+staging="$(mktemp -d)"
+trap 'rm -rf "$staging"' EXIT
+readback=()
+for pkg_dir in aw-linux-x64 aw-linux-arm64 aw-darwin-x64 aw-darwin-arm64 aw-windows-x64 aw-windows-arm64 aw; do
   echo "  Publishing @awebai/$pkg_dir@$VERSION..."
-  cd "$SCRIPT_DIR/$pkg_dir"
-  npm publish --access public --tag "$DIST_TAG"
-  cd "$REPO_ROOT"
+  mkdir -p "$staging/$pkg_dir"
+  packed="$(cd "$SCRIPT_DIR/$pkg_dir" && npm pack --ignore-scripts --json --pack-destination "$staging/$pkg_dir")"
+  filename="$(python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["filename"])' <<<"$packed")"
+  archive="$staging/$pkg_dir/$filename"
+  npm publish "$archive" --access public --tag "$DIST_TAG"
+  readback+=(--artifact "@awebai/$pkg_dir=$archive")
 done
-
-# Step 4: Publish the main wrapper package last
-echo "  Publishing @awebai/aw@$VERSION..."
-cd "$SCRIPT_DIR/aw"
-npm publish --access public --tag "$DIST_TAG"
-cd "$REPO_ROOT"
-
-echo "Done! All packages published at version $VERSION."
+python3 "$SCRIPT_DIR/readback.py" "${readback[@]}" --version "$VERSION" \
+  --dist-tag "$DIST_TAG" --registry "${NPM_CONFIG_REGISTRY:-https://registry.npmjs.org}"
+echo "Done! All seven packages verified at version $VERSION on $DIST_TAG."

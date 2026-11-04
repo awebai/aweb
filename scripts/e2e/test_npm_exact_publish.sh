@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Self-test for scripts/npm-exact-publish.sh, no network.
+# Self-test for scripts/npm-exact-publish.sh; network stays on owned loopback.
 #
 #   green: pack-inspect stages one tgz from a coherent package and reports
 #          its digest; verify-published (against a supplied observed file)
@@ -365,74 +365,11 @@ expect_refusal "guard probe refuses present version" "already exists" \
 expect_refusal "guard probe refuses outage" "never proof of absence" \
   decide-npm --observed-status 500
 
-# ── post-action readback: bounded propagation, exact bytes only ─────
-cat > "$tmp/fake-bin/curl" <<'EOFCURL'
-#!/usr/bin/env bash
-set -euo pipefail
-: "${FAKE_STATUS_SEQUENCE:?}" "${FAKE_CURL_COUNT:?}" "${FAKE_REMOTE_TGZ:?}"
-out='' url=''
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    -o) out="$2"; shift 2 ;;
-    -w|--connect-timeout|--max-time) shift 2 ;;
-    -*) shift ;;
-    *) url="$1"; shift ;;
-  esac
-done
-if [[ "$url" == "https://registry.example/exact.tgz" ]]; then
-  cp "$FAKE_REMOTE_TGZ" "$out"
-  exit 0
-fi
-count=0
-[[ ! -f "$FAKE_CURL_COUNT" ]] || count="$(cat "$FAKE_CURL_COUNT")"
-count=$((count + 1)); printf '%s' "$count" > "$FAKE_CURL_COUNT"
-status="$(sed -n "${count}p" "$FAKE_STATUS_SEQUENCE")"
-[[ -n "$status" ]] || status="$(tail -n 1 "$FAKE_STATUS_SEQUENCE")"
-if [[ "$status" == 200 ]]; then
-  printf '{"dist":{"tarball":"https://registry.example/exact.tgz"}}' > "$out"
-else
-  : > "$out"
-fi
-printf '%s' "$status"
-EOFCURL
-chmod +x "$tmp/fake-bin/curl"
-
-run_bounded_readback() {
-  PATH="$tmp/fake-bin:$PATH" \
-  FAKE_STATUS_SEQUENCE="$tmp/statuses" \
-  FAKE_CURL_COUNT="$tmp/curl-count" \
-  FAKE_REMOTE_TGZ="$tmp/remote.tgz" \
-    bash "$LANE" verify-published-bounded \
-      --tgz "$staged" --package '@awebai/lane-fixture' --version 1.2.3 \
-      --post-action publish --deadline-seconds "$1" --backoff-seconds "$2"
-}
-
-printf '404\n200\n' > "$tmp/statuses"; : > "$tmp/curl-count"
-cp "$staged" "$tmp/remote.tgz"
-run_bounded_readback 2 0 >/dev/null \
-  || fail "bounded readback did not accept 404 followed by exact bytes"
-[[ "$(cat "$tmp/curl-count")" == 2 ]] \
-  || fail "404-to-exact readback did not make exactly two observations"
-ok "post-publish 404 retries to exact staged-byte success"
-
-printf '404\n' > "$tmp/statuses"; : > "$tmp/curl-count"
-if out="$(run_bounded_readback 1 1 2>&1)"; then
-  fail "persistent 404 was accepted"
-fi
-grep -qi "uncertain\|deadline" <<<"$out" \
-  || fail "persistent 404 refusal did not name bounded uncertainty: $out"
-ok "persistent 404 fails uncertain at the strict deadline"
-
-printf '200\n404\n' > "$tmp/statuses"; : > "$tmp/curl-count"
-cp "$staged" "$tmp/remote.tgz"; printf x >> "$tmp/remote.tgz"
-if out="$(run_bounded_readback 2 0 2>&1)"; then
-  fail "present mismatched bytes were accepted"
-fi
-grep -qi "permanent" <<<"$out" \
-  || fail "present mismatch refusal did not name permanence: $out"
-[[ "$(cat "$tmp/curl-count")" == 1 ]] \
-  || fail "present mismatch retried instead of refusing permanently"
-ok "present mismatch refuses permanently without retry"
+# ── post-action readback: real owned registry, no external publication ──
+expect_refusal "readback requires an earlier publish/adopt" "post-action" \
+  verify-published-bounded --tgz "$staged" --package '@awebai/lane-fixture' --version 1.2.3
+python3 "$ROOT/scripts/test_npm_readback.py"
+ok "bounded exact readback and all seven aw packages verified against owned registry"
 
 # ── committed metadata and ZIP source/output contract ───────────────
 node - "$ROOT" <<'NODE'

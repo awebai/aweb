@@ -767,15 +767,17 @@ class NpmRcContractTest(unittest.TestCase):
                 self.assertEqual(args[1], str(archive.resolve()))
 
     def test_synced_downstream_publisher_routes_all_seven_packages(self):
-        # Execute the real publisher with real platform archives. Only npm's
-        # external publication boundary is replaced, so nothing is uploaded.
-        with tempfile.TemporaryDirectory() as directory:
+        # Real publisher, npm and platform archives; uploads stay inside an
+        # owned loopback registry, including the new exact readback boundary.
+        from test_npm_readback import Registry
+        with tempfile.TemporaryDirectory() as directory, Registry().serve() as registry:
             root = Path(directory)
             npm_root, artifacts = root / "npm", root / "artifacts"
             npm_root.mkdir()
             artifacts.mkdir()
             command(root, "git", "init", "-q")
             shutil.copyfile(ROOT / "cli/go/npm/publish.sh", npm_root / "publish.sh")
+            shutil.copyfile(ROOT / "cli/go/npm/readback.py", npm_root / "readback.py")
             helper = ROOT / "cli/go/npm/publication.py"
             if helper.exists():
                 shutil.copyfile(helper, npm_root / helper.name)
@@ -804,9 +806,8 @@ class NpmRcContractTest(unittest.TestCase):
                 # The production workflow runs Ubuntu; use GNU sed for that
                 # same existing publisher on the author's macOS host.
                 (root / "bin/sed").symlink_to(shutil.which("gsed") or "/usr/bin/sed")
-            npm = root / "bin/npm"
-            npm.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CAPTURE_NPM"\n')
-            npm.chmod(0o755)
+            config = root / "npmrc"
+            config.write_text(f"registry={registry.url}\n//{registry.url.split('//')[1]}/:_authToken=disposable-fixture\n")
             origin = root / "origin.git"
             command(root, "git", "init", "--bare", "-q", str(origin))
             command(root, "git", "remote", "add", "origin", str(origin))
@@ -816,11 +817,11 @@ class NpmRcContractTest(unittest.TestCase):
                 ("1.2.5", "next", "checkout"), ("1.2.6", "latest", "ci-final"),
                 ("1.2.7-rc.1", "next", "ci-rc"), ("1.2.8", None, "ci-missing"),
             ):
-                capture = root / "args"
-                capture.write_text("")
-                environment = {**os.environ, "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"],
-                               "CAPTURE_NPM": str(capture), "GITHUB_REF_NAME": "v" + version,
-                               "GITHUB_ACTIONS": "false"}
+                registry.published.clear()
+                environment = {k: v for k, v in os.environ.items() if not k.startswith(("NPM_", "npm_", "NODE_AUTH"))}
+                environment.update(PATH=str(root / "bin") + os.pathsep + os.environ["PATH"],
+                                   GITHUB_REF_NAME="v" + version, GITHUB_ACTIONS="false",
+                                   NPM_CONFIG_USERCONFIG=str(config), NPM_CONFIG_REGISTRY=registry.url)
                 tag = "v" + version
                 if staged in ("tag", "checkout", "ci-final", "ci-rc"):
                     command(root, "git", "config", "user.name", "fixture")
@@ -843,12 +844,11 @@ class NpmRcContractTest(unittest.TestCase):
                                         text=True, capture_output=True)
                 if staged == "ci-missing":
                     self.assertNotEqual(result.returncode, 0, result.stdout)
-                    self.assertEqual(capture.read_text(), "", "missing CI tag reached npm")
+                    self.assertEqual(registry.published, [], "missing CI tag reached npm")
                     continue
                 self.assertEqual(result.returncode, 0, result.stderr)
-                calls = capture.read_text().splitlines()
-                self.assertEqual(len(calls), 7)
-                self.assertTrue(all(call.endswith("--tag " + expected) for call in calls), calls)
+                self.assertEqual(len(registry.published), 7)
+                self.assertTrue(all(tags == {expected: version} for _, _, tags in registry.published), registry.published)
                 if staged == "checkout":
                     self.assertEqual(command(root, "git", "cat-file", "-t", "refs/tags/" + tag), "tag")
                 wrapper = json.loads((npm_root / "aw/package.json").read_text())

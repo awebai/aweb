@@ -319,6 +319,8 @@ def npm_publish_exact(root: Path, directory: str, package: str, profile: str, ve
             version,
             "--post-action",
             action,
+            "--dist-tag",
+            "next" if staged_final or "-" in version else "latest",
             env=environment,
         )
 
