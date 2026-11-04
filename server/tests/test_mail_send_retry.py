@@ -100,3 +100,24 @@ async def test_a_different_message_with_the_same_conversation_id_continues_it(aw
     assert other.json()["message_id"] == other_request["message_id"]
     assert await _counts(db) == (2, 1)
     assert events == [("message.sent", first_request["message_id"]), ("message.sent", other_request["message_id"])]
+
+
+@pytest.mark.asyncio
+async def test_a_refused_send_leaves_no_conversation_behind(aweb_cloud_db):
+    db, app, events, alice_sk, alice_key, bob_key = await _sender(aweb_cloud_db)
+    first_request = _signed_send(alice_sk, alice_key, bob_key, body="first")
+    reused = _signed_send(alice_sk, alice_key, bob_key, body="different content")
+    reused = {**reused, "message_id": first_request["message_id"]}
+    claims = __import__("json").loads(reused["signed_payload"])
+    claims["message_id"] = first_request["message_id"]
+    signed = canonical_json_bytes(claims)
+    reused["signed_payload"] = signed.decode()
+    reused["signature"] = sign_message(alice_sk, signed)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post("/v1/messages", json=first_request)
+        assert first.status_code == 200, first.text
+        refused = await client.post("/v1/messages", json=reused)
+
+    assert refused.status_code == 409, refused.text
+    assert await _counts(db) == (1, 1)
+    assert events == [("message.sent", first_request["message_id"])]
