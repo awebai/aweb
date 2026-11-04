@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -21,11 +20,10 @@ from .connection_scope import ConnectionScopeMiddleware
 from .db import DatabaseInfra
 from .db import db_infra as default_db_infra
 from awid.log_config import configure_logging
-from .lifecycle import replay_lifecycle_side_effects
 from .federation.activation import build_federation_authority_activation
 from .federation.errors import authority_error_body
-from .federation.delivery import replay_federation_mutation_outbox
 from .mutation_hooks import create_mutation_handler
+from .outbox_recovery import start_outbox_recovery, stop_outbox_recovery
 from awid.ratelimit import build_rate_limiter
 from .routing_utils import move_mount_before_spa_fallback
 from .service_errors import ServiceError
@@ -61,9 +59,6 @@ from .coordination.routes.tasks import router as tasks_router
 from .coordination.routes.workspaces import router as workspaces_router
 
 logger = logging.getLogger(__name__)
-
-_LIFECYCLE_OUTBOX_REPLAY_BATCH_SIZE = 100
-_LIFECYCLE_OUTBOX_MAX_BATCHES_PER_TRIGGER = 10
 
 
 def _cached_body_receive(body: bytes):
@@ -118,85 +113,6 @@ async def _shutdown_mcp_app(app: FastAPI) -> None:
         return
     await mcp_app.shutdown()
     app.state.mcp_app = None
-
-
-def _schedule_lifecycle_outbox_replay(app: FastAPI) -> None:
-    """Schedule a bounded replay without delaying the current request.
-
-    Mounted FastAPI sub-applications do not receive lifespan events, so this
-    request-path trigger is also the restart recovery hook for embedded hosts.
-    """
-    db_infra = getattr(app.state, "db", None)
-    redis = getattr(app.state, "redis", None)
-    if db_infra is None or redis is None:
-        return
-
-    loop = asyncio.get_running_loop()
-    next_at = float(getattr(app.state, "lifecycle_outbox_replay_next_at", 0.0))
-    task = getattr(app.state, "lifecycle_outbox_replay_task", None)
-    if (task is not None and not task.done()) or loop.time() < next_at:
-        return
-    app.state.lifecycle_outbox_replay_next_at = loop.time() + 1.0
-
-    async def _replay() -> None:
-        try:
-            for _ in range(_LIFECYCLE_OUTBOX_MAX_BATCHES_PER_TRIGGER):
-                result = await replay_lifecycle_side_effects(
-                    db_infra.get_manager("aweb"),
-                    redis,
-                    limit=_LIFECYCLE_OUTBOX_REPLAY_BATCH_SIZE,
-                )
-                if result.attempted_count < _LIFECYCLE_OUTBOX_REPLAY_BATCH_SIZE:
-                    break
-                await asyncio.sleep(0)
-        except Exception:
-            logger.warning("Lifecycle outbox replay failed", exc_info=True)
-
-    app.state.lifecycle_outbox_replay_task = asyncio.create_task(_replay())
-
-
-def _schedule_federation_outbox_replay(app: FastAPI) -> None:
-    db_infra = getattr(app.state, "db", None)
-    callback = getattr(app.state, "on_mutation", None)
-    if db_infra is None or callback is None:
-        return
-    task = getattr(app.state, "federation_outbox_replay_task", None)
-    if task is not None and not task.done():
-        return
-
-    async def _replay() -> None:
-        try:
-            await replay_federation_mutation_outbox(
-                app,
-                db_infra.get_manager("aweb"),
-                limit=100,
-            )
-        except Exception:
-            logger.warning("Federation outbox replay failed", exc_info=True)
-
-    app.state.federation_outbox_replay_task = asyncio.create_task(_replay())
-
-
-async def _shutdown_federation_outbox_replay(app: FastAPI) -> None:
-    task = getattr(app.state, "federation_outbox_replay_task", None)
-    if task is None or task.done():
-        return
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
-
-
-async def _shutdown_lifecycle_outbox_replay(app: FastAPI) -> None:
-    task = getattr(app.state, "lifecycle_outbox_replay_task", None)
-    if task is None or task.done():
-        return
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
 
 
 async def _shutdown_federation_authority(app: FastAPI) -> None:
@@ -284,8 +200,7 @@ def _make_standalone_lifespan():
                 app.state.awid_registry_client,
                 app.state.federation_authority,
             )
-            _schedule_lifecycle_outbox_replay(app)
-            _schedule_federation_outbox_replay(app)
+            start_outbox_recovery(app)
 
         except Exception:
             # Log which phase failed
@@ -306,8 +221,7 @@ def _make_standalone_lifespan():
         finally:
             logger.info("Shutting down aweb coordination server")
             await _shutdown_mcp_app(app)
-            await _shutdown_lifecycle_outbox_replay(app)
-            await _shutdown_federation_outbox_replay(app)
+            await stop_outbox_recovery(app)
             await _shutdown_federation_authority(app)
             await _shutdown_awid_registry_client(app)
             await redis.aclose()
@@ -346,16 +260,14 @@ def _make_library_lifespan(
             app.state.awid_registry_client,
             app.state.federation_authority,
         )
-        _schedule_lifecycle_outbox_replay(app)
-        _schedule_federation_outbox_replay(app)
+        start_outbox_recovery(app)
 
         try:
             yield
         finally:
             # Don't close connections in library mode - caller manages them
             await _shutdown_mcp_app(app)
-            await _shutdown_lifecycle_outbox_replay(app)
-            await _shutdown_federation_outbox_replay(app)
+            await stop_outbox_recovery(app)
             await _shutdown_federation_authority(app)
             await _shutdown_awid_registry_client(app)
             logger.info("Aweb coordination server stopping (library mode)")
@@ -442,12 +354,6 @@ def create_app(
     )
     app.include_router(attachment_router)
     app.add_middleware(NormalizeMountedMCPPathMiddleware, mount_path="/mcp")
-
-    @app.middleware("http")
-    async def lifecycle_outbox_replay_middleware(request: Request, call_next):
-        _schedule_lifecycle_outbox_replay(request.app)
-        _schedule_federation_outbox_replay(request.app)
-        return await call_next(request)
 
     @app.middleware("http")
     async def cache_body_middleware(request: Request, call_next):
