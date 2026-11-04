@@ -93,13 +93,14 @@ outside logging, rate limiting and authentication; using `add_middleware` alone
 misses framework-generated 500s. Nested wrappers are safe, advertise once, and
 leave websocket and lifespan traffic untouched.
 
-Embedding hosts that mount aweb without running its lifespan own two duties
-the lifespan performs for a standalone server:
+Embedding hosts that mount aweb without running its lifespan:
 
-- Run `aweb.outbox_recovery.recover_outboxes(aweb_db=..., redis=...,
-  on_mutation=...)` every `OUTBOX_RECOVERY_INTERVAL_SECONDS` from the host's
-  scheduler. Writers deliver their own outbox rows after commit; recovery
-  retries the rows a failed or interrupted delivery left behind.
+- Get outbox recovery automatically: the mount's first request starts the
+  15 s loop that retries outbox rows a failed or interrupted after-commit
+  delivery left behind. A host that runs
+  `aweb.outbox_recovery.recover_outboxes(aweb_db=..., redis=..., on_mutation=...)`
+  every `OUTBOX_RECOVERY_INTERVAL_SECONDS` from its own scheduler passes
+  `host_runs_outbox_recovery=True` to `create_app`.
 - For one database connection per request, build the host's managers on the
   shared pool with `aweb.connection_scope.DatabaseManager` and install
   `aweb.connection_scope.ConnectionScopeMiddleware` outside every middleware

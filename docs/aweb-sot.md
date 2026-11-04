@@ -1063,10 +1063,11 @@ hints; consumers read PostgreSQL state as truth. Failed rows stay durable
 until outbox recovery delivers them: `aweb.outbox_recovery.recover_outboxes`
 replays undelivered lifecycle and federation outbox rows in bounded batches.
 The standalone and library lifespans run it at startup and every
-`OUTBOX_RECOVERY_INTERVAL_SECONDS` (15 s). No request path replays outboxes, so
-an embedding host that mounts aweb without running its lifespan must run
-`recover_outboxes` on the same cycle from its own scheduler, passing the aweb
-manager, Redis and the host's mutation handler.
+`OUTBOX_RECOVERY_INTERVAL_SECONDS` (15 s). A mounted app receives no lifespan,
+so its first request starts the same loop; later requests only find it
+running, and no request scans an outbox itself. A host that runs
+`recover_outboxes` from its own scheduler instead creates the app with
+`create_app(..., host_runs_outbox_recovery=True)`.
 
 ### Dashboard routes
 
@@ -1775,8 +1776,9 @@ aweb starts up in this order:
    HTTP.
 6. Mount the FastAPI app and the `/mcp` MCP server.
 7. Start outbox recovery (`recover_outboxes` at startup and every 15 s).
-   Mounted sub-applications do not receive lifespan events, so an embedding
-   host runs `recover_outboxes` from its own scheduler; no request path does.
+   Mounted sub-applications do not receive lifespan events, so a mount's
+   first request starts the loop, unless the host runs recovery itself
+   (`host_runs_outbox_recovery=True`).
 8. Begin serving.
 
 Shutdown reverses the order: stop accepting requests, close Redis,
