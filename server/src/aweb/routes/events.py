@@ -7,7 +7,9 @@ from aweb.messaging.participant_succession import MailSuccessionScope, load_mail
 import asyncio
 import json
 import logging
+import random
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from time import monotonic
 from typing import Any
@@ -29,15 +31,18 @@ from aweb.app_events import (
     verify_app_event_auth,
 )
 from aweb.agent_health import LISTENING_REFRESH_SECONDS, record_stream_listening
+from aweb.agent_wake import agent_wake_key, did_wake_key, read_wake_marks, team_room_wake_key
 from aweb.deps import get_db, get_redis
 from aweb.identity_metadata import lookup_identity_metadata_by_did, routable_chat_address
 from aweb.messaging.chat import get_pending_conversations
-from aweb.messaging.room_notices import current_room_events
+from aweb.messaging.room_notices import RoomAuthorityWindow, current_room_events
 from aweb.messaging.waiting import get_waiting_agents, get_waiting_agents_by_session
 from aweb.internal_auth import parse_internal_auth_context
 from aweb.grant_streams import (
+    GRANT_STREAM_RECHECK_SECONDS,
     agent_event_allowed,
     clamp_deadline_to_grant,
+    grant_has_scope,
     NeverGrantStreamGuard, grant_expiry_reason,
     grant_terminal_sse,
     require_valid_stream_grant,
@@ -49,11 +54,21 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/events", tags=["aweb-events"])
 
-EVENTS_POLL_INTERVAL = 1.0  # seconds between polls
-EVENTS_POLL_FAILURE_WINDOW = 30.0  # tolerate bursts; terminate only after >30s
-EVENTS_POLL_MAX_BACKOFF = 5.0  # cap query retry delay, not disconnect checks
+EVENTS_RECONCILE_INTERVAL = 15.0  # seconds between wake-counter reconciles
+EVENTS_SNAPSHOT_RETRY_INITIAL = 1.0  # first retry delay after a failed snapshot
+EVENTS_SNAPSHOT_FAILURE_WINDOW = 30.0  # tolerate bursts; terminate only after >30s
+EVENTS_SNAPSHOT_MAX_BACKOFF = 5.0  # cap snapshot retry delay
 EVENTS_HEARTBEAT_INTERVAL = 30.0  # seconds between idle SSE heartbeat comments
 MAX_STREAM_DURATION = 300  # maximum stream lifetime in seconds
+
+# Snapshot and emission order, and the field each kind's events are keyed by.
+STREAM_KINDS = ("mail", "chat", "control", "app", "room")
+_STREAM_KEY_FIELDS = {
+    "mail": "message_id",
+    "chat": "session_id",
+    "app": "event_id",
+    "room": "message_id",
+}
 
 
 class AppEventEmitRequest(BaseModel):
@@ -249,6 +264,37 @@ def _identity_dids(viewer: dict[str, Any] | None, identity: TeamIdentity | None 
     return dids
 
 
+ChatWaitingState = dict[str, tuple[tuple[str, ...], bool, bool]]
+
+
+async def _chat_waiting_state(redis, *, viewer_dids: list[str], other_dids: dict[str, list[str]]) -> ChatWaitingState:
+    """Per pending session: its other participants, whether the viewer waits in
+    it, and whether another participant waits in it. Read from Redis only."""
+    viewer_waiting = await get_waiting_agents_by_session(
+        redis,
+        {session_id: viewer_dids for session_id in other_dids},
+    )
+    state: ChatWaitingState = {}
+    for session_id, others in other_dids.items():
+        state[session_id] = (
+            tuple(others),
+            bool(viewer_waiting.get(session_id)),
+            bool(await get_waiting_agents(redis, session_id, others)),
+        )
+    return state
+
+
+async def _chat_waiting_changed(redis, *, viewer_dids: list[str], held: ChatWaitingState) -> bool:
+    if not held:
+        return False
+    current = await _chat_waiting_state(
+        redis,
+        viewer_dids=viewer_dids,
+        other_dids={session_id: list(others) for session_id, (others, _, _) in held.items()},
+    )
+    return current != held
+
+
 async def _current_actionable_chat(
     db,
     redis,
@@ -256,8 +302,13 @@ async def _current_actionable_chat(
     participant_dids: list[str],
     viewer_team_id: str | None,
     participant_agent_id: str | None = None,
+    waiting_state: ChatWaitingState | None = None,
 ) -> list[dict[str, Any]]:
-    """Return the current actionable unread chat state for an identity."""
+    """Return the current actionable unread chat state for an identity.
+
+    ``waiting_state``, when given, receives the Redis waiting state the
+    result depended on, so a stream can notice when only that state changes.
+    """
     pending_by_session: dict[str, dict[str, Any]] = {}
     viewer_did_set = set(participant_dids)
     for participant_did in participant_dids:
@@ -278,20 +329,23 @@ async def _current_actionable_chat(
             + ([(item.get("last_from_did") or "").strip()] if item.get("last_from_did") else [])
         ],
     )
-    recipient_waiting = await get_waiting_agents_by_session(
+    state = await _chat_waiting_state(
         redis,
-        {session_id: participant_dids for session_id in pending_by_session},
+        viewer_dids=participant_dids,
+        other_dids={
+            session_id: [did for did in item.get("participant_dids", []) if did not in viewer_did_set]
+            for session_id, item in pending_by_session.items()
+        },
     )
+    if waiting_state is not None:
+        waiting_state.clear()
+        waiting_state.update(state)
     for item in pending_by_session.values():
+        _, recipient_waiting, sender_waiting = state[item["session_id"]]
         # A recipient already waiting in this session receives chat in-process.
-        # Leave unread state untouched so a later poll can wake after they leave.
-        if recipient_waiting.get(item["session_id"]):
+        # Leave unread state untouched so a later snapshot can wake after they leave.
+        if recipient_waiting:
             continue
-        other_dids = [
-            did for did in item.get("participant_dids", []) if did not in viewer_did_set
-        ]
-        waiting = await get_waiting_agents(redis, item["session_id"], other_dids)
-        sender_waiting = bool(waiting)
         last_activity = item.get("last_activity")
         actionable.append(
             {
@@ -421,6 +475,60 @@ async def _poll_control_signals(aweb_db, *, team_id: str, agent_id: UUID) -> lis
     ]
 
 
+def _sse_frame(evt: dict[str, Any]) -> str:
+    return f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
+
+
+def _stream_wake_keys(identity: TeamIdentity, viewer_dids: list[str]) -> list[str]:
+    keys = [did_wake_key(did) for did in viewer_dids]
+    keys.append(agent_wake_key(identity.agent_id))
+    if grant_has_scope(identity, "chat.read"):
+        keys.append(team_room_wake_key(identity.team_id))
+    return keys
+
+
+async def _read_stream_marks(redis, keys: list[str]) -> dict[tuple[str, str], str | None] | None:
+    """The stream's wake counters, or None when Redis cannot answer."""
+    if redis is None:
+        return None
+    try:
+        return await read_wake_marks(redis, keys)
+    except Exception:
+        logger.warning("Agent wake counters unavailable; reconciling from Postgres", exc_info=True)
+        return None
+
+
+def _moved_kinds(
+    marks: dict[tuple[str, str], str | None] | None,
+    current: dict[tuple[str, str], str | None] | None,
+) -> set[str]:
+    """Kinds whose counter moved; every kind when either side is unknown."""
+    if marks is None or current is None:
+        return set(STREAM_KINDS)
+    return {mark[1] for mark, value in current.items() if value != marks.get(mark)}
+
+
+@asynccontextmanager
+async def _wake_subscription(hub, keys: list[str]):
+    if hub is None:
+        yield None
+        return
+    async with hub.subscribe(keys) as subscription:
+        yield subscription
+
+
+async def _wait_for_wake(subscription, timeout: float) -> None:
+    if timeout <= 0:
+        return
+    if subscription is None:
+        await asyncio.sleep(timeout)
+        return
+    try:
+        await asyncio.wait_for(subscription.wait(), timeout)
+    except TimeoutError:
+        pass
+
+
 async def _sse_agent_events(
     *,
     request: Request,
@@ -430,8 +538,14 @@ async def _sse_agent_events(
     agent_id: str,
     identity: TeamIdentity,
     deadline: datetime,
+    wake_hub=None,
 ) -> AsyncIterator[str]:
-    """Generate per-agent SSE actionable coordination events."""
+    """Generate per-agent SSE actionable coordination events.
+
+    State is read from Postgres at open, then again only for the kinds a wake
+    names, or whose wake counter moved at the slow reconcile. Disconnects are
+    found by the failed write of a heartbeat or event, not by probing.
+    """
     aweb_db = db.get_manager("aweb")
     aid = UUID(agent_id)
     viewer = await aweb_db.fetch_one(
@@ -447,183 +561,199 @@ async def _sse_agent_events(
         yield f"event: error\ndata: {json.dumps({'type': 'error', 'detail': 'identity incomplete'})}\n\n"
         return
 
-    yield ": keepalive\n\n"
-    last_heartbeat_at = datetime.now(timezone.utc)
+    room_authority = RoomAuthorityWindow()
+    previous: dict[str, dict[str, dict[str, Any]]] = {kind: {} for kind in STREAM_KINDS}
+    chat_waiting: ChatWaitingState = {}
 
-    yield f"event: connected\ndata: {json.dumps({'agent_id': agent_id, 'team_id': team_id})}\n\n"
-    await record_stream_listening(redis, agent_id, now=datetime.now(timezone.utc))
-    listening_recorded_at = monotonic()
-
-    guard = NeverGrantStreamGuard(request, db, identity, grant_expiry_reason)
-    reason = await guard.reason()
-    if reason:
-        yield grant_terminal_sse(reason)
-        return
-
-    # Thread evidence is immutable for this stream lifetime, not a per-tick read.
-    mail_scope = await load_mail_succession_scope(aweb_db, viewer_dids=viewer_dids)
-    # Initial snapshot
-    mail_events = await _current_actionable_mail(
-        aweb_db, inbox_dids=viewer_dids, mail_scope=mail_scope
-    )
-    chat_events = await _current_actionable_chat(
-        db,
-        redis,
-        participant_dids=viewer_dids,
-        viewer_team_id=team_id,
-        participant_agent_id=agent_id,
-    )
-    control_events = await _poll_control_signals(aweb_db, team_id=team_id, agent_id=aid)
-    app_events = await current_app_events_for_agent(aweb_db, team_id=team_id, agent_id=agent_id)
-    previous_mail = _index_events(mail_events, key_field="message_id")
-    previous_chat = _index_events(chat_events, key_field="session_id")
-    previous_app = _index_events(app_events, key_field="event_id")
-    room_events = await current_room_events(request, db, identity)
-    previous_room = _index_events(room_events, key_field="message_id")
-
-    reason = await guard.reason()
-    if reason:
-        yield grant_terminal_sse(reason)
-        return
-    # The caller deadline bounds polling, not the initial scoped snapshot.
-    # Grant expiry still blocks delivery above, even for an expired deadline.
-
-    for evt in mail_events:
-        if agent_event_allowed(identity, evt):
-            yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
-    for evt in chat_events:
-        if agent_event_allowed(identity, evt):
-            yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
-    for evt in control_events:
-        if agent_event_allowed(identity, evt):
-            yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
-    for evt in app_events:
-        if agent_event_allowed(identity, evt):
-            yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
-    for evt in room_events:
-        if agent_event_allowed(identity, evt):
-            yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
-
-    failure_started_at: float | None = None
-    retry_delay = EVENTS_POLL_INTERVAL
-    next_poll_at = 0.0
-    while datetime.now(timezone.utc) < deadline:
-        await asyncio.sleep(EVENTS_POLL_INTERVAL)
-
-        if await request.is_disconnected():
-            break
-
-        # Guard against sleep or is_disconnected taking longer than remaining time.
-        if datetime.now(timezone.utc) >= deadline:
-            break
-
-        if monotonic() - listening_recorded_at >= LISTENING_REFRESH_SECONDS:
-            await record_stream_listening(redis, agent_id, now=datetime.now(timezone.utc))
-            listening_recorded_at = monotonic()
-
-        reason = await guard.reason()
-        if reason:
-            yield grant_terminal_sse(reason)
-            return
-
-        # Backoff skips query work, not the heartbeat needed to keep proxies
-        # from closing an otherwise recoverable stream.
-        if failure_started_at is not None:
-            now = datetime.now(timezone.utc)
-            if (now - last_heartbeat_at).total_seconds() >= EVENTS_HEARTBEAT_INTERVAL:
-                yield ": keepalive\n\n"
-                last_heartbeat_at = now
-
-        # Keep disconnect/deadline/grant checks at the ordinary poll cadence
-        # during backoff; task cancellation still interrupts every await.
-        if monotonic() < next_poll_at:
-            continue
-
-        try:
-            current_mail = await _current_actionable_mail(
+    async def snapshot(kinds: set[str]) -> dict[str, list[dict[str, Any]]]:
+        """Current events per kind; control signals are consumed by reading them."""
+        current: dict[str, list[dict[str, Any]]] = {}
+        if "mail" in kinds:
+            current["mail"] = await _current_actionable_mail(
                 aweb_db, inbox_dids=viewer_dids, mail_scope=mail_scope
             )
-            current_chat = await _current_actionable_chat(
+        if "chat" in kinds:
+            current["chat"] = await _current_actionable_chat(
                 db,
                 redis,
                 participant_dids=viewer_dids,
                 viewer_team_id=team_id,
                 participant_agent_id=agent_id,
+                waiting_state=chat_waiting,
             )
-            control_events = await _poll_control_signals(aweb_db, team_id=team_id, agent_id=aid)
-            current_app = await current_app_events_for_agent(aweb_db, team_id=team_id, agent_id=agent_id)
-            current_room = await current_room_events(request, db, identity)
-        except Exception:
-            logger.exception("event-stream poll error for agent %s", agent_id)
-            now = monotonic()
-            if failure_started_at is None:
-                failure_started_at = now
-                retry_delay = EVENTS_POLL_INTERVAL
-            elif now - failure_started_at > EVENTS_POLL_FAILURE_WINDOW:
-                yield f"event: error\ndata: {json.dumps({'type': 'error', 'detail': 'poll failure'})}\n\n"
-                break
+        if "control" in kinds:
+            current["control"] = await _poll_control_signals(aweb_db, team_id=team_id, agent_id=aid)
+        if "app" in kinds:
+            current["app"] = await current_app_events_for_agent(aweb_db, team_id=team_id, agent_id=agent_id)
+        if "room" in kinds:
+            current["room"] = await current_room_events(request, db, identity, room_authority)
+        return current
+
+    def changes(current: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
+        """Events to emit, in kind order; records each kind's new state."""
+        emitted: list[dict[str, Any]] = []
+        for kind in STREAM_KINDS:
+            if kind not in current:
+                continue
+            events = current[kind]
+            if kind == "control":
+                emitted.extend(events)
+                continue
+            key_field = _STREAM_KEY_FIELDS[kind]
+            if kind == "mail":
+                emitted.extend(_new_or_changed_mail_events(events, previous[kind]))
             else:
-                retry_delay = min(retry_delay * 2, EVENTS_POLL_MAX_BACKOFF)
-            next_poll_at = now + retry_delay
-            continue
+                emitted.extend(_new_or_changed_events(events, previous[kind], key_field=key_field))
+            previous[kind] = _index_events(events, key_field=key_field)
+        return emitted
 
-        # Reset only after the complete poll, not a successful first query.
-        failure_started_at = None
-        retry_delay = EVENTS_POLL_INTERVAL
-        next_poll_at = 0.0
-        mail_events = _new_or_changed_mail_events(current_mail, previous_mail)
-        chat_events = _new_or_changed_events(
-            current_chat,
-            previous_chat,
-            key_field="session_id",
-        )
-        app_events = _new_or_changed_events(
-            current_app,
-            previous_app,
-            key_field="event_id",
-        )
-        room_events = _new_or_changed_events(current_room, previous_room, key_field="message_id")
+    async with _wake_subscription(wake_hub, _stream_wake_keys(identity, viewer_dids)) as subscription:
+        keys = list(subscription.keys) if subscription is not None else []
+        marks = await _read_stream_marks(redis, keys) if subscription is not None else None
 
+        yield ": keepalive\n\n"
+        last_heartbeat_at = datetime.now(timezone.utc)
+
+        yield f"event: connected\ndata: {json.dumps({'agent_id': agent_id, 'team_id': team_id})}\n\n"
+        await record_stream_listening(redis, agent_id, now=datetime.now(timezone.utc))
+        listening_recorded_at = monotonic()
+
+        guard = NeverGrantStreamGuard(request, db, identity, grant_expiry_reason)
         reason = await guard.reason()
         if reason:
             yield grant_terminal_sse(reason)
             return
 
-        if datetime.now(timezone.utc) >= deadline:
-            break
+        # Thread evidence is immutable for this stream lifetime, not a per-snapshot read.
+        mail_scope = await load_mail_succession_scope(aweb_db, viewer_dids=viewer_dids)
+        initial = changes(await snapshot(set(STREAM_KINDS)))
 
-        for evt in mail_events:
-            if agent_event_allowed(identity, evt):
-                yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
-        for evt in chat_events:
-            if agent_event_allowed(identity, evt):
-                yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
-        for evt in control_events:
-            if agent_event_allowed(identity, evt):
-                yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
-        for evt in app_events:
-            if agent_event_allowed(identity, evt):
-                yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
-        for evt in room_events:
-            if agent_event_allowed(identity, evt):
-                yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
+        reason = await guard.reason()
+        if reason:
+            yield grant_terminal_sse(reason)
+            return
+        # The caller deadline bounds waiting, not the initial scoped snapshot.
+        # Grant expiry still blocks delivery above, even for an expired deadline.
 
-        if mail_events or chat_events or control_events or app_events or room_events:
-            last_heartbeat_at = datetime.now(timezone.utc)
-        else:
+        for evt in initial:
+            if evt["type"] == "actionable_room_post" and not room_authority.fresh():
+                continue
+            if agent_event_allowed(identity, evt):
+                yield _sse_frame(evt)
+
+        # Streams opened together reconcile apart.
+        next_reconcile_at = monotonic() + random.uniform(0, EVENTS_RECONCILE_INTERVAL)
+        pending: set[str] = set()
+        failure_started_at: float | None = None
+        retry_delay = EVENTS_SNAPSHOT_RETRY_INITIAL
+        retry_at = 0.0
+        while datetime.now(timezone.utc) < deadline:
+            now = monotonic()
+            due = [
+                next_reconcile_at,
+                listening_recorded_at + LISTENING_REFRESH_SECONDS,
+                now + (deadline - datetime.now(timezone.utc)).total_seconds(),
+                now + max(
+                    0.0,
+                    EVENTS_HEARTBEAT_INTERVAL
+                    - (datetime.now(timezone.utc) - last_heartbeat_at).total_seconds(),
+                ),
+            ]
+            if identity.grant is not None and identity.grant.never_expires:
+                due.append(guard.checked_at + GRANT_STREAM_RECHECK_SECONDS)
+            if pending:
+                due.append(retry_at)
+            await _wait_for_wake(subscription, min(due) - now)
+
+            if datetime.now(timezone.utc) >= deadline:
+                break
+
+            if monotonic() - listening_recorded_at >= LISTENING_REFRESH_SECONDS:
+                await record_stream_listening(redis, agent_id, now=datetime.now(timezone.utc))
+                listening_recorded_at = monotonic()
+
+            reason = await guard.reason()
+            if reason:
+                yield grant_terminal_sse(reason)
+                return
+
+            if subscription is not None:
+                batch = subscription.take()
+                pending |= batch.kinds
+                if batch.resync:
+                    pending |= set(STREAM_KINDS)
+            if monotonic() >= next_reconcile_at:
+                next_reconcile_at = monotonic() + EVENTS_RECONCILE_INTERVAL
+                if subscription is None:
+                    pending |= set(STREAM_KINDS)
+                else:
+                    current_marks = await _read_stream_marks(redis, keys)
+                    pending |= _moved_kinds(marks, current_marks)
+                    # Waiting presence expires in Redis without any write.
+                    if "chat" not in pending and await _chat_waiting_changed(
+                        redis, viewer_dids=viewer_dids, held=chat_waiting
+                    ):
+                        pending.add("chat")
+
+            emitted: list[dict[str, Any]] = []
+            if pending and monotonic() >= retry_at:
+                kinds = set(pending)
+                try:
+                    snapshot_marks = (
+                        await _read_stream_marks(redis, keys) if subscription is not None else None
+                    )
+                    current = await snapshot(kinds)
+                except Exception:
+                    logger.exception("event-stream snapshot error for agent %s", agent_id)
+                    now = monotonic()
+                    if failure_started_at is None:
+                        failure_started_at = now
+                        retry_delay = EVENTS_SNAPSHOT_RETRY_INITIAL
+                    elif now - failure_started_at > EVENTS_SNAPSHOT_FAILURE_WINDOW:
+                        yield f"event: error\ndata: {json.dumps({'type': 'error', 'detail': 'poll failure'})}\n\n"
+                        break
+                    else:
+                        retry_delay = min(retry_delay * 2, EVENTS_SNAPSHOT_MAX_BACKOFF)
+                    retry_at = now + retry_delay
+                else:
+                    # Reset only after the complete snapshot, not a successful first query.
+                    failure_started_at = None
+                    retry_delay = EVENTS_SNAPSHOT_RETRY_INITIAL
+                    retry_at = 0.0
+                    pending -= kinds
+                    if snapshot_marks is not None:
+                        marks = snapshot_marks
+                    emitted = changes(current)
+
+            reason = await guard.reason()
+            if reason:
+                yield grant_terminal_sse(reason)
+                return
+
+            if datetime.now(timezone.utc) >= deadline:
+                break
+
+            delivered = False
+            for evt in emitted:
+                if evt["type"] == "actionable_room_post" and not room_authority.fresh():
+                    # Never emit room content on authority older than 60 s.
+                    previous["room"].pop(str(evt["message_id"]), None)
+                    pending.add("room")
+                    continue
+                if agent_event_allowed(identity, evt):
+                    yield _sse_frame(evt)
+                    delivered = True
+
             now = datetime.now(timezone.utc)
-            if (now - last_heartbeat_at).total_seconds() >= EVENTS_HEARTBEAT_INTERVAL:
+            if delivered:
+                last_heartbeat_at = now
+            elif (now - last_heartbeat_at).total_seconds() >= EVENTS_HEARTBEAT_INTERVAL:
                 yield ": keepalive\n\n"
                 last_heartbeat_at = now
 
-        previous_mail = _index_events(current_mail, key_field="message_id")
-        previous_chat = _index_events(current_chat, key_field="session_id")
-        previous_app = _index_events(current_app, key_field="event_id")
-        previous_room = _index_events(current_room, key_field="message_id")
-
-    reason = await guard.reason()
-    if reason:
-        yield grant_terminal_sse(reason)
+        reason = await guard.reason()
+        if reason:
+            yield grant_terminal_sse(reason)
 
 
 @router.post("/app", response_model=AppEventEmitResponse)
@@ -735,6 +865,7 @@ async def event_stream(
             agent_id=identity.agent_id,
             identity=identity,
             deadline=deadline_dt,
+            wake_hub=getattr(request.app.state, "agent_wake_hub", None),
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},

@@ -202,6 +202,10 @@ async def test_room_stream_rechecks_global_tree_after_opening(
         monkeypatch.setattr(
             events_routes, "asyncio", SimpleNamespace(sleep=advance_poll)
         )
+        # The stream schedules its reconcile on the monotonic clock.
+        monkeypatch.setattr(
+            events_routes, "monotonic", lambda: (clock.now - start).total_seconds()
+        )
         monkeypatch.setattr(identity_binding, "monotonic", lambda: clock.evidence)
         try:
             response = await env.client.send(request)

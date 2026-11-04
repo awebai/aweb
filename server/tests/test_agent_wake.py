@@ -24,6 +24,7 @@ from aweb.agent_wake import (
     read_wake_marks,
     record_agent_wake,
     team_room_wake_key,
+    wake_kinds_for_key,
 )
 from tests.redis_fault_proxy import RedisFaultProxy
 
@@ -79,6 +80,9 @@ def test_wake_keys_name_the_predicate_the_snapshot_filters_on():
     assert did_wake_key("did:aw:abc") == "did:did:aw:abc"
     assert agent_wake_key("4c0a") == "agent:4c0a"
     assert team_room_wake_key("backend:acme.com") == "team-room:backend:acme.com"
+    assert wake_kinds_for_key(did_wake_key("did:aw:abc")) == ("mail", "chat")
+    assert wake_kinds_for_key(agent_wake_key("4c0a")) == ("control", "app")
+    assert wake_kinds_for_key(team_room_wake_key("t")) == ("room",)
 
 
 @pytest.mark.asyncio
@@ -94,7 +98,8 @@ async def test_scope_publishes_after_exit_and_counts_the_key(redis, hub, publish
     assert batch.kinds == {"mail"}
     assert batch.resync is False
     after = await read_wake_marks(redis, [key])
-    assert after[key] != before[key]
+    assert after[(key, "mail")] != before[(key, "mail")]
+    assert after[(key, "chat")] == before[(key, "chat")]
 
 
 @pytest.mark.asyncio
@@ -121,7 +126,7 @@ async def test_scope_left_by_an_exception_publishes_nothing(redis, hub, publishe
                 raise RuntimeError("rolled back")
         await asyncio.sleep(0.3)
         assert subscription.take().kinds == set()
-    assert (await read_wake_marks(redis, [key]))[key] is None
+    assert (await read_wake_marks(redis, [key]))[(key, "mail")] is None
 
 
 @pytest.mark.asyncio
@@ -132,7 +137,7 @@ async def test_record_outside_a_scope_is_logged_and_dropped(redis, caplog):
     assert [r.getMessage() for r in caplog.records] == [
         f"Agent wake {key} (mail) recorded outside a wake scope; it is not published"
     ]
-    assert (await read_wake_marks(redis, [key]))[key] is None
+    assert (await read_wake_marks(redis, [key]))[(key, "mail")] is None
 
 
 @pytest.mark.asyncio
@@ -142,7 +147,7 @@ async def test_scope_without_publisher_drops_wakes_quietly(redis, caplog):
         with agent_wake_scope(None):
             record_agent_wake(key, "mail")
     assert caplog.records == []
-    assert (await read_wake_marks(redis, [key]))[key] is None
+    assert (await read_wake_marks(redis, [key]))[(key, "mail")] is None
 
 
 @pytest.mark.asyncio
@@ -162,11 +167,11 @@ async def test_failed_publication_is_retried_until_redis_returns(redis, hub, pro
                     await asyncio.sleep(0.1)
             assert _publication_failed(caplog)
             assert subscription.take().kinds == set()
-            assert (await read_wake_marks(redis, [key]))[key] is None
+            assert (await read_wake_marks(redis, [key]))[(key, "mail")] is None
             proxy.restore()
             batch = await _next_batch(subscription, timeout=8.0)
         assert batch.kinds == {"mail"}
-        assert (await read_wake_marks(redis, [key]))[key] is not None
+        assert (await read_wake_marks(redis, [key]))[(key, "mail")] is not None
     finally:
         await publisher.close()
         await faulty.aclose()
@@ -230,8 +235,8 @@ async def test_marks_expire_so_redis_keeps_no_key_per_identity_forever(redis, pu
     with agent_wake_scope(publisher):
         record_agent_wake(key, "mail")
     for _ in range(40):
-        if (await read_wake_marks(redis, [key]))[key] is not None:
+        if (await read_wake_marks(redis, [key]))[(key, "mail")] is not None:
             break
         await asyncio.sleep(0.05)
-    ttl = await redis.ttl(f"agent-mark:{key}")
+    ttl = await redis.ttl(f"agent-mark:mail:{key}")
     assert 86000 < ttl <= 86400

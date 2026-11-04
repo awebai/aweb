@@ -14,7 +14,8 @@ opened by the owner of the outermost transaction. The scope hands them to the
 publisher only when it exits normally, after that transaction committed, so a
 stream is never woken before the row it must read is visible.
 
-The publisher bumps a counter (``agent-mark:{key}``) and publishes on
+The publisher bumps a counter per key and kind (``agent-mark:{kind}:{key}``)
+and publishes on
 ``agent-wake:{key}`` in one pipeline, from its own task, so a Redis fault never
 fails or delays the write. A failed publication is retried with backoff until
 Redis accepts it. Streams compare the counters on their slow reconcile, which
@@ -42,6 +43,11 @@ HUB_PING_INTERVAL_SECONDS = 15.0
 HUB_RECONNECT_MAX_SECONDS = 5.0
 
 WAKE_KINDS = frozenset({"mail", "chat", "control", "app", "room"})
+_KINDS_BY_KEY_TYPE = {
+    "did": ("mail", "chat"),
+    "agent": ("control", "app"),
+    "team-room": ("room",),
+}
 
 
 def did_wake_key(did: str) -> str:
@@ -56,12 +62,17 @@ def team_room_wake_key(team_id: str) -> str:
     return f"team-room:{team_id}"
 
 
+def wake_kinds_for_key(key: str) -> tuple[str, ...]:
+    """The kinds of state a key can wake, in snapshot order."""
+    return _KINDS_BY_KEY_TYPE.get(key.split(":", 1)[0], ())
+
+
 def wake_channel(key: str) -> str:
     return f"agent-wake:{key}"
 
 
-def wake_mark(key: str) -> str:
-    return f"agent-mark:{key}"
+def wake_mark(key: str, kind: str) -> str:
+    return f"agent-mark:{kind}:{key}"
 
 
 def _merge(into: dict[str, set[str]], wakes: Mapping[str, Iterable[str]]) -> None:
@@ -164,21 +175,26 @@ class AgentWakePublisher:
     async def _send(self, wakes: Mapping[str, set[str]]) -> None:
         pipe = self._redis.pipeline(transaction=False)
         for key, kinds in wakes.items():
-            pipe.incr(wake_mark(key))
-            pipe.expire(wake_mark(key), WAKE_MARK_TTL_SECONDS)
+            for kind in kinds:
+                pipe.incr(wake_mark(key, kind))
+                pipe.expire(wake_mark(key, kind), WAKE_MARK_TTL_SECONDS)
             pipe.publish(wake_channel(key), json.dumps({"kinds": sorted(kinds)}))
         await pipe.execute()
 
 
-async def read_wake_marks(redis, keys: Iterable[str]) -> dict[str, str | None]:
-    """Return each key's change counter; a missing counter reads as None."""
-    keys = list(keys)
-    if not keys:
+async def read_wake_marks(redis, keys: Iterable[str]) -> dict[tuple[str, str], str | None]:
+    """Return the change counter of every (key, kind) the keys can wake.
+
+    One MGET. A missing counter reads as None; callers compare by inequality,
+    so an expired or flushed counter can only cause an extra snapshot.
+    """
+    marks = [(key, kind) for key in dict.fromkeys(keys) for kind in wake_kinds_for_key(key)]
+    if not marks:
         return {}
-    values = await redis.mget([wake_mark(key) for key in keys])
+    values = await redis.mget([wake_mark(key, kind) for key, kind in marks])
     return {
-        key: (value.decode() if isinstance(value, bytes) else value)
-        for key, value in zip(keys, values, strict=True)
+        mark: (value.decode() if isinstance(value, bytes) else value)
+        for mark, value in zip(marks, values, strict=True)
     }
 
 
