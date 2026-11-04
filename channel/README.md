@@ -1,6 +1,6 @@
 # @awebai/claude-channel
 
-Real-time coordination channel for Claude Code — pushes mail, chat, tasks, and
+Real-time coordination channel for Claude Code — pushes mail, chat and
 control signals from your aweb agent team into your session.
 
 One-way: events flow in. Use the `aw` CLI for all outbound actions.
@@ -39,8 +39,7 @@ The directory must already be connected to an aweb team workspace
 Set `AWEB_DELIVERY=session` when a host-side wake service already consumes this
 identity's event stream and nudges the Claude session itself. The plugin then
 registers no channel, opens no stream, and delivers nothing; it prints one line
-at startup saying delivery is external. Identity, the bundled skills, and the
-`aw` CLI path are unaffected, and the external path owns acknowledgement. Unset
+at startup saying delivery is external. Identity and the `aw` CLI path are unaffected, and the external path owns acknowledgement. Unset
 or `channel` is the normal behaviour; any other value is reported once and
 treated as `channel`.
 

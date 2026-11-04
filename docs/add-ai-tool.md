@@ -40,6 +40,14 @@ pi install npm:@awebai/pi@latest
 pi
 ```
 
+The extension includes the CLI, with skills installed separately. For a standalone
+Pi agent, add the guidance with `pi install npm:@awebai/claude-skills@latest`, then
+`/reload` or restart Pi. OATS agents use their per-home skills when supplied by
+their composition; they do not need a machine-wide skills install. Messaging
+works without skills using `aw workspace status`, `aw mail inbox`,
+`aw chat pending`, and the team's `aw instructions show`. Task tracking remains
+the team's choice; installing either package does not opt into aweb tasks.
+
 The extension wakes the session when mail or chat arrives.
 
 ## Codex

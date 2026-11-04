@@ -165,7 +165,7 @@ function sleep(ms, signal) {
 }
 { name: "aweb-channel", version: "0.1.0" }'
 SENTINEL='aweb-channel-core-security/did-log-genesis-bound-v2+full-log-v1+pinstore-fail-closed-v1'
-SKILLS='aweb-bootstrap aweb-coordination aweb-identity aweb-messaging aweb-team-membership'
+SKILLS="$(node "$ROOT/scripts/skill-packaging.mjs" list)"
 
 make_profile_fixture() {
   # $1 profile, then flags: --no-sentinel, --drop-skill <name>, --extra-skill <name>
@@ -202,6 +202,7 @@ make_profile_fixture() {
     esac
   done
   rm -rf "$tmp/prof"; mkdir -p "$tmp/prof/dist"
+  local pi_metadata='"pi": {"skills": []},'
   local files='"dist", "README.md"'
   case "$profile" in
     channel)
@@ -224,21 +225,27 @@ make_profile_fixture() {
       ;;
     pi)
       printf '%s\n%s\n' "$markers" "$unsafe_merge" > "$tmp/prof/dist/index.js"
-      files='"dist", "skills", "README.md"'
+      files='"dist", "README.md"'
       ;;
     skills)
       mkdir -p "$tmp/prof/.claude-plugin"
       printf '{"name": "fixture", "version": "1.2.3"}\n' > "$tmp/prof/.claude-plugin/plugin.json"
       files='".claude-plugin", "skills", "README.md"'
+      pi_metadata='"pi": {"skills": ["./skills"]},'
       ;;
   esac
-  if [[ "$profile" == "pi" || "$profile" == "skills" ]]; then
+  if [[ "$profile" == "skills" ]]; then
     local s
     for s in $SKILLS $extra; do
       [[ "$s" == "$drop" ]] && continue
       mkdir -p "$tmp/prof/skills/$s"
       echo "skill" > "$tmp/prof/skills/$s/SKILL.md"
     done
+  fi
+  if [[ "$profile" != "skills" && -n "$extra" ]]; then
+    mkdir -p "$tmp/prof/skills/$extra"
+    echo "skill" > "$tmp/prof/skills/$extra/SKILL.md"
+    files="$files, \"skills\""
   fi
   local main='"main": "./dist/index.js",'
   [[ "$profile" == "skills" ]] && main=''
@@ -247,6 +254,7 @@ make_profile_fixture() {
   "name": "@awebai/profile-fixture",
   "version": "1.2.3",
   $main
+  $pi_metadata
   "files": [$files]
 }
 EOF
@@ -277,15 +285,16 @@ profile_case "channel profile refuses a bundle without the final MCP runtime nam
 profile_case "channel profile refuses missing authenticated trust boundary" channel refuse "encrypted_envelope" --drop-trust-boundary
 profile_case "channel profile refuses trust-field overwrite merge" channel refuse "overwrite" --unsafe-decrypt-merge
 profile_case "pi profile accepts coherent fixture" pi ok ""
-profile_case "pi profile refuses missing skill dir" pi refuse "aweb-identity" --drop-skill aweb-identity
-profile_case "pi profile refuses a sixth skill dir" pi refuse "skill set" --extra-skill extra-skill
+profile_case "pi profile refuses bundled skills" pi refuse "skills" --extra-skill extra-skill
 profile_case "pi profile refuses missing authenticated trust boundary" pi refuse "encrypted_envelope" --drop-trust-boundary
 profile_case "pi profile refuses trust-field overwrite merge" pi refuse "overwrite" --unsafe-decrypt-merge
 profile_case "pi profile refuses missing local stream deadline" pi refuse "local event-stream deadline" --drop-local-deadline
 profile_case "pi profile refuses missing inactivity watchdog" pi refuse "byte-inactivity watchdog" --drop-inactivity-watchdog
 profile_case "pi profile refuses missing settled backoff cleanup" pi refuse "backoff abort-listener cleanup" --drop-backoff-cleanup
-profile_case "skills profile accepts exact five" skills ok ""
-profile_case "skills profile refuses a sixth skill dir" skills refuse "skill set" --extra-skill extra-skill
+profile_case "skills profile accepts shipped set" skills ok ""
+profile_case "skills profile refuses missing tasks skill" skills refuse "skill set" --drop-skill aweb-tasks
+profile_case "channel profile refuses configure skill" channel refuse "skills" --extra-skill configure
+profile_case "skills profile refuses an extra skill dir" skills refuse "skill set" --extra-skill extra-skill
 
 # ── manifest publishability and binding ─────────────────────────────
 mkdir -p "$tmp/mstage"
@@ -449,17 +458,12 @@ NODE
 ok "committed channel/skills plugin versions equal package versions"
 
 python3 - "$ROOT" <<'PYSKILLS'
+import json
 import os
 import sys
 
 root = sys.argv[1]
-default = {
-    "aweb-bootstrap",
-    "aweb-coordination",
-    "aweb-identity",
-    "aweb-messaging",
-    "aweb-team-membership",
-}
+default = set(json.load(open(os.path.join(root, "skills", "shipped.json"))))
 # No internal-only skills remain; every canonical directory ships in the default
 # set. The gate still requires each one to be classified explicitly, so a new
 # directory cannot silently ship nowhere.
@@ -481,7 +485,9 @@ PYSKILLS
 ok "every canonical skill is explicitly default-shipped or internal"
 
 ziproot="$tmp/zip-repo"
-mkdir -p "$ziproot/packages/claude-ai-skills" "$ziproot/skills"
+mkdir -p "$ziproot/packages/claude-ai-skills" "$ziproot/skills" "$ziproot/scripts"
+cp "$ROOT/skills/shipped.json" "$ziproot/skills/"
+cp "$ROOT/scripts/skill-packaging.mjs" "$ziproot/scripts/"
 cp "$ROOT/packages/claude-ai-skills/build-zips.sh" "$ziproot/packages/claude-ai-skills/"
 for skill in $SKILLS; do
   mkdir -p "$ziproot/skills/$skill/references"
@@ -490,9 +496,9 @@ for skill in $SKILLS; do
 done
 (cd "$ziproot/packages/claude-ai-skills" && ./build-zips.sh >/dev/null)
 python3 - "$ziproot" <<'PYZIP'
-import os, sys, zipfile
+import json, os, sys, zipfile
 root = sys.argv[1]
-expected = {"aweb-bootstrap", "aweb-coordination", "aweb-identity", "aweb-messaging", "aweb-team-membership"}
+expected = set(json.load(open(os.path.join(root, "skills", "shipped.json"))))
 dist = os.path.join(root, "packages", "claude-ai-skills", "dist")
 names = {name[:-4] for name in os.listdir(dist) if name.endswith(".zip")}
 if names != expected:
@@ -509,7 +515,7 @@ for skill in expected:
     if actual != wanted:
         raise SystemExit(f"ZIP {skill} bytes differ from canonical source")
 PYZIP
-ok "exact five ZIP names and bytes equal the five default skill sources"
+ok "exact ZIP names and bytes equal the shipped skill sources"
 rm -rf "$ziproot/skills/aweb-identity"
 if (cd "$ziproot/packages/claude-ai-skills" && ./build-zips.sh >/dev/null 2>&1); then
   fail "ZIP build accepted a missing canonical skill source"
@@ -519,5 +525,8 @@ mkdir -p "$ziproot/skills/aweb-identity/references"
 printf '%s\n' aweb-identity > "$ziproot/skills/aweb-identity/SKILL.md"
 printf '%s\n' aweb-identity-ref > "$ziproot/skills/aweb-identity/references/ref.md"
 (cd "$ziproot/packages/claude-ai-skills" && ./build-zips.sh >/dev/null)
+
+node --test "$ROOT/scripts/test-skill-packaging.mjs"
+ok "shipping-list consumers and exact ZIP name mutations"
 
 printf 'SELFTEST OK: %d assertions\n' "$PASS"

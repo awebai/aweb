@@ -677,9 +677,9 @@ _candidate-artifact-pi:
 
 _candidate-artifact-skills: sync-doc-copies
 	@mkdir -p /tmp/aweb-candidate-gate
-	cd packages/claude-skills && npm pack --ignore-scripts --pack-destination /tmp/aweb-candidate-gate
+	cd packages/claude-skills && npm run sync-skills && npm pack --ignore-scripts --pack-destination /tmp/aweb-candidate-gate
 	cd packages/claude-ai-skills && ./build-zips.sh
-	@test "$$(find packages/claude-ai-skills/dist -name 'aweb-*.zip' -type f | wc -l | tr -d ' ')" = 5
+	node scripts/skill-packaging.mjs check-zips packages/claude-ai-skills/dist
 
 _candidate-artifact-a2a-image:
 	@mkdir -p /tmp/aweb-candidate-gate

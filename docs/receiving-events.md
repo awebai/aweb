@@ -123,8 +123,7 @@ With `AWEB_DELIVERY=session`:
 
 - the Pi extension and the Claude Code channel plugin open no SSE stream and
   deliver no notifications or awakenings;
-- everything else they provide is unchanged — identity resolution, the installed
-  aweb skills, the welcome and status text, and the `aw` CLI path. Each prints
+- everything else they provide is unchanged — identity resolution, the welcome and status text, and the `aw` CLI path. Each prints
   one line at startup saying delivery is external, and the Pi status line reads
   `aweb delivery external`;
 - acknowledgement moves with delivery. For `aw wake`, channel-core marks mail
@@ -378,6 +377,14 @@ workspace:
 pi install npm:@awebai/pi@latest
 pi --approve
 ```
+
+The extension includes the CLI, with skills installed separately. For a standalone
+Pi agent, add the guidance with `pi install npm:@awebai/claude-skills@latest`, then
+`/reload` or restart Pi. OATS agents use their per-home skills when supplied by
+their composition; they do not need a machine-wide skills install. Messaging
+works without skills using `aw workspace status`, `aw mail inbox`,
+`aw chat pending`, and the team's `aw instructions show`. Task tracking remains
+the team's choice; installing either package does not opt into aweb tasks.
 
 Mail and chat wake the session, with the sender's verification shown.
 

@@ -1,7 +1,7 @@
 {
   "name": "@awebai/claude-skills",
   "version": "0.2.16",
-  "description": "Content-only Claude Code plugin shipping the canonical aweb agent-coordination skills: aweb-coordination, aweb-messaging, aweb-team-membership, aweb-bootstrap, aweb-identity.",
+  "description": "Content-only aweb skills for Claude Code and Pi: coordination, optional task tracking, messaging, membership, bootstrap, and identity.",
   "license": "MIT",
   "homepage": "https://aweb.ai",
   "repository": {
@@ -14,7 +14,8 @@
     "aweb",
     "agent-coordination",
     "messaging",
-    "skills"
+    "skills",
+    "pi-package"
   ],
   "files": [
     ".claude-plugin",
@@ -23,9 +24,14 @@
     "package.json"
   ],
   "scripts": {
-    "sync-skills": "rm -rf skills && mkdir -p skills && cp -R ../../skills/aweb-coordination ../../skills/aweb-messaging ../../skills/aweb-team-membership ../../skills/aweb-bootstrap ../../skills/aweb-identity skills/",
+    "sync-skills": "node ../../scripts/skill-packaging.mjs sync skills",
     "sync-plugin-version": "node -e \"const p=JSON.parse(require('fs').readFileSync('.claude-plugin/plugin.json','utf8')); p.version=require('./package.json').version; require('fs').writeFileSync('.claude-plugin/plugin.json',JSON.stringify(p,null,2)+'\\n')\"",
     "prepack": "npm run sync-skills && npm run sync-plugin-version",
     "prepublishOnly": "npm run sync-skills && npm run sync-plugin-version"
+  },
+  "pi": {
+    "skills": [
+      "./skills"
+    ]
   }
 }

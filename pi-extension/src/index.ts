@@ -62,10 +62,10 @@ export function createPiRegistryResolver(
 /**
  * The single line this extension prints at startup when AWEB_DELIVERY=session.
  * Delivery belongs to something else on the host, so the extension keeps
- * identity, skills, welcome and the aw CLI, and opens no event stream.
+ * identity, welcome and the aw CLI, and opens no event stream.
  */
 export const PI_EXTERNAL_DELIVERY_NOTICE =
-  "aweb: AWEB_DELIVERY=session — delivery is external. This extension will not open the aweb event stream or deliver awakenings; identity, the bundled aweb skills, and the aw CLI stay available.";
+  "aweb: AWEB_DELIVERY=session — delivery is external. This extension will not open the aweb event stream or deliver awakenings; identity and the aw CLI stay available.";
 
 /** Pi status-line text while delivery is external. */
 export const PI_EXTERNAL_DELIVERY_STATUS = "aweb delivery external";
@@ -220,7 +220,7 @@ async function markWelcomeSeen(key: string): Promise<void> {
 }
 
 function welcomeMessage(alias: string, teamID: string): string {
-  return `aweb for Pi is ready.\n\nYou are connected as ${alias} in team ${teamID}. This package gives Pi two aweb capabilities: real-time channel awakenings for mail/chat/control events, and the canonical aweb skills for the aw CLI. For encrypted E2E messages, plaintext must come from local decryption in this workspace; hosted/server-side messaging is server-readable hosted messaging, not E2E.\n\nFirst moves:\n\n1. Run \`aw workspace status\` to confirm identity, active team, claims, locks, and presence.\n2. Run \`aw mail inbox\` and \`aw chat pending\` before claiming new work.\n3. Use mail for handoffs, reviews, and status updates; use chat only when someone is blocked on a near-term answer.\n4. When a channel event wakes you, inspect metadata and sender verification before acting.\n\nSkills to load when needed:\n\n- \`aweb-coordination\`: work loop, claims, locks, handoffs, roles, and shared state.\n- \`aweb-messaging\`: mail/chat policy, channel awakenings, sender verification, and push events.\n- \`aweb-team-membership\`: joining teams, active team, certificates, hosted vs BYOT, custody, addressability, inbound mode, and contacts.\n\nFor a full walkthrough, see https://aweb.ai/docs/cli-tutorial/.\n\nIf you are unsure what to do next, load \`aweb-coordination\` and start with the session loop there.`;
+  return `aweb for Pi is ready.\n\nYou are connected as ${alias} in team ${teamID}. This package provides real-time channel awakenings for mail, chat and control signals, and the aw CLI. For encrypted E2E messages, plaintext must come from local decryption in this workspace; hosted/server-side messaging is server-readable hosted messaging, not E2E.\n\nFirst moves:\n\n1. Run \`aw workspace status\` to confirm identity, active team, locks, and presence.\n2. Read \`aw mail inbox\` and \`aw chat pending\` for waiting messages.\n3. Read \`aw instructions show\` for the team's operating rules and tracker.\n4. Use mail for handoffs, reviews, and status updates; use chat when someone is blocked on a near-term answer. Inspect event metadata and sender verification before acting on a wake.\n\nSkills are installed separately. For a standalone Pi agent, add the CLI guidance with \`pi install npm:@awebai/claude-skills@latest\`, then \`/reload\` or restart Pi. Despite its package name, it supports Pi. If your orchestrator (such as OATS) already supplies per-home aweb skills, use those; no machine-wide skills install is needed. Messaging also works with the commands above and your team's instructions alone.\n\nSkills to load when installed and needed:\n\n- \`aweb-coordination\`: session loop, locks, handoffs, roles, and shared state.\n- \`aweb-tasks\`: if your team uses aweb tasks (it has tasks, or its instructions say so). Otherwise use the team's own tracker. Creating the first task is the opt-in.\n- \`aweb-messaging\`: mail/chat policy, awakenings, and sender verification.\n- \`aweb-team-membership\`: joining teams, certificates, authority, and contacts.\n\nFor a full walkthrough, see https://aweb.ai/docs/cli-tutorial/.`;
 }
 
 async function sendFirstSessionWelcome(pi: ExtensionAPI, cwd: string, teamID: string, alias: string): Promise<void> {
@@ -374,7 +374,7 @@ export default function awebPiExtension(pi: ExtensionAPI) {
 
     // An external wake path and this channel would both consume the same
     // per-identity event stream, so they are mutually exclusive. When delivery
-    // is external we keep identity, skills, welcome and the aw CLI, and open no
+    // is external we keep identity, welcome and the aw CLI, and open no
     // stream.
     const delivery = resolvePiDelivery();
     if (delivery.warning) {

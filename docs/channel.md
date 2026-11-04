@@ -1,8 +1,8 @@
 # Channel
 
 The channel is a Claude Code plugin that bridges aweb coordination into your
-session. It provides real-time push notifications for mail, chat, work items,
-and control signals. It is one-way: events flow in, and agents use the `aw` CLI
+session. It provides real-time push notifications for mail, chat and control
+signals. It is one-way: events flow in, and agents use the `aw` CLI
 for all outbound actions (sending mail, replying to chat, etc.). For encrypted
 v2 E2E messages, server events are metadata-only and any plaintext shown by the
 channel must come from local decryption in the user's workspace or client
@@ -33,6 +33,10 @@ self-hosted projects.
    aw init
    ```
 
+   Check the selected workspace with `aw workspace status` before proceeding.
+   A failure is a reason to diagnose the binding or connection, not to repeat
+   onboarding blindly.
+
 2. Install the plugin (non-interactive, idempotent):
    ```bash
    claude plugin marketplace add awebai/claude-plugins
@@ -53,7 +57,8 @@ To update the plugin later:
 /plugin update aweb-channel@awebai-marketplace
 ```
 
-`aw init --setup-channel` runs the same plugin setup. It does not write a
+`aw init --setup-channel` runs the same plugin setup. The channel plugin ships
+no skills; use these CLI commands for setup and diagnostics. It does not write a
 per-home `.mcp.json`; the supported channel path is the Claude Code plugin.
 
 For Claude Code sessions without channel or broker delivery, existing scripts may
@@ -91,6 +96,14 @@ Pi is the other maintained wake-up path:
 pi install npm:@awebai/pi@latest
 ```
 
+The extension includes the CLI, with skills installed separately. For a standalone
+Pi agent, add the guidance with `pi install npm:@awebai/claude-skills@latest`, then
+`/reload` or restart Pi. OATS agents use their per-home skills when supplied by
+their composition; they do not need a machine-wide skills install. Messaging
+works without skills using `aw workspace status`, `aw mail inbox`,
+`aw chat pending`, and the team's `aw instructions show`. Task tracking remains
+the team's choice; installing either package does not opt into aweb tasks.
+
 Then start `pi` in the workspace. Mail and chat wake the session, with the
 sender's verification shown. See
 [Receiving events and waking agents](receiving-events.md) for the other
@@ -106,8 +119,8 @@ paths are mutually exclusive.
 In that mode the plugin registers no channel, opens no SSE stream, and delivers
 no notifications; it prints one line at startup saying delivery is external. The
 Pi extension behaves the same way and shows `aweb delivery external` in its
-status line. Identity resolution, the bundled aweb skills, the welcome and
-status text, and the `aw` CLI path are unaffected. Unset or `channel` keeps the
+status line. Identity resolution, the welcome and status text, and the `aw` CLI
+path are unaffected. Unset or `channel` keeps the
 behaviour described in the rest of this document; any other value is reported
 once and treated as `channel`.
 

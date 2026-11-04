@@ -63,10 +63,10 @@ export function handleClaudeStreamState(
  * channel and opens no event stream.
  */
 export const CHANNEL_EXTERNAL_DELIVERY_NOTICE =
-  "[aw-channel] AWEB_DELIVERY=session — delivery is external. This plugin will not open the aweb event stream or deliver channel notifications; identity, the bundled aweb skills, and the aw CLI stay available.";
+  "[aw-channel] AWEB_DELIVERY=session — delivery is external. This plugin will not open the aweb event stream or deliver channel notifications; identity and the aw CLI stay available.";
 
 const CHANNEL_EXTERNAL_DELIVERY_INSTRUCTIONS =
-  "aweb delivery is external for this session (AWEB_DELIVERY=session). This plugin delivers nothing: mail, chat, control signals, work and claim updates reach you through the host's own wake path. Use the aw CLI to read and respond: aw mail inbox, aw chat pending, aw workspace status.";
+  "aweb delivery is external for this session (AWEB_DELIVERY=session). This plugin delivers nothing: mail, chat and control signals reach you through the host's own wake path. Use the aw CLI to read and respond: aw mail inbox, aw chat pending, aw workspace status.";
 
 export interface ChannelDeliveryDecision {
   mode: DeliveryMode;
@@ -160,8 +160,7 @@ async function main() {
   // per-identity event stream, including control signals, so they are mutually
   // exclusive. When delivery is external we stay a healthy but silent MCP
   // server: no claude/channel capability is registered, no stream is opened,
-  // and no notification is ever sent. Identity, the bundled aweb skills and the
-  // aw CLI are untouched.
+  // and no notification is ever sent. Identity and the aw CLI are untouched.
   const delivery = resolveChannelDelivery();
   if (delivery.warning) console.error(delivery.warning);
   if (delivery.mode === "session") {
