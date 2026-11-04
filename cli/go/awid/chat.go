@@ -505,16 +505,37 @@ func (c *Client) addressedSessionParticipant(ctx context.Context, sessionID stri
 		}
 		aliases, _, addresses := classifyE2EEChatTargets(otherAddresses[0])
 		if len(aliases) == 1 {
-			// Use the same verified roster lookup as an alias-addressed send.
-			// A missing or invalid roster key must not fall back to history.
-			recipients, err := c.e2eeChatRecipients(ctx, aliases, nil, nil)
+			// Use the same verified roster lookup as alias mail. A rejected
+			// publication is different from a peer that has not published.
+			agent, err := c.e2eeRecipientAgent(ctx, "", aliases[0])
 			if err != nil {
 				return E2EERecipientKey{}, false, err
 			}
-			if strings.TrimSpace(recipients[0].DID) != strings.TrimSpace(otherDIDs[0]) {
+			if strings.TrimSpace(agent.DIDKey) != strings.TrimSpace(otherDIDs[0]) {
 				return E2EERecipientKey{}, false, errNoPublishedEncryptionKey
 			}
-			return recipients[0], true, nil
+			if agent.EncryptionKey == nil && !agent.encryptionKeyRejected && strings.TrimSpace(agent.DIDAW) == "" {
+				// A local peer may supply its key in a verified envelope instead.
+				// Only this conversation and its exact participant authorize it.
+				recipients, _, err := c.learnedE2EEChatRecipients(ctx, sessionID)
+				if err != nil {
+					return E2EERecipientKey{}, false, err
+				}
+				for _, recipient := range recipients {
+					if strings.TrimSpace(recipient.DID) == strings.TrimSpace(otherDIDs[0]) {
+						return recipient, true, nil
+					}
+				}
+				return E2EERecipientKey{}, false, errNoPublishedEncryptionKey
+			}
+			recipient, err := c.e2eeRecipientFromAgent(ctx, agent)
+			if err != nil {
+				return E2EERecipientKey{}, false, err
+			}
+			if strings.TrimSpace(recipient.DID) != strings.TrimSpace(otherDIDs[0]) {
+				return E2EERecipientKey{}, false, errNoPublishedEncryptionKey
+			}
+			return recipient, true, nil
 		}
 		if len(addresses) != 1 {
 			return E2EERecipientKey{}, false, nil
