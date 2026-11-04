@@ -117,3 +117,40 @@ async def test_a_page_of_text_only_encrypted_mail_reads_attachments_once(privacy
     assert len(messages) == page
     assert all(m["attachment_refs"] == [] for m in messages)
     assert len([q for q in statements if "message_attachments" in q]) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_chat_history_page_reads_its_attachment_references_once(privacy_app, monkeypatch):
+    from uuid import UUID, uuid4
+
+    env = privacy_app
+    opened = await _request(env, "alice", "POST", "/v1/chat/sessions", {
+        "to_dids": [env.actors["bob"].did], "message": "first",
+    })
+    assert opened.status_code == 200, opened.text
+    session_id = UUID(opened.json()["session_id"])
+    opening = await env.db.fetch_value(
+        "SELECT message_id FROM {{tables.chat_messages}} WHERE session_id = $1", session_id,
+    )
+    later = []
+    for body in ("second", "third"):
+        later.append(await env.db.fetch_value(
+            "INSERT INTO {{tables.chat_messages}} (session_id, from_agent_id, from_did, from_alias, body) "
+            "VALUES ($1, $2, $3, 'alice', $4) RETURNING message_id",
+            session_id, env.actors["alice"].id, env.actors["alice"].did, body,
+        ))
+    with_two, with_one = later
+    second = await _attach(env, with_two, session_id, 1, kind="chat")
+    first = await _attach(env, with_two, session_id, 0, kind="chat")
+    only = await _attach(env, with_one, session_id, 0, kind="chat")
+    await _attach(env, with_one, session_id, 1, kind="mail")
+    await _attach(env, uuid4(), session_id, 0, kind="chat")
+    statements = _observe_statements(monkeypatch)
+    history = await _request(env, "bob", "GET", f"/v1/chat/sessions/{session_id}/messages")
+
+    assert history.status_code == 200, history.text
+    refs = {m["message_id"]: [ref["id"] for ref in m["attachment_refs"]] for m in history.json()["messages"]}
+    assert refs[str(with_two)] == [first, second]
+    assert refs[str(with_one)] == [only]
+    assert refs[str(opening)] == []
+    assert len([q for q in statements if "message_attachments" in q]) == 1
