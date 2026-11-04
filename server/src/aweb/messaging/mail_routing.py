@@ -88,9 +88,7 @@ async def recipient_for_conversation_participant(db, participant: dict) -> dict:
     return participant_recipient({**participant, "agent_id": None})
 
 
-async def remote_recipient_from_participant(registry_client, participant: dict, *, request=None) -> dict:
-    from aweb.federation.team_routes import refresh_recipient_team_route
-    participant = await refresh_recipient_team_route(request, participant)
+async def remote_recipient_from_participant(registry_client, participant: dict) -> dict:
     address = str(participant.get("address") or "").strip()
     delivery_origin = participant_delivery_origin(participant)
     participant_did = str(participant.get("did") or "").strip()
@@ -98,7 +96,6 @@ async def remote_recipient_from_participant(registry_client, participant: dict, 
     if not did_aw:
         if participant_did.startswith("did:key:") and delivery_origin:
             return {
-                **{key: participant.get(key) for key in ("route_team_id", "route_certificate_id", "route_certificate", "_route_previous_origin", "_route_verified_origin")},
                 "agent_id": None,
                 "team_id": None,
                 "alias": participant.get("alias") or participant_did,

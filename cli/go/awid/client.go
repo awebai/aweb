@@ -477,11 +477,6 @@ func (c *Client) signedPayloadFrom(identityTarget, preferAlias bool) string {
 	if c.signingKey == nil {
 		return from
 	}
-	// Cross-team local messages bind the full canonical team in their signed
-	// display label. Ordinary team aliases keep their released local shape.
-	if c.stableID == "" && c.teamCertHeader != "" && !preferAlias && c.teamID != "" && c.certAlias != "" {
-		return c.teamID + "/" + c.certAlias
-	}
 	if identityTarget {
 		if from == "" {
 			return strings.TrimSpace(c.did)

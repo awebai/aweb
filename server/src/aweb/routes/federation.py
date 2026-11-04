@@ -13,8 +13,6 @@ from awid.log import canonical_server_origin
 from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
 from aweb.deps import get_db
 from aweb.federation.authority import AuthorityClaim
-from aweb.federation.team_routes import authorize_local_sender
-from datetime import datetime, timezone
 from aweb.federation.delivery import (
     deliver_federated_phase_b,
     federation_envelope_hash,
@@ -26,7 +24,7 @@ from aweb.federation.envelope import (
     FederationEnvelopeError,
     verify_federation_envelope,
 )
-from aweb.federation.errors import authority_error_body, TeamRouteError
+from aweb.federation.errors import authority_error_body
 from aweb.messaging.messages import resolve_agent_by_did
 from aweb.identity_binding import verify_identity_binding
 from aweb.id_chain_auth import authenticate_id_chain
@@ -109,7 +107,7 @@ async def _stored_route_participants(
         raise FederationAuthorityError("federation_conversation_invalid")
     rows = await manager.fetch_all(
         """
-        SELECT did, address, delivery_origin, current_did_key, transport_hint, route_team_id, route_certificate_id, route_certificate
+        SELECT did, address, delivery_origin, current_did_key, transport_hint
         FROM {{tables.conversation_participants}}
         WHERE conversation_id = $1
           AND did = ANY($2::text[])
@@ -118,8 +116,6 @@ async def _stored_route_participants(
         [envelope.sender_did_aw, envelope.target_did_aw],
     )
     by_did = {row["did"]: dict(row) for row in rows}
-    if _is_local_did_key(envelope.target_did_aw) and envelope.target_did_aw not in by_did:
-        raise TeamRouteError("local_recipient_route_missing")
     if set(by_did) != {envelope.sender_did_aw, envelope.target_did_aw}:
         raise FederationAuthorityError("federation_conversation_invalid")
     _validate_stored_current_keys(envelope, by_did)
@@ -132,7 +128,7 @@ async def _stored_route_participants(
             raise FederationAuthorityError("federation_conversation_invalid")
         chat_rows = await manager.fetch_all(
             """
-            SELECT did, address, delivery_origin, current_did_key, route_team_id, route_certificate_id, route_certificate
+            SELECT did, address, delivery_origin, current_did_key
             FROM {{tables.chat_participants}}
             WHERE session_id = $1 AND did = ANY($2::text[])
             """,
@@ -140,8 +136,6 @@ async def _stored_route_participants(
             [envelope.sender_did_aw, envelope.target_did_aw],
         )
         chat_by_did = {row["did"]: dict(row) for row in chat_rows}
-        if _is_local_did_key(envelope.target_did_aw) and envelope.target_did_aw not in chat_by_did:
-            raise TeamRouteError("local_recipient_route_missing")
         if set(chat_by_did) != {envelope.sender_did_aw, envelope.target_did_aw}:
             raise FederationAuthorityError("federation_conversation_invalid")
         _validate_stored_current_keys(envelope, chat_by_did)
@@ -322,10 +316,6 @@ async def receive_federated_message(
             envelope=envelope,
             envelope_hash=ingress_envelope_hash,
         )
-        if established_replay is not None and _is_local_did_key(envelope.sender_did_aw):
-            # Signature, target binding and skew already passed. These exact
-            # bytes were admitted; changed certificates conflict in the hash.
-            return established_replay["result"]
         if established_replay is not None:
             metadata = established_replay["metadata"]
             envelope = envelope.model_copy(
@@ -360,10 +350,7 @@ async def receive_federated_message(
                 target_participant.get("address") or ""
             ).strip()
             if not stored_target_address:
-                if _is_local_did_key(envelope.target_did_aw):
-                    stored_target_address = envelope.target_did_aw
-                else:
-                    raise FederationAuthorityError("recipient_route_missing")
+                raise FederationAuthorityError("recipient_route_missing")
             if envelope.target_address not in {
                 stored_target_address,
                 envelope.target_did_aw,
@@ -373,7 +360,6 @@ async def receive_federated_message(
                 update={"target_address": stored_target_address}
             )
         authority_token = None
-        team_route = None
         if envelope.sender_did_aw.startswith("did:aw:"):
             sender_address = envelope.sender_address or str(
                 (sender_participant or {}).get("address") or ""
@@ -413,14 +399,9 @@ async def receive_federated_message(
         else:
             if envelope.sender_current_did_key != envelope.sender_did_aw:
                 raise FederationAuthorityError("local_sender_route_mismatch")
-            if not stored_route or (sender_participant or {}).get("route_team_id"):
-                team_route = await authorize_local_sender(
-                    request, envelope, stored_team_id=(sender_participant or {}).get("route_team_id"),
-                )
-                envelope = envelope.model_copy(update={
-                    "sender_address": None, "sender_delivery_origin": team_route.delivery_origin,
-                })
-            elif established_replay is None:
+            if established_replay is None:
+                if not stored_route or sender_participant is None:
+                    raise FederationAuthorityError("local_sender_route_mismatch")
                 for actual, stored in (
                     (envelope.sender_address, sender_participant.get("address")),
                     (
@@ -472,9 +453,6 @@ async def receive_federated_message(
             )
             return result
 
-        if _is_local_did_key(envelope.target_did_aw) and not stored_route:
-            raise TeamRouteError("local_recipient_route_missing")
-
         await _resolve_target_identity(
             registry_client,
             envelope,
@@ -486,8 +464,6 @@ async def receive_federated_message(
                 db, envelope.target_current_did_key
             )
         if recipient is None:
-            if _is_local_did_key(envelope.target_did_aw):
-                raise TeamRouteError("local_recipient_route_missing")
             raise FederationAuthorityError("recipient_identity_not_found")
         if (
             str(recipient.get("did_key") or "").strip()
@@ -495,24 +471,14 @@ async def receive_federated_message(
             != envelope.target_current_did_key
         ):
             raise FederationAuthorityError("recipient_current_key_mismatch")
-        async def require_current_team_route():
-            nonlocal team_route
-            if team_route is not None and team_route.expires_at <= datetime.now(timezone.utc):
-                refreshed = await authorize_local_sender(
-                    request, envelope, stored_team_id=team_route.team_id, fresh=True,
-                )
-                if refreshed.delivery_origin != team_route.delivery_origin:
-                    raise FederationAuthorityError("local_sender_route_mismatch")
-                team_route = refreshed
-
+        if _is_local_did_key(envelope.target_did_aw) and not stored_route:
+            raise FederationAuthorityError("local_recipient_route_missing")
         result = await deliver_federated_phase_b(
             db,
             envelope=envelope,
             signature=payload.signature,
             id_chain=getattr(request.state, "id_chain", None),
             recipient=recipient,
-            team_route=team_route,
-            before_commit=require_current_team_route,
             authority_token=authority_token,
             stored_route_continuation=stored_route,
             stored_route_snapshot=stored_route_snapshot,
@@ -530,7 +496,4 @@ async def receive_federated_message(
             )
         return result
     except FederationAuthorityError as exc:
-        if (payload.envelope.sender_did_aw.startswith("did:key:")
-                and exc.reason == "recipient_policy_rejected") or exc.reason == "local_recipient_route_missing":
-            exc = TeamRouteError(exc.reason)
         return _stable_error_response(request, exc)

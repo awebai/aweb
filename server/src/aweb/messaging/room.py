@@ -146,7 +146,9 @@ async def present_room(db, request, output):
     by_id = {str(row["message_id"]): row for row in rows}
     for item in items:
         row = by_id[item["message_id"]]
-        item["sender_membership"] = memberships[str(row["message_id"])].model_dump()
+        item["sender_membership"] = memberships[
+            (row["team_id"], str(row["from_agent_id"] or ""))
+        ].model_dump()
         item["from_address"] = item["from_alias"] if "/" in item["from_alias"] else ""
         try:
             signed = _SignedPost.model_validate_json(item["signed_payload"])

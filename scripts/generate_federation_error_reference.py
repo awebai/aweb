@@ -18,15 +18,9 @@ if str(AWID_SOURCE) not in sys.path:
 from awid.federation_errors import FederationErrorSpec, federation_error_specs
 
 DEFAULT_VECTOR = ROOT / "docs/vectors/federation-authority-state-v1.json"
-TEAM_ROUTE_VECTOR = ROOT / "docs/vectors/team-vouched-local-routes-v1.json"
 DEFAULT_OUTPUT = ROOT / "docs/federation-error-reference.md"
 
 SUPPORT_MEANINGS = {
-    "local_sender_certificate_required": "A cross-server local sender lacks its certificate or signed full-team binding.",
-    "local_sender_certificate_invalid": "The local certificate is malformed, has an invalid signature, or disagrees with the signed key, scope, team or alias.",
-    "local_sender_certificate_revoked": "The local sender certificate or team is revoked or absent.",
-    "local_sender_team_key_stale": "The local sender certificate was signed by a superseded team key.",
-    "local_sender_team_server_missing": "The selected team has no valid current team-server record naming the sending service.",
     "federation_envelope_invalid": "Envelope shape, version, content mode, UUID, or required behavior field is invalid.",
     "federation_signature_invalid": "Signature encoding or plaintext/encrypted protected-envelope verification failed.",
     "federation_timestamp_invalid": "Signed timestamp is malformed, imprecise, expired, or too far in the future.",
@@ -101,14 +95,7 @@ def _validate_contract(
     if retry_after_reasons != ["federation_rate_limited"]:
         raise ReferenceContractError("Retry-After reason contract changed")
 
-    # The original authority vectors are immutable. actf extends the vocabulary
-    # in a separately reviewed vector instead of re-freezing that contract.
-    extension = json.loads(TEAM_ROUTE_VECTOR.read_text(encoding="utf-8"))
-    if extension.get("schema") != "aweb.team-vouched-local-routes.v1" or extension.get("contract") != "aweb-actf":
-        raise ReferenceContractError("unsupported team-route extension vector")
     errors = contract.get("stable_errors")
-    if isinstance(errors, list):
-        errors = [*errors, *extension["stable_errors"]]
     if not isinstance(errors, list) or not errors:
         raise ReferenceContractError("stable error vocabulary is empty")
     reasons: set[str] = set()
@@ -190,11 +177,10 @@ def render_reference(
         "[`awid/src/awid/federation_errors.py`](../awid/src/awid/federation_errors.py),",
         "the shipped machine-readable authority. The response shape and safe diagnostic fields are",
         "cross-checked against the selected-policy conformance vector in",
-        "[`docs/vectors/federation-authority-state-v1.json`](vectors/federation-authority-state-v1.json)",
-        "and the additive [team-route vector](vectors/team-vouched-local-routes-v1.json).",
+        "[`docs/vectors/federation-authority-state-v1.json`](vectors/federation-authority-state-v1.json).",
         "",
         "Federation failures return a JSON object with `detail`, `reason`, `retryable`, and `correlation_id`.",
-        "`detail` may include a human-readable recovery step. Clients branch on `reason` and",
+        "`detail` equals the stable `reason` string. Clients may branch on `reason` and",
         "may retry only when `retryable` is true. `Retry-After` is required only for",
         "`federation_rate_limited`, which emits `Retry-After: 1`; other retryable failures require",
         "caller-chosen bounded backoff.",

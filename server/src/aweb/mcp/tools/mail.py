@@ -35,12 +35,11 @@ from aweb.mcp.signing import (
 )
 from aweb.e2ee_messages import encrypted_message_storage_metadata
 from aweb.mcp.tools.federation import (
-    mcp_authority_refusal,
     mcp_federation_request,
     mcp_messaging_auth,
     registry_delivery_origin,
 )
-from aweb.messaging.sender_address import sender_address as _sender_address, signed_sender_label
+from aweb.messaging.sender_address import sender_address as _sender_address
 from aweb.messaging.alias_targets import (
     AmbiguousLocalAddressError,
     get_agent_by_namespace_alias,
@@ -306,7 +305,7 @@ async def send_mail(
             if participant_is_remote(recipient_participant):
                 remote_recipient = await remote_recipient_from_participant(
                     registry_client,
-                    recipient_participant, request=auth.request,
+                    recipient_participant,
                 )
                 local = await local_recipient_for_own_route(
                     db_infra, remote_recipient, request=auth.request,
@@ -316,8 +315,8 @@ async def send_mail(
                     remote_recipient["did_key"] = local["did_key"]
         except HTTPException as exc:
             return json.dumps({"error": exc.detail})
-        except FederationAuthorityError as exc:
-            return mcp_authority_refusal(exc)
+        except RecipientNotResidentError as exc:
+            return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
         except (ValidationError, NotFoundError, ForbiddenError) as exc:
             return json.dumps({"error": exc.detail})
         except ServiceError as exc:
@@ -327,7 +326,7 @@ async def send_mail(
         signed_to_did = ""
         signed_to_stable_id = ""
         if remote_recipient is not None:
-            signed_to = (remote_recipient.get("address") or remote_recipient.get("did_key") or "").strip()
+            signed_to = (remote_recipient.get("address") or "").strip()
             signed_to_did = (remote_recipient.get("did_key") or "").strip()
             signed_to_stable_id = (remote_recipient.get("did_aw") or "").strip()
         signed_fields = {
@@ -335,8 +334,8 @@ async def send_mail(
             "conversation_id": conversation_ref,
             "from": (
                 sender_address
-                if auth.did_aw and remote_recipient is not None and sender_address
-                else signed_sender_label(auth)
+                if remote_recipient is not None and sender_address
+                else (auth.alias or auth.address or auth.did_aw or auth.did_key or "").strip()
             ),
             "from_did": (auth.did_key or "").strip(),
             "message_id": str(message_id),
@@ -406,7 +405,6 @@ async def send_mail(
                 response = await _deliver_remote_mail_and_project_locally(
                     mcp_federation_request(
                         public_origin=public_origin, request=auth.request,
-                        sender_certificate=getattr(encrypted if encrypted is not None else signed, "sender_certificate", None),
                         mail_transport=federation_transport,
                     ),
                     payload,
@@ -457,8 +455,8 @@ async def send_mail(
                 stored_route_continuation=True,
             )
             await touch_conversation_activity(db_infra, conversation_id=conversation_ref)
-        except FederationAuthorityError as exc:
-            return mcp_authority_refusal(exc)
+        except RecipientNotResidentError as exc:
+            return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
         except Exception as exc:
             detail = getattr(exc, "detail", None)
             return json.dumps({"error": detail or str(exc)})
@@ -542,8 +540,8 @@ async def send_mail(
                             registry_delivery_origin(resolved),
                             origins=public_origins(auth.request, public_origin=public_origin),
                         )
-                    except FederationAuthorityError as exc:
-                        return mcp_authority_refusal(exc)
+                    except RecipientNotResidentError as exc:
+                        return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
                     recipient = _external_recipient_from_address(recipient_ref, resolved)
         if recipient is None:
             if await namespace_exists(db_infra, domain):
@@ -587,8 +585,8 @@ async def send_mail(
     signed_to = recipient_ref if recipient_ref.startswith("did:") or "/" in recipient_ref else recipient_alias
     signed_from = (
         sender_address
-        if auth.did_aw and (recipient or {}).get("external") and sender_address
-        else signed_sender_label(auth)
+        if (recipient or {}).get("external") and sender_address
+        else (auth.alias or auth.address or auth.did_aw or auth.did_key or "").strip()
     )
     signed_fields = {
         "body": body,
@@ -669,7 +667,6 @@ async def send_mail(
             response = await _deliver_remote_mail_and_project_locally(
                 mcp_federation_request(
                     public_origin=public_origin, request=auth.request,
-                        sender_certificate=getattr(encrypted if encrypted is not None else signed, "sender_certificate", None),
                     mail_transport=federation_transport,
                 ),
                 payload,
@@ -741,8 +738,8 @@ async def send_mail(
             conversation_id=conversation["conversation_id"],
             skip_policy_check=True,
         )
-    except FederationAuthorityError as exc:
-        return mcp_authority_refusal(exc)
+    except RecipientNotResidentError as exc:
+        return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
     except Exception as exc:
         detail = getattr(exc, "detail", None)
         return json.dumps({"error": detail or str(exc)})

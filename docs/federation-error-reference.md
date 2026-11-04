@@ -12,11 +12,10 @@ This compatibility reference generates reason, HTTP status, and retryability fro
 [`awid/src/awid/federation_errors.py`](../awid/src/awid/federation_errors.py),
 the shipped machine-readable authority. The response shape and safe diagnostic fields are
 cross-checked against the selected-policy conformance vector in
-[`docs/vectors/federation-authority-state-v1.json`](vectors/federation-authority-state-v1.json)
-and the additive [team-route vector](vectors/team-vouched-local-routes-v1.json).
+[`docs/vectors/federation-authority-state-v1.json`](vectors/federation-authority-state-v1.json).
 
 Federation failures return a JSON object with `detail`, `reason`, `retryable`, and `correlation_id`.
-`detail` may include a human-readable recovery step. Clients branch on `reason` and
+`detail` equals the stable `reason` string. Clients may branch on `reason` and
 may retry only when `retryable` is true. `Retry-After` is required only for
 `federation_rate_limited`, which emits `Retry-After: 1`; other retryable failures require
 caller-chosen bounded backoff.
@@ -39,12 +38,7 @@ Security diagnostics may additionally include `did_aw`, `observed_sequence`. The
 | `federation_signature_invalid` | 422 | no | no | Signature encoding or plaintext/encrypted protected-envelope verification failed. |
 | `federation_timestamp_invalid` | 422 | no | no | Signed timestamp is malformed, imprecise, expired, or too far in the future. |
 | `local_recipient_route_missing` | 404 | no | no | Local recipient lacks the exact learned conversation/session route. |
-| `local_sender_certificate_invalid` | 422 | no | no | The local certificate is malformed, has an invalid signature, or disagrees with the signed key, scope, team or alias. |
-| `local_sender_certificate_required` | 422 | no | no | A cross-server local sender lacks its certificate or signed full-team binding. |
-| `local_sender_certificate_revoked` | 403 | no | no | The local sender certificate or team is revoked or absent. |
 | `local_sender_route_mismatch` | 422 | no | no | Local sender address/origin differs from or attempts to create its learned route. |
-| `local_sender_team_key_stale` | 409 | no | no | The local sender certificate was signed by a superseded team key. |
-| `local_sender_team_server_missing` | 424 | no | no | The selected team has no valid current team-server record naming the sending service. |
 | `recipient_address_did_mismatch` | 422 | no | no | Target address resolves to a different stable recipient DID. |
 | `recipient_current_key_mismatch` | 422 | no | no | Target current key differs from authoritative or stored recipient state. |
 | `recipient_custodial_no_e2ee` | 422 | no | no | The verified recipient encryption-key assertion states hosted custody; send explicitly without --e2ee. |

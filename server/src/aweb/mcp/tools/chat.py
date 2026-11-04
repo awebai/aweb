@@ -32,8 +32,7 @@ from aweb.messaging.chat import (
     resolve_session_actor_did,
     send_in_session,
 )
-from aweb.federation.team_routes import refresh_recipient_team_route, persist_accepted_team_route
-from aweb.messaging.sender_address import sender_address as _sender_address, signed_sender_label
+from aweb.messaging.sender_address import sender_address as _sender_address
 from aweb.messaging.alias_targets import (
     AmbiguousLocalAddressError,
     get_agent_by_namespace_alias,
@@ -71,7 +70,6 @@ from aweb.mcp.signing import (
     sign_hosted_message,
 )
 from aweb.mcp.tools.federation import (
-    mcp_authority_refusal,
     mcp_federation_request,
     mcp_messaging_auth,
     registry_delivery_origin,
@@ -118,7 +116,12 @@ def _canonical_target_list(values: list[str]) -> str:
 
 
 def _signed_from(auth, actor_alias: str) -> str:
-    return signed_sender_label(auth, actor_alias)
+    return (
+        (actor_alias or "").strip()
+        or (auth.address or "").strip()
+        or (auth.did_aw or "").strip()
+        or (auth.did_key or "").strip()
+    )
 
 
 async def _local_agent_by_address(db_infra, *, domain: str, name: str) -> dict | None:
@@ -133,9 +136,7 @@ def _recipient_signed_fields(rows: list[dict]) -> tuple[str, str, str]:
     to_dids: list[str] = []
     to_stable_ids: list[str] = []
     for row in rows:
-        if row.get("route_team_id"):
-            to_values.append(row.get("did_key") or row.get("did") or "")
-        elif row.get("external") and row.get("address"):
+        if row.get("external") and row.get("address"):
             to_values.append(row["address"])
         else:
             to_values.append(
@@ -236,7 +237,7 @@ async def _session_recipient_rows(db_infra, *, session_id: UUID, actor_dids: lis
     rows = await aweb_db.fetch_all(
         """
         SELECT p.did, p.alias, p.address AS participant_address, p.delivery_origin,
-               p.current_did_key, p.route_team_id, p.route_certificate_id, p.route_certificate
+               p.current_did_key
         FROM {{tables.chat_participants}} p
         WHERE p.session_id = $1
           AND p.did <> ALL($2::text[])
@@ -257,7 +258,6 @@ async def _session_recipient_rows(db_infra, *, session_id: UUID, actor_dids: lis
             "did_key": participant.get("current_did_key") or (did if did.startswith("did:key:") else None),
             "address": participant.get("participant_address") or None,
         }
-        item.update({key: participant.get(key) for key in ("route_team_id", "route_certificate_id", "route_certificate")})
         item.update(did=did, alias=participant["alias"],
                     delivery_origin=participant.get("delivery_origin") or None,
                     current_did_key=participant.get("current_did_key"),
@@ -527,8 +527,8 @@ async def chat_send(
                                 registry_delivery_origin(resolved),
                                 origins=public_origins(auth.request, public_origin=public_origin),
                             )
-                        except FederationAuthorityError as exc:
-                            return mcp_authority_refusal(exc)
+                        except RecipientNotResidentError as exc:
+                            return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
                         target = {
                             "agent_id": None,
                             "team_id": None,
@@ -624,7 +624,7 @@ async def chat_send(
         to_value, to_current_did, to_stable_id = _recipient_signed_fields([target])
         from_value = (
             sender_address
-            if auth.did_aw and target.get("external") and sender_address
+            if target.get("external") and sender_address
             else _signed_from(auth, actor_alias)
         )
         signed_fields = {
@@ -723,7 +723,6 @@ async def chat_send(
                 remote = await _deliver_federated_chat(
                     mcp_federation_request(
                         public_origin=public_origin, request=auth.request,
-                        sender_certificate=getattr(encrypted if encrypted is not None else signed, "sender_certificate", None),
                         chat_transport=federation_transport,
                     ),
                     payload,
@@ -732,8 +731,8 @@ async def chat_send(
                     route=route,
                     session_id=str(sid),
                 )
-            except FederationAuthorityError as exc:
-                return mcp_authority_refusal(exc)
+            except RecipientNotResidentError as exc:
+                return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
             except HumanChatRefused as exc:
                 return json.dumps({"error": exc.detail, **exc.body()})
             except Exception as exc:
@@ -800,15 +799,14 @@ async def chat_send(
         localized_own_route = False
         try:
             for recipient in recipient_rows:
-                recipient.update(await refresh_recipient_team_route(auth.request, recipient))
                 local = await local_recipient_for_own_route(
                     db_infra, recipient, request=auth.request, origins=public_origins(auth.request, public_origin=public_origin),
                 )
                 if local is not None:
                     localized_own_route = True
                     recipient.update(local, delivery_origin=None, external=False, current_did_key=local.get("did_key"))
-        except FederationAuthorityError as exc:
-            return mcp_authority_refusal(exc)
+        except RecipientNotResidentError as exc:
+            return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
         except HTTPException as exc:
             return json.dumps({"error": exc.detail})
         try:
@@ -860,7 +858,7 @@ async def chat_send(
             "conversation_id": str(sid),
             "from": (
                 sender_address
-                if auth.did_aw and remote_recipients and sender_address
+                if remote_recipients and sender_address
                 else _signed_from(auth, actor_alias)
             ),
             "from_did": (auth.did_key or "").strip(),
@@ -942,7 +940,6 @@ async def chat_send(
                 remote = await _deliver_federated_chat(
                     mcp_federation_request(
                         public_origin=public_origin, request=auth.request,
-                        sender_certificate=getattr(encrypted if encrypted is not None else signed, "sender_certificate", None),
                         chat_transport=federation_transport,
                     ),
                     payload,
@@ -951,8 +948,8 @@ async def chat_send(
                     route=recipient_rows[0],
                     session_id=str(sid),
                 )
-            except FederationAuthorityError as exc:
-                return mcp_authority_refusal(exc)
+            except RecipientNotResidentError as exc:
+                return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
             except HumanChatRefused as exc:
                 return json.dumps({"error": exc.detail, **exc.body()})
             except Exception as exc:
@@ -984,8 +981,6 @@ async def chat_send(
         )
         if msg is None:
             return json.dumps({"error": "Session not found"})
-        for recipient in recipient_rows:
-            await persist_accepted_team_route(db_infra, recipient, str(sid))
         sent_from_did = session_actor_did
         federated = bool(remote_recipients)
 

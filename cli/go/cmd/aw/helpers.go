@@ -1758,7 +1758,7 @@ func checkVerificationRequired(err error) string {
 // When a network send fails because the target agent doesn't exist, the raw error
 // is "aweb: http 404: ..." which looks like a broken endpoint. This rewrites it
 // to mention the target address.
-func networkError(err error, target string, localSender ...bool) error {
+func networkError(err error, target string) error {
 	if refused := humanMailOnlyRefusal(err); refused != err {
 		return refused
 	}
@@ -1767,20 +1767,6 @@ func networkError(err error, target string, localSender ...bool) error {
 		return err
 	}
 	code, ok := awid.HTTPStatusCode(err)
-	if spec, found := awid.FederationErrorSpecFor(httpErrorReason(err)); ok && found && code == spec.HTTPStatus {
-		switch httpErrorReason(err) {
-		case "local_sender_certificate_required", "local_sender_certificate_invalid", "local_sender_certificate_revoked", "local_sender_team_key_stale", "local_sender_team_server_missing", "local_recipient_route_missing", "local_sender_route_mismatch":
-			if detail := awid.DescribeError(err).Detail; detail != "" && detail != httpErrorReason(err) {
-				return &plainRefusal{text: termtext.Line(detail), err: err}
-			}
-		}
-	}
-	if ok && code == 422 && len(localSender) > 0 && localSender[0] {
-		reason := httpErrorReason(err)
-		if (reason == "federation_envelope_invalid" || reason == "local_sender_route_mismatch") && awid.DescribeError(err).Detail == reason {
-			return &plainRefusal{text: reason + ". The recipient's server may not yet accept first messages from team-only agents.", err: err}
-		}
-	}
 	if ok && code == 404 {
 		switch httpErrorReason(err) {
 		case "recipient_identity_not_found":

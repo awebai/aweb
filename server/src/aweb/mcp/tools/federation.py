@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import json
-from uuid import uuid4
 from types import SimpleNamespace
 from typing import Any
 
-from aweb.federation.errors import authority_error_body
 from aweb.config import get_settings
 from aweb.identity_auth_deps import MessagingAuth
 from aweb.mcp.auth import AuthContext
@@ -31,7 +28,6 @@ def mcp_federation_request(
     *,
     public_origin: str | None = None,
     request=None,
-    sender_certificate: str | None = None,
     mail_transport: Any = None,
     chat_transport: Any = None,
 ):
@@ -40,14 +36,13 @@ def mcp_federation_request(
         public_origin=origin,
         federation_public_origins=public_origins(request, public_origin=origin),
         awid_registry_client=getattr(getattr(getattr(request, "app", None), "state", None), "awid_registry_client", None),
-        federation_authority=getattr(getattr(getattr(request, "app", None), "state", None), "federation_authority", None),
         federation_mail_transport=mail_transport,
         federation_chat_transport=chat_transport,
         federation_message_transport=chat_transport,
         on_mutation=current_mutation_callback(),
     )
     app = SimpleNamespace(state=state)
-    return SimpleNamespace(app=app, headers={}, state=SimpleNamespace(sender_certificate=sender_certificate))
+    return SimpleNamespace(app=app, headers={}, state=SimpleNamespace())
 
 
 def registry_delivery_origin(resolution) -> str:
@@ -57,9 +52,3 @@ def registry_delivery_origin(resolution) -> str:
         or getattr(delivery, "origin", "")
         or ""
     ).strip()
-
-
-def mcp_authority_refusal(error) -> str:
-    body = authority_error_body(error, correlation_id=str(uuid4()))
-    body["error"] = body.pop("detail")
-    return json.dumps(body)

@@ -20,7 +20,6 @@ class HostedMessageSigningResult:
     signature: str
     signed_payload: str
     signing_key_id: str | None = None
-    sender_certificate: str | None = None
 
 
 HostedMessageSigner = Callable[
@@ -40,7 +39,6 @@ class HostedMessageEncryptionResult:
     encrypted_envelope: dict[str, Any]
     content_mode: str = "encrypted_v2"
     message_version: int = 2
-    sender_certificate: str | None = None
 
 
 HostedMessageEncryptor = Callable[
@@ -111,15 +109,6 @@ def _decryption_result_field(
     return getattr(result, field)
 
 
-def _certificate_field(result: Any, error_type: type[RuntimeError]) -> str | None:
-    # Preserve the exact certificate bytes. Public team-route verification,
-    # not a custody hook, establishes whether this proof is current and valid.
-    value = result.get("sender_certificate") if isinstance(result, dict) else getattr(result, "sender_certificate", None)
-    if value is not None and not isinstance(value, str):
-        raise error_type("hosted custody returned an invalid sender_certificate field")
-    return value
-
-
 async def encrypt_hosted_message(
     *,
     auth: Any,
@@ -173,7 +162,6 @@ async def encrypt_hosted_message(
         encrypted_envelope=encrypted_envelope,
         content_mode=content_mode,
         message_version=message_version,
-        sender_certificate=_certificate_field(result, HostedMessageEncryptionError),
     )
 
 
@@ -292,5 +280,4 @@ async def sign_hosted_message(
         signature=signature,
         signing_key_id=signing_key_id,
         signed_payload=signed_payload,
-        sender_certificate=_certificate_field(result, HostedMessageSigningError),
     )

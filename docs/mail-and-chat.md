@@ -463,12 +463,6 @@ returns HTTP 409 without changing the thread. Reuse preserves the stored
 participants and routes: create-request targets cannot add or update members.
 Membership changes use the membership operations, not session creation.
 
-For a one-to-one chat, replacing an active session with a fresh requested ID
-uses the same sender-bound predicate in plaintext and encrypted-v2. The v2
-envelope signature, authenticated sender and protected conversation ID must
-verify before the old session is closed. An exact retry acknowledges its
-accepted message without replacing a newer session.
-
 ## Addressing and authority
 
 Inside one team, use the member name such as `reviewer`. For first contact

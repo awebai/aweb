@@ -154,9 +154,6 @@ def _participant_dict(row: dict[str, Any]) -> dict[str, Any]:
         "delivery_origin": row.get("delivery_origin"),
         "current_did_key": row.get("current_did_key"),
         "transport_hint": row.get("transport_hint"),
-        "route_team_id": row.get("route_team_id"),
-        "route_certificate_id": row.get("route_certificate_id"),
-        "route_certificate": row.get("route_certificate"),
         "role": row["role"],
         "joined_at": row["joined_at"],
     }
@@ -357,7 +354,7 @@ async def list_conversation_participants(db, *, conversation_id: str | UUID) -> 
     aweb_db = db.get_manager("aweb")
     rows = await aweb_db.fetch_all(
         """
-        SELECT conversation_id, did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role, joined_at, route_team_id, route_certificate_id, route_certificate
+        SELECT conversation_id, did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role, joined_at
         FROM {{tables.conversation_participants}}
         WHERE conversation_id = $1
         ORDER BY joined_at, alias
@@ -395,7 +392,7 @@ async def add_conversation_participant(
             current_did_key = COALESCE(EXCLUDED.current_did_key, {{tables.conversation_participants}}.current_did_key),
             transport_hint = EXCLUDED.transport_hint,
             role = EXCLUDED.role
-        RETURNING conversation_id, did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role, joined_at, route_team_id, route_certificate_id, route_certificate
+        RETURNING conversation_id, did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role, joined_at
         """,
         _parse_uuid(conversation_id, field_name="conversation_id"),
         record["did"],
@@ -432,7 +429,7 @@ async def require_active_conversation_participant(
 
     participant_row = await aweb_db.fetch_one(
         """
-        SELECT conversation_id, did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role, joined_at, route_team_id, route_certificate_id, route_certificate
+        SELECT conversation_id, did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role, joined_at
         FROM {{tables.conversation_participants}}
         WHERE conversation_id = $1
           AND did = ANY($2::text[])

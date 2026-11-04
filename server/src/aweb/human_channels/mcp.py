@@ -9,7 +9,6 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 from awid.signing import canonical_json_bytes
 
 from aweb.mcp.signing import encrypt_hosted_message, sign_hosted_message
-from aweb.messaging.sender_address import signed_sender_label
 from aweb.mcp.tools.federation import mcp_messaging_auth
 
 from .contract import ContractError
@@ -147,7 +146,7 @@ async def send_mcp_native(
         subject=arguments.get("subject", ""),
         body=message,
         timestamp=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        **{"from": signed_sender_label(caller)},
+        **{"from": caller.alias or caller.address or _principal(caller)},
     )
     if caller.did_aw:
         signed["from_stable_id"] = caller.did_aw

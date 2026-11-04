@@ -19,7 +19,6 @@ import httpx
 import uvicorn
 
 from awid.signing import canonical_json_bytes, sign_message
-from awid.team_server_record import build_team_server_record, sign_team_server_record
 from awid.e2ee_keys import build_encryption_key_assertion
 from aweb.e2ee_messages import encrypt_e2ee_message, generate_x25519_keypair
 from aweb.federation.activation import build_federation_authority_activation
@@ -66,7 +65,6 @@ async def same_origin(privacy_app, monkeypatch):
         )
         monkeypatch.setenv("APP_ENV", "development")
         monkeypatch.setenv("AWEB_FEDERATION_TEST", "1")
-        monkeypatch.setenv("AWID_ALLOW_INSECURE_DELIVERY_ORIGIN", "1")
         monkeypatch.setenv("AWEB_FEDERATION_TEST_DEFAULT_REGISTRY", "1")
         monkeypatch.setenv("AWID_REGISTRY_URL", registry_origin)
         authority = build_federation_authority_activation(
@@ -412,19 +410,18 @@ async def foreign_receiver(same_origin, test_db_factory, monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["mail", "chat"])
 @pytest.mark.parametrize("sender_kind", ["local", "global", "human"])
-async def test_foreign_origin_global_delivery_and_legacy_local_refusal(same_origin, foreign_receiver, kind, sender_kind):
+async def test_foreign_origin_still_reaches_real_receiver(same_origin, foreign_receiver, kind, sender_kind):
     response, submitted = await same_origin.send(kind, sender_kind)
     assert not same_origin.ingress, response.text
-    assert foreign_receiver.ingress == ([] if sender_kind == "local" else ["/v1/federation/messages"]), response.text
+    assert foreign_receiver.ingress == ["/v1/federation/messages"], response.text
     table = "messages" if kind == "mail" else "chat_messages"
     row = await foreign_receiver.db.fetch_one(
         "SELECT * FROM {{tables." + table + "}} WHERE message_id=$1", submitted.message_id,
     )
     if sender_kind == "local":
-        # A released local label without the signed full team cannot authorize
-        # a cross-server route. Refuse before forwarding; same-server stays valid.
+        # Existing first-contact limit; actf will replace this, not this fix.
         assert response.status_code == 422, response.text
-        assert response.json()["reason"] == "local_sender_certificate_required"
+        assert "local_sender_route_mismatch" in response.text
         assert row is None
     else:
         assert response.status_code == 200, response.text
@@ -450,26 +447,6 @@ async def test_foreign_origin_global_delivery_and_legacy_local_refusal(same_orig
 @pytest.mark.parametrize("route", ["resident", "nonresident", "foreign"])
 async def test_real_cli_address_delivery(same_origin, foreign_receiver, source_cli_binary, tmp_path, kind, route):
     env = same_origin.env
-    actor = env.actors["alice"]
-    cert = _make_certificate(env.team_sk, env.team_did, actor.did, team_id=TEAM, alias="alice", identity_scope="local")
-    for field in ("signature", "member_did_aw", "member_address"):
-        cert.pop(field)
-    cert["signature"] = sign_message(env.team_sk, canonical_json_bytes(cert))
-    if route == "foreign":
-        # Supply the real team's public route authority for new-client first
-        # contact. The local sender has no AWID address of its own.
-        registry = env.app.state.awid_registry_client
-        await env.registry_db.execute(
-            "INSERT INTO {{tables.dns_namespaces}} "
-            "(domain,controller_did,verification_status,default_delivery_origin) "
-            "VALUES ('example.test',$1,'verified',$2)", env.team_did, env.app.state.public_origin)
-        await registry.register_team_certificate("example.test", TEAM.split(":", 1)[0],
-            team_controller_signing_key=env.team_sk, certificate_id=cert["certificate_id"],
-            member_did_key=actor.did, member_did_aw=None, member_address=None,
-            alias="alice", identity_scope="local", certificate=_encode_certificate(cert))
-        record = build_team_server_record(TEAM, env.team_did, env.app.state.public_origin, datetime.now(timezone.utc))
-        await registry.publish_team_server_record("example.test", TEAM.split(":", 1)[0], record,
-                                                  sign_team_server_record(env.team_sk, record))
     if route != "foreign":
         await env.registry_db.execute(
             "UPDATE {{tables.dns_namespaces}} SET default_delivery_origin=$1 "
@@ -477,6 +454,11 @@ async def test_real_cli_address_delivery(same_origin, foreign_receiver, source_c
         )
     if route == "resident":
         await same_origin.resident()
+    actor = env.actors["alice"]
+    cert = _make_certificate(env.team_sk, env.team_did, actor.did, team_id=TEAM, alias="alice", identity_scope="local")
+    for field in ("signature", "member_did_aw", "member_address"):
+        cert.pop(field)
+    cert["signature"] = sign_message(env.team_sk, canonical_json_bytes(cert))
     identity_home = tmp_path / "sender" / ".aw"
     identity_home.mkdir(parents=True, mode=0o700)
     _pem(identity_home / "signing.key", "ED25519 PRIVATE KEY", actor.sk)
@@ -505,11 +487,10 @@ async def test_real_cli_address_delivery(same_origin, foreign_receiver, source_c
     output = data.decode()
     assert not same_origin.ingress, output
     assert bool(foreign_receiver.ingress) == (route == "foreign"), output
-    if route in {"resident", "foreign"}:
+    if route == "resident":
         assert process.returncode == 0, output
         table = "messages" if kind == "mail" else "chat_messages"
-        delivery_db = env.db if route == "resident" else foreign_receiver.db
-        row = await delivery_db.fetch_one("SELECT * FROM {{tables." + table + "}}")
+        row = await env.db.fetch_one("SELECT * FROM {{tables." + table + "}}")
         assert row is not None
         assert row["body"] == body_file.read_text()
         signed = json.loads(row["signed_payload"])
@@ -518,14 +499,17 @@ async def test_real_cli_address_delivery(same_origin, foreign_receiver, source_c
         if kind == "mail":
             assert row["to_did"] == same_origin.target_did
         else:
-            participants = await delivery_db.fetch_all(
+            participants = await env.db.fetch_all(
                 "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1", row["session_id"],
             )
             assert {p["did"] for p in participants} == {actor.did, same_origin.target_did}
     else:
         assert process.returncode != 0, output
         assert await same_origin.effects() == before
-        assert "Ask the recipient or the person who manages that server" in output
+        if route == "nonresident":
+            assert "Ask the recipient or the person who manages that server" in output
+        else:
+            assert "local_sender_route_mismatch" in output
 
 
 @pytest.mark.asyncio

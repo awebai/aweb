@@ -429,7 +429,6 @@ class NativeMessagingService:
                     "from_alias": auth.alias,
                     "from_address": auth.address,
                     "from_stable_id": auth.did_aw,
-                    "from_team_id": auth.team_id,
                     "body": signed["body"],
                     "from_did": auth.did_key,
                     "message_id": value["message_id"],

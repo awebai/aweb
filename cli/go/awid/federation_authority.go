@@ -32,12 +32,6 @@ type FederationErrorSpec struct {
 }
 
 var federationErrorSpecs = map[string]FederationErrorSpec{
-	"local_sender_certificate_required": {422, false, false},
-	"local_sender_certificate_invalid":  {422, false, false},
-	"local_sender_certificate_revoked":  {403, false, false},
-	"local_sender_team_key_stale":       {409, false, false},
-	"local_sender_team_server_missing":  {424, false, false},
-
 	"contact_identity_binding_required":               {409, false, false},
 	"federation_authority_cas_conflict":               {503, true, false},
 	"federation_authority_coordination_unavailable":   {503, true, false},

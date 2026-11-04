@@ -8,7 +8,6 @@ from typing import Any
 
 import httpx
 
-from awid.federation_errors import federation_error_spec
 from awid.log import canonical_server_origin
 from awid.id_certificates import encode_id_chain_header
 from aweb.messaging.chat_policy import HumanChatRefused
@@ -16,7 +15,6 @@ from aweb.messaging.chat_policy import HumanChatRefused
 from aweb.messaging.address_auth import refuse_same_origin_nonresident
 
 from .envelope import FederatedDeliveryRequest, FederationEnvelope
-from .errors import TeamRouteError
 
 
 MAX_FEDERATION_RESPONSE_BYTES = 10 * 1024 * 1024
@@ -122,17 +120,6 @@ async def deliver_federated_message(
                 if not isinstance(recipients, list) or not all(isinstance(name, str) for name in recipients):
                     recipients = []
                 raise HumanChatRefused(recipients)
-        # Team-vouched exchanges retain the typed public refusal through the
-        # forwarding hop. Validate its vocabulary/status; never trust remote
-        # prose or a claimed retryability that contradicts the public contract.
-        if envelope.sender_did_aw.startswith("did:key:") or envelope.target_did_aw.startswith("did:key:"):
-            try:
-                refused = json.loads(content)
-                spec = federation_error_spec(refused["reason"])
-                if spec.http_status == response.status_code and refused.get("retryable") is spec.retryable:
-                    raise TeamRouteError(spec.reason)
-            except (ValueError, KeyError, TypeError):
-                pass
         detail = _response_detail(response.status_code, content)
         raise FederatedMailDeliveryError(
             f"Federated mail delivery to {origin} failed: {detail}",
