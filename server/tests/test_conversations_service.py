@@ -735,3 +735,60 @@ async def test_find_session_between_picks_newest_duplicate_legacy_session(
     )
 
     assert str(found_session_id) == str(newer["session_id"])
+
+
+@pytest.mark.asyncio
+async def test_a_chat_send_backfills_a_legacy_session_once(aweb_cloud_db, monkeypatch):
+    import asyncpg.connection
+
+    from aweb.messaging.chat import ensure_session
+
+    db = _DbShim(aweb_cloud_db.aweb_db)
+    await _insert_team(aweb_cloud_db.aweb_db)
+    alice = await _insert_agent(aweb_cloud_db.aweb_db, team_id="backend:acme.com", alias="alice",
+                                did_aw="did:aw:alice", address="acme.com/alice")
+    bob = await _insert_agent(aweb_cloud_db.aweb_db, team_id="backend:acme.com", alias="bob",
+                              did_aw="did:aw:bob", address="acme.com/bob")
+    session = await aweb_cloud_db.aweb_db.fetch_one(
+        "INSERT INTO {{tables.chat_sessions}} (team_id, created_by) VALUES ('backend:acme.com', 'alice') "
+        "RETURNING session_id"
+    )
+    session_id = session["session_id"]
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address)
+        VALUES ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice'),
+               ($1, 'did:aw:bob', $3, 'bob', 'acme.com/bob')
+        """,
+        session_id, alice, bob,
+    )
+    participants = [
+        {"did": "did:aw:alice", "agent_id": alice, "alias": "alice", "address": "acme.com/alice"},
+        {"did": "did:aw:bob", "agent_id": bob, "alias": "bob", "address": "acme.com/bob"},
+    ]
+    backfill_statements: list[str] = []
+    execute = asyncpg.connection.Connection._execute
+
+    async def observed(connection, query, *args, **kwargs):
+        if "FOR UPDATE" in query and "chat_sessions" in query:
+            backfill_statements.append(query)
+        return await execute(connection, query, *args, **kwargs)
+
+    monkeypatch.setattr(asyncpg.connection.Connection, "_execute", observed)
+
+    async def send():
+        return await ensure_session(
+            db, team_id="backend:acme.com", participant_rows=participants, created_by="alice",
+            session_id=session_id,
+        )
+
+    assert await send() == session_id
+    backfilled = len(backfill_statements)
+    conversation = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT conversation_type FROM {{tables.conversations}} WHERE conversation_id = $1", session_id,
+    )
+    assert await send() == session_id
+
+    assert backfilled == 1
+    assert conversation is not None and conversation["conversation_type"] == "chat"
+    assert len(backfill_statements) == 1
