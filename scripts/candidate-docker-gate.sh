@@ -151,7 +151,12 @@ KEY="$TREE-$(printf '%s' "$external_inputs" | python3 -c 'import hashlib,sys;pri
 LEDGER_LOGS="${AWEB_GATE_LOG_DIR:-$(dirname "$LEDGER")/gate-logs}"
 # The runner uses the host UID without requiring a container passwd entry.
 # Owner is a ledger label, so its numeric UID is sufficient in that case.
-OWNER="${GATE_OWNER:-${OATS_INSTANCE:-$(id -un 2>/dev/null || id -u)}}"
+OWNER="${GATE_OWNER:-${OATS_INSTANCE:-}}"
+if [[ -z "$OWNER" ]]; then
+  # GNU id may print a numeric UID before failing its name lookup. Assign each
+  # attempt separately so that failed stdout cannot enter the ledger field.
+  OWNER="$(id -un 2>/dev/null)" || OWNER="$(id -u)"
+fi
 mkdir -p "$(dirname "$LEDGER")/gate-locks" "$LEDGER_LOGS"
 touch "$LEDGER"
 # Hold through cleanup and recording, including concurrent direct/RC calls.

@@ -192,8 +192,13 @@ else: os.execv({sys.executable!r},[{sys.executable!r},*sys.argv[1:]])
                 (commands / 'id').write_text(f'''#!/bin/sh
 printf '%s\\n' "$*" >> "$ID_LOOKUP_RECEIPT"
 if [ "$*" = -un ]; then
+ printf '501\\n'
  printf 'id: cannot find name for user ID 501\\n' >&2
  exit 1
+fi
+if [ "$*" = -u ]; then
+ printf '501\\n'
+ exit 0
 fi
 exec {real_id} "$@"
 ''')
@@ -236,13 +241,19 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                         env=settings, capture_output=True, text=True, timeout=30)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     return result.stdout
+                def ledger_rows():
+                    rows = (root / 'ledger.tsv').read_text().splitlines()
+                    self.assertTrue(all(len(row.split('\t')) == 10 for row in rows), rows)
+                    self.assertEqual({row.split('\t')[6] for row in rows}, {'501'})
+                    return rows
                 try:
                     invoke('checks')
+                    self.assertEqual(len(ledger_rows()), 1)
                     self.assertEqual((root / 'id-lookups').read_text().splitlines()[:2], ['-un', '-u'])
                     self.assertTrue(list((repo / 'scripts/__pycache__').glob('fetch_released_aw.*.pyc')))
                     self.assertEqual(git('status', '--porcelain', '--untracked-files=all'), '')
                     invoke(None)
-                    ledger = (root / 'ledger.tsv').read_text().splitlines()
+                    ledger = ledger_rows()
                     self.assertEqual(len(ledger), 5, ledger)
                     self.assertEqual(len({row.split('\t')[0] for row in ledger}), 1)
                     receipt = json.loads((root / 'snapshot.json').read_text())
@@ -258,11 +269,11 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                     self.assertIn('no stages run', reused)
                     self.assertEqual(reused.count('NOT COVERED: pending aweb-actu'), 12)
                     self.assertIn('incomplete: human paths not covered', reused)
-                    self.assertEqual(len((root / 'ledger.tsv').read_text().splitlines()), 5)
+                    self.assertEqual(len(ledger_rows()), 5)
                     # Changing only the frozen artifact invalidates the key.
                     metadata['version'] = '1.36.55'
                     invoke('checks')
-                    changed = (root / 'ledger.tsv').read_text().splitlines()
+                    changed = ledger_rows()
                     self.assertEqual(len(changed), 6)
                     self.assertNotEqual(changed[-1].split('\t')[0], ledger[0].split('\t')[0])
                     self.assertEqual(server.requests, ['/@awebai%2faw/latest'] * 4)
