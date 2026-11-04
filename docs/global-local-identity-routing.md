@@ -200,8 +200,10 @@ today. A message outside the skew is refused before any receipt lookup.
    - The certificate signature must verify under that key.
 5. Read the team-server record (anonymous) and verify it under the same current
    team key.
-   - Its `server_url` is the sender's return route.
-   - A supplied `sender_delivery_origin` must equal it.
+   - Verify the exact signed `server_url`, including any path prefix. The
+     record's verified origin is the sender's return route; the path prefix is
+     the client API mount. Federation uses `<origin>/v1/federation/messages`.
+   - A supplied `sender_delivery_origin` must equal that verified origin.
    - If it names this server, the sender is resident here, so arriving by
      federation is refused.
 6. Cache entries are keyed by registry and `(team_id, certificate_id)` for
@@ -209,10 +211,17 @@ today. A message outside the skew is refused before any receipt lookup.
    for at most 60 seconds. A cached entry never answers a different key. A
    registry, DNS or coordination failure is retryable and fails closed. If the
    evidence reaches its 60 seconds during a later wait (for a lock or a database
-   call), re-read it after the last such wait and before the write.
+   call), re-read it after the last such wait and before the write. Team-route
+   verification has a five-second aggregate deadline, including discovery,
+   registry reads, pool acquisition and coordination. The team-route delivery
+   transaction has a ten-second aggregate deadline, including all lock waits
+   and refreshes. Exceeding either deadline cancels the work, rolls back delivery and returns the
+   retryable `federation_authority_coordination_unavailable` refusal.
 7. Apply recipient policy: a local sender is admitted only under `open`. This
    holds for first contact and for every continuation, mail and chat,
-   plaintext and encrypted-v2.
+   plaintext and encrypted-v2. Another enrollment of the same key in the
+   recipient's team does not count; neither team nor contact shortcuts apply
+   to a sender presenting a verified team route.
 8. On acceptance, store the sender's participant route (see Storage). The
    recipient's reads report `sender_membership` from the stored certificate,
    with the certificate status read again under the same cache. Clients
@@ -225,10 +234,10 @@ origin. Each new message from it repeats steps 2-7 with its own certificate:
 - the certificate's `team_id` must equal the stored `route_team_id`; a
   different team is `local_sender_route_mismatch`;
 - the certificate may be a reissue, for example after a team key rotation;
-- the supplied `sender_delivery_origin` must equal the freshly verified record,
+- the supplied `sender_delivery_origin` must equal the freshly verified record's origin,
   not the stored row.
 
-If the verified `server_url` differs from the stored `delivery_origin`, the
+If the record's verified origin differs from the stored `delivery_origin`, the
 stored route is updated to the new origin and certificate in the same
 transaction that stores the message. An unverified change, meaning a missing,
 invalid or unverifiable certificate or record, is refused with the first-contact
@@ -265,7 +274,7 @@ chat participant rows store:
 
 - `did` = the sender `did:key`;
 - `address` = NULL;
-- `delivery_origin` = the verified team-server URL;
+- `delivery_origin` = the verified origin of the signed team-server URL;
 - `route_team_id`, `route_certificate_id`, and `route_certificate`, which is the
   exact certificate as received. All three are set for this kind of participant
   and NULL for every other kind.
@@ -278,7 +287,8 @@ garbage collection never removes the certificate a reply needs for validation.
 same 60-second caches:
 
 - **Active, current team key equal to the stored certificate's
-  `team_did_key`:** send to the record's current `server_url`. Update the stored
+  `team_did_key`:** send to the record's verified origin (the `server_url`'s
+  origin; any path prefix is the client API mount). Update the stored
   `delivery_origin` only when that server accepts the reply.
 - **The record names the replying server itself:** do not federate.
   - If the target `did:key` is resident here, deliver locally as a stored-route
@@ -291,7 +301,7 @@ same 60-second caches:
 **Reply envelope.**
 - `target_did_aw`, `target_current_did_key` and `target_address` are all the
   local `did:key`; a local target has no address.
-- `target_delivery_origin` is the team-server URL.
+- `target_delivery_origin` is the signed team-server URL's verified origin.
 - The signed `to` and `to_did` are the `did:key`.
 
 **At the local sender's home server**, a reply to a local `did:key` is accepted

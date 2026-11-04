@@ -5,6 +5,7 @@ from __future__ import annotations
 from aweb.messaging.chat_policy import HumanChatRefused, recipient_label
 from aweb.messaging.messages import _is_global_recipient
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -25,9 +26,9 @@ from aweb.e2ee_messages import encrypted_message_storage_metadata
 from aweb.federation.authority_state import AuthoritySecurityToken
 from aweb.federation.envelope import FederationEnvelope
 from aweb.federation.team_routes import VerifiedTeamRoute
-from awid.team_certificate import decode_team_certificate
 
 BeforeCommit = Callable[[], Awaitable[None]]
+TEAM_ROUTE_PHASE_B_DEADLINE_SECONDS = 10.0
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +177,9 @@ async def _require_current_stored_route(
         sender = expected_participants[envelope.sender_did_aw]
         target = expected_participants[envelope.target_did_aw]
         refreshed_team = team_route is not None and sender.get("route_team_id") == team_route.team_id
+        stored_sender_origin = _route_value(sender.get("delivery_origin"))
+        if refreshed_team and not stored_sender_origin:
+            raise FederationAuthorityError("federation_conversation_invalid")
         target_address = _route_value(target.get("address"))
         if not target_address and envelope.target_did_aw.startswith("did:key:"):
             target_address = envelope.target_did_aw
@@ -202,7 +206,7 @@ async def _require_current_stored_route(
             raise FederationAuthorityError("federation_conversation_invalid")
         if include_transport_hint and (
             _route_value(sender.get("transport_hint"))
-            != "federation:" + _route_value(envelope.sender_delivery_origin)
+            != "federation:" + (stored_sender_origin if refreshed_team else _route_value(envelope.sender_delivery_origin))
             or _route_value(target.get("transport_hint")) != "local"
         ):
             raise FederationAuthorityError("federation_conversation_invalid")
@@ -356,8 +360,15 @@ async def _authorize_policy(
     envelope: FederationEnvelope,
     recipient: dict,
     stored_route_continuation: bool,
+    team_route: VerifiedTeamRoute | None = None,
 ) -> None:
     mode = str(recipient.get("inbound_mode") or "").strip().lower()
+    if team_route is not None:
+        # This message selects the vouched team, never another enrollment of
+        # the same key or a contact. Global and legacy routes retain their rules.
+        if mode != "open":
+            raise FederationAuthorityError("recipient_policy_rejected")
+        return
     recipient_global = _is_global_recipient(recipient)
     if recipient_global and mode == "open":
         return
@@ -450,6 +461,7 @@ async def _ensure_mail_conversation(
     recipient: dict,
     *,
     preserve_existing_route: bool,
+    team_route: VerifiedTeamRoute | None = None,
 ) -> None:
     conversation_id = UUID(str(envelope.conversation_id))
     existing = await tx.fetch_one(
@@ -484,6 +496,7 @@ async def _ensure_mail_conversation(
         recipient,
         conversation_id,
         preserve_existing_route=preserve_existing_route,
+        team_route=team_route,
     )
 
 
@@ -493,6 +506,7 @@ async def _ensure_chat_session(
     recipient: dict,
     *,
     preserve_existing_route: bool,
+    team_route: VerifiedTeamRoute | None = None,
 ) -> None:
     session_id = UUID(str(envelope.conversation_id))
     existing = await tx.fetch_one(
@@ -538,8 +552,9 @@ async def _ensure_chat_session(
         recipient,
         session_id,
         preserve_existing_route=preserve_existing_route,
+        team_route=team_route,
     )
-    for did, agent_id, alias, address, origin, current_key in _participants(envelope, recipient):
+    for did, agent_id, alias, address, origin, current_key in _participants(envelope, recipient, team_route):
         await tx.execute(
             """
             INSERT INTO {{tables.chat_participants}} (
@@ -563,15 +578,14 @@ async def _ensure_chat_session(
         )
 
 
-def _sender_alias(envelope: FederationEnvelope) -> str:
-    if envelope.sender_did_aw.startswith("did:key:") and envelope.sender_certificate:
-        # The caller has already verified this exact certificate in Phase A.
-        return decode_team_certificate(envelope.sender_certificate)["alias"]
+def _sender_alias(envelope: FederationEnvelope, team_route: VerifiedTeamRoute | None = None) -> str:
+    if team_route is not None:
+        return team_route.alias
     return (envelope.sender_address or envelope.sender_did_aw).split("/", 1)[-1]
 
 
-def _participants(envelope: FederationEnvelope, recipient: dict):
-    sender_alias = _sender_alias(envelope)
+def _participants(envelope: FederationEnvelope, recipient: dict, team_route: VerifiedTeamRoute | None = None):
+    sender_alias = _sender_alias(envelope, team_route)
     target_alias = str(recipient.get("alias") or envelope.target_address.split("/", 1)[-1])
     return (
         (
@@ -600,9 +614,10 @@ async def _upsert_conversation_participants(
     conversation_id: UUID,
     *,
     preserve_existing_route: bool,
+    team_route: VerifiedTeamRoute | None = None,
 ) -> None:
     for index, (did, agent_id, alias, address, origin, current_key) in enumerate(
-        _participants(envelope, recipient)
+        _participants(envelope, recipient, team_route)
     ):
         await tx.execute(
             """
@@ -641,7 +656,7 @@ async def _upsert_conversation_participants(
         raise FederationAuthorityError("federation_conversation_invalid")
 
 
-async def _store_mail(tx, envelope: FederationEnvelope, signature: str, recipient: dict, id_chain=None):
+async def _store_mail(tx, envelope: FederationEnvelope, signature: str, recipient: dict, id_chain=None, *, team_route: VerifiedTeamRoute | None = None):
     metadata = (
         encrypted_message_storage_metadata(envelope.encrypted_envelope or {})
         if envelope.content_mode == "encrypted_v2"
@@ -667,7 +682,7 @@ async def _store_mail(tx, envelope: FederationEnvelope, signature: str, recipien
         UUID(envelope.message_id),
         envelope.sender_did_aw,
         envelope.target_did_aw,
-        _sender_alias(envelope),
+        _sender_alias(envelope, team_route),
         envelope.sender_address,
         recipient.get("alias") or envelope.target_address.split("/", 1)[-1],
         "" if metadata else (envelope.subject or ""),
@@ -904,6 +919,7 @@ async def _deliver_federated_phase_b(
             envelope=envelope,
             recipient=recipient,
             stored_route_continuation=stored_route_continuation,
+            team_route=team_route,
         )
         if team_route is not None and before_commit is not None:
             await before_commit()
@@ -941,14 +957,16 @@ async def _deliver_federated_phase_b(
                 envelope,
                 recipient,
                 preserve_existing_route=stored_route_continuation,
+                team_route=team_route,
             )
-            message = await _store_mail(tx, envelope, signature, recipient, id_chain)
+            message = await _store_mail(tx, envelope, signature, recipient, id_chain, team_route=team_route)
         else:
             await _ensure_chat_session(
                 tx,
                 envelope,
                 recipient,
                 preserve_existing_route=stored_route_continuation,
+                team_route=team_route,
             )
             message = await _store_chat(tx, envelope, signature, id_chain)
 
@@ -994,7 +1012,7 @@ async def _deliver_federated_phase_b(
             "from_did": envelope.sender_current_did_key,
             "from_did_aw": envelope.sender_did_aw,
             "to_agent_id": str(recipient.get("agent_id") or "") or None,
-            "from_alias": _sender_alias(envelope),
+            "from_alias": _sender_alias(envelope, team_route),
             "message_id": envelope.message_id,
             "conversation_id": envelope.conversation_id,
             "session_id": envelope.conversation_id if envelope.type == "chat" else None,
@@ -1034,22 +1052,25 @@ async def deliver_federated_phase_b(
     envelope_hash_override: str | None = None,
 ) -> dict[str, object]:
     try:
-        return await _deliver_federated_phase_b(
-            db,
-            envelope=envelope,
-            signature=signature,
-            recipient=recipient,
-            id_chain=id_chain,
-            authority_token=authority_token,
-            stored_route_continuation=stored_route_continuation,
-            stored_route_snapshot=stored_route_snapshot,
-            before_commit=before_commit,
-            team_route=team_route,
-            envelope_hash_override=envelope_hash_override,
-        )
+        # Bound the whole team-route transaction, including lock and pool waits
+        # and both freshness checks. Cancellation unwinds the transaction first.
+        async with asyncio.timeout(TEAM_ROUTE_PHASE_B_DEADLINE_SECONDS if team_route is not None else None):
+            return await _deliver_federated_phase_b(
+                db,
+                envelope=envelope,
+                signature=signature,
+                recipient=recipient,
+                id_chain=id_chain,
+                authority_token=authority_token,
+                stored_route_continuation=stored_route_continuation,
+                stored_route_snapshot=stored_route_snapshot,
+                before_commit=before_commit,
+                team_route=team_route,
+                envelope_hash_override=envelope_hash_override,
+            )
     except FederationAuthorityError:
         raise
-    except (AsyncDBError, asyncpg.PostgresError) as exc:
+    except (TimeoutError, AsyncDBError, asyncpg.PostgresError) as exc:
         raise FederationAuthorityError(
             "federation_authority_coordination_unavailable"
         ) from exc

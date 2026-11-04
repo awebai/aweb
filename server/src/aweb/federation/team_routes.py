@@ -6,6 +6,7 @@ existing PostgreSQL authority work store, never in an adapter or process cache.
 """
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -28,6 +29,8 @@ from .origins import public_origins
 from .errors import TeamRouteError
 
 logger = logging.getLogger(__name__)
+
+TEAM_ROUTE_DEADLINE_SECONDS = 5.0
 
 
 @dataclass(frozen=True)
@@ -99,6 +102,7 @@ async def _cached(work, key: str, read, *, fresh: bool = False):
         if expires <= datetime.now(timezone.utc):
             raise TeamRouteError("federation_authority_coordination_unavailable")
         return result.evidence["value"], expires
+    cancelled = False
     try:
         # Start the bound before the network read and any publication wait.
         observed = datetime.now(timezone.utc)
@@ -107,12 +111,28 @@ async def _cached(work, key: str, read, *, fresh: bool = False):
             lease, status="verified", evidence={"value": value, "observed_at": observed.isoformat()}, ttl_seconds=60,
         )
         return value, min(result.expires_at, observed + timedelta(seconds=60))
+    except asyncio.CancelledError:
+        cancelled = True
+        raise
     finally:
-        await work.release_lease(lease)
+        # Cancellation must not acquire another pool connection while Phase B
+        # holds one. An abandoned lease expires after its existing ten-second TTL.
+        if not cancelled:
+            await work.release_lease(lease)
 
 
 async def verify_team_route(request, certificate: str, *, fresh: bool = False, membership_only: bool = False) -> VerifiedTeamRoute:
     """Verify an exact stored certificate without treating custody as authority."""
+    try:
+        # One wall-clock budget includes home HTTP, DNS, both evidence reads,
+        # pool acquisition, lease coordination and result publication.
+        async with asyncio.timeout(TEAM_ROUTE_DEADLINE_SECONDS):
+            return await _verify_team_route(request, certificate, fresh=fresh, membership_only=membership_only)
+    except TimeoutError as exc:
+        raise TeamRouteError("federation_authority_coordination_unavailable") from exc
+
+
+async def _verify_team_route(request, certificate: str, *, fresh: bool, membership_only: bool) -> VerifiedTeamRoute:
     cert = _certificate(certificate)
     team, cert_id = cert["team_id"], cert["certificate_id"]
     domain, name = parse_team_id(team)
@@ -179,7 +199,7 @@ async def verify_team_route(request, certificate: str, *, fresh: bool = False, m
             raise TeamRouteError("local_sender_team_server_missing") from exc
         return VerifiedTeamRoute(
             team, cert_id, certificate, cert["member_did_key"], cert["alias"],
-            canonical_server_origin(verified.server_url), min(status_expiry, record_expiry),
+            verified.audience, min(status_expiry, record_expiry),
         )
     except FederationAuthorityError as exc:
         raise TeamRouteError(exc.reason, team=team, domain=domain) from exc
