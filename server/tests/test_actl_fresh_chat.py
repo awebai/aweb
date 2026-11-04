@@ -63,7 +63,7 @@ async def test_signed_fresh_chat_replaces_in_both_orders(route_pair, foreign, en
 @pytest.mark.parametrize("foreign", [False, True], ids=["local", "federated"])
 @pytest.mark.parametrize("encrypted,fault", [(e, f) for e in (False, True)
     for f in ("mismatched-id", "unsigned", "tampered", "foreign-signer")
-    if e or f in ("mismatched-id", "unsigned")])
+    if e or f in ("mismatched-id", "unsigned", "foreign-signer")])
 async def test_unbound_fresh_chat_does_not_close_or_deliver(route_pair, foreign, encrypted, fault):
     pair = route_pair
     sender = pair.source.local
@@ -89,7 +89,7 @@ async def test_unbound_fresh_chat_does_not_close_or_deliver(route_pair, foreign,
     before = await _snapshot(pair)
     posts = len(pair.target.calls)
     response = await _post(sender, fresh)
-    assert response.status_code == 409, response.text
+    assert response.status_code in ({409, 422} if fault == "foreign-signer" else {409}), response.text
     assert await _snapshot(pair) == before
     assert await _status(pair.source, old.cid) == "active"
     assert len(pair.target.calls) == posts

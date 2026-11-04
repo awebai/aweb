@@ -358,6 +358,7 @@ def _sender_bound_fresh_session(payload: CreateSessionRequest, auth: MessagingAu
         return False
     if not _payload_is_encrypted(payload):
         return (payload.signature is not None
+                and payload.from_did in auth_dids(auth)
                 and _signed_payload_conversation_id(payload.signed_payload) == str(session_id))
     envelope = payload.encrypted_envelope or {}
     sender = envelope.get("from")
