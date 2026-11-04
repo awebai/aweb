@@ -138,17 +138,18 @@ def agent_wake_publisher(state) -> AgentWakePublisher | None:
 
 
 class AgentWakePublisher:
-    """Publishes wakes from one task per process, retrying until Redis accepts them."""
+    """Publishes wakes from one task per process, retrying until Redis accepts them.
+
+    The task runs only while wakes are pending.
+    """
 
     def __init__(self, redis) -> None:
         self._redis = redis
         self._pending: dict[str, set[str]] = {}
-        self._ready = asyncio.Event()
         self._task: asyncio.Task | None = None
 
     def submit(self, wakes: Mapping[str, Iterable[str]]) -> None:
         _merge(self._pending, wakes)
-        self._ready.set()
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self._run(), name="agent-wake-publisher")
 
@@ -177,13 +178,10 @@ class AgentWakePublisher:
             )
 
     async def _run(self) -> None:
+        """Send until nothing is pending, then end; submit starts it again."""
         delay = PUBLISH_RETRY_INITIAL_SECONDS
-        while True:
-            await self._ready.wait()
-            self._ready.clear()
+        while self._pending:
             batch, self._pending = self._pending, {}
-            if not batch:
-                continue
             try:
                 await self._send(batch)
             except asyncio.CancelledError:
@@ -199,7 +197,6 @@ class AgentWakePublisher:
                 )
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, PUBLISH_RETRY_MAX_SECONDS)
-                self._ready.set()
                 continue
             delay = PUBLISH_RETRY_INITIAL_SECONDS
 
@@ -453,3 +450,4 @@ def _text(value) -> str:
     if isinstance(value, bytes):
         return value.decode()
     return "" if value is None else str(value)
+

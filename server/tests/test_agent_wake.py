@@ -287,3 +287,16 @@ async def test_close_gives_up_on_unreachable_redis_within_its_bound(proxy, caplo
         )
     finally:
         await link.aclose()
+
+
+@pytest.mark.asyncio
+async def test_publisher_runs_no_task_while_nothing_is_pending(redis, hub):
+    key = _did_key()
+    publisher = AgentWakePublisher(redis)
+    async with hub.subscribe([key]) as subscription:
+        with agent_wake_scope(publisher):
+            record_agent_wake(key, "mail")
+        assert (await _next_batch(subscription)).kinds == {"mail"}
+    await asyncio.sleep(0.05)
+    assert publisher._task is not None and publisher._task.done()
+    await publisher.close()
