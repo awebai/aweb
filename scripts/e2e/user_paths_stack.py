@@ -74,7 +74,8 @@ def configuration(dns=None):
         'server': dict(image=LOCAL_IMAGES['runtime'], entrypoint=['/opt/candidate-browser/server/.venv/bin/aweb', 'serve', '--host', '0.0.0.0', '--port', '8000'], environment=dict(common, AWEB_DATABASE_URL='postgresql://aweb:disposable@postgres:5432/aweb', AWEB_PUBLIC_ORIGIN='http://server:8000')),
         'peer': dict(image=LOCAL_IMAGES['runtime'], entrypoint=['/opt/candidate-browser/server/.venv/bin/aweb', 'serve', '--host', '0.0.0.0', '--port', '8000'], environment=dict(common, AWEB_DATABASE_URL='postgresql://aweb:disposable@postgres:5432/peer', AWEB_PUBLIC_ORIGIN='http://peer:8000')),
         'cli': dict(image=LOCAL_IMAGES['runtime'],
-                    user=CLIENT_USER, entrypoint=['sleep', 'infinity'], environment={'APP_ENV': 'development'}, volumes=[f'{WORK}:/work']),
+                    user=CLIENT_USER, entrypoint=['sleep', 'infinity'], environment={'APP_ENV': 'development'},
+                    volumes=[f'{WORK}:/work', 'identities:/identities']),
     }
     if BASELINE_READY:
         services['server']['environment']['PYTHONPATH'] = '/work/baseline-package'
@@ -84,7 +85,7 @@ def configuration(dns=None):
     for name in ('awid', 'server', 'peer', 'cli'):
         if dns:
             services[name]['dns'] = [dns]
-    return dict(services=services, networks={'default': {'internal': True}})
+    return dict(services=services, networks={'default': {'internal': True}}, volumes={'identities': {}})
 
 
 def wait_ready():
@@ -202,6 +203,10 @@ def main():
             COMPOSE.write_text(json.dumps(configuration(dns)))
             compose('up', '--pull', 'never', '-d', '--wait', 'postgres')
             compose('up', '--pull', 'never', '-d', 'awid', 'server', 'peer', 'cli')
+            # Initialize only the empty volume's parent. Each identity itself
+            # is subsequently created by the ordinary CLI as CLIENT_USER.
+            compose('run', '--rm', '--no-deps', '--pull', 'never', '--user', '0:0',
+                    '--entrypoint', 'chown', 'cli', CLIENT_USER, '/identities')
             wait_ready()
             (EVIDENCE / 'head-version.txt').write_text(compose('exec', '-T', 'cli', HEAD_BINARY, 'version', capture=True).stdout)
             if BASELINE_READY:

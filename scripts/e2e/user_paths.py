@@ -56,7 +56,12 @@ class Lane:
         self.name, self.binary = name, binary
         self.root = ROOT / name
         self.root.mkdir()
-        self.home = self.root / 'home'
+        # Fixture storage choice: Docker Desktop host-bind ownership reads
+        # flipped CLI-created homes from UID 501 to UID 0 under the receiver.
+        # Use a Linux volume; keep aw's actual ownership guard unchanged.
+        self.identity_root = Path('/identities') / name
+        self.identity_root.mkdir()
+        self.home = self.identity_root / 'home'
         self.home.mkdir()
         self.actors = {}
         self.receivers = []
@@ -167,7 +172,7 @@ class Lane:
         return json.loads(result.stdout)
 
     def actor(self, name, domain, server='http://server:8000'):
-        path = self.root / name
+        path = self.identity_root / name
         path.mkdir()
         self.actors[name] = dict(home=path, domain=domain, server=server)
 

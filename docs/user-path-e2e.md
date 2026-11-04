@@ -12,6 +12,11 @@ Each lane provisions actors using the public CLI: controller preparation and
 real TXT verification, identity creation, team creation/invitation/acceptance,
 workspace initialization, delivery-origin publication and encryption-key setup.
 The two local actors are distinct identities in the first global actor's team.
+Private homes are created by that CLI on a run-owned Linux Docker volume whose
+empty parent is owned by the client UID. Evidence and artifacts use the host
+bind. This separates identity ownership from Docker Desktop bind-mount UID
+reads, which were observed to flip to UID 0 under the receiver; the CLI's
+ownership guard stays enabled.
 
 | Directed path | Relationship | Mail | Chat |
 | --- | --- | --- | --- |
@@ -44,6 +49,10 @@ is bound to the presented message ID and the original conversation/session ID.
 Inbox and history message IDs, pending-session IDs and history content modes
 are checked independently; signed payload/envelope IDs are also checked when
 exposed. Chat pending is a session summary and has no message ID or content mode.
+Chat creation must return its session ID. An exact-session continuation returns
+a message receipt; its expected thread comes from the explicit request, and any
+thread included in that receipt must agree. Failed cases retain raw send/reply/
+continuation stdout and stderr separately.
 
 Refusal controls check the actual user-facing diagnostic and no delivery:
 
