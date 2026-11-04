@@ -117,6 +117,7 @@ from aweb.grant_streams import (
     grant_terminal_sse,
     require_valid_stream_grant,
 )
+from aweb.messaging.mail_routing import _require_live_mail_participant
 from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL, ConflictError, ForbiddenError, NotFoundError, ValidationError
 
 logger = logging.getLogger(__name__)
@@ -2770,6 +2771,14 @@ async def send_message(
     if not actor_did:
         raise HTTPException(status_code=404, detail="Session not found")
     recipient_rows = await _resolve_session_recipient_rows(db, session_id=session_uuid, actor_dids=actor_dids)
+    # Succession is mail-only. Retired humans get a mail-directed refusal;
+    # retired agents retain the existing chat behavior for live group members.
+    try:
+        for row in recipient_rows:
+            if not _target_delivery_origin(row):
+                await _require_live_mail_participant(db, row, {}, human_only=True)
+    except ValidationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     for row in recipient_rows:
         local = await local_recipient_for_own_route(db, row, request=request, origins=public_origins(request))
         if local is not None:

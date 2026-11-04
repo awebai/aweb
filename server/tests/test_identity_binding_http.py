@@ -704,11 +704,29 @@ async def test_retired_group_member_does_not_relax_live_member_policy(privacy_ap
         await env.db.execute("UPDATE {{tables.agents}} SET did_aw_verified_key=NULL WHERE agent_id=$1",bob.id)
         allowed = await signed(sender,"POST",f"/v1/chat/sessions/{session}/messages",{"body":"remaining member open"})
         assert allowed.status_code == 200, allowed.text
+        from fastapi import FastAPI
+        from fastapi.responses import JSONResponse
+        from aweb.mcp.auth import MCPAuthMiddleware
+        from aweb.mcp.tools.chat import chat_send
+
+        mcp_app = FastAPI()
+        @mcp_app.post("/")
+        async def continue_group_chat():
+            result = await chat_send(env.infra, env.redis, registry_client=registry,
+                session_id=session, message="remaining member via MCP", plaintext=True)
+            return JSONResponse(json.loads(result))
+        env.app.mount("/retired-group-mcp", MCPAuthMiddleware(mcp_app, env.infra))
+        mcp_allowed = await signed(sender, "POST", "/retired-group-mcp/")
+        assert mcp_allowed.status_code == 200, mcp_allowed.text
+        assert mcp_allowed.json().get("message_id"), mcp_allowed.text
         tightened = await signed(bob,"PATCH","/v1/agents/me/inbound-mode",{"inbound_mode":"team_and_contacts"})
         assert tightened.status_code == 200, tightened.text
         before = await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}} WHERE session_id=$1::uuid",session)
         refused = await signed(sender,"POST",f"/v1/chat/sessions/{session}/messages",{"body":"remaining member restricted"})
         assert refused.status_code == 403, refused.text
+        mcp_refused = await signed(sender, "POST", "/retired-group-mcp/")
+        assert mcp_refused.status_code == 200, mcp_refused.text
+        assert "only accepts" in mcp_refused.json()["error"], mcp_refused.text
         assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}} WHERE session_id=$1::uuid",session) == before
 
 

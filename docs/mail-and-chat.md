@@ -393,12 +393,38 @@ still durable and exactly fetchable, but is not replayed as unread wake state.
 Use mail for status, findings, review requests, and handoffs that should survive
 the current process or runtime session.
 
-A mail continuation whose recipient identity has been retired locally refuses
-with HTTP 410 and `detail.code: participant_retired`, before forwarding or
-storing anything. The message names the stored alias/team for a new mail.
-A new recipient-by-alias send resolves the current identity and starts a new
-thread; it never moves the old thread to the replacement. Deleting one membership
-projection does not retire a still-live participant DID in another membership.
+An operator holding custody of a retired human identity and its successor for
+one account may record their succession through
+`aweb.messaging.participant_succession.succeed_local_human_participant_on`.
+The caller proves same-account custody, records that decision and invokes the
+seam in its existing transaction after the live successor projection exists.
+The seam replaces participants only in existing local mail threads, preserving
+the conversation IDs. It is idempotent and rejects observable foreign routes;
+no alias, address or display-name match establishes succession. Mail is
+identity-scoped: when the successor has no membership in the thread's team,
+the participant uses its live projection from another team; this grants no
+membership in the thread's team.
+
+Plaintext mail then continues in both directions in the same thread. A signed
+continuation may still name that thread's recorded predecessor as its target;
+new outgoing messages authenticate as the successor, never as the retired key.
+Delivery authorization uses the successor participant; a queued signed target
+is retained as the message target so ordinary readers still verify its bytes.
+Historical message DIDs, signatures and envelopes stay unchanged. The recorded
+thread-local predecessor mapping preserves read attribution. Hosted custodial
+readers can display old encrypted messages using retained predecessor decryption
+keys; this is server-readable custody, not end-to-end encryption. Succession
+adds no exception to the refusal of new encrypted sends to a custodial human,
+including messages encrypted to the predecessor key.
+
+Chat participant rows and read receipts stay unchanged. A continuation to a
+retired local chat participant refuses with HTTP 410 and
+`detail.code: participant_retired`, directing the sender to mail. Chat to a live
+human still refuses with `recipient_human_mail_only`. A retired mail participant
+without a recorded successor likewise retains the 410, before forwarding or
+storage. A fresh alias-based send resolves normally and never moves a thread.
+Deleting one membership projection does not retire a still-live participant DID
+in another membership.
 
 `GET /v1/messages/unread-count` returns `{ "unread_count": N }`: the
 participant's distinct total incoming unread mail across threads, without

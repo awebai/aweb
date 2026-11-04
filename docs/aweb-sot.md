@@ -626,7 +626,14 @@ authority remains the ordered SQL itself; this SOT does not duplicate that DDL.
 - `team_rooms`
 - `room_messages`
 - `room_post_notices`
+- `local_human_successions`
+- `conversation_participant_successions`
 <!-- END SOURCE INVENTORY: aweb-tables -->
+
+Migration `046_local_human_succession` adds:
+
+- `local_human_successions` records authorized local human predecessor identities and their successors.
+- `conversation_participant_successions` scopes predecessor target and historical attribution evidence to existing mail threads.
 
 Migrations `035_team_app_installation_identity` and `036_app_installation_management`
 add installation identity and management. They use these tables:

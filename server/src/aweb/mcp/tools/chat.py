@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from aweb.messaging.participants import messaging_participant_by_alias
+from aweb.messaging.mail_routing import _require_live_mail_participant
 from aweb.messaging.chat_policy import HumanChatRefused, require_agent_chat
 from aweb.identity_auth_deps import participant_dids
 
@@ -810,9 +811,14 @@ async def chat_send(
         except HTTPException as exc:
             return json.dumps({"error": exc.detail})
         try:
+            for recipient in recipient_rows:
+                if not recipient.get("delivery_origin"):
+                    await _require_live_mail_participant(db_infra, recipient, {}, human_only=True)
             await require_agent_chat(db_infra, recipient_rows, registry_client=registry_client)
         except HumanChatRefused as exc:
             return json.dumps({"error": exc.detail, **exc.body()})
+        except ServiceError as exc:
+            return json.dumps({"error": exc.detail})
         try:
             for recipient in recipient_rows:
                 if recipient.get("delivery_origin"):

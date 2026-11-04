@@ -310,6 +310,7 @@ async def deliver_message(
     message_id: UUID | None = None,
     conversation_id: str | UUID | None = None,
     skip_policy_check: bool = False,
+    signed_recipient_did: str | None = None,
 ) -> tuple[UUID, datetime]:
     """Deliver a message between identities, not within a team."""
     sender_did = str(from_did or "").strip()
@@ -420,7 +421,10 @@ async def deliver_message(
         """,
         message_id,
         sender_did,
-        recipient_did,
+        # A validated same-account succession may deliver to the successor
+        # while preserving its predecessor as the original signed target.
+        # Policy and residence above always use the current delivery identity.
+        signed_recipient_did or recipient_did,
         from_alias_value,
         from_address_value,
         to_alias_value,

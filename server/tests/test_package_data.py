@@ -144,6 +144,7 @@ def test_canonical_chain_starts_with_reset_baseline_then_forward_migrations():
         "043_team_room.sql",
         "044_room_post_notices.sql",
         "045_canonical_participant_dids.sql",
+        "046_local_human_succession.sql",
     ]
 
 
