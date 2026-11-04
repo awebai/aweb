@@ -311,6 +311,7 @@ async def deliver_message(
     conversation_id: str | UUID | None = None,
     skip_policy_check: bool = False,
     signed_recipient_did: str | None = None,
+    known_new: bool = False,
 ) -> tuple[UUID, datetime]:
     """Deliver a message between identities, not within a team."""
     sender_did = str(from_did or "").strip()
@@ -378,7 +379,9 @@ async def deliver_message(
         encrypted_metadata = {}
 
     aweb_db = db.get_manager("aweb")
-    existing = await aweb_db.fetch_one(
+    # known_new: the caller looked this message_id up in this request and
+    # found no row, so the same lookup is not repeated here.
+    existing = None if known_new else await aweb_db.fetch_one(
         """
         SELECT message_id, created_at, content_mode, signed_envelope_hash,
                from_did, signed_payload
