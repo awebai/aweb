@@ -450,4 +450,3 @@ def _text(value) -> str:
     if isinstance(value, bytes):
         return value.decode()
     return "" if value is None else str(value)
-
