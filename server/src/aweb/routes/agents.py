@@ -387,7 +387,13 @@ async def list_agents(
                e.not_before_text AS encryption_key_not_before,
                e.expires_at_text AS encryption_key_expires_at,
                e.previous_encryption_key_id,
-               e.assertion_signature AS encryption_key_signature
+               e.assertion_signature AS encryption_key_signature,
+               ctx.workspace_id,
+               ctx.workspace_type,
+               ctx.hostname,
+               ctx.workspace_path,
+               ctx.ws_role,
+               ctx.repo
         FROM {{tables.agents}} a
         CROSS JOIN LATERAL (
             SELECT CASE WHEN a.did_aw_verified_key = a.did_key THEN a.did_aw END AS did_aw,
@@ -413,6 +419,20 @@ async def list_agents(
             ORDER BY assertion_created_at DESC, not_before_at DESC, encryption_key_id DESC
             LIMIT 1
         ) e ON TRUE
+        -- Workspace context: an agent's most recently seen live workspace.
+        LEFT JOIN LATERAL (
+            SELECT w.workspace_id,
+                   w.workspace_type,
+                   w.hostname,
+                   w.workspace_path,
+                   w.role AS ws_role,
+                   r.canonical_origin AS repo
+            FROM {{tables.workspaces}} w
+            LEFT JOIN {{tables.repos}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
+            WHERE w.team_id = a.team_id AND w.agent_id = a.agent_id AND w.deleted_at IS NULL
+            ORDER BY w.last_seen_at DESC NULLS LAST, w.created_at DESC, w.workspace_id
+            LIMIT 1
+        ) ctx ON TRUE
         WHERE a.team_id = $1 AND a.deleted_at IS NULL
           AND COALESCE(a.agent_type, 'agent') != 'human'
         ORDER BY a.alias
@@ -420,26 +440,10 @@ async def list_agents(
         identity.team_id,
     )
 
-    # Workspace context for each agent
-    context_rows = await aweb_db.fetch_all(
-        """
-        SELECT w.agent_id,
-               w.workspace_id,
-               w.workspace_type,
-               w.hostname,
-               w.workspace_path,
-               w.role AS ws_role,
-               r.canonical_origin AS repo
-        FROM {{tables.workspaces}} w
-        LEFT JOIN {{tables.repos}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
-        WHERE w.team_id = $1 AND w.deleted_at IS NULL
-        """,
-        identity.team_id,
-    )
-    context_by_agent = {str(r["agent_id"]): r for r in context_rows}
+    context_by_agent = {str(r["agent_id"]): r for r in rows if r["workspace_id"] is not None}
 
     # Presence is keyed by workspace_id, not agent_id.
-    workspace_ids = [str(r["workspace_id"]) for r in context_rows]
+    workspace_ids = [str(r["workspace_id"]) for r in context_by_agent.values()]
     presences = (
         await list_agent_presences_by_workspace_ids(redis, workspace_ids)
         if redis and workspace_ids
