@@ -88,15 +88,29 @@ checks and same-version tag assignments.
 
 Before final tagging, `release_candidate.py` selects the highest numbered
 existing RC tag for the same artifact and base version. Its commit must be an
-ancestor of the final commit. The complete RC-to-final **tree** diff may only
-promote manifest versions and exact dependency pins or lower-bound floors on promoted packages to the same final base.
-A pin may change only when its target package's manifest is promoted in that
-same tree. Parsed extras, markers, scripts and other metadata remain equal.
-Existing uv/npm lock records may promote those same versions; artifact URLs,
-hashes, sizes, integrity and upload times may change only for promoted records.
-Lock records may not be added or removed. File additions, deletions, renames,
-mode changes and source changes refuse. Commit release notes before RC1:
-docs and CHANGELOG changes after the selected RC also refuse.
+ancestor of the final commit. The complete RC-to-final diff is checked for the
+package being promoted: `server/`, `awid/`, `naapp-lib/` (including its lockstep
+`testing/` package), or `cli/go/` (including all npm platform packages). These
+trees include source, manifests, locks and package build configuration. The
+shared build commands in `scripts/publish_release.py`, root checkout filters
+(`.gitignore`, `.gitattributes`), and the lane's build configuration also count:
+Python's root `pyproject.toml`, `uv.toml`, `uv.lock`, `.python-version` and PyPI
+workflow; Go's root `go.work`, `go.work.sum`, aw release workflow and shared
+`scripts/npm-exact-publish.sh` packing recipe.
+Unrelated files elsewhere, including the root Makefile and another package's
+source, do not force a new RC of this package.
+
+Within that scope, only manifest versions and exact dependency pins or
+lower-bound floors on promoted packages may move to the same final base.
+A pin may change only when its target package's manifest is promoted in those
+same compared trees; external manifests provide that version evidence without
+pulling their source into this package's scope. Parsed extras, markers, scripts
+and other metadata remain equal. Existing uv/npm lock records may promote those
+same versions; artifact URLs, hashes, sizes, integrity and upload times may
+change only for promoted records. Lock records may not be added or removed.
+File additions, deletions, renames, mode changes and source changes within the
+scope refuse. Commit package-local release notes before RC1; unrelated release
+notes outside the package do not block promotion.
 
 The same check runs in the tag publisher, including runnerless publication.
 The aw sync workflow calls the read-only `publish_release.py --check-tag`
