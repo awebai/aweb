@@ -11,8 +11,8 @@ query filters on:
 
 Writers record wakes with ``record_agent_wake`` inside an ``agent_wake_scope``
 opened by the owner of the outermost transaction. The scope hands them to the
-publisher only when it exits normally, after that transaction committed, so a
-stream is never woken before the row it must read is visible.
+publisher when it exits, after that transaction ended, so a stream is never
+woken before the row it must read is visible.
 
 The publisher bumps a counter per key and kind (``agent-mark:{kind}:{key}``)
 and publishes on
@@ -109,12 +109,14 @@ def record_did_wakes(dids: Iterable[str], kind: str) -> None:
 
 @contextlib.contextmanager
 def agent_wake_scope(publisher: AgentWakePublisher | None) -> Generator[None]:
-    """Collect wakes recorded inside; hand them to the publisher on normal exit.
+    """Collect wakes recorded inside; hand them to the publisher when it exits.
 
     Open it around the outermost transaction. A nested scope records into the
-    outermost one, so wakes are published once, after the outermost commit.
-    Leaving by an exception publishes nothing. Without a publisher (no Redis)
-    the wakes are dropped and streams rely on their reconcile.
+    outermost one, so wakes are published once, after the outermost
+    transaction ended. They are published on every exit, an exception
+    included: the write may have committed before the failure, and a wake for
+    a write that rolled back costs only one snapshot. Without a publisher (no
+    Redis) the wakes are dropped and streams rely on their reconcile.
     """
     if _current_scope.get() is not None:
         yield
@@ -125,8 +127,8 @@ def agent_wake_scope(publisher: AgentWakePublisher | None) -> Generator[None]:
         yield
     finally:
         _current_scope.reset(token)
-    if publisher is not None and scope.wakes:
-        publisher.submit(scope.wakes)
+        if publisher is not None and scope.wakes:
+            publisher.submit(scope.wakes)
 
 
 def agent_wake_publisher(state) -> AgentWakePublisher | None:

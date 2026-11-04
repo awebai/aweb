@@ -117,16 +117,18 @@ async def test_nested_scope_records_into_the_outermost_scope(hub, publisher):
 
 
 @pytest.mark.asyncio
-async def test_scope_left_by_an_exception_publishes_nothing(redis, hub, publisher):
+async def test_scope_left_by_an_exception_still_publishes(redis, hub, publisher):
+    # The write may have committed before the exception; a spurious wake
+    # costs one snapshot, a lost one costs the reconcile bound.
     key = _did_key()
     async with hub.subscribe([key]) as subscription:
         with pytest.raises(RuntimeError):
             with agent_wake_scope(publisher):
                 record_agent_wake(key, "mail")
-                raise RuntimeError("rolled back")
-        await asyncio.sleep(0.3)
-        assert subscription.take().kinds == set()
-    assert (await read_wake_marks(redis, [key]))[(key, "mail")] is None
+                raise RuntimeError("failed after commit")
+        batch = await _next_batch(subscription)
+    assert batch.kinds == {"mail"}
+    assert (await read_wake_marks(redis, [key]))[(key, "mail")] is not None
 
 
 @pytest.mark.asyncio
