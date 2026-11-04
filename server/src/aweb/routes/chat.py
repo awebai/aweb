@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from aweb.federation.origins import public_origins
 
-from aweb.attachment_service import prepare_attachment_send, refuse_remote_attachments, attachment_retry, attachment_references
+from aweb.attachment_service import prepare_attachment_send, refuse_remote_attachments, attachment_retry, attachment_references_by_message
 
 from aweb.messaging.participants import messaging_participant_by_alias, messaging_participants_by_aliases
 from aweb.messaging.sender_membership import sender_memberships
@@ -2073,6 +2073,7 @@ async def history(
     )
 
     memberships = await sender_memberships(request, db, [dict(m, team_id=sess["team_id"]) for m in messages])
+    attachment_refs = await attachment_references_by_message(db, "chat", [m["message_id"] for m in messages])
     history_items: list[dict[str, Any]] = []
     for msg in messages:
         from_did = (msg.get("from_did") or "").strip()
@@ -2083,7 +2084,7 @@ async def history(
         )
         history_items.append(
             {
-                "attachment_refs": await attachment_references(db, "chat", msg["message_id"]),
+                "attachment_refs": attachment_refs[str(msg["message_id"])],
                 "sender_membership": memberships[(str(sess["team_id"] or ""), str(msg.get("from_agent_id") or ""))],
                 "conversation_id": str(session_uuid),
                 "message_id": msg["message_id"],
