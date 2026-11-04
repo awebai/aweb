@@ -36,14 +36,18 @@ discovers them automatically.
 
 ## Install in Pi
 
+For a standalone agent, run this in that agent's folder to install in project
+settings:
+
 ```bash
-pi install npm:@awebai/claude-skills@latest
+pi install -l npm:@awebai/claude-skills@latest
 ```
 
 Run `/reload` or restart Pi after installing. This installs guidance only; the
 channel and CLI come from `pi install npm:@awebai/pi@latest`. An orchestrator
-such as OATS may already supply the skills per home, in which case no global
-skills install is needed. Neither package opts a team into aweb tasks.
+such as OATS may already supply the skills per home; use that composed set. Do not
+install this package user-wide on a host running OATS Pi homes: user-wide skills
+load in every Pi folder on that host. Neither package opts a team into aweb tasks.
 
 ## Publish (maintainers)
 
