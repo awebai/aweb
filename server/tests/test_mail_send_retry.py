@@ -186,3 +186,24 @@ async def test_concurrent_identical_continuations_deliver_once_and_both_succeed(
     assert {r.json()["message_id"] for r in responses} == {retried["message_id"]}
     assert await _counts(db) == (2, 1)
     assert events == [("message.sent", opening["message_id"]), ("message.sent", retried["message_id"])]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("continuation", [False, True])
+async def test_an_exact_retry_is_refused_once_the_recipient_no_longer_admits_the_sender(aweb_cloud_db, continuation):
+    db, app, events, alice_sk, alice_key, bob_key = await _sender(aweb_cloud_db)
+    conversation_id = str(uuid4())
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        if continuation:
+            opening = _signed_send(alice_sk, alice_key, bob_key, conversation_id=conversation_id, body="opening")
+            assert (await client.post("/v1/messages", json=opening)).status_code == 200
+        request = _signed_send(
+            alice_sk, alice_key, bob_key, conversation_id=conversation_id if continuation else None, body="retried",
+        )
+        assert (await client.post("/v1/messages", json=request)).status_code == 200
+        await db.execute(
+            "UPDATE {{tables.agents}} SET inbound_mode = 'contacts_only' WHERE did_key = $1", bob_key,
+        )
+        retry = await client.post("/v1/messages", json=request)
+
+    assert retry.status_code == 403, retry.text
