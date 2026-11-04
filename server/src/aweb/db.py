@@ -11,6 +11,7 @@ from pgdbm.migrations import AsyncMigrationManager
 from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations
 
 from .config import get_settings
+from .connection_scope import DatabaseManager
 from awid.db_config import build_database_config
 
 class DatabaseInfra:
@@ -57,7 +58,7 @@ class DatabaseInfra:
 
             self._shared_pool = shared_pool
 
-            self._manager = AsyncDatabaseManager(
+            self._manager = DatabaseManager(
                 pool=shared_pool,
                 schema="aweb",
             )

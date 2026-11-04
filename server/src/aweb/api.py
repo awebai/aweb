@@ -17,6 +17,7 @@ from awid.registry import CachedRegistryClient, RegistryClient
 from awid.federation_errors import FederationAuthorityError
 from .config import get_public_origin, get_settings
 from awid.log import canonical_server_origin
+from .connection_scope import ConnectionScopeMiddleware
 from .db import DatabaseInfra
 from .db import db_infra as default_db_infra
 from awid.log_config import configure_logging
@@ -582,6 +583,10 @@ def create_app(
     app.include_router(tasks_router)
     app.include_router(workspaces_router)
     app.include_router(repos_router)
+
+    # Added last, so it is outermost: one connection for every statement a
+    # request runs before its response starts, middleware included.
+    app.add_middleware(ConnectionScopeMiddleware)
 
     return app
 
