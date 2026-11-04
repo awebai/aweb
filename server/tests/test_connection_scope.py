@@ -169,6 +169,35 @@ async def test_a_request_shares_one_checkout_until_its_response_starts(managers)
     assert stream.text == "True,False"
 
 
+class _UnusedRedis:
+    pass
+
+
+@pytest.mark.asyncio
+async def test_an_aweb_app_request_shares_one_checkout(shared_test_pool, monkeypatch):
+    from aweb.api import create_app
+    from aweb.db import DatabaseInfra
+
+    async def _noop_mount(_app, _db_infra, _redis, _registry_client):
+        return None
+
+    monkeypatch.setattr("aweb.api._mount_mcp_app", _noop_mount)
+    db_infra = DatabaseInfra()
+    await db_infra.initialize(shared_pool=shared_test_pool)
+    app = create_app(db_infra=db_infra, redis=_UnusedRedis())
+    app.state.db = db_infra
+
+    @app.get("/probe")
+    async def probe():
+        db = app.state.db.get_manager("aweb")
+        await _mark(db)
+        return {"marked": await _marked(db)}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/probe")
+    assert response.json() == {"marked": True}
+
+
 @pytest.mark.asyncio
 async def test_a_mounted_app_with_its_own_scope_middleware_joins_the_outer_scope(managers):
     aweb_db, _ = managers
