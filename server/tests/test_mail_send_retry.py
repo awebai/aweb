@@ -57,6 +57,30 @@ def _signed_send(alice_sk, alice_key, bob_key, *, conversation_id=None, body="no
     return request
 
 
+def _both_past_the_lookup(monkeypatch):
+    """Hold each request after its stored-send lookup until both have looked:
+    both see no row, so both go on to insert."""
+    import asyncio
+
+    import aweb.routes.messages as message_routes
+
+    lookup = message_routes._stored_exact_send
+    arrived = 0
+    both = asyncio.Event()
+
+    async def held(*args, **kwargs):
+        nonlocal arrived
+        result = await lookup(*args, **kwargs)
+        if not both.is_set():
+            arrived += 1
+            if arrived == 2:
+                both.set()
+            await asyncio.wait_for(both.wait(), timeout=5)
+        return result
+
+    monkeypatch.setattr(message_routes, "_stored_exact_send", held)
+
+
 async def _counts(db):
     messages = await db.fetch_value("SELECT count(*) FROM {{tables.messages}}")
     conversations = await db.fetch_value("SELECT count(*) FROM {{tables.conversations}}")
@@ -121,3 +145,44 @@ async def test_a_refused_send_leaves_no_conversation_behind(aweb_cloud_db):
     assert refused.status_code == 409, refused.text
     assert await _counts(db) == (1, 1)
     assert events == [("message.sent", first_request["message_id"])]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("caller_conversation", [True, False])
+async def test_concurrent_identical_sends_deliver_once_and_both_succeed(
+    aweb_cloud_db, caller_conversation, monkeypatch,
+):
+    import asyncio
+
+    db, app, events, alice_sk, alice_key, bob_key = await _sender(aweb_cloud_db)
+    request = _signed_send(
+        alice_sk, alice_key, bob_key, conversation_id=str(uuid4()) if caller_conversation else None,
+    )
+    _both_past_the_lookup(monkeypatch)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        responses = await asyncio.gather(*(client.post("/v1/messages", json=request) for _ in range(2)))
+
+    assert [r.status_code for r in responses] == [200, 200], [r.text for r in responses]
+    assert {r.json()["message_id"] for r in responses} == {request["message_id"]}
+    assert len({r.json()["conversation_id"] for r in responses}) == 1
+    assert await _counts(db) == (1, 1)
+    assert events == [("message.sent", request["message_id"])]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_identical_continuations_deliver_once_and_both_succeed(aweb_cloud_db, monkeypatch):
+    import asyncio
+
+    db, app, events, alice_sk, alice_key, bob_key = await _sender(aweb_cloud_db)
+    conversation_id = str(uuid4())
+    opening = _signed_send(alice_sk, alice_key, bob_key, conversation_id=conversation_id, body="opening")
+    retried = _signed_send(alice_sk, alice_key, bob_key, conversation_id=conversation_id, body="retried")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        assert (await client.post("/v1/messages", json=opening)).status_code == 200
+        _both_past_the_lookup(monkeypatch)
+        responses = await asyncio.gather(*(client.post("/v1/messages", json=retried) for _ in range(2)))
+
+    assert [r.status_code for r in responses] == [200, 200], [r.text for r in responses]
+    assert {r.json()["message_id"] for r in responses} == {retried["message_id"]}
+    assert await _counts(db) == (2, 1)
+    assert events == [("message.sent", opening["message_id"]), ("message.sent", retried["message_id"])]
