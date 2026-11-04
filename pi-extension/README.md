@@ -16,15 +16,16 @@ pi list
 ## Skills (optional)
 
 The extension installs the channel and `aw` CLI without skills. For a standalone
-Pi agent, add the aweb CLI guidance separately:
+Pi agent, run this in that agent's folder to add the guidance to project settings:
 
 ```bash
-pi install npm:@awebai/claude-skills@latest
+pi install -l npm:@awebai/claude-skills@latest
 ```
 
 Despite its name, this content-only package supports Pi. Run `/reload` or restart
 Pi after installing it. If OATS or another orchestrator supplies per-home aweb
-skills, use that composed set; a machine-wide skills package is unnecessary.
+skills, use that composed set. Do not install this skills package user-wide on a
+host running OATS Pi homes: user-wide skills load in every Pi folder on that host.
 Messaging works without skills: check `aw workspace status`, read `aw mail inbox`
 and `aw chat pending`, then read `aw instructions show` for the team's rules.
 

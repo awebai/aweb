@@ -104,8 +104,9 @@ install. The local `aweb.tasks` capability supplies `aweb-coordination` and
 `aweb-tasks`; the latter applies when the team has tasks or its instructions
 select aweb tasks. Creating the first task is the opt-in.
 
-For a standalone Pi agent or a composition that intentionally wants the shared
-skill catalog, install `pi install npm:@awebai/claude-skills@latest`, then
-`/reload` or restart Pi. Messaging works without skills using `aw workspace
-status`, `aw mail inbox`, `aw chat pending`, and `aw instructions show`; a runtime
+For a standalone Pi agent, run `pi install -l npm:@awebai/claude-skills@latest`
+in that agent's folder to add the shared skills to project settings, then
+`/reload` or restart Pi. Do not install this package user-wide on a host running
+OATS Pi homes: user-wide skills load in every Pi folder on that host.
+Messaging works without skills using `aw workspace status`, `aw mail inbox`, `aw chat pending`, and `aw instructions show`; a runtime
 install alone does not select the team's tracker.
