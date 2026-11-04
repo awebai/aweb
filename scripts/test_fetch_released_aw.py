@@ -64,6 +64,8 @@ class ReleasedArtifactTests(unittest.TestCase):
                     metadata['name'] = '@awebai/aw-unsupported'
                 if failure == 'source' and name != 'aw':
                     metadata['gitHead'] = 'b' * 40
+                if failure == 'latest-source' and name == 'aw':
+                    metadata['gitHead'] = 'b' * 40
                 if self.path.endswith('.tgz'):
                     if failure == 'integrity':
                         body += b'changed'
@@ -88,6 +90,16 @@ class ReleasedArtifactTests(unittest.TestCase):
                 hits.clear()
                 fetch.fetch(root / 'frozen', origin, metadata=frozen)
                 self.assertNotIn('/@awebai%2faw/latest', hits)
+                first = fetch.freeze_latest(root / 'snapshots', origin)
+                original = first.read_bytes()
+                scenario['failure'] = 'latest-source'
+                second = fetch.freeze_latest(root / 'snapshots', origin)
+                self.assertNotEqual(first, second)
+                self.assertEqual(first.read_bytes(), original)
+                self.assertEqual(json.loads(second.read_text())['gitHead'], 'b' * 40)
+                scenario['failure'] = ''
+                self.assertEqual(fetch.freeze_latest(root / 'snapshots', origin), first)
+                self.assertEqual(first.read_bytes(), original)
                 for failure in ['integrity', 'identity', 'pin', 'missing', 'output', 'version', 'platform', 'source', 'stamp']:
                     scenario['failure'] = failure
                     with self.subTest(failure=failure), self.assertRaises(Exception):

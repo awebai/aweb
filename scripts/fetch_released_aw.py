@@ -12,6 +12,7 @@ import re
 import subprocess
 import sys
 import tarfile
+import tempfile
 from urllib.request import urlopen
 from urllib.error import HTTPError
 
@@ -80,6 +81,22 @@ def latest_metadata(registry='https://registry.npmjs.org'):
     return {key: metadata[key] for key in ('name', 'version', 'gitHead', 'dist')}
 
 
+def freeze_latest(directory, registry='https://registry.npmjs.org'):
+    # Concurrent gate invocations can observe different latest versions. A
+    # shared mutable filename would let one replace the other's ledger input.
+    body = (json.dumps(latest_metadata(registry), sort_keys=True) + '\n').encode()
+    directory.mkdir(parents=True, exist_ok=True)
+    destination = directory / ('released-aw-' + hashlib.sha256(body).hexdigest() + '.json')
+    descriptor, temporary = tempfile.mkstemp(prefix='.released-aw-', dir=directory)
+    try:
+        with os.fdopen(descriptor, 'wb') as output:
+            output.write(body)
+        os.replace(temporary, destination)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+    return destination
+
+
 def fetch(destination, registry='https://registry.npmjs.org', metadata=None):
     destination.mkdir(parents=True, exist_ok=False)
     selected = platform_package()
@@ -127,8 +144,11 @@ if __name__ == '__main__':
     parser.add_argument('destination', type=Path, nargs='?')
     parser.add_argument('--resolve-only', type=Path)
     parser.add_argument('--metadata-input', type=Path)
+    parser.add_argument('--freeze-latest', type=Path)
     args = parser.parse_args()
-    if args.resolve_only:
+    if args.freeze_latest:
+        print(freeze_latest(args.freeze_latest))
+    elif args.resolve_only:
         args.resolve_only.parent.mkdir(parents=True, exist_ok=True)
         args.resolve_only.write_text(json.dumps(latest_metadata(), sort_keys=True) + '\n')
     else:

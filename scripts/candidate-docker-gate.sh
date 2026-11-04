@@ -92,9 +92,8 @@ external_inputs="CLI_VERSION=$CLI_VERSION"$'\n'"A2A_GATEWAY_VERSION=$A2A_GATEWAY
 # latest exactly once here; the isolated matrix consumes this frozen metadata.
 if [[ " $REQUESTED " == *" user-paths "* ]]; then
   mkdir -p "$LOG_DIR"
-  USER_PATHS_LATEST_METADATA="$LOG_DIR/released-aw-latest.json"
   resolve_started=$SECONDS
-  python3 "$ROOT/scripts/fetch_released_aw.py" --resolve-only "$USER_PATHS_LATEST_METADATA"
+  USER_PATHS_LATEST_METADATA="$(python3 "$ROOT/scripts/fetch_released_aw.py" --freeze-latest "$LOG_DIR")"
   USER_PATHS_RESOLVE_SECONDS=$((SECONDS - resolve_started))
   released_identity="$(python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$USER_PATHS_LATEST_METADATA")"
   external_inputs+="RELEASED_AW=$released_identity"$'\n'
