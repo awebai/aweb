@@ -765,6 +765,10 @@ async def replay_federation_mutation_outbox(app, manager, *, limit: int = 100) -
     callback = getattr(app.state, "on_mutation", None)
     if callback is None:
         return 0
+    return await deliver_federation_mutation_outbox(manager, callback, limit=limit)
+
+
+async def deliver_federation_mutation_outbox(manager, callback, *, limit: int = 100) -> int:
     delivered = 0
     async with manager.transaction() as tx:
         rows = await tx.fetch_all(
