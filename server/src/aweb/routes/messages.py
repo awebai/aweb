@@ -4,7 +4,7 @@ from aweb.federation.origins import public_origins
 from aweb.messaging.mail_attribution import incoming_mail_sql, readable_mail_sql
 
 from aweb.identity_auth_deps import participant_dids
-from aweb.attachment_service import prepare_attachment_send, refuse_remote_attachments, attachment_retry, attachment_references
+from aweb.attachment_service import prepare_attachment_send, refuse_remote_attachments, attachment_retry, attachment_references_by_message
 
 import json
 import logging
@@ -301,6 +301,10 @@ async def _inbox_response_from_rows(
     )
 
     memberships = await sender_memberships(request, db, rows, member_rows=sender_member_rows)
+    attachment_refs = await attachment_references_by_message(
+        db, "mail",
+        [r["message_id"] for r in rows if str(r.get("content_mode") or "") == "encrypted_v2"],
+    )
     messages = []
     for r in rows:
         from_did = (r.get("from_did") or "").strip()
@@ -311,7 +315,7 @@ async def _inbox_response_from_rows(
             encrypted_envelope = json.loads(encrypted_envelope)
         messages.append(
             InboxMessage(
-                attachment_refs=await attachment_references(db, "mail", r["message_id"]) if content_mode == "encrypted_v2" else [],
+                attachment_refs=attachment_refs.get(str(r["message_id"]), []),
                 sender_membership=memberships[(str(r.get("team_id") or ""), str(r.get("from_agent_id") or ""))],
                 message_id=str(r["message_id"]),
                 conversation_id=(str(r["conversation_id"]) if r.get("conversation_id") else None),

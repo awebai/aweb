@@ -176,11 +176,23 @@ async def _bind(tx, kind, message_id, context):
 
 
 async def attachment_references(db, kind, message_id):
+    references = await attachment_references_by_message(db, kind, [message_id])
+    return references[str(message_id)]
+
+
+async def attachment_references_by_message(db, kind, message_ids):
+    """Each message's attachment references in ordinal order, in one read."""
+    ids = list(dict.fromkeys(UUID(str(message_id)) for message_id in message_ids))
+    references: dict[str, list[dict]] = {str(message_id): [] for message_id in ids}
+    if not ids:
+        return references
     rows = await db.get_manager("aweb").fetch_all(
-        "SELECT attachment_id,size,descriptor_sha256 FROM {{tables.message_attachments}} "
-        "WHERE message_kind=$1 AND message_id=$2 ORDER BY ordinal", kind, UUID(str(message_id)))
-    return [{"id": str(row["attachment_id"]), "size": row["size"],
-             "descriptor_sha256": row["descriptor_sha256"]} for row in rows]
+        "SELECT message_id,attachment_id,size,descriptor_sha256 FROM {{tables.message_attachments}} "
+        "WHERE message_kind=$1 AND message_id=ANY($2::uuid[]) ORDER BY message_id,ordinal", kind, ids)
+    for row in rows:
+        references[str(row["message_id"])].append({"id": str(row["attachment_id"]), "size": row["size"],
+                                                   "descriptor_sha256": row["descriptor_sha256"]})
+    return references
 
 
 async def read_attachment(request, kind, message_id, attachment_id, db, auth):

@@ -1,9 +1,9 @@
-"""An inbox page reads its senders' agent rows with the page, not in a query of their own."""
+"""An inbox page reads what it renders in a fixed number of statements, not one per message."""
 
 import asyncpg.connection
 import pytest
 
-from test_dashboard_privacy import _request, _seed_mail, privacy_app  # noqa: F401
+from test_dashboard_privacy import TEAM, _request, _seed_mail, privacy_app  # noqa: F401
 
 
 @pytest.mark.asyncio
@@ -46,17 +46,29 @@ async def _encrypted_mail(env, conversation_id):
     return message_id
 
 
-async def _attach(env, message_id, conversation_id, ordinal):
+async def _attach(env, message_id, conversation_id, ordinal, kind="mail"):
     from uuid import uuid4
 
     attachment_id = uuid4()
     await env.db.execute(
         "INSERT INTO {{tables.message_attachments}} "
         "(attachment_id, message_kind, message_id, conversation_id, size, descriptor_sha256, envelope_sha256, ordinal) "
-        "VALUES ($1, 'mail', $2, $3, 10, $4, $4, $5)",
-        attachment_id, message_id, conversation_id, f"{ordinal:064x}", ordinal,
+        "VALUES ($1, $6, $2, $3, 10, $4, $4, $5)",
+        attachment_id, message_id, conversation_id, f"{ordinal:064x}", ordinal, kind,
     )
     return str(attachment_id)
+
+
+def _observe_statements(monkeypatch) -> list[str]:
+    statements: list[str] = []
+    execute = asyncpg.connection.Connection._execute
+
+    async def observed_execute(connection, query, *args, **kwargs):
+        statements.append(" ".join(query.split()))
+        return await execute(connection, query, *args, **kwargs)
+
+    monkeypatch.setattr(asyncpg.connection.Connection, "_execute", observed_execute)
+    return statements
 
 
 @pytest.mark.asyncio
@@ -70,14 +82,12 @@ async def test_an_inbox_page_reads_its_attachment_references_once(privacy_app, m
     second = await _attach(env, with_two, conversation_id, 1)
     first = await _attach(env, with_two, conversation_id, 0)
     only = await _attach(env, with_one, conversation_id, 0)
-    statements: list[str] = []
-    execute = asyncpg.connection.Connection._execute
-
-    async def observed_execute(connection, query, *args, **kwargs):
-        statements.append(" ".join(query.split()))
-        return await execute(connection, query, *args, **kwargs)
-
-    monkeypatch.setattr(asyncpg.connection.Connection, "_execute", observed_execute)
+    # A chat attachment under the same message id, and a mail attachment of a
+    # message that is not on bob's page, are not this page's references.
+    await _attach(env, with_one, conversation_id, 1, kind="chat")
+    from uuid import uuid4
+    await _attach(env, uuid4(), conversation_id, 0)
+    statements = _observe_statements(monkeypatch)
     inbox = await _request(env, "bob", "GET", "/v1/messages/inbox?limit=50")
 
     assert inbox.status_code == 200, inbox.text
@@ -86,4 +96,24 @@ async def test_an_inbox_page_reads_its_attachment_references_once(privacy_app, m
     assert refs[str(without)] == []
     assert refs[str(with_one)] == [only]
     assert refs[seeded] == []
+    assert len([q for q in statements if "message_attachments" in q]) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("page", [1, 50])
+async def test_a_page_of_text_only_encrypted_mail_reads_attachments_once(privacy_app, monkeypatch, page):
+    env = privacy_app
+    seeded = await _seed_mail(env)
+    conversation_id = await env.db.fetch_value(
+        "SELECT conversation_id FROM {{tables.messages}} WHERE message_id = $1", seeded,
+    )
+    for _ in range(page):
+        await _encrypted_mail(env, conversation_id)
+    statements = _observe_statements(monkeypatch)
+    inbox = await _request(env, "bob", "GET", f"/v1/messages/inbox?limit={page}")
+
+    assert inbox.status_code == 200, inbox.text
+    messages = inbox.json()["messages"]
+    assert len(messages) == page
+    assert all(m["attachment_refs"] == [] for m in messages)
     assert len([q for q in statements if "message_attachments" in q]) == 1
