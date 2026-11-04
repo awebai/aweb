@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-04
+* **Harvest**: OKF proposal from seat aweb-protocol-expert-stream-push with five backing notes; three accepted stream decisions (implemented on a review branch, not on main) and two runtime lessons.
+* **Creation**: decisions [stream wakes target the resolved identity](/aweb-protocol-expert/decisions/stream-wakes-target-the-resolved-identity.md), [the agent event stream is push-driven](/aweb-protocol-expert/decisions/agent-event-stream-is-push-driven.md) and [stream room authority is re-proved lazily](/aweb-protocol-expert/decisions/stream-room-authority-is-re-proved-lazily.md); lessons [SSE cleanup is cancelled on client disconnect](/aweb-protocol-expert/lessons/sse-cleanup-is-cancelled-on-disconnect.md) and [a mounted app gets no lifespan](/aweb-protocol-expert/lessons/a-mounted-app-gets-no-lifespan.md).
+
 ## 2026-10-29
 * **Harvest**: manual harvest of seat aweb-protocol-expert-acmj-binding from its proposal and three backing notes, task aweb-acmj.19. Public contract decisions and rejected alternatives are retained; application implementation details and mail receipts are omitted.
 * **Creation**: decision [owner binding needs independent authorities](/aweb-protocol-expert/decisions/owner-binding-needs-independent-authorities.md); lessons [local stop is not new binding authority](/aweb-protocol-expert/lessons/local-stop-is-not-new-binding-authority.md) and [frozen vectors need a real consumer](/aweb-protocol-expert/lessons/frozen-vectors-need-a-real-consumer.md).
