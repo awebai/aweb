@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 WAKE_MARK_TTL_SECONDS = 24 * 60 * 60
 PUBLISH_RETRY_INITIAL_SECONDS = 1.0
 PUBLISH_RETRY_MAX_SECONDS = 5.0
+SHUTDOWN_FLUSH_SECONDS = 2.0
 SUBSCRIBE_CONFIRM_TIMEOUT_SECONDS = 2.0
 HUB_READ_TIMEOUT_SECONDS = 0.05
 HUB_PING_INTERVAL_SECONDS = 15.0
@@ -152,11 +153,28 @@ class AgentWakePublisher:
             self._task = asyncio.create_task(self._run(), name="agent-wake-publisher")
 
     async def close(self) -> None:
+        """Stop, first publishing what is still pending, within a bound.
+
+        A deploy or restart is the common way a writer process ends; its
+        pending wakes are sent once, for at most SHUTDOWN_FLUSH_SECONDS.
+        """
         if self._task is not None:
             self._task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task
             self._task = None
+        if not self._pending:
+            return
+        pending, self._pending = self._pending, {}
+        try:
+            await asyncio.wait_for(send_agent_wakes(self._redis, pending), SHUTDOWN_FLUSH_SECONDS)
+        except Exception:
+            logger.warning(
+                "%d agent wake keys unpublished at shutdown; their streams see the "
+                "change when they reopen or read",
+                len(pending),
+                exc_info=True,
+            )
 
     async def _run(self) -> None:
         delay = PUBLISH_RETRY_INITIAL_SECONDS

@@ -242,3 +242,48 @@ async def test_marks_expire_so_redis_keeps_no_key_per_identity_forever(redis, pu
         await asyncio.sleep(0.05)
     ttl = await redis.ttl(f"agent-mark:mail:{key}")
     assert 86000 < ttl <= 86400
+
+
+@pytest.mark.asyncio
+async def test_close_flushes_wakes_still_pending_at_shutdown(redis, hub, proxy):
+    key = _did_key()
+    link = Redis.from_url(proxy.url, decode_responses=True, socket_timeout=1, socket_connect_timeout=1)
+    publisher = AgentWakePublisher(link)
+    try:
+        # The subscriber stands for a surviving process.
+        async with hub.subscribe([key]) as subscription:
+            proxy.cut()
+            with agent_wake_scope(publisher):
+                record_agent_wake(key, "mail")
+            await asyncio.sleep(0.3)
+            assert subscription.take().kinds == set()
+            proxy.restore()
+            started = asyncio.get_running_loop().time()
+            await publisher.close()
+            assert asyncio.get_running_loop().time() - started < 2.5
+            batch = await _next_batch(subscription)
+        assert batch.kinds == {"mail"}
+        assert (await read_wake_marks(redis, [key]))[(key, "mail")] is not None
+    finally:
+        await link.aclose()
+
+
+@pytest.mark.asyncio
+async def test_close_gives_up_on_unreachable_redis_within_its_bound(proxy, caplog):
+    key = _did_key()
+    link = Redis.from_url(proxy.url, decode_responses=True, socket_timeout=1, socket_connect_timeout=1)
+    publisher = AgentWakePublisher(link)
+    try:
+        proxy.cut()
+        with agent_wake_scope(publisher):
+            record_agent_wake(key, "mail")
+        await asyncio.sleep(0.2)
+        started = asyncio.get_running_loop().time()
+        with caplog.at_level(logging.WARNING, logger="aweb.agent_wake"):
+            await publisher.close()
+        assert asyncio.get_running_loop().time() - started < 3.0
+        assert any(
+            "unpublished at shutdown" in r.getMessage() for r in caplog.records
+        )
+    finally:
+        await link.aclose()

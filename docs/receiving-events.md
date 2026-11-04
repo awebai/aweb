@@ -223,9 +223,13 @@ moved, so an idle stream reads no Postgres between reconciles. Waiting presence
 that only expires in Redis is rechecked there. When the server's Redis
 subscriber reconnects, every stream recomputes all of its state at once. While
 Redis is unavailable, the stream recomputes everything from Postgres every 15
-seconds; it does not fall back to faster polling. A delivery whose wake is lost
-therefore surfaces within 15 seconds, or when a wake that failed to publish is
-retried once Redis returns.
+seconds; it does not fall back to faster polling. A wake lost to a Redis or
+subscriber fault therefore surfaces within 15 seconds, or when a wake that
+failed to publish is retried once Redis returns; a server shutting down first
+publishes the wakes it still holds. A writing process killed outright
+(SIGKILL, out of memory) between committing a write and publishing its wake
+can delay that notification until the recipient's stream reopens or the
+recipient next reads. The write itself is durable and visible to any read.
 
 A failed recomputation after the initial snapshot is logged and retried on the
 same stream after 1, 2, 4, then at most 5 seconds between attempts. A complete
