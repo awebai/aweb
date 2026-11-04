@@ -18,10 +18,20 @@ import pytest_asyncio
 from redis.asyncio import Redis
 
 import aweb.routes.events as events_routes
-from aweb.agent_wake import AgentWakeHub, AgentWakePublisher, did_wake_key, wake_channel, wake_mark
+from aweb.agent_wake import (
+    AgentWakeHub,
+    AgentWakePublisher,
+    agent_wake_key,
+    agent_wake_scope,
+    did_wake_key,
+    record_agent_wake,
+    wake_channel,
+    wake_mark,
+)
 from tests.redis_fault_proxy import RedisFaultProxy
-from test_agent_wake_latency import _quiet, _send_mail, agent_stream, wake_app  # noqa: F401
-from test_dashboard_privacy import privacy_app  # noqa: F401
+from test_agent_wake_latency import _open_chat, _quiet, _send_mail, agent_stream, wake_app  # noqa: F401
+from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
+from test_team_room import metadata as room_metadata, post_payload as room_post_payload
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
@@ -147,3 +157,126 @@ async def test_closing_a_stream_releases_its_wake_channels(wake_app):
     async with asyncio.timeout(2):
         while dict(await env.redis.pubsub_numsub(channel))[channel] != 0:
             await asyncio.sleep(0.02)
+
+
+async def _insert_unread_chat(env, recipient="bob"):
+    session_id, message_id = uuid4(), uuid4()
+    alice, bob = env.actors["alice"], env.actors[recipient]
+    await env.db.execute(
+        "INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by) VALUES ($1, $2, $3)",
+        session_id, TEAM, alice.did,
+    )
+    await env.db.execute(
+        """INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias)
+        VALUES ($1, $2, $3, 'alice'), ($1, $4, $5, $6)""",
+        session_id, alice.did, alice.id, bob.did, bob.id, recipient,
+    )
+    await env.db.execute(
+        """INSERT INTO {{tables.chat_messages}} (message_id, session_id, from_did, from_alias, body)
+        VALUES ($1, $2, $3, 'alice', 'unannounced chat')""",
+        message_id, session_id, alice.did,
+    )
+    return str(session_id)
+
+
+async def _events_until(next_event, wanted: set[str], timeout: float):
+    seen: dict[str, dict] = {}
+    async with asyncio.timeout(timeout):
+        while not wanted <= set(seen):
+            event = await next_event(timeout)
+            seen[event["type"]] = event
+    return seen
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lost", ["chat", "mail"])
+async def test_a_wake_for_one_kind_also_reads_kinds_whose_counter_moved(wake_app, lost):  # noqa: F811
+    env = wake_app
+    bob_key = did_wake_key(env.actors["bob"].did)
+    async with agent_stream(env, "bob") as next_event:
+        await _quiet(next_event)
+        # A committed write whose counter moved but whose PUBLISH was lost.
+        if lost == "chat":
+            unannounced = await _insert_unread_chat(env)
+        else:
+            unannounced = await _insert_unread_mail(env)
+        await env.redis.incr(wake_mark(bob_key, lost))
+        # Then an ordinary wake for the other kind arrives.
+        if lost == "chat":
+            await _send_mail(env)
+        else:
+            await _open_chat(env)
+        seen = await _events_until(next_event, {"actionable_mail", "actionable_chat"}, 2.0)
+    if lost == "chat":
+        assert seen["actionable_chat"]["session_id"] == unannounced
+    else:
+        assert seen["actionable_mail"]["message_id"] == unannounced
+
+
+async def _insert_control_signals(env, count, recipient="bob"):
+    for _ in range(count):
+        await env.db.execute(
+            """INSERT INTO {{tables.control_signals}} (team_id, target_agent_id, from_agent_id, signal_type)
+            VALUES ($1, $2, $3, 'pause')""",
+            TEAM, env.actors[recipient].id, env.actors["alice"].id,
+        )
+
+
+@pytest.mark.asyncio
+async def test_more_control_signals_than_one_batch_are_all_delivered(wake_app):  # noqa: F811
+    env = wake_app
+    await _insert_control_signals(env, 11)
+    async with agent_stream(env, "bob") as next_event:
+        opening = [await next_event(2.0) for _ in range(11)]
+        assert {event["type"] for event in opening} == {"control_pause"}
+        await _quiet(next_event)
+        # Eleven more, announced by one coalesced wake.
+        await _insert_control_signals(env, 11)
+        with agent_wake_scope(env.app.state.agent_wake_publisher):
+            record_agent_wake(agent_wake_key(str(env.actors["bob"].id)), "control")
+        woken = [await next_event(2.0) for _ in range(11)]
+        assert {event["type"] for event in woken} == {"control_pause"}
+        await _quiet(next_event)
+    assert await env.db.fetch_val(
+        "SELECT count(*) FROM {{tables.control_signals}} WHERE target_agent_id=$1 AND consumed_at IS NULL",
+        env.actors["bob"].id,
+    ) == 0
+
+
+@pytest.mark.asyncio
+async def test_room_notices_wait_out_unavailable_authority_on_the_same_stream(wake_app):  # noqa: F811
+    from awid.registry import RegistryClient
+
+    from aweb.messaging.room import RoomPost, post_room_message
+    from aweb.team_auth_deps import TeamIdentity
+    from tests.real_stack import ServiceTransport
+
+    env = wake_app
+    room = await room_metadata(env)
+    alice = env.actors["alice"]
+    author = TeamIdentity(
+        team_id=TEAM, alias="alice", did_key=alice.did, did_aw="", address="",
+        identity_scope="local", agent_id=str(alice.id), certificate_id="privacy-alice",
+    )
+    reachable = env.app.state.awid_registry_client
+    transport = ServiceTransport(env.registry_app)
+    flaky = RegistryClient(registry_url="http://registry.test", transport=transport)
+    try:
+        async with agent_stream(env, "bob") as next_event:
+            await _quiet(next_event)
+            env.app.state.awid_registry_client = flaky
+            transport.down = True
+            with agent_wake_scope(env.app.state.agent_wake_publisher):
+                posted = await post_room_message(
+                    env.infra, author, RoomPost.model_validate(room_post_payload(env, room)),
+                )
+            # Unavailable authority emits nothing ...
+            await _quiet(next_event, seconds=1.5)
+            transport.down = False
+            # ... and the same notice is retried, with no further post.
+            event = await next_event(6.0)
+    finally:
+        env.app.state.awid_registry_client = reachable
+        await flaky.aclose()
+    assert event["type"] == "actionable_room_post"
+    assert event["message_id"] == posted["message_id"]

@@ -42,7 +42,7 @@ from aweb.agent_wake import (
 from aweb.deps import get_db, get_redis
 from aweb.identity_metadata import lookup_identity_metadata_by_did, routable_chat_address
 from aweb.messaging.chat import get_pending_conversations
-from aweb.messaging.room_notices import RoomAuthorityWindow, current_room_events
+from aweb.messaging.room_notices import RoomAuthorityUnavailable, RoomAuthorityWindow, current_room_events
 from aweb.messaging.waiting import get_waiting_agents, get_waiting_agents_by_session
 from aweb.internal_auth import parse_internal_auth_context
 from aweb.grant_streams import (
@@ -67,6 +67,8 @@ EVENTS_SNAPSHOT_FAILURE_WINDOW = 30.0  # tolerate bursts; terminate only after >
 EVENTS_SNAPSHOT_MAX_BACKOFF = 5.0  # cap snapshot retry delay
 EVENTS_HEARTBEAT_INTERVAL = 30.0  # seconds between idle SSE heartbeat comments
 MAX_STREAM_DURATION = 300  # maximum stream lifetime in seconds
+CONTROL_SIGNAL_BATCH = 10  # control signals consumed per read; a full batch reads again
+ROOM_AUTHORITY_RETRY_MAX = 5.0  # cap on retrying room notices while authority is unavailable
 
 # Snapshot and emission order, and the field each kind's events are keyed by.
 STREAM_KINDS = ("mail", "chat", "control", "app", "room")
@@ -466,12 +468,13 @@ async def _poll_control_signals(aweb_db, *, team_id: str, agent_id: UUID) -> lis
               AND target_agent_id = $2
               AND consumed_at IS NULL
             ORDER BY created_at ASC
-            LIMIT 10
+            LIMIT $3
         )
         RETURNING signal_id, signal_type, created_at
         """,
         team_id,
         agent_id,
+        CONTROL_SIGNAL_BATCH,
     )
     return [
         {
@@ -593,8 +596,18 @@ async def _sse_agent_events(
         if "app" in kinds:
             current["app"] = await current_app_events_for_agent(aweb_db, team_id=team_id, agent_id=agent_id)
         if "room" in kinds:
-            current["room"] = await current_room_events(request, db, identity, room_authority)
+            try:
+                current["room"] = await current_room_events(request, db, identity, room_authority)
+            except RoomAuthorityUnavailable:
+                # Left out: still pending, its bookmark unmoved, retried apart.
+                logger.warning("Room authority unavailable for agent %s; retrying", agent_id)
         return current
+
+    def unfinished(current: dict[str, list[dict[str, Any]]]) -> set[str]:
+        """Kinds this snapshot read only part of: a full control batch reads again."""
+        if len(current.get("control", ())) >= CONTROL_SIGNAL_BATCH:
+            return {"control"}
+        return set()
 
     def changes(current: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
         """Events to emit, in kind order; records each kind's new state."""
@@ -633,7 +646,8 @@ async def _sse_agent_events(
 
         # Thread evidence is immutable for this stream lifetime, not a per-snapshot read.
         mail_scope = await load_mail_succession_scope(aweb_db, viewer_dids=viewer_dids)
-        initial = changes(await snapshot(set(STREAM_KINDS)))
+        opening = await snapshot(set(STREAM_KINDS))
+        initial = changes(opening)
 
         reason = await guard.reason()
         if reason:
@@ -650,7 +664,12 @@ async def _sse_agent_events(
 
         # Streams opened together reconcile apart.
         next_reconcile_at = monotonic() + random.uniform(0, EVENTS_RECONCILE_INTERVAL)
-        pending: set[str] = set()
+        pending: set[str] = (set(STREAM_KINDS) - set(opening)) | unfinished(opening)
+        if marks is not None:
+            # A kind not read keeps its old bookmark, so its next read happens.
+            marks = {mark: value for mark, value in marks.items() if mark[1] in opening}
+        room_retry_delay = EVENTS_SNAPSHOT_RETRY_INITIAL
+        room_retry_at = 0.0 if "room" not in pending else monotonic() + room_retry_delay
         failure_started_at: float | None = None
         retry_delay = EVENTS_SNAPSHOT_RETRY_INITIAL
         retry_at = 0.0
@@ -668,8 +687,10 @@ async def _sse_agent_events(
             ]
             if identity.grant is not None and identity.grant.never_expires:
                 due.append(guard.checked_at + GRANT_STREAM_RECHECK_SECONDS)
-            if pending:
+            if pending - {"room"}:
                 due.append(retry_at)
+            if "room" in pending:
+                due.append(max(retry_at, room_retry_at))
             await _wait_for_wake(subscription, min(due) - now)
 
             if datetime.now(timezone.utc) >= deadline:
@@ -703,12 +724,19 @@ async def _sse_agent_events(
                         pending.add("chat")
 
             emitted: list[dict[str, Any]] = []
-            if pending and monotonic() >= retry_at:
-                kinds = set(pending)
+            kinds = set(pending)
+            if monotonic() < room_retry_at:
+                kinds.discard("room")
+            if kinds and monotonic() >= retry_at:
                 try:
                     snapshot_marks = (
                         await _read_stream_marks(redis, keys) if subscription is not None else None
                     )
+                    # A wake for one kind also reads every kind whose counter
+                    # moved, so a lost publication is not absorbed unread.
+                    kinds |= _moved_kinds(marks, snapshot_marks) if snapshot_marks is not None else set()
+                    if monotonic() < room_retry_at:
+                        kinds.discard("room")
                     current = await snapshot(kinds)
                 except Exception:
                     logger.exception("event-stream snapshot error for agent %s", agent_id)
@@ -727,9 +755,19 @@ async def _sse_agent_events(
                     failure_started_at = None
                     retry_delay = EVENTS_SNAPSHOT_RETRY_INITIAL
                     retry_at = 0.0
-                    pending -= kinds
+                    read = set(current)
+                    pending = (pending | kinds) - read | unfinished(current)
+                    if "room" in kinds and "room" not in read:
+                        room_retry_at = monotonic() + room_retry_delay
+                        room_retry_delay = min(room_retry_delay * 2, ROOM_AUTHORITY_RETRY_MAX)
+                    elif "room" in read:
+                        room_retry_delay = EVENTS_SNAPSHOT_RETRY_INITIAL
                     if snapshot_marks is not None:
-                        marks = snapshot_marks
+                        # Advance only the bookmarks of kinds actually read.
+                        marks = {
+                            mark: (value if mark[1] in read else (marks or {}).get(mark))
+                            for mark, value in snapshot_marks.items()
+                        }
                     emitted = changes(current)
 
             reason = await guard.reason()

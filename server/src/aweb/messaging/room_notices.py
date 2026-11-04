@@ -27,6 +27,10 @@ logger = logging.getLogger(__name__)
 ROOM_AUTHORITY_MAX_AGE_SECONDS = 60.0
 
 
+class RoomAuthorityUnavailable(Exception):
+    """Current room authority could not be established right now; retry later."""
+
+
 class RoomAuthorityWindow:
     """Room authority proved for one stream and trusted for 60 s.
 
@@ -209,8 +213,10 @@ async def ack_room_notice(db, actor, message_id):
 async def current_room_events(request, db, identity, authority: RoomAuthorityWindow | None = None):
     """Pending room notices, after current membership authority admits them.
 
-    With ``authority`` the check is reused while younger than 60 s;
-    without it every call re-proves authority.
+    With ``authority`` the check is reused while younger than 60 s, and an
+    unavailable authority raises ``RoomAuthorityUnavailable`` so the stream
+    can retry; without it every call re-proves authority and any failure
+    shows nothing.
     """
     if not grant_has_scope(identity, "chat.read"):
         return []
@@ -230,7 +236,11 @@ async def current_room_events(request, db, identity, authority: RoomAuthorityWin
         else:
             await authority.ensure(request, db, identity)
         return (await pending_room_notices(db, identity))["notices"]
-    except (HTTPException, ServiceError):
+    except (HTTPException, ServiceError) as exc:
+        if authority is not None and getattr(exc, "status_code", 500) >= 500:
+            # A dependency outage is not a refusal: nothing is shown now and
+            # the caller retries the same notices once authority answers.
+            raise RoomAuthorityUnavailable(str(getattr(exc, "detail", exc))) from exc
         logger.warning(
             "Room notice snapshot refused by current membership authority",
             exc_info=True,
