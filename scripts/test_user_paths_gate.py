@@ -331,6 +331,37 @@ class ExactMessageAssertions(unittest.TestCase):
 
 
 class ReleasedKnownIssueBudget(unittest.TestCase):
+    def test_successful_budgeted_flow_reports_only_failure_after_classification(self):
+        import io
+        import sys
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        spec = importlib.util.spec_from_file_location('user_paths', ROOT / 'scripts/e2e/user_paths.py')
+        paths = importlib.util.module_from_spec(spec)
+        with patch.dict(sys.modules, {'user_paths_result': result_model}):
+            spec.loader.exec_module(paths)
+        for name, expected in [('released', 'FAILED'), ('head', 'PASSED')]:
+            lane = paths.Lane.__new__(paths.Lane)
+            lane.name, lane.version = name, '1.36.53'
+            lane.results, lane.outcomes, lane.failures = [], [], []
+            lane.actors = {actor: dict(address='') for actor in ['t1','t2']}
+            sent = iter([dict(message_id='message-'+str(turn), session_id='same-session') for turn in range(3)])
+            lane.command = lambda *args: next(sent)
+            deliveries = []
+            lane.assert_message = lambda *args: deliveries.append(args)
+            case = name+'/t1->t2/chat/v2'
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                lane.run_case(case, lambda: lane.flow('t1','t2','chat',True))
+            self.assertEqual(len(deliveries), 3)
+            self.assertEqual(lane.outcomes[0]['status'], expected)
+            if name == 'released':
+                self.assertNotIn('PASS '+case, stdout.getvalue())
+                self.assertIn('FAIL '+case, stdout.getvalue())
+                self.assertEqual(len(lane.failures), 1)
+            else:
+                self.assertEqual(stdout.getvalue(), 'PASS '+case+'\n')
+
     def test_real_lane_command_failure_is_classified_without_a_head_exception(self):
         import json
         import sys

@@ -121,6 +121,8 @@ class Lane:
             print('FAIL', case, record.get('budget_error', record.get('error')), flush=True)
         elif record['status'] == 'KNOWN_ISSUE':
             print('KNOWN ISSUE', case, record['known_issue']['task'], 'observed failure:', record['failure']['response'], flush=True)
+        elif record['status'] == 'PASSED':
+            print('PASS', case, flush=True)
         record['seconds'] = round(time.monotonic() - started, 3)
         self.outcomes.append(record)
 
@@ -395,7 +397,6 @@ class Lane:
         continuation_id, _ = sent_identity(continued, kind, conversation)
         self.assert_message(receiver, sender, kind, continuation, conversation, continuation_id, encrypted)
         self.results.append(case)
-        print('PASS', case, flush=True)
 
     def close(self):
         for proc, _ in self.receivers:
