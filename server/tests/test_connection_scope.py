@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+import pytest_asyncio
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from httpx import ASGITransport, AsyncClient
@@ -213,3 +214,94 @@ async def test_a_mounted_app_with_its_own_scope_middleware_joins_the_outer_scope
     async with AsyncClient(transport=ASGITransport(app=outer), base_url="http://test") as client:
         response = await client.get("/inner/plain")
     assert response.json() == {"marked": True}
+
+
+@pytest.mark.asyncio
+async def test_an_idle_scope_parks_its_connection_for_the_next_statement(managers):
+    aweb_db, _ = managers
+    async with connection_scope():
+        await _mark(aweb_db)
+        assert await _marked(aweb_db)
+        await asyncio.sleep(0.1)
+        assert not await _marked(aweb_db)
+
+
+@pytest_asyncio.fixture
+async def small_pool(test_db_factory):
+    from awid.db_config import build_database_config
+    from pgdbm import AsyncDatabaseManager
+
+    db = await test_db_factory.create_db(suffix="scope_small_pool")
+    config = build_database_config(connection_string=db.config.get_dsn(), min_connections=1, max_connections=3)
+    pool = await AsyncDatabaseManager.create_shared_pool(config)
+    try:
+        yield pool
+    finally:
+        await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_requests_waiting_on_the_network_do_not_starve_the_pool(small_pool):
+    db = DatabaseManager(pool=small_pool, schema="public")
+    stalled_upstream = FastAPI()
+
+    @stalled_upstream.get("/slow")
+    async def slow():
+        await asyncio.sleep(2)
+        return {"ok": True}
+
+    upstream = AsyncClient(transport=ASGITransport(app=stalled_upstream), base_url="http://upstream")
+    app = FastAPI()
+
+    @app.get("/stalled")
+    async def stalled():
+        await db.fetch_value("SELECT 1")
+        await upstream.get("/slow")
+        return {"value": await db.fetch_value("SELECT 2")}
+
+    @app.get("/db")
+    async def db_only():
+        return {"value": await db.fetch_value("SELECT 3")}
+
+    app.add_middleware(ConnectionScopeMiddleware)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        stalled_requests = [asyncio.create_task(client.get("/stalled")) for _ in range(10)]
+        await asyncio.sleep(0.3)
+        started = asyncio.get_running_loop().time()
+        db_only_response = await client.get("/db")
+        db_only_seconds = asyncio.get_running_loop().time() - started
+        stalled_responses = await asyncio.gather(*stalled_requests)
+    await upstream.aclose()
+
+    assert db_only_response.json() == {"value": 3}
+    assert db_only_seconds < 1.0
+    assert [r.json() for r in stalled_responses] == [{"value": 2}] * 10
+
+
+@pytest.mark.asyncio
+async def test_an_exhausted_pool_fails_a_request_with_a_retryable_503(small_pool, monkeypatch):
+    import aweb.connection_scope as connection_scope_module
+
+    monkeypatch.setattr(connection_scope_module, "ACQUIRE_TIMEOUT_SECONDS", 0.3)
+    db = DatabaseManager(pool=small_pool, schema="public")
+    app = FastAPI()
+
+    @app.get("/db")
+    async def db_only():
+        return {"value": await db.fetch_value("SELECT 1")}
+
+    app.add_middleware(ConnectionScopeMiddleware)
+    held = [await small_pool.acquire() for _ in range(3)]
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            started = asyncio.get_running_loop().time()
+            response = await client.get("/db")
+            seconds = asyncio.get_running_loop().time() - started
+    finally:
+        for connection in held:
+            await small_pool.release(connection)
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": {"code": "database_unavailable", "retryable": True}}
+    assert response.headers["retry-after"] == "1"
+    assert seconds < 1.0
