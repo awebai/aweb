@@ -16,15 +16,48 @@ A borrowed operation that raises or is cancelled discards the connection: it
 goes back to the pool, which resets or terminates it, and every later acquire
 in the scope uses the pool. A closed scope lends nothing, so a task spawned
 during a request that outlives it uses the pool too.
+
+A scope never holds an idle connection across a wait. When a borrow ends the
+scope parks its connection back in the pool unless another statement borrows
+it within IDLE_PARK_SECONDS, so a request waiting on the network (AWID, a
+federation peer, DNS) holds no connection and an outage elsewhere cannot
+drain the pool; back-to-back statements still share one checkout.
+
+Every checkout waits at most ACQUIRE_TIMEOUT_SECONDS for the pool; an
+exhausted pool fails the request with a retryable 503 instead of hanging it.
 """
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from typing import Any, AsyncIterator, Optional
 
+from fastapi import HTTPException
+from fastapi.responses import JSONResponse
 from pgdbm import AsyncDatabaseManager
+
+IDLE_PARK_SECONDS = 0.01
+ACQUIRE_TIMEOUT_SECONDS = 10.0
+
+
+class DatabaseUnavailable(HTTPException):
+    """The pool had no connection to give within ACQUIRE_TIMEOUT_SECONDS."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=503,
+            detail={"code": "database_unavailable", "retryable": True},
+            headers={"Retry-After": "1"},
+        )
+
+
+async def _acquire_from(pool: Any) -> Any:
+    try:
+        return await pool.acquire(timeout=ACQUIRE_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        raise DatabaseUnavailable() from None
 
 
 class ConnectionScope:
@@ -35,6 +68,8 @@ class ConnectionScope:
         self._connection: Optional[Any] = None
         self._borrowed = False
         self._discarded = False
+        self._idle_park: Optional[asyncio.TimerHandle] = None
+        self._parking: Optional[asyncio.Task] = None
         self.closed = False
 
     def lends_for(self, pool: Any) -> bool:
@@ -48,9 +83,10 @@ class ConnectionScope:
     @asynccontextmanager
     async def borrow(self, pool: Any) -> AsyncIterator[Any]:
         self._borrowed = True
+        self._cancel_idle_park()
         try:
             if self._connection is None:
-                self._connection = await pool.acquire()
+                self._connection = await _acquire_from(pool)
                 self._pool = pool
             try:
                 yield self._connection
@@ -61,9 +97,28 @@ class ConnectionScope:
             self._borrowed = False
             if self.closed or self._discarded:
                 await self._release()
+            else:
+                self._idle_park = asyncio.get_running_loop().call_later(IDLE_PARK_SECONDS, self._park_when_idle)
+
+    def _cancel_idle_park(self) -> None:
+        if self._idle_park is not None:
+            self._idle_park.cancel()
+            self._idle_park = None
+
+    def _park_when_idle(self) -> None:
+        self._idle_park = None
+        if not self._borrowed and self._connection is not None:
+            self._parking = asyncio.ensure_future(self.park())
+
+    async def park(self) -> None:
+        """Return the connection to the pool while nothing borrows it; the next
+        statement in the scope checks out a fresh one."""
+        if not self._borrowed:
+            await self._release()
 
     async def close(self) -> None:
         self.closed = True
+        self._cancel_idle_park()
         if not self._borrowed:
             await self._release()
 
@@ -105,9 +160,16 @@ class DatabaseManager(AsyncDatabaseManager):
     @asynccontextmanager
     async def acquire(self) -> AsyncIterator[Any]:
         scope = _active_scope.get()
-        if scope is None or not scope.lends_for(self._pool):
-            async with super().acquire() as connection:
+        if self._pool is None:
+            async with super().acquire() as connection:  # raises pgdbm's PoolError
                 yield connection
+            return
+        if scope is None or not scope.lends_for(self._pool):
+            connection = await _acquire_from(self._pool)
+            try:
+                yield connection
+            finally:
+                await self._pool.release(connection)
             return
         async with scope.borrow(self._pool) as connection:
             yield connection
@@ -119,6 +181,10 @@ class ConnectionScopeMiddleware:
     Statements in a streaming body, in background tasks or in anything else
     that runs after the response starts take pool connections, as without a
     scope. Installed inside another scope (a mounted app), it joins that one.
+
+    Installed outermost, it also answers an exhausted pool that surfaced
+    before any response started (in another middleware, say) with the
+    retryable 503 rather than letting it become a 500.
     """
 
     def __init__(self, app: Any) -> None:
@@ -128,11 +194,21 @@ class ConnectionScopeMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+        response_started = False
         async with connection_scope() as connections:
 
             async def send_closing_on_start(message: dict) -> None:
+                nonlocal response_started
                 if message["type"] == "http.response.start":
+                    response_started = True
                     await connections.close()
                 await send(message)
 
-            await self.app(scope, receive, send_closing_on_start)
+            try:
+                await self.app(scope, receive, send_closing_on_start)
+            except DatabaseUnavailable as exc:
+                if response_started:
+                    raise
+                await JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)(
+                    scope, receive, send,
+                )

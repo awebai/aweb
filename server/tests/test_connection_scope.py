@@ -305,3 +305,35 @@ async def test_an_exhausted_pool_fails_a_request_with_a_retryable_503(small_pool
     assert response.json() == {"detail": {"code": "database_unavailable", "retryable": True}}
     assert response.headers["retry-after"] == "1"
     assert seconds < 1.0
+
+
+@pytest.mark.asyncio
+async def test_an_exhausted_pool_in_a_middleware_is_a_retryable_503_not_a_500(small_pool, monkeypatch):
+    import aweb.connection_scope as connection_scope_module
+
+    monkeypatch.setattr(connection_scope_module, "ACQUIRE_TIMEOUT_SECONDS", 0.3)
+    db = DatabaseManager(pool=small_pool, schema="public")
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def reads_before_routing(request, call_next):
+        await db.fetch_value("SELECT 1")
+        return await call_next(request)
+
+    @app.get("/db")
+    async def db_only():
+        return {"value": 1}
+
+    app.add_middleware(ConnectionScopeMiddleware)
+    held = [await small_pool.acquire() for _ in range(3)]
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test",
+        ) as client:
+            response = await client.get("/db")
+    finally:
+        for connection in held:
+            await small_pool.release(connection)
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": {"code": "database_unavailable", "retryable": True}}
