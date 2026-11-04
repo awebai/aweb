@@ -46,7 +46,10 @@ async def load_mail_succession_scope(
            LEFT JOIN {{tables.local_human_successions}} succession
              ON succession.predecessor_did = history.predecessor_did
             AND succession.successor_did = own.did
-           WHERE own.did = ANY($1::text[])""",
+           WHERE own.did = ANY($1::text[])
+             AND ((NULLIF(own.current_did_key, '') IS NOT NULL
+                   AND own.current_did_key <> ALL($1::text[]))
+                  OR succession.predecessor_did IS NOT NULL)""",
         viewer_dids,
     )
     identities_by_thread: dict[UUID, set[str]] = {}

@@ -17,10 +17,13 @@ class RecordingDatabase:
     def __init__(self, db):
         self.db = db
         self.calls = []
+        self.row_counts = []
 
     async def fetch_all(self, query, *args):
         self.calls.append((query, args))
-        return await self.db.fetch_all(query, *args)
+        rows = await self.db.fetch_all(query, *args)
+        self.row_counts.append(len(rows))
+        return rows
 
     def __getattr__(self, name):
         return getattr(self.db, name)
@@ -147,4 +150,67 @@ async def test_mail_tick_uses_recipient_index_on_large_unread_history(
         if directory := os.environ.get("MAIL_PLAN_REPORT_DIR"):
             Path(directory, f"baseline-plan-{has_succession}.json").write_text(
                 json.dumps(baseline_plan, indent=2)
+            )
+
+
+@pytest.mark.asyncio
+async def test_stream_scope_does_not_return_ordinary_conversation_history(
+    aweb_cloud_db,
+):
+    db = aweb_cloud_db.aweb_db
+    await db.execute("""
+        INSERT INTO {{tables.conversations}}
+            (conversation_id, conversation_type, created_by_did)
+        SELECT md5(n::text)::uuid, 'mail', 'did:aw:viewer'
+        FROM generate_series(1, 50000) n
+    """)
+    # 50k viewer rows in a larger server population. None carries a thread key
+    # outside the viewer's identities or a recorded predecessor.
+    await db.execute("""
+        INSERT INTO {{tables.conversation_participants}}
+            (conversation_id, did, alias, transport_hint, current_did_key)
+        SELECT md5(((n - 1) % 50000 + 1)::text)::uuid,
+               CASE WHEN n <= 50000 THEN 'did:aw:viewer' ELSE 'did:aw:other-' || n END,
+               'participant', 'local',
+               CASE WHEN n <= 50000 THEN 'did:key:viewer' ELSE 'did:key:other-' || n END
+        FROM generate_series(1, 500000) n
+    """)
+    await db.execute("ANALYZE {{tables.conversation_participants}}")
+    observed = RecordingDatabase(db)
+    scope = await load_mail_succession_scope(
+        observed, viewer_dids=["did:aw:viewer", "did:key:viewer"]
+    )
+    assert scope.identity_threads == ()
+    assert len(observed.calls) == 1
+    query, args = observed.calls[0]
+    rows = await db.fetch_all("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " + query, *args)
+    plan = rows[0]["QUERY PLAN"]
+    if isinstance(plan, str):
+        plan = json.loads(plan)
+    if directory := os.environ.get("MAIL_PLAN_REPORT_DIR"):
+        Path(directory).mkdir(parents=True, exist_ok=True)
+        Path(directory, "scope-plan.json").write_text(json.dumps(plan, indent=2))
+    scans = [
+        n
+        for n in _nodes(plan[0]["Plan"])
+        if n.get("Relation Name") == "conversation_participants"
+    ]
+    assert scans and all(n["Node Type"] != "Seq Scan" for n in scans)
+    assert any("did" in n.get("Index Cond", "") for n in _nodes(plan[0]["Plan"]))
+    assert plan[0]["Plan"]["Actual Rows"] == 0
+    assert observed.row_counts == [0]
+
+    if baseline_file := os.environ.get("MAIL_SCOPE_BASELINE_SQL"):
+        rows = await db.fetch_all(
+            "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "
+            + Path(baseline_file).read_text(),
+            *args,
+        )
+        old_plan = rows[0]["QUERY PLAN"]
+        if isinstance(old_plan, str):
+            old_plan = json.loads(old_plan)
+        assert old_plan[0]["Plan"]["Actual Rows"] == 50000
+        if directory := os.environ.get("MAIL_PLAN_REPORT_DIR"):
+            Path(directory, "scope-baseline-plan.json").write_text(
+                json.dumps(old_plan, indent=2)
             )
