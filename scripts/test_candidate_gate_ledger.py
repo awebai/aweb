@@ -12,7 +12,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 STAGES = "checks user-paths unit artifacts integration"
-# The targets the fixture gives real recipes: the four stage assertions below
+# The targets the fixture gives real recipes: the stage assertions below
 # use real tools and services, never a replacement runner.
 REAL_RECIPES = frozenset({
     "test-shipping", "_candidate-node-deps", "build", "_candidate-unit-suites",
@@ -125,7 +125,7 @@ candidate-gate:
         assert len(rows) == 1 and rows[0].split("\t")[1:3] == ["checks", "passed"]
         invoke("missing-only", "make", "candidate-gate")
         rows = ledger.read_text().splitlines()
-        assert len(rows) == 5 and {row.split("\t")[1] for row in rows} == set(STAGES.split())
+        assert len(rows) == len(STAGES.split()) and {row.split("\t")[1] for row in rows} == set(STAGES.split())
         assert all(row.split("\t")[2] == "passed" for row in rows)
         assert "no stages run" in invoke("same-tree-direct", *gate)
         # New commit metadata with the identical tree does not invalidate proof.
@@ -146,12 +146,12 @@ candidate-gate:
         env["CLI_VERSION"] = "1.2.4"
         invoke("version-input", *gate, stages="checks")
         version_rows = ledger.read_text().splitlines()
-        assert len(version_rows) == 5 and version_rows[-1].split("\t")[0] != rows[0].split("\t")[0]
+        assert len(version_rows) == len(rows) + 1 and version_rows[-1].split("\t")[0] != rows[0].split("\t")[0]
         env["CLI_VERSION"] = "1.2.3"
         (repo / "Makefile").write_text(recipes.replace("6 * 7 == 42", "7 * 6 == 42"))
         checked(repo, "git", "commit", "-qam", "changed tree")
         invoke("changed-tree", *gate, stages="checks")
-        assert len(ledger.read_text().splitlines()) == 6
+        assert len(ledger.read_text().splitlines()) == len(version_rows) + 1
         (repo / "Makefile").write_text(recipes.replace("6 * 7 == 42", "6 * 7 == 43"))
         checked(repo, "git", "commit", "-qam", "real failing stage")
         invoke("failed-tree", *gate, stages="checks", success=False)
