@@ -21,7 +21,7 @@ from aweb.federation.authority_work import (
     authority_result_scope_payload,
     authority_result_ttl_seconds,
 )
-from aweb.federation.errors import authority_error_body
+from aweb.federation.errors import TeamRouteError, authority_error_body
 from awid.external_registry import ExternalAuthorityEvidence
 from awid.federation_errors import FederationAuthorityError, federation_error_spec
 from awid.identity_log_verify import IdentityCheckpoint, VerifiedIdentityLog
@@ -797,3 +797,27 @@ def test_stable_error_vector_is_the_runtime_error_vocabulary() -> None:
             "did_aw": "did:aw:fixture",
             "observed_sequence": 2,
         }
+
+
+@pytest.mark.parametrize("reason", [
+    "sender_registry_origin_forbidden", "sender_registry_protocol_invalid",
+    "sender_registry_tls_invalid", "sender_registry_unresolvable",
+    "sender_registry_unavailable", "sender_registry_discovery_failed",
+    "federation_authority_coordination_unavailable",
+])
+def test_team_route_recovery_distinguishes_discovery_from_verification(reason):
+    error = TeamRouteError(reason, domain="fixture.test")
+    body = authority_error_body(error, correlation_id="copy-control")
+    spec = federation_error_spec(reason)
+    assert (error.http_status, body["reason"], body["retryable"]) == (
+        spec.http_status, reason, spec.retryable,
+    )
+    detail = body["detail"]
+    # TLS, protocol and origin-policy failures do not establish missing DNS.
+    assert ("_awid" in detail) == (reason == "sender_registry_unresolvable")
+    assert ("Retry shortly" in detail) == spec.retryable
+    if reason in {"sender_registry_origin_forbidden", "sender_registry_protocol_invalid", "sender_registry_tls_invalid"}:
+        assert "could not verify the identity directory for fixture.test" in detail
+        assert "person who manages that domain" in detail
+    if reason == "federation_authority_coordination_unavailable":
+        assert "could not finish verifying" in detail

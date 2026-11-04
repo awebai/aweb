@@ -464,8 +464,8 @@ async def test_team_route_ingress_refuses_without_effects(route_pair, kind, encr
     assert response.json().get("reason") == reason, response.text
     assert response.json()["retryable"] is False
     if fault != "policy":
-        next_steps = {"missing": "Upgrade aw", "invalid": "fetch-cert", "team-swap": "fetch-cert",
-                      "revoked": "no longer a member", "old-team-key": "reissue", "no-record": "set-server",
+        next_steps = {"missing": "Update the software sending", "invalid": "fetch-cert", "team-swap": "fetch-cert",
+                      "revoked": "check this agent's membership", "old-team-key": "reissue", "no-record": "set-server",
                       "self-record": "show-server"}
         assert next_steps[fault] in response.json()["detail"], response.text
     assert await _effects(target) == before
