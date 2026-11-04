@@ -7,6 +7,7 @@ import pytest
 import aweb.lifecycle as lifecycle
 import aweb.mutation_hooks as mutation_hooks
 from aweb.events import (
+    ChatMessageEvent,
     MessageDeliveredEvent,
     ReservationAcquiredEvent,
     TaskClaimedEvent,
@@ -536,8 +537,22 @@ async def test_a_chat_event_uses_the_aliases_and_preview_its_sender_supplied(awe
         return await execute(connection, query, *args, **kwargs)
 
     monkeypatch.setattr(asyncpg.connection.Connection, "_execute", observed)
-    handler = mutation_hooks.create_mutation_handler(redis=None, db_infra=_DbShim(aweb_cloud_db.aweb_db))
+    import os
 
+    from redis.asyncio import Redis
+
+    async with Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True) as redis:
+        handler = mutation_hooks.create_mutation_handler(redis=redis, db_infra=_DbShim(aweb_cloud_db.aweb_db))
+        await _send_supplied_chat_event(handler)
+
+    chat_events = [event for event in published if isinstance(event, ChatMessageEvent)]
+    assert len(chat_events) == 1
+    assert chat_events[0].to_aliases == ["bob"]
+    assert chat_events[0].preview == "hello bob"
+    assert chat_reads == []
+
+
+async def _send_supplied_chat_event(handler):
     await handler(
         "chat.message_sent",
         {
@@ -550,9 +565,3 @@ async def test_a_chat_event_uses_the_aliases_and_preview_its_sender_supplied(awe
             "preview": "hello bob",
         },
     )
-
-    chat_events = [event for event in published if isinstance(event, ChatMessageEvent)]
-    assert len(chat_events) == 1
-    assert chat_events[0].to_aliases == ["bob"]
-    assert chat_events[0].preview == "hello bob"
-    assert chat_reads == []
