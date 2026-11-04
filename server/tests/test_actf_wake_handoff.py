@@ -36,6 +36,12 @@ async def test_live_wake_reader_handoff(route_pair):
                 if kind not in {"mail", "chat"} or type(encrypted) is not bool:
                     raise ValueError("unknown fixture case")
                 case = f"{kind}-{'v2' if encrypted else 'plaintext'}"
+                if command.get("after_v2"):
+                    if kind != "chat" or encrypted or not {"chat-plaintext", "chat-v2"} <= sent.keys():
+                        raise ValueError("reverse-order chat requires both initial chat deliveries")
+                    case = "chat-plaintext-after-v2"
+                if case == "chat-v2" and "chat-plaintext" not in sent:
+                    raise ValueError("send plaintext chat first to exercise both format transitions")
                 if case not in sent:
                     response, submitted = await _send(route_pair.source.local, route_pair.target.global_actor,
                                                       kind, encrypted=encrypted)
@@ -63,12 +69,15 @@ async def test_live_wake_reader_handoff(route_pair):
             environment={key: env[key] for key in ("HOME", "XDG_CONFIG_HOME", "AW_NO_UPDATE_CHECK",
                          "AWEB_IDENTITY_HOME", "AWID_REGISTRY_URL")},
             control_host="127.0.0.1", control_port=port, capability=capability,
-            lifetime_seconds=1800, cases=[f"{k}-{f}" for k in ("mail", "chat") for f in ("plaintext", "v2")])
+            lifetime_seconds=1800,
+            cases=[f"{k}-{f}" for k in ("mail", "chat") for f in ("plaintext", "v2")]
+                  + ["chat-plaintext-after-v2"],
+            reverse_chat_order_command=dict(action="send", kind="chat", encrypted=False, after_v2=True))
         path = root / "manifest.json"
         path.write_text(json.dumps(manifest, indent=2))
         path.chmod(0o600)
         try:
             await asyncio.wait_for(stopped.wait(), 1800)
-            assert len(sent) == 4, "wake owner did not request all four real deliveries"
+            assert len(sent) == 5, "wake owner did not request four formats and both chat transitions"
         finally:
             path.unlink(missing_ok=True)

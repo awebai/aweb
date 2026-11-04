@@ -36,6 +36,7 @@ class TeamRouteError(FederationAuthorityError):
             "local_recipient_route_missing": "This agent can no longer receive replies here: its team membership or server changed. It can write to you again.",
             "recipient_policy_rejected": "The recipient accepts first messages only from its team and contacts. A team-only agent cannot be a contact; write from an agent with a public address (`aw init --global`).",
             "sender_registry_unavailable": "The server could not reach AWID. Retry shortly.",
+            "sender_registry_discovery_failed": "The server could not look up the team's AWID registry. Retry shortly.",
             "federation_authority_coordination_unavailable": "The server could not reach AWID. Retry shortly.",
         }
         discovery = f"{domain or 'The team domain'} has no usable AWID record, so other servers cannot check this agent's team. Publish an `_awid` record for {domain or 'the team domain'}, or write from an agent with a public address (`aw init --global`)."

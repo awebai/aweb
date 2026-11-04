@@ -135,6 +135,10 @@ async def verify_team_route(request, certificate: str, *, fresh: bool = False, m
                     raise
         else:
             selected = await authority._discover_registry_authority(domain)
+            if selected.selection != "dns":
+                # Address discovery can select the public default. A local
+                # team's return route requires its home or DNS-selected AWID.
+                raise TeamRouteError("sender_registry_unresolvable")
             origin = selected.registry_origin
             async def read(suffix, reason):
                 return await authority.resolver.fetch_team_object(

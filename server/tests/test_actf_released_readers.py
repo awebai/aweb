@@ -24,6 +24,7 @@ async def _older_server(node, tmp_path):
     package = os.environ.get("AW_TEST_PRE_MEMBERSHIP_SERVER_ROOT")
     if not package:
         pytest.skip("set AW_TEST_PRE_MEMBERSHIP_SERVER_ROOT to published aweb1.27.15")
+    package = str(Path(package).resolve())
     assert (Path(package) / "aweb-1.27.15.dist-info").is_dir()
     database = await node.db.fetch_value("SELECT current_database()")
     env = dict(os.environ)
@@ -36,6 +37,11 @@ async def _older_server(node, tmp_path):
     sock.close()
     env["AWEB_PUBLIC_ORIGIN"] = origin
     code = '''import asyncio, os
+import importlib.metadata
+from pathlib import Path
+import aweb.api
+assert importlib.metadata.version("aweb") == "1.27.15"
+assert Path(aweb.api.__file__).resolve().is_relative_to(Path(os.environ["PYTHONPATH"]).resolve())
 from aweb.api import create_app
 from aweb.db import DatabaseInfra
 from redis.asyncio import Redis

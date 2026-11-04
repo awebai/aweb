@@ -79,8 +79,9 @@ def _observe(app):
 
 
 @pytest_asyncio.fixture
-async def route_pair(test_db_factory, monkeypatch):
-    """Separate home registries; actual UDP TXT discovery between the nodes."""
+async def route_pair(test_db_factory, monkeypatch, request):
+    """Real home registries and UDP TXT discovery; optionally a shared registry."""
+    shared_registry = getattr(request, "param", {}).get("shared_registry", False)
     monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.setenv("AWEB_FEDERATION_TEST", "1")
     monkeypatch.setenv("AWID_ALLOW_INSECURE_DELIVERY_ORIGIN", "1")
@@ -111,13 +112,19 @@ async def route_pair(test_db_factory, monkeypatch):
             db = await test_db_factory.create_db(suffix=f"actf_{name}")
             await db.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public")
             dsn = db.config.get_dsn()
-            registry = await stack.enter_async_context(running_registry(dsn, service_token=token, redis=redis))
-            registry_sock = _socket()
-            registry_origin = _origin(registry_sock)
-            registry_calls = _observe(registry.app)
-            await stack.enter_async_context(_listener(registry.app, registry_sock))
-            registry_client = RegistryClient(registry_origin, service_token=token)
-            stack.push_async_callback(registry_client.aclose)
+            if shared_registry and nodes:
+                registry = nodes[0].registry
+                registry_client = nodes[0].registry_client
+                registry_origin = registry_client.registry_url
+                registry_calls = nodes[0].registry_calls
+            else:
+                registry = await stack.enter_async_context(running_registry(dsn, service_token=token, redis=redis))
+                registry_sock = _socket()
+                registry_origin = _origin(registry_sock)
+                registry_calls = _observe(registry.app)
+                await stack.enter_async_context(_listener(registry.app, registry_sock))
+                registry_client = RegistryClient(registry_origin, service_token=token)
+                stack.push_async_callback(registry_client.aclose)
             await registry.add_team(team_id, team_did, visibility="private")
             server_sock = _socket()
             public_origin = _origin(server_sock)
@@ -211,10 +218,11 @@ async def _actor(node, alias, *, global_identity):
     )
 
 
-def _submission(sender, target, kind, *, encrypted=False, continuation=None):
-    mid, cid = str(uuid4()), continuation or str(uuid4())
-    created = datetime.now(timezone.utc).replace(microsecond=0)
-    body = f"{kind} {'reply' if continuation else 'first contact'} {mid}"
+def _submission(sender, target, kind, *, encrypted=False, continuation=None,
+                message_id=None, created_at=None, body=None):
+    mid, cid = message_id or str(uuid4()), continuation or str(uuid4())
+    created = (created_at or datetime.now(timezone.utc)).replace(microsecond=0)
+    body = body if body is not None else f"{kind} {'reply' if continuation else 'first contact'} {mid}"
     to_label = target.address or target.did
     fields = dict(type=kind, from_did=sender.did, to=to_label, to_did=target.did,
                   message_id=mid, conversation_id=cid, timestamp=created.isoformat().replace("+00:00", "Z"), body=body)
@@ -269,8 +277,10 @@ async def _send(sender, target, kind, *, encrypted=False, continuation=None):
     return response, submitted
 
 
-def _federation_packet(sender, target, kind, *, encrypted=False, continuation=None):
-    _, payload, submitted = _submission(sender, target, kind, encrypted=encrypted, continuation=continuation)
+def _federation_packet(sender, target, kind, *, encrypted=False, continuation=None,
+                       message_id=None, created_at=None, body=None):
+    _, payload, submitted = _submission(sender, target, kind, encrypted=encrypted, continuation=continuation,
+                                         message_id=message_id, created_at=created_at, body=body)
     envelope = dict(
         version=1, type=kind, sender_did_aw=sender.stable or sender.did,
         sender_current_did_key=sender.did, sender_delivery_origin=sender.node.origin,
@@ -838,21 +848,23 @@ async def test_reply_move_without_conversation_refuses_no_backfill(route_pair, t
 
 
 @pytest.mark.asyncio
-async def test_team_evidence_expiring_during_real_database_wait_is_reread(route_pair):
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+@pytest.mark.parametrize("encrypted", [False, True], ids=["plaintext", "v2"])
+async def test_team_evidence_expiring_during_real_database_wait_is_reread(route_pair, kind, encrypted):
     source, target = route_pair.source, route_pair.target
-    packet, first = _federation_packet(source.local, target.global_actor, "mail")
+    packet, first = _federation_packet(source.local, target.global_actor, kind, encrypted=encrypted)
     response = await target.client.post("/v1/federation/messages", json=packet)
     assert response.status_code == 200, response.text
     status_path = f"/v1/namespaces/{source.domain}/teams/members/certificates/{source.local.certificate['certificate_id']}/status"
     reads = source.registry_calls.count(("GET", status_path))
     # A new message uses warm proof while still repeating signature and policy.
-    warm, _ = _federation_packet(source.local, target.global_actor, "mail", continuation=str(first.cid))
+    warm, _ = _federation_packet(source.local, target.global_actor, kind, encrypted=encrypted, continuation=str(first.cid))
     response = await target.client.post("/v1/federation/messages", json=warm)
     assert response.status_code == 200, response.text
     assert source.registry_calls.count(("GET", status_path)) == reads
     before = await _effects(target)
     routes = await _route_rows(target, first.cid, source.local.did)
-    next_packet, _ = _federation_packet(source.local, target.global_actor, "mail", continuation=str(first.cid))
+    next_packet, _ = _federation_packet(source.local, target.global_actor, kind, encrypted=encrypted, continuation=str(first.cid))
     # Age the real evidence first; the lock itself stays within the ordinary
     # five-second database limit while spanning the sixty-second cache bound.
     await asyncio.sleep(58)
