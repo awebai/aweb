@@ -487,9 +487,9 @@ func (c *Client) e2eeChatRecipientsForSession(ctx context.Context, sessionID str
 }
 
 // addressedSessionParticipant resolves the other participant of a one-to-one
-// session through its address, when the session lists one. It is that
-// participant only if the address resolves to the session's did:key; an
-// address now held by another identity is not used.
+// session through its address or team alias, when the session lists one. It is
+// that participant only if resolution matches the session's did:key; a name
+// now held by another identity cannot replace the participant.
 func (c *Client) addressedSessionParticipant(ctx context.Context, sessionID string) (E2EERecipientKey, bool, error) {
 	resp, err := c.ChatListSessions(ctx)
 	if err != nil {
@@ -500,7 +500,49 @@ func (c *Client) addressedSessionParticipant(ctx context.Context, sessionID stri
 			continue
 		}
 		otherDIDs, otherAddresses := OtherConversationParticipants(session.ParticipantDIDs, session.ParticipantAddresses, c.stableID, c.did, c.address)
-		if len(otherDIDs) != 1 || len(otherAddresses) != 1 || !isLocalDIDKey(otherDIDs[0]) || !strings.Contains(otherAddresses[0], "/") {
+		if len(otherDIDs) != 1 || len(otherAddresses) != 1 || !isLocalDIDKey(otherDIDs[0]) {
+			return E2EERecipientKey{}, false, nil
+		}
+		aliases, _, addresses := classifyE2EEChatTargets(otherAddresses[0])
+		if len(aliases) == 1 {
+			// Use the same verified roster lookup as alias mail. Missing alias
+			// metadata is not a new authority requirement for an existing peer.
+			agent, err := c.e2eeRecipientAgent(ctx, "", aliases[0])
+			if err != nil {
+				if status, ok := HTTPStatusCode(err); !ok || status != http.StatusNotFound {
+					return E2EERecipientKey{}, false, err
+				}
+			} else {
+				if strings.TrimSpace(agent.DIDKey) != strings.TrimSpace(otherDIDs[0]) {
+					return E2EERecipientKey{}, false, errNoPublishedEncryptionKey
+				}
+				// An invalid publication must not become an absent publication;
+				// nor may a global identity use local history instead of AWID.
+				if agent.EncryptionKey != nil || agent.encryptionKeyRejected || strings.TrimSpace(agent.DIDAW) != "" {
+					recipient, err := c.e2eeRecipientFromAgent(ctx, agent)
+					if err != nil {
+						return E2EERecipientKey{}, false, err
+					}
+					if strings.TrimSpace(recipient.DID) != strings.TrimSpace(otherDIDs[0]) {
+						return E2EERecipientKey{}, false, errNoPublishedEncryptionKey
+					}
+					return recipient, true, nil
+				}
+			}
+			// A local peer without a current roster publication may supply its
+			// key in a verified envelope from this conversation and exact DID.
+			recipients, _, err := c.learnedE2EEChatRecipients(ctx, sessionID)
+			if err != nil {
+				return E2EERecipientKey{}, false, err
+			}
+			for _, recipient := range recipients {
+				if strings.TrimSpace(recipient.DID) == strings.TrimSpace(otherDIDs[0]) {
+					return recipient, true, nil
+				}
+			}
+			return E2EERecipientKey{}, false, errNoPublishedEncryptionKey
+		}
+		if len(addresses) != 1 {
 			return E2EERecipientKey{}, false, nil
 		}
 		identity, err := c.ResolveIdentity(ctx, otherAddresses[0])
@@ -539,6 +581,11 @@ func (c *Client) learnedE2EEChatRecipients(ctx context.Context, sessionID string
 	recipients := make([]E2EERecipientKey, 0, 1)
 	seen := map[string]bool{}
 	for _, msg := range history.Messages {
+		// A valid envelope from another conversation, or a projection that
+		// failed verification, cannot authorize this conversation's reply key.
+		if msg.VerificationStatus != Verified || msg.ConversationID != sessionID || msg.Encrypted == nil || msg.Encrypted.ConversationID != sessionID {
+			continue
+		}
 		recipient, ok, err := c.learnedE2EERecipientFromEnvelope(msg.Encrypted)
 		if err != nil {
 			return nil, true, err

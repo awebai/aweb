@@ -1210,14 +1210,38 @@ func TestMailE2EEConversationReplyLearnsLocalOnlySenderKey(t *testing.T) {
 
 func TestChatE2EEContinuationLearnsLocalOnlySenderKey(t *testing.T) {
 	t.Parallel()
+	for _, scenario := range []string{"addressless", "alias_without_published_key", "wrong_history_DID", "expired_history", "invalid_roster_assertion", "reassigned_alias",
+		"absent_roster", "absent_roster_wrong_history_DID", "absent_roster_expired_history",
+		"absent_roster_foreign_history", "absent_roster_empty_history", "absent_roster_mismatched_projection", "lookup_forbidden"} {
+		t.Run(scenario, func(t *testing.T) {
+			testChatE2EEContinuationLearnsLocalOnlySenderKey(t, scenario)
+		})
+	}
+}
+
+func testChatE2EEContinuationLearnsLocalOnlySenderKey(t *testing.T, scenario string) {
 
 	self := newE2EETestLocalIdentity(t)
 	remote := newE2EETestLocalIdentity(t)
+	historySender := remote
+	if strings.HasSuffix(scenario, "wrong_history_DID") {
+		historySender = newE2EETestLocalIdentity(t)
+	}
+	if strings.HasSuffix(scenario, "expired_history") {
+		historySender.assertion.ExpiresAt = "2026-05-27T12:00:00Z"
+		if err := SignEncryptionKeyAssertion(historySender.assertion, historySender.priv); err != nil {
+			t.Fatal(err)
+		}
+	}
+	historySessionID := "22222222-2222-4222-8222-222222222232"
+	if scenario == "absent_roster_foreign_history" {
+		historySessionID = "22222222-2222-4222-8222-222222222233"
+	}
 	env, err := EncryptE2EEChat(E2EEEncryptMessageParams{
 		Sender: E2EESenderKey{
-			DID:           remote.did,
-			EncryptionKey: remote.assertion,
-			SigningKey:    remote.priv,
+			DID:           historySender.did,
+			EncryptionKey: historySender.assertion,
+			SigningKey:    historySender.priv,
 		},
 		Recipients: []E2EERecipientKey{{
 			DID:           self.did,
@@ -1225,7 +1249,7 @@ func TestChatE2EEContinuationLearnsLocalOnlySenderKey(t *testing.T) {
 		}},
 		Body:           "incoming chat",
 		MessageID:      "11111111-1111-4111-8111-111111111132",
-		ConversationID: "22222222-2222-4222-8222-222222222232",
+		ConversationID: historySessionID,
 		CreatedAt:      time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC),
 		DeliveryOrigin: "https://alpha.example",
 	})
@@ -1239,19 +1263,52 @@ func TestChatE2EEContinuationLearnsLocalOnlySenderKey(t *testing.T) {
 			return
 		}
 		switch r.URL.Path {
+		case "/v1/agents":
+			if strings.HasPrefix(scenario, "absent_roster") || scenario == "lookup_forbidden" {
+				_ = json.NewEncoder(w).Encode(ListAgentsResponse{})
+				return
+			}
+			row := AgentView{Alias: "remote", DIDKey: remote.did, IdentityScope: IdentityModeLocal}
+			if scenario == "invalid_roster_assertion" {
+				invalid := *remote.assertion
+				invalid.Signature = self.assertion.Signature
+				row.EncryptionKey = &invalid
+			}
+			if scenario == "reassigned_alias" {
+				row.DIDKey, row.EncryptionKey = self.did, self.assertion
+			}
+			_ = json.NewEncoder(w).Encode(ListAgentsResponse{Agents: []AgentView{row}})
+		case "/v1/messaging/participants/remote":
+			if scenario == "lookup_forbidden" {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			http.NotFound(w, r)
 		case "/v1/chat/sessions":
-			_ = json.NewEncoder(w).Encode(ChatListSessionsResponse{Sessions: []ChatSessionItem{{
+			session := ChatSessionItem{
 				SessionID:       "22222222-2222-4222-8222-222222222232",
 				Participants:    []string{"self", "remote"},
 				ParticipantDIDs: []string{self.did, remote.did},
-			}}})
+			}
+			if scenario != "addressless" {
+				session.ParticipantAddresses = []string{"self", "remote"}
+			}
+			_ = json.NewEncoder(w).Encode(ChatListSessionsResponse{Sessions: []ChatSessionItem{session}})
 		case "/v1/chat/sessions/22222222-2222-4222-8222-222222222232/messages":
 			if r.Method == http.MethodGet {
+				if scenario == "absent_roster_empty_history" {
+					_ = json.NewEncoder(w).Encode(ChatHistoryResponse{})
+					return
+				}
+				projectedMessageID := env.MessageID
+				if scenario == "absent_roster_mismatched_projection" {
+					projectedMessageID = "11111111-1111-4111-8111-111111111133"
+				}
 				_ = json.NewEncoder(w).Encode(ChatHistoryResponse{Messages: []ChatMessage{{
-					MessageID:      env.MessageID,
+					MessageID:      projectedMessageID,
 					ConversationID: env.ConversationID,
 					FromAgent:      "remote",
-					FromDID:        remote.did,
+					FromDID:        historySender.did,
 					ContentMode:    ContentModeEncryptedV2,
 					MessageVersion: E2EEMessageVersion,
 					Encrypted:      env,
@@ -1284,6 +1341,12 @@ func TestChatE2EEContinuationLearnsLocalOnlySenderKey(t *testing.T) {
 		Body:        "reply chat",
 		EncryptE2EE: true,
 	})
+	if scenario != "addressless" && scenario != "alias_without_published_key" && scenario != "absent_roster" {
+		if err == nil || posted.Encrypted != nil || posted.Body != "" {
+			t.Fatalf("invalid reply authority must refuse without POST: err=%v posted=%#v", err, posted)
+		}
+		return
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
