@@ -25,6 +25,7 @@ from aweb.app_registry import AppEmitKey, AppEventType
 from tests.installation_fixtures import install_fixture_app as install_app
 from aweb.agent_wake import AgentWakeHub, AgentWakePublisher
 from aweb.api import create_app
+from chat_pair_support import route_pair  # noqa: F401  (fixture)
 from test_awid_transport import awid, db_infra  # noqa: F401  (fixtures)
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401  (fixture)
 from test_app_events_http import _make_app_keypair, _signed_app_headers
@@ -480,3 +481,40 @@ async def test_stream_on_a_host_with_agent_wakes_reports_nothing(wake_app, monke
         async with agent_stream(wake_app, "bob") as next_event:
             await _quiet(next_event, seconds=0.1)
     assert not [r for r in caplog.records if "Agent wakes are not started" in r.getMessage()]
+
+
+@pytest.mark.asyncio
+async def test_succession_addressed_mail_wakes_the_successor(route_pair):  # noqa: F811
+    from aweb.agent_wake import did_wake_key
+    from aweb.messaging.participant_succession import succeed_local_human_participant_on
+    from chat_pair_support import _actor, _submission
+    from test_actl_fresh_chat import _post
+    from test_participant_succession import _human, _retire, _send
+
+    node = route_pair.source
+    old, agent = node.local, node.global_actor
+    successor = await _actor(node, "account-human", global_identity=True)
+    await _human(old)
+    await _human(successor)
+    response, first = await _send(agent, old, "mail")
+    assert response.status_code == 200, response.text
+    queued = _submission(agent, old, "mail", continuation=str(first.cid))
+    await _retire(old)
+    async with node.db.transaction() as tx:
+        await succeed_local_human_participant_on(
+            tx, predecessor_did=old.stable or old.did, successor_did=successor.stable
+        )
+    hub = node.server.app.state.agent_wake_hub
+    # The successor's stream subscribes only to its own DIDs.
+    async with hub.subscribe([did_wake_key(successor.stable), did_wake_key(successor.did)]) as wakes:
+        started = time.monotonic()
+        response = await _post(agent, queued)
+        assert response.status_code == 200, response.text
+        await asyncio.wait_for(wakes.wait(), WAKE_LATENCY_BOUND_SECONDS)
+        assert time.monotonic() - started < WAKE_LATENCY_BOUND_SECONDS
+        assert "mail" in wakes.take().kinds
+    row = await node.db.fetch_one(
+        "SELECT to_did FROM {{tables.messages}} WHERE message_id=$1", queued[2].mid
+    )
+    # The stored target remains the predecessor's; the wake still reached H.
+    assert row["to_did"] == (old.stable or old.did)
