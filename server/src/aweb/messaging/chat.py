@@ -450,19 +450,33 @@ async def send_in_session(
     sender_agent_uuid = _uuid_or_none(sender_agent_id) or participant.get("agent_id")
     encrypted_metadata = encrypted_metadata or {}
 
+    # The message and the sender's read receipt for it commit together.
     msg_row = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.chat_messages}}
-            (message_id, session_id, from_agent_id, from_did, from_alias, from_address,
-             body, sender_leaving, hang_on, reply_to, signature, signed_payload,
-             content_mode, message_version, encrypted_envelope, encrypted_ciphertext,
-             encrypted_key_wraps, encrypted_ciphertext_hash, encrypted_ciphertext_size,
-             encrypted_key_wraps_hash, encrypted_inner_header_hash, encrypted_suite,
-             encrypted_signing_key_id, signed_envelope_hash, created_at, id_chain)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-                $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-                $21, $22, $23, $24, $25, $26::jsonb)
-        RETURNING message_id, created_at
+        WITH message AS (
+            INSERT INTO {{tables.chat_messages}}
+                (message_id, session_id, from_agent_id, from_did, from_alias, from_address,
+                 body, sender_leaving, hang_on, reply_to, signature, signed_payload,
+                 content_mode, message_version, encrypted_envelope, encrypted_ciphertext,
+                 encrypted_key_wraps, encrypted_ciphertext_hash, encrypted_ciphertext_size,
+                 encrypted_key_wraps_hash, encrypted_inner_header_hash, encrypted_suite,
+                 encrypted_signing_key_id, signed_envelope_hash, created_at, id_chain)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                    $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+                    $21, $22, $23, $24, $25, $26::jsonb)
+            RETURNING message_id, created_at
+        ), receipt AS (
+            INSERT INTO {{tables.chat_read_receipts}}
+                (session_id, did, agent_id, last_read_message_id, last_read_at)
+            SELECT $2, $4, $3, message_id, created_at FROM message
+            ON CONFLICT (session_id, did) DO UPDATE
+            SET last_read_message_id = EXCLUDED.last_read_message_id,
+                agent_id = EXCLUDED.agent_id,
+                last_read_at = EXCLUDED.last_read_at
+            WHERE {{tables.chat_read_receipts}}.last_read_at IS NULL
+               OR EXCLUDED.last_read_at > {{tables.chat_read_receipts}}.last_read_at
+        )
+        SELECT message_id, created_at FROM message
         """,
         effective_message_id,
         session_id,
@@ -490,25 +504,6 @@ async def send_in_session(
         encrypted_metadata.get("signed_envelope_hash"),
         effective_created_at,
         json.dumps(id_chain) if id_chain is not None else None,
-    )
-
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.chat_read_receipts}}
-            (session_id, did, agent_id, last_read_message_id, last_read_at)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (session_id, did) DO UPDATE
-        SET last_read_message_id = EXCLUDED.last_read_message_id,
-            agent_id = EXCLUDED.agent_id,
-            last_read_at = EXCLUDED.last_read_at
-        WHERE {{tables.chat_read_receipts}}.last_read_at IS NULL
-           OR EXCLUDED.last_read_at > {{tables.chat_read_receipts}}.last_read_at
-        """,
-        session_id,
-        participant["did"],
-        sender_agent_uuid,
-        msg_row["message_id"],
-        msg_row["created_at"],
     )
 
     return dict(msg_row)
