@@ -387,7 +387,7 @@ async def _chat_create_retry(db, payload: CreateSessionRequest, *, actor_dids: l
         envelope = json.loads(envelope)
     matches = (
         row["from_did"] in actor_dids
-        and str(row["session_id"]) == payload.session_id
+        and (payload.session_id is None or str(row["session_id"]) == payload.session_id)
         and row["body"] == payload.message
         and row.get("signature") == payload.signature
         and row.get("signed_payload") == payload.signed_payload
@@ -402,13 +402,19 @@ async def _chat_create_retry(db, payload: CreateSessionRequest, *, actor_dids: l
     signer = (signed.get("from") or {}).get("did") if envelope is not None else signed.get("from_did")
     matches = (matches and payload.timestamp == timestamp
                and (payload.from_did == signer or (envelope is not None and payload.from_did is None))
-               and payload.wait_seconds == (None if envelope is not None else signed.get("wait_seconds")))
+               and (envelope is not None or payload.wait_seconds == signed.get("wait_seconds")))
+    # Encrypted wait_seconds is an outer request option, not stored message
+    # evidence. Acknowledge the matching envelope without applying a wait again;
+    # the session's current wait may belong to a later accepted request.
     participants = await manager.fetch_all(
         "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1", row["session_id"],
     )
     matches = matches and {p["did"] for p in participants} == set(actor_dids) | set(target_dids)
     if not matches:
-        raise HTTPException(status_code=409, detail="message_id already exists with different chat content")
+        raise HTTPException(status_code=409, detail=(
+            "This message ID has already been used for a different chat request. "
+            "Retry the original request unchanged. Use a new message ID only if you intend to send a new message."
+        ))
     return row
 
 
