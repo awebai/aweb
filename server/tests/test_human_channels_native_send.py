@@ -384,15 +384,12 @@ async def test_committed_intent_recovers_without_second_message(native_send):
     ] == 1
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("kind", ["mail", "chat"])
-async def test_native_http_ingress_headers_recover_without_resend(native_send, kind):
-    import httpx
+async def _native_http_ingress(env, kind):
+    """Mount the native routes on the fixture app and build one ingress request."""
     from aweb.identity_auth_deps import get_messaging_auth
     from aweb.routes.chat import router as chat_router
     from aweb.routes.messaging import router as messaging_router
 
-    env = native_send
     if kind == "chat":
         # D8: this is the valid agent-chat neighbour; mail still reaches a human.
         await env["db"].execute("UPDATE {{tables.agents}} SET agent_type='agent' WHERE agent_id=$1", UUID(env["b"]))
@@ -436,6 +433,16 @@ async def test_native_http_ingress_headers_recover_without_resend(native_send, k
         "X-AWEB-Ingress-Key": "event1",
         "X-AWEB-Ingress-Input-Hash": env["key"].value["input_hash"],
     }
+    return app, path, payload, headers, signed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+async def test_native_http_ingress_headers_recover_without_resend(native_send, kind):
+    import httpx
+
+    env = native_send
+    app, path, payload, headers, signed = await _native_http_ingress(env, kind)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
@@ -1016,3 +1023,40 @@ async def test_native_facts_project_identity_in_endpoint_team(native_send):
     assert facts.value['principal'] == {'kind': 'native', 'did': 'did:aw:human'}
     assert facts.value['actor_id'] == env['b']
     assert facts.value['team_id'] == env['auth'].team_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+async def test_native_http_ingress_wakes_recipient_after_commit(native_send, kind):
+    import asyncio
+    import os
+    import time
+
+    import httpx
+    from redis.asyncio import Redis
+
+    from aweb.agent_wake import AgentWakeHub, AgentWakePublisher, did_wake_key
+
+    env = native_send
+    app, path, payload, headers, _ = await _native_http_ingress(env, kind)
+    recipient = await env["db"].fetch_one(
+        "SELECT did_key FROM {{tables.agents}} WHERE agent_id=$1", UUID(env["b"])
+    )
+    async with Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True) as redis:
+        hub, publisher = AgentWakeHub(redis), AgentWakePublisher(redis)
+        await hub.start()
+        app.state.agent_wake_publisher = publisher
+        try:
+            keys = [did_wake_key("did:aw:human"), did_wake_key(recipient["did_key"])]
+            async with hub.subscribe(keys) as subscription, httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                started = time.monotonic()
+                sent = await client.post(path, json=payload, headers=headers)
+                assert sent.status_code == 200, sent.text
+                await asyncio.wait_for(subscription.wait(), 1.0)
+                assert time.monotonic() - started < 1.0
+                assert kind in subscription.take().kinds
+        finally:
+            await hub.close()
+            await publisher.close()

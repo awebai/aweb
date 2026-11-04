@@ -19,12 +19,17 @@ import pytest
 import pytest_asyncio
 
 import aweb.routes.events as events_routes
+from aweb.federation.activation import build_federation_authority_activation
+from aweb.mcp.server import create_mcp_app
+from aweb.app_registry import AppEmitKey, AppEventType
+from tests.installation_fixtures import install_fixture_app as install_app
 from aweb.agent_wake import AgentWakeHub, AgentWakePublisher
 from aweb.api import create_app
 from test_awid_transport import awid, db_infra  # noqa: F401  (fixtures)
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401  (fixture)
+from test_app_events_http import _make_app_keypair, _signed_app_headers
 from test_messages_http import _signed_team_headers
-from test_team_room import metadata as room_metadata, post as room_post
+from test_team_room import metadata as room_metadata, post as room_post, post_payload as room_post_payload
 
 WAKE_LATENCY_BOUND_SECONDS = 1.0
 
@@ -260,3 +265,197 @@ async def test_room_post_wakes_team_members(wake_app):
         assert sent.status_code == 200, sent.text
         event = await _expect_within_bound(next_event, started, "actionable_room_post")
     assert event["message_id"] == sent.json()["message_id"]
+
+
+async def _install_emitting_app(env):
+    signing_key, did_key = _make_app_keypair()
+    await install_app(
+        env.db,
+        team_id=TEAM,
+        app_id="folio",
+        origin="https://folio.aweb.ai",
+        app_version="1.x",
+        manifest_version=1,
+        digest="sha256:" + "0" * 64,
+        granted_scopes=["folio:read"],
+        installed_by_agent_id=str(env.actors["alice"].id),
+        event_types=[AppEventType(type="doc.changed", default_delivery_intent="wake")],
+        emit_keys=[AppEmitKey(kid="emit-1", did_key=did_key)],
+    )
+    return signing_key, did_key
+
+
+async def _emit_app_event(env, signing_key, did_key, resource_ref="doc-1"):
+    body = json.dumps({"type": "folio/doc.changed", "resource_ref": resource_ref, "payload": {}}).encode()
+    headers = _signed_app_headers(
+        signing_key=signing_key, did_key=did_key, body=body, team_id=TEAM,
+        aud=env.app.state.public_origin,
+    )
+    response = await env.client.post("/v1/events/app", content=body, headers=headers)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+@pytest.mark.asyncio
+async def test_app_event_wakes_subscribed_agents_only(wake_app):
+    env = wake_app
+    signing_key, did_key = await _install_emitting_app(env)
+    subscribed = await _team_request(env, "bob", "POST", "/v1/events/subscriptions", {
+        "type": "folio/doc.changed",
+    })
+    assert subscribed.status_code == 200, subscribed.text
+    async with agent_stream(env, "bob") as bob_events, agent_stream(env, "carol") as carol_events:
+        await _quiet(bob_events)
+        started = time.monotonic()
+        emitted = await _emit_app_event(env, signing_key, did_key)
+        event = await _expect_within_bound(bob_events, started, "app_event")
+        await _quiet(carol_events)
+    assert event["event_id"] == emitted["event_id"]
+
+
+@pytest.mark.asyncio
+async def test_app_subscription_wakes_its_agent_with_recent_events(wake_app):
+    env = wake_app
+    signing_key, did_key = await _install_emitting_app(env)
+    emitted = await _emit_app_event(env, signing_key, did_key)
+    async with agent_stream(env, "bob") as next_event:
+        await _quiet(next_event)
+        started = time.monotonic()
+        subscribed = await _team_request(env, "bob", "POST", "/v1/events/subscriptions", {
+            "type": "folio/doc.changed",
+        })
+        assert subscribed.status_code == 200, subscribed.text
+        event = await _expect_within_bound(next_event, started, "app_event")
+    assert event["event_id"] == emitted["event_id"]
+
+
+@pytest_asyncio.fixture
+async def mcp_call(wake_app):
+    """Call a tool on the real MCP app mounted in the wake_app server."""
+    env = wake_app
+    origin = env.app.state.public_origin
+    authority = build_federation_authority_activation(env.infra, public_origin=origin)
+    mcp = create_mcp_app(
+        db_infra=env.infra, redis=env.redis, registry_client=env.app.state.awid_registry_client,
+        federation_authority=authority, public_origin=origin,
+    )
+    env.app.mount("/wake-mcp", mcp)
+    await mcp.startup()
+
+    async def call(actor, name, **arguments):
+        identity = env.actors[actor]
+        body = json.dumps({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": name, "arguments": arguments},
+        }).encode()
+        response = await env.client.post("/wake-mcp/", content=body, headers={
+            **_signed_team_headers(identity.sk, identity.did, TEAM, identity.certificate, body),
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }, timeout=30)
+        assert response.status_code == 200, response.text
+        result = response.json()
+        assert "error" not in result, result
+        tool = result["result"]
+        assert not tool.get("isError"), tool
+        value = json.loads(tool["content"][0]["text"])
+        assert not (isinstance(value, dict) and "error" in value), value
+        return value
+
+    try:
+        yield call
+    finally:
+        await mcp.shutdown()
+        await authority.aclose()
+
+
+@pytest.mark.asyncio
+async def test_mcp_send_mail_wakes_recipient(wake_app, mcp_call):
+    env = wake_app
+    async with agent_stream(env, "bob") as next_event:
+        await _quiet(next_event)
+        started = time.monotonic()
+        sent = await mcp_call("alice", "send_mail", to="bob", subject="wake", body="now")
+        event = await _expect_within_bound(next_event, started, "actionable_mail")
+    assert event["message_id"] == sent["message_id"]
+
+
+@pytest.mark.asyncio
+async def test_mcp_check_mail_auto_ack_wakes_reader(wake_app, mcp_call):
+    env = wake_app
+    await _send_mail(env, subject="first")
+    await _send_mail(env, subject="second")
+    async with agent_stream(env, "bob") as next_event:
+        assert {(await next_event(2))["unread_count"] for _ in range(2)} == {2}
+        await _quiet(next_event)
+        await mcp_call("bob", "check_mail", limit=1)
+        started = time.monotonic()
+        event = await _expect_within_bound(next_event, started, "actionable_mail")
+    assert event["unread_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_mcp_send_chat_wakes_recipient(wake_app, mcp_call):
+    env = wake_app
+    async with agent_stream(env, "bob") as next_event:
+        await _quiet(next_event)
+        started = time.monotonic()
+        sent = await mcp_call("alice", "send_chat", to="bob", message="hello")
+        event = await _expect_within_bound(next_event, started, "actionable_chat")
+    assert event["session_id"] == sent["session_id"]
+
+
+@pytest.mark.asyncio
+async def test_mcp_chat_wait_wakes_recipient_as_interrupt(wake_app, mcp_call):
+    env = wake_app
+    chat = await _open_chat(env)
+    async with agent_stream(env, "bob") as next_event:
+        assert (await next_event(2))["sender_waiting"] is False
+        await _quiet(next_event)
+        started = time.monotonic()
+        waiting = asyncio.create_task(mcp_call(
+            "alice", "send_chat", conversation_id=chat["session_id"], message="still there?",
+            wait=True, wait_seconds=2,
+        ))
+        try:
+            events = [await next_event(WAKE_LATENCY_BOUND_SECONDS)]
+            if not events[0]["sender_waiting"]:
+                events.append(await next_event(WAKE_LATENCY_BOUND_SECONDS))
+            assert time.monotonic() - started < WAKE_LATENCY_BOUND_SECONDS
+            assert events[-1]["sender_waiting"] is True
+            assert events[-1]["wake_mode"] == "interrupt"
+        finally:
+            await waiting
+        started = time.monotonic()
+        event = await _expect_within_bound(next_event, started, "actionable_chat")
+    assert event["sender_waiting"] is False
+
+
+@pytest.mark.asyncio
+async def test_mcp_mark_chat_read_wakes_reader(wake_app, mcp_call):
+    env = wake_app
+    chat = await _open_chat(env)
+    reply = await _request(env, "alice", "POST", f"/v1/chat/sessions/{chat['session_id']}/messages", {
+        "body": "again",
+    })
+    assert reply.status_code == 200, reply.text
+    async with agent_stream(env, "bob") as next_event:
+        assert (await next_event(2))["unread_count"] == 2
+        await _quiet(next_event)
+        started = time.monotonic()
+        await mcp_call("bob", "mark_chat_read", conversation_id=chat["session_id"],
+                       message_ids=[chat["message_id"]])
+        event = await _expect_within_bound(next_event, started, "actionable_chat")
+    assert event["unread_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_mcp_room_post_wakes_team_members(wake_app, mcp_call):
+    env = wake_app
+    room = await room_metadata(env)
+    async with agent_stream(env, "bob") as next_event:
+        await _quiet(next_event)
+        started = time.monotonic()
+        posted = await mcp_call("alice", "room_post", signed_post=room_post_payload(env, room))
+        event = await _expect_within_bound(next_event, started, "actionable_room_post")
+    assert event["message_id"] == posted["message_id"]

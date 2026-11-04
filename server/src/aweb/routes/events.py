@@ -31,7 +31,14 @@ from aweb.app_events import (
     verify_app_event_auth,
 )
 from aweb.agent_health import LISTENING_REFRESH_SECONDS, record_stream_listening
-from aweb.agent_wake import agent_wake_key, did_wake_key, read_wake_marks, team_room_wake_key
+from aweb.agent_wake import (
+    agent_wake_key,
+    agent_wake_publisher,
+    agent_wake_scope,
+    did_wake_key,
+    read_wake_marks,
+    team_room_wake_key,
+)
 from aweb.deps import get_db, get_redis
 from aweb.identity_metadata import lookup_identity_metadata_by_did, routable_chat_address
 from aweb.messaging.chat import get_pending_conversations
@@ -765,14 +772,15 @@ async def emit_app_event_route(
     aweb_db = db.get_manager("aweb")
     try:
         auth = await verify_app_event_auth(request, aweb_db)
-        record = await emit_app_event(
-            aweb_db,
-            auth=auth,
-            event_type=payload.type,
-            resource_ref=payload.resource_ref,
-            producer_delivery_intent=payload.delivery_intent,
-            payload=payload.payload,
-        )
+        with agent_wake_scope(agent_wake_publisher(request.app.state)):
+            record = await emit_app_event(
+                aweb_db,
+                auth=auth,
+                event_type=payload.type,
+                resource_ref=payload.resource_ref,
+                producer_delivery_intent=payload.delivery_intent,
+                payload=payload.payload,
+            )
     except ServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     return _app_event_response(record)
@@ -787,14 +795,15 @@ async def upsert_app_event_subscription_route(
     identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
     try:
-        subscription = await upsert_app_event_subscription(
-            aweb_db,
-            team_id=identity.team_id,
-            agent_id=identity.agent_id,
-            event_type=payload.type,
-            resource_ref=payload.resource_ref,
-            delivery_intent=payload.delivery_intent,
-        )
+        with agent_wake_scope(agent_wake_publisher(request.app.state)):
+            subscription = await upsert_app_event_subscription(
+                aweb_db,
+                team_id=identity.team_id,
+                agent_id=identity.agent_id,
+                event_type=payload.type,
+                resource_ref=payload.resource_ref,
+                delivery_intent=payload.delivery_intent,
+            )
     except ServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     return _subscription_response(subscription)
@@ -821,12 +830,13 @@ async def delete_app_event_subscription_route(
 ) -> dict[str, str]:
     identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
-    deleted = await delete_app_event_subscription(
-        aweb_db,
-        team_id=identity.team_id,
-        agent_id=identity.agent_id,
-        subscription_id=subscription_id,
-    )
+    with agent_wake_scope(agent_wake_publisher(request.app.state)):
+        deleted = await delete_app_event_subscription(
+            aweb_db,
+            team_id=identity.team_id,
+            agent_id=identity.agent_id,
+            subscription_id=subscription_id,
+        )
     if not deleted:
         raise HTTPException(status_code=404, detail="Subscription not found")
     return {"subscription_id": subscription_id, "status": "deleted"}
