@@ -158,7 +158,16 @@ are `AWEB_GATE_MIN_FREE_GB=50` and `AWEB_GATE_RESERVE_GB=30`, requiring 80 GiB
 free. The reserve covers the measured 20–28 GB peak of the private builder cache,
 tool/suite images, workspace and runner; it is separate from the critical floor.
 Both settings accept nonnegative integer GiB values, including a smaller reserve
-for a deliberately smaller fixture. The same check serves make prerequisites.
+for a deliberately smaller fixture. Before any self-test or Docker test,
+`make release-candidate` and `make candidate-gate` check this floor once and
+refuse with the measured free space and required floor when it is not met.
+They do not spend the ledger self-test's 900-second timeout waiting for disk.
+The direct gate retains its minute-by-minute wait; `--check-disk` performs the
+one-shot preflight. The ledger fixture clears inherited make control variables
+for its nested commands so its pinned fixture versions cannot be overridden.
+Both `make release-candidate CLI_VERSION=... STAGE_AW_FINAL=1 TAGS='...'` and
+`CLI_VERSION=... STAGE_AW_FINAL=1 make release-candidate TAGS='...'` are supported;
+these values still govern the real candidate, not the self-test's ledger key.
 This is startup headroom, not a disk quota or a shared admission lock. Concurrent
 gates remain possible; their operator must leave capacity for all outstanding
 gate budgets before starting another run.
