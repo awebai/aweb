@@ -523,7 +523,12 @@ sdist = { url = "https://files.example/unrelated.tar.gz", hash = "sha256:unchang
                 "node_modules/@awebai/aw-linux-x64": {"version": "1.36.48-rc.1", "resolved": "https://registry.example/rc.tgz", "integrity": "sha512:rc"},
             },
         }))
-        (root / "implementation.py").write_text("value = 1\n")
+        for directory in ("server", "awid", "naapp-lib", "naapp-lib/testing", "cli/go"):
+            (root / directory / "implementation.py").write_text("value = 1\n")
+        (root / "scripts").mkdir(exist_ok=True)
+        (root / "scripts/publish_release.py").write_text("# build recipe\n")
+        (root / ".gitignore").write_text("__pycache__/\n")
+        (root / "Makefile").write_text("original-target:\n\t@true\n")
         command(root, "git", "add", ".")
         command(root, "git", "commit", "-qm", "RC code")
         for tag in ("server-v1.27.34rc1", "awid-service-v0.5.32rc1", "aweb-naapp-v0.4.1rc1", "aw-v1.36.48-rc.1"):
@@ -548,13 +553,13 @@ sdist = { url = "https://files.example/unrelated.tar.gz", hash = "sha256:unchang
         command(root, "git", "add", "-A")
         command(root, "git", "commit", "-qm", "promotion")
 
-    def assert_both_refuse(self, root, pattern):
+    def assert_both_refuse(self, root, pattern, tag="server-v1.27.34"):
         self.commit(root)
         with self.assertRaisesRegex(CANDIDATE.CandidateRefusal, pattern):
-            CANDIDATE.validate_tags(root, ["server-v1.27.34"])
-        command(root, "git", "tag", "server-v1.27.34")
+            CANDIDATE.validate_tags(root, [tag])
+        command(root, "git", "tag", tag)
         with self.assertRaisesRegex(PUBLISH.PublishRefusal, pattern):
-            PUBLISH.tag_identity(root, "server-v1.27.34")
+            PUBLISH.tag_identity(root, tag)
 
     def test_promotes_all_five_packages_exact_pins_and_lock_artifacts(self):
         root = self.repository()
@@ -583,11 +588,11 @@ sdist = { url = "https://files.example/unrelated.tar.gz", hash = "sha256:unchang
         command(root, "git", "tag", "-f", "server-v1.27.34rc1")
         return root
 
-    def assert_both_accept(self, root):
+    def assert_both_accept(self, root, tag="server-v1.27.34"):
         self.commit(root)
-        source, _ = CANDIDATE.validate_tags(root, ["server-v1.27.34"])
-        command(root, "git", "tag", "server-v1.27.34")
-        self.assertEqual(PUBLISH.tag_identity(root, "server-v1.27.34")[2], source)
+        source, _ = CANDIDATE.validate_tags(root, [tag])
+        command(root, "git", "tag", tag)
+        self.assertEqual(PUBLISH.tag_identity(root, tag)[2], source)
 
     def test_promotes_floors_in_project_optional_and_group_dependencies(self):
         root = self.floor_repository()
@@ -638,9 +643,73 @@ sdist = { url = "https://files.example/unrelated.tar.gz", hash = "sha256:unchang
                                                         "awid-service" + operator + "0.5.32"))
                 self.assert_both_refuse(root, "beyond version promotion")
 
-    def test_source_diff_uses_the_whole_tree_not_just_the_final_commit(self):
+    LANES = (("server", "server-v1.27.34"), ("awid", "awid-service-v0.5.32"),
+             ("naapp-lib", "aweb-naapp-v0.4.1"), ("cli/go", "aw-v1.36.48"))
+
+    def test_unrelated_tree_changes_allow_candidate_and_publisher(self):
+        for directory, tag in self.LANES:
+            with self.subTest(tag=tag):
+                root = self.repository()
+                self.promote(root)
+                # The reported failure: a root Makefile change or another
+                # package moving on must not demand another RC of this package.
+                (root / "Makefile").write_text("unrelated-target:\n\t@true\n")
+                other = "server" if directory != "server" else "awid"
+                (root / other / "implementation.py").unlink()
+                manifest = root / other / "pyproject.toml"
+                manifest.write_text(manifest.read_text().replace('version = "', 'version = "9'))
+                # Leave dependency floors on their RC versions: no promotion
+                # of the unrelated target is being asserted by this test.
+                if directory == "server":
+                    for relative in ("server/pyproject.toml", "server/uv.lock"):
+                        path = root / relative
+                        path.write_text(command(root, "git", "show", "HEAD:" + relative)
+                                        .replace("1.27.34rc1", "1.27.34")
+                                        .replace("0.4.1rc1", "0.4.1") + "\n")
+                self.assert_both_accept(root, tag)
+
+    def test_each_package_source_change_refuses_candidate_and_publisher(self):
+        for directory, tag in self.LANES:
+            with self.subTest(tag=tag):
+                root = self.repository()
+                self.promote(root)
+                (root / directory / "implementation.py").write_text("value = 2\n")
+                self.assert_both_refuse(root, "non-version file", tag)
+
+    def test_build_configuration_and_lockstep_testing_source_refuse(self):
+        cases = [(tag, "scripts/publish_release.py") for _, tag in self.LANES]
+        cases += [("awid-service-v0.5.32", ".gitignore"),
+                  ("awid-service-v0.5.32", "uv.toml"),
+                  ("aw-v1.36.48", "go.work"),
+                  ("aweb-naapp-v0.4.1", "naapp-lib/testing/implementation.py")]
+        for tag, relative in cases:
+            with self.subTest(tag=tag, path=relative):
+                root = self.repository()
+                self.promote(root)
+                (root / relative).write_text("# changed build input\n")
+                self.assert_both_refuse(root, "non-version file|additions", tag)
+
+    def test_shared_npm_pack_recipe_is_an_aw_build_input(self):
+        for tag in ("aw-v1.36.48", "awid-service-v0.5.32"):
+            with self.subTest(tag=tag):
+                root = self.repository()
+                path = root / "scripts/npm-exact-publish.sh"
+                shutil.copyfile(ROOT / "scripts/npm-exact-publish.sh", path)
+                self.commit(root)
+                command(root, "git", "tag", "-f", tag + ("-rc.1" if tag.startswith("aw-v") else "rc1"))
+                self.promote(root)
+                original = path.read_text()
+                self.assertEqual(original.count("npm pack --ignore-scripts --pack-destination"), 1)
+                path.write_text(original.replace("npm pack --ignore-scripts --pack-destination",
+                                                 "npm pack --pack-destination"))
+                if tag.startswith("aw-v"):
+                    self.assert_both_refuse(root, "npm-exact-publish.sh: non-version file", tag)
+                else:
+                    self.assert_both_accept(root, tag)
+
+    def test_package_diff_includes_intermediate_commits(self):
         root = self.repository()
-        (root / "implementation.py").write_text("value = 2\n")
+        (root / "server/implementation.py").write_text("value = 2\n")
         command(root, "git", "commit", "-qam", "earlier hidden source change")
         self.promote(root)
         self.assert_both_refuse(root, "non-version file")
@@ -650,13 +719,13 @@ sdist = { url = "https://files.example/unrelated.tar.gz", hash = "sha256:unchang
             with self.subTest(change=change):
                 root = self.repository()
                 self.promote(root)
-                path = root / "implementation.py"
+                path = root / "server/implementation.py"
                 if change == "add":
-                    (root / "new.py").write_text("pass\n")
+                    (root / "server/new.py").write_text("pass\n")
                 elif change == "delete":
                     path.unlink()
                 elif change == "rename":
-                    path.rename(root / "renamed.py")
+                    path.rename(root / "server/renamed.py")
                 else:
                     path.chmod(0o755)
                 self.assert_both_refuse(root, "additions, deletions, renames and mode")
@@ -685,7 +754,8 @@ sdist = { url = "https://files.example/unrelated.tar.gz", hash = "sha256:unchang
                 else:
                     path = root / "cli/go/npm/aw-linux-x64/package.json"
                     path.write_text(path.read_text().replace("1.36.48", "1.36.48-rc.1"))
-                self.assert_both_refuse(root, "exact promoted pins")
+                self.assert_both_refuse(root, "exact promoted pins",
+                                        "aw-v1.36.48" if target == "npm-platform" else "server-v1.27.34")
 
     def test_unpromoted_lock_artifact_and_added_removed_lock_records_refuse(self):
         for change in ("artifact", "add", "remove"):
@@ -712,7 +782,7 @@ sdist = { url = "https://files.example/unrelated.tar.gz", hash = "sha256:unchang
         self.assertEqual(VERSIONS.require_final_promotion(root, "server-v1.27.34", "HEAD"), "server-v1.27.34rc10")
         # A later RC cannot be used to bless an earlier final tree.
         final = command(root, "git", "rev-parse", "HEAD")
-        (root / "implementation.py").write_text("later = 1\n")
+        (root / "server/implementation.py").write_text("later = 1\n")
         command(root, "git", "commit", "-qam", "later RC")
         command(root, "git", "tag", "server-v1.27.34rc11")
         with self.assertRaisesRegex(VERSIONS.VersionRefusal, "merge-base"):
@@ -883,7 +953,7 @@ class NpmRcContractTest(unittest.TestCase):
                 shutil.copyfile(ROOT / "cli/go/npm/publication.py", root / "cli/go/npm/publication.py")
                 manifest = root / "cli/go/npm/aw/package.json"
                 manifest.write_text(json.dumps({"name": "@awebai/aw", "version": "1.36.48-rc.1"}))
-                (root / "implementation.go").write_text("package main\n")
+                (root / "cli/go/implementation.go").write_text("package main\n")
                 command(root, "git", "add", ".")
                 command(root, "git", "commit", "-qm", "RC")
                 if case != "final-without-rc":
@@ -891,7 +961,7 @@ class NpmRcContractTest(unittest.TestCase):
                 if case != "rc":
                     manifest.write_text(json.dumps({"name": "@awebai/aw", "version": "1.36.48"}))
                     if case == "source-changed-final":
-                        (root / "implementation.go").write_text("package main\n// changed after RC\n")
+                        (root / "cli/go/implementation.go").write_text("package main\n// changed after RC\n")
                     command(root, "git", "commit", "-qam", "final")
                     command(root, "git", "tag", "aw-v1.36.48")
                 side_effect = root / "downstream-side-effect"
