@@ -85,16 +85,18 @@ async def test_an_exact_retry_returns_the_stored_send_with_no_second_effect(aweb
 
 
 @pytest.mark.asyncio
-async def test_a_different_message_reusing_a_conversation_id_is_still_refused(aweb_cloud_db):
-    db, app, _, alice_sk, alice_key, bob_key = await _sender(aweb_cloud_db)
+async def test_a_different_message_with_the_same_conversation_id_continues_it(aweb_cloud_db):
+    db, app, events, alice_sk, alice_key, bob_key = await _sender(aweb_cloud_db)
     conversation_id = str(uuid4())
+    first_request = _signed_send(alice_sk, alice_key, bob_key, conversation_id=conversation_id, body="first")
+    other_request = _signed_send(alice_sk, alice_key, bob_key, conversation_id=conversation_id, body="other")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        first = await client.post("/v1/messages", json=_signed_send(
-            alice_sk, alice_key, bob_key, conversation_id=conversation_id, body="first"))
+        first = await client.post("/v1/messages", json=first_request)
         assert first.status_code == 200, first.text
-        other = await client.post("/v1/messages", json=_signed_send(
-            alice_sk, alice_key, bob_key, conversation_id=conversation_id, body="other"))
+        other = await client.post("/v1/messages", json=other_request)
 
-    assert other.status_code == 409
-    assert other.json()["detail"] == "conversation_exists"
-    assert await _counts(db) == (1, 1)
+    assert other.status_code == 200, other.text
+    assert other.json()["conversation_id"] == conversation_id
+    assert other.json()["message_id"] == other_request["message_id"]
+    assert await _counts(db) == (2, 1)
+    assert events == [("message.sent", first_request["message_id"]), ("message.sent", other_request["message_id"])]
