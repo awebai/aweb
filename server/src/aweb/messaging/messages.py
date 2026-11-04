@@ -355,7 +355,9 @@ async def deliver_message(
     # two values intentionally use different clocks and may disagree.
     created_at = datetime.now(timezone.utc)
     if message_id is None:
+        # A freshly generated id names no stored message.
         message_id = uuid_mod.uuid4()
+        known_new = True
 
     conversation_uuid = _parse_uuid(conversation_id, field_name="conversation_id") if conversation_id else None
     from_uuid = _parse_uuid(from_agent_id, field_name="from_agent_id") if from_agent_id else None

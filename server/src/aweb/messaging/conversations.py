@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 from uuid import UUID
+
+from pgdbm import TransactionManager
 
 from aweb.service_errors import ForbiddenError, NotFoundError, ServiceError, ValidationError
 from aweb.identity_metadata import native_participant_reference
@@ -263,7 +266,10 @@ async def create_conversation(
     now = _now_utc()
     effective_expires_at = _expires_at(now, ttl, expires_at)
     aweb_db = db.get_manager("aweb")
-    async with aweb_db.transaction() as tx:
+    # Inside a caller's transaction the caller's commit makes this atomic;
+    # a savepoint would only add two round trips.
+    in_transaction = isinstance(aweb_db, TransactionManager)
+    async with (nullcontext(aweb_db) if in_transaction else aweb_db.transaction()) as tx:
         row = await tx.fetch_one(
             """
             INSERT INTO {{tables.conversations}} (
