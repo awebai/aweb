@@ -12,6 +12,14 @@ result_model = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(result_model)
 
 
+def known_failure(case):
+    sender, receiver = case.split('/')[1].split('->')
+    message = ('sending message: recipient has no published E2E encryption key; ask them to upgrade aw/Pi/channel '
+               'and run `aw id encryption-key setup`, or explicitly send a server-readable upgrade note with --plaintext')
+    return dict(actor=sender, args=['chat', 'send-and-wait', receiver, case+'/'+'a'*32, '--e2ee', '--wait', '0'],
+                exit=1, response={'error': {'code': 'error', 'message': message}}, stderr=message+'\n')
+
+
 class UserPathsAdmission(unittest.TestCase):
     def test_missing_prepared_runtime_fails_without_allocating_or_fetching(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -27,15 +35,30 @@ class UserPathsAdmission(unittest.TestCase):
             self.assertIn('infrastructure prerequisite failed; no pull or retry attempted', result.stderr)
             self.assertEqual(list(bind.iterdir()), [])
             self.assertTrue((root / 'evidence/infrastructure.json').is_file())
+            import json
+            report = json.loads((root / 'evidence/qualification.json').read_text())
+            self.assertEqual(report['status'], 'FAILED')
+            self.assertEqual(len(report['required_humans']), 12)
+            self.assertEqual(result.stdout.count('NOT COVERED: pending aweb-actu'), 12)
+            self.assertIn('incomplete: human paths not covered', result.stdout)
 
-    def test_missing_lane_failure_cleanup_budget_and_required_humans_cannot_qualify(self):
+    def test_agent_failures_cleanup_budget_and_visible_human_gap(self):
         inventory = result_model.qualification({}, 10, [])['required_agent_cases']
         lanes = {lane: {'outcomes': [dict(case=case, status='PASSED') for case in inventory if case.startswith(lane + '/')]}
                  for lane in ['head', 'released']}
+        lanes['released']['version'] = '1.36.53'
+        for row in lanes['released']['outcomes']:
+            if row['case'] in [rule['case'] for rule in result_model.KNOWN_RELEASED_ISSUES]:
+                row.update(status='FAILED', failure=known_failure(row['case']))
         full = result_model.qualification(lanes, 100, [])
-        self.assertEqual(full['status'], 'INCOMPLETE')
+        self.assertEqual(full['status'], 'PASSED')
+        self.assertEqual(full['coverage_summary'], 'incomplete: human paths not covered')
+        self.assertEqual({row['status'] for row in full['required_humans']}, {'NOT COVERED: pending aweb-actu'})
+        self.assertTrue(all(row['case'] not in full['passed_agent_cases'] for row in full['required_humans']))
         self.assertEqual(len(full['required_humans']), 12)
         self.assertEqual(len(full['required_agent_cases']), 66)
+        self.assertEqual(len(full['passed_agent_cases']), 64)
+        self.assertEqual(len(full['known_issues']), 2)
         self.assertEqual(result_model.qualification({'head': lanes['head']}, 100, [])['status'], 'FAILED')
         self.assertEqual(result_model.qualification(lanes, 600, [])['status'], 'FAILED')
         self.assertEqual(result_model.qualification(lanes, 100, ['owned resource remains'])['status'], 'FAILED')
@@ -57,6 +80,20 @@ class UserPathsAdmission(unittest.TestCase):
             summary = (root / 'summary.tsv').read_text()
             self.assertIn('checks\tPASSED', summary)
             self.assertIn('user-paths\tFAILED', summary)
+
+    def test_passing_stage_summary_still_exposes_incomplete_human_coverage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            make = root / 'make'
+            make.write_text('#!/bin/bash\nmkdir -p "$CANDIDATE_LOG_DIR/user-paths"\nprintf "%s\\n" "incomplete: human paths not covered" > "$CANDIDATE_LOG_DIR/user-paths/coverage-summary.txt"\n')
+            make.chmod(0o755)
+            result = subprocess.run(['bash', str(ROOT / 'scripts/candidate-suite.sh'), 'user-paths'],
+                                    env=dict(os.environ, PATH=f'{root}:{os.environ["PATH"]}', CANDIDATE_LOG_DIR=str(root)),
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            row = (root / 'summary.tsv').read_text().strip().split('\t')
+            self.assertEqual(row[:2], ['user-paths', 'PASSED'])
+            self.assertEqual(row[-1], 'incomplete: human paths not covered')
 
 
 
@@ -91,6 +128,8 @@ class FrozenGateInput(unittest.TestCase):
                 commands.mkdir()
                 for name in ['candidate-docker-gate.sh', 'candidate-suite.sh', 'candidate-cleanup.sh', 'fetch_released_aw.py']:
                     shutil.copy2(ROOT / 'scripts' / name, repo / 'scripts' / name)
+                shutil.copy2(ROOT / 'scripts/e2e/user_paths_result.py', repo / 'scripts/user_paths_result.py')
+                (repo / 'scripts/coverage_fixture.py').write_text('from user_paths_result import qualification\nr=qualification({},0,[])\nfor h in r["required_humans"]: print(h["case"]+": "+h["status"])\nprint(r["coverage_summary"])\n')
                 (repo / 'scripts/candidate-host-pressure.py').write_text('import pathlib,sys\nif sys.argv[1]=="capture": pathlib.Path(sys.argv[2]).write_text("{}")\n')
                 (repo / 'candidate-gate').mkdir()
                 (repo / 'candidate-gate/Dockerfile').write_text('FROM scratch\n')
@@ -102,6 +141,7 @@ naapp-e2e-packages:
 \t@echo proof/one
 e2e-user-paths:
 \t@python3 -c 'import os,pathlib,hashlib,json; p=pathlib.Path(os.environ["USER_PATHS_LATEST_METADATA"]); b=p.read_bytes(); pathlib.Path(os.environ["SNAPSHOT_RECEIPT"]).write_text(json.dumps(dict(body=b.decode(),digest=hashlib.sha256(b).hexdigest(),declared=os.environ.get("USER_PATHS_LATEST_SHA256"))))'
+\t@python3 scripts/coverage_fixture.py
 '''.lstrip())
                 def git(*args):
                     return subprocess.run(['git', '-C', str(repo), *args], check=True, capture_output=True, text=True).stdout.strip()
@@ -172,7 +212,10 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                     tree = git('rev-parse', 'HEAD^{tree}')
                     external = f'CLI_VERSION=1.36.54\nA2A_GATEWAY_VERSION=1.27.6\nRELEASED_AW={digest}\n'
                     self.assertEqual(ledger[0].split('\t')[0], tree+'-'+hashlib.sha256(external.encode()).hexdigest())
-                    self.assertIn('no stages run', invoke(None))
+                    reused = invoke(None)
+                    self.assertIn('no stages run', reused)
+                    self.assertEqual(reused.count('NOT COVERED: pending aweb-actu'), 12)
+                    self.assertIn('incomplete: human paths not covered', reused)
                     self.assertEqual(len((root / 'ledger.tsv').read_text().splitlines()), 5)
                     # Changing only the frozen artifact invalidates the key.
                     metadata['version'] = '1.36.55'
@@ -194,10 +237,12 @@ class ExactMessageAssertions(unittest.TestCase):
     def exercise(self, kind, encrypted, mutate=None):
         import copy
         import json
+        import sys
         from unittest.mock import patch
         spec = importlib.util.spec_from_file_location('user_paths', ROOT / 'scripts/e2e/user_paths.py')
         paths = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(paths)
+        with patch.dict(sys.modules, {'user_paths_result': result_model}):
+            spec.loader.exec_module(paths)
         with tempfile.TemporaryDirectory() as directory:
             lane = paths.Lane.__new__(paths.Lane)
             lane.name, lane.root, lane.results = 'head', Path(directory), []
@@ -282,6 +327,69 @@ class ExactMessageAssertions(unittest.TestCase):
                 with self.subTest(kind=kind,turn=turn,change='plaintext mode substitution'):
                     with self.assertRaises(AssertionError):
                         self.exercise(kind,False,lambda records:records[turn]['history']['messages'][0].update(content_mode='encrypted_v2'))
+
+
+
+class ReleasedKnownIssueBudget(unittest.TestCase):
+    def test_real_lane_command_failure_is_classified_without_a_head_exception(self):
+        import json
+        import sys
+        from unittest.mock import patch
+        spec = importlib.util.spec_from_file_location('user_paths', ROOT / 'scripts/e2e/user_paths.py')
+        paths = importlib.util.module_from_spec(spec)
+        with patch.dict(sys.modules, {'user_paths_result': result_model}):
+            spec.loader.exec_module(paths)
+        with tempfile.TemporaryDirectory() as directory:
+            for name, expected in [('released', 'KNOWN_ISSUE'), ('head', 'FAILED')]:
+                lane = paths.Lane.__new__(paths.Lane)
+                lane.name, lane.version, lane.binary, lane.environment = name, '1.36.53', '/fixture/aw', {}
+                lane.results, lane.outcomes, lane.failures = [], [], []
+                lane.actors = {actor: dict(address='', home=directory) for actor in ['t1','t2']}
+                case = name+'/t1->t2/chat/v2'
+                failure = known_failure(case)
+                response = subprocess.CompletedProcess([], 1, json.dumps(failure['response'])+'\n', failure['stderr'])
+                with patch.object(paths.subprocess, 'run', return_value=response):
+                    lane.run_case(case, lambda: lane.flow('t1','t2','chat',True))
+                self.assertEqual(lane.outcomes[0]['status'], expected)
+                self.assertEqual(len(lane.failures), 0 if name=='released' else 1)
+                if name=='released':
+                    self.assertEqual(lane.outcomes[0]['failure']['response'], failure['response'])
+                    lane.run_case(case, lambda: None)
+                    self.assertEqual(lane.outcomes[-1]['status'], 'FAILED')
+                    self.assertEqual(len(lane.failures), 1)
+
+    def test_exact_measured_failures_only_on_each_released_cell(self):
+        self.assertEqual(len(result_model.KNOWN_RELEASED_ISSUES), 2)
+        for case in ['released/t1->t2/chat/v2', 'released/t2->t1/chat/v2']:
+            for version in ['1.36.53', '1.36.54']:
+                row = dict(case=case, status='FAILED', failure=known_failure(case))
+                classified = result_model.classify_outcome(row, version)
+                self.assertEqual(classified['status'], 'KNOWN_ISSUE')
+                self.assertEqual(classified['known_issue']['task'], 'aweb-actw')
+                self.assertEqual(classified['observed_status'], 'FAILED')
+                # Reclassification at the parent boundary preserves the same verdict.
+                self.assertEqual(result_model.classify_outcome(classified, version), classified)
+
+    def test_unexpected_success_wrong_failure_phase_version_or_lane_is_red(self):
+        import copy
+        case = 'released/t1->t2/chat/v2'
+        row = dict(case=case, status='FAILED', failure=known_failure(case))
+        variants = [('unexpected pass', dict(case=case,status='PASSED'))]
+        for field,value in [('exit',2), ('stderr','different failure'), ('actor','t2'),
+                            ('args',['chat','send','--session-id','existing','--e2ee'])]:
+            changed=copy.deepcopy(row);changed['failure'][field]=value;variants.append((field,changed))
+        for field,value in [('message','different key error'),('code','permission_denied'),('reason','new_reason')]:
+            changed=copy.deepcopy(row);changed['failure']['response']['error'][field]=value;variants.append((field,changed))
+        for name,changed in variants:
+            with self.subTest(change=name):
+                self.assertEqual(result_model.classify_outcome(changed,'1.36.53')['status'],'FAILED')
+        for version in ['1.36.52','1.36.55','dev','1.36.54-rc.1',None]:
+            with self.subTest(version=version):
+                self.assertEqual(result_model.classify_outcome(row,version)['status'],'FAILED')
+                self.assertEqual(result_model.classify_outcome(dict(case=case,status='PASSED'),version)['status'],'FAILED')
+        for other in ['head/t1->t2/chat/v2','released/g1->t1/chat/v2','released/t1->t2/mail/v2']:
+            changed=copy.deepcopy(row);changed['case']=other
+            self.assertEqual(result_model.classify_outcome(changed,'1.36.53')['status'],'FAILED')
 
 
 if __name__ == '__main__':

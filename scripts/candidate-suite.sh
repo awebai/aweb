@@ -103,7 +103,12 @@ for stage in $stages; do
   set -e
   result=PASSED
   [[ "$status" == 0 ]] || result=FAILED
-  printf '%s\t%s\t%s.log\t%ss\n' "$stage" "$result" "$stage" "$((SECONDS-started))" >> "$log_dir/summary.tsv"
+  coverage=""
+  if [[ "$stage" == user-paths && -f "$log_dir/user-paths/coverage-summary.txt" ]]; then
+    coverage="$(cat "$log_dir/user-paths/coverage-summary.txt")"
+    printf 'user-paths coverage: %s\n' "$coverage"
+  fi
+  printf '%s\t%s\t%s.log\t%ss\t%s\n' "$stage" "$result" "$stage" "$((SECONDS-started))" "$coverage" >> "$log_dir/summary.tsv"
   [[ "$status" == 0 ]] || exit "$status"
 done
 printf '\ncandidate suite PASSED\n'

@@ -11,10 +11,22 @@ from pathlib import Path
 import subprocess
 import time
 import uuid
+from user_paths_result import classify_outcome, HUMAN_STATUS, COVERAGE_SUMMARY
 
 ROOT = Path('/work')
 REGISTRY = 'http://awid:8010'
 PAIRS = [('g1', 'g2'), ('g2', 'g1'), ('t1', 't2'), ('t2', 't1'), ('t1', 'g1'), ('g1', 't1')]
+
+
+class CLICommandError(AssertionError):
+    def __init__(self, lane, actor, args, result):
+        try:
+            response = json.loads(result.stdout)
+        except ValueError:
+            response = None
+        self.failure = dict(actor=actor, args=list(args), exit=result.returncode,
+                            response=response, stderr=result.stderr)
+        super().__init__(f'{lane}/{actor} aw {args}: {result.returncode}\n{result.stdout}\n{result.stderr}')
 
 
 def rows(value):
@@ -49,6 +61,7 @@ class Lane:
         self.outcomes = []
         version_output = subprocess.run([self.binary, 'version'], capture_output=True, text=True, check=True, timeout=10).stdout
         match = re.search(r'^aw (\d+)\.(\d+)\.(\d+)\s*$', version_output, re.M)
+        self.version = '.'.join(match.groups()) if match else None
         self.legacy_released_diagnostics = self.name == 'released' and match is not None and tuple(map(int, match.groups())) <= (1, 36, 54)
         (self.root / 'version.txt').write_text(version_output)
 
@@ -84,8 +97,8 @@ class Lane:
             operation()
         except Exception as error:
             record = dict(case=case, status='FAILED', error=str(error))
-            self.failures.append(record)
-            print('FAIL', case, error, flush=True)
+            if isinstance(error, CLICommandError):
+                record['failure'] = error.failure
             if diagnostic:
                 try:
                     self.capture_failure(case, *diagnostic)
@@ -102,6 +115,12 @@ class Lane:
                             Path(str(events) + '.release-' + event['meta']['message_id']).touch()
         else:
             record = dict(case=case, status='PASSED')
+        record = classify_outcome(record, self.version)
+        if record['status'] == 'FAILED':
+            self.failures.append(record)
+            print('FAIL', case, record.get('budget_error', record.get('error')), flush=True)
+        elif record['status'] == 'KNOWN_ISSUE':
+            print('KNOWN ISSUE', case, record['known_issue']['task'], 'observed failure:', record['failure']['response'], flush=True)
         record['seconds'] = round(time.monotonic() - started, 3)
         self.outcomes.append(record)
 
@@ -112,7 +131,7 @@ class Lane:
             return subprocess.Popen(cmd, cwd=work, env=self.environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         result = subprocess.run(cmd, cwd=work, env=self.environment, capture_output=True, text=True, timeout=25)
         if check and result.returncode:
-            raise AssertionError(f'{self.name}/{actor} aw {args}: {result.returncode}\n{result.stdout}\n{result.stderr}')
+            raise CLICommandError(self.name, actor, args, result)
         if not check:
             return result
         return json.loads(result.stdout)
@@ -417,7 +436,7 @@ if __name__ == '__main__':
             lane.controls()
     finally:
         lane.close()
-        (lane.root / 'results.json').write_text(json.dumps(dict(cases=lane.results, outcomes=lane.outcomes,
-            required_human_coverage='PENDING aweb-actu; incomplete qualification', elapsed=time.monotonic()-start), indent=2))
+        (lane.root / 'results.json').write_text(json.dumps(dict(version=lane.version, cases=lane.results, outcomes=lane.outcomes,
+            required_human_coverage=HUMAN_STATUS, coverage_summary=COVERAGE_SUMMARY, elapsed=time.monotonic()-start), indent=2))
     if lane.failures:
         raise SystemExit(1)

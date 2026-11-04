@@ -62,8 +62,13 @@ errors never count as these refusals.
 
 ## Required human coverage
 
-Human coverage is **required and pending aweb-actu**, not skipped or passed.
-The complete stage refuses qualification while this dependency is pending:
+Human coverage is **NOT COVERED: pending aweb-actu**, not skipped or passed.
+Per coordinator decision 6a00bc5b, the 48 runnable agent flows and 18 controls
+determine the stage's PASS/FAIL. Every invocation prints all human cells and
+retains them in the stage result, including infrastructure failures. A reused stage reprints its human coverage
+gap from the retained log. The stage summary says **incomplete: human paths not covered**, even when runnable cases
+pass. The human cells become required for admission in the same change that
+implements the real public surface in aweb-actu:
 
 | Required path | Outcome |
 | --- | --- |
@@ -97,7 +102,7 @@ Artifact fetch has network access; messaging services and clients stay internal.
 Evidence includes the frozen artifact provenance, named outcomes for every
 attempted case in both lanes, required human status, public failure/read records,
 source revision and harness bytes, service logs and phase timings. Artifact
-failure, absent lane, product assertion failure, timeout or failed cleanup keeps
+failure, absent lane, unexpected case failure, timeout or failed cleanup keeps
 the stage red. A failed case does not prevent later cases or the other lane
 from running. Evidence excludes actor identity homes and private keys.
 
@@ -116,6 +121,29 @@ lane and cleanup; the shared candidate-image build retains its own build log.
 Cleanup removes only this run's project, resources and scratch homes, preserving
 the prepared images. It verifies absence and surfaces cleanup failures. No
 retry or coverage reduction makes a stage pass.
+
+## Reviewed released-client issue budget
+
+Coordinator decision d51223e6 permits these measured released-client failures
+while HEAD must pass both cells. Each case still runs; its observed failure
+is retained as `KNOWN_ISSUE`, never counted as a passed case:
+
+| Cell | Released versions (inclusive) | Task | Exact expected failure |
+| --- | --- | --- | --- |
+| released/t1->t2/chat/v2 | 1.36.53–1.36.54 | aweb-actw | First `chat send-and-wait t2 ... --e2ee --wait 0`, exit 1, diagnostic below |
+| released/t2->t1/chat/v2 | 1.36.53–1.36.54 | aweb-actw | First `chat send-and-wait t1 ... --e2ee --wait 0`, exit 1, diagnostic below |
+
+The JSON error must contain exactly `code=error` and this message, also emitted
+on stderr: "sending message: recipient has no published E2E encryption key; ask
+them to upgrade aw/Pi/channel and run `aw id encryption-key setup`, or explicitly
+send a server-readable upgrade note with --plaintext". The originating actor,
+exact command/flags and that case's body are checked as well. Failure on a later
+reply, a different diagnostic, unexpected success, unsupported version or any
+undeclared failure is red. The parent stage rechecks the version and failure
+receipt. Remove both entries in the change that promotes the fixed aw to npm
+latest; a version outside the reviewed range is red until the budget is updated
+or removed. These are the two released cells; the four original failures were
+these same two directions across HEAD and released lanes.
 
 For an additional author-only version comparison, set
 `USER_PATHS_COMPARISON_METADATA` to immutable npm metadata for that exact

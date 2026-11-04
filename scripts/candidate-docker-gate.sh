@@ -159,6 +159,10 @@ for stage in $REQUESTED; do
   case "$stage" in checks|user-paths|unit|artifacts|integration) ;; *) refuse "unknown stage '$stage'" ;; esac
   if [[ "$(recorded "$stage" | cut -f3)" == passed ]]; then
     printf 'gate: tree %s already passed %s; original log %s\n' "$TREE" "$stage" "$(recorded "$stage" | cut -f6)"
+    if [[ "$stage" == user-paths ]]; then
+      # Reusing the proof must not hide its coverage gap in an otherwise green gate.
+      grep -E 'NOT COVERED: pending aweb-actu$|^incomplete: human paths not covered$' "$(recorded "$stage" | cut -f6)" || true
+    fi
   elif [[ " $pending " != *" $stage "* ]]; then
     pending="${pending:+$pending }$stage"
   fi
