@@ -280,6 +280,44 @@ async def authorize_message_delivery(
     )
 
 
+async def admit_message_delivery(
+    db,
+    *,
+    recipient: dict,
+    recipient_did: str,
+    to_agent_id: str | None,
+    sender_did: str,
+    sender_address: str | None,
+    team_id: str | None,
+    sender_verified_team_id: str | None,
+    sender_verified_dids,
+    stored_route_continuation: bool,
+) -> None:
+    """The recipient's delivery policy for this sender; raises when it refuses."""
+    if recipient.get("external") and not (stored_route_continuation and not recipient.get("delivery_origin")):
+        return
+    policies = [recipient]
+    if stored_route_continuation:
+        policies = await policy_rows_for_participant(db, {
+            "agent_id": to_agent_id or recipient.get("agent_id"), "did": recipient_did,
+        })
+        if not policies:
+            # Mail has one recipient; absence is not a policy denial and
+            # must not create a local delivery to a retired projection.
+            raise NotFoundError("Recipient agent not found")
+    for policy_recipient in policies:
+        await authorize_message_delivery(
+            db,
+            recipient_agent=policy_recipient,
+            sender_did=sender_did,
+            sender_address=sender_address,
+            sender_team_id=team_id,
+            sender_verified_team_id=sender_verified_team_id,
+            sender_verified_dids=sender_verified_dids,
+            stored_route_continuation=stored_route_continuation,
+        )
+
+
 @attachment_transaction("mail")
 async def deliver_message(
     db,
@@ -325,30 +363,19 @@ async def deliver_message(
     if recipient is None:
         raise NotFoundError("Recipient agent not found")
 
-    if not skip_policy_check and (
-        not recipient.get("external")
-        or (stored_route_continuation and not recipient.get("delivery_origin"))
-    ):
-        policies = [recipient]
-        if stored_route_continuation:
-            policies = await policy_rows_for_participant(db, {
-                "agent_id": to_agent_id or recipient.get("agent_id"), "did": recipient_did,
-            })
-            if not policies:
-                # Mail has one recipient; absence is not a policy denial and
-                # must not create a local delivery to a retired projection.
-                raise NotFoundError("Recipient agent not found")
-        for policy_recipient in policies:
-            await authorize_message_delivery(
-                db,
-                recipient_agent=policy_recipient,
-                sender_did=sender_did,
-                sender_address=sender_address,
-                sender_team_id=team_id,
-                sender_verified_team_id=sender_verified_team_id,
-                sender_verified_dids=sender_verified_dids,
-                stored_route_continuation=stored_route_continuation,
-            )
+    if not skip_policy_check:
+        await admit_message_delivery(
+            db,
+            recipient=recipient,
+            recipient_did=recipient_did,
+            to_agent_id=to_agent_id,
+            sender_did=sender_did,
+            sender_address=sender_address,
+            team_id=team_id,
+            sender_verified_team_id=sender_verified_team_id,
+            sender_verified_dids=sender_verified_dids,
+            stored_route_continuation=stored_route_continuation,
+        )
 
     # The sender-attested time remains in signed_payload or encrypted_envelope.
     # created_at is when this server received the message for ordering, so the

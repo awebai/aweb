@@ -83,6 +83,7 @@ from aweb.messaging.mail_routing import (
 )
 from aweb.messaging.messages import (
     MessagePriority,
+    admit_message_delivery,
     authorize_message_delivery,
     deliver_message,
     get_agent_by_id,
@@ -1364,6 +1365,19 @@ async def _send_mail_conversation_continuation(
             await require_non_custodial_recipients(
                 db, payload.encrypted_envelope or {}, [recipient] if recipient else [], sender=auth,
             )
+        # Admission comes before any replay, as for any send.
+        await admit_message_delivery(
+            db,
+            recipient=recipient,
+            recipient_did=recipient_participant["did"],
+            to_agent_id=recipient.get("agent_id"),
+            sender_did=sender_did,
+            sender_address=sender_address,
+            team_id=continuation.conversation.get("team_id") or auth.team_id,
+            sender_verified_team_id=auth.verified_team_id,
+            sender_verified_dids=auth_dids(auth),
+            stored_route_continuation=True,
+        )
         stored, message_is_new = await _stored_exact_send(db, payload=payload, sender_did=sender_did)
         if stored is not None:
             return stored
@@ -1398,6 +1412,7 @@ async def _send_mail_conversation_continuation(
                 signed_recipient_did=historical_target["signed_did"]
                 if historical_target is not None else None,
                 known_new=message_is_new,
+                skip_policy_check=True,
             )
         except Exception as exc:
             if not _lost_send_race(exc):
