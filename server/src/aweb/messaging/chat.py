@@ -4,6 +4,7 @@ from aweb.human_channels.contract import ContractError
 from aweb.human_channels.participants import require_native_participant_input
 from aweb.service_errors import ValidationError
 
+from aweb.agent_wake import agent_wake_scope, record_did_wakes
 from aweb.attachment_service import attachment_transaction
 
 import logging
@@ -74,6 +75,28 @@ def _participant_did(row: dict[str, Any]) -> str:
     except ContractError as error:
         raise ValidationError(str(error)) from error
     return (row.get("did") or row.get("did_aw") or row.get("did_key") or "").strip()
+
+
+async def record_chat_session_wakes(aweb_db, *, session_id: UUID, except_did: str | None = None) -> None:
+    """Record a chat wake for each participant of a session (departed ones too:
+    leaving does not end their pending state)."""
+    rows = await aweb_db.fetch_all(
+        "SELECT did FROM {{tables.chat_participants}} WHERE session_id = $1",
+        session_id,
+    )
+    record_did_wakes((row["did"] for row in rows if row["did"] != except_did), "chat")
+
+
+async def wake_chat_session_participants(aweb_db, publisher, *, session_id: UUID) -> None:
+    """Wake every participant after a change only Redis records: waiting
+    presence changes sender_waiting and lifts a viewer's own suppression."""
+    if publisher is None:
+        return
+    try:
+        with agent_wake_scope(publisher):
+            await record_chat_session_wakes(aweb_db, session_id=session_id)
+    except Exception:
+        logger.warning("Chat session wake failed for %s", session_id, exc_info=True)
 
 
 async def get_agent_by_id(db, *, agent_id: str, team_id: str | None = None) -> dict[str, Any] | None:
@@ -506,6 +529,8 @@ async def send_in_session(
         json.dumps(id_chain) if id_chain is not None else None,
     )
 
+    await record_chat_session_wakes(aweb_db, session_id=session_id, except_did=participant["did"])
+
     return dict(msg_row)
 
 
@@ -827,6 +852,7 @@ async def mark_messages_read(
             read_time,
         )
 
+    record_did_wakes([participant_did], "chat")
     return {
         "session_id": str(session_id),
         "messages_marked": len(marked),
@@ -918,6 +944,7 @@ async def mark_messages_read_up_to(
             watermark["created_at"],
         )
 
+    record_did_wakes([participant_did], "chat")
     return {
         "session_id": str(session_id),
         "messages_marked": len(marked),

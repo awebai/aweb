@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from aweb.agent_wake import record_did_wakes
 from aweb.attachment_service import attachment_transaction
 
 import json
@@ -486,5 +487,8 @@ async def deliver_message(
     )
     if not row:
         raise ServiceError("Failed to create message")
+
+    # Wake the identity this delivery resolved, never a stored address field.
+    record_did_wakes((recipient.get("did_aw"), recipient.get("did_key")), "mail")
 
     return UUID(str(row["message_id"])), row["created_at"]

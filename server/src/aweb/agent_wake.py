@@ -101,6 +101,12 @@ def record_agent_wake(key: str, kind: str) -> None:
     scope.wakes.setdefault(key, set()).add(kind)
 
 
+def record_did_wakes(dids: Iterable[str], kind: str) -> None:
+    """Record a wake for each DID of one identity."""
+    for did in dict.fromkeys(did for did in dids if did):
+        record_agent_wake(did_wake_key(did), kind)
+
+
 @contextlib.contextmanager
 def agent_wake_scope(publisher: AgentWakePublisher | None) -> Generator[None]:
     """Collect wakes recorded inside; hand them to the publisher on normal exit.
@@ -121,6 +127,11 @@ def agent_wake_scope(publisher: AgentWakePublisher | None) -> Generator[None]:
         _current_scope.reset(token)
     if publisher is not None and scope.wakes:
         publisher.submit(scope.wakes)
+
+
+def agent_wake_publisher(state) -> AgentWakePublisher | None:
+    """The process's publisher on an application state, if it runs one."""
+    return getattr(state, "agent_wake_publisher", None)
 
 
 class AgentWakePublisher:

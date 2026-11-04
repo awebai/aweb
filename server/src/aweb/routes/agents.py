@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, field_validator, model_serializer, model_
 from awid.dns_auth import validate_did_key, verify_signed_json_request
 from awid.e2ee_keys import validate_encryption_key_assertion
 from awid.team_ids import parse_team_id
+from aweb.agent_wake import agent_wake_key, agent_wake_publisher, agent_wake_scope, record_agent_wake
 from aweb.inbound_modes import INBOUND_MODES, normalize_inbound_mode, effective_inbound_mode, set_identity_inbound_mode
 from aweb.service_errors import ForbiddenError
 from aweb.alias_allocator import candidate_name_prefixes, used_name_prefixes
@@ -1085,15 +1086,17 @@ async def send_control_signal(
     if not target:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    result = await aweb_db.fetch_one(
-        """
-        INSERT INTO {{tables.control_signals}} (team_id, target_agent_id, from_agent_id, signal_type)
-        VALUES ($1, $2, $3, $4)
-        RETURNING signal_id
-        """,
-        identity.team_id,
-        target["agent_id"],
-        UUID(identity.agent_id),
-        payload.signal,
-    )
+    with agent_wake_scope(agent_wake_publisher(request.app.state)):
+        result = await aweb_db.fetch_one(
+            """
+            INSERT INTO {{tables.control_signals}} (team_id, target_agent_id, from_agent_id, signal_type)
+            VALUES ($1, $2, $3, $4)
+            RETURNING signal_id
+            """,
+            identity.team_id,
+            target["agent_id"],
+            UUID(identity.agent_id),
+            payload.signal,
+        )
+        record_agent_wake(agent_wake_key(str(target["agent_id"])), "control")
     return {"signal_id": str(result["signal_id"]), "signal": payload.signal}

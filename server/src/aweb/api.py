@@ -22,6 +22,7 @@ from .db import db_infra as default_db_infra
 from awid.log_config import configure_logging
 from .federation.activation import build_federation_authority_activation
 from .federation.errors import authority_error_body
+from .agent_wake import AgentWakeHub, AgentWakePublisher
 from .mutation_hooks import create_mutation_handler
 from .outbox_recovery import OutboxRecoveryStarter, start_outbox_recovery, stop_outbox_recovery
 from awid.ratelimit import build_rate_limiter
@@ -115,6 +116,22 @@ async def _shutdown_mcp_app(app: FastAPI) -> None:
     app.state.mcp_app = None
 
 
+async def _start_agent_wakes(app: FastAPI, redis: Redis) -> None:
+    """One wake publisher and one wake subscriber per process."""
+    app.state.agent_wake_publisher = AgentWakePublisher(redis)
+    app.state.agent_wake_hub = AgentWakeHub(redis)
+    await app.state.agent_wake_hub.start()
+
+
+async def _shutdown_agent_wakes(app: FastAPI) -> None:
+    hub = getattr(app.state, "agent_wake_hub", None)
+    if hub is not None:
+        await hub.close()
+    publisher = getattr(app.state, "agent_wake_publisher", None)
+    if publisher is not None:
+        await publisher.close()
+
+
 async def _shutdown_federation_authority(app: FastAPI) -> None:
     authority = getattr(app.state, "federation_authority", None)
     if authority is None:
@@ -200,6 +217,7 @@ def _make_standalone_lifespan():
                 app.state.awid_registry_client,
                 app.state.federation_authority,
             )
+            await _start_agent_wakes(app, redis)
             start_outbox_recovery(app)
 
         except Exception:
@@ -224,6 +242,7 @@ def _make_standalone_lifespan():
             await stop_outbox_recovery(app)
             await _shutdown_federation_authority(app)
             await _shutdown_awid_registry_client(app)
+            await _shutdown_agent_wakes(app)
             await redis.aclose()
             await default_db_infra.close()
 
@@ -260,6 +279,7 @@ def _make_library_lifespan(
             app.state.awid_registry_client,
             app.state.federation_authority,
         )
+        await _start_agent_wakes(app, redis)
         start_outbox_recovery(app)
 
         try:
@@ -270,6 +290,7 @@ def _make_library_lifespan(
             await stop_outbox_recovery(app)
             await _shutdown_federation_authority(app)
             await _shutdown_awid_registry_client(app)
+            await _shutdown_agent_wakes(app)
             logger.info("Aweb coordination server stopping (library mode)")
 
     return lifespan

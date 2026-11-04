@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from aweb.agent_wake import agent_wake_publisher, agent_wake_scope, record_did_wakes
 from aweb.federation.origins import public_origins
 from aweb.messaging.mail_attribution import incoming_mail_sql, readable_mail_sql
 
@@ -1017,32 +1018,33 @@ async def _deliver_remote_mail_and_project_locally(
                 ],
                 team_id=auth.team_id,
             )
-        local_message_id, local_created_at = await deliver_message(
-            db,
-            id_chain=getattr(getattr(request, "state", None), "id_chain", None),
-            registry_client=registry_client,
-            recipient_agent=recipient,
-            team_id=auth.team_id,
-            from_agent_id=auth.agent_id,
-            from_alias=auth.alias,
-            to_agent_id=to_agent_id,
-            to_alias=to_alias,
-            from_did=sender_did,
-            to_did=recipient_did,
-            sender_address=sender_address,
-            subject="" if is_encrypted else payload.subject,
-            body="" if is_encrypted else payload.body,
-            priority=payload.priority,
-            signature=None if is_encrypted else payload.signature,
-            signed_payload=None if is_encrypted else payload.signed_payload,
-            content_mode=payload.content_mode or "legacy_plaintext_v1",
-            message_version=payload.message_version or 1,
-            encrypted_envelope=payload.encrypted_envelope,
-            encrypted_metadata=encrypted_metadata,
-            message_id=msg_uuid,
-            conversation_id=conversation["conversation_id"],
-            skip_policy_check=True,
-        )
+        with agent_wake_scope(agent_wake_publisher(request.app.state)):
+            local_message_id, local_created_at = await deliver_message(
+                db,
+                id_chain=getattr(getattr(request, "state", None), "id_chain", None),
+                registry_client=registry_client,
+                recipient_agent=recipient,
+                team_id=auth.team_id,
+                from_agent_id=auth.agent_id,
+                from_alias=auth.alias,
+                to_agent_id=to_agent_id,
+                to_alias=to_alias,
+                from_did=sender_did,
+                to_did=recipient_did,
+                sender_address=sender_address,
+                subject="" if is_encrypted else payload.subject,
+                body="" if is_encrypted else payload.body,
+                priority=payload.priority,
+                signature=None if is_encrypted else payload.signature,
+                signed_payload=None if is_encrypted else payload.signed_payload,
+                content_mode=payload.content_mode or "legacy_plaintext_v1",
+                message_version=payload.message_version or 1,
+                encrypted_envelope=payload.encrypted_envelope,
+                encrypted_metadata=encrypted_metadata,
+                message_id=msg_uuid,
+                conversation_id=conversation["conversation_id"],
+                skip_policy_check=True,
+            )
     except (ValidationError, NotFoundError, ForbiddenError) as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
@@ -1382,38 +1384,39 @@ async def _send_mail_conversation_continuation(
         if stored is not None:
             return stored
         try:
-            message_id, server_received_at = await deliver_message(
-                db,
-                id_chain=getattr(getattr(request, "state", None), "id_chain", None),
-                registry_client=registry_client,
-                recipient_agent=recipient,
-                team_id=continuation.conversation.get("team_id") or auth.team_id,
-                from_agent_id=auth.agent_id,
-                from_alias=auth.alias,
-                to_agent_id=recipient.get("agent_id"),
-                to_alias=recipient_participant.get("alias"),
-                from_did=sender_did,
-                to_did=recipient_participant["did"],
-                sender_address=sender_address,
-                subject=payload.subject,
-                body=payload.body,
-                priority=payload.priority,
-                signature=payload.signature,
-                signed_payload=payload.signed_payload,
-                content_mode=payload.content_mode or "legacy_plaintext_v1",
-                message_version=payload.message_version or 1,
-                encrypted_envelope=payload.encrypted_envelope,
-                encrypted_metadata=encrypted_metadata,
-                message_id=msg_uuid,
-                conversation_id=conversation_id,
-                sender_verified_team_id=auth.verified_team_id,
-                sender_verified_dids=auth_dids(auth),
-                stored_route_continuation=True,
-                signed_recipient_did=historical_target["signed_did"]
-                if historical_target is not None else None,
-                known_new=message_is_new,
-                skip_policy_check=True,
-            )
+            with agent_wake_scope(agent_wake_publisher(request.app.state)):
+                message_id, server_received_at = await deliver_message(
+                    db,
+                    id_chain=getattr(getattr(request, "state", None), "id_chain", None),
+                    registry_client=registry_client,
+                    recipient_agent=recipient,
+                    team_id=continuation.conversation.get("team_id") or auth.team_id,
+                    from_agent_id=auth.agent_id,
+                    from_alias=auth.alias,
+                    to_agent_id=recipient.get("agent_id"),
+                    to_alias=recipient_participant.get("alias"),
+                    from_did=sender_did,
+                    to_did=recipient_participant["did"],
+                    sender_address=sender_address,
+                    subject=payload.subject,
+                    body=payload.body,
+                    priority=payload.priority,
+                    signature=payload.signature,
+                    signed_payload=payload.signed_payload,
+                    content_mode=payload.content_mode or "legacy_plaintext_v1",
+                    message_version=payload.message_version or 1,
+                    encrypted_envelope=payload.encrypted_envelope,
+                    encrypted_metadata=encrypted_metadata,
+                    message_id=msg_uuid,
+                    conversation_id=conversation_id,
+                    sender_verified_team_id=auth.verified_team_id,
+                    sender_verified_dids=auth_dids(auth),
+                    stored_route_continuation=True,
+                    signed_recipient_did=historical_target["signed_did"]
+                    if historical_target is not None else None,
+                    known_new=message_is_new,
+                    skip_policy_check=True,
+                )
         except Exception as exc:
             if not _lost_send_race(exc):
                 raise
@@ -1905,64 +1908,65 @@ async def send_message(
         if stored is not None:
             return stored
         try:
-            # The conversation and its first message commit together: a refused
-            # delivery leaves no conversation behind.
-            async with db.get_manager("aweb").transaction() as tx:
-                send_db = TransactionInfra(db, tx)
-                # If an explicit recipient is present, conversation_id is a caller-chosen
-                # initial id. Continuations use conversation_id without recipient fields.
-                conversation = await _create_mail_conversation(
-                    send_db,
-                    conversation_type="mail",
-                    created_by_did=sender_did,
-                    conversation_id=payload.conversation_id,
-                    initiator={
-                        "did": sender_did,
-                        "agent_id": auth.agent_id,
-                        "alias": auth.alias or sender_address or sender_did,
-                        "address": sender_address,
-                        "current_did_key": (auth.did_key or "").strip() or None,
-                        "transport_hint": "local",
-                    },
-                    recipients=[
-                        {
-                            "did": recipient_did or "",
-                            "agent_id": to_agent_id,
-                            "alias": to_alias or (recipient or {}).get("alias") or recipient_did or "",
-                            "address": _recipient_conversation_address(recipient, payload),
-                            "current_did_key": (recipient or {}).get("did_key"),
+            with agent_wake_scope(agent_wake_publisher(request.app.state)):
+                # The conversation and its first message commit together: a refused
+                # delivery leaves no conversation behind.
+                async with db.get_manager("aweb").transaction() as tx:
+                    send_db = TransactionInfra(db, tx)
+                    # If an explicit recipient is present, conversation_id is a caller-chosen
+                    # initial id. Continuations use conversation_id without recipient fields.
+                    conversation = await _create_mail_conversation(
+                        send_db,
+                        conversation_type="mail",
+                        created_by_did=sender_did,
+                        conversation_id=payload.conversation_id,
+                        initiator={
+                            "did": sender_did,
+                            "agent_id": auth.agent_id,
+                            "alias": auth.alias or sender_address or sender_did,
+                            "address": sender_address,
+                            "current_did_key": (auth.did_key or "").strip() or None,
                             "transport_hint": "local",
-                        }
-                    ],
-                    team_id=auth.team_id,
-                )
-                message_id, server_received_at = await deliver_message(
-                    send_db,
-                    id_chain=getattr(getattr(request, "state", None), "id_chain", None),
-                    registry_client=registry_client,
-                    recipient_agent=recipient,
-                    team_id=auth.team_id,
-                    from_agent_id=auth.agent_id,
-                    from_alias=auth.alias,
-                    to_agent_id=to_agent_id,
-                    to_alias=to_alias,
-                    from_did=sender_did,
-                    to_did=recipient_did or "",
-                    sender_address=sender_address,
-                    subject=payload.subject,
-                    body=payload.body,
-                    priority=payload.priority,
-                    signature=payload.signature,
-                    signed_payload=payload.signed_payload,
-                    content_mode=payload.content_mode or "legacy_plaintext_v1",
-                    message_version=payload.message_version or 1,
-                    encrypted_envelope=payload.encrypted_envelope,
-                    encrypted_metadata=encrypted_metadata,
-                    message_id=msg_uuid,
-                    conversation_id=conversation["conversation_id"],
-                    skip_policy_check=True,
-                    known_new=message_is_new,
-                )
+                        },
+                        recipients=[
+                            {
+                                "did": recipient_did or "",
+                                "agent_id": to_agent_id,
+                                "alias": to_alias or (recipient or {}).get("alias") or recipient_did or "",
+                                "address": _recipient_conversation_address(recipient, payload),
+                                "current_did_key": (recipient or {}).get("did_key"),
+                                "transport_hint": "local",
+                            }
+                        ],
+                        team_id=auth.team_id,
+                    )
+                    message_id, server_received_at = await deliver_message(
+                        send_db,
+                        id_chain=getattr(getattr(request, "state", None), "id_chain", None),
+                        registry_client=registry_client,
+                        recipient_agent=recipient,
+                        team_id=auth.team_id,
+                        from_agent_id=auth.agent_id,
+                        from_alias=auth.alias,
+                        to_agent_id=to_agent_id,
+                        to_alias=to_alias,
+                        from_did=sender_did,
+                        to_did=recipient_did or "",
+                        sender_address=sender_address,
+                        subject=payload.subject,
+                        body=payload.body,
+                        priority=payload.priority,
+                        signature=payload.signature,
+                        signed_payload=payload.signed_payload,
+                        content_mode=payload.content_mode or "legacy_plaintext_v1",
+                        message_version=payload.message_version or 1,
+                        encrypted_envelope=payload.encrypted_envelope,
+                        encrypted_metadata=encrypted_metadata,
+                        message_id=msg_uuid,
+                        conversation_id=conversation["conversation_id"],
+                        skip_policy_check=True,
+                        known_new=message_is_new,
+                    )
         except Exception as exc:
             # An identical send that ran concurrently committed first; its
             # rollback here leaves nothing of this attempt behind.
@@ -2203,18 +2207,21 @@ async def ack_message(
     if not inbox_dids:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 
-    result = await aweb_db.fetch_one(
-        f"""
-        UPDATE {{{{tables.messages}}}} m
-        SET read_at = $1
-        WHERE m.message_id = $2 AND {incoming_mail_sql('$3')}
-          AND read_at IS NULL
-        RETURNING message_id, from_alias, subject, content_mode
-        """,
-        now,
-        msg_uuid,
-        inbox_dids,
-    )
+    with agent_wake_scope(agent_wake_publisher(request.app.state)):
+        result = await aweb_db.fetch_one(
+            f"""
+            UPDATE {{{{tables.messages}}}} m
+            SET read_at = $1
+            WHERE m.message_id = $2 AND {incoming_mail_sql('$3')}
+              AND read_at IS NULL
+            RETURNING message_id, from_alias, subject, content_mode
+            """,
+            now,
+            msg_uuid,
+            inbox_dids,
+        )
+        if result:
+            record_did_wakes(inbox_dids, "mail")
 
     if not result:
         # Either already read or not found — check existence

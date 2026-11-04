@@ -19,7 +19,8 @@ from awid.federation_errors import FederationAuthorityError
 from aweb.awid_error_handling import awid_registry_not_configured_detail
 from aweb.federation.origins import public_origins
 from aweb.federation.errors import RecipientNotResidentError
-from aweb.mcp.auth import auth_dids, get_auth, primary_auth_did
+from aweb.agent_wake import agent_wake_scope, record_did_wakes
+from aweb.mcp.auth import auth_dids, current_agent_wake_publisher, get_auth, primary_auth_did
 from aweb.mcp.mutations import fire_mcp_mutation_hook
 from aweb.mcp.signing import (
     HostedMessageDecryptor,
@@ -428,32 +429,33 @@ async def send_mail(
                         "to": recipient_participant.get("alias") or recipient_did,
                     }
                 )
-            message_id, server_received_at = await deliver_message(
-                db_infra,
-                registry_client=registry_client,
-                recipient_agent=recipient,
-                from_did=sender_did,
-                to_did=recipient_did,
-                team_id=continuation.conversation.get("team_id") or auth.team_id,
-                from_agent_id=auth.agent_id,
-                from_alias=auth.alias,
-                sender_address=sender_address,
-                to_agent_id=recipient.get("agent_id"),
-                to_alias=recipient_participant.get("alias"),
-                subject="" if encrypted is not None else subject,
-                body="" if encrypted is not None else body,
-                priority=cast(MessagePriority, priority),
-                signature=None if encrypted is not None else signature,
-                signed_payload=None if encrypted is not None else signed_payload,
-                content_mode=encrypted.content_mode if encrypted is not None else "legacy_plaintext_v1",
-                message_version=encrypted.message_version if encrypted is not None else 1,
-                encrypted_envelope=encrypted.encrypted_envelope if encrypted is not None else None,
-                encrypted_metadata=encrypted_metadata,
-                message_id=message_id,
-                conversation_id=conversation_ref,
-                sender_verified_dids=auth_dids(auth),
-                stored_route_continuation=True,
-            )
+            with agent_wake_scope(current_agent_wake_publisher()):
+                message_id, server_received_at = await deliver_message(
+                    db_infra,
+                    registry_client=registry_client,
+                    recipient_agent=recipient,
+                    from_did=sender_did,
+                    to_did=recipient_did,
+                    team_id=continuation.conversation.get("team_id") or auth.team_id,
+                    from_agent_id=auth.agent_id,
+                    from_alias=auth.alias,
+                    sender_address=sender_address,
+                    to_agent_id=recipient.get("agent_id"),
+                    to_alias=recipient_participant.get("alias"),
+                    subject="" if encrypted is not None else subject,
+                    body="" if encrypted is not None else body,
+                    priority=cast(MessagePriority, priority),
+                    signature=None if encrypted is not None else signature,
+                    signed_payload=None if encrypted is not None else signed_payload,
+                    content_mode=encrypted.content_mode if encrypted is not None else "legacy_plaintext_v1",
+                    message_version=encrypted.message_version if encrypted is not None else 1,
+                    encrypted_envelope=encrypted.encrypted_envelope if encrypted is not None else None,
+                    encrypted_metadata=encrypted_metadata,
+                    message_id=message_id,
+                    conversation_id=conversation_ref,
+                    sender_verified_dids=auth_dids(auth),
+                    stored_route_continuation=True,
+                )
             await touch_conversation_activity(db_infra, conversation_id=conversation_ref)
         except RecipientNotResidentError as exc:
             return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
@@ -713,31 +715,32 @@ async def send_mail(
             ],
             team_id=auth.team_id,
         )
-        message_id, server_received_at = await deliver_message(
-            db_infra,
-            registry_client=registry_client,
-            recipient_agent=recipient,
-            from_did=sender_did,
-            to_did=recipient_did,
-            team_id=auth.team_id,
-            from_agent_id=auth.agent_id,
-            from_alias=auth.alias,
-            sender_address=sender_address,
-            to_agent_id=str(recipient["agent_id"]) if recipient.get("agent_id") else None,
-            to_alias=recipient_alias,
-            subject="" if encrypted is not None else subject,
-            body="" if encrypted is not None else body,
-            priority=cast(MessagePriority, priority),
-            signature=None if encrypted is not None else signature,
-            signed_payload=None if encrypted is not None else signed_payload,
-            content_mode=encrypted.content_mode if encrypted is not None else "legacy_plaintext_v1",
-            message_version=encrypted.message_version if encrypted is not None else 1,
-            encrypted_envelope=encrypted.encrypted_envelope if encrypted is not None else None,
-            encrypted_metadata=encrypted_metadata,
-            message_id=message_id,
-            conversation_id=conversation["conversation_id"],
-            skip_policy_check=True,
-        )
+        with agent_wake_scope(current_agent_wake_publisher()):
+            message_id, server_received_at = await deliver_message(
+                db_infra,
+                registry_client=registry_client,
+                recipient_agent=recipient,
+                from_did=sender_did,
+                to_did=recipient_did,
+                team_id=auth.team_id,
+                from_agent_id=auth.agent_id,
+                from_alias=auth.alias,
+                sender_address=sender_address,
+                to_agent_id=str(recipient["agent_id"]) if recipient.get("agent_id") else None,
+                to_alias=recipient_alias,
+                subject="" if encrypted is not None else subject,
+                body="" if encrypted is not None else body,
+                priority=cast(MessagePriority, priority),
+                signature=None if encrypted is not None else signature,
+                signed_payload=None if encrypted is not None else signed_payload,
+                content_mode=encrypted.content_mode if encrypted is not None else "legacy_plaintext_v1",
+                message_version=encrypted.message_version if encrypted is not None else 1,
+                encrypted_envelope=encrypted.encrypted_envelope if encrypted is not None else None,
+                encrypted_metadata=encrypted_metadata,
+                message_id=message_id,
+                conversation_id=conversation["conversation_id"],
+                skip_policy_check=True,
+            )
     except RecipientNotResidentError as exc:
         return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
     except Exception as exc:
@@ -806,18 +809,21 @@ async def check_inbox(
     # Auto-acknowledge unread messages
     unread_message_ids = [r["message_id"] for r in rows if r["read_at"] is None]
     if unread_message_ids:
-        acknowledged = await aweb_db.fetch_all(
-            f"""
-            UPDATE {{{{tables.messages}}}} m
-            SET read_at = NOW()
-            WHERE {incoming_mail_sql('$1')}
-              AND message_id = ANY($2::uuid[])
-              AND read_at IS NULL
-            RETURNING message_id, from_alias, subject, content_mode
-            """,
-            inbox_dids,
-            unread_message_ids,
-        )
+        with agent_wake_scope(current_agent_wake_publisher()):
+            acknowledged = await aweb_db.fetch_all(
+                f"""
+                UPDATE {{{{tables.messages}}}} m
+                SET read_at = NOW()
+                WHERE {incoming_mail_sql('$1')}
+                  AND message_id = ANY($2::uuid[])
+                  AND read_at IS NULL
+                RETURNING message_id, from_alias, subject, content_mode
+                """,
+                inbox_dids,
+                unread_message_ids,
+            )
+            if acknowledged:
+                record_did_wakes(inbox_dids, "mail")
         for row in acknowledged:
             await fire_mcp_mutation_hook(
                 "message.acknowledged",
