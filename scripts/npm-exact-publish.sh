@@ -51,6 +51,9 @@
 
 set -euo pipefail
 
+# Publication must not trigger npm's unrelated background self-update lookup.
+export NPM_CONFIG_UPDATE_NOTIFIER=false npm_config_update_notifier=false
+
 fail() { printf 'REFUSE: %s\n' "$1" >&2; exit 1; }
 
 sha256() {

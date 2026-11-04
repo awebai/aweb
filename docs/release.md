@@ -248,6 +248,10 @@ is maintained at `cli/go/.github/workflows/release.yml` and copied into
 60 minutes for build, publication and readback. A successful publish command
 alone is not a successful release.
 
+Publisher subprocesses disable npm's update notifier, including build, pack,
+publish and promotion commands. Release registry traffic must not depend on
+whether npm's unrelated self-update check is due in the operator's cache.
+
 
 The Claude marketplace does not duplicate channel or skills versions. Its npm
 sources omit `version`, so Claude resolves npm's public `latest`; the packaged

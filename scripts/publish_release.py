@@ -60,13 +60,17 @@ def run(
     input_text: str | None = None,
     timeout: int = 7200,
 ) -> str:
+    # npm's background self-update lookup is not part of publication. Cover
+    # direct build commands and nested scripts, regardless of caller config.
+    environment = dict(os.environ if env is None else env)
+    environment.update(NPM_CONFIG_UPDATE_NOTIFIER="false", npm_config_update_notifier="false")
     completed = subprocess.run(
         argv,
         cwd=root,
         text=True,
         input=input_text,
         capture_output=capture,
-        env=env,
+        env=environment,
         timeout=timeout,
         check=False,
     )

@@ -749,9 +749,13 @@ class NpmRcContractTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             npm = root / "npm"
-            npm.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$CAPTURE_NPM"\n')
+            npm.write_text('#!/bin/sh\nset -eu\n'
+                           'test "$NPM_CONFIG_UPDATE_NOTIFIER" = false\n'
+                           'test "$npm_config_update_notifier" = false\n'
+                           'printf "%s\\n" "$@" > "$CAPTURE_NPM"\n')
             npm.chmod(0o755)
-            environment = {**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"], "CAPTURE_NPM": str(root / "args")}
+            environment = {**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"], "CAPTURE_NPM": str(root / "args"),
+                           "NPM_CONFIG_UPDATE_NOTIFIER": "true", "npm_config_update_notifier": "true"}
             for version, expected, staged in (("1.2.3-rc.1", "next", False), ("1.2.3", "latest", False), ("1.2.3", "next", True)):
                 archive = root / "staged.tgz"
                 raw = json.dumps({"name": "@awebai/aw", "version": version}).encode()

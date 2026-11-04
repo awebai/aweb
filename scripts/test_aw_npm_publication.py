@@ -68,6 +68,23 @@ class PublicationTest(unittest.TestCase):
     def test_runnerless_lag_exhausts_one_budget_without_republishing(self):
         self.exercise_runnerless(lag=True)
 
+    def test_runnerless_build_commands_disable_notifier(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import publish_release as publisher
+        from test_npm_readback import Registry
+        with tempfile.TemporaryDirectory() as directory, Registry().serve() as registry:
+            root = Path(directory)
+            config = root / "npmrc"
+            config.write_text(f"registry={registry.url}\nupdate-notifier=true\n")
+            env = dict(os.environ, NPM_CONFIG_REGISTRY=registry.url,
+                       NPM_CONFIG_USERCONFIG=str(config), NPM_CONFIG_CACHE=str(root / "cache"),
+                       NPM_CONFIG_UPDATE_NOTIFIER="true", npm_config_update_notifier="true", CI="false")
+            with mock.patch.dict(os.environ, env):
+                for custom in (None, env):
+                    with self.subTest(custom_env=custom is not None):
+                        self.assertEqual(publisher.run(root, "npm", "config", "get", "update-notifier", env=custom), "false")
+            self.assertEqual(registry.reads, set())
+
     def exercise_runnerless(self, lag=False):
         # Real pack/inspect/publish/read-back logic with a fixture compiler
         # and an owned HTTP registry. No binary/runtime claim is made.
@@ -92,6 +109,10 @@ pathlib.Path(sys.argv[sys.argv.index("-o")+1]).write_bytes(b"fixture compiler ou
             config.write_text(f"registry={registry.url}\n//{registry.url.split('//')[1]}/:_authToken=disposable-fixture\n")
             env = {"PATH": str(binaries) + os.pathsep + os.environ["PATH"],
                    "NPM_CONFIG_REGISTRY": registry.url, "NPM_CONFIG_USERCONFIG": str(config),
+                   # Force the notifier path even on CI or a warm developer host.
+                   # Its last-check marker lives in the cache's parent directory.
+                   "NPM_CONFIG_CACHE": str(root / "cache"), "npm_config_cache": str(root / "cache"),
+                   "NPM_CONFIG_UPDATE_NOTIFIER": "true", "npm_config_update_notifier": "true", "CI": "false",
                    "NODE_AUTH_TOKEN": "disposable-fixture"}
             readbacks = []
             first_read = None
@@ -152,6 +173,8 @@ pathlib.Path(sys.argv[sys.argv.index("-o")+1]).write_bytes(b"fixture compiler ou
         (root / "metadata.json").write_text(json.dumps(metadata))
         (root / "npm").write_text('''#!/usr/bin/env python3
 import json, os, pathlib, sys
+assert os.environ.get("NPM_CONFIG_UPDATE_NOTIFIER") == "false"
+assert os.environ.get("npm_config_update_notifier") == "false"
 root = pathlib.Path(os.environ["PUBLICATION_FIXTURE"])
 args = sys.argv[1:]
 with (root / "calls").open("a") as f: f.write(json.dumps(args) + "\\n")
@@ -167,6 +190,7 @@ else: raise SystemExit("unexpected npm operation: " + repr(args))
 ''')
         (root / "npm").chmod(0o755)
         return {**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                "NPM_CONFIG_UPDATE_NOTIFIER": "true", "npm_config_update_notifier": "true",
                 "PUBLICATION_FIXTURE": str(root)}
 
     def exercise_promotion(self, corrupt=None):

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Keep every pack/publish subprocess free of npm's self-update registry reads.
+export NPM_CONFIG_UPDATE_NOTIFIER=false npm_config_update_notifier=false
+
 # Get version from git tag (v0.10.0 -> 0.10.0)
 VERSION="${GITHUB_REF_NAME#v}"
 if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.[1-9][0-9]*)?$ ]]; then

@@ -226,6 +226,8 @@ class ReadbackTests(unittest.TestCase):
                 config.write_text(f'registry={registry.url}\n//127.0.0.1:{urllib.parse.urlparse(registry.url).port}/:_authToken=disposable-fixture\n')
                 env = {k: v for k, v in os.environ.items() if not k.startswith(('NPM_', 'npm_', 'NODE_AUTH'))}
                 env.update(GITHUB_REF_NAME='v1.2.3', GITHUB_ACTIONS='false', NPM_CONFIG_USERCONFIG=str(config),
+                           NPM_CONFIG_CACHE=str(root / 'cache'), NPM_CONFIG_UPDATE_NOTIFIER='true',
+                           npm_config_update_notifier='true', CI='false',
                            NPM_CONFIG_REGISTRY=registry.url, PATH=str(bindir) + os.pathsep + env['PATH'])
                 if mismatch: registry.corrupt = '@awebai/aw-windows-arm64'
                 result = subprocess.run(['bash', str(root / 'npm/publish.sh'), '--staged-final'],
