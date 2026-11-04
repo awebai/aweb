@@ -379,29 +379,9 @@ socket_gid="$(docker run --rm \
   "$IMAGE" stat -c '%g' /var/run/docker.sock)"
 naapp_packages_text="$(make -s --no-print-directory -C "$ROOT" naapp-e2e-packages)"
 read -r -a naapp_packages <<<"$(printf '%s\n' "$naapp_packages_text" | tr '\n' ' ')"
-port_allocations="$(
-  python3 - "$gate_run_id" "${naapp_packages[@]}" <<'PYPORTS'
-import socket
-import sys
-from pathlib import PurePosixPath
-sockets = []
-def allocate_port():
-    sock = socket.socket()
-    sock.bind(("127.0.0.1", 0))
-    sockets.append(sock)
-    return sock.getsockname()[1]
-try:
-    print(*(allocate_port() for _ in range(8)))
-    for package in sys.argv[2:]:
-        project = f"{sys.argv[1]}-naapp-{PurePosixPath(package).name}"
-        print(package, project, allocate_port(), allocate_port())
-finally:
-    for sock in sockets:
-        sock.close()
-PYPORTS
-)"
-read -r a2a_aweb_port a2a_awid_port a2a_redis_port a2a_pg_port a2a_gateway_port fed_awid_port fed_alpha_port fed_beta_port <<<"$(printf '%s\n' "$port_allocations" | head -n 1)"
-naapp_e2e_allocations="$(printf '%s\n' "$port_allocations" | tail -n +2)"
+python3 "$checkout/scripts/candidate-ports.py" "$gate_run_id" \
+  "$work/ports.env" "$work/naapp-ports.tsv" "${naapp_packages[@]}"
+naapp_e2e_allocations="$(cat "$work/naapp-ports.tsv")"
 
 # Copy the exact checkout and inputs through the Docker API. The host checkout
 # is never mounted into a container; extracted dependency trees stay in Docker.
@@ -461,14 +441,7 @@ docker run --rm --init \
   -e NPM_CONFIG_CACHE=/tmp/npm-cache \
   -e AWEB_DOCKER_BIND_ROOT="$docker_bind_root" \
   -e AWEB_DOCKER_PUBLISHED_HOST=aweb-docker.test \
-  -e AWEB_A2A_E2E_PORT="$a2a_aweb_port" \
-  -e AWID_A2A_E2E_PORT="$a2a_awid_port" \
-  -e AWEB_A2A_E2E_REDIS="$a2a_redis_port" \
-  -e AWEB_A2A_E2E_PG="$a2a_pg_port" \
-  -e A2A_GW_E2E_PORT="$a2a_gateway_port" \
-  -e AWID_FED_E2E_PORT="$fed_awid_port" \
-  -e AWEB_ALPHA_E2E_PORT="$fed_alpha_port" \
-  -e AWEB_BETA_E2E_PORT="$fed_beta_port" \
+  --env-file "$work/ports.env" \
   -e AWEB_SKEW_PROJECT_TOKEN="${suite_projects[0]}" \
   -e AWEB_E2E_PROJECT="${suite_projects[1]}" \
   -e AWEB_FED_AUTH_PROJECT="${suite_projects[2]}" \

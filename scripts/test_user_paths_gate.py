@@ -144,7 +144,7 @@ class FrozenGateInput(unittest.TestCase):
                 repo, commands = root / 'repo', root / 'bin'
                 (repo / 'scripts').mkdir(parents=True)
                 commands.mkdir()
-                for name in ['candidate-docker-gate.sh', 'candidate-suite.sh', 'candidate-cleanup.sh', 'fetch_released_aw.py']:
+                for name in ['candidate-docker-gate.sh', 'candidate-suite.sh', 'candidate-cleanup.sh', 'candidate-ports.py', 'fetch_released_aw.py']:
                     shutil.copy2(ROOT / 'scripts' / name, repo / 'scripts' / name)
                 shutil.copy2(ROOT / 'scripts/e2e/user_paths_result.py', repo / 'scripts/user_paths_result.py')
                 (repo / 'scripts/coverage_fixture.py').write_text('from user_paths_result import qualification\nr=qualification({},0,[])\nfor h in r["required_humans"]: print(h["case"]+": "+h["status"])\nprint(r["coverage_summary"])\n')
