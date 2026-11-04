@@ -87,17 +87,17 @@ A2A_GATEWAY_VERSION="${A2A_GATEWAY_VERSION:-$(python3 "$ROOT/scripts/next_tag_ve
 # stage history. Version defaults depend on tags, so their effective values
 # are external inputs even when the caller did not supply an override.
 TREE="$(git -C "$ROOT" rev-parse 'HEAD^{tree}')"
+LEDGER="${AWEB_GATE_LEDGER:-$HOME/.cache/aweb-oss/candidate-gate-ledger.tsv}"
 external_inputs="CLI_VERSION=$CLI_VERSION"$'\n'"A2A_GATEWAY_VERSION=$A2A_GATEWAY_VERSION"$'\n'
 # The same tree must be requalified when the released client changes. Resolve
-# latest exactly once here; the isolated matrix consumes this frozen metadata.
-if [[ " $REQUESTED " == *" user-paths "* ]]; then
-  mkdir -p "$LOG_DIR"
-  resolve_started=$SECONDS
-  USER_PATHS_LATEST_METADATA="$(python3 "$ROOT/scripts/fetch_released_aw.py" --freeze-latest "$LOG_DIR")"
-  USER_PATHS_RESOLVE_SECONDS=$((SECONDS - resolve_started))
-  released_identity="$(python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$USER_PATHS_LATEST_METADATA")"
-  external_inputs+="RELEASED_AW=$released_identity"$'\n'
-fi
+# latest exactly once here, for every stage selection. Focused and full callers
+# must share a key so the full gate can reuse their completed stages.
+resolve_started=$SECONDS
+USER_PATHS_LATEST_METADATA="$(python3 "$ROOT/scripts/fetch_released_aw.py" --freeze-latest "$(dirname "$LEDGER")/released-aw-inputs")"
+USER_PATHS_RESOLVE_SECONDS=$((SECONDS - resolve_started))
+released_identity="$(python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$USER_PATHS_LATEST_METADATA")"
+USER_PATHS_LATEST_SHA256="$released_identity"
+external_inputs+="RELEASED_AW=$released_identity"$'\n'
 input_identity() {
   local name="$1" path="$2" default="$3" repo sha relative
   repo="$(git -C "$path" rev-parse --show-toplevel)"
@@ -137,7 +137,6 @@ gate_setting AWEB_CANDIDATE_SIBLING_CPUS 2
 gate_setting AWEB_CANDIDATE_SIBLING_MEMORY 4g
 gate_setting AWEB_CANDIDATE_SIBLING_PIDS 1024
 KEY="$TREE-$(printf '%s' "$external_inputs" | python3 -c 'import hashlib,sys;print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')"
-LEDGER="${AWEB_GATE_LEDGER:-$HOME/.cache/aweb-oss/candidate-gate-ledger.tsv}"
 LEDGER_LOGS="${AWEB_GATE_LOG_DIR:-$(dirname "$LEDGER")/gate-logs}"
 OWNER="${GATE_OWNER:-${OATS_INSTANCE:-$(id -un)}}"
 mkdir -p "$(dirname "$LEDGER")/gate-locks" "$LEDGER_LOGS"
@@ -223,6 +222,14 @@ source "$ROOT/scripts/candidate-cleanup.sh"
 trap 'cleanup "$?"' EXIT
 trap 'cleanup 130' INT
 trap 'cleanup 143' TERM
+# The content-addressed input lives outside the resettable run logs. Retain a
+# checked copy in the mounted logs so the runner consumes the ledger's bytes.
+if [[ -n "${USER_PATHS_LATEST_METADATA:-}" ]]; then
+  cp "$USER_PATHS_LATEST_METADATA" "$LOG_DIR/released-aw.json"
+  USER_PATHS_LATEST_METADATA="$LOG_DIR/released-aw.json"
+  [[ "$(python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$USER_PATHS_LATEST_METADATA")" == "$USER_PATHS_LATEST_SHA256" ]] \
+    || refuse "released aw metadata changed after the ledger lookup"
+fi
 checkout="$work/aweb"
 git clone --local --no-hardlinks "$ROOT" "$checkout" >/dev/null
 git -C "$checkout" checkout --detach "$SOURCE_SHA" >/dev/null
@@ -419,6 +426,7 @@ docker run --rm --init \
   -e LIBRARY_E2E_BLUEPRINT_SRC="$LIBRARY_E2E_BLUEPRINT_SRC" \
   -e CANDIDATE_LOG_DIR="$LOG_DIR" \
   -e USER_PATHS_LATEST_METADATA="${USER_PATHS_LATEST_METADATA:-}" \
+  -e USER_PATHS_LATEST_SHA256="${USER_PATHS_LATEST_SHA256:-}" \
   -e USER_PATHS_RESOLVE_SECONDS="${USER_PATHS_RESOLVE_SECONDS:-0}" \
   -e CANDIDATE_RESOURCE_MANIFEST="$LOG_DIR/owned-resources.tsv" \
   -e BUILDX_CONFIG="$buildx_config" \

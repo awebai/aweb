@@ -39,7 +39,11 @@ assertions run, and then completes so core performs its ordinary acknowledgement
 This keeps a list/read acknowledgement distinct from actual channel presentation.
 Both sides' local literal DIDs and global sender addresses are checked; local
 team labels do not become global address claims. Public read responses are
-retained with each message's evidence.
+retained with each message's evidence. Every send, reply and continuation result
+is bound to the presented message ID and the original conversation/session ID.
+Inbox and history message IDs, pending-session IDs and history content modes
+are checked independently; signed payload/envelope IDs are also checked when
+exposed. Chat pending is a session summary and has no message ID or content mode.
 
 Refusal controls check the actual user-facing diagnostic and no delivery:
 
@@ -77,10 +81,14 @@ the real user paths cover their property.
 
 ## Artifacts, evidence and budget
 
-The candidate entry resolves npm `latest` once before its ledger key. That
-metadata's hash changes the key when the released artifact changes; the stage
-consumes the frozen metadata without resolving the tag again. The explicit
-artifact-fetch container selects its **own executing platform**, verifies both
+Every candidate entry, including a focused stage selection, resolves npm
+`latest` once before its ledger key. This preserves reuse between focused and
+full invocations on the same tree, versions and released artifact. The metadata
+is content-addressed beside the ledger, outside the run log directory that
+setup resets. The gate copies it into mounted evidence, checks its digest, and
+the stage verifies that digest again before consuming the exact bytes. Changing
+the released artifact changes the key; the stage never resolves the tag again.
+The explicit artifact-fetch container selects its **own executing platform**, verifies both
 wrapper and platform SHA512 tarballs, packed names/versions, exact platform pin,
 source gitHeads and executable version/source stamp. It reads checked regular
 archive members without extraction, install scripts or source fallback.

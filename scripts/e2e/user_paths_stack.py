@@ -164,6 +164,16 @@ def main():
             metadata_args = []
             if os.environ.get('USER_PATHS_LATEST_METADATA'):
                 shutil.copy2(os.environ['USER_PATHS_LATEST_METADATA'], WORK / 'latest.json')
+                import hashlib
+                snapshot = (WORK / 'latest.json').read_bytes()
+                digest = hashlib.sha256(snapshot).hexdigest()
+                expected = os.environ.get('USER_PATHS_LATEST_SHA256')
+                if os.environ.get('CANDIDATE_SOURCE_SHA') and not expected:
+                    raise RuntimeError('candidate released aw input has no ledger digest')
+                if expected and digest != expected:
+                    raise RuntimeError('released aw input differs from the ledger digest')
+                (EVIDENCE / 'released-metadata.json').write_bytes(snapshot)
+                (EVIDENCE / 'released-metadata.sha256').write_text(digest + '\n')
                 metadata_args = ['--metadata-input', '/work/latest.json']
             run('docker', 'run', '--rm', '--pull=never', '--name', PROJECT + '-fetch', '--network', 'bridge',
                 '--user', CLIENT_USER, '--cpus', '1', '--memory', '512m', '--pids-limit', '64',

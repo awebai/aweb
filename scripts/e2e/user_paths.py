@@ -23,6 +23,16 @@ def rows(value):
     return value.get('messages', value.get('history', value.get('pending', [])))
 
 
+def sent_identity(sent, kind, conversation=None):
+    """Use the send result as the expected identity, never the delivered DTO."""
+    message_id = sent['message_id']
+    thread = sent['conversation_id' if kind == 'mail' else 'session_id']
+    assert isinstance(message_id, str) and message_id, sent
+    assert isinstance(thread, str) and thread, sent
+    assert conversation is None or thread == conversation, ('send result thread', conversation, sent)
+    return message_id, thread
+
+
 class Lane:
     def __init__(self, name, binary):
         self.name, self.binary = name, binary
@@ -234,15 +244,19 @@ class Lane:
             event = self.delivered('g2', body)
             conversation = event['meta'].get('session_id', event['meta'].get('conversation_id'))
             assert conversation, event
-            self.assert_message('g2', 'g1', 'chat', body, conversation)
+            self.assert_message('g2', 'g1', 'chat', body, conversation, event['meta']['message_id'], False)
             reply = body + '/reply'
-            self.command('g2', 'chat', 'send', '--session-id', conversation, '--plaintext', '--body', reply)
+            sent_reply = self.command('g2', 'chat', 'send', '--session-id', conversation, '--plaintext', '--body', reply)
+            reply_id, _ = sent_identity(sent_reply, 'chat', conversation)
             stdout, stderr = waiting.communicate(timeout=20)
             assert waiting.returncode == 0, (stdout, stderr)
             result = json.loads(stdout)
+            sent_id, _ = sent_identity(result, 'chat', conversation)
+            assert sent_id == event['meta']['message_id'], result
             assert result['status'] == 'replied' and result['reply'] == reply, result
             events = [row for row in result['events'] if row.get('body') == reply]
             assert len(events) == 1 and events[0]['verification_status'] == 'verified', result
+            assert events[0]['message_id'] == reply_id, result
         finally:
             if waiting.poll() is None:
                 waiting.terminate()
@@ -254,9 +268,10 @@ class Lane:
             body = self.name + '/fresh-order/' + mode + '/' + uuid.uuid4().hex
             sent = self.command('g1', 'chat', 'send-and-wait', self.actors['g2']['address'], body,
                                 mode, '--start-conversation', '--wait', '0')
+            message_id, conversation = sent_identity(sent, 'chat')
             assert sent['session_id'] not in sessions, sent
             sessions.append(sent['session_id'])
-            self.assert_message('g2', 'g1', 'chat', body, sent['session_id'])
+            self.assert_message('g2', 'g1', 'chat', body, conversation, message_id, mode == '--e2ee')
 
     def wait_event(self, name, predicate):
         path = self.actors[name]['events']
@@ -278,20 +293,43 @@ class Lane:
         assert event['meta']['trust_status'] == 'verified', event
         return event
 
-    def assert_message(self, receiver, sender, kind, body, conversation):
+    def assert_message(self, receiver, sender, kind, body, conversation, message_id, encrypted):
         # Wake proof is complete BEFORE any list/read/ack operation.
         event = self.delivered(receiver, body)
+        assert event['kind'] == kind, event
+        assert event['meta']['message_id'] == message_id, ('channel message', message_id, event)
+        assert event['meta']['conversation_id'] == conversation, ('channel thread', conversation, event)
+        if kind == 'chat':
+            assert event['meta']['session_id'] == conversation, ('channel session', conversation, event)
         if kind == 'mail':
             inbox = self.command(receiver, 'mail', 'inbox', '--show-all')
             history = self.command(receiver, 'mail', 'show', '--conversation-id', conversation)
         else:
             inbox = self.command(receiver, 'chat', 'pending')
             history = self.command(receiver, 'chat', 'history', '--session-id', conversation)
+            assert history['session_id'] == conversation, ('history session', conversation, history)
         expected = self.actors[sender]['address']
         for label, result in [('inbox/pending', inbox), ('history', history)]:
             matches = [r for r in rows(result) if r.get('body', r.get('last_message')) == body]
             assert len(matches) == 1, (label, body, result)
             message = matches[0]
+            if kind == 'chat' and label == 'inbox/pending':
+                # Pending exposes a session summary, not a message ID or mode.
+                assert message['session_id'] == conversation, (label, conversation, message)
+            else:
+                assert message['message_id'] == message_id, (label, message_id, message)
+                assert message['content_mode'] == ('encrypted_v2' if encrypted else 'legacy_plaintext_v1'), (label, encrypted, message)
+                if kind == 'mail' or 'conversation_id' in message:
+                    assert message['conversation_id'] == conversation, (label, conversation, message)
+                if 'encrypted_envelope' in message and message['encrypted_envelope']:
+                    proof = message['encrypted_envelope']
+                elif message.get('signed_payload'):
+                    proof = json.loads(message['signed_payload'])
+                else:
+                    proof = None
+                if proof:
+                    assert proof['message_id'] == message_id, (label, 'signed message', proof)
+                    assert proof['conversation_id'] == conversation, (label, 'signed thread', proof)
             if kind == 'mail' or label == 'history':
                 assert message['verification_status'] == 'verified', (label, message)
             address = message.get('from_address', message.get('last_from_address', ''))
@@ -315,29 +353,28 @@ class Lane:
         if kind == 'mail':
             target_flag = '--to-address' if self.actors[receiver]['address'] else '--to'
             sent = self.command(sender, 'mail', 'send', mode, target_flag, target, '--subject', case, '--body', body)
-            conversation = sent['conversation_id']
-            self.assert_message(receiver, sender, kind, body, conversation)
-            first_id = sent['message_id']
         else:
             # Explicit zero wait leaves presentation to the channel on all three
             # turns. A concurrently waiting CLI would legitimately read the
             # reply before channel-core's unread reader. The real-wait control
             # below exercises that different, ordinary consumer path separately.
             sent = self.command(sender, 'chat', 'send-and-wait', target, body, mode, '--wait', '0')
-            conversation = sent['session_id']
-            self.assert_message(receiver, sender, kind, body, conversation)
+        first_id, conversation = sent_identity(sent, kind)
+        self.assert_message(receiver, sender, kind, body, conversation, first_id, encrypted)
         reply_body = body + '/reply'
         if kind == 'mail':
             reply = self.command(receiver, 'mail', 'reply', first_id, mode, '--body', reply_body)
         else:
             reply = self.command(receiver, 'chat', 'send', '--session-id', conversation, mode, '--body', reply_body)
-        self.assert_message(sender, receiver, kind, reply_body, conversation)
+        reply_id, _ = sent_identity(reply, kind, conversation)
+        self.assert_message(sender, receiver, kind, reply_body, conversation, reply_id, encrypted)
         continuation = body + '/continuation'
         if kind == 'mail':
-            self.command(sender, 'mail', 'reply', reply['message_id'], mode, '--body', continuation)
+            continued = self.command(sender, 'mail', 'reply', reply_id, mode, '--body', continuation)
         else:
-            self.command(sender, 'chat', 'send', '--session-id', conversation, mode, '--body', continuation)
-        self.assert_message(receiver, sender, kind, continuation, conversation)
+            continued = self.command(sender, 'chat', 'send', '--session-id', conversation, mode, '--body', continuation)
+        continuation_id, _ = sent_identity(continued, kind, conversation)
+        self.assert_message(receiver, sender, kind, continuation, conversation, continuation_id, encrypted)
         self.results.append(case)
         print('PASS', case, flush=True)
 
