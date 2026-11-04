@@ -188,6 +188,15 @@ if len(sys.argv)>2 and sys.argv[1].endswith('/fetch_released_aw.py') and sys.arg
 else: os.execv({sys.executable!r},[{sys.executable!r},*sys.argv[1:]])
 ''')
                 (commands / 'uname').write_text('#!/bin/sh\nprintf "Linux\\n"\n')
+                real_id = shutil.which('id')
+                (commands / 'id').write_text(f'''#!/bin/sh
+printf '%s\\n' "$*" >> "$ID_LOOKUP_RECEIPT"
+if [ "$*" = -un ]; then
+ printf 'id: cannot find name for user ID 501\\n' >&2
+ exit 1
+fi
+exec {real_id} "$@"
+''')
                 (commands / 'df').write_text('#!/bin/sh\nprintf "Filesystem blocks Used Available Capacity Mounted\\nfixture 999999999 0 999999999 0 /\\n"\n')
                 (commands / 'docker').write_text(f'''#!{sys.executable}
 import os,subprocess,sys
@@ -214,9 +223,11 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                 env = {k: v for k,v in os.environ.items() if not k.startswith(
                     ('AWEB_', 'CANDIDATE_', 'GATE_', 'LIBRARY_E2E_', 'USER_PATHS_', 'PYTHON'))}
                 (root / 'home').mkdir()
+                env.pop('OATS_INSTANCE', None)
                 env.update(PATH=f'{commands}:{env["PATH"]}', AWEB_GATE_LEDGER=str(root / 'ledger.tsv'),
                            AWEB_GATE_LOG_DIR=str(root / 'logs'), CLI_VERSION='1.36.54', A2A_GATEWAY_VERSION='1.27.6',
-                           HOME=str(root / 'home'), SNAPSHOT_RECEIPT=str(root / 'snapshot.json'))
+                           HOME=str(root / 'home'), SNAPSHOT_RECEIPT=str(root / 'snapshot.json'),
+                           ID_LOOKUP_RECEIPT=str(root / 'id-lookups'))
                 def invoke(stages):
                     settings = dict(env)
                     if stages is not None:
@@ -227,6 +238,7 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                     return result.stdout
                 try:
                     invoke('checks')
+                    self.assertEqual((root / 'id-lookups').read_text().splitlines()[:2], ['-un', '-u'])
                     self.assertTrue(list((repo / 'scripts/__pycache__').glob('fetch_released_aw.*.pyc')))
                     self.assertEqual(git('status', '--porcelain', '--untracked-files=all'), '')
                     invoke(None)

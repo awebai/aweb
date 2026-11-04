@@ -149,7 +149,9 @@ gate_setting AWEB_CANDIDATE_SIBLING_MEMORY 4g
 gate_setting AWEB_CANDIDATE_SIBLING_PIDS 1024
 KEY="$TREE-$(printf '%s' "$external_inputs" | python3 -c 'import hashlib,sys;print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')"
 LEDGER_LOGS="${AWEB_GATE_LOG_DIR:-$(dirname "$LEDGER")/gate-logs}"
-OWNER="${GATE_OWNER:-${OATS_INSTANCE:-$(id -un)}}"
+# The runner uses the host UID without requiring a container passwd entry.
+# Owner is a ledger label, so its numeric UID is sufficient in that case.
+OWNER="${GATE_OWNER:-${OATS_INSTANCE:-$(id -un 2>/dev/null || id -u)}}"
 mkdir -p "$(dirname "$LEDGER")/gate-locks" "$LEDGER_LOGS"
 touch "$LEDGER"
 # Hold through cleanup and recording, including concurrent direct/RC calls.
