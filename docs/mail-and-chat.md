@@ -531,10 +531,15 @@ kind, or conversation/session fails with
 block later UUID reuse after message deletion; existing local API idempotency
 may still return its row before attempting an insert.
 
-For local plaintext mail, retrying a stored `message_id` with the same sender
-and exact nonempty `signed_payload` returns its original ID and receipt time.
-A different sender or payload (including unsigned ID reuse) returns HTTP 409.
-Delivery admission and signature validation still apply before replay.
+For local mail, an exact retry is a stored `message_id` resent by the same
+sender with the identical nonempty `signed_payload` (plaintext) or the identical
+encrypted envelope. It returns the original message ID, conversation ID and
+receipt time with no second effect: no new conversation, no second
+`message.sent`, no second count against the sender's allowance. A different
+sender or payload under that ID (including unsigned ID reuse) returns HTTP 409.
+Delivery admission and signature validation still apply before replay, so a
+retry whose request fields disagree with its signed payload is refused as any
+send would be.
 
 Cross-registry failures return `reason`, `retryable`, and `correlation_id` in
 addition to matching `detail`. Retry unchanged input only when `retryable` is
