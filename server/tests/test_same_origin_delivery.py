@@ -567,6 +567,10 @@ async def test_chat_route_refresh_to_nonresident_own_origin_has_no_effects(same_
 
 
 def _encrypted_continuation(kind, actor, sender_stable, fields, target_key, target_sk, target_stable):
+    # Model keys already available when MCP chose its signed message time.
+    # A fresh wall-clock read here can cross a second and mint future keys.
+    created_at = datetime.fromisoformat(fields["timestamp"].replace("Z", "+00:00"))
+
     def identity(did, stable, address, sk):
         _, public_key = generate_x25519_keypair()
         return dict(
@@ -574,7 +578,7 @@ def _encrypted_continuation(kind, actor, sender_stable, fields, target_key, targ
             encryption_key=build_encryption_key_assertion(
                 signing_key=sk, identity_did=did, identity_stable_id=stable,
                 encryption_public_key=public_key, custody="hosted_custodial",
-                now=datetime.now(timezone.utc),
+                now=created_at,
             ),
         )
     return encrypt_e2ee_message(
@@ -582,8 +586,32 @@ def _encrypted_continuation(kind, actor, sender_stable, fields, target_key, targ
         recipients=[identity(target_key, target_stable, "recipient.test/recipient", target_sk)],
         body=fields["body"], subject=fields.get("subject", ""),
         message_id=fields["message_id"], conversation_id=fields["conversation_id"],
-        created_at=datetime.fromisoformat(fields["timestamp"].replace("Z", "+00:00")),
+        created_at=created_at,
     )
+
+
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+def test_hosted_continuation_fixture_crosses_clock_second(kind, monkeypatch):
+    """The fixture's keys must exist at the MCP-selected envelope time."""
+    class LaterClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 11, 4, 12, 0, 1, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(f"{__name__}.datetime", LaterClock)
+    sender_sk, _, sender_did = _make_keypair()
+    target_sk, _, target_did = _make_keypair()
+    fields = dict(
+        timestamp="2026-11-04T12:00:00Z", body="second-boundary regression",
+        subject="fixture timeline", message_id=str(uuid4()), conversation_id=str(uuid4()),
+    )
+    envelope = _encrypted_continuation(
+        kind, SimpleNamespace(sk=sender_sk, did=sender_did), None,
+        fields, target_did, target_sk, None,
+    )
+    assert envelope["created_at"] == fields["timestamp"]
+    assert envelope["message_id"] == fields["message_id"]
+    assert envelope["conversation_id"] == fields["conversation_id"]
 
 
 async def _mcp_continue(same_origin, first, kind, *, target_key=None, target_sk=None, encrypted=False):
