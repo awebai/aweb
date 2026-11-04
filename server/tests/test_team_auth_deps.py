@@ -191,6 +191,48 @@ class TestResolveTeamIdentity:
         with pytest.raises(ValueError, match="not connected"):
             await resolve_team_identity(db, cert_info)
 
+    @staticmethod
+    def _host_read_cert_info(did_key, *, row_did_key):
+        agent_id = str(uuid.uuid4())
+        cert_info = {
+            "team_id": "backend:acme.com",
+            "alias": "hosted",
+            "did_key": did_key,
+            "identity_scope": "local",
+            "certificate_id": "cert-003",
+            "agent_row": {
+                "team_id": "backend:acme.com",
+                "did_key": row_did_key,
+                "agent_id": agent_id,
+                "certificate_id": "cert-003",
+                "did_aw": "",
+                "address": "",
+            },
+        }
+        return cert_info, agent_id
+
+    @pytest.mark.asyncio
+    async def test_uses_the_agent_row_its_host_read_for_this_member(self, aweb_cloud_db):
+        from aweb.team_auth_deps import resolve_team_identity
+
+        _, _, did_key = _make_keypair()
+        cert_info, agent_id = self._host_read_cert_info(did_key, row_did_key=did_key)
+
+        identity = await resolve_team_identity(aweb_cloud_db.aweb_db, cert_info)
+
+        assert identity.agent_id == agent_id
+
+    @pytest.mark.asyncio
+    async def test_reads_its_own_agent_row_when_the_hosts_names_another_member(self, aweb_cloud_db):
+        from aweb.team_auth_deps import resolve_team_identity
+
+        _, _, did_key = _make_keypair()
+        _, _, other_did_key = _make_keypair()
+        cert_info, _ = self._host_read_cert_info(did_key, row_did_key=other_did_key)
+
+        with pytest.raises(ValueError, match="not connected"):
+            await resolve_team_identity(aweb_cloud_db.aweb_db, cert_info)
+
 
 @pytest.mark.asyncio
 async def test_get_team_identity_accepts_raw_manager(privacy_app):
