@@ -245,6 +245,12 @@ async def validate_session_id(
     actor_dids: list[str],
 ) -> bool:
     """Allow a fresh UUID or an existing chat's active caller; never grant membership."""
+    exists, _ = await _chat_session_state(db, session_id=session_id, actor_dids=actor_dids)
+    return exists
+
+
+async def _chat_session_state(db, *, session_id: UUID, actor_dids: list[str]) -> tuple[bool, bool]:
+    """validate_session_id's answer, and whether the session has its conversation row."""
     row = await db.get_manager("aweb").fetch_one(
         """
         SELECT s.session_id, c.conversation_type,
@@ -260,11 +266,11 @@ async def validate_session_id(
         session_id, actor_dids,
     )
     if row is None:
-        return False
+        return False, False
     if (row["conversation_type"] not in (None, "chat")
             or row["session_id"] is None or not row["caller_participant"]):
         raise ConflictError("session_id is not an existing chat session of the caller")
-    return True
+    return True, row["conversation_type"] is not None
 
 
 async def _backfill_legacy_chat_conversation(db, *, session_id: UUID) -> None:
@@ -336,11 +342,12 @@ async def ensure_session(
 
     actor = normalized_participants[0]  # Supplied by the authenticated adapter, never by target resolution.
     actor_dids = [actor["did"]]
-    if session_id is not None and await validate_session_id(
-        db, session_id=session_id, actor_dids=actor_dids,
-    ):
-        await _backfill_legacy_chat_conversation(db, session_id=session_id)
-        return UUID(str(session_id))
+    if session_id is not None:
+        exists, has_conversation = await _chat_session_state(db, session_id=session_id, actor_dids=actor_dids)
+        if exists:
+            if not has_conversation:
+                await _backfill_legacy_chat_conversation(db, session_id=session_id)
+            return UUID(str(session_id))
 
     if session_id is None and len(normalized_participants) == 2:
         existing = await find_session_between(
@@ -349,10 +356,9 @@ async def ensure_session(
             did_b=normalized_participants[1]["did"],
         )
         if existing is not None:
-            await validate_session_id(
-                db, session_id=existing, actor_dids=actor_dids,
-            )
-            await _backfill_legacy_chat_conversation(db, session_id=existing)
+            _, has_conversation = await _chat_session_state(db, session_id=existing, actor_dids=actor_dids)
+            if not has_conversation:
+                await _backfill_legacy_chat_conversation(db, session_id=existing)
             return existing
 
     try:
