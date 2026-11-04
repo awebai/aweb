@@ -887,8 +887,13 @@ var mailShowCmd = &cobra.Command{
 			return usageError("--conversation-id and --message-id are mutually exclusive")
 		}
 
-		ctx, cancel := commandAPIContext(cmd)
-		defer cancel()
+		// A page fetch and each custody unwrap retain their individual bounds.
+		// Do not spend one cumulative API budget decrypting an entire page.
+		// Keep an embedding caller's cancellation/deadline, as chat history does.
+		ctx := cmd.Context()
+		if ctx == nil {
+			ctx = context.Background()
+		}
 
 		// Same client selection as mail send/reply: certificate-authenticated
 		// when the workspace has one, identity-auth fallback otherwise. Reads
