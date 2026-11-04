@@ -70,6 +70,7 @@ class ConnectionScope:
         self._discarded = False
         self._idle_park: Optional[asyncio.TimerHandle] = None
         self._parking: Optional[asyncio.Task] = None
+        self.memo: dict[str, Any] = {}
         self.closed = False
 
     def lends_for(self, pool: Any) -> bool:
@@ -118,6 +119,7 @@ class ConnectionScope:
 
     async def close(self) -> None:
         self.closed = True
+        self.memo = {}
         self._cancel_idle_park()
         if not self._borrowed:
             await self._release()
@@ -152,6 +154,19 @@ async def connection_scope() -> AsyncIterator[ConnectionScope]:
             await scope.close()
         finally:
             _active_scope.reset(token)
+
+
+def request_memo() -> Optional[dict[str, Any]]:
+    """Facts read once for the request whose scope is open, or None.
+
+    The memo lives exactly as long as the scope lends its connection: it is
+    empty and unreachable once the response starts, so a streaming body, a
+    background task or anything else that outlives the request reads afresh.
+    """
+    active = _active_scope.get()
+    if active is None or active.closed:
+        return None
+    return active.memo
 
 
 class DatabaseManager(AsyncDatabaseManager):
