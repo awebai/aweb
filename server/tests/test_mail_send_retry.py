@@ -204,6 +204,8 @@ async def test_an_exact_retry_is_refused_once_the_recipient_no_longer_admits_the
         await db.execute(
             "UPDATE {{tables.agents}} SET inbound_mode = 'contacts_only' WHERE did_key = $1", bob_key,
         )
+        before = (await _counts(db), list(events))
         retry = await client.post("/v1/messages", json=request)
 
     assert retry.status_code == 403, retry.text
+    assert (await _counts(db), events) == before
