@@ -575,3 +575,37 @@ async def test_session_reuse_respects_canonical_conversation_lifecycle(aweb_clou
     assert await aweb_cloud_db.aweb_db.fetch_value(
         "SELECT status FROM {{tables.conversations}} WHERE conversation_id = $1", new_id,
     ) == "active"
+
+
+@pytest.mark.asyncio
+async def test_a_chat_message_and_its_senders_read_receipt_are_one_statement(aweb_cloud_db, monkeypatch):
+    import asyncpg.connection
+
+    db_shim = _DbShim(aweb_cloud_db.aweb_db)
+    alice, bob = await _setup_team_and_agents(aweb_cloud_db.aweb_db)
+    session_id = await ensure_session(
+        db_shim, team_id="backend:acme.com", participant_rows=[alice, bob], created_by="alice",
+    )
+    writes: list[str] = []
+    execute = asyncpg.connection.Connection._execute
+
+    async def observed(connection, query, *args, **kwargs):
+        if "INSERT INTO" in query and ("chat_messages" in query or "chat_read_receipts" in query):
+            writes.append(query)
+        return await execute(connection, query, *args, **kwargs)
+
+    monkeypatch.setattr(asyncpg.connection.Connection, "_execute", observed)
+    msg = await send_in_session(
+        db_shim, session_id=session_id, sender_did="did:aw:alice",
+        sender_agent_id=str(alice["agent_id"]), body="Hello Bob!",
+    )
+
+    assert msg is not None
+    assert len(writes) == 1
+    receipt = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT last_read_message_id, last_read_at FROM {{tables.chat_read_receipts}} "
+        "WHERE session_id = $1 AND did = 'did:aw:alice'",
+        session_id,
+    )
+    assert receipt["last_read_message_id"] == msg["message_id"]
+    assert receipt["last_read_at"] == msg["created_at"]
