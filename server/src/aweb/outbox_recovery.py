@@ -19,7 +19,7 @@ from .lifecycle import replay_lifecycle_side_effects
 
 logger = logging.getLogger(__name__)
 
-OUTBOX_RECOVERY_INTERVAL_SECONDS = 15.0
+OUTBOX_RECOVERY_INTERVAL_SECONDS = 15
 _LIFECYCLE_BATCH_SIZE = 100
 _LIFECYCLE_MAX_BATCHES = 10
 _FEDERATION_BATCH_SIZE = 100
