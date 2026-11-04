@@ -361,7 +361,7 @@ def main() -> None:
             delivery,
             """        if include_transport_hint and (
             _route_value(sender.get("transport_hint"))
-            != "federation:" + _route_value(envelope.sender_delivery_origin)
+            != "federation:" + (stored_sender_origin if refreshed_team else _route_value(envelope.sender_delivery_origin))
             or _route_value(target.get("transport_hint")) != "local"
         ):
             raise FederationAuthorityError("federation_conversation_invalid")

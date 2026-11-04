@@ -317,6 +317,15 @@ not an external freshness SLA, and contacts are identity-bound with no automatic
 transfer. These bytes authorize no storage, ingress, migration, or activation
 behavior by themselves.
 
+### `team-vouched-local-routes-v1.json`
+
+Current additive stable-error vocabulary for team-vouched local sender routes
+(`aweb-actf`), governed by [global/local identity routing](../global-local-identity-routing.md).
+It extends the immutable federation-authority vector without changing its bytes.
+The error-reference generator checks the combined reason, status, retryability,
+and Retry-After requirements against the canonical error source. This fixture
+does not by itself prove certificate verification or cross-server delivery.
+
 ## Agreed fixtures ahead of implementation
 
 ### `page-format-v1.json`
@@ -773,6 +782,7 @@ reference duplication are mutation-tested failures.
 | `federation-origin-ip-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |
 | `federation-discovery-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |
 | `federation-authority-state-v1.json` | Python AWID `test_federation_authority_vectors.py`; Python aweb `test_federation_authority_core.py`, `test_federation_authority_schema.py`, and pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go`; generated `federation-error-reference.md` response-shape cross-check through `generate_federation_error_reference.py` (reason/status/retryability source is `awid/src/awid/federation_errors.py`); federation SOT/support coverage in `check-extension-docs.py` |
+| `team-vouched-local-routes-v1.json` | Generated `federation-error-reference.md` response-shape cross-check through `scripts/generate_federation_error_reference.py`, combined with `federation-authority-state-v1.json` and checked against `awid/src/awid/federation_errors.py` |
 
 Package and reference enforcement is also explicit: the root `Makefile` runs the
 provenance baseline and mutations from `make test`; the aweb package-data test

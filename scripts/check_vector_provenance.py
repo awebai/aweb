@@ -687,8 +687,9 @@ ROOT_CONSUMERS = {
         'vector_path = docs / "vectors/federation-authority-state-v1.json"',
     ),
     PurePosixPath("scripts/generate_federation_error_reference.py"): _consumer(
-        "federation-authority-state-v1.json",
+        {"federation-authority-state-v1.json", "team-vouched-local-routes-v1.json"},
         'DEFAULT_VECTOR = ROOT / "docs/vectors/federation-authority-state-v1.json"',
+        'TEAM_ROUTE_VECTOR = ROOT / "docs/vectors/team-vouched-local-routes-v1.json"',
     ),
     PurePosixPath("scripts/test_generate_federation_error_reference.py"): _consumer(
         "federation-authority-state-v1.json",
