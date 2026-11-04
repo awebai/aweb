@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-04
+* **Harvest**: OKF proposal from seat aweb-protocol-expert-db-access with three backing notes. Status is recorded as reviewed but not on main (source branch at 455b22404); reviewer and message identifiers are omitted.
+* **Creation**: lessons [an exact-retry answer sits after validation, and a race loser rereads](/aweb-protocol-expert/lessons/exact-retry-answers-after-validation.md) and [a nested pgdbm transaction is a savepoint](/aweb-protocol-expert/lessons/a-nested-pgdbm-transaction-is-a-savepoint.md); decision [per-request facts live in the request memo, never in a cache](/aweb-protocol-expert/decisions/per-request-facts-live-in-the-request-memo.md).
+
 ## 2026-10-29
 * **Harvest**: manual harvest of seat aweb-protocol-expert-acmj-binding from its proposal and three backing notes, task aweb-acmj.19. Public contract decisions and rejected alternatives are retained; application implementation details and mail receipts are omitted.
 * **Creation**: decision [owner binding needs independent authorities](/aweb-protocol-expert/decisions/owner-binding-needs-independent-authorities.md); lessons [local stop is not new binding authority](/aweb-protocol-expert/lessons/local-stop-is-not-new-binding-authority.md) and [frozen vectors need a real consumer](/aweb-protocol-expert/lessons/frozen-vectors-need-a-real-consumer.md).
