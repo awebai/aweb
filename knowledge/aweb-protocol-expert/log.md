@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-04
+* **Harvest**: OKF proposal from seat aweb-protocol-expert-db-access with four backing notes. Status is recorded as reviewed but not on main (source branch at 6cb347a25); reviewer and message identifiers and shell trivia are omitted.
+* **Creation**: decision [one connection per request is lent, parked during waits, and never a transaction](/aweb-protocol-expert/decisions/one-connection-per-request-is-lent-never-a-transaction.md); lessons [removing an implicit side effect is a contract change](/aweb-protocol-expert/lessons/removing-an-implicit-side-effect-is-a-contract-change.md) and [measuring and testing hot-path changes across repositories](/aweb-protocol-expert/lessons/measuring-hot-path-changes.md).
+* **Update**: [released clients are a permanent constraint](/aweb-protocol-expert/decisions/released-clients-are-a-permanent-constraint.md) gains "Implicit behaviour is part of the contract"; [admission is not the effect transaction](/aweb-protocol-expert/lessons/admission-is-not-the-effect-transaction.md) links the connection-scope decision, which confirms its no-request-wide-transaction rule.
+
 ## 2026-10-29
 * **Harvest**: manual harvest of seat aweb-protocol-expert-acmj-binding from its proposal and three backing notes, task aweb-acmj.19. Public contract decisions and rejected alternatives are retained; application implementation details and mail receipts are omitted.
 * **Creation**: decision [owner binding needs independent authorities](/aweb-protocol-expert/decisions/owner-binding-needs-independent-authorities.md); lessons [local stop is not new binding authority](/aweb-protocol-expert/lessons/local-stop-is-not-new-binding-authority.md) and [frozen vectors need a real consumer](/aweb-protocol-expert/lessons/frozen-vectors-need-a-real-consumer.md).
