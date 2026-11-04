@@ -842,6 +842,23 @@ async def delete_app_event_subscription_route(
     return {"subscription_id": subscription_id, "status": "deleted"}
 
 
+_missing_wake_hub_reported = False
+
+
+def _agent_wake_hub(state):
+    """The process's wake subscriber; reports once when Redis has none."""
+    global _missing_wake_hub_reported
+    hub = getattr(state, "agent_wake_hub", None)
+    if hub is None and getattr(state, "redis", None) is not None and not _missing_wake_hub_reported:
+        _missing_wake_hub_reported = True
+        logger.warning(
+            "Agent wakes are not started on this app (call aweb.api.start_agent_wakes when "
+            "mounting it); event streams reconcile from Postgres every %.0f s",
+            EVENTS_RECONCILE_INTERVAL,
+        )
+    return hub
+
+
 @router.get("/stream")
 async def event_stream(
     request: Request,
@@ -875,7 +892,7 @@ async def event_stream(
             agent_id=identity.agent_id,
             identity=identity,
             deadline=deadline_dt,
-            wake_hub=getattr(request.app.state, "agent_wake_hub", None),
+            wake_hub=_agent_wake_hub(request.app.state),
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},

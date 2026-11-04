@@ -116,14 +116,20 @@ async def _shutdown_mcp_app(app: FastAPI) -> None:
     app.state.mcp_app = None
 
 
-async def _start_agent_wakes(app: FastAPI, redis: Redis) -> None:
-    """One wake publisher and one wake subscriber per process."""
+async def start_agent_wakes(app: FastAPI, redis: Redis) -> None:
+    """Start the process's agent wake publisher and subscriber on ``app.state``.
+
+    Both lifespans call this. A host that mounts the app as a sub-application,
+    whose lifespan never runs, must call it at mount (and ``stop_agent_wakes``
+    at shutdown); without it, writes publish no wakes and streams fall back to
+    their 15 s reconcile from Postgres.
+    """
     app.state.agent_wake_publisher = AgentWakePublisher(redis)
     app.state.agent_wake_hub = AgentWakeHub(redis)
     await app.state.agent_wake_hub.start()
 
 
-async def _shutdown_agent_wakes(app: FastAPI) -> None:
+async def stop_agent_wakes(app: FastAPI) -> None:
     hub = getattr(app.state, "agent_wake_hub", None)
     if hub is not None:
         await hub.close()
@@ -217,7 +223,7 @@ def _make_standalone_lifespan():
                 app.state.awid_registry_client,
                 app.state.federation_authority,
             )
-            await _start_agent_wakes(app, redis)
+            await start_agent_wakes(app, redis)
             start_outbox_recovery(app)
 
         except Exception:
@@ -242,7 +248,7 @@ def _make_standalone_lifespan():
             await stop_outbox_recovery(app)
             await _shutdown_federation_authority(app)
             await _shutdown_awid_registry_client(app)
-            await _shutdown_agent_wakes(app)
+            await stop_agent_wakes(app)
             await redis.aclose()
             await default_db_infra.close()
 
@@ -279,7 +285,7 @@ def _make_library_lifespan(
             app.state.awid_registry_client,
             app.state.federation_authority,
         )
-        await _start_agent_wakes(app, redis)
+        await start_agent_wakes(app, redis)
         start_outbox_recovery(app)
 
         try:
@@ -290,7 +296,7 @@ def _make_library_lifespan(
             await stop_outbox_recovery(app)
             await _shutdown_federation_authority(app)
             await _shutdown_awid_registry_client(app)
-            await _shutdown_agent_wakes(app)
+            await stop_agent_wakes(app)
             logger.info("Aweb coordination server stopping (library mode)")
 
     return lifespan

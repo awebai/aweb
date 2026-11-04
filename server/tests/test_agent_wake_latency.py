@@ -459,3 +459,24 @@ async def test_mcp_room_post_wakes_team_members(wake_app, mcp_call):
         posted = await mcp_call("alice", "room_post", signed_post=room_post_payload(env, room))
         event = await _expect_within_bound(next_event, started, "actionable_room_post")
     assert event["message_id"] == posted["message_id"]
+
+
+@pytest.mark.asyncio
+async def test_stream_on_a_host_without_agent_wakes_says_so_once(privacy_app, monkeypatch, caplog):  # noqa: F811
+    env = privacy_app
+    monkeypatch.setattr(events_routes, "_missing_wake_hub_reported", False)
+    with caplog.at_level("WARNING", logger="aweb.routes.events"):
+        for _ in range(2):
+            async with agent_stream(env, "bob") as next_event:
+                await _quiet(next_event, seconds=0.1)
+    reports = [r for r in caplog.records if "Agent wakes are not started" in r.getMessage()]
+    assert len(reports) == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_on_a_host_with_agent_wakes_reports_nothing(wake_app, monkeypatch, caplog):
+    monkeypatch.setattr(events_routes, "_missing_wake_hub_reported", False)
+    with caplog.at_level("WARNING", logger="aweb.routes.events"):
+        async with agent_stream(wake_app, "bob") as next_event:
+            await _quiet(next_event, seconds=0.1)
+    assert not [r for r in caplog.records if "Agent wakes are not started" in r.getMessage()]

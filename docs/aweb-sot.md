@@ -1779,7 +1779,12 @@ aweb starts up in this order:
    Mounted sub-applications do not receive lifespan events, so a mount's
    first request starts the loop, unless the host runs recovery itself
    (`host_runs_outbox_recovery=True`).
-8. Begin serving.
+8. Start the agent wake publisher and subscriber (`start_agent_wakes`). A host
+   that mounts the app must call `aweb.api.start_agent_wakes(app, redis)` itself
+   and `stop_agent_wakes(app)` at shutdown; without them writes publish no
+   wakes, event streams fall back to their 15 s reconcile, and the first stream
+   logs a warning saying so.
+9. Begin serving.
 
 Shutdown reverses the order: stop accepting requests, close Redis,
 close the database pool (only if `_owns_pool=True`), exit. The
