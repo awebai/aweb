@@ -145,6 +145,8 @@ test-shipping:
 	python3 scripts/test_candidate_cleanup.py
 	python3 scripts/test_candidate_disk_floor.py
 	python3 scripts/test_folio_wakes_gate.py
+	python3 scripts/test_user_paths_gate.py
+	python3 scripts/test_fetch_released_aw.py
 
 # AWID metadata is repeated in every committed Python lock that takes the in-repo
 # awid (awid, server, naapp-lib and each naapp). Check them all without repair,
@@ -726,3 +728,7 @@ test-egress-controls:
 .PHONY: check-page-renderer-bundle
 check-page-renderer-bundle:
 	cd naapp-lib/renderer && npm ci --ignore-scripts && node build.mjs --check
+
+.PHONY: e2e-user-paths
+e2e-user-paths:
+	USER_PATHS_EVIDENCE="$${CANDIDATE_LOG_DIR:-/tmp/aweb-user-paths-evidence}/user-paths" bash scripts/e2e-user-paths.sh

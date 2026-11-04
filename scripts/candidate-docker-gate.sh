@@ -73,7 +73,7 @@ LOG_DIR="/tmp/aweb-candidate-gate-$SOURCE_SHA"
 # Focused pre-landing proof uses the same stages and ledger. Release candidates
 # always request the complete list and retain the origin/main requirement.
 STAGES="${AWEB_CANDIDATE_STAGES:-}"
-REQUESTED="${STAGES:-checks unit artifacts integration}"
+REQUESTED="${STAGES:-checks user-paths unit artifacts integration}"
 if [[ -z "$STAGES" ]]; then
   git -C "$ROOT" fetch --quiet origin main
   git -C "$ROOT" merge-base --is-ancestor "$SOURCE_SHA" origin/main \
@@ -88,6 +88,17 @@ A2A_GATEWAY_VERSION="${A2A_GATEWAY_VERSION:-$(python3 "$ROOT/scripts/next_tag_ve
 # are external inputs even when the caller did not supply an override.
 TREE="$(git -C "$ROOT" rev-parse 'HEAD^{tree}')"
 external_inputs="CLI_VERSION=$CLI_VERSION"$'\n'"A2A_GATEWAY_VERSION=$A2A_GATEWAY_VERSION"$'\n'
+# The same tree must be requalified when the released client changes. Resolve
+# latest exactly once here; the isolated matrix consumes this frozen metadata.
+if [[ " $REQUESTED " == *" user-paths "* ]]; then
+  mkdir -p "$LOG_DIR"
+  USER_PATHS_LATEST_METADATA="$LOG_DIR/released-aw-latest.json"
+  resolve_started=$SECONDS
+  python3 "$ROOT/scripts/fetch_released_aw.py" --resolve-only "$USER_PATHS_LATEST_METADATA"
+  USER_PATHS_RESOLVE_SECONDS=$((SECONDS - resolve_started))
+  released_identity="$(python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$USER_PATHS_LATEST_METADATA")"
+  external_inputs+="RELEASED_AW=$released_identity"$'\n'
+fi
 input_identity() {
   local name="$1" path="$2" default="$3" repo sha relative
   repo="$(git -C "$path" rev-parse --show-toplevel)"
@@ -147,7 +158,7 @@ if [[ -n "$failed" ]]; then
 fi
 pending=""
 for stage in $REQUESTED; do
-  case "$stage" in checks|unit|artifacts|integration) ;; *) refuse "unknown stage '$stage'" ;; esac
+  case "$stage" in checks|user-paths|unit|artifacts|integration) ;; *) refuse "unknown stage '$stage'" ;; esac
   if [[ "$(recorded "$stage" | cut -f3)" == passed ]]; then
     printf 'gate: tree %s already passed %s; original log %s\n' "$TREE" "$stage" "$(recorded "$stage" | cut -f6)"
   elif [[ " $pending " != *" $stage "* ]]; then
@@ -259,6 +270,7 @@ docker update --cpus "$builder_cpus" --memory "$builder_memory" --memory-swap "$
   || refuse "could not apply candidate builder resource limits"
 
 BUILDX_CONFIG="$buildx_config" docker buildx build --builder "$builder_name" --load --pull \
+  --build-arg USER_PATHS_SOURCE_TREE="$TREE" \
   --label "aweb.candidate-gate=$resource_label" \
   -f "$checkout/candidate-gate/Dockerfile" -t "$IMAGE" "$checkout" \
   2>&1 | tee "$LOG_DIR/docker-build.log"
@@ -407,6 +419,8 @@ docker run --rm --init \
   -e A2A_GATEWAY_VERSION="${A2A_GATEWAY_VERSION:-}" \
   -e LIBRARY_E2E_BLUEPRINT_SRC="$LIBRARY_E2E_BLUEPRINT_SRC" \
   -e CANDIDATE_LOG_DIR="$LOG_DIR" \
+  -e USER_PATHS_LATEST_METADATA="${USER_PATHS_LATEST_METADATA:-}" \
+  -e USER_PATHS_RESOLVE_SECONDS="${USER_PATHS_RESOLVE_SECONDS:-0}" \
   -e CANDIDATE_RESOURCE_MANIFEST="$LOG_DIR/owned-resources.tsv" \
   -e BUILDX_CONFIG="$buildx_config" \
   -e BUILDX_BUILDER="$builder_name" \

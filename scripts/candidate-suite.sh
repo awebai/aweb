@@ -19,7 +19,7 @@ if [[ "${1:-}" == "--isolated-suites" ]]; then
 fi
 
 log_dir="${CANDIDATE_LOG_DIR:?CANDIDATE_LOG_DIR is required}"
-stages="${1:-checks unit artifacts integration}"
+stages="${1:-checks user-paths unit artifacts integration}"
 checks() {
   run check-private-boundary
   run _candidate-gate-docker-boundaries
@@ -43,6 +43,9 @@ checks() {
   run test-go-vulnerability-audit
   run check-go-vulnerability-audit
   run test-release-cli-version
+}
+user-paths() {
+  run e2e-user-paths
 }
 unit() {
   run _candidate-unit-suites
@@ -84,7 +87,7 @@ node_ready=0
 cli_ready=0
 : > "$log_dir/summary.tsv"
 for stage in $stages; do
-  case "$stage" in checks|unit|artifacts|integration) ;; *) echo "unknown candidate stage: $stage" >&2; exit 2;; esac
+  case "$stage" in checks|user-paths|unit|artifacts|integration) ;; *) echo "unknown candidate stage: $stage" >&2; exit 2;; esac
   case "$stage" in
     unit|artifacts|integration)
       if [[ "$node_ready" == 0 ]]; then run _candidate-node-deps; node_ready=1; fi ;;
