@@ -1,4 +1,4 @@
-"""Outbox rows are delivered by their writers and recovered on a timer, never by reads."""
+"""Outbox rows are delivered by their writers and recovered on a timer, never by a read's own scan."""
 
 from __future__ import annotations
 
@@ -77,24 +77,86 @@ def _recording_hook():
     return delivered, on_mutation
 
 
-@pytest.mark.asyncio
-async def test_a_read_request_replays_no_outbox(db_infra, redis, monkeypatch):
+def _mounted_host(db_infra, redis, on_mutation, monkeypatch, **create_app_options):
+    """A host app that mounts aweb as the library-mode example does: it sets
+    aweb's state itself and never runs aweb's own lifespan."""
+    from fastapi import FastAPI
+
     async def _noop_mount(_app, _db_infra, _redis, _registry_client):
         return None
 
     monkeypatch.setattr("aweb.api._mount_mcp_app", _noop_mount)
+    aweb_app = create_app(db_infra=db_infra, redis=redis, **create_app_options)
+    aweb_app.state.db = db_infra
+    aweb_app.state.redis = redis
+    aweb_app.state.on_mutation = on_mutation
+    host = FastAPI()
+    host.mount("/coordination", aweb_app)
+    return host, aweb_app
+
+
+@pytest.mark.asyncio
+async def test_a_mounted_app_without_lifespan_recovers_after_its_first_request(db_infra, redis, monkeypatch):
+    aweb_db = db_infra.get_manager("aweb")
+    message_id = await _leave_undelivered_federation_row(aweb_db)
+    await _leave_undelivered_lifecycle_rows(aweb_db, 1)
+    delivered, on_mutation = _recording_hook()
+    host, aweb_app = _mounted_host(db_infra, redis, on_mutation, monkeypatch)
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=host), base_url="http://test") as client:
+            assert (await client.get("/coordination/health")).status_code == 200
+        for _ in range(40):
+            if await _undelivered(aweb_db) == (0, 0):
+                break
+            await asyncio.sleep(0.05)
+    finally:
+        await stop_outbox_recovery(aweb_app)
+
+    assert delivered == [("message.sent", message_id)]
+    assert await _undelivered(aweb_db) == (0, 0)
+
+
+@pytest.mark.asyncio
+async def test_reads_on_a_mounted_app_scan_the_outbox_once_per_cycle_not_per_request(
+    db_infra, redis, monkeypatch,
+):
+    import asyncpg.connection
+
+    monkeypatch.setattr("aweb.outbox_recovery.OUTBOX_RECOVERY_INTERVAL_SECONDS", 60)
+    _, on_mutation = _recording_hook()
+    host, aweb_app = _mounted_host(db_infra, redis, on_mutation, monkeypatch)
+    scans = []
+    execute = asyncpg.connection.Connection._execute
+
+    async def observed_execute(connection, query, *args, **kwargs):
+        if "federation_mutation_outbox" in query:
+            scans.append(query)
+        return await execute(connection, query, *args, **kwargs)
+
+    monkeypatch.setattr(asyncpg.connection.Connection, "_execute", observed_execute)
+    try:
+        async with AsyncClient(transport=ASGITransport(app=host), base_url="http://test") as client:
+            for _ in range(10):
+                assert (await client.get("/coordination/health")).status_code == 200
+        await asyncio.sleep(0.3)
+    finally:
+        await stop_outbox_recovery(aweb_app)
+
+    assert len(scans) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_host_that_runs_recovery_itself_gets_none_from_requests(db_infra, redis, monkeypatch):
     aweb_db = db_infra.get_manager("aweb")
     await _leave_undelivered_federation_row(aweb_db)
     await _leave_undelivered_lifecycle_rows(aweb_db, 1)
     delivered, on_mutation = _recording_hook()
-    app = create_app(db_infra=db_infra, redis=redis)
-    app.state.db = db_infra
-    app.state.redis = redis
-    app.state.on_mutation = on_mutation
+    host, _ = _mounted_host(db_infra, redis, on_mutation, monkeypatch, host_runs_outbox_recovery=True)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=host), base_url="http://test") as client:
         for _ in range(3):
-            assert (await client.get("/health")).status_code == 200
+            assert (await client.get("/coordination/health")).status_code == 200
     await asyncio.sleep(0.3)
 
     assert delivered == []
