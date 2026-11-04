@@ -153,6 +153,10 @@ class FrozenGateInput(unittest.TestCase):
                 (repo / 'candidate-gate/Dockerfile').write_text('FROM scratch\n')
                 (repo / 'naapp/library/test-vectors/blueprints/team').mkdir(parents=True)
                 (repo / 'naapp/library/test-vectors/blueprints/team/proof').touch()
+                # The real freeze import writes bytecode before input_identity
+                # rechecks this checkout. Own the same ignore rule as the source
+                # repo instead of relying on the caller's Python cache settings.
+                (repo / '.gitignore').write_text('__pycache__/\n')
                 (repo / 'Makefile').write_text(''' .DEFAULT:
 \t@true
 naapp-e2e-packages:
@@ -169,6 +173,10 @@ e2e-user-paths:
                 git('add', '.')
                 git('commit', '-qm', 'gate entrypoint fixture')
                 git('remote', 'add', 'origin', str(repo))
+                blueprints = repo / 'naapp/library/test-vectors/blueprints/team'
+                self.assertEqual(subprocess.check_output(
+                    ['git', '-C', str(blueprints), 'rev-parse', '--show-toplevel'], text=True).strip(),
+                    str(repo.resolve()))
                 # Redirect only the registry transport to owned HTTP; run the real
                 # freeze implementation. Every other Python command is unchanged.
                 (commands / 'python3').write_text(f'''#!{sys.executable}
@@ -203,10 +211,12 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
 ''')
                 for path in commands.iterdir():
                     path.chmod(0o755)
-                env = {k: v for k,v in os.environ.items() if not k.startswith(('AWEB_', 'CANDIDATE_', 'GATE_', 'LIBRARY_E2E_', 'USER_PATHS_'))}
+                env = {k: v for k,v in os.environ.items() if not k.startswith(
+                    ('AWEB_', 'CANDIDATE_', 'GATE_', 'LIBRARY_E2E_', 'USER_PATHS_', 'PYTHON'))}
+                (root / 'home').mkdir()
                 env.update(PATH=f'{commands}:{env["PATH"]}', AWEB_GATE_LEDGER=str(root / 'ledger.tsv'),
                            AWEB_GATE_LOG_DIR=str(root / 'logs'), CLI_VERSION='1.36.54', A2A_GATEWAY_VERSION='1.27.6',
-                           SNAPSHOT_RECEIPT=str(root / 'snapshot.json'))
+                           HOME=str(root / 'home'), SNAPSHOT_RECEIPT=str(root / 'snapshot.json'))
                 def invoke(stages):
                     settings = dict(env)
                     if stages is not None:
@@ -217,6 +227,8 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                     return result.stdout
                 try:
                     invoke('checks')
+                    self.assertTrue(list((repo / 'scripts/__pycache__').glob('fetch_released_aw.*.pyc')))
+                    self.assertEqual(git('status', '--porcelain', '--untracked-files=all'), '')
                     invoke(None)
                     ledger = (root / 'ledger.tsv').read_text().splitlines()
                     self.assertEqual(len(ledger), 5, ledger)
@@ -381,8 +393,10 @@ class ReleasedKnownIssueBudget(unittest.TestCase):
                 self.assertEqual(stdout.getvalue(), 'PASS '+case+'\n')
 
     def test_real_lane_command_failure_is_classified_without_a_head_exception(self):
+        import io
         import json
         import sys
+        from contextlib import redirect_stdout
         from unittest.mock import patch
         spec = importlib.util.spec_from_file_location('user_paths', ROOT / 'scripts/e2e/user_paths.py')
         paths = importlib.util.module_from_spec(spec)
@@ -397,15 +411,24 @@ class ReleasedKnownIssueBudget(unittest.TestCase):
                 case = name+'/t1->t2/chat/v2'
                 failure = known_failure(case)
                 response = subprocess.CompletedProcess([], 1, json.dumps(failure['response'])+'\n', failure['stderr'])
-                with patch.object(paths.subprocess, 'run', return_value=response):
+                stdout = io.StringIO()
+                with redirect_stdout(stdout), patch.object(paths.subprocess, 'run', return_value=response):
                     lane.run_case(case, lambda: lane.flow('t1','t2','chat',True))
                 self.assertEqual(lane.outcomes[0]['status'], expected)
                 self.assertEqual(len(lane.failures), 0 if name=='released' else 1)
                 if name=='released':
+                    self.assertTrue(stdout.getvalue().startswith('KNOWN ISSUE '+case+' aweb-actw observed failure:'))
+                    self.assertNotIn('FAIL ', stdout.getvalue())
                     self.assertEqual(lane.outcomes[0]['failure']['response'], failure['response'])
-                    lane.run_case(case, lambda: None)
+                    unexpected = io.StringIO()
+                    with redirect_stdout(unexpected):
+                        lane.run_case(case, lambda: None)
+                    self.assertEqual(unexpected.getvalue(), 'FAIL '+case+' declared known issue passed unexpectedly or failed differently\n')
                     self.assertEqual(lane.outcomes[-1]['status'], 'FAILED')
                     self.assertEqual(len(lane.failures), 1)
+                else:
+                    self.assertTrue(stdout.getvalue().startswith('FAIL '+case+' '))
+                self.assertNotIn('PASS ', stdout.getvalue())
 
     def test_exact_measured_failures_only_on_each_released_cell(self):
         self.assertEqual(len(result_model.KNOWN_RELEASED_ISSUES), 2)
