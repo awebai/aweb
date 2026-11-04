@@ -72,6 +72,7 @@ from aweb.messaging.contacts import (
     upsert_successful_identity_contact,
 )
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
+from aweb.messaging.participant_succession import predecessor_target_for_mail
 from aweb.messaging.mail_routing import (
     MailContinuationContext,
     explicit_mail_target_matches_participant,
@@ -1220,6 +1221,7 @@ async def _send_mail_conversation_continuation(
                 continuation=continuation,
             )
         recipient = local_recipient or await recipient_for_conversation_participant(db, recipient_participant)
+        historical_target = None
         if payload.signature is not None:
             if payload.from_did is None or not payload.from_did.strip():
                 raise HTTPException(status_code=422, detail="from_did is required when signature is provided")
@@ -1249,7 +1251,22 @@ async def _send_mail_conversation_continuation(
                 timestamp=payload.timestamp,
                 conversation_id=conversation_id,
             )
-            if recipient.get("did_aw") and not recipient.get("did_key"):
+            # Historical target evidence is restricted to this recorded local
+            # mail thread. It never supplies sender or current-key authority.
+            signed = verified_signed_payload_json(
+                signed_payload=payload.signed_payload,
+                signature=payload.signature,
+                did_key=auth.did_key,
+            )
+            if signed is not None and payload.encrypted_envelope is None:
+                historical_target = await predecessor_target_for_mail(
+                    db, conversation_id=conversation_id,
+                    successor_did=recipient_participant["did"], signed=signed,
+                )
+            if historical_target is not None:
+                validation["recipient"] = historical_target
+                validation["to_alias"] = historical_target["alias"]
+            elif recipient.get("did_aw") and not recipient.get("did_key"):
                 # A canonical stored participant can outlive its key projection.
                 # Even a stable-only signed target needs current key evidence.
                 validation["recipient"] = await _continuation_signature_recipient(
@@ -1308,6 +1325,8 @@ async def _send_mail_conversation_continuation(
             sender_verified_team_id=auth.verified_team_id,
             sender_verified_dids=auth_dids(auth),
             stored_route_continuation=True,
+            signed_recipient_did=historical_target["signed_did"]
+            if historical_target is not None else None,
         )
         await touch_conversation_activity(db, conversation_id=conversation_id)
     except (ValidationError, NotFoundError, ForbiddenError, ConflictError) as exc:
@@ -1447,14 +1466,33 @@ async def send_message(
                 )
             except (ValidationError, NotFoundError, ForbiddenError, ConflictError) as exc:
                 raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-            if not await explicit_mail_target_matches_participant(
+            target_matches = await explicit_mail_target_matches_participant(
                 db, requested_continuation.recipient_participant,
                 to_agent_id=payload.to_agent_id,
                 to_alias=payload.to_alias,
                 to_did=payload.to_did,
                 to_stable_id=payload.to_stable_id,
                 to_address=payload.to_address,
-            ):
+            )
+            if (not target_matches and payload.encrypted_envelope is None
+                    and payload.to_agent_id is None and payload.to_alias is None
+                    and payload.to_address is None):
+                signed = verified_signed_payload_json(
+                    signed_payload=payload.signed_payload, signature=payload.signature,
+                    did_key=auth.did_key,
+                )
+                historical = await predecessor_target_for_mail(
+                    db, conversation_id=payload.conversation_id,
+                    successor_did=requested_continuation.recipient_participant["did"],
+                    signed=signed,
+                ) if signed is not None else None
+                if historical is not None:
+                    identities = {historical["did_key"], historical["did_aw"]} - {None}
+                    target_matches = all(
+                        value is None or value in identities
+                        for value in (payload.to_did, payload.to_stable_id)
+                    )
+            if not target_matches:
                 raise HTTPException(
                     status_code=409,
                     detail="conversation_id recipient does not match the requested recipient",

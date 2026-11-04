@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.messaging.mail_attribution import incoming_mail_sql
+
 import asyncio
 import json
 import logging
@@ -150,12 +152,12 @@ async def _subscription_read_identity(request: Request, db) -> tuple[str, str]:
 async def _current_actionable_mail(aweb_db, *, inbox_dids: list[str]) -> list[dict[str, Any]]:
     """Return the current actionable unread mail state for an identity."""
     rows = await aweb_db.fetch_all(
-        """
+        f"""
         WITH unread AS (
             SELECT message_id, conversation_id, from_did, from_alias, from_address, subject, priority,
                    created_at, content_mode, message_version
-            FROM {{tables.messages}}
-            WHERE to_did = ANY($1::text[])
+            FROM {{{{tables.messages}}}} m
+            WHERE (m.to_did = ANY($1::text[]) OR {incoming_mail_sql('$1')})
               AND read_at IS NULL
         ),
         windowed AS (
