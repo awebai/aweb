@@ -50,9 +50,10 @@ Refusal controls check the actual user-facing diagnostic and no delivery:
 - A local sender to a global `contacts_only` recipient without a contact.
   Same-team `team_and_contacts` delivery remains a positive neighbor.
 - An address published in real AWID whose identity has not connected residence.
-- A local sender to the real second-server recipient without published
-  team-server authority. A missing certificate on an older released client and
-  missing team-server authority on the current client are distinct refusals.
+- A local first-contact sender to the real second-server recipient without an
+  already stored return route. Both lanes must expose the current acst server's
+  `local_sender_route_mismatch` refusal with HTTP 422; actf-only certificate and
+  team-server discovery errors are not this server's contract.
 
 Released 1.36.53/1.36.54 diagnose a nonresident target during CLI preflight;
 the current client reaches the server's `recipient_identity_not_found` response.

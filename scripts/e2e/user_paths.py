@@ -245,15 +245,11 @@ class Lane:
             else:
                 self.run_case(self.name + '/nonresident/' + kind, lambda: self.refused('g1', 'nonresident', kind,
                     404, 'The recipient is not set up for messaging', 'recipient_identity_not_found'))
-            # The peer is a real connected global identity on a live second OSS
-            # server; this local sender has no published team-server authority.
-            # An outage or invalid certificate cannot satisfy this refusal.
-            if self.legacy_released_diagnostics:
-                self.run_case(self.name + '/cross-server/' + kind, lambda: self.refused('t1', 'remote', kind,
-                    422, "This message is missing this agent's team certificate.", 'local_sender_certificate_required'))
-            else:
-                self.run_case(self.name + '/cross-server/' + kind, lambda: self.refused('t1', 'remote', kind,
-                    424, "This team's published messaging server could not be verified", 'local_sender_team_server_missing'))
+            # The peer is reachable, but this is first contact by a local
+            # sender: acst permits only an already stored return route. Both
+            # clients must expose that server refusal, not an actf-only error.
+            self.run_case(self.name + '/cross-server/' + kind, lambda: self.refused('t1', 'remote', kind,
+                422, 'local_sender_route_mismatch', 'local_sender_route_mismatch'))
         self.run_case(self.name + '/waiting-chat', self.waiting_chat)
         self.run_case(self.name + '/fresh-chat/plain-v2-plain', self.fresh_chat_modes)
 
