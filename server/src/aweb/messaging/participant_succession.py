@@ -21,6 +21,54 @@ class SuccessionResult:
     chat_sessions_updated: int = 0
 
 
+@dataclass(frozen=True)
+class MailSuccessionScope:
+    # Each group binds historical identities to exactly their own threads.
+    # Current participant keys are also thread-local read evidence.
+    identity_threads: tuple[tuple[tuple[str, ...], tuple[UUID, ...]], ...] = ()
+
+
+async def load_mail_succession_scope(
+    db, *, viewer_dids: list[str]
+) -> MailSuccessionScope:
+    """Snapshot thread-local mail attribution once when opening a stream.
+
+    This is read evidence, never a current identity binding or a wake address.
+    New writes wake the resolved delivery identity. Reconnect/reconcile reloads
+    this snapshot; ticks do not query participant or succession tables.
+    """
+    rows = await db.fetch_all(
+        """SELECT own.conversation_id, own.current_did_key,
+                  succession.predecessor_did, succession.predecessor_did_key
+           FROM {{tables.conversation_participants}} own
+           LEFT JOIN {{tables.conversation_participant_successions}} history
+             ON history.conversation_id = own.conversation_id
+           LEFT JOIN {{tables.local_human_successions}} succession
+             ON succession.predecessor_did = history.predecessor_did
+            AND succession.successor_did = own.did
+           WHERE own.did = ANY($1::text[])""",
+        viewer_dids,
+    )
+    identities_by_thread: dict[UUID, set[str]] = {}
+    viewer = set(viewer_dids)
+    for row in rows:
+        identities = identities_by_thread.setdefault(row["conversation_id"], set())
+        for field in ("current_did_key", "predecessor_did", "predecessor_did_key"):
+            value = str(row.get(field) or "").strip()
+            if value and value not in viewer:
+                identities.add(value)
+    threads_by_identities: dict[tuple[str, ...], list[UUID]] = {}
+    for cid, identities in identities_by_thread.items():
+        if identities:
+            threads_by_identities.setdefault(tuple(sorted(identities)), []).append(cid)
+    return MailSuccessionScope(
+        tuple(
+            (identities, tuple(sorted(cids)))
+            for identities, cids in sorted(threads_by_identities.items())
+        )
+    )
+
+
 async def succeed_local_human_participant_on(
     tx, *, predecessor_did: str, successor_did: str
 ) -> SuccessionResult:

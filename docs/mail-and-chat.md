@@ -400,7 +400,10 @@ The caller proves same-account custody, records that decision and invokes the
 seam in its existing transaction after the live successor projection exists.
 The seam replaces participants only in existing local mail threads, preserving
 the conversation IDs. It is idempotent and rejects observable foreign routes;
-no alias, address or display-name match establishes succession.
+no alias, address or display-name match establishes succession. Mail is
+identity-scoped: when the successor has no membership in the thread's team,
+the participant uses its live projection from another team; this grants no
+membership in the thread's team.
 
 Plaintext mail then continues in both directions in the same thread. A signed
 continuation may still name that thread's recorded predecessor as its target;

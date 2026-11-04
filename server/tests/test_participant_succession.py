@@ -9,7 +9,10 @@ from uuid import uuid4
 
 import pytest
 from aweb.mcp.server import create_mcp_app
-from aweb.messaging.participant_succession import succeed_local_human_participant_on
+from aweb.messaging.participant_succession import (
+    load_mail_succession_scope,
+    succeed_local_human_participant_on,
+)
 from aweb.routes.events import _current_actionable_mail
 from aweb.service_errors import ConflictError, ValidationError
 from chat_pair_support import (
@@ -177,7 +180,11 @@ async def test_plaintext_mail_continues_after_human_succession(
     assert str(first.mid) in incoming and str(old_encrypted.mid) in incoming
     assert str(old_sent.mid) not in incoming  # historical outgoing is still ours
     actionable = await _current_actionable_mail(
-        node.db, inbox_dids=[successor.stable, successor.did]
+        node.db,
+        inbox_dids=[successor.stable, successor.did],
+        mail_scope=await load_mail_succession_scope(
+            node.db, viewer_dids=[successor.stable, successor.did]
+        ),
     )
     assert {r["message_id"] for r in actionable} == incoming
     roster = await _get(agent, f"/v1/messaging/participants/{successor.alias}")
@@ -483,3 +490,36 @@ async def test_succession_alias_reuse_resolves_current_h_without_alias_forwardin
             tx, predecessor_did=old.did, successor_did=successor.stable
         )
     assert result.conversations_updated == 0 and not result.mapping_created
+
+
+@pytest.mark.asyncio
+async def test_merged_human_participant_does_not_wake_for_historical_own_mail(
+    route_pair,
+):
+    node = route_pair.source
+    old = node.local
+    successor = await _actor(node, "account-human", global_identity=True)
+    await _human(old)
+    await _human(successor)
+    response, own = await _send(old, successor, "mail")
+    assert response.status_code == 200, response.text
+    # A second affected thread contains actual peer-to-predecessor incoming mail.
+    response, incoming = await _send(node.global_actor, old, "mail")
+    assert response.status_code == 200, response.text
+    await _move(node, old, successor)
+    inbox = await _get(successor, "/v1/messages/inbox")
+    assert inbox.status_code == 200, inbox.text
+    ids = {r["message_id"] for r in inbox.json()["messages"]}
+    assert str(own.mid) not in ids and str(incoming.mid) in ids
+    count = await _get(successor, "/v1/messages/unread-count")
+    assert count.status_code == 200, count.text
+    assert count.json() == {"unread_count": len(ids)}
+    actionable = await _current_actionable_mail(
+        node.db,
+        inbox_dids=[successor.stable, successor.did],
+        mail_scope=await load_mail_succession_scope(
+            node.db, viewer_dids=[successor.stable, successor.did]
+        ),
+    )
+    assert {r["message_id"] for r in actionable} == ids
+    assert all(r["unread_count"] == len(ids) for r in actionable)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from aweb.messaging.mail_attribution import incoming_mail_sql
+from aweb.messaging.participant_succession import MailSuccessionScope, load_mail_succession_scope
 
 import asyncio
 import json
@@ -149,15 +149,35 @@ async def _subscription_read_identity(request: Request, db) -> tuple[str, str]:
     return identity.team_id, identity.agent_id
 
 
-async def _current_actionable_mail(aweb_db, *, inbox_dids: list[str]) -> list[dict[str, Any]]:
-    """Return the current actionable unread mail state for an identity."""
+async def _current_actionable_mail(
+    aweb_db, *, inbox_dids: list[str], mail_scope: MailSuccessionScope
+) -> list[dict[str, Any]]:
+    """Return unread incoming mail using preloaded, exact thread evidence."""
+    args: list[Any] = [inbox_dids]
+    targets = ["m.to_did = ANY($1::text[])"]
+    senders = ["m.from_did = ANY($1::text[])"]
+    for dids, conversations in mail_scope.identity_threads:
+        did_param, conversation_param = len(args) + 1, len(args) + 2
+        args.extend((list(dids), list(conversations)))
+        for field, clauses in (("to_did", targets), ("from_did", senders)):
+            clauses.append(
+                f"(m.{field} = ANY(${did_param}::text[]) "
+                f"AND m.conversation_id = ANY(${conversation_param}::uuid[]))"
+            )
+    # Exact current targets retain legacy/no-conversation wake delivery. Extra
+    # identities require their recorded thread, on BOTH sides of attribution.
+    # A merged predecessor's outgoing mail is not incoming even if sent to H.
+    predicate = (
+        f"({' OR '.join(targets)}) "
+        f"AND NOT COALESCE(({' OR '.join(senders)}), FALSE)"
+    )
     rows = await aweb_db.fetch_all(
         f"""
         WITH unread AS (
             SELECT message_id, conversation_id, from_did, from_alias, from_address, subject, priority,
                    created_at, content_mode, message_version
             FROM {{{{tables.messages}}}} m
-            WHERE (m.to_did = ANY($1::text[]) OR {incoming_mail_sql('$1')})
+            WHERE {predicate}
               AND read_at IS NULL
         ),
         windowed AS (
@@ -182,7 +202,7 @@ async def _current_actionable_mail(aweb_db, *, inbox_dids: list[str]) -> list[di
         FROM windowed
         ORDER BY created_at ASC, message_id ASC
         """,
-        inbox_dids,
+        *args,
     )
     sender_map = await lookup_identity_metadata_by_did(
         aweb_db,
@@ -440,8 +460,12 @@ async def _sse_agent_events(
         yield grant_terminal_sse(reason)
         return
 
+    # Thread evidence is immutable for this stream lifetime, not a per-tick read.
+    mail_scope = await load_mail_succession_scope(aweb_db, viewer_dids=viewer_dids)
     # Initial snapshot
-    mail_events = await _current_actionable_mail(aweb_db, inbox_dids=viewer_dids)
+    mail_events = await _current_actionable_mail(
+        aweb_db, inbox_dids=viewer_dids, mail_scope=mail_scope
+    )
     chat_events = await _current_actionable_chat(
         db,
         redis,
@@ -516,7 +540,9 @@ async def _sse_agent_events(
             continue
 
         try:
-            current_mail = await _current_actionable_mail(aweb_db, inbox_dids=viewer_dids)
+            current_mail = await _current_actionable_mail(
+                aweb_db, inbox_dids=viewer_dids, mail_scope=mail_scope
+            )
             current_chat = await _current_actionable_chat(
                 db,
                 redis,
