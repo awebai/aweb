@@ -33,7 +33,12 @@ SOURCE_CHECKS = source_checks()
 
 
 def run(root: Path, *args: str, env: dict[str, str] | None = None):
-    return subprocess.run(args, cwd=root, env=env, text=True, capture_output=True, timeout=900)
+    # This fixture pins its own versions. A caller's make command-line values
+    # otherwise override them in the nested make, but not in the direct gate.
+    environment = dict(os.environ if env is None else env)
+    for name in ("MAKEFLAGS", "MAKELEVEL", "MAKEOVERRIDES", "MFLAGS"):
+        environment.pop(name, None)
+    return subprocess.run(args, cwd=root, env=environment, text=True, capture_output=True, timeout=900)
 
 
 def checked(root: Path, *args: str):
@@ -43,6 +48,10 @@ def checked(root: Path, *args: str):
 
 
 def main() -> None:
+    # Direct invocation needs the same immediate refusal as the make target.
+    preflight = run(ROOT, "bash", "scripts/candidate-docker-gate.sh", "--check-disk")
+    if preflight.returncode:
+        raise SystemExit(preflight.stdout + preflight.stderr)
     evidence = Path(tempfile.mkdtemp(prefix="aweb-ledger-evidence.")).resolve()
     print(f"Ledger integration evidence: {evidence}", flush=True)
     with tempfile.TemporaryDirectory(prefix="aweb-ledger-proof.") as temporary:

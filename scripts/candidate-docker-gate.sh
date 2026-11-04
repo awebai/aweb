@@ -10,6 +10,7 @@ refuse() { printf 'candidate gate refused: %s\n' "$*" >&2; exit 2; }
 # container. Desktop's Linux DockerRootDir lives inside its sparse disk image.
 # Keep the critical floor free after this gate's measured peak allocation.
 wait_for_disk() {
+  local mode="${1:-wait}"
   local floor="${AWEB_GATE_MIN_FREE_GB:-50}" reserve="${AWEB_GATE_RESERVE_GB:-30}" path available
   [[ "$floor" =~ ^[0-9]+$ ]] || refuse "AWEB_GATE_MIN_FREE_GB must be a nonnegative integer"
   [[ "$reserve" =~ ^[0-9]+$ ]] || refuse "AWEB_GATE_RESERVE_GB must be a nonnegative integer"
@@ -36,13 +37,23 @@ PY
     if awk -v free="$available" -v floor="$floor" -v reserve="$reserve" 'BEGIN {exit !(free >= (floor + reserve) * 1024 * 1024)}'; then
       return
     fi
+    if [[ "$mode" == check ]]; then
+      refuse "$(awk -v free="$available" -v floor="$floor" -v reserve="$reserve" -v path="$path" \
+        'BEGIN {printf "Docker data volume %s has %.1f GiB free; need %.0f GiB (%s critical + %s gate reserve). Free space before retrying.", path, free / 1024 / 1024, floor + reserve, floor, reserve}')"
+    fi
     awk -v free="$available" -v floor="$floor" -v reserve="$reserve" -v path="$path" \
       'BEGIN {printf "candidate gate waiting: Docker data volume %s has %.1f GiB free; need %.0f GiB (%s critical + %s gate reserve); retrying in 60s\n", path, free / 1024 / 1024, floor + reserve, floor, reserve}'
     sleep 60
   done
 }
 
-# The make prerequisites use the same wait before their own Docker tests.
+# Release prerequisites refuse immediately rather than timing out inside a
+# nested self-test. Direct gates retain their operator-visible waiting mode.
+if [[ "${1:-}" == --check-disk && "$#" == 1 ]]; then
+  wait_for_disk check
+  exit 0
+fi
+# The direct waiting probe uses the same floor and measurement.
 if [[ "${1:-}" == --wait-for-disk && "$#" == 1 ]]; then
   wait_for_disk
   exit 0

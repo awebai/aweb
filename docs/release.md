@@ -158,7 +158,16 @@ are `AWEB_GATE_MIN_FREE_GB=50` and `AWEB_GATE_RESERVE_GB=30`, requiring 80 GiB
 free. The reserve covers the measured 20–28 GB peak of the private builder cache,
 tool/suite images, workspace and runner; it is separate from the critical floor.
 Both settings accept nonnegative integer GiB values, including a smaller reserve
-for a deliberately smaller fixture. The same check serves make prerequisites.
+for a deliberately smaller fixture. Before any self-test or Docker test,
+`make release-candidate` and `make candidate-gate` check this floor once and
+refuse with the measured free space and required floor when it is not met.
+They do not spend the ledger self-test's 900-second timeout waiting for disk.
+The direct gate retains its minute-by-minute wait; `--check-disk` performs the
+one-shot preflight. The ledger fixture clears inherited make control variables
+for its nested commands so its pinned fixture versions cannot be overridden.
+Both `make release-candidate CLI_VERSION=... STAGE_AW_FINAL=1 TAGS='...'` and
+`CLI_VERSION=... STAGE_AW_FINAL=1 make release-candidate TAGS='...'` are supported;
+these values still govern the real candidate, not the self-test's ledger key.
 This is startup headroom, not a disk quota or a shared admission lock. Concurrent
 gates remain possible; their operator must leave capacity for all outstanding
 gate budgets before starting another run.
@@ -221,6 +230,28 @@ Each tag starts only its owning thin publisher. Publishers rebuild or stage the
 exact tagged source, publish or adopt exact bytes, verify registry readback,
 and stop. They do not run product suites, move a branch, infer changed
 artifacts, create another aweb tag, or contact AC.
+
+Npm readback allows **25 minutes** after publishing or adopting exact staged
+bytes: registry propagation has taken about 19 minutes, so the window includes
+six minutes of margin. Missing metadata, a stale dist-tag, or an unavailable
+registry remains uncertain until the deadline; none permits another publish.
+A package identity, integrity or tarball mismatch refuses immediately. Success
+requires the staged bytes, SHA-512 integrity and intended `next` or `latest` tag.
+
+Both the aw distribution workflow and runnerless aw publisher pack each of
+the six platform packages and the wrapper once, publish or adopt those exact
+archives, and then verify all seven with one shared 25-minute readback deadline. The verifier lives at
+`cli/go/npm/readback.py`; the other npm lanes call it through
+`scripts/npm-exact-publish.sh verify-published-bounded`. The aw release workflow
+is maintained at `cli/go/.github/workflows/release.yml` and copied into
+`awebai/aw` by the existing source sync. Both npm publishing workflows allow
+60 minutes for build, publication and readback. A successful publish command
+alone is not a successful release.
+
+Publisher subprocesses disable npm's update notifier, including build, pack,
+publish and promotion commands. Release registry traffic must not depend on
+whether npm's unrelated self-update check is due in the operator's cache.
+
 
 The Claude marketplace does not duplicate channel or skills versions. Its npm
 sources omit `version`, so Claude resolves npm's public `latest`; the packaged

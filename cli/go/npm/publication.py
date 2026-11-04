@@ -7,6 +7,7 @@ import base64
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -42,8 +43,13 @@ def channel(version: str, *, staged_final: bool = False,
     return "next" if staged_final or "-rc." in version else "latest"
 
 
+def npm_environment() -> dict[str, str]:
+    # Promotion reads and tag writes must not query npm's own update metadata.
+    return dict(os.environ, NPM_CONFIG_UPDATE_NOTIFIER="false", npm_config_update_notifier="false")
+
+
 def npm_json(*args: str):
-    return json.loads(subprocess.check_output(["npm", *args, "--json"], text=True))
+    return json.loads(subprocess.check_output(["npm", *args, "--json"], text=True, env=npm_environment()))
 
 
 def verify_package(name: str, version: str) -> None:
@@ -82,7 +88,7 @@ def promote_latest(version: str) -> None:
         verify_package("@awebai/" + package, version)
     for package in PACKAGES:
         name = "@awebai/" + package
-        subprocess.run(["npm", "dist-tag", "add", name + "@" + version, "latest"], check=True)
+        subprocess.run(["npm", "dist-tag", "add", name + "@" + version, "latest"], check=True, env=npm_environment())
         if npm_json("view", name, "dist-tags.latest") != version:
             raise ValueError(f"latest read-back mismatch: {name}@{version}")
         print(f"PROMOTED: {name}@{version} -> latest", flush=True)

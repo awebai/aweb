@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack, contextmanager
 import hashlib
 import json
 import os
@@ -59,13 +60,17 @@ def run(
     input_text: str | None = None,
     timeout: int = 7200,
 ) -> str:
+    # npm's background self-update lookup is not part of publication. Cover
+    # direct build commands and nested scripts, regardless of caller config.
+    environment = dict(os.environ if env is None else env)
+    environment.update(NPM_CONFIG_UPDATE_NOTIFIER="false", npm_config_update_notifier="false")
     completed = subprocess.run(
         argv,
         cwd=root,
         text=True,
         input=input_text,
         capture_output=capture,
-        env=env,
+        env=environment,
         timeout=timeout,
         check=False,
     )
@@ -246,7 +251,9 @@ def require_pi_aw_floor(root: Path, timeout_seconds: float = 180) -> str:
         time.sleep(6)
 
 
-def npm_publish_exact(root: Path, directory: str, package: str, profile: str, version: str, *, staged_final: bool = False) -> None:
+@contextmanager
+def _npm_publish_staged(root: Path, directory: str, package: str, profile: str, version: str, *, staged_final: bool = False):
+    """Publish/adopt once; keep the exact archive alive until readback finishes."""
     token = os.environ.get("NODE_AUTH_TOKEN", "").strip() or os.environ.get("NPM_TOKEN", "").strip()
     if not token:
         raise PublishRefusal("NODE_AUTH_TOKEN or NPM_TOKEN is required")
@@ -306,6 +313,12 @@ def npm_publish_exact(root: Path, directory: str, package: str, profile: str, ve
             )
         else:
             raise PublishRefusal(f"npm registry returned unexpected HTTP {status}")
+        yield archive, action, environment
+
+
+def npm_publish_exact(root: Path, directory: str, package: str, profile: str, version: str, *, staged_final: bool = False) -> None:
+    with _npm_publish_staged(root, directory, package, profile, version, staged_final=staged_final) as staged:
+        archive, action, environment = staged
         run(
             root,
             "bash",
@@ -319,6 +332,8 @@ def npm_publish_exact(root: Path, directory: str, package: str, profile: str, ve
             version,
             "--post-action",
             action,
+            "--dist-tag",
+            "next" if staged_final or "-" in version else "latest",
             env=environment,
         )
 
@@ -391,14 +406,23 @@ def publish_aw_npm(root: Path, version: str, source_sha: str, *, staged_final: b
         name: version for name in sorted(value.get("optionalDependencies", {}))
     }
     main_manifest.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
-    for package_dir in [item[0] for item in packages.values()] + ["aw"]:
-        npm_publish_exact(
-            root,
-            str(Path("cli/go/npm") / package_dir),
-            "@awebai/" + package_dir,
-            "",
-            version,
-            staged_final=staged_final,
+    # Hold all seven once-staged archives through one verifier invocation.
+    # Publishing/adopting never becomes a retry action on readback uncertainty.
+    with ExitStack() as staging:
+        artifacts = []
+        for package_dir in [item[0] for item in packages.values()] + ["aw"]:
+            package = "@awebai/" + package_dir
+            archive, _, environment = staging.enter_context(_npm_publish_staged(
+                root, str(Path("cli/go/npm") / package_dir), package, "", version,
+                staged_final=staged_final,
+            ))
+            artifacts.extend(("--artifact", f"{package}={archive}"))
+        run(
+            root, "python3", str(npm_root / "readback.py"), *artifacts,
+            "--version", version,
+            "--dist-tag", "next" if staged_final or "-" in version else "latest",
+            "--registry", environment.get("NPM_CONFIG_REGISTRY", "https://registry.npmjs.org"),
+            env=environment,
         )
     print("npm CLI packages published; hosted binary release assets can be resumed later")
 
