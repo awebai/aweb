@@ -555,8 +555,10 @@ test-naapp-e2e:
 	$(MAKE) -C cli/go build
 	uv run --no-project python scripts/test_naapp_e2e.py
 
-test-candidate-ledger: test-naapp-e2e
-	bash scripts/candidate-docker-gate.sh --wait-for-disk
+test-candidate-ledger:
+	bash scripts/candidate-docker-gate.sh --check-disk
+	$(MAKE) test-naapp-e2e
+	python3 scripts/test_candidate_make_environment.py
 	python3 scripts/test_candidate_gate_ledger.py
 
 _candidate-unit-suites:

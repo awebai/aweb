@@ -1,6 +1,6 @@
 {
   "name": "@awebai/claude-skills",
-  "version": "0.2.16",
+  "version": "0.2.17",
   "description": "Content-only aweb skills for Claude Code and Pi: coordination, optional task tracking, messaging, membership, bootstrap, and identity.",
   "license": "MIT",
   "homepage": "https://aweb.ai",
