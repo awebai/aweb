@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import json
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -70,6 +70,32 @@ def _decrypt_identity(identity: dict) -> dict:
         "encryption_key_id": identity["encryption_key"]["encryption_key_id"],
         "private_key": identity["private_key"],
     }
+
+
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+@pytest.mark.parametrize("key_owner", ["sender", "recipient"])
+@pytest.mark.parametrize("key_offset_seconds", [0, 1])
+def test_encryption_key_window_is_bound_to_envelope_time(kind, key_owner, key_offset_seconds):
+    created = datetime(2026, 5, 27, 12, 0, 0, tzinfo=timezone.utc)
+    sender, recipient = _identity("alice"), _identity("bob")
+    identity = sender if key_owner == "sender" else recipient
+    _, public_key = generate_x25519_keypair()
+    identity["encryption_key"] = build_encryption_key_assertion(
+        signing_key=identity["signing_key"], identity_did=identity["did"],
+        identity_stable_id=identity["stable_id"], encryption_public_key=public_key,
+        custody="self", now=created + timedelta(seconds=key_offset_seconds),
+    )
+    encrypt = encrypt_e2ee_mail if kind == "mail" else encrypt_e2ee_chat
+    kwargs = dict(
+        sender=sender, recipients=[_recipient(recipient)], body="strict key window",
+        message_id="00000000-0000-0000-0000-000000000001",
+        conversation_id="00000000-0000-0000-0000-000000000002", created_at=created,
+    )
+    if key_offset_seconds:
+        with pytest.raises(ValueError, match="^created_at must not be in the future$"):
+            encrypt(**kwargs)
+    else:
+        assert encrypt(**kwargs)["created_at"] == "2026-05-27T12:00:00Z"
 
 
 def test_python_decrypts_go_encrypted_v2_fixture():
