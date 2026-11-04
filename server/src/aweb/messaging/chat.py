@@ -77,14 +77,14 @@ def _participant_did(row: dict[str, Any]) -> str:
     return (row.get("did") or row.get("did_aw") or row.get("did_key") or "").strip()
 
 
-async def record_chat_session_wakes(aweb_db, *, session_id: UUID, except_did: str | None = None) -> None:
+async def record_chat_session_wakes(aweb_db, *, session_id: UUID) -> None:
     """Record a chat wake for each participant of a session (departed ones too:
     leaving does not end their pending state)."""
     rows = await aweb_db.fetch_all(
         "SELECT did FROM {{tables.chat_participants}} WHERE session_id = $1",
         session_id,
     )
-    record_did_wakes((row["did"] for row in rows if row["did"] != except_did), "chat")
+    record_did_wakes((row["did"] for row in rows), "chat")
 
 
 async def wake_chat_session_participants(aweb_db, publisher, *, session_id: UUID) -> None:
@@ -473,8 +473,9 @@ async def send_in_session(
     sender_agent_uuid = _uuid_or_none(sender_agent_id) or participant.get("agent_id")
     encrypted_metadata = encrypted_metadata or {}
 
-    # The message and the sender's read receipt for it commit together.
-    msg_row = await aweb_db.fetch_one(
+    # One statement inserts the message and the sender's read receipt for it,
+    # and names the participants to wake.
+    inserted = await aweb_db.fetch_one(
         """
         WITH message AS (
             INSERT INTO {{tables.chat_messages}}
@@ -499,7 +500,12 @@ async def send_in_session(
             WHERE {{tables.chat_read_receipts}}.last_read_at IS NULL
                OR EXCLUDED.last_read_at > {{tables.chat_read_receipts}}.last_read_at
         )
-        SELECT message_id, created_at FROM message
+        SELECT message.message_id, message.created_at,
+               ARRAY(
+                   SELECT p.did FROM {{tables.chat_participants}} p
+                   WHERE p.session_id = $2 AND p.did <> $4
+               ) AS wake_dids
+        FROM message
         """,
         effective_message_id,
         session_id,
@@ -528,8 +534,10 @@ async def send_in_session(
         effective_created_at,
         json.dumps(id_chain) if id_chain is not None else None,
     )
+    msg_row = {"message_id": inserted["message_id"], "created_at": inserted["created_at"]}
 
-    await record_chat_session_wakes(aweb_db, session_id=session_id, except_did=participant["did"])
+    # Departed participants are woken too: leaving does not end their pending state.
+    record_did_wakes(inserted["wake_dids"] or (), "chat")
 
     return dict(msg_row)
 
