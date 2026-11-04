@@ -487,9 +487,9 @@ func (c *Client) e2eeChatRecipientsForSession(ctx context.Context, sessionID str
 }
 
 // addressedSessionParticipant resolves the other participant of a one-to-one
-// session through its address, when the session lists one. It is that
-// participant only if the address resolves to the session's did:key; an
-// address now held by another identity is not used.
+// session through its address or team alias, when the session lists one. It is
+// that participant only if resolution matches the session's did:key; a name
+// now held by another identity cannot replace the participant.
 func (c *Client) addressedSessionParticipant(ctx context.Context, sessionID string) (E2EERecipientKey, bool, error) {
 	resp, err := c.ChatListSessions(ctx)
 	if err != nil {
@@ -500,7 +500,23 @@ func (c *Client) addressedSessionParticipant(ctx context.Context, sessionID stri
 			continue
 		}
 		otherDIDs, otherAddresses := OtherConversationParticipants(session.ParticipantDIDs, session.ParticipantAddresses, c.stableID, c.did, c.address)
-		if len(otherDIDs) != 1 || len(otherAddresses) != 1 || !isLocalDIDKey(otherDIDs[0]) || !strings.Contains(otherAddresses[0], "/") {
+		if len(otherDIDs) != 1 || len(otherAddresses) != 1 || !isLocalDIDKey(otherDIDs[0]) {
+			return E2EERecipientKey{}, false, nil
+		}
+		aliases, _, addresses := classifyE2EEChatTargets(otherAddresses[0])
+		if len(aliases) == 1 {
+			// Use the same verified roster lookup as an alias-addressed send.
+			// A missing or invalid roster key must not fall back to history.
+			recipients, err := c.e2eeChatRecipients(ctx, aliases, nil, nil)
+			if err != nil {
+				return E2EERecipientKey{}, false, err
+			}
+			if strings.TrimSpace(recipients[0].DID) != strings.TrimSpace(otherDIDs[0]) {
+				return E2EERecipientKey{}, false, errNoPublishedEncryptionKey
+			}
+			return recipients[0], true, nil
+		}
+		if len(addresses) != 1 {
 			return E2EERecipientKey{}, false, nil
 		}
 		identity, err := c.ResolveIdentity(ctx, otherAddresses[0])
