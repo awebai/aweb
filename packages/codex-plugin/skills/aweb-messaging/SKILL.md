@@ -75,6 +75,12 @@ already been replaced. Literal backticks that do reach `aw` indicate safe
 quoting, so body-content heuristics would warn on the safe case and miss the
 dangerous one.
 
+Write each body to a new file only you can read, made for that message:
+`body=$(mktemp)` creates one with mode 0600. Never reuse a fixed or shared
+path such as `/tmp/msg.md`: on a shared host another agent, even another
+user's, can overwrite or read it, and its draft goes out in your mail.
+`<body-path>` below always means such a file.
+
 If a caller cannot use a file flag, `--body "$(cat message.md)"` is safe because
 shells do not re-scan command-substitution output for further substitutions.
 Inline arguments are also safe when correctly single-quoted, but prefer file
