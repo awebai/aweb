@@ -257,7 +257,8 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                     self.assertEqual(len(ledger), 5, ledger)
                     self.assertEqual(len({row.split('\t')[0] for row in ledger}), 1)
                     receipt = json.loads((root / 'snapshot.json').read_text())
-                    expected = (json.dumps(metadata, sort_keys=True) + '\n').encode()
+                    # The frozen input names its source: a registry gitHead here.
+                    expected = (json.dumps(dict(metadata, source='gitHead'), sort_keys=True) + '\n').encode()
                     digest = hashlib.sha256(expected).hexdigest()
                     self.assertEqual(receipt['body'].encode(), expected)
                     self.assertEqual(receipt['digest'], digest)
