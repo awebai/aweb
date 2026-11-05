@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Annotated
 
 from aweb_naapp.css import font_bytes
+from aweb_naapp.identity_assets import mount_identity_routes
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from pgdbm import AsyncDatabaseManager
@@ -85,6 +86,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await database.disconnect()
 
     app = FastAPI(title="library", version="0.1.0", lifespan=lifespan)
+    mount_identity_routes(app)
 
     def db() -> AsyncDatabaseManager:
         database = holder.get("db")

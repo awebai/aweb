@@ -13,6 +13,7 @@ from importlib.resources import files
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+from aweb_naapp.css import FONT_NAMES, font_bytes
 from aweb_naapp.pages import validate_page
 from aweb_naapp.pages.gallery_decisions import (
     additions as decision_additions,
@@ -396,6 +397,8 @@ class Handler(BaseHTTPRequestHandler):
             if url.path == "/api/page" and query.get("case") == ["unsupported"]:
                 page["page_format"] = "aweb.page/2"
             body, content_type = json.dumps(page, ensure_ascii=False).encode(), "application/json"
+        elif url.path.removeprefix("/fonts/") in FONT_NAMES:
+            body, content_type = font_bytes(url.path.removeprefix("/fonts/")), "font/woff2"
         elif url.path == "/assets/gallery.js":
             body, content_type = (
                 files("aweb_naapp.pages").joinpath("assets/gallery-entry.js").read_bytes(),

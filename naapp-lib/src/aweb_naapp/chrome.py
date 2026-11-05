@@ -8,8 +8,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from html import escape
+from importlib.resources import files
 
 from aweb_naapp.css import CSS_SHA256
+from aweb_naapp.identity_assets import ASSET_PREFIX
 
 COPY_BTN = (
     '<button class="copy-btn" type="button" aria-label="Copy command">'
@@ -141,7 +143,8 @@ class SiteConfig:
     # header and an "open source, MIT-licensed" line in the footer.
     source_url: str | None = None
     # The social-card image path (1200x630), served by the app. When set, it is
-    # the og:image / twitter:image for link previews (WhatsApp, Slack, X, etc.).
+    # the og:image / twitter:image for link previews. With no override, the
+    # toolkit provides its coherent public default card.
     og_image: str | None = None
 
     @property
@@ -192,14 +195,17 @@ def render_head(site: SiteConfig) -> str:
     # URL. The app serves /css/aweb.<hash>.css (and the legacy /css/aweb.css).
     css_href = f"/css/aweb.{CSS_SHA256[:12]}.css"
     og_image = ""
-    if site.og_image:
-        img = f"{origin}{escape(site.og_image, quote=True)}"
+    if site.og_image or site.brand:
+        image_path = site.og_image or f"{ASSET_PREFIX}/aweb-card.png"
+        img = f"{origin}{escape(image_path, quote=True)}"
         og_image = (
             f'\n  <meta property="og:image" content="{img}">'
+            '\n  <meta property="og:image:type" content="image/png">'
             '\n  <meta property="og:image:width" content="1200">'
             '\n  <meta property="og:image:height" content="630">'
             f'\n  <meta property="og:image:alt" content="{title}">'
             f'\n  <meta name="twitter:image" content="{img}">'
+            f'\n  <meta name="twitter:image:alt" content="{title}">'
         )
     return f"""<head>
   <meta charset="utf-8">
@@ -207,8 +213,11 @@ def render_head(site: SiteConfig) -> str:
   <title>{escape(site.title)}</title>
   <meta name="description" content="{desc}">
   <link rel="canonical" href="{origin}/">
-  <meta name="theme-color" content="#faf7f2" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#0b0a09" media="(prefers-color-scheme: dark)">
+  <link rel="icon" type="image/svg+xml" href="{ASSET_PREFIX}/favicon.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="{ASSET_PREFIX}/icon-32.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="{ASSET_PREFIX}/icon-180.png">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#17191c" media="(prefers-color-scheme: dark)">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="{escape(site.brand, quote=True)}">
   <meta property="og:title" content="{title}">
@@ -224,7 +233,7 @@ def render_head(site: SiteConfig) -> str:
 
 
 def render_header(site: SiteConfig) -> str:
-    # aweb / awid nav links carry the brand-word (accent wordmark), like the
+    # aweb / awid nav links carry the monochrome brand-word, like the
     # wordmarks in body copy; other nav links use the plain nav style.
     nav = "\n".join(
         f'        <a href="{link.href}"'
@@ -243,7 +252,7 @@ def render_header(site: SiteConfig) -> str:
     )
     return f"""  <header class="site-header">
     <div class="wrap">
-      <a class="brand" href="/"><span class="dot"></span>{site.brand}</a>
+      <a class="brand" href="/"><svg class="brand-mark" viewBox="0 0 48 64" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="5.5"><path stroke="var(--brand-amber)" d="M13 3 C12 17 21 22 43 22"/><path d="M3 32 H43"/><path d="M7 61 C16 47 25 42 43 42"/></g></svg>{site.brand}</a>
       <nav class="nav-links">
 {nav}
       </nav>
@@ -282,7 +291,7 @@ def render_footer(site: SiteConfig) -> str:
     <div class="wrap">
       <div class="footer-cols">
         <div class="footer-brand">
-          <a class="brand" href="/"><span class="dot"></span>{site.brand}</a>
+          <a class="brand" href="/"><svg class="brand-mark" viewBox="0 0 48 64" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="5.5"><path stroke="var(--brand-amber)" d="M13 3 C12 17 21 22 43 22"/><path d="M3 32 H43"/><path d="M7 61 C16 47 25 42 43 42"/></g></svg>{site.brand}</a>
           <p>{site.footer_blurb}</p>{oss}
         </div>
 {cols}
@@ -311,3 +320,10 @@ def page(site: SiteConfig, body_html: str) -> str:
 {render_scripts()}
 </body>
 </html>"""
+
+
+def render_field() -> str:
+    """Static decorative strands for spacious public landing sections."""
+    field = files("aweb_naapp").joinpath("assets/field.svg").read_text(encoding="utf-8")
+    return field.replace('<svg xmlns="http://www.w3.org/2000/svg">',
+        '<svg class="site-field" viewBox="0 0 1800 1800" aria-hidden="true" focusable="false">')

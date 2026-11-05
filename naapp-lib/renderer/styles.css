@@ -1,7 +1,6 @@
-/* Colors, radii and type sizes use the shared Paper/Clay token catalog above.
+/* Colors, radii and type sizes use the shared identity token catalog above.
    Hosts override tokens; they never patch widget CSS. */
 :root {
-  color-scheme: light dark;
   font-family: var(--font-sans);
   color: var(--ink);
   background: var(--bg);

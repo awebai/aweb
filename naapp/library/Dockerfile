@@ -36,7 +36,6 @@ COPY naapp/library/pyproject.toml naapp/library/uv.lock naapp/library/README.md 
 RUN uv sync --frozen --no-install-project --no-dev
 COPY naapp/library/src ./src
 COPY naapp/library/skills ./skills
-COPY naapp/library/site/static ./site/static
 RUN uv sync --frozen --no-dev
 
 RUN useradd --create-home --shell /usr/sbin/nologin library

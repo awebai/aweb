@@ -51,6 +51,7 @@ from starlette.routing import BaseRoute, Host, Mount
 from aweb_naapp.css import aweb_css, font_bytes
 from aweb_naapp.hooks.producer import HookProducer
 from aweb_naapp.hooks.resolver import TeamServerRegistrations
+from aweb_naapp.identity_assets import mount_identity_routes
 from aweb_naapp.manifest import (
     CATALOG_PATH,
     LEGACY_MANIFEST_PATH,
@@ -704,6 +705,7 @@ def mount_naapp_routes(
     health routes check the runtime's dependencies plus the app's own
     ``health_checks``.
     """
+    mount_identity_routes(app)
     settings = runtime.settings
     noindex_prefixes = tuple(noindex_paths)
 

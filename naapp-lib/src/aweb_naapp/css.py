@@ -1,8 +1,8 @@
 """Two-layer CSS bundle for Native Agentic App surfaces.
 
 Layer 1 is ``assets/aweb.css``: the shared aweb design system, vendored
-byte-for-byte from the design system's source stylesheet and checked by its own
-hash.
+with its own content hash. The approved identity is mapped into these existing
+base styles.
 
 Layer 2 is ``assets/naapp-components.css``: selectors emitted only by the
 ``aweb-naapp`` chrome/reference renderers. Apps serve the concatenated bundle at
@@ -29,10 +29,9 @@ def font_bytes(name: str) -> bytes | None:
     return (_ASSETS_DIR / "fonts" / name).read_bytes()
 
 
-# Hash of layer 1 only: the vendored design-system stylesheet at
-# src/aweb_naapp/assets/aweb.css. This must stay byte-identical to the design
-# system's source stylesheet and is intentionally separate from CSS_SHA256.
-VENDORED_AWEB_CSS_SHA256 = "1a529122adb1641f6029db84eaf791616c1c4b8ba505ae42fb0426490af9895c"
+# Hash of layer 1 only: the shared design-system stylesheet at
+# src/aweb_naapp/assets/aweb.css. Its hash is intentionally separate from CSS_SHA256.
+VENDORED_AWEB_CSS_SHA256 = "f37adec4e7dd53472bafb4eae981ab4001964f8b5540e392e66c1a377c5d6fef"
 
 
 @lru_cache(maxsize=1)

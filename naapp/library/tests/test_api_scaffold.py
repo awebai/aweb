@@ -82,9 +82,9 @@ def test_aweb_css_served_verbatim() -> None:
     assert "text/css" in response.headers["content-type"]
     # Byte-for-byte the aweb design system the toolkit ships (its own sha pin).
     assert hashlib.sha256(response.content).hexdigest() == CSS_SHA256
-    assert "--accent: #cf4a26;" in response.text  # redesigned light palette
-    assert "--bg: #0b0a09;" in response.text  # warm-charcoal dark palette
-    assert "--accent: #ff6a2c;" in response.text  # orange dark-mode accent
+    assert "--accent: #2342e8;" in response.text  # redesigned light palette
+    assert "--bg: #17191c;" in response.text  # carbon dark palette
+    assert "--accent: #a5b5ff;" in response.text  # blue dark-mode action
 
 
 def test_og_card_and_fingerprinted_css_served() -> None:

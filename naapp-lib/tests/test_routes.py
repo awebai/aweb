@@ -358,3 +358,24 @@ def test_the_catalog_and_its_variant_are_fixed_at_startup(tmp_path: Path) -> Non
     assert client.get("/.well-known/aweb-app-versions.json").content == catalog
     assert select_variant(_HOSTED, (2,), _fetch(client)).data == variant.data
     assert client.get("/aweb-app.json").content == variant.data
+
+
+def test_packaged_identity_assets_have_real_image_bytes_and_dimensions(tmp_path: Path) -> None:
+    import struct
+
+    client = _client(tmp_path)
+    svg = client.get('/brand/field-v1/favicon.svg')
+    assert svg.status_code == 200
+    assert svg.headers['content-type'].startswith('image/svg+xml')
+    assert '<svg' in svg.text
+    for name, size in [('icon-32.png', (32, 32)), ('icon-180.png', (180, 180)),
+                       ('aweb-card.png', (1200, 630)), ('folio-card.png', (1200, 630)),
+                       ('library-card.png', (1200, 630))]:
+        response = client.get('/brand/field-v1/' + name)
+        assert response.status_code == 200
+        assert response.headers['content-type'] == 'image/png'
+        assert response.content[:8] == b'\x89PNG\r\n\x1a\n'
+        assert struct.unpack('>II', response.content[16:24]) == size
+        assert 'immutable' in response.headers['cache-control']
+    assert client.get('/brand/field-v1/missing.png').status_code == 404
+    assert client.get('/brand/field-v1/..%2Fcss.py').status_code == 404
