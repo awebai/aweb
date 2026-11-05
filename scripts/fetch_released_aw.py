@@ -74,17 +74,62 @@ def download(url):
     return body
 
 
-def latest_metadata(registry='https://registry.npmjs.org'):
+AW_DISTRIBUTION = 'https://github.com/awebai/aw'
+
+
+def _ls_remote(url, ref):
+    return subprocess.run(['git', 'ls-remote', url, ref], capture_output=True, text=True,
+                          timeout=30, check=True).stdout
+
+
+def aw_tag_commit(version, ls_remote=_ls_remote):
+    """The commit of the awebai/aw release tag, for a release npm recorded no gitHead for."""
+    if not re.fullmatch(r'\d+\.\d+\.\d+', version):
+        raise ValueError('an aw tag source needs an exact final version')
+    ref = f'refs/tags/v{version}^{{}}'
+    lines = ls_remote(AW_DISTRIBUTION, ref).splitlines()
+    if len(lines) != 1:
+        raise ValueError(f'expected exactly one {ref} in {AW_DISTRIBUTION}, found {len(lines)}')
+    commit, _, listed = lines[0].partition('\t')
+    if listed != ref or not re.fullmatch(r'[0-9a-f]{40}', commit):
+        raise ValueError(f'malformed {ref} listing from {AW_DISTRIBUTION}')
+    return commit
+
+
+def latest_metadata(registry='https://registry.npmjs.org', resolve_tag=aw_tag_commit):
     metadata = json.loads(download(registry + '/@awebai%2faw/latest'))
     if metadata.get('name') != '@awebai/aw' or not re.fullmatch(r'\d+\.\d+\.\d+', metadata.get('version', '')):
         raise ValueError('npm latest must name an exact final aw package')
-    return {key: metadata[key] for key in ('name', 'version', 'gitHead', 'dist')}
+    latest = {key: metadata[key] for key in ('name', 'version', 'dist')}
+    # npm records gitHead only when a directory is published; a tarball
+    # publish (aw 1.36.55) records none, and its source comes from the tag.
+    if 'gitHead' in metadata:
+        latest.update(gitHead=metadata['gitHead'], source='gitHead')
+    else:
+        latest.update(source='aw-tag', sourceCommit=resolve_tag(latest['version']))
+    return latest
 
 
-def freeze_latest(directory, registry='https://registry.npmjs.org'):
+def wrapper_source(wrapper, resolve_tag):
+    """The wrapper's source kind and commit; a present gitHead always decides."""
+    if 'gitHead' in wrapper:
+        if wrapper.get('source', 'gitHead') != 'gitHead' or 'sourceCommit' in wrapper:
+            raise ValueError('a gitHead source cannot also name another source')
+        if not isinstance(wrapper['gitHead'], str) or not re.fullmatch(r'[0-9a-f]{40}', wrapper['gitHead']):
+            raise ValueError('missing immutable package source gitHead')
+        return 'gitHead', wrapper['gitHead']
+    if wrapper.get('source') not in (None, 'aw-tag'):
+        raise ValueError('unknown aw package source')
+    commit = wrapper.get('sourceCommit') or resolve_tag(wrapper['version'])
+    if not re.fullmatch(r'[0-9a-f]{40}', commit):
+        raise ValueError('aw tag source commit is not a full commit')
+    return 'aw-tag', commit
+
+
+def freeze_latest(directory, registry='https://registry.npmjs.org', resolve_tag=aw_tag_commit):
     # Concurrent gate invocations can observe different latest versions. A
     # shared mutable filename would let one replace the other's ledger input.
-    body = (json.dumps(latest_metadata(registry), sort_keys=True) + '\n').encode()
+    body = (json.dumps(latest_metadata(registry, resolve_tag), sort_keys=True) + '\n').encode()
     directory.mkdir(parents=True, exist_ok=True)
     destination = directory / ('released-aw-' + hashlib.sha256(body).hexdigest() + '.json')
     descriptor, temporary = tempfile.mkstemp(prefix='.released-aw-', dir=directory)
@@ -97,21 +142,25 @@ def freeze_latest(directory, registry='https://registry.npmjs.org'):
     return destination
 
 
-def fetch(destination, registry='https://registry.npmjs.org', metadata=None):
+def fetch(destination, registry='https://registry.npmjs.org', metadata=None, resolve_tag=aw_tag_commit):
     destination.mkdir(parents=True, exist_ok=False)
     selected = platform_package()
-    wrapper = metadata if metadata is not None else latest_metadata(registry)
+    wrapper = metadata if metadata is not None else latest_metadata(registry, resolve_tag)
     version = wrapper.get('version', '')
     if not re.fullmatch(r'\d+\.\d+\.\d+', version):
         raise ValueError('npm latest must name an exact final aw version')
+    source, commit = wrapper_source(wrapper, resolve_tag)
     records = []
     for name, metadata in [('aw', wrapper), (selected, None)]:
         metadata = metadata or json.loads(download(f'{registry}/@awebai%2f{name}/{version}'))
         if metadata.get('name') != '@awebai/' + name or metadata.get('version') != version:
             raise ValueError('registry package name/version mismatch')
-        if not re.fullmatch(r'[0-9a-f]{40}', metadata.get('gitHead', '')):
+        if source == 'aw-tag':
+            if 'gitHead' in metadata:
+                raise ValueError('gitHead is absent on only some packages of this release')
+        elif not re.fullmatch(r'[0-9a-f]{40}', metadata.get('gitHead', '')):
             raise ValueError('missing immutable package source gitHead')
-        if metadata['gitHead'] != wrapper.get('gitHead'):
+        elif metadata['gitHead'] != commit:
             raise ValueError('wrapper/platform source gitHead mismatch')
         dist = metadata['dist']
         body = download(dist['tarball'])
@@ -130,9 +179,9 @@ def fetch(destination, registry='https://registry.npmjs.org', metadata=None):
                             env=dict(os.environ, AW_NO_UPDATE_CHECK='1'), check=True)
     if not re.search(r'^aw ' + re.escape(version) + r'\s*$', result.stdout, re.M):
         raise ValueError('downloaded aw version output mismatch')
-    if not re.search(r'^\s*commit: ' + re.escape(wrapper['gitHead']) + r'(?:\s|$)', result.stdout, re.M):
+    if not re.search(r'^\s*commit: ' + re.escape(commit) + r'(?:\s|$)', result.stdout, re.M):
         raise ValueError('downloaded aw source stamp mismatch')
-    evidence = dict(version=version, platform=selected, binary=str(binary.resolve()),
+    evidence = dict(version=version, platform=selected, source=source, sourceCommit=commit, binary=str(binary.resolve()),
                     binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
                     version_output=result.stdout, packages=records)
     (destination / 'provenance.json').write_text(json.dumps(evidence, indent=2) + '\n')

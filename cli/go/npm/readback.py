@@ -32,7 +32,7 @@ class Artifact:
     path: Path
 
 
-def verify(artifacts, version, *, dist_tag=None, registry="https://registry.npmjs.org",
+def verify(artifacts, version, *, dist_tag=None, git_head=None, registry="https://registry.npmjs.org",
            deadline_seconds=DEFAULT_DEADLINE_SECONDS, backoff_seconds=5,
            clock=time.monotonic, sleep=time.sleep):
     if deadline_seconds <= 0 or backoff_seconds < 0:
@@ -84,6 +84,10 @@ def verify(artifacts, version, *, dist_tag=None, registry="https://registry.npmj
                 metadata = document(url + "/" + urllib.parse.quote(version, safe=""))
                 if metadata.get("name") != package or metadata.get("version") != version:
                     raise ReadbackRefusal(f"permanent package identity mismatch: {package}@{version}")
+                # The registry records gitHead with the version; it never changes afterwards.
+                if git_head and metadata.get("gitHead") != git_head:
+                    raise ReadbackRefusal(f"permanent source gitHead mismatch: {package}@{version} has "
+                                          f"{metadata.get('gitHead') or 'none'}, expected {git_head}")
                 dist = metadata.get("dist") or {}
                 if not isinstance(dist, dict):
                     raise Pending("registry distribution metadata unavailable")
@@ -121,6 +125,7 @@ def main():
     parser.add_argument("--artifact", action="append", required=True, metavar="PACKAGE=TGZ")
     parser.add_argument("--version", required=True)
     parser.add_argument("--dist-tag")
+    parser.add_argument("--git-head", help="source commit every package version must record")
     parser.add_argument("--registry", default="https://registry.npmjs.org")
     parser.add_argument("--deadline-seconds", type=int, default=DEFAULT_DEADLINE_SECONDS)
     parser.add_argument("--backoff-seconds", type=int, default=5)
@@ -132,7 +137,7 @@ def main():
             if not separator or not package or not path:
                 raise ValueError("artifact must be PACKAGE=TGZ")
             artifacts.append(Artifact(package, Path(path)))
-        verify(artifacts, args.version, dist_tag=args.dist_tag, registry=args.registry,
+        verify(artifacts, args.version, dist_tag=args.dist_tag, git_head=args.git_head, registry=args.registry,
                deadline_seconds=args.deadline_seconds, backoff_seconds=args.backoff_seconds)
     except (OSError, ValueError, ReadbackRefusal) as exc:
         print(f"REFUSE: {exc}", file=sys.stderr)

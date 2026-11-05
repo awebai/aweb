@@ -29,6 +29,13 @@ else
   exit 2
 fi
 DIST_TAG="$(python3 "$SCRIPT_DIR/publication.py" channel "${channel_args[@]}")"
+# goreleaser stamps the binaries with this checkout's commit. npm records no
+# gitHead for a published tarball, so each manifest carries it explicitly.
+SOURCE_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+if [[ ! "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "Error: cannot read the source commit of $REPO_ROOT" >&2
+  exit 1
+fi
 
 echo "Publishing aw v${VERSION} to npm..."
 
@@ -76,6 +83,19 @@ done
 main_pkg="$SCRIPT_DIR/aw/package.json"
 sed -i "s/\"@awebai\/aw-\([^\"]*\)\": \"[^\"]*\"/\"@awebai\/aw-\1\": \"$VERSION\"/" "$main_pkg"
 
+echo "  Recording source commit $SOURCE_COMMIT in all packages..."
+for pkg_dir in aw aw-linux-x64 aw-linux-arm64 aw-darwin-x64 aw-darwin-arm64 aw-windows-x64 aw-windows-arm64; do
+  python3 - "$SCRIPT_DIR/$pkg_dir/package.json" "$SOURCE_COMMIT" <<'PY'
+import json, sys
+path, commit = sys.argv[1], sys.argv[2]
+with open(path) as handle:
+    manifest = json.load(handle)
+manifest["gitHead"] = commit
+with open(path, "w") as handle:
+    handle.write(json.dumps(manifest, indent=2) + "\n")
+PY
+done
+
 # Pack once, then publish and verify those exact bytes. The platform packages
 # precede the wrapper, while one shared deadline covers readback of all seven.
 staging="$(mktemp -d)"
@@ -91,5 +111,5 @@ for pkg_dir in aw-linux-x64 aw-linux-arm64 aw-darwin-x64 aw-darwin-arm64 aw-wind
   readback+=(--artifact "@awebai/$pkg_dir=$archive")
 done
 python3 "$SCRIPT_DIR/readback.py" "${readback[@]}" --version "$VERSION" \
-  --dist-tag "$DIST_TAG" --registry "${NPM_CONFIG_REGISTRY:-https://registry.npmjs.org}"
+  --dist-tag "$DIST_TAG" --git-head "$SOURCE_COMMIT" --registry "${NPM_CONFIG_REGISTRY:-https://registry.npmjs.org}"
 echo "Done! All seven packages verified at version $VERSION on $DIST_TAG."
