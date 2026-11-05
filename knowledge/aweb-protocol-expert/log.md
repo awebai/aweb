@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-05
+* **Harvest**: OKF proposal from seat aweb-protocol-expert-db-access with one backing note.
+* **Creation**: lesson [statement-count gates must not count connection-scope parking](/aweb-protocol-expert/lessons/statement-count-gates-must-not-count-connection-parking.md), with its elimination route: move the pin or the reset exclusion into the shared statement counter.
+
 ## 2026-10-29
 * **Harvest**: manual harvest of seat aweb-protocol-expert-acmj-binding from its proposal and three backing notes, task aweb-acmj.19. Public contract decisions and rejected alternatives are retained; application implementation details and mail receipts are omitted.
 * **Creation**: decision [owner binding needs independent authorities](/aweb-protocol-expert/decisions/owner-binding-needs-independent-authorities.md); lessons [local stop is not new binding authority](/aweb-protocol-expert/lessons/local-stop-is-not-new-binding-authority.md) and [frozen vectors need a real consumer](/aweb-protocol-expert/lessons/frozen-vectors-need-a-real-consumer.md).
