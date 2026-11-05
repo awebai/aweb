@@ -14,6 +14,7 @@ from contextlib import suppress
 
 import anyio
 import pytest
+import pytest_asyncio
 from redis.asyncio import Redis
 from redis.asyncio.client import PubSub
 from redis.exceptions import ConnectionError as RedisConnectionError
@@ -21,6 +22,7 @@ from starlette.requests import Request
 
 from aweb.events import stream_events_multi
 from aweb.routes.dashboard import _sse_dashboard_events
+from test_dashboard_privacy import privacy_app  # noqa: F401
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 CYCLES = 10
@@ -32,13 +34,13 @@ def held(redis: Redis) -> int:
 
 async def settled(redis: Redis, expected: int, timeout: float = 2.0) -> int:
     """The held count once async finalizers have run, or the last count seen."""
-    async with anyio.move_on_after(timeout):
+    with anyio.move_on_after(timeout):
         while held(redis) != expected:
             await asyncio.sleep(0.01)
     return held(redis)
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def redis():
     async with Redis.from_url(REDIS_URL, decode_responses=True) as client:
         await client.ping()
@@ -171,3 +173,71 @@ async def test_open_subscription_owns_its_connection_until_it_returns(redis, aft
         await release_subscription(pubsub, "lease-ownership-channel")
     assert held(redis) == 0
     await release_subscription(None)
+
+
+@pytest.mark.asyncio
+async def test_a_chat_stream_whose_subscribe_fails_after_connect_returns_its_connection(privacy_app, after_connect):
+    from test_agent_activity_http import _session, _stream
+
+    env = privacy_app
+    session_id = await _session(env, "alice", "bob")
+    baseline = await settled(env.redis, 0)
+    failures = []
+
+    async def fail():
+        failures.append(1)
+        raise RedisConnectionError("subscribe failed after the connection was checked out")
+
+    after_connect["action"] = fail
+    # The stream falls back to database polling and retries its subscription until the deadline.
+    async with _stream(env, "bob", session_id, seconds=2) as response:
+        assert response.status_code == 200
+        async for _ in response.aiter_lines():
+            pass
+    after_connect["action"] = None
+    assert failures
+    assert await settled(env.redis, baseline) == baseline
+
+
+@pytest.mark.asyncio
+async def test_a_subscription_whose_disconnect_fails_still_returns_its_connection(redis, monkeypatch, caplog):
+    from redis.asyncio.connection import Connection
+
+    from aweb.redis_subscriptions import open_subscription, release_subscription
+
+    pubsub = await open_subscription(redis, "lease-ownership-channel")
+    assert held(redis) == 1
+
+    async def disconnect(self, *args, **kwargs):
+        raise TimeoutError("Timed out closing connection")
+
+    monkeypatch.setattr(Connection, "disconnect", disconnect)
+    with caplog.at_level("WARNING", logger="aweb.redis_subscriptions"):
+        await release_subscription(pubsub, "lease-ownership-channel")
+    assert held(redis) == 0
+    assert [r.getMessage() for r in caplog.records] == ["Redis pubsub close failed; returning its connection"]
+
+
+@pytest.mark.asyncio
+async def test_a_release_cancelled_by_asyncio_still_returns_its_connection(redis, monkeypatch):
+    from redis.asyncio.connection import Connection
+
+    from aweb.redis_subscriptions import open_subscription, release_subscription
+
+    pubsub = await open_subscription(redis, "lease-ownership-channel")
+    original = Connection.disconnect
+    disconnecting = asyncio.Event()
+
+    async def slow(self, *args, **kwargs):
+        disconnecting.set()
+        await asyncio.sleep(0.2)
+        return await original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Connection, "disconnect", slow)
+    releasing = asyncio.create_task(release_subscription(pubsub, "lease-ownership-channel"))
+    await disconnecting.wait()
+    # A plain task cancellation, outside any AnyIO cancel scope.
+    releasing.cancel()
+    with suppress(asyncio.CancelledError):
+        await releasing
+    assert await settled(redis, 0) == 0
