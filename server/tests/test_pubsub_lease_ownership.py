@@ -205,17 +205,29 @@ async def test_a_subscription_whose_disconnect_fails_still_returns_its_connectio
 
     from aweb.redis_subscriptions import open_subscription, release_subscription
 
-    pubsub = await open_subscription(redis, "lease-ownership-channel")
+    channel = "lease-ownership-disconnect-failure"
+    pubsub = await open_subscription(redis, channel)
     assert held(redis) == 1
+    original = Connection.disconnect
 
     async def disconnect(self, *args, **kwargs):
+        # As when wait_closed times out: the socket is closed, then the timeout raises.
+        await original(self, *args, **kwargs)
         raise TimeoutError("Timed out closing connection")
 
     monkeypatch.setattr(Connection, "disconnect", disconnect)
     with caplog.at_level("WARNING", logger="aweb.redis_subscriptions"):
-        await release_subscription(pubsub, "lease-ownership-channel")
+        await release_subscription(pubsub, channel)
+    monkeypatch.setattr(Connection, "disconnect", original)
     assert held(redis) == 0
     assert [r.getMessage() for r in caplog.records] == ["Redis pubsub close failed; returning its connection"]
+
+    # The returned connection is reused and reconnects. The released PubSub, still
+    # alive here, must not resubscribe through it or check out another connection.
+    assert await redis.ping()
+    assert await settled(redis, 0) == 0
+    assert dict(await redis.pubsub_numsub(channel))[channel] == 0
+    assert pubsub.channels == {}
 
 
 @pytest.mark.asyncio

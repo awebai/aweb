@@ -11,6 +11,7 @@ close it. Every stream that subscribes opens and releases through this module.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 
 import anyio
@@ -69,5 +70,12 @@ async def _close(pubsub: PubSub) -> None:
         # A PubSub whose constructor failed has no connection attribute.
         connection = getattr(pubsub, "connection", None)
         if connection is not None:
+            # aclose stopped before forgetting the subscription. Do it here, or the
+            # connection's next reconnect would resubscribe this PubSub through a
+            # newly checked-out connection.
+            with contextlib.suppress(ValueError):
+                connection.deregister_connect_callback(pubsub.on_connect)
+            pubsub.channels = {}
+            pubsub.patterns = {}
             pubsub.connection = None
             await pubsub.connection_pool.release(connection)
