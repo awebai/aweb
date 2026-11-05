@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from pydantic_settings import SettingsConfigDict
 
 from aweb_naapp import CSS_SHA256, aweb_css
-from aweb_naapp.css import FONT_NAMES
+from aweb_naapp.css import FONT_NAMES, font_bytes
 from aweb_naapp.manifest import (
     ManifestError,
     canonical_bytes,
@@ -122,7 +122,7 @@ def test_og_card_is_the_app_card(tmp_path: Path) -> None:
     assert response.content == _OG_CARD
 
 
-def test_the_stylesheet_fonts_are_served_from_the_app_directory(tmp_path: Path) -> None:
+def test_the_stylesheet_fonts_are_packaged_with_the_toolkit(tmp_path: Path) -> None:
     client = _client(tmp_path)
     for name in FONT_NAMES:
         response = client.get(f"/fonts/{name}")
@@ -130,7 +130,8 @@ def test_the_stylesheet_fonts_are_served_from_the_app_directory(tmp_path: Path) 
         assert response.headers["content-type"] == "font/woff2"
         assert response.headers["x-content-type-options"] == "nosniff"
         assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
-        assert response.content == _font_bytes(name)
+        assert response.content == font_bytes(name)
+        assert response.content.startswith(b"wOF2")
 
 
 def test_only_the_stylesheet_fonts_are_served(tmp_path: Path) -> None:
@@ -145,15 +146,12 @@ def test_the_fonts_are_the_ones_the_stylesheet_loads() -> None:
     assert loaded == set(FONT_NAMES)
 
 
-def test_a_fonts_directory_missing_a_stylesheet_font_is_refused(tmp_path: Path) -> None:
-    missing = sorted(FONT_NAMES)[0]
-    fonts_dir = tmp_path / "partial-fonts"
-    fonts_dir.mkdir()
+def test_fonts_do_not_require_app_copies(tmp_path: Path) -> None:
+    client = _client(tmp_path, fonts_dir=tmp_path / "absent")
+    assert FONT_NAMES == {"Archivo-Latin-Variable.woff2"}
     for name in FONT_NAMES:
-        if name != missing:
-            (fonts_dir / name).write_bytes(_font_bytes(name))
-    with pytest.raises(FileNotFoundError, match=missing):
-        _client(tmp_path, fonts_dir=fonts_dir)
+        assert client.get(f"/fonts/{name}").content == font_bytes(name)
+    assert client.get("/fonts/BerkeleyMono-Regular.woff2").status_code == 404
 
 
 def test_manifest_is_the_committed_bytes_at_both_paths(tmp_path: Path) -> None:

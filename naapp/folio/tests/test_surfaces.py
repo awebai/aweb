@@ -187,8 +187,8 @@ def test_seo_meta_social_card_and_design_assets() -> None:
 
     css = client.get("/css/aweb.css")
     assert css.status_code == 200
-    assert '/fonts/BerkeleyMono-Regular.woff2' in css.text
-    font = client.get("/fonts/BerkeleyMono-Regular.woff2")
+    assert '/fonts/Archivo-Latin-Variable.woff2' in css.text
+    font = client.get("/fonts/Archivo-Latin-Variable.woff2")
     assert font.status_code == 200
     assert font.headers["content-type"] == "font/woff2"
     assert font.headers["cache-control"] == "public, max-age=31536000, immutable"

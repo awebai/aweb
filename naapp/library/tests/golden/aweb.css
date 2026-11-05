@@ -1,39 +1,23 @@
 /* ============================================================
    aweb design system — Paper/Clay, light + dark.
-   Type: Berkeley Mono (display + record/identity artifacts),
-   system sans (body). One web font, preloaded, mono fallback —
-   so headings never reflow when the face swaps in.
+   Type: self-hosted OFL Archivo; system monospace for machine text.
    ============================================================ */
 
 @font-face {
-  font-family: "Berkeley Mono";
-  font-weight: 300;
+  font-family: Archivo;
+  font-weight: 400 900;
+  font-stretch: 75% 125%;
   font-style: normal;
   font-display: swap;
-  src: url("/fonts/BerkeleyMono-Light.woff2") format("woff2");
-}
-@font-face {
-  font-family: "Berkeley Mono";
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-  src: url("/fonts/BerkeleyMono-Regular.woff2") format("woff2");
-}
-@font-face {
-  font-family: "Berkeley Mono";
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
-  src: url("/fonts/BerkeleyMono-SemiBold.woff2") format("woff2");
+  src: url("/fonts/Archivo-Latin-Variable.woff2") format("woff2");
 }
 
 :root {
   /* body stays system sans for fast, legible long-form reading */
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  /* Berkeley Mono carries the brand: headlines + every id/address/event.
-     ui-monospace fallback keeps advance width identical, so no swap jump. */
-  --font-display: "Berkeley Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  --font-mono: "Berkeley Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  /* System monospace for code, commands and identifiers. */
+  --font-display: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
 
   /* fluid type scale */
   --step--1: clamp(0.82rem, 0.8rem + 0.1vw, 0.875rem);
@@ -140,7 +124,7 @@ body {
   text-rendering: optimizeLegibility;
 }
 /* Headings: long statements (h1/h2) read in sans; short labels (h3/h4)
-   stay in Berkeley Mono where the machine voice looks sharp. */
+   stay in system monospace where the machine voice looks sharp. */
 h1, h2, h3, h4 { margin: 0; line-height: 1.12; }
 h1, h2 { font-family: var(--font-sans); font-weight: 680; letter-spacing: -0.025em; }
 h3, h4 { font-family: var(--font-display); font-weight: 600; letter-spacing: -0.015em; }
@@ -721,7 +705,7 @@ img { max-width: 100%; display: block; }
 }
 
 /* ============================================================
-   Homepage 2026-06 — why → how → start, Berkeley Mono identity
+   Homepage 2026-06 — why → how → start, system monospace identity
    ============================================================ */
 
 /* hero: copy left, live record right */

@@ -1,10 +1,9 @@
 :root {
   /* body stays system sans for fast, legible long-form reading */
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  /* Berkeley Mono carries the brand: headlines + every id/address/event.
-     ui-monospace fallback keeps advance width identical, so no swap jump. */
-  --font-display: "Berkeley Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  --font-mono: "Berkeley Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  /* System monospace for code, commands and identifiers. */
+  --font-display: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
 
   /* fluid type scale */
   --step--1: clamp(0.82rem, 0.8rem + 0.1vw, 0.875rem);

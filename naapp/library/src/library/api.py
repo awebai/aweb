@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
+from aweb_naapp.css import font_bytes
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from pgdbm import AsyncDatabaseManager
@@ -60,15 +61,6 @@ from library.surfaces import (
 )
 
 _OG_CARD_BYTES = (Path(__file__).resolve().parent / "assets" / "og-card.png").read_bytes()
-_FONTS_DIR = Path(__file__).resolve().parents[2] / "site" / "static" / "fonts"
-_FONT_FILES = {
-    name: _FONTS_DIR / name
-    for name in (
-        "BerkeleyMono-Light.woff2",
-        "BerkeleyMono-Regular.woff2",
-        "BerkeleyMono-SemiBold.woff2",
-    )
-}
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -160,11 +152,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/fonts/{font_name}")
     async def font_route(font_name: str) -> Response:
-        path = _FONT_FILES.get(font_name)
-        if path is None or not path.is_file():
+        font = font_bytes(font_name)
+        if font is None:
             raise HTTPException(status_code=404, detail="Font not found")
         return Response(
-            content=path.read_bytes(),
+            content=font,
             media_type="font/woff2",
             headers={
                 "X-Content-Type-Options": "nosniff",
