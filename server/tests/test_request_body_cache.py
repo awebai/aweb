@@ -130,3 +130,96 @@ def test_create_app_keeps_no_base_http_middleware():
     app = create_app()
     assert RequestBodyCacheMiddleware in [entry.cls for entry in app.user_middleware]
     assert not [entry.cls for entry in app.user_middleware if entry.cls is BaseHTTPMiddleware]
+
+
+async def _run(middleware, scope, chunks):
+    """Drive one request through the middleware; report what the app saw and what was read."""
+    seen, sent, read = [], [], []
+
+    async def receive():
+        message = next(chunks)
+        read.append(len(message.get("body", b"")))
+        return message
+
+    async def send(message):
+        sent.append(message)
+
+    await middleware({"type": "http", "method": "POST", "headers": [], **scope}, receive, send)
+    return seen, sent, read
+
+
+def _recording_app(seen):
+    async def app(scope, receive, send):
+        seen.append(len(scope["state"]["cached_body"]))
+        await send({"type": "http.response.start", "status": 204, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    return app
+
+
+def _status(sent):
+    return next(m["status"] for m in sent if m["type"] == "http.response.start")
+
+
+@pytest.mark.asyncio
+async def test_a_body_at_the_cap_is_cached_and_one_byte_more_is_refused():
+    cap = 4096
+    seen = []
+    middleware = RequestBodyCacheMiddleware(_recording_app(seen), max_body_bytes=cap)
+
+    at_cap = iter([{"type": "http.request", "body": b"x" * cap, "more_body": False}])
+    _, sent, _ = await _run(middleware, {}, at_cap)
+    assert seen == [cap] and _status(sent) == 204
+
+    over = iter([{"type": "http.request", "body": b"x" * cap, "more_body": True},
+                 {"type": "http.request", "body": b"y", "more_body": False}])
+    _, sent, _ = await _run(middleware, {}, over)
+    assert seen == [cap], "the app must not run for an oversized body"
+    assert _status(sent) == 413
+
+
+@pytest.mark.asyncio
+async def test_an_endless_body_is_refused_without_reading_past_the_cap():
+    cap, chunk = 64 * 1024, 1024
+
+    def endless():
+        while True:
+            yield {"type": "http.request", "body": b"z" * chunk, "more_body": True}
+
+    seen = []
+    _, sent, read = await _run(RequestBodyCacheMiddleware(_recording_app(seen), max_body_bytes=cap), {}, endless())
+    assert _status(sent) == 413 and seen == []
+    assert sum(read) <= cap + chunk, sum(read)
+
+
+@pytest.mark.asyncio
+async def test_a_declared_oversized_body_is_refused_before_any_read():
+    seen = []
+    scope = {"headers": [(b"content-length", b"4097")]}
+    _, sent, read = await _run(RequestBodyCacheMiddleware(_recording_app(seen), max_body_bytes=4096), scope, iter([]))
+    assert read == [] and seen == [] and _status(sent) == 413
+
+
+def test_the_default_cap_admits_the_largest_released_client_body():
+    # aw sends --body-file bodies up to 10 MiB; encrypted, base64 makes that about 13.4 MiB.
+    from aweb.api import DEFAULT_MAX_REQUEST_BODY_BYTES
+
+    assert DEFAULT_MAX_REQUEST_BODY_BYTES == 16 * 1024 * 1024
+    assert DEFAULT_MAX_REQUEST_BODY_BYTES > (10 * 1024 * 1024) * 4 // 3
+
+
+@pytest.mark.asyncio
+async def test_create_app_takes_its_cap_from_the_environment(monkeypatch):
+    monkeypatch.setenv("AWEB_MAX_REQUEST_BODY_BYTES", "1024")
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/v1/messages", content=b"x" * 2048, headers={"content-type": "application/json"})
+    assert response.status_code == 413
+    assert response.json() == {"detail": "Request body too large"}
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "lots"])
+def test_an_invalid_cap_refuses_to_start(monkeypatch, value):
+    monkeypatch.setenv("AWEB_MAX_REQUEST_BODY_BYTES", value)
+    with pytest.raises(ValueError, match="AWEB_MAX_REQUEST_BODY_BYTES"):
+        create_app()

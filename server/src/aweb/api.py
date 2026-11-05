@@ -85,18 +85,47 @@ def _cached_body_receive(body: bytes):
     return _receive
 
 
+# Above the largest body a released client sends: aw reads a --body-file
+# of up to 10 MiB, which end-to-end encryption carries as about 13.4 MiB of
+# base64. Every route's tighter bound still applies on top of this one.
+DEFAULT_MAX_REQUEST_BODY_BYTES = 16 * 1024 * 1024
+
+
+def _max_request_body_bytes() -> int:
+    """The deployment's request-body cap, from AWEB_MAX_REQUEST_BODY_BYTES."""
+    raw = os.getenv("AWEB_MAX_REQUEST_BODY_BYTES")
+    if raw is None:
+        return DEFAULT_MAX_REQUEST_BODY_BYTES
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value < 1:
+        raise ValueError("AWEB_MAX_REQUEST_BODY_BYTES must be a positive whole number of bytes")
+    return value
+
+
 class RequestBodyCacheMiddleware:
     """Cache each HTTP request's body and its SHA-256 for signature verification.
 
     Sets ``request.state.cached_body`` and ``request.state.body_sha256``. A
     GET, HEAD or OPTIONS request has an empty body and keeps its receive. Any
     other request is read whole before the app runs and replayed to it, so
-    FastAPI still parses it. Pure ASGI: unlike a BaseHTTPMiddleware, it holds
-    no tasks of its own for a long-lived streaming response.
+    FastAPI still parses it. A body over ``max_body_bytes`` is refused with
+    413 as soon as it is declared or read past the cap, before the app runs,
+    so no request buffers more than the cap. Pure ASGI: unlike a
+    BaseHTTPMiddleware, it holds no tasks of its own for a long-lived
+    streaming response.
     """
 
-    def __init__(self, app) -> None:
+    def __init__(self, app, *, max_body_bytes: int = DEFAULT_MAX_REQUEST_BODY_BYTES) -> None:
+        if max_body_bytes < 1:
+            raise ValueError("max_body_bytes must be positive")
         self.app = app
+        self.max_body_bytes = max_body_bytes
+
+    async def _refuse(self, scope, receive, send) -> None:
+        await JSONResponse({"detail": "Request body too large"}, status_code=413)(scope, receive, send)
 
     async def __call__(self, scope, receive, send) -> None:
         if scope["type"] != "http":
@@ -108,12 +137,21 @@ class RequestBodyCacheMiddleware:
             state["body_sha256"] = hashlib.sha256(b"").hexdigest()
             await self.app(scope, receive, send)
             return
-        chunks = []
+        declared = next((value for name, value in scope.get("headers", []) if name.lower() == b"content-length"), None)
+        if declared is not None and declared.isdigit() and int(declared) > self.max_body_bytes:
+            await self._refuse(scope, receive, send)
+            return
+        chunks, received = [], 0
         while True:
             message = await receive()
             if message["type"] == "http.disconnect":
                 return  # The client left before sending its body; nobody to answer.
-            chunks.append(message.get("body", b""))
+            chunk = message.get("body", b"")
+            received += len(chunk)
+            if received > self.max_body_bytes:
+                await self._refuse(scope, receive, send)
+                return
+            chunks.append(chunk)
             if not message.get("more_body", False):
                 break
         body = b"".join(chunks)
@@ -427,7 +465,7 @@ def create_app(
     app.include_router(attachment_router)
     app.add_middleware(NormalizeMountedMCPPathMiddleware, mount_path="/mcp")
 
-    app.add_middleware(RequestBodyCacheMiddleware)
+    app.add_middleware(RequestBodyCacheMiddleware, max_body_bytes=_max_request_body_bytes())
 
     @app.exception_handler(RequestValidationError)
     async def _request_validation_error_handler(
