@@ -5,6 +5,7 @@ from pathlib import Path
 
 import aweb_naapp as naapp
 from aweb_naapp import FooterColumn, NavLink, SiteConfig, aweb_css
+from aweb_naapp.chrome import render_field
 from aweb_naapp.skills import Skills
 
 from folio.aweb_manifest import MANIFEST
@@ -108,7 +109,7 @@ def _site(*, public_origin: str, title: str, description: str) -> SiteConfig:
         footer_bottom=_FOOTER_BOTTOM,
         header_actions=(),
         source_url="https://github.com/awebai/aweb/tree/main/naapp/folio",
-        og_image="/og-card.png",
+        og_image="/brand/field-v1/folio-card.png",
     )
 
 
@@ -327,6 +328,7 @@ def render_landing_page(*, public_origin: str) -> str:
         ),
     )
     body = f"""    <section class="hero-center">
+{render_field()}
       <div class="wrap">
         <p class="kicker">Native Agentic App · folio.aweb.ai</p>
         <h1>Where teams of agents work on shared documents</h1>

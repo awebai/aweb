@@ -20,6 +20,40 @@ from test_present_privacy import mint, present_world
 __all__ = ["present_world"]
 
 
+async def test_editor_controls_reflow_and_remain_keyboard_accessible(present_world):
+    app, _, _ = present_world
+    link = await mint(present_world)
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        origin = f"http://127.0.0.1:{listener.getsockname()[1]}"
+        server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_config=None, ws="none"))
+        serving = asyncio.create_task(server.serve(sockets=[listener]))
+        try:
+            async with asyncio.timeout(10):
+                while not server.started:
+                    await asyncio.sleep(0.01)
+            async with async_playwright() as playwright:
+                browser = await playwright.chromium.launch(channel="chrome")
+                page = await browser.new_page(color_scheme="dark")
+                await page.goto(origin + urlsplit(link["url"]).path + "#" + urlsplit(link["url"]).fragment)
+                for width in (320, 768):
+                    await page.set_viewport_size({"width": width, "height": 900})
+                    assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                    editor = page.get_by_role("textbox", name="Write", exact=True)
+                    await expect(editor).to_be_editable()
+                    await editor.fill("Keyboard draft")
+                    await page.locator("#discard").focus()
+                    await page.keyboard.press("Enter")
+                    await expect(page.locator("#discard-dialog")).to_be_visible()
+                    await page.keyboard.press("Escape")
+                    await expect(editor).to_have_value("Keyboard draft")
+                await browser.close()
+        finally:
+            server.should_exit = True
+            await serving
+
+
 @pytest.mark.parametrize("failure", ["membership", "revoked"])
 async def test_unavailable_save_preserves_copyable_draft_and_reopen_path(present_world, failure):
     app, db, _ = present_world

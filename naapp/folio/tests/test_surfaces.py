@@ -178,7 +178,7 @@ def test_seo_meta_social_card_and_design_assets() -> None:
     assert '<link rel="canonical" href="https://folio.aweb.ai/">' in text
     assert '<meta property="og:title"' in text
     assert '<meta name="twitter:card" content="summary_large_image">' in text
-    assert '<meta property="og:image" content="https://folio.aweb.ai/og-card.png">' in text
+    assert '<meta property="og:image" content="https://folio.aweb.ai/brand/field-v1/folio-card.png">' in text
     # The social card image is served as a real PNG.
     og = client.get("/og-card.png")
     assert og.status_code == 200

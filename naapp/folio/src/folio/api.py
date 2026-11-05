@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
+from aweb_naapp.identity_assets import identity_asset
 from aweb_naapp.runtime.app import NOINDEX_ROBOTS_HEADER, NaappRuntime, mount_naapp_routes
 from aweb_naapp.runtime.authorization import Authorization
 from aweb_naapp.runtime.installation import InstallationRefused, apply_installation_migrations
@@ -76,7 +77,9 @@ from folio.surfaces import (
 from folio.templates import render_declarative_template
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
-_OG_CARD_BYTES = (_PACKAGE_DIR / "assets" / "og-card.png").read_bytes()
+_OG_CARD = identity_asset("folio-card.png")
+assert _OG_CARD is not None
+_OG_CARD_BYTES = _OG_CARD[0]
 _FONTS_DIR = _PACKAGE_DIR / "fonts"
 _MIGRATIONS_DIR = _PACKAGE_DIR / "migrations"
 # Present links and asset URLs are user content: crawlers skip them and every
