@@ -37,6 +37,7 @@ from aweb.awid_error_handling import (
 from aweb.config import get_public_origin
 from aweb.deps import get_db, get_redis
 from aweb.events import chat_session_channel_name, publish_chat_session_signal
+from aweb.redis_subscriptions import open_subscription, release_subscription
 from aweb.messaging.encryption_custody import require_non_custodial_recipients
 from aweb.e2ee_messages import (
     E2EEEnvelopeError,
@@ -2201,16 +2202,7 @@ async def mark_read(
 
 
 async def _close_session_pubsub(pubsub: PubSub | None, channel: str) -> None:
-    if pubsub is None:
-        return
-    try:
-        await pubsub.unsubscribe(channel)
-    except Exception:
-        pass
-    try:
-        await pubsub.aclose()
-    except Exception:
-        pass
+    await release_subscription(pubsub, channel)
 
 
 async def _sse_events(
@@ -2325,9 +2317,7 @@ async def _sse_events(
         contact_addrs = await get_contact_addresses(db, owner_dids=contact_owner_dids)
 
         async def _connect_pubsub() -> PubSub:
-            ps: PubSub = redis.pubsub()
-            await ps.subscribe(channel)
-            return ps
+            return await open_subscription(redis, channel)
 
         if redis is not None:
             try:
