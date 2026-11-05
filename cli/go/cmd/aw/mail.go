@@ -348,7 +348,7 @@ var mailReplyCmd = &cobra.Command{
 			return networkError(err, messageID)
 		}
 		if len(inbox.Messages) == 0 {
-			return fmt.Errorf("mail message not found: %s", messageID)
+			return mailReplySourceMissingError(ctx, c, messageID)
 		}
 		encryptReply := mailReplyE2EE
 		if !cmd.Flags().Changed("e2ee") && !mailReplyPlaintext && !mailReplyLegacyPlaintext {
@@ -979,6 +979,27 @@ func init() {
 
 // replySubject is the subject of a reply: the explicit one when given,
 // otherwise "Re: <original>", never prefixed twice.
+// mailReplySourceMissingError explains a reply source absent from the inbox.
+// An exact read sees messages the caller sent as well as received, so a hit
+// there is the caller's own message: reply answers received mail only, and a
+// sent message's conversation is continued with mail send.
+func mailReplySourceMissingError(ctx context.Context, c *aweb.Client, messageID string) error {
+	notFound := fmt.Errorf("mail message not found: %s", messageID)
+	exact, err := c.Message(ctx, messageID)
+	if err != nil {
+		debugLog("exact read of reply source %s: %v", messageID, err)
+		return notFound
+	}
+	if len(exact.Messages) == 0 {
+		return notFound
+	}
+	conversationID := strings.TrimSpace(exact.Messages[0].ConversationID)
+	if conversationID == "" {
+		return fmt.Errorf("message %s is one you sent, and legacy mail without a conversation; send a new message instead", messageID)
+	}
+	return usageError("message %s is one you sent; aw mail reply answers mail you received. To continue its conversation, run `aw mail send --conversation-id %s --body-file <file>`", messageID, conversationID)
+}
+
 func replySubject(explicit, original string) string {
 	if subject := strings.TrimSpace(explicit); subject != "" {
 		return subject
