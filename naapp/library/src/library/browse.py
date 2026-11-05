@@ -1,6 +1,6 @@
 """Human-readable browse pages for the public catalog: the blueprint index, a
 blueprint, a profile, and a skill. These render the live catalog view data
-(assembled by the API layer) in the aweb Paper/Clay system via the shared naapp
+(assembled by the API layer) in the shared aweb identity via the shared naapp
 chrome. All browse-specific classes carry the ``browse-`` prefix to stay clear
 of the shared design-system classes (``.roster``/``.tag`` are already taken);
 ``.markdown-body`` is the shared wrapper the markdown renderer emits.
@@ -30,6 +30,7 @@ __all__ = [
 # body like the landing's section styles. Reuses design-system tokens; adds no
 # shared class. Kept as one constant so the four pages share one stylesheet.
 _STYLE = """<style>
+  .browse-hero, .browse-section { overflow-wrap: anywhere; }
   .browse-hero { padding: var(--s7) 0 var(--s5); border-bottom: 1px solid var(--line); }
   .browse-hero .kicker { display: inline-block; margin-bottom: var(--s3); }
   .browse-title { font-size: var(--step-4); line-height: 1.05; margin: 0; letter-spacing: -0.02em; }
@@ -65,7 +66,7 @@ _STYLE = """<style>
 
   .browse-table-scroll { overflow-x: auto; margin: var(--s4) 0 0; border: 1px solid var(--line); border-radius: var(--radius); }
   .browse-roster { width: 100%; border-collapse: collapse; min-width: 640px; background: var(--surface); }
-  .browse-roster th { text-align: left; font: 600 0.7rem/1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em;
+  .browse-roster th { text-align: left; font: 650 var(--step--1)/1.4 var(--font-sans); text-transform: none; letter-spacing: 0;
     color: var(--faint); padding: 0.9rem 1rem; border-bottom: 1px solid var(--line); background: var(--surface-2); }
   .browse-roster td { padding: 0.95rem 1rem; border-bottom: 1px solid var(--line); vertical-align: top; font-size: var(--step-0); }
   .browse-roster tr:last-child td { border-bottom: none; }
@@ -79,7 +80,7 @@ _STYLE = """<style>
   .browse-specs { margin: var(--s4) 0 0; display: grid; grid-template-columns: 1fr 1fr; gap: var(--s4) var(--s6); }
   .browse-specs > div { border-top: 1px solid var(--line-strong); padding-top: var(--s3); }
   .browse-specs > div:first-child { border-top-color: var(--accent); }
-  .browse-specs dt { font: 650 var(--step--1)/1 var(--font-mono); letter-spacing: 0.02em; color: var(--ink); }
+  .browse-specs dt { font: 650 var(--step--1)/1.4 var(--font-sans); letter-spacing: 0; color: var(--ink); }
   .browse-specs dd { margin: var(--s2) 0 0; color: var(--muted); font-size: var(--step-0); }
   .browse-specs dd ul { margin: 0; padding-left: 1.1rem; }
   .browse-specs dd li { margin: 0.15rem 0; }
@@ -90,7 +91,8 @@ _STYLE = """<style>
     border-left: 2px solid var(--accent); border-radius: var(--radius-sm); color: var(--muted); font-size: var(--step-0); }
 
   .browse-skills { list-style: none; margin: var(--s4) 0 0; padding: 0; display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--s3); }
+    grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); gap: var(--s3); }
+  .browse-skills > li, .browse-blueprints > li { min-width: 0; }
   .browse-skill-card { display: block; padding: var(--s4); background: var(--surface); border: 1px solid var(--line);
     border-radius: var(--radius); text-decoration: none; color: inherit; transition: border-color .15s, box-shadow .15s; }
   .browse-skill-card:hover { border-color: var(--line-strong); box-shadow: var(--shadow-lg); }
@@ -103,15 +105,15 @@ _STYLE = """<style>
 
   .browse-frontmatter { margin: var(--s4) 0 0; display: grid; grid-template-columns: max-content 1fr; gap: 0.5rem var(--s3);
     padding: var(--s3) var(--s4); background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); }
-  .browse-frontmatter dt { font: 650 0.72rem/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: 0.04em; color: var(--faint); }
+  .browse-frontmatter dt { font: 650 var(--step--1)/1.4 var(--font-sans); text-transform: none; letter-spacing: 0; color: var(--faint); }
   .browse-frontmatter dd { margin: 0; font-size: var(--step--1); color: var(--muted); }
 
   .markdown-body { max-width: 74ch; margin: 0; color: var(--ink); font-size: var(--step-0); line-height: 1.7; }
   .markdown-body > :first-child { margin-top: 0; }
   .markdown-body h1 { font-size: var(--step-3); margin: var(--s5) 0 var(--s2); }
   .markdown-body h2 { font-size: var(--step-2); margin: var(--s5) 0 var(--s2); padding-top: var(--s3); border-top: 1px solid var(--line); }
-  .markdown-body h3 { font: 600 var(--step-1)/1.2 var(--font-mono); margin: var(--s4) 0 var(--s2); letter-spacing: -0.01em; }
-  .markdown-body h4 { font: 650 var(--step-0)/1.2 var(--font-mono); margin: var(--s4) 0 var(--s1); color: var(--muted); }
+  .markdown-body h3 { font: 650 var(--step-1)/1.2 var(--font-sans); margin: var(--s4) 0 var(--s2); letter-spacing: -0.01em; }
+  .markdown-body h4 { font: 650 var(--step-0)/1.2 var(--font-sans); margin: var(--s4) 0 var(--s1); color: var(--muted); }
   .markdown-body p { margin: var(--s2) 0; }
   .markdown-body ul, .markdown-body ol { margin: var(--s2) 0; padding-left: 1.4rem; }
   .markdown-body li { margin: 0.3rem 0; }
@@ -121,14 +123,14 @@ _STYLE = """<style>
   .markdown-body strong { font-weight: 650; }
   .markdown-body code { font: 500 0.88em/1.4 var(--font-mono); background: var(--surface-2);
     border: 1px solid var(--line); border-radius: 5px; padding: 0.08em 0.34em; }
-  .markdown-body pre { margin: var(--s3) 0; padding: var(--s3); background: var(--surface); border: 1px solid var(--line);
+  .markdown-body pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: var(--s3) 0; padding: var(--s3); background: var(--surface); border: 1px solid var(--line);
     border-radius: var(--radius); overflow-x: auto; }
   .markdown-body pre code { background: none; border: none; padding: 0; font-size: 0.85em; line-height: 1.6; color: var(--ink); }
   .markdown-body blockquote { margin: var(--s3) 0; padding: 0.2rem 0 0.2rem var(--s3); border-left: 2px solid var(--accent); color: var(--muted); }
   .markdown-body hr { border: none; border-top: 1px solid var(--line); margin: var(--s5) 0; }
   .markdown-body table { border-collapse: collapse; margin: var(--s3) 0; font-size: var(--step--1); display: block; overflow-x: auto; }
   .markdown-body th, .markdown-body td { border: 1px solid var(--line); padding: 0.5rem 0.7rem; text-align: left; }
-  .markdown-body th { background: var(--surface-2); font-family: var(--font-mono); }
+  .markdown-body th { background: var(--surface-2); font-family: var(--font-sans); }
 
   .browse-crumbs { font: 500 var(--step--1)/1 var(--font-mono); color: var(--faint); margin: 0 0 var(--s3); }
   .browse-crumbs a { color: var(--muted); text-decoration: none; }
@@ -220,14 +222,14 @@ def render_catalog_page(*, public_origin: str, blueprints: list[dict[str, Any]])
             else ""
         )
         cards.append(
-            f"""      <a class="browse-blueprint-card" href="/blueprints/{_e(ref)}">
+            f"""      <li><a class="browse-blueprint-card" href="/blueprints/{_e(ref)}">
         <div class="browse-blueprint-card__head">
           <h2 class="browse-blueprint-card__title">{_e(name)}</h2>
           {count_html}
         </div>
         <p class="browse-blueprint-card__summary">{_e(summary)}</p>
         {roster_html}
-      </a>"""
+      </a></li>"""
         )
     listing = (
         f'<ul class="browse-blueprints">\n{chr(10).join(cards)}\n        </ul>'
@@ -355,10 +357,10 @@ def render_profile_page(*, public_origin: str, profile: dict[str, Any]) -> str:
 
     skills = profile.get("skills") or []
     skill_cards = "".join(
-        f"""          <a class="browse-skill-card" href="{escape(s.get('href') or _profile_href(ref, pref) + '/skills/' + (s.get('name') or ''), quote=True)}">
+        f"""          <li><a class="browse-skill-card" href="{escape(s.get('href') or _profile_href(ref, pref) + '/skills/' + (s.get('name') or ''), quote=True)}">
             <h3 class="browse-skill-card__name">{_e(s.get('name') or '')}</h3>
             <p class="browse-skill-card__desc">{_e(s.get('description') or '')}</p>
-          </a>"""
+          </a></li>"""
         for s in skills
     )
     skills_section = (

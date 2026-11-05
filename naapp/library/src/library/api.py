@@ -1,11 +1,10 @@
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Annotated
 
 from aweb_naapp.css import font_bytes
-from aweb_naapp.identity_assets import mount_identity_routes
+from aweb_naapp.identity_assets import identity_asset, mount_identity_routes
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from pgdbm import AsyncDatabaseManager
@@ -61,7 +60,9 @@ from library.surfaces import (
     skills_index,
 )
 
-_OG_CARD_BYTES = (Path(__file__).resolve().parent / "assets" / "og-card.png").read_bytes()
+_OG_CARD = identity_asset("library-card.png")
+assert _OG_CARD is not None
+_OG_CARD_BYTES = _OG_CARD[0]
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
