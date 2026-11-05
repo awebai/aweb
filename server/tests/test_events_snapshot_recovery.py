@@ -1,4 +1,8 @@
-"""Inject poll-query faults through the actual SSE generator; no live service."""
+"""Inject snapshot-query faults through the actual SSE generator; no live service.
+
+Without Redis the stream reconciles from Postgres on its reconcile interval;
+the harness sets that interval to one simulated second.
+"""
 import asyncio
 import json
 from collections import deque
@@ -14,8 +18,8 @@ import aweb.routes.events as events
 from aweb.team_auth_deps import TeamIdentity
 
 
-class PollHarness:
-    def __init__(self, monkeypatch, *, target="mail", actions=(), stop_at=50, deadline=120):
+class SnapshotHarness:
+    def __init__(self, monkeypatch, *, target="mail", actions=(), deadline=120):
         self.now = 0.0
         self.actions = deque(actions)
         self.attempts = []
@@ -38,13 +42,14 @@ class PollHarness:
                 return harness.origin + timedelta(seconds=harness.now)
 
         async def sleep(delay):
-            assert delay == 1.0  # Backoff must not delay disconnect/grant checks.
+            # Backoff must not delay deadline or grant checks past a reconcile.
+            assert 0 < delay <= 1.0
             if self.block_backoff and self.failures:
                 self.blocked.set()
                 await self.never.wait()
             self.now += delay
             self.tick_count += 1
-            assert self.tick_count < 150, "poll loop failed to finish"
+            assert self.tick_count < 150, "stream loop failed to finish"
             await asyncio.sleep(0)
 
         async def fetch_all(query, *args):
@@ -84,11 +89,13 @@ class PollHarness:
         manager = SimpleNamespace(fetch_one=AsyncMock(return_value={"did_key": "did:key:test", "did_aw": ""}),
                                   fetch_all=fetch_all, fetch_val=fetch_val)
         db = SimpleNamespace(get_manager=lambda name="aweb": manager)
-        request = SimpleNamespace(is_disconnected=AsyncMock(side_effect=lambda: self.now >= stop_at))
+        request = SimpleNamespace(is_disconnected=AsyncMock(return_value=False))
         self.request = request
         monkeypatch.setattr(events, "datetime", Clock)
         monkeypatch.setattr(events, "monotonic", lambda: self.now)
         monkeypatch.setattr(events, "asyncio", SimpleNamespace(sleep=sleep))
+        monkeypatch.setattr(events, "EVENTS_RECONCILE_INTERVAL", 1.0)
+        monkeypatch.setattr(events, "random", SimpleNamespace(uniform=lambda low, high: high))
         monkeypatch.setattr(events, "_poll_control_signals", AsyncMock(return_value=[]))
         monkeypatch.setattr(events, "current_app_events_for_agent", AsyncMock(return_value=[]))
         self.identity = TeamIdentity(team_id="backend:acme.com", alias="bob", did_key="did:key:test",
@@ -104,7 +111,7 @@ class PollHarness:
         return [frame for _, frame in self.frames]
 
     def assert_logged(self, caplog):
-        failures = [record for record in caplog.records if "event-stream poll error" in record.message]
+        failures = [record for record in caplog.records if "event-stream snapshot error" in record.message]
         assert len(failures) == self.failures
         assert all(record.exc_info for record in failures)
 
@@ -118,8 +125,8 @@ class PollHarness:
     # Exactly 30 seconds since first failure is still recoverable.
     ([("fail", 0), ("fail", 29), ("ok", 0)], [1, 2, 33]),
 ])
-async def test_poll_failures_recover(monkeypatch, caplog, target, actions, expected):
-    h = PollHarness(monkeypatch, target=target, actions=actions)
+async def test_snapshot_failures_recover(monkeypatch, caplog, target, actions, expected):
+    h = SnapshotHarness(monkeypatch, target=target, actions=actions)
     frames = await h.collect()
     assert h.attempts[:len(expected)] == expected
     assert not any(frame.startswith("event: error") for frame in frames)
@@ -131,19 +138,19 @@ async def test_poll_failures_recover(monkeypatch, caplog, target, actions, expec
 
 @pytest.mark.asyncio
 async def test_complete_success_resets_failure_window_and_backoff(monkeypatch, caplog):
-    h = PollHarness(monkeypatch, target="chat", actions=[("fail", 0), ("ok", 0),
+    h = SnapshotHarness(monkeypatch, target="chat", actions=[("fail", 0), ("ok", 0),
                        ("fail", 0), ("fail", 26), ("ok", 0)])
     frames = await h.collect()
     assert h.attempts[:5] == [1, 2, 3, 4, 32]
     assert not any(frame.startswith("event: error") for frame in frames)
-    # Successful mail queries during failed chat polls did not reset the streak.
+    # Successful mail queries during failed chat snapshots did not reset the streak.
     h.assert_logged(caplog)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("target", ["mail", "chat"])
-async def test_sustained_poll_failure_ends_with_existing_error(monkeypatch, caplog, target):
-    h = PollHarness(monkeypatch, target=target, actions=[("fail", 0)] * 20)
+async def test_sustained_snapshot_failure_ends_with_existing_error(monkeypatch, caplog, target):
+    h = SnapshotHarness(monkeypatch, target=target, actions=[("fail", 0)] * 20)
     frames = await h.collect()
     assert h.attempts == [1, 2, 4, 8, 13, 18, 23, 28, 33]
     assert frames[-1] == 'event: error\ndata: {"type": "error", "detail": "poll failure"}\n\n'
@@ -154,8 +161,8 @@ async def test_sustained_poll_failure_ends_with_existing_error(monkeypatch, capl
 @pytest.mark.asyncio
 async def test_backoff_preserves_heartbeat_then_recovers(monkeypatch, caplog):
     # Healthy until t=10, failures t=10..32 (<25s), recovery t=37. Heartbeat
-    # remains due at t=30 even though no complete poll succeeded since t=9.
-    h = PollHarness(monkeypatch, actions=[("quiet", 0)] * 9 + [("fail", 0)] * 7 + [("ok", 0)])
+    # remains due at t=30 even though no complete snapshot succeeded since t=9.
+    h = SnapshotHarness(monkeypatch, actions=[("quiet", 0)] * 9 + [("fail", 0)] * 7 + [("ok", 0)])
     await h.collect()
     heartbeats = [at for at, frame in h.frames if frame == ": keepalive\n\n"]
     assert heartbeats[:2] == [0, 30]
@@ -166,10 +173,9 @@ async def test_backoff_preserves_heartbeat_then_recovers(monkeypatch, caplog):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("boundary", ["disconnect", "deadline", "grant"])
-async def test_backoff_checks_stream_boundaries_every_tick(monkeypatch, caplog, boundary):
-    h = PollHarness(monkeypatch, actions=[("fail", 0)] * 20,
-                    stop_at=3 if boundary == "disconnect" else 50,
+@pytest.mark.parametrize("boundary", ["deadline", "grant"])
+async def test_backoff_checks_stream_boundaries_on_time(monkeypatch, caplog, boundary):
+    h = SnapshotHarness(monkeypatch, actions=[("fail", 0)] * 20,
                     deadline=3 if boundary == "deadline" else 120)
     if boundary == "grant":
         monkeypatch.setattr(events, "grant_expiry_reason", lambda identity: "grant_expired" if h.now >= 3 else None)
@@ -182,9 +188,17 @@ async def test_backoff_checks_stream_boundaries_every_tick(monkeypatch, caplog, 
 
 
 @pytest.mark.asyncio
+async def test_stream_never_probes_for_disconnect(monkeypatch):
+    # A dead peer is found by the failed write of a heartbeat or event.
+    h = SnapshotHarness(monkeypatch, actions=[("quiet", 0)] * 5, deadline=10)
+    await h.collect()
+    h.request.is_disconnected.assert_not_called()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("during", ["query", "backoff"])
-async def test_real_task_cancellation_is_not_a_poll_failure(monkeypatch, caplog, during):
-    h = PollHarness(monkeypatch, actions=[("fail", 0)] * 20)
+async def test_real_task_cancellation_is_not_a_snapshot_failure(monkeypatch, caplog, during):
+    h = SnapshotHarness(monkeypatch, actions=[("fail", 0)] * 20)
     h.block_query = during == "query"
     h.block_backoff = during == "backoff"
     task = asyncio.create_task(h.collect())

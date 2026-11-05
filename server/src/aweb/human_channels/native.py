@@ -21,6 +21,7 @@ from awid.signing import canonical_json_bytes
 from fastapi import HTTPException
 
 from aweb.attachment_service import prepare_attachment_send
+from aweb.db import TransactionInfra
 from aweb.identity_auth_deps import auth_dids, participant_dids
 from aweb.identity_binding import verified_projection
 from aweb.inbound_modes import effective_inbound_mode
@@ -74,14 +75,6 @@ def _auth_binding(auth):
         auth.certificate_id,
         getattr(auth.grant, "grant_id", None) if auth.grant else None,
     )
-
-
-class _TransactionInfra:
-    def __init__(self, original, manager):
-        self.original, self.manager = original, manager
-
-    def get_manager(self, name="aweb"):
-        return self.manager if name == "aweb" else self.original.get_manager(name)
 
 
 @dataclass(frozen=True)
@@ -748,7 +741,7 @@ class NativeMessagingUnitOfWork:
                 if d
             ],
         )
-        db = _TransactionInfra(self.service.db, self.manager)
+        db = TransactionInfra(self.service.db, self.manager)
         await self.service._policy(
             db, self.auth, by_id[str(retained.recipient["agent_id"])]
         )

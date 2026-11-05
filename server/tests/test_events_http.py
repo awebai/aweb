@@ -149,8 +149,9 @@ async def _open_test_event_stream(aweb_db, agent_id, monkeypatch, *, redis=None)
         async def is_disconnected(self):
             return False
 
-    monkeypatch.setattr(events_module, "EVENTS_POLL_INTERVAL", 0.01)
-    monkeypatch.setattr(events_module, "EVENTS_HEARTBEAT_INTERVAL", 0.01)
+    # As in production, a heartbeat is due only after a reconcile had its turn.
+    monkeypatch.setattr(events_module, "EVENTS_RECONCILE_INTERVAL", 0.01)
+    monkeypatch.setattr(events_module, "EVENTS_HEARTBEAT_INTERVAL", 0.05)
     stream = events_module._sse_agent_events(
         request=_ConnectedRequest(),
         db=_DbShim(),
@@ -295,7 +296,7 @@ async def test_events_stream_sends_idle_heartbeats(aweb_cloud_db, monkeypatch):
         bob_did_key,
     )
 
-    monkeypatch.setattr(events_module, "EVENTS_POLL_INTERVAL", 0.01)
+    monkeypatch.setattr(events_module, "EVENTS_RECONCILE_INTERVAL", 0.01)
     monkeypatch.setattr(events_module, "EVENTS_HEARTBEAT_INTERVAL", 0.01)
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)

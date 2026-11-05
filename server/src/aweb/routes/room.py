@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, Depends, Query, Request
 
+from aweb.agent_wake import agent_wake_publisher, agent_wake_scope
 from aweb.deps import get_db
 from aweb.messaging.room import (
     RoomPost,
@@ -62,7 +63,8 @@ async def exact(
 async def post(
     payload: RoomPost, request: Request, db=Depends(get_db), actor=Depends(_post)
 ):
-    output = await post_room_message(
-        db, actor, payload, id_chain=getattr(request.state, "id_chain", None)
-    )
+    with agent_wake_scope(agent_wake_publisher(request.app.state)):
+        output = await post_room_message(
+            db, actor, payload, id_chain=getattr(request.state, "id_chain", None)
+        )
     return await present_room(db, request, output)

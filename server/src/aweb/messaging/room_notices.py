@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from time import monotonic
 from uuid import UUID
 
 from fastapi import HTTPException, Request
@@ -22,6 +23,38 @@ from aweb.team_auth_deps import (
 )
 
 logger = logging.getLogger(__name__)
+
+ROOM_AUTHORITY_MAX_AGE_SECONDS = 60.0
+
+
+class RoomAuthorityUnavailable(Exception):
+    """Current room authority could not be established right now; retry later."""
+
+
+class RoomAuthorityWindow:
+    """Room authority proved for one stream and trusted for 60 s.
+
+    A stream emits room content only while its last successful authority
+    check is younger than the bound; a failed check trusts nothing.
+    """
+
+    def __init__(self) -> None:
+        self._checked_at: float | None = None
+
+    def fresh(self) -> bool:
+        return (
+            self._checked_at is not None
+            and monotonic() - self._checked_at < ROOM_AUTHORITY_MAX_AGE_SECONDS
+        )
+
+    async def ensure(self, request, db, identity) -> None:
+        """Refresh authority unless fresh; raises when current membership refuses."""
+        if self.fresh():
+            return
+        self._checked_at = None
+        started_at = monotonic()
+        await _refresh_room_authority(request, db, identity)
+        self._checked_at = started_at
 
 
 async def _refresh_room_authority(request, db, identity):
@@ -177,7 +210,14 @@ async def ack_room_notice(db, actor, message_id):
     return {"message_id": str(message_id), "status": "acknowledged"}
 
 
-async def current_room_events(request, db, identity):
+async def current_room_events(request, db, identity, authority: RoomAuthorityWindow | None = None):
+    """Pending room notices, after current membership authority admits them.
+
+    With ``authority`` the check is reused while younger than 60 s, and an
+    unavailable authority raises ``RoomAuthorityUnavailable`` so the stream
+    can retry; without it every call re-proves authority and any failure
+    shows nothing.
+    """
     if not grant_has_scope(identity, "chat.read"):
         return []
     # No room activity adds no authority call to an existing mail/chat stream.
@@ -191,9 +231,16 @@ async def current_room_events(request, db, identity):
     if not exists:
         return []
     try:
-        await _refresh_room_authority(request, db, identity)
+        if authority is None:
+            await _refresh_room_authority(request, db, identity)
+        else:
+            await authority.ensure(request, db, identity)
         return (await pending_room_notices(db, identity))["notices"]
-    except (HTTPException, ServiceError):
+    except (HTTPException, ServiceError) as exc:
+        if authority is not None and getattr(exc, "status_code", 500) >= 500:
+            # A dependency outage is not a refusal: nothing is shown now and
+            # the caller retries the same notices once authority answers.
+            raise RoomAuthorityUnavailable(str(getattr(exc, "detail", exc))) from exc
         logger.warning(
             "Room notice snapshot refused by current membership authority",
             exc_info=True,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import ssl
 import tempfile
 from datetime import UTC, datetime, timedelta
@@ -13,6 +14,7 @@ import aweb
 import httpx
 import pytest
 import pytest_asyncio
+from aweb.agent_wake import AgentWakeHub, AgentWakePublisher, did_wake_key
 from aweb.federation.activation import FederationAuthorityActivation
 from aweb.federation.authority import AuthorityClaim, FederationAuthorityCore
 from aweb.federation.authority_state import (
@@ -37,6 +39,7 @@ from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes, sign_message
 from cryptography import x509
 from fastapi import FastAPI
+from redis.asyncio import Redis
 from httpx import ASGITransport, AsyncClient
 from nacl.signing import SigningKey
 from cryptography.hazmat.primitives import hashes, serialization
@@ -1019,17 +1022,31 @@ async def test_http_ingress_uses_production_dns_authority_not_receiver_home_regi
             },
             "signature": sign_message(bytes(sender_key), signed_payload.encode()),
         }
+        # The recipient's stream is woken through the identity the delivery
+        # resolved, published from a reachable Redis after the commit.
+        wake_redis = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True)
+        wake_hub, app.state.agent_wake_publisher = AgentWakeHub(wake_redis), AgentWakePublisher(wake_redis)
+        await wake_hub.start()
+        woken = None
         try:
-            async with AsyncClient(
+            async with wake_hub.subscribe(
+                [did_wake_key(target_did_aw), did_wake_key(target_did_key)]
+            ) as wakes, AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://receiver.test"
             ) as client:
                 from awid.id_certificates import encode_id_chain_header
                 headers = {"X-AWID-ID-Chain": encode_id_chain_header(chain)} if chain else {}
                 response = await client.post("/v1/federation/messages", json=payload, headers=headers)
+                if response.status_code == 200:
+                    await asyncio.wait_for(wakes.wait(), 1.0)
+                    woken = wakes.take().kinds
         finally:
             await activation.aclose()
             await app.state.redis.aclose()
             await home_registry_client.aclose()
+            await wake_hub.close()
+            await app.state.agent_wake_publisher.close()
+            await wake_redis.aclose()
 
     if authority_case in {"mismatch", "timeout"}:
         assert response.status_code == 503, response.text
@@ -1038,6 +1055,7 @@ async def test_http_ingress_uses_production_dns_authority_not_receiver_home_regi
         return
     assert response.status_code == 200, response.text
     assert response.json()["message_id"] == message_id
+    assert woken == {"mail"}
     assert sender_dns.queries == [f"_awid.{sender_domain}"] + (["_awid.example.com"] if authority_case == "alias" else [])
     assert not any(b"authorization:" in request.lower() or b"x-awid-service-token:" in request.lower() for request in sender_registry.requests)
     assert [request.split(b" ", 2)[1].decode() for request in home_registry.requests] == [

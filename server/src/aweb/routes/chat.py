@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+from aweb.agent_wake import agent_wake_publisher, agent_wake_scope
 from aweb.federation.origins import public_origins
 
-from aweb.attachment_service import prepare_attachment_send, refuse_remote_attachments, attachment_retry, attachment_references
+from aweb.attachment_service import prepare_attachment_send, refuse_remote_attachments, attachment_retry, attachment_references_by_message
 
 from aweb.messaging.participants import messaging_participant_by_alias, messaging_participants_by_aliases
 from aweb.messaging.sender_membership import sender_memberships
 from aweb.identity_metadata import native_participant_reference
 
+import anyio
 import asyncio
 import json
 import logging
@@ -87,6 +89,7 @@ from aweb.messaging.chat import (
     resolve_agent_by_did,
     resolve_session_actor_did,
     send_in_session,
+    wake_chat_session_participants,
 )
 from aweb.messaging.activity_stream import SessionActivity
 from aweb.messaging.conversations import close_conversation
@@ -1650,24 +1653,25 @@ async def create_or_send(
             created_by=actor_alias,
             session_id=requested_session_id,
         )
-        msg_row = await send_in_session(
-            db,
-            id_chain=getattr(getattr(request, "state", None), "id_chain", None),
-            session_id=session_id,
-            sender_did=actor_did,
-            sender_agent_id=actor_agent_id,
-            sender_address=sender_address,
-            body=payload.message,
-            reply_to=uuid_mod.UUID(payload.reply_to) if payload.reply_to is not None else None,
-            leaving=payload.leaving,
-            signature=payload.signature,
-            signed_payload=payload.signed_payload,
-            content_mode=payload.content_mode,
-            message_version=payload.message_version,
-            encrypted_envelope=payload.encrypted_envelope,
-            encrypted_metadata=encrypted_metadata,
-            message_id=pre_message_id,
-        )
+        with agent_wake_scope(agent_wake_publisher(request.app.state)):
+            msg_row = await send_in_session(
+                db,
+                id_chain=getattr(getattr(request, "state", None), "id_chain", None),
+                session_id=session_id,
+                sender_did=actor_did,
+                sender_agent_id=actor_agent_id,
+                sender_address=sender_address,
+                body=payload.message,
+                reply_to=uuid_mod.UUID(payload.reply_to) if payload.reply_to is not None else None,
+                leaving=payload.leaving,
+                signature=payload.signature,
+                signed_payload=payload.signed_payload,
+                content_mode=payload.content_mode,
+                message_version=payload.message_version,
+                encrypted_envelope=payload.encrypted_envelope,
+                encrypted_metadata=encrypted_metadata,
+                message_id=pre_message_id,
+            )
         if msg_row is None:
             raise HTTPException(status_code=500, detail="Failed to send message")
         await _record_successful_chat_contacts(
@@ -1794,24 +1798,25 @@ async def create_or_send(
             raise HTTPException(status_code=404, detail="Replied-to message not found")
 
     try:
-        msg_row = await send_in_session(
-            db,
-            id_chain=getattr(getattr(request, "state", None), "id_chain", None),
-            session_id=session_id,
-            sender_did=actor_did,
-            sender_agent_id=actor_agent_id,
-            sender_address=sender_address,
-            body=payload.message,
-            reply_to=uuid_mod.UUID(payload.reply_to) if payload.reply_to is not None else None,
-            leaving=payload.leaving,
-            signature=payload.signature,
-            signed_payload=payload.signed_payload,
-            content_mode=payload.content_mode,
-            message_version=payload.message_version,
-            encrypted_envelope=payload.encrypted_envelope,
-            encrypted_metadata=encrypted_metadata,
-            message_id=pre_message_id,
-        )
+        with agent_wake_scope(agent_wake_publisher(request.app.state)):
+            msg_row = await send_in_session(
+                db,
+                id_chain=getattr(getattr(request, "state", None), "id_chain", None),
+                session_id=session_id,
+                sender_did=actor_did,
+                sender_agent_id=actor_agent_id,
+                sender_address=sender_address,
+                body=payload.message,
+                reply_to=uuid_mod.UUID(payload.reply_to) if payload.reply_to is not None else None,
+                leaving=payload.leaving,
+                signature=payload.signature,
+                signed_payload=payload.signed_payload,
+                content_mode=payload.content_mode,
+                message_version=payload.message_version,
+                encrypted_envelope=payload.encrypted_envelope,
+                encrypted_metadata=encrypted_metadata,
+                message_id=pre_message_id,
+            )
     except Exception as exc:
         if isinstance(exc, asyncpg.exceptions.UniqueViolationError):
             raise HTTPException(status_code=409, detail="message_id already exists")
@@ -2073,6 +2078,7 @@ async def history(
     )
 
     memberships = await sender_memberships(request, db, [dict(m, team_id=sess["team_id"]) for m in messages])
+    attachment_refs = await attachment_references_by_message(db, "chat", [m["message_id"] for m in messages])
     history_items: list[dict[str, Any]] = []
     for msg in messages:
         from_did = (msg.get("from_did") or "").strip()
@@ -2083,7 +2089,7 @@ async def history(
         )
         history_items.append(
             {
-                "attachment_refs": await attachment_references(db, "chat", msg["message_id"]),
+                "attachment_refs": attachment_refs[str(msg["message_id"])],
                 "sender_membership": memberships[(str(sess["team_id"] or ""), str(msg.get("from_agent_id") or ""))],
                 "conversation_id": str(session_uuid),
                 "message_id": msg["message_id"],
@@ -2144,7 +2150,6 @@ async def mark_read(
     redis=Depends(get_redis),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> dict[str, Any]:
-    del request
     actor_dids = _actor_dids(auth)
     if not actor_dids:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
@@ -2162,23 +2167,25 @@ async def mark_read(
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
     if payload.message_ids is not None:
-        result = await mark_messages_read(
-            db,
-            session_id=session_uuid,
-            participant_did=actor_did,
-            participant_agent_id=actor_agent_id,
-            message_ids=payload.message_ids,
-        )
+        with agent_wake_scope(agent_wake_publisher(request.app.state)):
+            result = await mark_messages_read(
+                db,
+                session_id=session_uuid,
+                participant_did=actor_did,
+                participant_agent_id=actor_agent_id,
+                message_ids=payload.message_ids,
+            )
         read_receipt_message_id = payload.message_ids[-1]
     else:
         assert payload.up_to_message_id is not None
-        result = await mark_messages_read_up_to(
-            db,
-            session_id=session_uuid,
-            participant_did=actor_did,
-            participant_agent_id=actor_agent_id,
-            up_to_message_id=payload.up_to_message_id,
-        )
+        with agent_wake_scope(agent_wake_publisher(request.app.state)):
+            result = await mark_messages_read_up_to(
+                db,
+                session_id=session_uuid,
+                participant_did=actor_did,
+                participant_agent_id=actor_agent_id,
+                up_to_message_id=payload.up_to_message_id,
+            )
         read_receipt_message_id = payload.up_to_message_id
 
     if int(result["messages_marked"] or 0) > 0:
@@ -2605,8 +2612,14 @@ async def _sse_events(
         if reason:
             yield grant_terminal_sse(reason)
     finally:
-        await _close_session_pubsub(pubsub, channel)
-        await unregister_waiting(redis, session_id_str, viewer_did)
+        # A client disconnect cancels the response's task group; shield the
+        # cleanup so this viewer stops counting as waiting when it leaves.
+        with anyio.CancelScope(shield=True):
+            await _close_session_pubsub(pubsub, channel)
+            await unregister_waiting(redis, session_id_str, viewer_did)
+            await wake_chat_session_participants(
+                aweb_db, agent_wake_publisher(request.app.state), session_id=session_id
+            )
 
 
 @router.get("/sessions/{session_id}/stream")
@@ -2648,6 +2661,9 @@ async def stream(
     after_dt = _parse_timestamp(after, "after") if after is not None else None
     await require_valid_stream_grant(request, db, auth)
     await register_waiting(redis, str(session_uuid), actor_did)
+    await wake_chat_session_participants(
+        aweb_db, agent_wake_publisher(request.app.state), session_id=session_uuid
+    )
 
     return StreamingResponse(
         _sse_events(
@@ -2931,25 +2947,26 @@ async def send_message(
             raise HTTPException(status_code=502, detail="Federated chat response message_id mismatch")
 
         try:
-            msg_row = await send_in_session(
-                db,
-                id_chain=getattr(getattr(request, "state", None), "id_chain", None),
-                session_id=session_uuid,
-                sender_did=actor_did,
-                sender_agent_id=actor_agent_id,
-                sender_address=sender_address,
-                body=payload.body,
-                reply_to=uuid_mod.UUID(payload.reply_to) if payload.reply_to is not None else None,
-                leaving=payload.leaving,
-                hang_on=payload.hang_on,
-                signature=payload.signature,
-                signed_payload=payload.signed_payload,
-                content_mode=payload.content_mode,
-                message_version=payload.message_version,
-                encrypted_envelope=payload.encrypted_envelope,
-                encrypted_metadata=encrypted_metadata,
-                message_id=pre_message_id,
-            )
+            with agent_wake_scope(agent_wake_publisher(request.app.state)):
+                msg_row = await send_in_session(
+                    db,
+                    id_chain=getattr(getattr(request, "state", None), "id_chain", None),
+                    session_id=session_uuid,
+                    sender_did=actor_did,
+                    sender_agent_id=actor_agent_id,
+                    sender_address=sender_address,
+                    body=payload.body,
+                    reply_to=uuid_mod.UUID(payload.reply_to) if payload.reply_to is not None else None,
+                    leaving=payload.leaving,
+                    hang_on=payload.hang_on,
+                    signature=payload.signature,
+                    signed_payload=payload.signed_payload,
+                    content_mode=payload.content_mode,
+                    message_version=payload.message_version,
+                    encrypted_envelope=payload.encrypted_envelope,
+                    encrypted_metadata=encrypted_metadata,
+                    message_id=pre_message_id,
+                )
         except Exception as exc:
             if isinstance(exc, asyncpg.exceptions.UniqueViolationError):
                 raise HTTPException(status_code=409, detail="message_id already exists")
@@ -2991,25 +3008,26 @@ async def send_message(
         )
 
     try:
-        msg_row = await send_in_session(
-            db,
-            id_chain=getattr(getattr(request, "state", None), "id_chain", None),
-            session_id=session_uuid,
-            sender_did=actor_did,
-            sender_agent_id=actor_agent_id,
-            sender_address=sender_address,
-            body=payload.body,
-            reply_to=uuid_mod.UUID(payload.reply_to) if payload.reply_to is not None else None,
-            leaving=payload.leaving,
-            hang_on=payload.hang_on,
-            signature=payload.signature,
-            signed_payload=payload.signed_payload,
-            content_mode=payload.content_mode,
-            message_version=payload.message_version,
-            encrypted_envelope=payload.encrypted_envelope,
-            encrypted_metadata=encrypted_metadata,
-            message_id=pre_message_id,
-        )
+        with agent_wake_scope(agent_wake_publisher(request.app.state)):
+            msg_row = await send_in_session(
+                db,
+                id_chain=getattr(getattr(request, "state", None), "id_chain", None),
+                session_id=session_uuid,
+                sender_did=actor_did,
+                sender_agent_id=actor_agent_id,
+                sender_address=sender_address,
+                body=payload.body,
+                reply_to=uuid_mod.UUID(payload.reply_to) if payload.reply_to is not None else None,
+                leaving=payload.leaving,
+                hang_on=payload.hang_on,
+                signature=payload.signature,
+                signed_payload=payload.signed_payload,
+                content_mode=payload.content_mode,
+                message_version=payload.message_version,
+                encrypted_envelope=payload.encrypted_envelope,
+                encrypted_metadata=encrypted_metadata,
+                message_id=pre_message_id,
+            )
     except Exception as exc:
         if isinstance(exc, asyncpg.exceptions.UniqueViolationError):
             raise HTTPException(status_code=409, detail="message_id already exists")

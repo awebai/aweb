@@ -215,10 +215,13 @@ Cleanup is storage housekeeping, never membership authority.
 The existing per-agent SSE stream adds `actionable_room_post`: room/post IDs,
 team and recipient IDs, signed sender identity/label and subject, with no body.
 Opening the stream retains its existing `events.read` grant requirement; each
-room snapshot additionally requires `chat.read` and rechecks current membership
-using the existing production certificate/grant validators and registry cache
-bounds for the admitted subject. The opening request signature and timestamp
-are not replayed as a new request at each snapshot.
+room snapshot additionally requires `chat.read` and current membership, proved
+with the existing production certificate/grant validators and registry cache
+bounds for the admitted subject. A stream re-proves membership only when it has
+room content to emit and its last successful proof is 60 seconds old; it never
+emits room content on an older proof, and a failed proof emits none. The
+opening request signature and timestamp are not replayed as a new request at
+each snapshot.
 Room admission failures or unavailable authority expose no notices. Other event
 shapes and the transport remain unchanged. The broker uses the existing chat
 receive capability, which has the same `chat.read` authority.

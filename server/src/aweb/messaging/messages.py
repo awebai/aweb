@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from aweb.agent_wake import record_did_wakes
 from aweb.attachment_service import attachment_transaction
 
 import json
@@ -280,6 +281,44 @@ async def authorize_message_delivery(
     )
 
 
+async def admit_message_delivery(
+    db,
+    *,
+    recipient: dict,
+    recipient_did: str,
+    to_agent_id: str | None,
+    sender_did: str,
+    sender_address: str | None,
+    team_id: str | None,
+    sender_verified_team_id: str | None,
+    sender_verified_dids,
+    stored_route_continuation: bool,
+) -> None:
+    """The recipient's delivery policy for this sender; raises when it refuses."""
+    if recipient.get("external") and not (stored_route_continuation and not recipient.get("delivery_origin")):
+        return
+    policies = [recipient]
+    if stored_route_continuation:
+        policies = await policy_rows_for_participant(db, {
+            "agent_id": to_agent_id or recipient.get("agent_id"), "did": recipient_did,
+        })
+        if not policies:
+            # Mail has one recipient; absence is not a policy denial and
+            # must not create a local delivery to a retired projection.
+            raise NotFoundError("Recipient agent not found")
+    for policy_recipient in policies:
+        await authorize_message_delivery(
+            db,
+            recipient_agent=policy_recipient,
+            sender_did=sender_did,
+            sender_address=sender_address,
+            sender_team_id=team_id,
+            sender_verified_team_id=sender_verified_team_id,
+            sender_verified_dids=sender_verified_dids,
+            stored_route_continuation=stored_route_continuation,
+        )
+
+
 @attachment_transaction("mail")
 async def deliver_message(
     db,
@@ -311,6 +350,7 @@ async def deliver_message(
     conversation_id: str | UUID | None = None,
     skip_policy_check: bool = False,
     signed_recipient_did: str | None = None,
+    known_new: bool = False,
 ) -> tuple[UUID, datetime]:
     """Deliver a message between identities, not within a team."""
     sender_did = str(from_did or "").strip()
@@ -324,37 +364,28 @@ async def deliver_message(
     if recipient is None:
         raise NotFoundError("Recipient agent not found")
 
-    if not skip_policy_check and (
-        not recipient.get("external")
-        or (stored_route_continuation and not recipient.get("delivery_origin"))
-    ):
-        policies = [recipient]
-        if stored_route_continuation:
-            policies = await policy_rows_for_participant(db, {
-                "agent_id": to_agent_id or recipient.get("agent_id"), "did": recipient_did,
-            })
-            if not policies:
-                # Mail has one recipient; absence is not a policy denial and
-                # must not create a local delivery to a retired projection.
-                raise NotFoundError("Recipient agent not found")
-        for policy_recipient in policies:
-            await authorize_message_delivery(
-                db,
-                recipient_agent=policy_recipient,
-                sender_did=sender_did,
-                sender_address=sender_address,
-                sender_team_id=team_id,
-                sender_verified_team_id=sender_verified_team_id,
-                sender_verified_dids=sender_verified_dids,
-                stored_route_continuation=stored_route_continuation,
-            )
+    if not skip_policy_check:
+        await admit_message_delivery(
+            db,
+            recipient=recipient,
+            recipient_did=recipient_did,
+            to_agent_id=to_agent_id,
+            sender_did=sender_did,
+            sender_address=sender_address,
+            team_id=team_id,
+            sender_verified_team_id=sender_verified_team_id,
+            sender_verified_dids=sender_verified_dids,
+            stored_route_continuation=stored_route_continuation,
+        )
 
     # The sender-attested time remains in signed_payload or encrypted_envelope.
     # created_at is when this server received the message for ordering, so the
     # two values intentionally use different clocks and may disagree.
     created_at = datetime.now(timezone.utc)
     if message_id is None:
+        # A freshly generated id names no stored message.
         message_id = uuid_mod.uuid4()
+        known_new = True
 
     conversation_uuid = _parse_uuid(conversation_id, field_name="conversation_id") if conversation_id else None
     from_uuid = _parse_uuid(from_agent_id, field_name="from_agent_id") if from_agent_id else None
@@ -378,7 +409,9 @@ async def deliver_message(
         encrypted_metadata = {}
 
     aweb_db = db.get_manager("aweb")
-    existing = await aweb_db.fetch_one(
+    # known_new: the caller looked this message_id up in this request and
+    # found no row, so the same lookup is not repeated here.
+    existing = None if known_new else await aweb_db.fetch_one(
         """
         SELECT message_id, created_at, content_mode, signed_envelope_hash,
                from_did, signed_payload
@@ -454,5 +487,8 @@ async def deliver_message(
     )
     if not row:
         raise ServiceError("Failed to create message")
+
+    # Wake the identity this delivery resolved, never a stored address field.
+    record_did_wakes((recipient.get("did_aw"), recipient.get("did_key")), "mail")
 
     return UUID(str(row["message_id"])), row["created_at"]

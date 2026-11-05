@@ -11,6 +11,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError as ModelError
 from awid.signing import verify_did_key_signature, verify_signature, VerifyResult
+from aweb.agent_wake import record_agent_wake, team_room_wake_key
 from aweb.federation.envelope import (
     enforce_message_timestamp_skew,
     FederationEnvelopeError,
@@ -352,4 +353,5 @@ async def post_room_message(db, actor, post: RoomPost, *, id_chain=None):
             actor.team_id,
             UUID(actor.agent_id),
         )
+        record_agent_wake(team_room_wake_key(actor.team_id), "room")
         return _post_dict(row, actor.team_id)

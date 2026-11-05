@@ -8,6 +8,8 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from awid.signing import canonical_json_bytes
 
+from aweb.agent_wake import agent_wake_scope
+from aweb.mcp.auth import current_agent_wake_publisher
 from aweb.mcp.signing import encrypt_hosted_message, sign_hosted_message
 from aweb.mcp.tools.federation import mcp_messaging_auth
 
@@ -204,32 +206,34 @@ async def send_mcp_native(
             },
         ),
     )
-    async with service.unit_of_work(caller) as uow:
-        previous = await uow.claim_ingress(key)
-        if previous is not None:
-            if previous.value["result"].get("logical_input_hash") != logical_hash:
-                raise ContractError("replay_conflict", "native MCP input")
-            return previous.value["result"]["response"]
-        accepted = await uow.accept(prepared)
-        response = {"message_id": mid, "conversation_id": cid, "status": "delivered"}
-        if kind == "chat":
-            response.update(session_id=cid, delivered=True)
-        else:
-            response["to"] = recipient["alias"]
-        await uow.finish_ingress(
-            _dto(
-                "IngressResult",
-                {
-                    "version": "aweb-ingress-result-v1",
-                    "key": key.value,
-                    "accepted": accepted.value,
-                    "result": {
-                        "logical_input_hash": logical_hash,
-                        "response": response,
+    # Wakes are published after the unit of work commits.
+    with agent_wake_scope(current_agent_wake_publisher()):
+        async with service.unit_of_work(caller) as uow:
+            previous = await uow.claim_ingress(key)
+            if previous is not None:
+                if previous.value["result"].get("logical_input_hash") != logical_hash:
+                    raise ContractError("replay_conflict", "native MCP input")
+                return previous.value["result"]["response"]
+            accepted = await uow.accept(prepared)
+            response = {"message_id": mid, "conversation_id": cid, "status": "delivered"}
+            if kind == "chat":
+                response.update(session_id=cid, delivered=True)
+            else:
+                response["to"] = recipient["alias"]
+            await uow.finish_ingress(
+                _dto(
+                    "IngressResult",
+                    {
+                        "version": "aweb-ingress-result-v1",
+                        "key": key.value,
+                        "accepted": accepted.value,
+                        "result": {
+                            "logical_input_hash": logical_hash,
+                            "response": response,
+                        },
                     },
-                },
+                )
             )
-        )
     # Blocking chat waits belong to the existing read path after commit. This
     # adapter returns the committed send, never holds a UoW while waiting.
     return response

@@ -32,6 +32,7 @@ from aweb.messaging.chat import (
     resolve_agent_by_did,
     resolve_session_actor_did,
     send_in_session,
+    wake_chat_session_participants,
 )
 from aweb.messaging.sender_address import sender_address as _sender_address
 from aweb.messaging.alias_targets import (
@@ -56,7 +57,8 @@ from aweb.messaging.verification import (
     verified_signed_recipient_fields,
 )
 from aweb.messaging.waiting import register_waiting, unregister_waiting
-from aweb.mcp.auth import get_auth, primary_auth_did
+from aweb.agent_wake import agent_wake_scope
+from aweb.mcp.auth import current_agent_wake_publisher, get_auth, primary_auth_did
 from aweb.mcp.mutations import fire_mcp_mutation_hook
 from aweb.events import publish_chat_session_signal
 from aweb.mcp.signing import (
@@ -295,6 +297,7 @@ async def _wait_for_replies(
     deadline = start + wait_seconds
 
     await register_waiting(redis, session_id_str, participant_did)
+    await wake_chat_session_participants(aweb_db, current_agent_wake_publisher(), session_id=session_id)
     last_refresh = time.monotonic()
     last_seen_at = after
 
@@ -371,6 +374,7 @@ async def _wait_for_replies(
         return [], True
     finally:
         await unregister_waiting(redis, session_id_str, participant_did)
+        await wake_chat_session_participants(aweb_db, current_agent_wake_publisher(), session_id=session_id)
 
 
 async def chat_send(
@@ -745,23 +749,24 @@ async def chat_send(
                 return json.dumps({"error": "Federated chat response session_id mismatch"})
             if remote_message_id != str(pre_message_id):
                 return json.dumps({"error": "Federated chat response message_id mismatch"})
-        msg = await send_in_session(
-            db_infra,
-            session_id=sid,
-            sender_did=actor_did,
-            sender_agent_id=actor_agent_id,
-            sender_address=sender_address,
-            body="" if encrypted_envelope is not None else message,
-            leaving=leaving,
-            hang_on=hang_on,
-            signature=signed.signature if signed else None,
-            signed_payload=signed.signed_payload if signed else None,
-            content_mode=content_mode,
-            message_version=message_version,
-            encrypted_envelope=encrypted_envelope,
-            encrypted_metadata=encrypted_metadata,
-            message_id=pre_message_id,
-        )
+        with agent_wake_scope(current_agent_wake_publisher()):
+            msg = await send_in_session(
+                db_infra,
+                session_id=sid,
+                sender_did=actor_did,
+                sender_agent_id=actor_agent_id,
+                sender_address=sender_address,
+                body="" if encrypted_envelope is not None else message,
+                leaving=leaving,
+                hang_on=hang_on,
+                signature=signed.signature if signed else None,
+                signed_payload=signed.signed_payload if signed else None,
+                content_mode=content_mode,
+                message_version=message_version,
+                encrypted_envelope=encrypted_envelope,
+                encrypted_metadata=encrypted_metadata,
+                message_id=pre_message_id,
+            )
         if msg is None:
             return json.dumps({"error": "Failed to send message"})
         sent_from_did = actor_did
@@ -968,23 +973,24 @@ async def chat_send(
             if remote_message_id != str(pre_message_id):
                 return json.dumps({"error": "Federated chat response message_id mismatch"})
 
-        msg = await send_in_session(
-            db_infra,
-            session_id=sid,
-            sender_did=session_actor_did,
-            sender_agent_id=actor_agent_id,
-            sender_address=sender_address,
-            body="" if encrypted_envelope is not None else message,
-            leaving=leaving,
-            hang_on=hang_on,
-            signature=signed.signature if signed else None,
-            signed_payload=signed.signed_payload if signed else None,
-            content_mode=content_mode,
-            message_version=message_version,
-            encrypted_envelope=encrypted_envelope,
-            encrypted_metadata=encrypted_metadata,
-            message_id=pre_message_id,
-        )
+        with agent_wake_scope(current_agent_wake_publisher()):
+            msg = await send_in_session(
+                db_infra,
+                session_id=sid,
+                sender_did=session_actor_did,
+                sender_agent_id=actor_agent_id,
+                sender_address=sender_address,
+                body="" if encrypted_envelope is not None else message,
+                leaving=leaving,
+                hang_on=hang_on,
+                signature=signed.signature if signed else None,
+                signed_payload=signed.signed_payload if signed else None,
+                content_mode=content_mode,
+                message_version=message_version,
+                encrypted_envelope=encrypted_envelope,
+                encrypted_metadata=encrypted_metadata,
+                message_id=pre_message_id,
+            )
         if msg is None:
             return json.dumps({"error": "Session not found"})
         sent_from_did = session_actor_did
@@ -1209,22 +1215,24 @@ async def chat_read(
 
     try:
         if normalized_message_ids is not None:
-            result = await mark_messages_read(
-                db_infra,
-                session_id=session_uuid,
-                participant_did=actor_did,
-                participant_agent_id=actor_agent_id,
-                message_ids=normalized_message_ids,
-            )
+            with agent_wake_scope(current_agent_wake_publisher()):
+                result = await mark_messages_read(
+                    db_infra,
+                    session_id=session_uuid,
+                    participant_did=actor_did,
+                    participant_agent_id=actor_agent_id,
+                    message_ids=normalized_message_ids,
+                )
         else:
             assert normalized_watermark is not None
-            result = await mark_messages_read_up_to(
-                db_infra,
-                session_id=session_uuid,
-                participant_did=actor_did,
-                participant_agent_id=actor_agent_id,
-                up_to_message_id=normalized_watermark,
-            )
+            with agent_wake_scope(current_agent_wake_publisher()):
+                result = await mark_messages_read_up_to(
+                    db_infra,
+                    session_id=session_uuid,
+                    participant_did=actor_did,
+                    participant_agent_id=actor_agent_id,
+                    up_to_message_id=normalized_watermark,
+                )
     except ServiceError as exc:
         return json.dumps({"error": exc.detail})
 
