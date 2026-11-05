@@ -432,7 +432,10 @@ def _editor_theme_css(theme: dict[str, Any] | None) -> str:
     if scheme == "auto":
         palette = {name: f"light-dark({value}, {dark[name]})" for name, value in light.items()}
     return (f"color-scheme: {_COLOR_SCHEME_META[scheme]};\n"
-            + _palette_declarations(palette, "      ") + "\n" + _theme_css(safe))
+            + _palette_declarations(palette, "      ")
+            + "\n      --font-body: Archivo, Arial, sans-serif;"
+            + "\n      --font-heading: var(--font-body);\n"
+            + _theme_css(safe))
 
 
 def _theme_css(tokens: dict[str, dict[str, str]] | None) -> str:

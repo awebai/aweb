@@ -23,6 +23,56 @@ from folio.presentation import contrast_ratio, theme_contrast_error
 __all__ = ["present_world"]
 
 
+@pytest.mark.parametrize(
+    ("fonts", "body_family", "heading_family"),
+    [(None, "Archivo", "Archivo"), ({"body": "serif", "heading": "mono"}, "Georgia", "ui-monospace")],
+    ids=["default", "custom"],
+)
+async def test_editor_uses_default_and_custom_computed_fonts(
+    present_world, fonts, body_family, heading_family
+):
+    app, db, _ = present_world
+    await db.execute("UPDATE {{tables.document_versions}} SET body=$1", "# Shared heading\n\nDraft text.")
+    if fonts:
+        await db.execute(
+            "INSERT INTO {{tables.themes}} (team_id,tokens) VALUES ($1,$2::jsonb)",
+            OWNER.team_id, json.dumps({"fonts": fonts}),
+        )
+    link = await mint(present_world)
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        origin = f"http://127.0.0.1:{listener.getsockname()[1]}"
+        server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_config=None, ws="none"))
+        serving = asyncio.create_task(server.serve(sockets=[listener]))
+        try:
+            async with asyncio.timeout(10):
+                while not server.started:
+                    await asyncio.sleep(0.01)
+            async with async_playwright() as playwright:
+                browser = await playwright.chromium.launch(channel="chrome")
+                try:
+                    page = await browser.new_page(color_scheme="dark")
+                    await page.goto(origin + urlsplit(link["url"]).path + "#" + urlsplit(link["url"]).fragment)
+                    await expect(page.get_by_role("textbox", name="Write", exact=True)).to_be_editable()
+                    await expect(page.locator("#preview h1")).to_have_text("Shared heading")
+                    await page.evaluate("document.fonts.ready")
+                    for width in (390, 1440):
+                        await page.set_viewport_size({"width": width, "height": 900})
+                        families = await page.evaluate("""() => Object.fromEntries(
+                            ['body', '.bar', '#save', '#preview', '#preview h1'].map(selector =>
+                                [selector, getComputedStyle(document.querySelector(selector)).fontFamily]
+                            ))""")
+                        for selector in ("body", ".bar", "#save", "#preview"):
+                            assert families[selector].startswith(body_family), families
+                        assert families["#preview h1"].startswith(heading_family), families
+                finally:
+                    await browser.close()
+        finally:
+            server.should_exit = True
+            await serving
+
+
 @pytest.mark.parametrize("scheme", ["light", "dark", "auto"])
 async def test_editor_controls_reflow_and_honour_validated_theme(present_world, scheme):
     app, db, _ = present_world
