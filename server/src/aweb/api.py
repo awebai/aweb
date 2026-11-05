@@ -70,6 +70,8 @@ def _cached_body_receive(body: bytes):
     immediately with an empty request-body event. Waiting on the original
     receive callable here can hang POST error responses under Uvicorn because
     Starlette may poll the request stream after the endpoint has already raised.
+    A non-GET route must not return a streaming response, and MCP must keep
+    json_response=True: a disconnect listener would spin on this receive.
     """
     replayed = False
 
