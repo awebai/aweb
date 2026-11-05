@@ -408,7 +408,12 @@ func runInitAdmissionTeamID(cmd *cobra.Command) error {
 	previousExpected := teamAdmissionInviteExpectedAccountID
 	teamAdmissionInviteExpectedAccountID = strings.TrimSpace(initExpectedAccountID)
 	defer func() { teamAdmissionInviteExpectedAccountID = previousExpected }()
-	resp, err := issueTeamAdmissionInvite(cmd.Context(), strings.TrimSpace(initAdmissionTeamID), newRegistryReadRequestID(), resolveAliasValue(resolveInitLocalName()))
+	// Cloud's admission-invite route takes a UUID request_id for retry-safe issuance.
+	requestID, err := newInvitationID()
+	if err != nil {
+		return err
+	}
+	resp, err := issueTeamAdmissionInvite(cmd.Context(), strings.TrimSpace(initAdmissionTeamID), requestID, resolveAliasValue(resolveInitLocalName()))
 	if err != nil {
 		return err
 	}

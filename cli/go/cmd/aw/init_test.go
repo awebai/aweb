@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -842,6 +843,11 @@ func TestInitJoinFromDenialLeavesTargetEmptyAndSuggestsAdmission(t *testing.T) {
 	}
 }
 
+var (
+	uuidPatternForTest   = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	uuidV4PatternForTest = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+)
+
 func TestInitAdmissionTeamIDIssuesAcceptsAndConnects(t *testing.T) {
 	resetAuthCommandGlobals(t)
 	oldAdmission, oldName, oldJSON, oldExpected := initAdmissionTeamID, initName, jsonFlag, initExpectedAccountID
@@ -867,7 +873,16 @@ func TestInitAdmissionTeamIDIssuesAcceptsAndConnects(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatal(err)
 			}
-			if req.AliasHint != "target" || req.RequestID == "" || req.ExpectedAccountID != "acct-test" {
+			// Cloud parses request_id as a UUID and refuses anything else.
+			if !uuidPatternForTest.MatchString(req.RequestID) {
+				w.WriteHeader(http.StatusUnprocessableEntity)
+				_ = json.NewEncoder(w).Encode(map[string]any{"detail": map[string]string{"code": "invalid_request_id", "message": "request_id must be a UUID"}})
+				return
+			}
+			if !uuidV4PatternForTest.MatchString(req.RequestID) {
+				t.Fatalf("admission request_id %q is not a random (version 4) UUID", req.RequestID)
+			}
+			if req.AliasHint != "target" || req.ExpectedAccountID != "acct-test" {
 				t.Fatalf("admission req=%+v", req)
 			}
 			_ = json.NewEncoder(w).Encode(teamAdmissionInviteResponse{InviteID: "invite-admission", Token: "aw_inv_admission", MaxUses: 1, TeamID: teamID, CanonicalTeamID: teamID, ServerURL: serverURL})
