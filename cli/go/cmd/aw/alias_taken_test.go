@@ -306,6 +306,7 @@ func TestTeamAdminCreateFirstAgentNameTakenIsAPlainSentence(t *testing.T) {
 	}))
 	t.Setenv("AWID_REGISTRY_URL", server.URL)
 	teamHumanCreateFirstGlobal = true
+	resetInitHostFlagsForTest(t)
 	initAwebURL = server.URL
 
 	err = runTeamHumanCreate(nil, []string{"Eng"})
