@@ -379,3 +379,15 @@ def test_packaged_identity_assets_have_real_image_bytes_and_dimensions(tmp_path:
         assert 'immutable' in response.headers['cache-control']
     assert client.get('/brand/field-v1/missing.png').status_code == 404
     assert client.get('/brand/field-v1/..%2Fcss.py').status_code == 404
+
+
+def test_app_owned_fonts_remain_available_without_bundling_them(tmp_path: Path) -> None:
+    owned = tmp_path / "owned-fonts"
+    owned.mkdir()
+    (owned / "AppMono.woff2").write_bytes(b"wOF2app-owned")
+    (owned / "private.txt").write_text("not a font")
+    client = _client(tmp_path, fonts_dir=owned)
+    assert client.get("/fonts/AppMono.woff2").content == b"wOF2app-owned"
+    assert client.get("/fonts/private.txt").status_code == 404
+    assert client.get("/fonts/..%2Fprivate.txt").status_code == 404
+    assert client.get("/fonts/Archivo-Latin-Variable.woff2").content == font_bytes("Archivo-Latin-Variable.woff2")

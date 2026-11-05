@@ -20,8 +20,8 @@ covered by the team's installed grant, and allowed by the app's policy. ``Depend
 authenticates: it says who signed the request, never that they may act, so it
 is for routes that need nothing more than the signer's identity.
 
-The licensed fonts under ``/fonts/`` ship with this toolkit. Apps do not
-need to copy fonts or redistribute proprietary typefaces.
+The licensed shared fonts under ``/fonts/`` ship with this toolkit. An app
+may also supply its own font directory; its licensing remains with that app.
 """
 
 from __future__ import annotations
@@ -694,8 +694,9 @@ def mount_naapp_routes(
 ) -> None:
     """Serve the standard naapp public surface.
 
-    ``fonts_dir`` is retained for source compatibility with existing apps.
-    Fonts are now served from the toolkit's licensed, bundled assets.
+    Shared fonts are served from the toolkit's licensed, bundled assets.
+    ``fonts_dir`` may additionally supply app-owned WOFF2 files. Only the
+    filenames loaded from that directory at mount time can be requested.
 
     The landing page, robots rules and noindex paths are the app's: ``landing``
     renders the front door on each request, ``robots_disallow`` lists the paths
@@ -742,9 +743,13 @@ def mount_naapp_routes(
     async def aweb_css_fingerprinted_route(fingerprint: str) -> Response:
         return _aweb_css_response(immutable=True)
 
+    app_fonts = {path.name: path.read_bytes() for path in fonts_dir.glob("*.woff2") if path.is_file()}
+
     @app.get("/fonts/{font_name}")
     async def font_route(font_name: str) -> Response:
         font = font_bytes(font_name)
+        if font is None:
+            font = app_fonts.get(font_name)
         if font is None:
             raise HTTPException(status_code=404, detail="Font not found")
         return Response(
