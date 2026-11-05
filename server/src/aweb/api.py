@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -80,6 +81,43 @@ def _cached_body_receive(body: bytes):
         return {"type": "http.request", "body": b"", "more_body": False}
 
     return _receive
+
+
+class RequestBodyCacheMiddleware:
+    """Cache each HTTP request's body and its SHA-256 for signature verification.
+
+    Sets ``request.state.cached_body`` and ``request.state.body_sha256``. A
+    GET, HEAD or OPTIONS request has an empty body and keeps its receive. Any
+    other request is read whole before the app runs and replayed to it, so
+    FastAPI still parses it. Pure ASGI: unlike a BaseHTTPMiddleware, it holds
+    no tasks of its own for a long-lived streaming response.
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        state = scope.setdefault("state", {})
+        if scope.get("method") in {"GET", "HEAD", "OPTIONS"}:
+            state["cached_body"] = b""
+            state["body_sha256"] = hashlib.sha256(b"").hexdigest()
+            await self.app(scope, receive, send)
+            return
+        chunks = []
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return  # The client left before sending its body; nobody to answer.
+            chunks.append(message.get("body", b""))
+            if not message.get("more_body", False):
+                break
+        body = b"".join(chunks)
+        state["cached_body"] = body
+        state["body_sha256"] = hashlib.sha256(body).hexdigest()
+        await self.app(scope, _cached_body_receive(body), send)
 
 
 async def _mount_mcp_app(
@@ -387,25 +425,7 @@ def create_app(
     app.include_router(attachment_router)
     app.add_middleware(NormalizeMountedMCPPathMiddleware, mount_path="/mcp")
 
-    @app.middleware("http")
-    async def cache_body_middleware(request: Request, call_next):
-        """Cache request body and compute SHA256 for signature verification.
-
-        Replaces the receive callable so FastAPI can still read the body
-        for Pydantic parsing after we've consumed the stream.
-        """
-        import hashlib as _hashlib
-
-        if request.method in {"GET", "HEAD", "OPTIONS"}:
-            request.state.cached_body = b""
-            request.state.body_sha256 = _hashlib.sha256(b"").hexdigest()
-            return await call_next(request)
-
-        body = await request.body()
-        request.state.cached_body = body
-        request.state.body_sha256 = _hashlib.sha256(body).hexdigest() if body else _hashlib.sha256(b"").hexdigest()
-        request._receive = _cached_body_receive(body)
-        return await call_next(request)
+    app.add_middleware(RequestBodyCacheMiddleware)
 
     @app.exception_handler(RequestValidationError)
     async def _request_validation_error_handler(
