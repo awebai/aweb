@@ -347,9 +347,12 @@ def publish_npm(root: Path, prefix: str, version: str) -> None:
         print("skill ZIPs are staged locally; hosted release assets can be uploaded later")
 
 
-def write_json_version(path: Path, version: str) -> None:
+def write_json_version(path: Path, version: str, git_head: str | None = None) -> None:
     value = json.loads(path.read_text(encoding="utf-8"))
     value["version"] = version
+    # npm records no gitHead for a published tarball; the manifest carries it.
+    if git_head is not None:
+        value["gitHead"] = git_head
     path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
 
 
@@ -398,10 +401,11 @@ def publish_aw_npm(root: Path, version: str, source_sha: str, *, staged_final: b
             env=environment,
             capture=False,
         )
-        write_json_version(npm_root / package_dir / "package.json", version)
+        write_json_version(npm_root / package_dir / "package.json", version, source_sha)
     main_manifest = npm_root / "aw/package.json"
     value = json.loads(main_manifest.read_text(encoding="utf-8"))
     value["version"] = version
+    value["gitHead"] = source_sha
     value["optionalDependencies"] = {
         name: version for name in sorted(value.get("optionalDependencies", {}))
     }
@@ -421,6 +425,7 @@ def publish_aw_npm(root: Path, version: str, source_sha: str, *, staged_final: b
             root, "python3", str(npm_root / "readback.py"), *artifacts,
             "--version", version,
             "--dist-tag", "next" if staged_final or "-" in version else "latest",
+            "--git-head", source_sha,
             "--registry", environment.get("NPM_CONFIG_REGISTRY", "https://registry.npmjs.org"),
             env=environment,
         )

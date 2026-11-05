@@ -850,6 +850,9 @@ class NpmRcContractTest(unittest.TestCase):
             npm_root.mkdir()
             artifacts.mkdir()
             command(root, "git", "init", "-q")
+            # A release checkout has a commit: the publisher records it as each package's gitHead.
+            command(root, "git", "-c", "user.name=fixture", "-c", "user.email=fixture@example.test",
+                    "commit", "--allow-empty", "-qm", "source")
             shutil.copyfile(ROOT / "cli/go/npm/publish.sh", npm_root / "publish.sh")
             shutil.copyfile(ROOT / "cli/go/npm/readback.py", npm_root / "readback.py")
             helper = ROOT / "cli/go/npm/publication.py"
