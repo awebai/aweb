@@ -419,6 +419,22 @@ def _root_css(
     return block
 
 
+def _editor_theme_css(theme: dict[str, Any] | None) -> str:
+    """Declaration-only editor theme, using the scheme validated for this team.
+
+    Snapshots insert these declarations in a root rule. light-dark() keeps an
+    explicitly automatic theme responsive without changing the snapshot shape.
+    """
+    safe = sanitize_theme_tokens((theme or {}).get("tokens"))
+    scheme = sanitize_layout_tokens(safe)["color_scheme"]
+    light, dark = _resolve_base_palettes((theme or {}).get("preset"))
+    palette = dark if scheme == "dark" else light
+    if scheme == "auto":
+        palette = {name: f"light-dark({value}, {dark[name]})" for name, value in light.items()}
+    return (f"color-scheme: {_COLOR_SCHEME_META[scheme]};\n"
+            + _palette_declarations(palette, "      ") + "\n" + _theme_css(safe))
+
+
 def _theme_css(tokens: dict[str, dict[str, str]] | None) -> str:
     if not tokens:
         return ""
@@ -910,8 +926,6 @@ def render_editor_page(
         allowed_asset_ids=allowed_asset_ids,
         asset_embeds=asset_embeds,
     )
-    safe_tokens = sanitize_theme_tokens((theme or {}).get("tokens"))
-    theme_css = _theme_css(safe_tokens)
     logo_url = str((theme or {}).get("logo_url") or "")
     header = str((theme or {}).get("header") or "")
     footer = str((theme or {}).get("footer") or "")
@@ -923,8 +937,7 @@ def render_editor_page(
     header_html = f'      <header class="theme-header">{escape(header)}</header>\n' if header else ""
     footer_html = f'      <footer class="theme-footer">{escape(footer)}</footer>\n' if footer else ""
     initial_json = _script_json({"body": body, "version_number": version_number, "token": token})
-    light_palette, dark_palette = _resolve_base_palettes((theme or {}).get("preset"))
-    root_css = _root_css({"color_scheme": "auto"}, theme_css, light_palette=light_palette, dark_palette=dark_palette)
+    root_css = ":root {" + _editor_theme_css(theme) + "}"
     return f"""<!doctype html>
 <html lang="en">
 <head>

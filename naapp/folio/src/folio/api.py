@@ -39,13 +39,12 @@ from folio.models import (
     VideoDirectUploadResponse,
 )
 from folio.presentation import (
-    _theme_css,
+    _editor_theme_css,
     content_security_policy,
     render_editor_page,
     render_presented_markdown,
     render_presented_page,
     sanitize_layout_tokens,
-    sanitize_theme_tokens,
     theme_contrast_error,
 )
 from folio.privacy import PresentationPrivacy, install_access_filter
@@ -354,7 +353,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         row = await database.fetch_one("SELECT tokens,logo_asset_id,header,footer FROM {{tables.themes}} WHERE team_id=$1", team_id)
         theme = _theme_from_row(row, public_origin=resolved.public_origin) if row else None
         return {"body": body, "version_number": version_number,
-                "theme": {"css": _theme_css(sanitize_theme_tokens((theme or {}).get("tokens"))),
+                "theme": {"css": _editor_theme_css(theme),
                           "header": (theme or {}).get("header"), "footer": (theme or {}).get("footer"),
                           "logo_url": (theme or {}).get("logo_url")},
                 "html": render_presented_markdown(body, public_origin=resolved.public_origin,

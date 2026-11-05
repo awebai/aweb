@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import logging
 import socket
 from urllib.parse import urlsplit
@@ -15,13 +16,24 @@ from urllib.parse import urlsplit
 import pytest
 import uvicorn
 from playwright.async_api import async_playwright, expect
-from test_present_privacy import mint, present_world
+from test_present_privacy import OWNER, mint, present_world
+
+from folio.presentation import contrast_ratio, theme_contrast_error
 
 __all__ = ["present_world"]
 
 
-async def test_editor_controls_reflow_and_remain_keyboard_accessible(present_world):
-    app, _, _ = present_world
+@pytest.mark.parametrize("scheme", ["light", "dark", "auto"])
+async def test_editor_controls_reflow_and_honour_validated_theme(present_world, scheme):
+    app, db, _ = present_world
+    tokens = {} if scheme == "light" else {"layout": {"color_scheme": scheme}}
+    if scheme != "auto":
+        tokens["colors"] = {"text": "#17191c" if scheme == "light" else "#f7f8fb"}
+    assert theme_contrast_error(tokens) is None
+    await db.execute(
+        "INSERT INTO {{tables.themes}} (team_id,tokens) VALUES ($1,$2::jsonb)",
+        OWNER.team_id, json.dumps(tokens),
+    )
     link = await mint(present_world)
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
@@ -42,6 +54,11 @@ async def test_editor_controls_reflow_and_remain_keyboard_accessible(present_wor
                     assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
                     editor = page.get_by_role("textbox", name="Write", exact=True)
                     await expect(editor).to_be_editable()
+                    colors = await page.evaluate("""() => ({
+                        text: getComputedStyle(document.querySelector('#body')).color,
+                        background: getComputedStyle(document.querySelector('#pane-edit')).backgroundColor
+                    })""")
+                    assert contrast_ratio(colors["text"], colors["background"]) >= 4.5
                     await editor.fill("Keyboard draft")
                     await page.locator("#discard").focus()
                     await page.keyboard.press("Enter")
