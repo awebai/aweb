@@ -977,8 +977,6 @@ func init() {
 	rootCmd.AddCommand(mailCmd)
 }
 
-// replySubject is the subject of a reply: the explicit one when given,
-// otherwise "Re: <original>", never prefixed twice.
 // mailReplySourceMissingError explains a reply source absent from the inbox.
 // An exact read sees messages the caller sent as well as received, so a hit
 // there is the caller's own message: reply answers received mail only, and a
@@ -1000,6 +998,8 @@ func mailReplySourceMissingError(ctx context.Context, c *aweb.Client, messageID 
 	return usageError("message %s is one you sent; aw mail reply answers mail you received. To continue its conversation, run `aw mail send --conversation-id %s --body-file <file>`", messageID, conversationID)
 }
 
+// replySubject is the subject of a reply: the explicit one when given,
+// otherwise "Re: <original>", never prefixed twice.
 func replySubject(explicit, original string) string {
 	if subject := strings.TrimSpace(explicit); subject != "" {
 		return subject
