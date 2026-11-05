@@ -58,7 +58,7 @@ _STYLE = """<style>
     border-radius: var(--radius); text-decoration: none; color: inherit; transition: border-color .15s, box-shadow .15s; }
   .browse-blueprint-card:hover { border-color: var(--line-strong); box-shadow: var(--shadow-lg); }
   .browse-blueprint-card__head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); flex-wrap: wrap; }
-  .browse-blueprint-card__title { font: 600 var(--step-2)/1.1 var(--font-mono); letter-spacing: -0.01em; color: var(--ink); margin: 0; }
+  .browse-blueprint-card__title { font: 600 var(--step-2)/1.1 var(--font-sans); letter-spacing: -0.01em; color: var(--ink); margin: 0; }
   .browse-blueprint-card__count { font: 600 var(--step--1)/1 var(--font-mono); color: var(--accent); white-space: nowrap; }
   .browse-blueprint-card__summary { color: var(--muted); margin: var(--s2) 0 0; max-width: 68ch; }
   .browse-blueprint-card__roster { margin: var(--s3) 0 0; color: var(--faint); font: 500 var(--step--1)/1.5 var(--font-mono); }

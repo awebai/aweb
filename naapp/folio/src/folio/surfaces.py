@@ -216,7 +216,7 @@ _WHATFOLIO_SECTION = """    <section class="section section--tint">
           .ff-do-grid { margin: var(--s5) 0 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s4) var(--s6); }
           .ff-do-grid > div { border-top: 1px solid var(--line-strong); padding-top: var(--s3); }
           .ff-do-grid > div:first-child { border-top-color: var(--accent); }
-          .ff-do-grid dt { font: 650 var(--step--1)/1 var(--font-mono); letter-spacing: 0.02em; color: var(--ink); }
+          .ff-do-grid dt { font: 650 var(--step--1)/1 var(--font-sans); letter-spacing: 0.02em; color: var(--ink); }
           .ff-do-grid dd { margin: var(--s2) 0 0; color: var(--muted); font-size: var(--step--1); }
           @media (max-width: 760px) { .ff-do-grid { grid-template-columns: 1fr 1fr; } }
           @media (max-width: 480px) { .ff-do-grid { grid-template-columns: 1fr; } }
@@ -283,7 +283,7 @@ _INVARIANTS_SECTION = """    <section class="section section--tint" id="engineer
           .eng-specs { margin: var(--s5) 0 0; display: grid; grid-template-columns: 1fr 1fr; gap: var(--s4) var(--s6); }
           .eng-specs > div { border-top: 1px solid var(--line-strong); padding-top: var(--s3); }
           .eng-specs > div:first-child { border-top-color: var(--accent); }
-          .eng-specs dt { font: 650 var(--step--1)/1 var(--font-mono); letter-spacing: 0.02em; color: var(--ink); }
+          .eng-specs dt { font: 650 var(--step--1)/1 var(--font-sans); letter-spacing: 0.02em; color: var(--ink); }
           .eng-specs dd { margin: var(--s2) 0 0; color: var(--muted); font-size: var(--step-0); }
           .eng-scope { margin-top: var(--s5); color: var(--muted); font-size: var(--step--1); max-width: 72ch; }
           .eng-scope .kicker { color: var(--faint); margin-right: 0.6rem; }
