@@ -363,7 +363,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def editor_shell(link_id: str) -> HTMLResponse:
         nonce = secrets.token_urlsafe(16)
         return HTMLResponse(
-            render_editor_page(token=link_id, body="", version_number=1, nonce=nonce),
+            render_editor_page(token=link_id, body="", version_number=1, nonce=nonce,
+                               public_origin=resolved.public_origin),
             headers={"Content-Security-Policy": f"default-src 'self'; img-src 'self'; script-src 'nonce-{nonce}'; style-src 'unsafe-inline' 'self'; base-uri 'none'; frame-ancestors 'none'"},
         )
 
