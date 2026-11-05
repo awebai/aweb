@@ -23,6 +23,7 @@ import (
 )
 
 func TestInitUsesGuidedOnboardingInTTY(t *testing.T) {
+	resetInitHostFlagsForTest(t)
 	// Cannot use t.Parallel() — needs cwd and globals.
 
 	oldWizard := guidedOnboardingWizard
@@ -101,6 +102,7 @@ func TestInitUsesGuidedOnboardingInTTY(t *testing.T) {
 }
 
 func TestInitExplicitHostedArgsInTTYSkipsOptionalPostCreatePrompts(t *testing.T) {
+	resetInitHostFlagsForTest(t)
 	// Cannot use t.Parallel() — needs cwd and globals.
 
 	oldWizard := guidedOnboardingWizard
@@ -174,6 +176,7 @@ func TestInitExplicitHostedArgsInTTYSkipsOptionalPostCreatePrompts(t *testing.T)
 }
 
 func TestInitNoTTYHostedRequiresExplicitNewAccountBeforeWizard(t *testing.T) {
+	resetInitHostFlagsForTest(t)
 	// Cannot use t.Parallel() — needs cwd and globals.
 	oldWizard := guidedOnboardingWizard
 	oldIsTTY := initIsTTY
@@ -254,6 +257,7 @@ func TestInitNoTTYLocalhostRequiresExplicitNewTeamBeforeLocalFlow(t *testing.T) 
 }
 
 func TestInitTTYMissingOutcomeUsesChooserConfirmation(t *testing.T) {
+	resetInitHostFlagsForTest(t)
 	// Cannot use t.Parallel() — needs cwd and globals/stdin.
 	oldWizard := guidedOnboardingWizard
 	oldIsTTY := initIsTTY
@@ -849,6 +853,7 @@ var (
 )
 
 func TestInitAdmissionTeamIDIssuesAcceptsAndConnects(t *testing.T) {
+	resetInitHostFlagsForTest(t)
 	resetAuthCommandGlobals(t)
 	oldAdmission, oldName, oldJSON, oldExpected := initAdmissionTeamID, initName, jsonFlag, initExpectedAccountID
 	t.Cleanup(func() {
