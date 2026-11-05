@@ -134,26 +134,18 @@ retry or coverage reduction makes a stage pass.
 
 ## Reviewed released-client issue budget
 
-Coordinator decision d51223e6 permits these measured released-client failures
-while HEAD must pass both cells. Each case still runs; its observed failure
-is retained as `KNOWN_ISSUE`, never counted as a passed case:
+There are no reviewed released-client issues. npm `latest` aw 1.36.55 carries
+the aweb-actw fix, so both local encrypted-chat directions must pass in both
+lanes. Coordinator decision 143e403a supersedes the former d51223e6 allowance
+for aw 1.36.53–1.36.54.
 
-| Cell | Released versions (inclusive) | Task | Exact expected failure |
-| --- | --- | --- | --- |
-| released/t1->t2/chat/v2 | 1.36.53–1.36.54 | aweb-actw | First `chat send-and-wait t2 ... --e2ee --wait 0`, exit 1, diagnostic below |
-| released/t2->t1/chat/v2 | 1.36.53–1.36.54 | aweb-actw | First `chat send-and-wait t1 ... --e2ee --wait 0`, exit 1, diagnostic below |
-
-The JSON error must contain exactly `code=error` and this message, also emitted
-on stderr: "sending message: recipient has no published E2E encryption key; ask
-them to upgrade aw/Pi/channel and run `aw id encryption-key setup`, or explicitly
-send a server-readable upgrade note with --plaintext". The originating actor,
-exact command/flags and that case's body are checked as well. Failure on a later
-reply, a different diagnostic, unexpected success, unsupported version or any
-undeclared failure is red. The parent stage rechecks the version and failure
-receipt. Remove both entries in the change that promotes the fixed aw to npm
-latest; a version outside the reviewed range is red until the budget is updated
-or removed. These are the two released cells; the four original failures were
-these same two directions across HEAD and released lanes.
+Any future exception requires a reviewed entry for the exact case, released
+version range, task and failure receipt. Budgeted failures remain
+`KNOWN_ISSUE`, never passed cases. A different command, actor, diagnostic,
+exit code or failure phase, an unexpected success, an unsupported version or
+any undeclared failure is red. The parent stage rechecks the receipt. Remove
+an entry when the fixed aw becomes npm `latest`; extending the range cannot
+excuse an unexpected success.
 
 For an additional author-only version comparison, set
 `USER_PATHS_COMPARISON_METADATA` to immutable npm metadata for that exact

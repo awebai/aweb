@@ -10,16 +10,9 @@ HUMANS = ['g-to-human/mail-by-address', 't-to-human/mail-by-address', 'human-to-
 COVERAGE_SUMMARY = 'incomplete: human paths not covered'
 HUMAN_STATUS = 'NOT COVERED: pending aweb-actu'
 
-# Coordinator d51223e6: these measured released-client defects do not excuse a
-# HEAD regression. Remove the entries when promoting the fixed aw to latest.
-KNOWN_RELEASED_ISSUES = [
-    dict(case='released/t1->t2/chat/v2', task='aweb-actw', minimum_version='1.36.53', maximum_version='1.36.54',
-         actor='t1', target='t2', exit=1, code='error',
-         message='sending message: recipient has no published E2E encryption key; ask them to upgrade aw/Pi/channel and run `aw id encryption-key setup`, or explicitly send a server-readable upgrade note with --plaintext'),
-    dict(case='released/t2->t1/chat/v2', task='aweb-actw', minimum_version='1.36.53', maximum_version='1.36.54',
-         actor='t2', target='t1', exit=1, code='error',
-         message='sending message: recipient has no published E2E encryption key; ask them to upgrade aw/Pi/channel and run `aw id encryption-key setup`, or explicitly send a server-readable upgrade note with --plaintext'),
-]
+# Coordinator 143e403a supersedes d51223e6: npm latest aw 1.36.55 carries
+# the actw fix. Future exceptions still require exact reviewed failure receipts.
+KNOWN_RELEASED_ISSUES = []
 
 
 def classify_outcome(outcome, version):
