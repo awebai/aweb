@@ -27,15 +27,18 @@ UIDs, excluding root and the runner UID. Config format is unchanged; the public
 service origin lives in the separate root-owned supervisor config.
 
 The two executable scripts must name the protected interpreter with `-I` in
-their shebangs. The installed-file manifest covers the interpreter, site-packages,
+their shebangs. Flatten the standalone distribution's symlinks into copies;
+do not create a venv. The supervisor refuses `pyvenv.cfg` and requires its actual
+`sys.prefix`, `sys.base_prefix`, `sys.base_exec_prefix` and every resolved
+`sys.path` entry to remain under the prefix. The installed-file manifest covers the interpreter, site-packages,
 any `.pth` files, native libraries and every installed file. A checkout-created
 venv or an editable installation is unsuitable.
 
 The proposed sudoers command is (replace `<agent>` with the actual driver user):
 
 ```text
-<agent> ALL=(aweb-runner) NOPASSWD: NOSETENV: NOLOG_INPUT: /opt/aweb-secrets-e2e/bin/aweb-secrets-supervisor ""
-Defaults!/opt/aweb-secrets-e2e/bin/aweb-secrets-supervisor env_reset, !log_input
+<agent> ALL=(aweb-runner) NOPASSWD: NOSETENV: NOLOG_INPUT: NOLOG_OUTPUT: /opt/aweb-secrets-e2e/bin/aweb-secrets-supervisor ""
+Defaults!/opt/aweb-secrets-e2e/bin/aweb-secrets-supervisor env_reset, !log_input, !log_output
 ```
 
 The operator validates the exact syntax/policy, installs it only after the
@@ -60,7 +63,8 @@ registration code is at most 254 UTF-8 bytes with no NUL/CR/LF. Only its one
 line is written to a **separate** child stdin pipe, then that pipe closes.
 The run/doctor child stdin is empty. Code never enters argv, environment,
 stdout/stderr or evidence. Disable sudo input logging for this command;
-supervisor suppression cannot prevent sudo from recording its own input.
+supervisor suppression cannot prevent sudo from recording its own input or
+PTY-echoed output.
 
 The guardian reports `{"pid":<worker PID>,"uid":<kernel effective UID>}` on
 stdout from the child's pre-exec kernel observation. A following
@@ -75,7 +79,8 @@ readiness descriptors after exec.
 Subsequent stdin lines are only `{"signal":15}` or `{"signal":2}`. They
 address that owned child, never a supplied PID. TERM/INT to the sudo process
 must relay through the supervisor to the child; other relayed HUP/USR1/USR2/
-QUIT/TSTP/CONT signals are ignored. EOF stops and reaps the child. After a
+QUIT/TSTP/CONT signals are ignored by the supervisor, then reset to default in
+the worker before exec so job signal behavior is preserved. EOF stops and reaps the child. After a
 three-second grace period, the guardian sends SIGKILL to its unreaped child.
 
 macOS has no PR_SET_PDEATHSIG. A separate guardian owns the worker and monitors

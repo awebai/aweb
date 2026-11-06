@@ -48,6 +48,7 @@ class Policy:
     protected_uid: int = 0
     ancestor_root: Path = Path("/")
     interpreter: Path | None = None
+    python_paths: tuple[str, ...] | None = None
 
     def __post_init__(self):
         object.__setattr__(self, "prefix", Path(self.prefix))
@@ -64,7 +65,10 @@ class Policy:
 
     @classmethod
     def deployed(cls):
-        return cls(PREFIX, pwd.getpwnam("aweb-runner").pw_uid)
+        uid = pwd.getpwnam("aweb-runner").pw_uid
+        if uid <= 0:
+            raise ValueError("unsafe runner uid")
+        return cls(PREFIX, uid)
 
     @property
     def state(self):
@@ -96,6 +100,8 @@ class Policy:
         # files. Only persistent state and the explicit runner-owned config differ.
         def tree(directory):
             for path in directory.iterdir():
+                if path.name == "pyvenv.cfg":
+                    raise ValueError("external python base")
                 if path in (self.state, self.prefix / "runner-config.json"):
                     continue
                 info = path.lstat()
@@ -105,6 +111,18 @@ class Policy:
                     tree(path)
 
         tree(self.prefix)
+        paths = (
+            self.python_paths
+            if self.python_paths is not None
+            else (
+                sys.prefix,
+                sys.base_prefix,
+                sys.base_exec_prefix,
+                *sys.path,
+            )
+        )
+        if any(not Path(path).resolve().is_relative_to(self.prefix) for path in paths):
+            raise ValueError("external python import path")
         self._entry(self.interpreter, self.protected_uid)
         for name in ("aweb-secrets-runner", "aweb-secrets-supervisor"):
             with (self.prefix / "bin" / name).open("rb") as source:
@@ -207,6 +225,8 @@ def _worker(argv, data, report):
             resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
             for number in (signal.SIGTERM, signal.SIGINT):
                 signal.signal(number, signal.SIG_DFL)
+            for name in ("SIGHUP", "SIGUSR1", "SIGUSR2", "SIGQUIT", "SIGTSTP", "SIGCONT"):
+                signal.signal(getattr(signal, name), signal.SIG_DFL)
             os.dup2(input_r, 0)
             null = os.open(os.devnull, os.O_WRONLY)
             os.dup2(null, 1)

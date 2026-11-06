@@ -7,6 +7,7 @@ import os
 import secrets
 import signal
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -38,6 +39,9 @@ while True:
 """
 
 
+PYTHON = str(Path(sys.executable).resolve())
+
+
 @pytest.fixture
 def world(tmp_path):
     # The deployment policy checks all ancestors; tmp itself is intentionally
@@ -53,18 +57,24 @@ def world(tmp_path):
         json.dumps({"origin": "https://service.example"})
     )
     binary = prefix / "bin" / "aweb-secrets-runner"
-    binary.write_text(f"#!{sys.executable} -I\n" + WORKER)
+    binary.write_text(f"#!{PYTHON} -I\n" + WORKER)
     binary.chmod(0o755)
-    (prefix / "bin" / "aweb-secrets-supervisor").write_text(f"#!{sys.executable} -I\n")
+    (prefix / "bin" / "aweb-secrets-supervisor").write_text(f"#!{PYTHON} -I\n")
     policy = Policy(
-        prefix, os.geteuid(), os.geteuid(), ancestor_root=prefix, interpreter=Path(sys.executable)
+        prefix,
+        os.geteuid(),
+        os.geteuid(),
+        ancestor_root=prefix,
+        interpreter=Path(PYTHON),
+        python_paths=(str(prefix),),
     )
     module_dir = Path(__file__).resolve().parents[1] / "e2e"
     bootstrap = (
         f"import sys; sys.path.insert(0, {str(module_dir)!r}); "
         "from runner_supervisor import Policy, supervise; "
         f"raise SystemExit(supervise(Policy({str(prefix)!r}, {os.geteuid()}, "
-        f"{os.geteuid()}, ancestor_root={str(prefix)!r}, interpreter={sys.executable!r})))"
+        f"{os.geteuid()}, ancestor_root={str(prefix)!r}, interpreter={PYTHON!r}, "
+        f"python_paths=({str(prefix)!r},))))"
     )
     command = (sys.executable, "-I", "-c", bootstrap)
     launcher = SupervisedLauncher(command=command, policy=policy)
@@ -229,5 +239,18 @@ def test_policy_rejects_symlink_and_writable_runtime(world):
         policy.check()
     module.unlink()
     module.symlink_to(policy.prefix / "runner-config.json")
+    with pytest.raises(ValueError):
+        policy.check()
+
+
+def test_external_python_base_and_venv_configuration_refuse(world):
+    policy, _, _ = world
+    policy.check()
+    # Use the actual host base outside this protocol fixture's prefix.
+    with pytest.raises(ValueError):
+        replace(policy, python_paths=(str(policy.prefix), sys.base_prefix)).check()
+    with pytest.raises(ValueError):
+        replace(policy, python_paths=None).check()
+    (policy.prefix / "pyvenv.cfg").write_text(f"home = {sys.base_prefix}\n")
     with pytest.raises(ValueError):
         policy.check()
