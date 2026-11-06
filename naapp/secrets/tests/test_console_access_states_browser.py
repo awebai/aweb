@@ -67,6 +67,20 @@ async def jobs_on_terms(w):
             )
 
 
+async def token_color(page, token: str) -> str:
+    """The colour the shared console toolkit gives `token` in the page's current theme."""
+    return await page.evaluate(
+        """token => { const probe = document.createElement('i');
+        probe.style.color = `var(${token})`; document.body.append(probe);
+        const value = getComputedStyle(probe).color; probe.remove(); return value; }""",
+        token,
+    )
+
+
+async def styled(locator, prop: str) -> str:
+    return await locator.first.evaluate("(el, prop) => getComputedStyle(el)[prop]", prop)
+
+
 async def tab_to(page, selector: str) -> None:
     for _ in range(80):
         await page.keyboard.press("Tab")
@@ -125,6 +139,32 @@ async def test_one_secrets_view_shows_who_can_use_it_on_what_terms(
         assert await page.evaluate(NO_OVERFLOW)
         await page.get_by_role("link", name="All access").click()
         await expect(page).to_have_url(origin + "/access")
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+async def test_access_colours_come_from_the_console_toolkit_in_either_theme(
+    world, browser, service, scheme
+):
+    _, origin = service
+    async with await browser.new_context(color_scheme=scheme) as context:
+        page, _, _ = await enrolled_page(world, context, origin)
+        await page.goto(origin + "/access")
+        expected = [
+            (".access-flags .flag-write", "color", "--stop"),
+            (".access-flags .flag-write", "backgroundColor", "--stop-soft"),
+            (".access-flags .flag-sensitive", "color", "--wait"),
+            (".access-flags .flag-sensitive", "backgroundColor", "--wait-soft"),
+            (".access-note", "color", "--muted"),
+            (".principal-team", "color", "--muted"),
+            (".access-agent", "borderBottomColor", "--line"),
+            (".access-grant", "borderLeftColor", "--line"),
+        ]
+        for selector, prop, token in expected:
+            assert await styled(page.locator(selector), prop) == await token_color(page, token), (
+                selector,
+                prop,
+                token,
+            )
 
 
 @pytest.mark.parametrize("width", [375, 1440])
@@ -209,6 +249,7 @@ async def test_a_failed_revoke_far_down_the_page_is_reported_where_the_owner_is(
         await expect(failure).not_to_be_empty()
         await expect(failure).to_be_in_viewport()
         await expect(control).to_be_focused()
+        assert await styled(failure, "color") == await token_color(page, "--stop")
 
 
 async def test_keyboard_only_list_secret_return_and_cancelled_narrowing(
