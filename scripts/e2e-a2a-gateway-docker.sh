@@ -250,6 +250,7 @@ POSTGRES_PASSWORD=aweb-a2a-gateway-e2e
 POSTGRES_DB=aweb
 AWEB_PORT=$AWEB_PORT
 AWID_PORT=$AWID_PORT
+AWEB_BIND_ADDRESS=0.0.0.0
 REDIS_PORT=$REDIS_PORT
 PG_PORT=$PG_PORT
 AWEB_PUBLIC_ORIGIN=$AWEB_DOCKER_URL
@@ -491,7 +492,6 @@ EOF
 capture_success reply_send "personal sends a2a reply" run_aw_in "$PERSONAL_DIR" mail send \
   --plaintext \
   --conversation-id "$conversation_id" \
-  --subject "A2A reply" \
   --body "$reply_body" \
   --json
 

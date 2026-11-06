@@ -34,12 +34,10 @@ def health_bytes(git_sha: str | None = _SHA_A) -> bytes:
     return json.dumps(health_payload(git_sha), separators=(",", ":")).encode()
 
 
-def deployment_health_payload(
-    *, git_sha: str = _SHA_A, **deployment_overrides: str
-) -> dict:
+def deployment_health_payload(*, git_sha: str = _SHA_A, **deployment_overrides: str) -> dict:
     deployment = {
         "service_id": "srv-abc123",
-        "service_name": "library",
+        "service_name": "library-origin",
         "hostname": "library-origin.example",
         "origin_url": "https://library-origin.example",
         "repo": "awebai/aweb",
@@ -137,6 +135,7 @@ def config(tmp_path: Path) -> render_ops.ProductionConfig:
             {
                 "service_id": "srv-abc123",
                 "service_name": "library",
+                "service_slug": "library-origin",
                 "region": "virginia",
                 "repo": "https://github.com/awebai/aweb",
                 "root_dir": "",
@@ -217,6 +216,7 @@ def write_config(path: Path, config: render_ops.ProductionConfig) -> None:
                 for key in (
                     "service_id",
                     "service_name",
+                    "service_slug",
                     "region",
                     "repo",
                     "root_dir",
@@ -288,6 +288,7 @@ def service(config: render_ops.ProductionConfig) -> dict:
     return {
         "id": config.service_id,
         "name": config.service_name,
+        "slug": config.service_slug,
         "repo": config.repo,
         "rootDir": config.root_dir,
         "branch": config.branch,
@@ -2746,3 +2747,74 @@ def test_wait_rejects_commit_change(config: render_ops.ProductionConfig) -> None
         render_ops.wait_for_deploy(
             ChangedClient(), config, "dep-created", "b" * 40, timeout_seconds=1, interval_seconds=0
         )
+
+
+def test_public_runtime_identifier_is_the_pinned_slug_not_api_display_name() -> None:
+    production = render_ops.ProductionConfig.load(
+        Path(__file__).parents[1] / "ops/render-production.json"
+    )
+    observed = deployment_health_payload(
+        git_sha="0c490a3627e50e2b3a8b240713d50c3d917659e2",
+        service_id=production.service_id,
+        service_name="library-02jf",
+        hostname="library-02jf.onrender.com",
+        origin_url=production.origin_url,
+    )
+    assert (
+        render_ops.verify_public_deployment_identity(observed, production) == observed["deployment"]
+    )
+
+
+@pytest.mark.parametrize(
+    "drift", [None, "rootDir", "dockerfilePath", "dockerContext", "name", "slug"]
+)
+def test_settings_move_is_pinned_and_rechecks_live_artifact(config, monkeypatch, drift) -> None:
+    before = service(config)
+    before["rootDir"] = "naapp/library"
+    before["serviceDetails"]["envSpecificDetails"]["dockerfilePath"] = "./Dockerfile"
+    if drift in {"dockerfilePath", "dockerContext"}:
+        before["serviceDetails"]["envSpecificDetails"][drift] = "unexpected"
+    elif drift:
+        before[drift] = "unexpected"
+
+    class SettingsClient(FakeClient):
+        def service(self, service_id):
+            return self.after if hasattr(self, "after") else before
+
+        def move_build_settings(self, service_id):
+            self.posts.append(("settings", service_id))
+            self.after = service(config)
+
+    live = deploy("dep-rollback", "a" * 40)
+    client = SettingsClient(config, live)
+    monkeypatch.setattr(render_ops, "_client", lambda args: (client, config))
+    monkeypatch.setattr(render_ops, "verify_git_target", lambda *args, **kwargs: None)
+    stub_command_evidence(monkeypatch)
+    args = common_args(config)
+    if drift:
+        with pytest.raises(render_ops.OpsError):
+            render_ops.command_move_build(args)
+        assert client.posts == []
+    else:
+        result = render_ops.command_move_build(args)
+        assert client.posts == [("settings", config.service_id)]
+        assert result["live_deploy"]["commit"] == "a" * 40
+
+
+def test_settings_patch_only_changes_reviewed_build_fields(monkeypatch) -> None:
+    client = render_ops.RenderClient("fixture")
+    calls = []
+    monkeypatch.setattr(client, "request", lambda *args: calls.append(args))
+    client.move_build_settings("srv-library")
+    assert calls == [
+        (
+            "PATCH",
+            "/services/srv-library",
+            {
+                "rootDir": "",
+                "serviceDetails": {
+                    "envSpecificDetails": {"dockerfilePath": "./naapp/library/Dockerfile"}
+                },
+            },
+        )
+    ]

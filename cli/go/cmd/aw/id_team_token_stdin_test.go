@@ -24,7 +24,8 @@ func TestAcceptInviteTokenStdinRefusals(t *testing.T) {
 		args              []string
 		openPipe          bool
 	}{
-		{name: "conflict_before_read", input: "", args: []string{"aw_inv_secret_positional"}, want: "cannot be combined", openPipe: true},
+		{name: "conflict_before_read", input: "", args: []string{"aw_inv_secret_positional"}, want: "not both", openPipe: true},
+		{name: "file_conflict_before_read", input: "", args: []string{"--token-file", "invite.token"}, want: "cannot be used together", openPipe: true},
 		{name: "empty", want: "empty"},
 		{name: "whitespace", input: " \n\t", want: "empty"},
 		{name: "invalid", input: "secret-invalid-token", want: "invalid invite token"},

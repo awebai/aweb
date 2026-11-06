@@ -22,6 +22,7 @@ def configured(tmp_path: Path) -> dict[str, str]:
         "API_ORIGIN": "https://api.secrets.test",
         "CONSOLE_ORIGIN": "https://console.secrets.test",
         "LOGS_ORIGIN": "https://logs.secrets.test",
+        "LOGS_CONSOLE_ORIGIN": "https://console.logs.secrets.test",
         "PRIVATE_DNS_NAME": "private-e2e.example.test",
         "MCP_URL": "https://mcp.secrets.test/mcp",
         "RUNNER_USER": "secrets-release-runner",
@@ -75,6 +76,64 @@ def test_private_dns_name_is_required(tmp_path: Path):
     with pytest.raises(ConfigurationError) as caught:
         load_environment(env)
     assert name in str(caught.value)
+
+
+def test_logs_console_origin_is_required_without_fallback(tmp_path: Path):
+    env = configured(tmp_path)
+    name = PREFIX + "LOGS_CONSOLE_ORIGIN"
+    del env[name]
+    with pytest.raises(ConfigurationError) as caught:
+        load_environment(env)
+    assert str(caught.value) == "Release E2E requires valid inputs: " + name
+
+
+def test_logs_console_origin_survives_the_explicit_mapping(tmp_path: Path):
+    env = configured(tmp_path)
+    name = PREFIX + "LOGS_CONSOLE_ORIGIN"
+    assert load_environment(env)[name] == env[name]
+
+
+@pytest.mark.parametrize(
+    "console",
+    [
+        "https://logs.secrets.test",
+        "https://LOGS.secrets.test:443/",
+        "https://logs.secrets.test:8443",
+        "https://logs.secrets.test./",
+    ],
+)
+def test_logs_origins_require_distinct_hostnames_even_on_different_ports(
+    tmp_path: Path, console: str
+):
+    env = configured(tmp_path)
+    public, human = PREFIX + "LOGS_ORIGIN", PREFIX + "LOGS_CONSOLE_ORIGIN"
+    env[human] = console
+    with pytest.raises(ConfigurationError) as caught:
+        load_environment(env)
+    assert str(caught.value) == "Release E2E requires valid inputs: " + ", ".join(
+        sorted((public, human))
+    )
+
+
+@pytest.mark.parametrize(
+    "console",
+    [
+        "http://console.logs.secrets.test",
+        "https://console.logs.secrets.test/path",
+        "https://user:private-marker@console.logs.secrets.test",
+        "https://console.logs.secrets.test?token=private-marker",
+        "https://console.logs.secrets.test#private-marker",
+    ],
+)
+def test_logs_console_requires_a_plain_https_origin_without_echoing_values(
+    tmp_path: Path, console: str
+):
+    env = configured(tmp_path)
+    name = PREFIX + "LOGS_CONSOLE_ORIGIN"
+    env[name] = console
+    with pytest.raises(ConfigurationError) as caught:
+        load_environment(env)
+    assert str(caught.value) == "Release E2E requires valid inputs: " + name
 
 
 @pytest.mark.parametrize(

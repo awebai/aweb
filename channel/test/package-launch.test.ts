@@ -40,6 +40,24 @@ test("freshly built ESM bundle completes MCP initialization through the packaged
     .toBe("plugin:aweb-channel:aweb-channel");
 });
 
+test("server instructions reply through a fresh owner-only body file, never an inline body", async () => {
+  const workdir = createInitializedWorkdir();
+  process.env.HOME = mkdtempSync(join(tmpdir(), "claude-channel-instructions-home-"));
+  delete process.env.AWEB_IDENTITY_HOME;
+
+  const launched = await launchPackagedMCPChild(channelRoot, workdir);
+  child = launched.child;
+  const instructions = launched.initialize.instructions ?? "";
+
+  // A fixed or shared path lets one agent's draft go out in another's mail.
+  expect(instructions).toContain("mktemp");
+  expect(instructions).toContain("aw mail reply <message_id> --body-file");
+  expect(instructions).toContain("aw chat send-and-wait <from> --body-file");
+  expect(instructions).not.toMatch(/--body\s+"/);
+  expect(instructions).not.toContain('"<reply>"');
+  expect(instructions).not.toMatch(/\/tmp\//);
+});
+
 test("supported source consumers do not depend on the retired qualified MCP name", () => {
   const consumerRoots = [
     join(repoRoot, "channel", "src"),

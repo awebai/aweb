@@ -2,7 +2,7 @@
 
 Your tasks layer is **aweb**. Shared task state, work discovery, ownership,
 status, and the team roster are authoritative in aweb for this deployment.
-Load the **aweb-coordination** skill before discovering, claiming, creating,
+Load the **aweb-tasks** skill before discovering, claiming, creating,
 updating, or handing off work.
 
 Use the selected principal from your instance home:

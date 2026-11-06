@@ -38,7 +38,7 @@ _CREDENTIAL_FILES = (
     "AGENT_A_MCP_TOKEN_FILE",
     "AGENT_B_MCP_TOKEN_FILE",
 )
-_ORIGINS = ("API_ORIGIN", "CONSOLE_ORIGIN", "LOGS_ORIGIN")
+_ORIGINS = ("API_ORIGIN", "CONSOLE_ORIGIN", "LOGS_ORIGIN", "LOGS_CONSOLE_ORIGIN")
 _RUNNER_PATHS = ("RUNNER_BINARY", "RUNNER_CONFIG_FILE", "RUNNER_STATE_DIR")
 REQUIRED_NAMES = tuple(
     PREFIX + name for name in (*_METADATA, *_CREDENTIAL_FILES, *_ORIGINS, "MCP_URL", *_RUNNER_PATHS)
@@ -143,6 +143,14 @@ def load_environment(environ: Mapping[str, str] | None = None) -> Mapping[str, s
             invalid.update((api, console))
     except ValueError:
         invalid.update((api, console))
+    logs, reader = PREFIX + "LOGS_ORIGIN", PREFIX + "LOGS_CONSOLE_ORIGIN"
+    try:
+        logs_host = (urlsplit(selected[logs]).hostname or "").rstrip(".")
+        reader_host = (urlsplit(selected[reader]).hostname or "").rstrip(".")
+        if logs_host == reader_host:
+            invalid.update((logs, reader))
+    except ValueError:
+        invalid.update((logs, reader))
     if invalid:
         raise ConfigurationError(invalid)
     return MappingProxyType(selected)

@@ -468,3 +468,27 @@ broker/run backend refuses before any control write. Its methods are:
 `InstallationRefused` retains its fixed code/status; `UseAuditUnavailable`
 remains 503 `release_context_unavailable`. Caller 401 session and 403 owner
 refusals pass through; other database failures propagate and roll back.
+
+## Public signed use correlation
+
+For newly admitted broker/run uses, signed `post-secret-use` payload `use_ref`
+is exactly the member response's existing server-minted `request_ref`. Frozen
+audit contexts retain it through approval decisions, resubmission, transport
+and result replay, uncertainty and owner settlement. Separate executions have
+separate refs; `dispatch_id`, `job_id` and `job_digest` retain their meanings.
+
+An attributable pre-admission refusal commits a fresh random 128-bit `use_`
+reference in the signed event and its local correlation in the same outer
+refusal transaction. Only after commit does the refused response present
+`use_ref`. A repeated refusal creates another attempt/ref without an intent,
+idempotency claim, dispatch or rate charge. If the authenticated scoped original
+use already exists, the refusal retains that original intent ref. Unattributed
+failures and rolled-back recording present no audit ref. The ref grants no
+lookup, retry, deduplication or execution authority.
+
+Member input models reject `use_ref`; refs never contain caller request IDs,
+parameters, reasons or credential material. Owners join the actual response ref
+to signed retained `payload.use_ref`, installation/generation, team and canonical
+actor DID. Legacy events may omit it and are not backfilled. Compatible receiver
+publication must precede new emission; the catalog v1 compatibility decision and
+upgrade requirement are recorded in the hook contract/changelog.

@@ -517,6 +517,10 @@ class FederationAuthorityActivation:
             if authority_generation is not None:
                 await self.resolver.expire_generation(authority_generation)
 
+    def received_registry_client(self, token, did_key, redis):
+        from .id_tree_registry import received_registry_client
+        return received_registry_client(self, token, did_key, redis)
+
     async def aclose(self) -> None:
         await self.resolver.aclose()
 

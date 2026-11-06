@@ -1,11 +1,13 @@
 """Actual member signatures/AWID, broker service, PostgreSQL and TLS transport."""
 
+import asyncio
 import json
 from dataclasses import replace
 
 import httpx
 from aweb_naapp.runtime.installation import InstallationFence
 from aweb_naapp_testing import Member
+from awid_service.testing import REGISTRY_URL
 
 from aweb_secrets.app import create_app
 from aweb_secrets.status_service import UseStatus
@@ -67,6 +69,16 @@ async def test_actual_guard_binds_submission_and_status_never_sends(
         awid_transport=registry.transport,
         tool_routers=(routes,),
     )
+    discovery_domains = []
+
+    async def registry_override(domain):
+        discovery_domains.append(domain)
+        assert domain == TEAM.split(":", 1)[1]
+        return REGISTRY_URL
+
+    # Keep the runtime's real hook drain and directory, with the same
+    # in-process registry discovery answer as the member verifier.
+    service.runtime.team_server_directory()._registry_override = registry_override
     async with service.api_app.router.lifespan_context(service.api_app):
         db = service.runtime.db()
         fence = InstallationFence(db, app_id="secrets", grants=grants)
@@ -126,3 +138,9 @@ async def test_actual_guard_binds_submission_and_status_never_sends(
                 assert status.status_code == 200 and status.json() == receipt
                 assert upstream.paths == ["/bearer/echo"]
                 assert await db.fetch_value("SELECT count(*) FROM {{tables.intents}}") == 1
+                # Observe the background drain using the configured external
+                # discovery seam; a fast test must not hide an untested default.
+                async with asyncio.timeout(10):
+                    while not discovery_domains:
+                        await asyncio.sleep(0.01)
+                assert set(discovery_domains) == {TEAM.split(":", 1)[1]}

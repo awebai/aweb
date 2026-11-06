@@ -3,7 +3,7 @@ type: Decision
 title: Released clients are a permanent constraint
 description: Once a client that sends a shape is published, the server accepts that shape until it is measured that nothing sends it; contract changes are additive by default, narrowing names every consumer and proves each deploys atomically, and removal is a separate change.
 tags: [decision, compatibility, release, clients, contracts]
-timestamp: 2026-10-25
+timestamp: 2026-11-04
 ---
 
 Decided on 2026-07-27 after a chat mark-read change made a new field required
@@ -54,6 +54,12 @@ Rulings and review misses from October 2026 mark the edges of the rule.
   on a released MCP selector. Compare the accepted inputs at every new
   constructor boundary, and enumerate the existing consumers before writing a
   contrastive sentence.
+- **Implicit behaviour is part of the contract.** Removing a side effect a
+  host gets without asking, such as per-request outbox recovery for a mounted
+  app, is narrowing too: keep the default and add an explicit opt-out, never a
+  new duty stated in a docstring. See
+  [removing an implicit side effect is a contract change](/aweb-protocol-expert/lessons/removing-an-implicit-side-effect-is-a-contract-change.md)
+  (2026-11-04).
 - **A dated exception, by the operator.** On 2026-10-20, relayed by the naapps
   and secrets coordinators, the operator waived the additive default for the
   naapp install surfaces, released aw clients included, on the premise that no

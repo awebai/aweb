@@ -53,11 +53,11 @@ func TestTeamInviteInspectCommand(t *testing.T) {
 			}
 		}
 		var request map[string]string
-		if json.NewDecoder(r.Body).Decode(&request) != nil || len(request) != 1 || request["token"] != inner {
-			t.Error("preview did not send exactly the inner token")
+		if json.NewDecoder(r.Body).Decode(&request) != nil || len(request) != 1 || request["token"] != inspectEnvelopeFixture(1, inner, server.URL+"/api") {
+			t.Error("preview did not send exactly the original full token")
 		}
 		selected := mode.Load().(string)
-		status := map[string]int{"unknown": 404, "rate": 429, "unavailable": 503, "redirect": 307, "bad_request": 422}[selected]
+		status := map[string]int{"unknown": 404, "rate": 429, "unavailable": 503, "redirect": 307, "bad_request": 422, "unauthorized": 401, "gone": 410, "used": 409}[selected]
 		w.Header().Set("X-Reflected-Secret", inner)
 		if status != 0 {
 			w.Header().Set("Location", other.URL+"/?token="+inner)
@@ -72,6 +72,8 @@ func TestTeamInviteInspectCommand(t *testing.T) {
 		case "nullable":
 			result["expires_at"] = nil
 			result["identity_scope"] = "global"
+		case "unbound_scope":
+			result["identity_scope"] = "unknown"
 		case "mismatch":
 			result["server_url"] = other.URL
 		case "echo":
@@ -142,8 +144,8 @@ func TestTeamInviteInspectCommand(t *testing.T) {
 		return result, diagnostic.String(), code
 	}
 	for _, tc := range []struct{ mode, code string }{
-		{"active", ""}, {"nullable", ""}, {"expired", "expired"}, {"exhausted", "exhausted"}, {"revoked", "revoked"},
-		{"unknown", "unknown_or_invalid"}, {"rate", "server_unreachable"}, {"unavailable", "server_unreachable"},
+		{"active", ""}, {"nullable", ""}, {"unbound_scope", ""}, {"expired", "expired"}, {"exhausted", "exhausted"}, {"revoked", "revoked"},
+		{"unauthorized", "unknown_or_invalid"}, {"gone", "expired_or_revoked"}, {"used", "exhausted"}, {"unknown", "unknown_or_invalid"}, {"rate", "server_unreachable"}, {"unavailable", "server_unreachable"},
 		{"redirect", "server_unreachable"}, {"bad_request", "server_unreachable"}, {"mismatch", "server_mismatch"},
 		{"echo", "server_unreachable"}, {"bad_scope", "server_unreachable"}, {"bad_status", "server_unreachable"},
 		{"bad_expiry", "server_unreachable"}, {"malformed", "server_unreachable"}, {"oversized", "server_unreachable"},
@@ -162,10 +164,21 @@ func TestTeamInviteInspectCommand(t *testing.T) {
 				if tc.mode == "nullable" && (result["expires_at"] != nil || result["identity_scope"] != "global") {
 					t.Fatal("nullable expiry/global scope not preserved")
 				}
+				if tc.mode == "unbound_scope" && result["identity_scope"] != "unknown" {
+					t.Fatal("unbound scope was inferred")
+				}
 			} else {
 				failure, ok := result["error"].(map[string]any)
 				if exit != 1 || !ok || failure["code"] != tc.code {
 					t.Fatalf("bad error: exit=%d result=%v", exit, result)
+				}
+				if tc.code == "unknown_or_invalid" {
+					message, _ := failure["message"].(string)
+					for _, guidance := range []string{"Invite is unknown or invalid", "If this service is too old", "upgrade it to a release supporting POST /api/v1/spawn/invite-preview", "request a new invite"} {
+						if !strings.Contains(message, guidance) {
+							t.Fatalf("preview refusal lacks %q: %s", guidance, message)
+						}
+					}
 				}
 				if tc.mode == "expired" || tc.mode == "exhausted" || tc.mode == "revoked" {
 					if inspected, ok := result["invite"].(map[string]any); !ok || inspected["status"] != tc.mode {

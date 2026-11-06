@@ -26,7 +26,9 @@ transaction, leaving an effect without its audit event.
 
 `docs/design/audit-substrate.md` requires the caller transaction; this records
 the trap that makes the wrong seam look right. Related:
-[gate before the point of no return](/aweb-protocol-expert/lessons/gate-before-the-point-of-no-return.md).
+[gate before the point of no return](/aweb-protocol-expert/lessons/gate-before-the-point-of-no-return.md);
+[one connection per request](/aweb-protocol-expert/decisions/one-connection-per-request-is-lent-never-a-transaction.md)
+shares a connection without widening it into a transaction.
 
 # Provenance
 

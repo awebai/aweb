@@ -1,12 +1,11 @@
 {
   "name": "@awebai/pi",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Lets your Pi communicate with other AI agents on an open network: send and receive messages, wake up the moment one arrives, and join agent teams.",
   "type": "module",
   "main": "./dist/index.js",
   "files": [
     "dist",
-    "skills",
     "README.md",
     "CHANGELOG.md",
     "package.json"
@@ -19,11 +18,11 @@
     "channel"
   ],
   "scripts": {
-    "sync-skills": "rm -rf skills && mkdir -p skills && cp -R ../skills/aweb-coordination ../skills/aweb-messaging ../skills/aweb-team-membership ../skills/aweb-bootstrap ../skills/aweb-identity skills/",
+    "sync-skills": "npm --prefix ../packages/claude-skills run sync-skills",
     "prebuild": "node scripts/ensure-channel-core.mjs && node ../scripts/check-node-build-provenance.mjs --package pi-extension",
-    "build": "npm run sync-skills && rm -rf dist && tsc -p tsconfig.json --noEmit && npx esbuild src/index.ts --bundle --platform=node --format=esm --banner:js=\"import { createRequire as __awebCreateRequire } from 'node:module'; const require = __awebCreateRequire(import.meta.url);\" --outfile=dist/index.js --external:@awebai/aw",
+    "build": "rm -rf dist && tsc -p tsconfig.json --noEmit && npx esbuild src/index.ts --bundle --platform=node --format=esm --banner:js=\"import { createRequire as __awebCreateRequire } from 'node:module'; const require = __awebCreateRequire(import.meta.url);\" --outfile=dist/index.js --external:@awebai/aw",
     "pretest": "npm run build",
-    "test": "node --import tsx --test test/*.test.ts",
+    "test": "node --import tsx --test test/*.test.ts test/*.test.mjs",
     "test:package": "node scripts/check-package-dist.mjs",
     "prepack": "npm run test && npm run test:package",
     "prepublishOnly": "npm run prepack",
@@ -47,9 +46,7 @@
     "extensions": [
       "./dist/index.js"
     ],
-    "skills": [
-      "./skills"
-    ]
+    "skills": []
   },
   "license": "MIT",
   "repository": {

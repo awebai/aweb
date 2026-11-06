@@ -1,0 +1,741 @@
+"""The public identity-tree registry client: register, revoke and signed rotation.
+
+Each call takes a signer, a ``payload -> (did_key, raw signature)`` callable
+whose result may also be awaitable, and owns everything else: the exact body bytes, the covering-v2
+payload and its headers, and the checks on what the signer returned, made
+before anything is sent.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import copy
+import json
+import os
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+
+import httpx
+import pytest
+import pytest_asyncio
+from nacl.signing import SigningKey
+from redis.asyncio import Redis
+
+import awid.registry as registry_module
+from awid.dns_verify import DomainAuthority
+from awid.id_certificates import decode_id_chain_header, verify_id_chain
+from awid.id_tree_requests import (
+    REGISTER_OPERATION,
+    REGISTER_PATH,
+    REVOKE_OPERATION,
+    REVOKE_PATH,
+    ROTATE_OPERATION,
+    covering_payload,
+    register_body,
+    revoke_body,
+    rotate_body,
+    rotate_claims,
+    rotate_path,
+)
+from awid.registry import CachedRegistryClient, RegistryClient, RegistryError
+from awid_service.deps import get_domain_verifier
+
+from id_tree_support import ORIGIN, VECTORS, Tree, at, certificate, certificate_id, did_aw, did_key, seed, sign
+from test_registry_client import FakeRedis
+
+DOMAIN = "example.com"
+EXAMPLE = VECTORS["registration_example"]
+ROTATION = VECTORS["namespace_rotation_requests"]
+
+
+def signer_for(key_name: str):
+    def signer(payload: bytes) -> tuple[str, bytes]:
+        return did_key(key_name), SigningKey(seed(key_name)).sign(payload).signature
+
+    return signer
+
+
+def async_signer_for(key_name: str):
+    """A signer that, like a custodial host's, finishes its own checks before answering."""
+
+    async def signer(payload: bytes) -> tuple[str, bytes]:
+        await asyncio.sleep(0)
+        return did_key(key_name), SigningKey(seed(key_name)).sign(payload).signature
+
+    return signer
+
+
+def refusing_signer(payload: bytes):
+    raise PermissionError("custody check refused")
+
+
+async def _refuse_later(payload: bytes):
+    await asyncio.sleep(0)
+    raise PermissionError("custody check refused")
+
+
+def _bundle(*names: str) -> dict:
+    return {"v": 1, "type": "aweb.id-chain", "certificates": [certificate(name) for name in names]}
+
+
+class Recorder:
+    """A registry that records each request and answers with a set response."""
+
+    def __init__(self, response: httpx.Response | None = None) -> None:
+        self.requests: list[httpx.Request] = []
+        self.response = response or httpx.Response(200, json={})
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        return self.response
+
+
+@pytest_asyncio.fixture
+async def recorded():
+    recorder = Recorder()
+    client = RegistryClient(ORIGIN, transport=httpx.MockTransport(recorder.handler))
+    recorder.client = client
+    try:
+        yield recorder
+    finally:
+        await client.aclose()
+
+
+def _sent_headers(request: httpx.Request, names) -> dict:
+    return {name: request.headers.get(name) for name in names}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("make_signer", [signer_for, async_signer_for], ids=["sync", "async"])
+async def test_registration_reproduces_the_frozen_example_byte_for_byte(recorded, monkeypatch, make_signer):
+    monkeypatch.setattr(registry_module, "_utc_timestamp", lambda: EXAMPLE["payload"]["timestamp"])
+    recorded.response = httpx.Response(200, json=EXAMPLE["response"])
+    bundle = decode_id_chain_header(EXAMPLE["headers"]["X-AWID-ID-Chain"])
+
+    receipt = await recorded.client.register_id_certificate(
+        bundle, signer=make_signer("bob"),
+        expected_head=EXAMPLE["body"]["expected_head"], invitation_id=EXAMPLE["body"]["invitation_id"],
+    )
+
+    assert receipt == EXAMPLE["response"]
+    [sent] = recorded.requests
+    assert (sent.method, sent.url.path) == ("POST", EXAMPLE["payload"]["path"])
+    assert sent.content == EXAMPLE["body_utf8"].encode()
+    assert _sent_headers(sent, EXAMPLE["headers"]) == EXAMPLE["headers"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("make_signer", [signer_for, async_signer_for], ids=["sync", "async"])
+async def test_signed_rotation_reproduces_the_frozen_request_byte_for_byte(recorded, monkeypatch, make_signer):
+    frozen = ROTATION["valid"]
+    monkeypatch.setattr(registry_module, "_utc_timestamp", lambda: frozen["payload"]["timestamp"])
+    recorded.response = httpx.Response(200, json={
+        "namespace_id": "00000000-0000-4000-8000-000000000009", "domain": DOMAIN,
+        "controller_did": frozen["body"]["new_did_key"], "verification_status": "verified",
+        "last_verified_at": "2026-10-26T00:10:00Z", "created_at": "2026-10-26T00:00:00Z",
+    })
+
+    namespace = await recorded.client.rotate_namespace_with_previous_key(
+        DOMAIN, from_seq=frozen["body"]["from_seq"],
+        previous_did_key=frozen["body"]["previous_did_key"], new_did_key=frozen["body"]["new_did_key"],
+        previous_signer=make_signer("root"), new_signer=make_signer("root_rotated"),
+    )
+
+    assert namespace.controller_did == frozen["body"]["new_did_key"]
+    [sent] = recorded.requests
+    assert (sent.method, sent.url.path) == ("POST", frozen["payload"]["path"])
+    assert sent.content == frozen["body_utf8"].encode()
+    assert _sent_headers(sent, frozen["headers"]) == frozen["headers"]
+
+
+def _wrong_key(key_name: str, reported: str):
+    sign = signer_for(key_name)
+    return lambda payload: (reported, sign(payload)[1])
+
+
+def _short_signature(key_name: str):
+    sign = signer_for(key_name)
+    return lambda payload: (did_key(key_name), sign(payload)[1][:63])
+
+
+def _encoded_signature(key_name: str):
+    sign = signer_for(key_name)
+    return lambda payload: (did_key(key_name), sign(payload)[1].hex().encode())
+
+
+def _noncanonical_key(key_name: str):
+    sign = signer_for(key_name)
+    return lambda payload: (did_key(key_name) + " ", sign(payload)[1])
+
+
+def _awaitable(signer):
+    async def wrapped(payload: bytes):
+        return signer(payload)
+
+    return wrapped
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("signer", [refusing_signer, _refuse_later], ids=["sync", "async"])
+async def test_a_refusing_signer_sends_nothing(recorded, signer):
+    with pytest.raises(PermissionError):
+        await recorded.client.register_id_certificate(
+            _bundle("alice", "bob"), signer=signer, expected_head=None, invitation_id=None,
+        )
+    with pytest.raises(PermissionError):
+        await recorded.client.revoke_id_certificate(
+            DOMAIN, did_aw("bob"), signer=signer, expected_head=certificate_id("bob"),
+        )
+    with pytest.raises(PermissionError):
+        await recorded.client.rotate_namespace_with_previous_key(
+            DOMAIN, from_seq=1, previous_did_key=did_key("root"), new_did_key=did_key("root_rotated"),
+            previous_signer=signer_for("root"), new_signer=signer,
+        )
+    assert recorded.requests == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wrap", [lambda signer: signer, _awaitable], ids=["sync", "async"])
+@pytest.mark.parametrize("bad_signer", [
+    _short_signature("bob"),
+    _encoded_signature("bob"),
+    _noncanonical_key("bob"),
+    lambda payload: ("did:aw:" + did_aw("bob")[7:], SigningKey(seed("bob")).sign(payload).signature),
+    lambda payload: [did_key("bob"), SigningKey(seed("bob")).sign(payload).signature],
+    _wrong_key("alice", did_key("bob")),
+], ids=["short-signature", "encoded-signature", "noncanonical-key", "not-a-did-key", "not-a-tuple",
+        "signed-by-another-key"])
+async def test_a_malformed_signer_result_sends_nothing(recorded, bad_signer, wrap):
+    with pytest.raises(ValueError):
+        await recorded.client.register_id_certificate(
+            _bundle("alice", "bob"), signer=wrap(bad_signer), expected_head=None, invitation_id=None,
+        )
+    with pytest.raises(ValueError):
+        await recorded.client.revoke_id_certificate(
+            DOMAIN, did_aw("bob"), signer=wrap(bad_signer), expected_head=certificate_id("bob"),
+        )
+    assert recorded.requests == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("previous_signer, new_signer", [
+    (signer_for("root_rotated"), signer_for("root")),
+    (signer_for("root"), signer_for("root")),
+    (signer_for("root"), _wrong_key("alice", did_key("root_rotated"))),
+], ids=["swapped-roles", "one-key-signs-both", "reported-key-is-not-the-signing-key"])
+async def test_a_rotation_signer_that_does_not_hold_its_named_key_sends_nothing(recorded, previous_signer, new_signer):
+    with pytest.raises(ValueError):
+        await recorded.client.rotate_namespace_with_previous_key(
+            DOMAIN, from_seq=1, previous_did_key=did_key("root"), new_did_key=did_key("root_rotated"),
+            previous_signer=previous_signer, new_signer=new_signer,
+        )
+    assert recorded.requests == []
+
+
+@pytest.mark.asyncio
+async def test_the_signed_payload_header_is_base64url_of_the_signed_bytes(recorded):
+    # Bytes like "?>~" encode to the two characters where base64 and base64url differ.
+    domain = "?>~.example"
+    await recorded.client.revoke_id_certificate(
+        domain, did_aw("bob"), signer=signer_for("root"), expected_head=certificate_id("bob"),
+    )
+    [sent] = recorded.requests
+    header = sent.headers["X-AWEB-Signed-Payload"]
+    signed = base64.b64decode(header + "=" * (-len(header) % 4), altchars=b"-_", validate=True)
+    assert json.loads(signed)["domain"] == domain
+    assert set("-_") & set(header) and not set("+/") & set(header)
+
+
+@pytest.mark.asyncio
+async def test_a_coded_refusal_keeps_its_code(recorded):
+    recorded.response = httpx.Response(409, json={"detail": {"code": "head_conflict", "message": "head conflict"}})
+    with pytest.raises(RegistryError) as refused:
+        await recorded.client.revoke_id_certificate(
+            DOMAIN, did_aw("bob"), signer=signer_for("root"), expected_head=certificate_id("bob"),
+        )
+    assert (refused.value.status_code, refused.value.code) == (409, "head_conflict")
+
+
+@pytest.mark.asyncio
+async def test_an_uncoded_refusal_has_no_code(recorded):
+    recorded.response = httpx.Response(429, json={"detail": "rate limit exceeded"})
+    with pytest.raises(RegistryError) as refused:
+        await recorded.client.revoke_id_certificate(
+            DOMAIN, did_aw("bob"), signer=signer_for("root"), expected_head=certificate_id("bob"),
+        )
+    assert (refused.value.status_code, refused.value.code, refused.value.detail) == (
+        429, None, "rate limit exceeded",
+    )
+
+
+def _signed_payload(sent: httpx.Request) -> bytes:
+    header = sent.headers["X-AWEB-Signed-Payload"]
+    return base64.b64decode(header + "=" * (-len(header) % 4), altchars=b"-_", validate=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("effective_from", [None, "2026-10-26T00:05:00Z"])
+async def test_every_write_sends_exactly_the_shared_request_layout(recorded, effective_from):
+    bundle = _bundle("alice", "bob")
+    claims = rotate_claims(from_seq=1, previous_did_key=did_key("root"), new_did_key=did_key("root_rotated"))
+    await recorded.client.register_id_certificate(
+        bundle, signer=signer_for("bob"), expected_head=None, invitation_id=EXAMPLE["body"]["invitation_id"],
+    )
+    await recorded.client.revoke_id_certificate(
+        DOMAIN, did_aw("bob"), signer=signer_for("root"), expected_head=certificate_id("bob"),
+        effective_from=effective_from,
+    )
+    recorded.response = httpx.Response(200, json={
+        "namespace_id": "00000000-0000-4000-8000-000000000009", "domain": DOMAIN,
+        "controller_did": did_key("root_rotated"), "verification_status": "verified",
+        "last_verified_at": "2026-10-26T00:10:00Z", "created_at": "2026-10-26T00:00:00Z",
+    })
+    await _rotate(recorded.client)
+
+    aud = await recorded.client.registry_audience(DOMAIN)
+    expected = [
+        (REGISTER_PATH, REGISTER_OPERATION, None, register_body(
+            bundle["certificates"][-1], expected_head=None, invitation_id=EXAMPLE["body"]["invitation_id"],
+        )),
+        (REVOKE_PATH, REVOKE_OPERATION, None, revoke_body(
+            DOMAIN, did_aw("bob"), expected_head=certificate_id("bob"), effective_from=effective_from,
+        )),
+        (rotate_path(DOMAIN), ROTATE_OPERATION, claims, rotate_body(DOMAIN, claims)),
+    ]
+    assert len(recorded.requests) == len(expected)
+    for sent, (path, operation, op_claims, body) in zip(recorded.requests, expected):
+        assert (sent.url.path, sent.content) == (path, body)
+        assert _signed_payload(sent) == covering_payload(
+            aud=aud, path=path, domain=DOMAIN, operation=operation, body=body,
+            timestamp=sent.headers["X-AWEB-Timestamp"], claims=op_claims,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("routed", ["https://other-registry.example", "HTTPS://Other-Registry.example:443/"])
+async def test_the_registry_audience_is_the_audience_a_write_to_the_routed_registry_signs(routed):
+    recorder = Recorder(httpx.Response(200, json=EXAMPLE["response"]))
+
+    async def route(domain: str) -> str:
+        assert domain == DOMAIN
+        return routed
+
+    client = RegistryClient(ORIGIN, transport=httpx.MockTransport(recorder.handler), domain_registry_resolver=route)
+    try:
+        audience = await client.registry_audience(DOMAIN)
+        await client.register_id_certificate(
+            _bundle("alice", "bob"), signer=signer_for("bob"), expected_head=None, invitation_id=None,
+        )
+    finally:
+        await client.aclose()
+    [sent] = recorder.requests
+    assert audience == json.loads(_signed_payload(sent))["aud"] == "https://other-registry.example"
+
+
+# ---------------------------------------------------------------------------
+# Through the real AWID routes
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def live(clocked_client, manual_clock):
+    tree = Tree(clocked_client, manual_clock)
+    tree.clock.now = at("2026-10-26T00:00:00Z")
+    await tree.root()
+    for key_name in ("alice", "bob"):
+        await tree.vector_did(key_name)
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+    client = CachedRegistryClient(
+        ORIGIN, FakeRedis(), transport=httpx.ASGITransport(app=clocked_client.app),
+    )
+    tree.registry = client
+    try:
+        yield tree
+    finally:
+        await client.aclose()
+
+
+async def _status(tree, *ids: str) -> dict:
+    resp = await tree.client.post("/v1/id-certificates/status", json={"v": 1, "domain": DOMAIN, "ids": list(ids)})
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+@pytest.mark.asyncio
+async def test_a_registration_and_its_exact_retry_through_the_real_routes(live):
+    invitation = EXAMPLE["body"]["invitation_id"]
+    live.clock.now = at("2026-10-26T00:03:00Z")
+    receipt = await live.registry.register_id_certificate(
+        _bundle("alice", "bob"), signer=signer_for("bob"), expected_head=None, invitation_id=invitation,
+    )
+    assert receipt == {"certificate_id": certificate_id("bob"), "registered_at": "2026-10-26T00:03:00.000000Z"}
+
+    live.clock.now = at("2026-10-26T00:20:00Z")
+    retry = await live.registry.register_id_certificate(
+        _bundle("alice", "bob"), signer=signer_for("bob"), expected_head=None, invitation_id=invitation,
+    )
+    assert retry == receipt
+
+
+@pytest.mark.asyncio
+async def test_the_gate_refuses_a_registration_signed_by_another_key_with_its_code(live):
+    with pytest.raises(RegistryError) as refused:
+        await live.registry.register_id_certificate(
+            _bundle("alice", "bob"), signer=signer_for("alice"), expected_head=None, invitation_id=None,
+        )
+    assert (refused.value.status_code, refused.value.code) == (403, "subject_mismatch")
+
+
+@pytest.mark.asyncio
+async def test_a_root_revocation_through_the_real_routes(live):
+    live.clock.now = at("2026-10-26T00:03:00Z")
+    await live.registry.register_id_certificate(
+        _bundle("alice", "bob"), signer=signer_for("bob"), expected_head=None, invitation_id=None,
+    )
+    live.clock.now = at("2026-10-26T00:10:00Z")
+    receipt = await live.registry.revoke_id_certificate(
+        DOMAIN, did_aw("bob"), signer=signer_for("root"), expected_head=certificate_id("bob"),
+    )
+    assert receipt == {"revoked_at": "2026-10-26T00:10:00.000000Z", "effective_from": "2026-10-26T00:10:00.000000Z"}
+    [bob] = [i for i in (await _status(live, did_aw("bob")))["identities"] if i["id"] == did_aw("bob")]
+    assert bob["revocation"] == receipt
+
+
+@pytest.mark.asyncio
+async def test_a_signed_rotation_through_the_real_routes_keeps_the_tree(live):
+    live.exact_dns("root_rotated")
+    live.clock.now = at("2026-10-26T00:10:00Z")
+    namespace = await live.registry.rotate_namespace_with_previous_key(
+        DOMAIN, from_seq=1, previous_did_key=did_key("root"), new_did_key=did_key("root_rotated"),
+        previous_signer=signer_for("root"), new_signer=signer_for("root_rotated"),
+    )
+    assert namespace.controller_did == did_key("root_rotated")
+    epochs = (await _status(live))["namespace"]["epochs"]
+    assert [(e["seq"], e["did_key"], e["continuity"]) for e in epochs] == [
+        (1, did_key("root"), "replaced"), (2, did_key("root_rotated"), "rotated"),
+    ]
+
+    with pytest.raises(RegistryError) as refused:
+        await live.registry.rotate_namespace_with_previous_key(
+            DOMAIN, from_seq=1, previous_did_key=did_key("root"), new_did_key=did_key("root_rotated"),
+            previous_signer=signer_for("root"), new_signer=signer_for("root_rotated"),
+        )
+    assert (refused.value.status_code, refused.value.code) == (409, "head_conflict")
+
+
+@pytest.mark.asyncio
+async def test_a_signed_rotation_replaces_the_cached_namespace(live):
+    assert (await live.registry.get_namespace(DOMAIN)).controller_did == did_key("root")
+    live.exact_dns("root_rotated")
+    await live.registry.rotate_namespace_with_previous_key(
+        DOMAIN, from_seq=1, previous_did_key=did_key("root"), new_did_key=did_key("root_rotated"),
+        previous_signer=signer_for("root"), new_signer=signer_for("root_rotated"),
+    )
+    assert (await live.registry.get_namespace(DOMAIN)).controller_did == did_key("root_rotated")
+
+
+class NamespaceRegistry:
+    """A registry whose namespace rotates when the signed rotation reaches it."""
+
+    def __init__(self) -> None:
+        self.controller = did_key("root")
+        self.on_rotate = None
+
+    def namespace(self) -> dict:
+        return {
+            "namespace_id": "00000000-0000-4000-8000-000000000009", "domain": DOMAIN,
+            "controller_did": self.controller, "verification_status": "verified",
+            "last_verified_at": "2026-10-26T00:00:00Z", "created_at": "2026-10-26T00:00:00Z",
+        }
+
+    async def handler(self, request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json=self.namespace())
+        if self.on_rotate is not None:
+            await self.on_rotate()
+        self.controller = did_key("root_rotated")
+        return httpx.Response(200, json=self.namespace())
+
+
+def _rotate(client):
+    return client.rotate_namespace_with_previous_key(
+        DOMAIN, from_seq=1, previous_did_key=did_key("root"), new_did_key=did_key("root_rotated"),
+        previous_signer=signer_for("root"), new_signer=signer_for("root_rotated"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_namespace_read_during_a_rotation_is_not_served_after_it():
+    registry = NamespaceRegistry()
+    client = CachedRegistryClient(ORIGIN, FakeRedis(), transport=httpx.MockTransport(registry.handler))
+
+    async def read_before_commit():
+        assert (await client.get_namespace(DOMAIN)).controller_did == did_key("root")
+
+    registry.on_rotate = read_before_commit
+    try:
+        await _rotate(client)
+        assert (await client.get_namespace(DOMAIN)).controller_did == did_key("root_rotated")
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_a_rotation_whose_answer_is_lost_leaves_no_cached_namespace():
+    registry = NamespaceRegistry()
+    client = CachedRegistryClient(ORIGIN, FakeRedis(), transport=httpx.MockTransport(registry.handler))
+
+    async def commit_then_lose_the_answer():
+        registry.controller = did_key("root_rotated")
+        raise httpx.ReadTimeout("answer lost after the registry committed")
+
+    registry.on_rotate = commit_then_lose_the_answer
+    try:
+        assert (await client.get_namespace(DOMAIN)).controller_did == did_key("root")
+        with pytest.raises(RegistryError) as lost:
+            await _rotate(client)
+        assert lost.value.code == "unavailable"
+        assert (await client.get_namespace(DOMAIN)).controller_did == did_key("root_rotated")
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_a_write_to_another_registry_is_addressed_to_it_without_the_service_token():
+    other = "https://other-registry.example"
+    recorder = Recorder(httpx.Response(200, json=EXAMPLE["response"]))
+
+    async def route(domain: str) -> str:
+        assert domain == DOMAIN
+        return other
+
+    client = RegistryClient(
+        ORIGIN, transport=httpx.MockTransport(recorder.handler), domain_registry_resolver=route,
+        service_token="s" * 32,
+    )
+    try:
+        await client.register_id_certificate(
+            _bundle("alice", "bob"), signer=signer_for("bob"), expected_head=None, invitation_id=None,
+        )
+        await client.revoke_id_certificate(
+            DOMAIN, did_aw("bob"), signer=signer_for("root"), expected_head=certificate_id("bob"),
+        )
+    finally:
+        await client.aclose()
+    assert len(recorder.requests) == 2
+    for sent in recorder.requests:
+        header = sent.headers["X-AWEB-Signed-Payload"]
+        signed = json.loads(base64.b64decode(header + "=" * (-len(header) % 4), altchars=b"-_", validate=True))
+        assert f"{sent.url.scheme}://{sent.url.host}" == signed["aud"] == other
+        assert "X-AWID-Service-Token" not in sent.headers
+
+
+# ---------------------------------------------------------------------------
+# Read-your-writes through the cached identity-tree evidence
+# ---------------------------------------------------------------------------
+
+OTHER_DOMAIN = "other.example"
+
+
+class WriteHook(httpx.ASGITransport):
+    """The real AWID app; ``on_write(request, forward)`` takes the next register or revoke."""
+
+    on_write = None
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if self.on_write is not None and request.url.path in (REGISTER_PATH, REVOKE_PATH):
+            hook, self.on_write = self.on_write, None
+            return await hook(request, super().handle_async_request)
+        return await super().handle_async_request(request)
+
+
+@pytest_asyncio.fixture
+async def cached(clocked_client, manual_clock):
+    """The real AWID routes behind a CachedRegistryClient on the real Redis.
+
+    ``tree.controller`` is the DNS key that both AWID and the client find for
+    each domain. The test's domains' evidence entries are removed before and
+    after.
+    """
+    tree = Tree(clocked_client, manual_clock)
+    tree.clock.now = at("2026-10-26T00:00:00Z")
+    await tree.root(domain=OTHER_DOMAIN)
+    await tree.root()
+    for key_name in ("alice", "bob"):
+        await tree.vector_did(key_name)
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+    tree.controller = {DOMAIN: "root", OTHER_DOMAIN: "root"}
+
+    async def verify(domain: str) -> DomainAuthority:
+        return DomainAuthority(
+            controller_did=did_key(tree.controller[domain]), registry_url=ORIGIN, dns_name=f"_awid.{domain}",
+        )
+
+    async def route(domain: str) -> str:
+        return ORIGIN
+
+    clocked_client.app.dependency_overrides[get_domain_verifier] = lambda: verify
+    redis = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+    tree.transport = WriteHook(app=clocked_client.app)
+    client = CachedRegistryClient(
+        ORIGIN, redis, transport=tree.transport, domain_registry_resolver=route, domain_verifier=verify,
+    )
+    tree.registry = client
+    tree.redis = redis
+
+    async def evidence_keys(domain: str) -> list[bytes]:
+        return [key async for key in redis.scan_iter(match=f"awid:registry_cache:v1:id_status:{domain}:*")]
+
+    async def clear() -> None:
+        for domain in (DOMAIN, OTHER_DOMAIN):
+            keys = await evidence_keys(domain)
+            if keys:
+                await redis.delete(*keys)
+
+    tree.evidence_keys = evidence_keys
+    await clear()
+    try:
+        yield tree
+    finally:
+        await clear()
+        await client.aclose()
+        await redis.aclose()
+
+
+async def _verified(tree, bundle: dict, name: str) -> dict:
+    subject = {"id": did_aw(name), "did_key": did_key(name)}
+    evidence = await tree.registry.id_chain_evidence(bundle, subject, domain=DOMAIN)
+    return verify_id_chain(bundle, subject=subject, evidence=evidence, domain=DOMAIN)
+
+
+async def _cache_other_domain(tree) -> list[bytes]:
+    subject = {"id": did_aw("bob"), "did_key": did_key("bob")}
+    await tree.registry.id_chain_evidence(None, subject, domain=OTHER_DOMAIN)
+    keys = await tree.evidence_keys(OTHER_DOMAIN)
+    assert len(keys) == 1
+    return keys
+
+
+@dataclass
+class Write:
+    """One write through the cached client, with the chain read before and after it."""
+
+    before: tuple[dict, str]
+    after: tuple[dict, str]
+    reasons: tuple[str, str]
+    send: Callable[[], Awaitable[dict]]
+
+
+async def _registration(tree) -> Write:
+    """alice's root was replaced; the new root re-issues her certificate."""
+    tree.clock.now = at("2026-10-26T00:05:00Z")
+    tree.controller[DOMAIN] = "root_rotated"
+    assert (await tree.replace_controller("root_rotated")).status_code == 200
+    fields = copy.deepcopy(certificate("alice")["certificate"])
+    fields.update(issuer_key=did_key("root_rotated"), issued_at="2026-10-26T00:06:00Z")
+    recovered = {"v": 1, "type": "aweb.id-chain", "certificates": [sign(fields, "root_rotated")]}
+
+    def send():
+        tree.clock.now = at("2026-10-26T00:06:00Z")
+        return tree.registry.register_id_certificate(
+            recovered, signer=signer_for("alice"), expected_head=certificate_id("alice"), invitation_id=None,
+        )
+
+    return Write((_bundle("alice"), "alice"), (recovered, "alice"), ("root_replaced", "verified"), send)
+
+
+async def _revocation(tree) -> Write:
+    """The root revokes bob, whom alice issued."""
+    await tree.enroll("alice", "bob", when=at("2026-10-26T00:02:00Z"))
+
+    def send():
+        tree.clock.now = at("2026-10-26T00:10:00Z")
+        return tree.registry.revoke_id_certificate(
+            DOMAIN, did_aw("bob"), signer=signer_for("root"), expected_head=certificate_id("bob"),
+        )
+
+    chain = (_bundle("alice", "bob"), "bob")
+    return Write(chain, chain, ("verified", "revoked"), send)
+
+
+WRITES = pytest.mark.parametrize("prepare", [_registration, _revocation], ids=["register", "revoke"])
+
+
+@WRITES
+@pytest.mark.asyncio
+async def test_a_write_is_read_back_at_once_through_the_cached_evidence(cached, prepare):
+    other = await _cache_other_domain(cached)
+    write = await prepare(cached)
+    assert (await _verified(cached, *write.before))["reason"] == write.reasons[0]
+
+    await write.send()
+
+    assert (await _verified(cached, *write.after))["reason"] == write.reasons[1]
+    assert await cached.evidence_keys(OTHER_DOMAIN) == other
+
+
+@WRITES
+@pytest.mark.asyncio
+async def test_evidence_read_while_a_write_is_in_flight_is_not_served_after_it(cached, prepare):
+    write = await prepare(cached)
+
+    async def read_before_commit(request, forward):
+        assert (await _verified(cached, *write.before))["reason"] == write.reasons[0]
+        return await forward(request)
+
+    cached.transport.on_write = read_before_commit
+    await write.send()
+
+    assert (await _verified(cached, *write.after))["reason"] == write.reasons[1]
+
+
+@WRITES
+@pytest.mark.asyncio
+async def test_a_write_whose_answer_is_lost_leaves_no_cached_evidence(cached, prepare):
+    write = await prepare(cached)
+    assert (await _verified(cached, *write.before))["reason"] == write.reasons[0]
+
+    async def commit_then_lose_the_answer(request, forward):
+        assert (await forward(request)).status_code == 200
+        raise httpx.ReadTimeout("answer lost after the registry committed")
+
+    cached.transport.on_write = commit_then_lose_the_answer
+    with pytest.raises(RegistryError) as lost:
+        await write.send()
+    assert lost.value.code == "unavailable"
+
+    assert (await _verified(cached, *write.after))["reason"] == write.reasons[1]
+
+
+class UnreachableRedis(FakeRedis):
+    async def delete(self, *keys: str) -> None:
+        raise OSError("Redis unavailable")
+
+    async def scan_iter(self, *, match: str):
+        raise OSError("Redis unavailable")
+        yield
+
+
+@pytest.mark.asyncio
+async def test_without_redis_a_write_still_succeeds(clocked_client, manual_clock):
+    tree = Tree(clocked_client, manual_clock)
+    tree.clock.now = at("2026-10-26T00:00:00Z")
+    await tree.root()
+    for key_name in ("alice", "bob"):
+        await tree.vector_did(key_name)
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+    client = CachedRegistryClient(ORIGIN, UnreachableRedis(), transport=httpx.ASGITransport(app=clocked_client.app))
+    try:
+        tree.clock.now = at("2026-10-26T00:03:00Z")
+        receipt = await client.register_id_certificate(
+            _bundle("alice", "bob"), signer=signer_for("bob"), expected_head=None, invitation_id=None,
+        )
+        assert receipt["certificate_id"] == certificate_id("bob")
+        tree.clock.now = at("2026-10-26T00:10:00Z")
+        revoked = await client.revoke_id_certificate(
+            DOMAIN, did_aw("bob"), signer=signer_for("root"), expected_head=certificate_id("bob"),
+        )
+        assert revoked["revoked_at"] == "2026-10-26T00:10:00.000000Z"
+    finally:
+        await client.aclose()

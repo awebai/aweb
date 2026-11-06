@@ -222,18 +222,18 @@ func printClaudeHooksResult(result *claudeHooksResult) {
 		return
 	}
 	if result.AlreadyExists {
-		fmt.Println("Claude Code hook: already configured")
+		fmt.Fprintln(commandStdout, "Claude Code hook: already configured")
 		return
 	}
 	if result.Skipped {
-		fmt.Println("Claude Code hook: skipped")
+		fmt.Fprintln(commandStdout, "Claude Code hook: skipped")
 		return
 	}
 	if result.Created {
-		fmt.Printf("Created %s with notification hook\n", result.FilePath)
+		fmt.Fprintf(commandStdout, "Created %s with notification hook\n", result.FilePath)
 		return
 	}
 	if result.Updated {
-		fmt.Printf("Added notification hook to %s\n", result.FilePath)
+		fmt.Fprintf(commandStdout, "Added notification hook to %s\n", result.FilePath)
 	}
 }

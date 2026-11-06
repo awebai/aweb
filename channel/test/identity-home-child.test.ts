@@ -15,13 +15,15 @@ ed.etc.sha512Sync = (...messages) => sha512(ed.etc.concatBytes(...messages));
 
 interface ProbeRequest {
   authorization: string;
+  body: string;
+  method: string;
   timestamp: string;
   url: string;
 }
 
 interface ProbeServer {
   close(): Promise<void>;
-  nextRequest(): Promise<ProbeRequest>;
+  nextRequest(matches?: (request: ProbeRequest) => boolean): Promise<ProbeRequest>;
   requests: ProbeRequest[];
   url: string;
 }
@@ -63,44 +65,61 @@ test("packaged Claude MCP child inherits AWEB_IDENTITY_HOME and signs as the ext
 
   const observed = await withTimeout(
     Promise.race([
-      externalServer.nextRequest().then((request) => ({ source: "external", request } as const)),
-      shadowServer.nextRequest().then((request) => ({ source: "shadow", request } as const)),
+      Promise.all([
+        externalServer.nextRequest((request) => request.url === "/v1/agents/heartbeat"),
+        externalServer.nextRequest((request) => /^\/v1\/events\/stream\?deadline=/.test(request.url)),
+      ]).then((requests) => ({ source: "external", requests } as const)),
+      shadowServer.nextRequest().then((request) => ({ source: "shadow", requests: [request] } as const)),
     ]),
     5_000,
-    () => `packaged MCP child did not reach either fixture server\n${launched.stderr()}`,
+    () => `packaged MCP child did not send both heartbeat and stream requests\n${launched.stderr()}`,
   );
 
   expect(observed.source).toBe("external");
-  const request = observed.request;
-  expect(request.url).toMatch(/^\/v1\/events\/stream\?deadline=/);
+  expect(observed.requests).toHaveLength(2);
+  expect(observed.requests.map((request) => request.method)).toEqual(["POST", "GET"]);
   expect(shadowServer.requests).toHaveLength(0);
 
-  const [scheme, did, encodedSignature] = request.authorization.split(" ");
-  expect(scheme).toBe("DIDKey");
-  expect(did).toBe(external.did);
-  expect(did).not.toBe(shadow.did);
+  for (const request of observed.requests) {
+    const [scheme, did, encodedSignature] = request.authorization.split(" ");
+    expect(scheme).toBe("DIDKey");
+    expect(did).toBe(external.did);
+    expect(did).not.toBe(shadow.did);
 
-  const bodyHash = createHash("sha256").update("", "utf8").digest("hex");
-  const payload = `{"body_sha256":${JSON.stringify(bodyHash)},"team_id":${JSON.stringify(external.teamID)},"timestamp":${JSON.stringify(request.timestamp)}}`;
-  const signature = Buffer.from(encodedSignature, "base64url");
-  const message = new TextEncoder().encode(payload);
-  expect(ed.verify(signature, message, ed.getPublicKey(external.seed))).toBe(true);
-  expect(ed.verify(signature, message, ed.getPublicKey(shadow.seed))).toBe(false);
+    const bodyHash = createHash("sha256").update(request.body, "utf8").digest("hex");
+    const payload = `{"body_sha256":${JSON.stringify(bodyHash)},"team_id":${JSON.stringify(external.teamID)},"timestamp":${JSON.stringify(request.timestamp)}}`;
+    const signature = Buffer.from(encodedSignature, "base64url");
+    const message = new TextEncoder().encode(payload);
+    expect(ed.verify(signature, message, ed.getPublicKey(external.seed))).toBe(true);
+    expect(ed.verify(signature, message, ed.getPublicKey(shadow.seed))).toBe(false);
+  }
 });
 
 async function startProbeServer(): Promise<ProbeServer> {
   const requests: ProbeRequest[] = [];
-  let receive: ((request: ProbeRequest) => void) | undefined;
-  const next = new Promise<ProbeRequest>((resolve) => { receive = resolve; });
-  const server = createServer((request: IncomingMessage, response) => {
+  const waiting = new Map<(request: ProbeRequest) => void, (request: ProbeRequest) => boolean>();
+  const server = createServer(async (request: IncomingMessage, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
     const observed = {
       authorization: request.headers.authorization || "",
+      body: Buffer.concat(chunks).toString("utf8"),
+      method: request.method || "",
       timestamp: String(request.headers["x-aweb-timestamp"] || ""),
       url: request.url || "",
     };
     requests.push(observed);
-    receive?.(observed);
-    receive = undefined;
+    for (const [receive, matches] of waiting) {
+      if (matches(observed)) {
+        waiting.delete(receive);
+        receive(observed);
+      }
+    }
+    if (observed.url === "/v1/agents/heartbeat") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+      return;
+    }
     response.writeHead(200, {
       "cache-control": "no-cache",
       connection: "keep-alive",
@@ -118,7 +137,10 @@ async function startProbeServer(): Promise<ProbeServer> {
   return {
     requests,
     url: `http://127.0.0.1:${address.port}`,
-    nextRequest: () => next,
+    nextRequest: (matches = () => true) => {
+      const observed = requests.find(matches);
+      return observed ? Promise.resolve(observed) : new Promise((resolve) => waiting.set(resolve, matches));
+    },
     close: async () => {
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) => {

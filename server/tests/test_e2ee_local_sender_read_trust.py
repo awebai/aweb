@@ -22,7 +22,7 @@ import re
 import socket
 import subprocess
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -244,8 +244,17 @@ async def _present_by_wake(tmp_path, binary, command_dir, command_env, message_i
     try:
         runner.stdin.write("".join(json.dumps(line) + "\n" for line in lines).encode())
         await runner.stdin.drain()
-        await _read_until(
-            runner, lambda _: delivered.exists() and "Use the aw CLI" in delivered.read_text(), "wake runner")
+        def presented(message):
+            if not delivered.exists():
+                return False
+            text = delivered.read_text()
+            if text.startswith("[aweb] 1 message held"):
+                # Wait for the bounded retry window, so shutdown cannot hide an
+                # incorrect acknowledgment or delivered-ID write after input.
+                return message.get("trace_stage") == "lane_job_failed"
+            return "Answer in the conversation: aw mail reply <message_id>." in text
+
+        await _read_until(runner, presented, "wake runner")
     finally:
         runner.stdin.write(b'{"type":"shutdown"}\n')
         await runner.stdin.drain()
@@ -302,6 +311,24 @@ async def _present_by_pi(tmp_path, binary, command_dir, command_env, message_id,
 PRESENTERS = {"wake": _present_by_wake, "channel": _present_by_channel, "pi": _present_by_pi}
 
 
+async def _assert_runtime_presentation(env, tmp_path, runtime, expected, status, text, message_id):
+    # docs/channel-core-terminal-adapter.md:14-20: native adapters retain their
+    # policy, while the terminal holds content unless sender trust is verified.
+    if runtime != "wake" or expected == "verified":
+        assert "local sender private text" in text, text
+        assert status == expected, text
+        return
+
+    assert text == "[aweb] 1 message held (unverified sender). Run: aw mail inbox", text
+    assert status is None, text
+    row = await env.db.fetch_one(
+        "SELECT read_at FROM {{tables.messages}} WHERE message_id=$1", UUID(message_id))
+    assert row is not None and row["read_at"] is None, row
+    store = tmp_path / "delivery.json"
+    marks = json.loads(store.read_text()) if store.exists() else {}
+    assert not any(message_id in key for key in marks), marks
+
+
 def _unreachable_url():
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
@@ -335,8 +362,7 @@ async def test_channel_core_runtimes_present_local_sender_e2ee_mail_trust(
             runtime_env["AWID_REGISTRY_URL"] = _unreachable_url()
         status, text = await PRESENTERS[runtime](
             tmp_path, binary, command_dir, runtime_env, message_id, conversation_id)
-        assert "local sender private text" in text, text
-        assert status == expected, text
+        await _assert_runtime_presentation(privacy_app, tmp_path, runtime, expected, status, text, message_id)
         # The runtimes resolve through Node's fetch; aw's own lookups are Go's.
         runtime_lookups = [(method, path, code) for method, path, code, agent in registry.responses
                            if agent == "node"]
@@ -371,8 +397,7 @@ async def test_channel_core_addressless_human_mail(
         runtime_env = dict(command_env, PATH=f"{binary.parent}{os.pathsep}{command_env.get('PATH', '')}")
         status, text = await PRESENTERS[runtime](
             tmp_path, binary, command_dir, runtime_env, message_id, conversation_id)
-        assert "local sender private text" in text
-        assert status == expected, (text, projection, registry.responses)
+        await _assert_runtime_presentation(privacy_app, tmp_path, runtime, expected, status, text, message_id)
         node_reads = [path for _, path, _, agent in registry.responses if agent == "node"]
         assert not any("/addresses/" in path for path in node_reads), node_reads
         if not sender_retired:
@@ -395,6 +420,6 @@ async def test_cross_team_local_sender_to_global_grant(
         row = shown["messages"][0]
         runtime_env = dict(command_env, PATH=f"{binary.parent}{os.pathsep}{command_env.get('PATH', '')}")
         status, text = await PRESENTERS[runtime](tmp_path, binary, command_dir, runtime_env, message_id, conversation_id)
-        assert "local sender private text" in text
-        assert (row["verification_status"], status) == (expected, expected), (row["verification_status"], status, row.get("sender_membership"), registry.responses)
+        assert row["verification_status"] == expected, (row, registry.responses)
+        await _assert_runtime_presentation(privacy_app, tmp_path, runtime, expected, status, text, message_id)
         assert not any("/addresses/" in path for _, path, _, _ in registry.responses), registry.responses

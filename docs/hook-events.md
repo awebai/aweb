@@ -155,6 +155,51 @@ the external call is sent. `op_kind` is `broker` or `run_job`.
 A withheld value and an undeclared credential are properties of the `completed`
 event, not separate events.
 
+**Public use correlation.** Optional `use_ref` is an opaque producer-assigned
+reference, using the existing `ref` type. For an admitted broker or runner
+use it is exactly the server-minted `request_ref` returned by the supported
+member API. Preserve it across approval wait/decision, resubmission, transport
+retry, replay, outcome and owner settlement. Distinct executions of the same
+job have distinct references; `job_id`/`job_digest` still name the definition,
+and `dispatch_id` still names the actual dispatch.
+
+For an attributable pre-admission refusal with no intent/dispatch, mint a
+fresh reference from at least 128 random bits, with a fixed safe ASCII prefix
+and at most 128 characters. Commit the event, reference and local correlation
+in the same refusal transaction; return that `use_ref` in the authenticated
+refused response only after commit. A repeated refusal is a new attempt/ref,
+not a replay of an uncommitted intent. A refusal belonging to an existing use
+keeps its original reference and returns it as `use_ref` if no `request_ref`
+is returned. No intent, rate claim, dispatch or credential operation is
+created by this correlation. Unattributed or uncommitted failures return no
+audit-reference claim.
+
+Never derive `use_ref` from caller `request_id`, parameters, reason, contact or
+credential material, including an unsalted hash; reject an injected input
+`use_ref`. It grants no authority, deduplication or lookup rights. An owner
+joins the actual response reference to retained signed `payload.use_ref`,
+scoped by producer installation/generation, team and canonical actor DID,
+through authorized Logs reads. Each event stays separate; a trace, alias or
+job ID is not this join. Legacy events may omit the field and acquire no
+retrospective mapping. Catalog syntax cannot prove producer assignment,
+response association or privacy: producer canary/rollback/replay tests and the
+real delivery/ingest/read journey must establish them.
+
+This optional addition is an in-place catalog v1 re-freeze under decision 93,
+authorized by coordinator receipt `bdccd8ec-8472-4e49-8115-7ad1f232a823`
+(2026-10-26). The coordinator reports no Secrets deployment, HO6 still open,
+no deployed hosted Logs or hook producer (X4/X5), and no other first-party
+post-secret-use receiver. This is scoped coordinator evidence, not an
+independent inventory of third-party deployments. Published
+`aweb-naapp 0.5.1rc1` at release source `a7d00e89a` lacks `use_ref`: a third-party
+receiver using that catalog refuses the field until upgraded. The next RC
+must package the updated reader/catalog before new producer emission.
+The landing owner must re-check the ruling: if Secrets or Logs has real
+traffic, a stable (non-RC) aweb-naapp with catalog v1 ships, or a third-party
+post-secret-use receiver in use is reported before landing, stop this
+re-freeze and use a new catalog version. Preserve all prior cases and the
+existing signed event/delivery vector bytes.
+
 **Request and parameter commitments (decision 73).** These two optional
 fields retain their historical names and 64-character lowercase hexadecimal
 shape, and are never plain SHA-256 values. The producer computes:

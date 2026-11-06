@@ -100,8 +100,8 @@ async def database_url(test_db_factory) -> str:
 
 
 KEY_PURPOSES = {
-    "secrets:hook-event-1": ["hook-event"],
-    "secrets:hook-delivery-1": ["hook-delivery"],
+    "secrets.hook-event-1": ["hook-event"],
+    "secrets.hook-delivery-1": ["hook-delivery"],
     "secrets:grant-read-1": ["app-grant-read"],
     "secrets:hook-resolve-1": ["hook-resolve"],
 }
@@ -438,7 +438,7 @@ async def test_the_served_v2_bytes_come_from_the_template_and_configured_keys(
         producer = runtime.hook_producer(
             installation_id="1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b", generation=1
         )
-        assert producer.producer.did_key == keys["secrets:hook-event-1"]
+        assert producer.producer.did_key == keys["secrets.hook-event-1"]
         assert producer.producer.did_key != keys["secrets:hook-resolve-1"]
 
 

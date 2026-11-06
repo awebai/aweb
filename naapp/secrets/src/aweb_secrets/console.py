@@ -21,6 +21,7 @@ from aweb_naapp.console import (
     ConsoleSession,
     ConsoleSessions,
     LoginLimiter,
+    console_assets_router,
     console_login_router,
 )
 from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier
@@ -200,6 +201,7 @@ class OwnerConsole:
 def owner_console_router(services: OwnerConsole, *, prefix: str = "") -> APIRouter:
     """Mount only on the human-origin application. Never mount on the agent API."""
     router = APIRouter(prefix=prefix, route_class=ConsoleRoute)
+    router.include_router(console_assets_router())
     router.include_router(
         console_login_router(sessions=services.sessions, limiter=services.limiter)
     )

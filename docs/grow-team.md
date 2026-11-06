@@ -6,6 +6,8 @@ weight: 15
 
 # Orchestrate more local agents
 
+For people setting up aweb.
+
 > **Status: current optional team-growth helper.** Membership is the aweb
 > authority; profiles, homes, worktrees, runtime selection, and process launch
 > remain optional operator/orchestrator choices.

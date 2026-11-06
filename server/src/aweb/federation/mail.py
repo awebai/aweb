@@ -9,6 +9,10 @@ from typing import Any
 import httpx
 
 from awid.log import canonical_server_origin
+from awid.id_certificates import encode_id_chain_header
+from aweb.messaging.chat_policy import HumanChatRefused
+
+from aweb.messaging.address_auth import refuse_same_origin_nonresident
 
 from .envelope import FederatedDeliveryRequest, FederationEnvelope
 
@@ -57,11 +61,17 @@ async def deliver_federated_message(
     delivery_origin: str,
     envelope: FederationEnvelope,
     signature: str,
+    id_chain: dict | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
     timeout: float = 10.0,
+    own_origins: set[str] | None = None,
 ) -> dict[str, Any]:
     """POST a sender-signed mail/chat envelope to a remote aweb delivery origin."""
     origin = canonical_server_origin(delivery_origin)
+    origins = set(own_origins or ())
+    if envelope.sender_delivery_origin:
+        origins.add(canonical_server_origin(envelope.sender_delivery_origin))
+    refuse_same_origin_nonresident(origin, origins=origins)
     request_body = FederatedDeliveryRequest(
         envelope=envelope,
         signature=signature,
@@ -80,6 +90,7 @@ async def deliver_federated_message(
                     headers={
                         "Accept": "application/json",
                         "Accept-Encoding": "identity",
+                        **({"X-AWID-ID-Chain": encode_id_chain_header(id_chain)} if id_chain is not None else {}),
                     },
                 ) as response:
                     max_bytes = (
@@ -95,6 +106,20 @@ async def deliver_federated_message(
         ) from exc
 
     if response.status_code < 200 or response.status_code >= 300:
+        # Preserve this application refusal across the chat federation hop.
+        # Other remote errors retain their existing status/text handling.
+        if envelope.type == "chat" and response.status_code == 422:
+            try:
+                refused = json.loads(content)
+            except (ValueError, UnicodeDecodeError):
+                refused = None
+            if (isinstance(refused, dict)
+                    and refused.get("reason") == HumanChatRefused.reason
+                    and refused.get("retryable") is False):
+                recipients = refused.get("recipients")
+                if not isinstance(recipients, list) or not all(isinstance(name, str) for name in recipients):
+                    recipients = []
+                raise HumanChatRefused(recipients)
         detail = _response_detail(response.status_code, content)
         raise FederatedMailDeliveryError(
             f"Federated mail delivery to {origin} failed: {detail}",
@@ -121,15 +146,19 @@ async def deliver_federated_mail(
     delivery_origin: str,
     envelope: FederationEnvelope,
     signature: str,
+    id_chain: dict | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
     timeout: float = 10.0,
+    own_origins: set[str] | None = None,
 ) -> dict[str, Any]:
     return await deliver_federated_message(
         delivery_origin=delivery_origin,
         envelope=envelope,
         signature=signature,
+        id_chain=id_chain,
         transport=transport,
         timeout=timeout,
+        own_origins=own_origins,
     )
 
 

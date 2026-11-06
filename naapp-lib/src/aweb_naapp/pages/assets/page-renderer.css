@@ -1,10 +1,18 @@
+@font-face {
+  font-family: Archivo;
+  font-weight: 400 900;
+  font-stretch: 75% 125%;
+  font-style: normal;
+  font-display: swap;
+  src: url("/fonts/Archivo-Latin-Variable.woff2") format("woff2");
+}
+
 :root {
-  /* body stays system sans for fast, legible long-form reading */
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  /* Berkeley Mono carries the brand: headlines + every id/address/event.
-     ui-monospace fallback keeps advance width identical, so no swap jump. */
-  --font-display: "Berkeley Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  --font-mono: "Berkeley Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  /* Shared reading and heading face; identifiers remain monospace. */
+  --font-sans: Archivo, Arial, sans-serif;
+  /* System monospace for code, commands and identifiers. */
+  --font-display: var(--font-sans);
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
 
   /* fluid type scale */
   --step--1: clamp(0.82rem, 0.8rem + 0.1vw, 0.875rem);
@@ -18,25 +26,30 @@
   --s1: 0.5rem; --s2: 1rem; --s3: 1.5rem; --s4: 2rem;
   --s5: 3rem;  --s6: 4rem;  --s7: 6rem;  --s8: 8rem;
 
-  --radius: 14px;
-  --radius-sm: 9px;
+  --radius: 2px;
+  --radius-sm: 2px;
   --maxw: 1120px;
 
   /* ---- light theme (default) ---- */
-  --bg: #faf7f2;
-  --bg-tint: #f4efe6;        /* alternating section band */
-  --ink: #1c1814;
-  --muted: #5f574e;
-  --faint: #8f867b;
-  --line: rgba(28,24,20,0.10);
-  --line-strong: rgba(28,24,20,0.17);
-  --surface: #fffdf9;
-  --surface-2: #f1ece4;
-  --accent: #cf4a26;
-  --accent-hover: #b53f1f;
+  color-scheme: light;
+  --brand-amber: #b76e17;
+  --field-warm: #b76e17;
+  --field-ink: #879ac4;
+  --field-opacity: .32;
+  --bg: #ffffff;
+  --bg-tint: #ffffff;        /* alternating section band */
+  --ink: #17191c;
+  --muted: #4c515b;
+  --faint: #4c515b;
+  --line: #c3c9d3;
+  --line-strong: #929baa;
+  --surface: #f0f2f5;
+  --surface-2: #e5e8ee;
+  --accent: #2342e8;
+  --accent-hover: #1832c4;
   --accent-ink: #ffffff;
-  --accent-soft: rgba(207,74,38,0.10);
-  --ink-strong: #000000;   /* max-contrast primary-action hover */
+  --accent-soft: rgba(35,66,232,0.08);
+  --ink-strong: #17191c;   /* max-contrast primary-action hover */
 
   --ok: #15803d;   --ok-soft: rgba(21,128,61,0.12);
   --wait: #b45309; --wait-soft: rgba(180,83,9,0.13);
@@ -49,19 +62,24 @@
 
 /* dark tokens, shared by manual toggle + OS preference */
 :root[data-theme="dark"] {
-  --bg: #0b0a09;
-  --bg-tint: #110f0e;
-  --ink: #efe9e0;
-  --muted: #d2cabe;
-  --faint: #a69d90;
-  --line: rgba(255,255,255,0.12);
-  --line-strong: rgba(255,255,255,0.24);
-  --surface: #191715;
-  --surface-2: #25211e;
-  --accent: #ff6a2c;
-  --accent-hover: #ff8250;
-  --accent-ink: #1a120c;
-  --accent-soft: rgba(255,106,44,0.12);
+  color-scheme: dark;
+  --brand-amber: #efb967;
+  --field-warm: #efb967;
+  --field-ink: #8c9fcc;
+  --field-opacity: .38;
+  --bg: #17191c;
+  --bg-tint: #17191c;
+  --ink: #f7f8fb;
+  --muted: #bfc5d0;
+  --faint: #bfc5d0;
+  --line: #454e5e;
+  --line-strong: #747e90;
+  --surface: #252a33;
+  --surface-2: #313744;
+  --accent: #a5b5ff;
+  --accent-hover: #bdc9ff;
+  --accent-ink: #17191c;
+  --accent-soft: rgba(165,181,255,0.10);
   --ink-strong: #ffffff;
 
   --ok: #5fcf86;   --ok-soft: rgba(95,207,134,0.16);
@@ -74,19 +92,24 @@
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0b0a09;
-    --bg-tint: #110f0e;
-    --ink: #efe9e0;
-    --muted: #d2cabe;
-    --faint: #a69d90;
-    --line: rgba(255,255,255,0.12);
-    --line-strong: rgba(255,255,255,0.24);
-    --surface: #191715;
-    --surface-2: #25211e;
-    --accent: #ff6a2c;
-    --accent-hover: #ff8250;
-    --accent-ink: #1a120c;
-    --accent-soft: rgba(255,106,44,0.12);
+    color-scheme: dark;
+    --brand-amber: #efb967;
+    --field-warm: #efb967;
+    --field-ink: #8c9fcc;
+    --field-opacity: .38;
+    --bg: #17191c;
+    --bg-tint: #17191c;
+    --ink: #f7f8fb;
+    --muted: #bfc5d0;
+    --faint: #bfc5d0;
+    --line: #454e5e;
+    --line-strong: #747e90;
+    --surface: #252a33;
+    --surface-2: #313744;
+    --accent: #a5b5ff;
+    --accent-hover: #bdc9ff;
+    --accent-ink: #17191c;
+    --accent-soft: rgba(165,181,255,0.10);
     --ink-strong: #ffffff;
     --ok: #5fcf86;   --ok-soft: rgba(95,207,134,0.16);
     --wait: #e0a544; --wait-soft: rgba(224,165,68,0.16);
@@ -97,10 +120,9 @@
   }
 }
 
-/* Colors, radii and type sizes use the shared Paper/Clay token catalog above.
+/* Colors, radii and type sizes use the shared identity token catalog above.
    Hosts override tokens; they never patch widget CSS. */
 :root {
-  color-scheme: light dark;
   font-family: var(--font-sans);
   color: var(--ink);
   background: var(--bg);
