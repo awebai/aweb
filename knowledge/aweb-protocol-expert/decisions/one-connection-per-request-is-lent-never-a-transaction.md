@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: One connection per request is lent, parked during waits, and never a transaction
-description: A request shares one pool connection by lending it to one borrower at a time, discards it after any failed or cancelled borrow, lends nothing once closed, ends at http.response.start, parks it after 10 ms idle, bounds every checkout at 10 s with a retryable 503, and never opens a transaction. Reviewed, not yet landed on main.
+description: A request shares one pool connection by lending it to one borrower at a time, discards it after any failed or cancelled borrow, lends nothing once closed, ends at http.response.start, parks it after 10 ms idle, bounds every checkout at 10 s with a retryable 503, and never opens a transaction. On main and in server-v1.27.47.
 tags: [decision, database, pgdbm, connections, request-lifecycle, outage]
 timestamp: 2026-11-04
 ---
@@ -15,17 +15,17 @@ realistic outage. A future change to pgdbm usage or the request lifecycle must
 keep them, and must not "simplify" the scope into a request-wide transaction or
 into park hooks in individual clients.
 
-**Status (2026-11-04):** the change was reviewed and the auth/data reviewer
-ruled on it, but it is not on main. It is in `server/src/aweb/connection_scope.py`
-on the source seat's branch at 6cb347a25, tested by
-`server/tests/test_connection_scope.py`, which was mutation-checked.
+**Status (verified 2026-11-06):** reviewed, with a ruling by the auth/data
+reviewer; on main as `server/src/aweb/connection_scope.py` (e268a8703 and
+5e46fb0f7), tested by `server/tests/test_connection_scope.py`, which was
+mutation-checked, and first released in server-v1.27.47.
 
 # Decision
 
 - **Lend only while no other borrower holds the connection.** A manager call
   nested inside another manager's `transaction()` still runs on its own
-  connection, outside that transaction, as it did before. Cloud's
-  `check_pgdbm_transactions` lint relies on that invariant. The branches of a
+  connection, outside that transaction, as it did before. A hosted operator's transaction
+  lint relies on that invariant. The branches of a
   `gather` stay isolated.
 - **Discard after any failed or cancelled borrow.** The connection goes back
   to the pool, which resets or terminates it, and later acquires use the pool.
