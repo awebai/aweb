@@ -26,6 +26,7 @@ change:
 Bench or test against the Cloud app, not only the OSS app, before claiming the
 service works in production. Related:
 [the agent event stream is push-driven](/aweb-protocol-expert/decisions/agent-event-stream-is-push-driven.md),
+[process helpers keep no idle tasks](/aweb-protocol-expert/lessons/process-helpers-keep-no-idle-tasks.md),
 [tests exercise the real authority](/aweb-protocol-expert/decisions/tests-exercise-the-real-authority.md).
 
 # Provenance

@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: The agent event stream is push-driven
-description: Writers record wakes in a scope owned by the outermost transaction and publish after its commit, never through the replaceable on_mutation hook; lost wakes are recovered by a 15 s reconcile that is one Redis MGET of change counters with no database statements when idle; a per-tick snapshot and Postgres change-mark triggers were rejected. Accepted, not yet on main.
+description: Writers record wakes in a scope owned by the outermost transaction and publish after its commit on every exit, never through the replaceable on_mutation hook; lost wakes are recovered by a 15 s reconcile that is one Redis MGET of change counters with no database statements when idle, and bookmarks advance only for kinds actually read; a hard writer crash is an accepted residue with a 2 s shutdown flush; a per-tick snapshot, Postgres change-mark triggers, a durable outbox and a periodic Postgres probe were rejected. Accepted, not yet on main.
 tags: [decision, event-stream, wake, redis, performance, transactions]
 timestamp: 2026-11-04
 ---
@@ -16,25 +16,46 @@ and not yet run in production. The figures below are a local bench.
 
 # Decision
 
-- **Publish after the outermost commit.** Writers record wakes in a scope that
-  the owner of the outermost transaction opens. The scope publishes on normal
-  exit, so a wake never announces a row a caller's transaction can still roll
-  back.
+- **Publish after the outermost commit, on every exit.** Writers record wakes
+  in a scope that the owner of the outermost transaction opens, so the scope
+  closes only after that transaction ends. It publishes on every exit,
+  exceptions included: a request can commit and then fail inside the scope,
+  and dropping its wakes left the recipient waiting for the 300 s stream cap.
+  A wake for a write that rolled back costs only one snapshot.
 - **Not through `on_mutation`.** An embedder can replace that hook, which
   would silently drop wakes.
 - **Publisher failure is retried** by one process-wide task with coalesced
-  keys and backoff capped at 5 s.
+  keys and backoff capped at 5 s. The task runs only while wakes are pending
+  (see [process helpers keep no idle tasks](/aweb-protocol-expert/lessons/process-helpers-keep-no-idle-tasks.md)).
 - **Reconcile reads counters, not Postgres.** Each wake also increments a
   per-(key, kind) Redis counter in the same pipeline as the publish. The 15 s
   reconcile is one `MGET` of those counters; a database snapshot is taken only
   for kinds whose counter moved. Order on open: subscribe, read counters, then
   snapshot, storing the pre-snapshot values; counters expire after 24 h and are
   compared by inequality.
+- **Bookmarks advance only for what was read.** Every snapshot also reads each
+  kind whose counter moved, and the stream advances only the bookmarks of the
+  kinds it actually read. Storing every counter after a single-kind snapshot
+  absorbed another kind's lost publication.
+  - A read bounded by a `LIMIT` keeps its kind pending while the batch comes
+    back full.
+  - A transient (5xx) failure of one kind's dependency is not an empty read.
+    The kind stays pending, its bookmark is unmoved, and it is retried on its
+    own backoff (capped at 5 s), so an outage of one kind's authority never
+    ends the stream for the others. A 4xx refusal still shows nothing.
 - **Redis down:** the stream reconciles every 15 s only. There is no 1 s
   polling fallback, because it would recreate the CPU storm this design
   removed.
 - **Residual loss** (a Redis fault together with process death) is bounded by
   the 300 s stream cap; accepted in the ruling.
+- **A hard writer crash is an accepted residue.** A writer process killed
+  between commit and wake publication can delay the notification until the
+  stream reopens or the recipient next reads. The data stays durable and
+  readable. Graceful shutdown must flush pending wakes, bounded at 2 s.
+  Ruled by the security and identity reviewer (R4, 1d846649).
+- **Constraint on future work:** a later long-lived or resumable stream must
+  keep a bound on hard-crash delay by comparing stored state on reconnect,
+  never by a periodic probe.
 
 # Rejected
 
@@ -44,12 +65,21 @@ and not yet run in production. The figures below are a local bench.
   but cost a migration plus write-path load and hot-row upserts on the very
   resource being freed. A forgotten site is instead a bug class guarded by a
   wake-latency test per write surface.
+- **A durable outbox for wakes** (to cover a hard writer crash): it costs a
+  write and a drain on every mail and chat write.
+- **A periodic Postgres probe per connected agent** (same purpose): about C/60
+  queries per second for C connected agents.
 
 # Evidence
 
 A bench against the Cloud app on TLS Postgres with statement cache 0: idle
 stream 25.0 → 0.0 statements per stream-second, CPU 1.97 → 0.05 ms per
 stream-second, mail write plus wake p50 7.7 ms.
+
+The publish-on-every-exit rule (R1, cb615508), the bookmark rules and the
+hard-crash ruling came from review of the implementation. Each was a real bug
+or gap that green tests had not caught, and each now has a real-stack
+regression test.
 
 This applies the aweb-cloud lesson that event consumers cover every write
 surface, with a per-surface test for each write site, and refines it: counters
@@ -64,3 +94,4 @@ Related:
 # Provenance
 
 Evidence: OKF proposal from aweb-protocol-expert/aweb-protocol-expert-stream-push, 2026-11-04; notes/stream-reconcile-redis-counters.md.
+Recovery rules: second OKF proposal from aweb-protocol-expert/aweb-protocol-expert-stream-push, 2026-11-04; notes/stream-reconcile-redis-counters.md (revised).
