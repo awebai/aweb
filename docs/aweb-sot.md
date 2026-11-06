@@ -623,7 +623,17 @@ authority remains the ordered SQL itself; this SOT does not duplicate that DDL.
 - `human_channel_sends`
 - `human_channel_ingress`
 - `human_channel_mutations`
+- `team_rooms`
+- `room_messages`
+- `room_post_notices`
+- `local_human_successions`
+- `conversation_participant_successions`
 <!-- END SOURCE INVENTORY: aweb-tables -->
+
+Migration `046_local_human_succession` adds:
+
+- `local_human_successions` records authorized local human predecessor identities and their successors.
+- `conversation_participant_successions` scopes predecessor target and historical attribution evidence to existing mail threads.
 
 Migrations `035_team_app_installation_identity` and `036_app_installation_management`
 add installation identity and management. They use these tables:
@@ -682,6 +692,7 @@ router entry.
 - `identity_grants`
 - `messaging`
 - `messages`
+- `room`
 - `reservations`
 - `session_leases`
 - `service_registration`
@@ -841,15 +852,16 @@ requires an unambiguous active local projection. Delivery then evaluates the
 recipient's `inbound_mode` against the verified sender identity/address and any
 verified shared-team authority.
 
-**Fresh mail conversations:** `POST /v1/messages` accepts additive
-`new_conversation: true` to skip automatic thread reuse. It requires an explicit
-recipient and a supplied `conversation_id` (422 if missing), and refuses an
-already existing conversation ID with 409 `conversation_exists`. False or
-omitted retains the existing behavior. The signed envelope already binds the
-conversation ID; this control does not change the signed payload format or
-recipient authorization. `aw mail send --new-conversation` creates that signed
-UUID without conversation/inbox lookup and rejects a different returned ID.
-See [`mail-and-chat.md`](mail-and-chat.md) for compatibility and retry limits.
+**Fresh mail conversations:** a `POST /v1/messages` with a recipient and no
+existing conversation ID starts a new conversation. An explicit existing
+`conversation_id` continues that conversation, subject to participant and
+recipient checks. The server preserves the sender's signed conversation ID;
+an initial ID collision refuses with 409 `conversation_exists`. The accepted
+`new_conversation` field is a no-op. HTTP, MCP and saved-contact mail all use
+this rule; chat session reuse is unchanged. `aw mail send` to a recipient
+creates a fresh signed UUID without conversation/inbox pair lookup and rejects
+a different returned ID. See [`mail-and-chat.md`](mail-and-chat.md) for thread
+listing and continuation.
 
 **Recipient resolution:** first-contact global mail/chat uses an address
 (`domain/name`) resolved via awid. A bare external `did:aw` is an identity
@@ -1047,9 +1059,15 @@ failed batch cannot starve later healthy work. Operation-specific replay may
 retry its own rows immediately after an outer commit. Delivery is at-least-once
 across a process crash: a crash after Redis accepted an effect but before
 `delivered_at` commits may replay it. Lifecycle events remain wake/state-change
-hints; consumers read PostgreSQL state as truth. Failed rows stay durable for a
-later request/startup replay, and startup/embedded request paths trigger
-canonical replay without a host-specific outbox protocol.
+hints; consumers read PostgreSQL state as truth. Failed rows stay durable
+until outbox recovery delivers them: `aweb.outbox_recovery.recover_outboxes`
+replays undelivered lifecycle and federation outbox rows in bounded batches.
+The standalone and library lifespans run it at startup and every
+`OUTBOX_RECOVERY_INTERVAL_SECONDS` (15 s). A mounted app receives no lifespan,
+so its first request starts the same loop; later requests only find it
+running, and no request scans an outbox itself. A host that runs
+`recover_outboxes` from its own scheduler instead creates the app with
+`create_app(..., host_runs_outbox_recovery=True)`.
 
 ### Dashboard routes
 
@@ -1757,10 +1775,16 @@ aweb starts up in this order:
    embedded awid mode — aweb always talks to a real awid instance over
    HTTP.
 6. Mount the FastAPI app and the `/mcp` MCP server.
-7. Schedule replay of committed lifecycle side-effect outbox rows; embedded
-   mounts also trigger bounded replay from their request path because mounted
-   sub-applications do not receive lifespan events.
-8. Begin serving.
+7. Start outbox recovery (`recover_outboxes` at startup and every 15 s).
+   Mounted sub-applications do not receive lifespan events, so a mount's
+   first request starts the loop, unless the host runs recovery itself
+   (`host_runs_outbox_recovery=True`).
+8. Start the agent wake publisher and subscriber (`start_agent_wakes`). A host
+   that mounts the app must call `aweb.api.start_agent_wakes(app, redis)` itself
+   and `stop_agent_wakes(app)` at shutdown; without them writes publish no
+   wakes, event streams fall back to their 15 s reconcile, and the first stream
+   logs a warning saying so.
+9. Begin serving.
 
 Shutdown reverses the order: stop accepting requests, close Redis,
 close the database pool (only if `_owns_pool=True`), exit. The

@@ -36,6 +36,7 @@ func TestCompressionFixtureDoesNotPoisonReusedListener(t *testing.T) {
 		w.Write([]byte(`{}`))
 	}))
 	t.Cleanup(advertiser.Close)
+	ForgetRequestCompression(advertiser.URL)
 	for n := 0; n < 2; n++ {
 		c, err := New(advertiser.URL)
 		if err != nil {
@@ -77,6 +78,7 @@ func TestCompressionFixtureDoesNotPoisonReusedListener(t *testing.T) {
 	plain.Listener = listener
 	plain.Start()
 	t.Cleanup(plain.Close)
+	ForgetRequestCompression(plain.URL)
 	c, err := New(plain.URL)
 	if err != nil {
 		t.Fatal(err)

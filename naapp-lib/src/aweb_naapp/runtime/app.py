@@ -20,9 +20,8 @@ covered by the team's installed grant, and allowed by the app's policy. ``Depend
 authenticates: it says who signed the request, never that they may act, so it
 is for routes that need nothing more than the signer's identity.
 
-The font files under ``/fonts/`` are the app's: this package names the fonts
-its stylesheet loads and serves them from the app's directory, but does not
-ship them.
+The licensed shared fonts under ``/fonts/`` ship with this toolkit. An app
+may also supply its own font directory; its licensing remains with that app.
 """
 
 from __future__ import annotations
@@ -49,9 +48,10 @@ from fastapi.routing import APIRoute
 from pgdbm import AsyncDatabaseManager
 from starlette.routing import BaseRoute, Host, Mount
 
-from aweb_naapp.css import FONT_NAMES, aweb_css
+from aweb_naapp.asset_responses import font_response, stylesheet_response
 from aweb_naapp.hooks.producer import HookProducer
 from aweb_naapp.hooks.resolver import TeamServerRegistrations
+from aweb_naapp.identity_assets import mount_identity_routes
 from aweb_naapp.manifest import (
     CATALOG_PATH,
     LEGACY_MANIFEST_PATH,
@@ -687,16 +687,17 @@ def mount_naapp_routes(
     reference_html: str,
     llms_txt: str,
     og_card_png: bytes,
-    fonts_dir: Path,
+    fonts_dir: Path | None = None,
     robots_disallow: Sequence[str] = (),
     noindex_paths: Sequence[str] = (),
     health_checks: Mapping[str, HealthCheck] | None = None,
 ) -> None:
     """Serve the standard naapp public surface.
 
-    ``fonts_dir`` holds the app's copies of the fonts the stylesheet loads
-    (``FONT_NAMES``); only those names are served, and a directory missing one
-    is refused here.
+    Shared fonts are served from the toolkit's licensed, bundled assets.
+    ``fonts_dir`` may additionally supply app-owned WOFF2 files. Only the
+    filenames loaded from that directory at mount time can be requested.
+    Omit it to serve only toolkit fonts.
 
     The landing page, robots rules and noindex paths are the app's: ``landing``
     renders the front door on each request, ``robots_disallow`` lists the paths
@@ -706,6 +707,7 @@ def mount_naapp_routes(
     health routes check the runtime's dependencies plus the app's own
     ``health_checks``.
     """
+    mount_identity_routes(app)
     settings = runtime.settings
     noindex_prefixes = tuple(noindex_paths)
 
@@ -724,36 +726,21 @@ def mount_naapp_routes(
     async def landing_route() -> HTMLResponse:
         return HTMLResponse(await landing())
 
-    def _aweb_css_response(immutable: bool) -> Response:
-        # The fingerprinted URL is content-addressed, so it can be cached forever;
-        # the legacy /css/aweb.css keeps a short TTL.
-        cache = "public, max-age=31536000, immutable" if immutable else "public, max-age=3600"
-        return Response(
-            content=aweb_css(),
-            media_type="text/css",
-            headers={**_NOSNIFF, "Cache-Control": cache},
-        )
-
     @app.get("/css/aweb.css")
     async def aweb_css_route() -> Response:
-        return _aweb_css_response(immutable=False)
+        return stylesheet_response(immutable=False)
 
     @app.get("/css/aweb.{fingerprint}.css")
     async def aweb_css_fingerprinted_route(fingerprint: str) -> Response:
-        return _aweb_css_response(immutable=True)
+        return stylesheet_response(immutable=True)
 
-    fonts = {name: (fonts_dir / name).read_bytes() for name in sorted(FONT_NAMES)}
+    app_fonts: dict[str, bytes] = {}
+    if fonts_dir is not None:
+        app_fonts = {path.name: path.read_bytes() for path in fonts_dir.glob("*.woff2") if path.is_file()}
 
     @app.get("/fonts/{font_name}")
     async def font_route(font_name: str) -> Response:
-        font = fonts.get(font_name)
-        if font is None:
-            raise HTTPException(status_code=404, detail="Font not found")
-        return Response(
-            content=font,
-            media_type="font/woff2",
-            headers={**_NOSNIFF, "Cache-Control": "public, max-age=31536000, immutable"},
-        )
+        return font_response(font_name, app_fonts=app_fonts)
 
     @app.get("/og-card.png")
     async def og_card_route() -> Response:

@@ -168,8 +168,9 @@ func (e *cliOAuthError) Error() string {
 }
 
 type cliAuthAccount struct {
-	ID     string `json:"id"`
-	Handle string `json:"handle,omitempty"`
+	ID              string              `json:"id"`
+	Handle          string              `json:"handle,omitempty"`
+	HumanIdentities []hostedHumanParent `json:"human_identities"`
 }
 
 type cliAuthStatusOutput struct {
@@ -631,6 +632,13 @@ func resolveCLIAuthIssuer(existing string) (string, error) {
 	if raw == "" {
 		raw = DefaultAwebURL
 	}
+	return normalizeCLIAuthIssuer(raw)
+}
+
+// normalizeCLIAuthIssuer reduces a server name or base URL to the issuer
+// origin that CLI logins are stored under.
+func normalizeCLIAuthIssuer(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
 	if !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") {
 		derived, err := awconfig.DeriveBaseURLFromServerName(raw)
 		if err != nil {

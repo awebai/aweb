@@ -14,7 +14,8 @@
     }
   ],
   "skills": [
-    "skills/aweb-coordination"
+    "skills/aweb-coordination",
+    "skills/aweb-tasks"
   ],
   "inject": "injects/aweb-tasks.md"
 }

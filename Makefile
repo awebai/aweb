@@ -104,7 +104,7 @@ help:
 	@echo "  release-publish TAG=<tag>             publish one local tag without GitHub Actions"
 	@echo "  clean        Remove all build artifacts and caches"
 
-.PHONY: e2e-naapp naapp-e2e-packages
+.PHONY: e2e-naapp e2e-folio-wakes naapp-e2e-packages
 # A new package joins the integration gate by joining this list.
 NAAPP_E2E_PACKAGES := naapp/folio naapp/library
 
@@ -127,6 +127,9 @@ e2e-naapp:
 		fi; \
 	done
 
+e2e-folio-wakes:
+	bash scripts/e2e-folio-wakes.sh
+
 build: sync-doc-copies
 	cd cli/go && $(MAKE) build
 
@@ -134,11 +137,17 @@ build: sync-doc-copies
 #
 # These cheap committed-source controls run first on every ordinary test run.
 # The expensive complete release proof is owned by the clean local-Docker gate.
-test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-release-cli-version test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
+test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-identity-primitives test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-release-cli-version test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
 
 test-shipping:
 	python3 scripts/test_shipping.py
+	python3 scripts/test_aw_npm_publication.py
 	python3 scripts/test_candidate_cleanup.py
+	python3 scripts/test_candidate_disk_floor.py
+	python3 scripts/test_candidate_ports.py
+	python3 scripts/test_folio_wakes_gate.py
+	python3 scripts/test_user_paths_gate.py
+	python3 scripts/test_fetch_released_aw.py
 
 # AWID metadata is repeated in every committed Python lock that takes the in-repo
 # awid (awid, server, naapp-lib and each naapp). Check them all without repair,
@@ -154,6 +163,16 @@ test-python-locks:
 test-sot-source-inventories:
 	python3 scripts/check_sot_source_inventories.py
 	python3 -m unittest discover -s scripts -p "test_check_sot_source_inventories.py" -v
+
+.PHONY: test-identity-primitives
+test-identity-primitives:
+	python3 scripts/check_identity_python_inventory.py
+	python3 -m unittest discover -s scripts -p "test_check_identity_python_inventory.py" -v
+	cd cli/go && GOTOOLCHAIN=local go run ./internal/identityinventory ../..
+	cd cli/go && GOTOOLCHAIN=local go test ./internal/identityinventory
+	cd channel-core && npm ci --ignore-scripts --no-audit --no-fund
+	node scripts/check_identity_ts_inventory.mjs
+	node --test scripts/test_check_identity_ts_inventory.mjs
 
 # Public protocol vectors have one repository-root authority. The checker also
 # inventories explicitly local fixture directories and proves each failure mode.
@@ -202,6 +221,12 @@ test-mcp-tools-reference:
 
 regenerate-mcp-tools-reference:
 	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen python ../scripts/regenerate_mcp_reference.py
+
+# Keep private application paths out of every candidate before it can land.
+.PHONY: check-private-boundary
+check-private-boundary:
+	python3 scripts/check-private-boundary.py
+	python3 scripts/check-private-boundary.py --self-test
 
 # Regenerate every committed generated artifact (uv locks, cli reference,
 # reserved-app-ids, resource packs, and the claude-channel + pi bundles) and
@@ -531,7 +556,10 @@ test-naapp-e2e:
 	$(MAKE) -C cli/go build
 	uv run --no-project python scripts/test_naapp_e2e.py
 
-test-candidate-ledger: test-naapp-e2e
+test-candidate-ledger:
+	bash scripts/candidate-docker-gate.sh --check-disk
+	$(MAKE) test-naapp-e2e
+	python3 scripts/test_candidate_make_environment.py
 	python3 scripts/test_candidate_gate_ledger.py
 
 _candidate-unit-suites:
@@ -544,7 +572,7 @@ candidate-gate: test-candidate-ledger
 
 release-candidate: test-candidate-ledger
 	@test -n "$(TAGS)" || (echo "TAGS='server-vX.Y.Z ...' is required" >&2; exit 2)
-	python3 scripts/release_candidate.py $(TAGS)
+	python3 scripts/release_candidate.py $(if $(filter 1,$(STAGE_AW_FINAL)),--stage-aw-final,) $(TAGS)
 
 release-publish:
 	@test -n "$(TAG)" || (echo "TAG=<artifact-vX.Y.Z> is required" >&2; exit 2)
@@ -654,9 +682,9 @@ _candidate-artifact-pi:
 
 _candidate-artifact-skills: sync-doc-copies
 	@mkdir -p /tmp/aweb-candidate-gate
-	cd packages/claude-skills && npm pack --ignore-scripts --pack-destination /tmp/aweb-candidate-gate
+	cd packages/claude-skills && npm run sync-skills && npm pack --ignore-scripts --pack-destination /tmp/aweb-candidate-gate
 	cd packages/claude-ai-skills && ./build-zips.sh
-	@test "$$(find packages/claude-ai-skills/dist -name 'aweb-*.zip' -type f | wc -l | tr -d ' ')" = 5
+	node scripts/skill-packaging.mjs check-zips packages/claude-ai-skills/dist
 
 _candidate-artifact-a2a-image:
 	@mkdir -p /tmp/aweb-candidate-gate
@@ -703,3 +731,7 @@ test-egress-controls:
 .PHONY: check-page-renderer-bundle
 check-page-renderer-bundle:
 	cd naapp-lib/renderer && npm ci --ignore-scripts && node build.mjs --check
+
+.PHONY: e2e-user-paths
+e2e-user-paths:
+	USER_PATHS_EVIDENCE="$${CANDIDATE_LOG_DIR:-/tmp/aweb-user-paths-evidence}/user-paths" bash scripts/e2e-user-paths.sh

@@ -71,7 +71,7 @@ cryptographically verifiable, not just a database row.
 
 Inside the same team, any member can use the local member name as a selector:
 
-- `aw mail send --to <name>` — send mail to a team member.
+- `aw mail send --to <name> --subject <subject>` — start a mail thread with a team member; `aw mail reply <message_id>` answers in it.
 - `aw chat send-and-wait <name> "..."` — chat with a team member.
 - `aw task create --assignee <name>` — create tasks and assign them.
 - `aw task list --assignee <name>` — see tasks assigned to a member.

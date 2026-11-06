@@ -18,7 +18,7 @@ import sys
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from http.client import HTTPException, IncompleteRead
 from pathlib import Path
@@ -738,6 +738,7 @@ def _health_event(
 class ProductionConfig:
     service_id: str
     service_name: str
+    service_slug: str
     region: str
     repo: str
     root_dir: str
@@ -803,9 +804,7 @@ def _validated_public_deployment_identity(
     return deployment
 
 
-def verify_public_deployment_identity(
-    payload: object, config: ProductionConfig
-) -> dict[str, str]:
+def verify_public_deployment_identity(payload: object, config: ProductionConfig) -> dict[str, str]:
     """Compare credential-less Render metadata with the pinned topology."""
     if not isinstance(payload, dict) or set(payload) != {
         "status",
@@ -832,7 +831,7 @@ def verify_public_deployment_identity(
         expected_repo = expected_repo[:-4]
     expected = {
         "service_id": config.service_id,
-        "service_name": config.service_name,
+        "service_name": config.service_slug,
         "hostname": origin.hostname or "",
         "origin_url": config.origin_url.rstrip("/"),
         "repo": expected_repo,
@@ -891,6 +890,7 @@ class RenderClient:
                 "Authorization": f"Bearer {self._api_key}",
                 "Accept": "application/json",
                 "Content-Type": "application/json",
+                "User-Agent": HEALTH_USER_AGENT,
             },
         )
         try:
@@ -916,6 +916,20 @@ class RenderClient:
                 {"clearCache": "clear", "commitId": commit},
             ),
             "deploy",
+        )
+
+    def move_build_settings(self, service_id: str) -> Any:
+        return self.request(
+            "PATCH",
+            f"/services/{service_id}",
+            {
+                "rootDir": "",
+                "serviceDetails": {
+                    "envSpecificDetails": {
+                        "dockerfilePath": "./naapp/library/Dockerfile",
+                    }
+                },
+            },
         )
 
     def rollback(self, service_id: str, deploy_id: str) -> dict[str, Any]:
@@ -955,6 +969,7 @@ def validate_service(service: dict[str, Any], config: ProductionConfig) -> None:
     observed = {
         "id": service.get("id"),
         "name": service.get("name"),
+        "slug": service.get("slug"),
         "region": details.get("region"),
         "repo": service.get("repo"),
         # An absent rootDir and an empty one both mean the repository root; null does not.
@@ -969,6 +984,7 @@ def validate_service(service: dict[str, Any], config: ProductionConfig) -> None:
     expected = {
         "id": config.service_id,
         "name": config.service_name,
+        "slug": config.service_slug,
         "region": config.region,
         "repo": config.repo,
         "rootDir": config.root_dir,
@@ -1639,6 +1655,64 @@ def command_status(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def command_move_build(args: argparse.Namespace) -> dict[str, Any]:
+    """Move only the established Library build layout; never deploy or rebuild."""
+    client, config = _client(args)
+    _confirm_apply(args, config)
+    commit = require_commit(args.commit)
+    rollback_id = require_deploy_id(args.rollback_deploy_id, "rollback deploy ID")
+    rollback_commit = require_commit(args.rollback_commit, "rollback commit")
+    if (config.root_dir, config.dockerfile_path, config.docker_context) != (
+        "",
+        "./naapp/library/Dockerfile",
+        ".",
+    ):
+        raise OpsError("settings target is not the reviewed repository-root build")
+    evidence = _command_health_evidence(args, label="move-build", config=config)
+    try:
+        verify_git_target(
+            Path(args.repo_root), commit, expected_repo=config.repo, expected_branch=config.branch
+        )
+        observed = client.service(config.service_id)
+        validate_service(
+            observed, replace(config, root_dir="naapp/library", dockerfile_path="./Dockerfile")
+        )
+        live = current_live(client.deploys(config.service_id))
+        require_rollback_artifact(live, deploy_id=rollback_id, commit=rollback_commit)
+        evidence.record(
+            {
+                "probe_kind": "settings-before",
+                "rootDir": "naapp/library",
+                "dockerfilePath": "./Dockerfile",
+                "dockerContext": ".",
+            }
+        )
+        client.move_build_settings(config.service_id)
+        validate_service(client.service(config.service_id), config)
+        require_deploy(
+            current_live(client.deploys(config.service_id)),
+            deploy_id=rollback_id,
+            commit=rollback_commit,
+        )
+    except Exception as exc:
+        evidence.finish(
+            {
+                "probe_kind": "run-outcome",
+                "outcome": "failed",
+                "stage": "move-build",
+                "error_class": type(exc).__name__,
+            }
+        )
+        raise
+    evidence.finish({"probe_kind": "run-outcome", "outcome": "passed", "stage": "move-build"})
+    return {
+        "live_deploy": safe_deploy(live),
+        "rootDir": config.root_dir,
+        "dockerfilePath": config.dockerfile_path,
+        "dockerContext": config.docker_context,
+    }
+
+
 def command_deploy(args: argparse.Namespace) -> dict[str, Any]:
     client, config = _client(args)
     _confirm_apply(args, config)
@@ -1826,7 +1900,7 @@ def parser() -> argparse.ArgumentParser:
         default=os.environ.get("ALLOW_LEGACY_MISSING_BUILD_FOR", ""),
     )
     proof.add_argument("--evidence-dir", default=os.environ.get("PROD_EVIDENCE_DIR", ""))
-    deploy = sub.add_parser("deploy")
+    deploy = sub.add_parser("deploy", aliases=["move-build"])
     deploy.add_argument("--commit", default=os.environ.get("PROD_COMMIT", ""))
     deploy.add_argument("--rollback-deploy-id", default=os.environ.get("ROLLBACK_DEPLOY_ID", ""))
     deploy.add_argument("--rollback-commit", default=os.environ.get("ROLLBACK_COMMIT", ""))
@@ -1862,7 +1936,7 @@ def parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = parser().parse_args()
     try:
-        if args.command in {"deploy", "verify", "rollback"} and not args.evidence_dir:
+        if args.command in {"deploy", "verify", "rollback", "move-build"} and not args.evidence_dir:
             raise OpsError("PROD_EVIDENCE_DIR/--evidence-dir is required for health evidence")
         if args.command == "public-identity":
             result = command_public_identity(args)
@@ -1872,6 +1946,8 @@ def main() -> int:
             if not args.evidence_dir:
                 raise OpsError("PROD_EVIDENCE_DIR/--evidence-dir is required")
             result = command_health_client_proof(args)
+        elif args.command == "move-build":
+            result = command_move_build(args)
         elif args.command == "deploy":
             result = command_deploy(args)
         elif args.command == "wait":

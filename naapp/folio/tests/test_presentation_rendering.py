@@ -267,7 +267,7 @@ def test_render_presented_page_defaults_to_document_layout_light() -> None:
     assert '<meta name="color-scheme" content="light">' in html
     style = html.split("</style>", 1)[0]
     assert "color-scheme: light;" in style
-    assert "--bg: #f8fafc;" in style
+    assert "--bg: #ffffff;" in style
     assert "--measure: 68ch;" in style
     assert "max-width: var(--measure)" in style
 
@@ -279,7 +279,7 @@ def test_render_presented_page_presentation_wide_dark() -> None:
     assert '<meta name="color-scheme" content="dark">' in html
     style = html.split("</style>", 1)[0]
     assert "color-scheme: dark;" in style
-    assert "--bg: #0b1220;" in style
+    assert "--bg: #17191c;" in style
     assert ".folio-layout-presentation {" in style
     assert "--measure: 1400px;" in style
 
@@ -291,7 +291,7 @@ def test_render_presented_page_auto_color_scheme_emits_dark_media_query() -> Non
     style = html.split("</style>", 1)[0]
     assert "color-scheme: light dark;" in style
     assert "@media (prefers-color-scheme: dark)" in style
-    assert "--bg: #0b1220;" in style
+    assert "--bg: #17191c;" in style
 
 
 def test_render_presented_page_layout_tokens_cannot_escape() -> None:
@@ -442,9 +442,9 @@ def test_render_presented_page_aweb_preset_light() -> None:
     assert '<meta name="color-scheme" content="light">' in html
     style = html.split("</style>", 1)[0]
     assert "color-scheme: light;" in style
-    assert "--bg: #fffaf0;" in style
-    assert "--accent: #246b49;" in style
-    assert "--text: #17201a;" in style
+    assert "--bg: #ffffff;" in style
+    assert "--accent: #2342e8;" in style
+    assert "--text: #17191c;" in style
 
 
 def test_render_presented_page_aweb_preset_dark() -> None:
@@ -453,21 +453,21 @@ def test_render_presented_page_aweb_preset_dark() -> None:
     assert '<meta name="color-scheme" content="dark">' in html
     style = html.split("</style>", 1)[0]
     assert "color-scheme: dark;" in style
-    assert "--bg: #10180f;" in style
-    assert "--accent: #5cb98a;" in style
+    assert "--bg: #17191c;" in style
+    assert "--accent: #a5b5ff;" in style
 
 
-def test_render_presented_page_aweb_preset_auto_emits_green_dark_media_query() -> None:
+def test_render_presented_page_aweb_preset_auto_emits_carbon_dark_media_query() -> None:
     theme = {"preset": "aweb", "tokens": {"layout": {"color_scheme": "auto"}}}
     style = render_presented_page(body="# Hi", theme=theme).split("</style>", 1)[0]
-    assert "--bg: #fffaf0;" in style  # light base
+    assert "--bg: #ffffff;" in style  # light base
     assert "@media (prefers-color-scheme: dark)" in style
-    assert "--bg: #10180f;" in style  # dark inside the media query
+    assert "--bg: #17191c;" in style  # dark inside the media query
 
 
 def test_render_presented_page_unknown_preset_falls_back_to_default() -> None:
     style = render_presented_page(body="# Hi", theme={"preset": "bogus"}).split("</style>", 1)[0]
-    assert "--bg: #f8fafc;" in style  # the un-themed default, never a leaked name
+    assert "--bg: #ffffff;" in style  # the un-themed default, never a leaked name
     assert "bogus" not in style
 
 
@@ -492,9 +492,9 @@ def test_theme_contrast_error_checks_custom_text_against_preset_surface() -> Non
 
 def test_theme_contrast_error_auto_scheme_checks_both_palettes_for_preset() -> None:
     # Custom dark text is readable on the aweb light surface but 1:1 against the
-    # aweb dark surface (#17201a). 'auto' renders BOTH, so it must be rejected.
+    # aweb dark surface (#17191c). 'auto' renders BOTH, so it must be rejected.
     error = theme_contrast_error(
-        {"layout": {"color_scheme": "auto"}, "colors": {"text": "#17201a"}}, preset="aweb"
+        {"layout": {"color_scheme": "auto"}, "colors": {"text": "#17191c"}}, preset="aweb"
     )
     assert error is not None
     assert "contrast" in error.lower()
@@ -518,7 +518,7 @@ def test_put_theme_rejects_auto_scheme_unreadable_against_dark_palette() -> None
 
     response = client.put(
         "/v1/theme",
-        json={"preset": "aweb", "tokens": {"layout": {"color_scheme": "auto"}, "colors": {"text": "#17201a"}}},
+        json={"preset": "aweb", "tokens": {"layout": {"color_scheme": "auto"}, "colors": {"text": "#17191c"}}},
     )
     assert response.status_code == 422, response.text
 

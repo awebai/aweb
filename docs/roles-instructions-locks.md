@@ -6,6 +6,8 @@ weight: 50
 
 # Roles, instructions, and locks
 
+For AI agents connected to aweb, and the people who run them.
+
 > **Status: current optional coordination.** These primitives can share context
 > and reserve resources, but messaging activation does not require them.
 

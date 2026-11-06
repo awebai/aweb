@@ -50,7 +50,7 @@ def fence(db):
     return InstallationFence(db, app_id="secrets", grants=Installed())
 
 
-async def setup(db, fence, *, open_call=None, policy_changes=None):
+async def setup(db, fence, *, open_call=None, policy_changes=None, installation_grant=None):
     import hashlib
 
     operation = OperationTemplate.from_after(copy.deepcopy(REFUND))
@@ -97,7 +97,7 @@ async def setup(db, fence, *, open_call=None, policy_changes=None):
         db,
         fence,
         request=request,
-        grant=_grant_source_grant(installation_id=INSTALLATION),
+        grant=installation_grant or _grant_source_grant(installation_id=INSTALLATION),
         clock=lambda: NOW,
     )
     from aweb_naapp.dispatch import apply_dispatch_migrations
@@ -135,9 +135,15 @@ def machine(audit):
     )
 
 
-async def prepared(db, fence, *, open_call=None, policy_changes=None, signed_trace_id=None):
+async def prepared(
+    db, fence, *, open_call=None, policy_changes=None, signed_trace_id=None, installation_grant=None
+):
     _, request, admitted = await setup(
-        db, fence, open_call=open_call, policy_changes=policy_changes
+        db,
+        fence,
+        open_call=open_call,
+        policy_changes=policy_changes,
+        installation_grant=installation_grant,
     )
     await apply_outbox_migrations(db)
     await apply_use_context_migrations(db)
@@ -661,11 +667,15 @@ async def test_outer_admission_refusal_survives_rolled_back_inner_claim_without_
         "action": "refused",
         "op_kind": "broker",
         "refusal_code": "grant_missing",
+        "use_ref": event["payload"]["use_ref"],
     }
+    use_ref = event["payload"]["use_ref"]
+    assert use_ref.startswith("use_") and len(use_ref) == 26
     assert event["actor"]["did_key"] == BOB.did_key
     row = await db.fetch_one("SELECT * FROM {{tables.broker_use_events}}")
     assert row["dispatch_id"] is None and row["installation_id"] == INSTALLATION
     assert row["team_id"] == TEAM and row["install_generation"] == scope.generation
+    assert json.loads(row["correlation"])["request_ref"] == use_ref
 
 
 async def test_outer_admission_trace_input_is_not_retained_as_free_text(db, fence):

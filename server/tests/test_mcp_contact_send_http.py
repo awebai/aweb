@@ -74,7 +74,7 @@ async def test_mounted_mcp_send_to_saved_contact(privacy_app, monkeypatch, chann
 
             added = await call("add_contact", address="example.test/bob")
             conversation = None
-            for message in ("first contact send", "continued contact send"):
+            for message in ("first contact send", "another contact send"):
                 sent = await call(
                     "send_message_to_contact", contact_id=added["contact_id"],
                     channel=channel, message=message, subject="saved contact",
@@ -82,7 +82,7 @@ async def test_mounted_mcp_send_to_saved_contact(privacy_app, monkeypatch, chann
                 current = sent.get("conversation_id") or sent.get("session_id")
                 assert current
                 if conversation is not None:
-                    assert current == conversation
+                    assert (current != conversation) if channel == "mail" else (current == conversation)
                 conversation = current
                 table = "messages" if channel == "mail" else "chat_messages"
                 row = await env.db.fetch_one(

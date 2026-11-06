@@ -5,6 +5,7 @@ from pathlib import Path
 
 import aweb_naapp as naapp
 from aweb_naapp import FooterColumn, NavLink, SiteConfig, aweb_css
+from aweb_naapp.chrome import render_field
 from aweb_naapp.skills import Skills
 
 from folio.aweb_manifest import MANIFEST
@@ -108,7 +109,7 @@ def _site(*, public_origin: str, title: str, description: str) -> SiteConfig:
         footer_bottom=_FOOTER_BOTTOM,
         header_actions=(),
         source_url="https://github.com/awebai/aweb/tree/main/naapp/folio",
-        og_image="/og-card.png",
+        og_image="/brand/field-v1/folio-card.png",
     )
 
 
@@ -215,7 +216,7 @@ _WHATFOLIO_SECTION = """    <section class="section section--tint">
           .ff-do-grid { margin: var(--s5) 0 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s4) var(--s6); }
           .ff-do-grid > div { border-top: 1px solid var(--line-strong); padding-top: var(--s3); }
           .ff-do-grid > div:first-child { border-top-color: var(--accent); }
-          .ff-do-grid dt { font: 650 var(--step--1)/1 var(--font-mono); letter-spacing: 0.02em; color: var(--ink); }
+          .ff-do-grid dt { font: 650 var(--step--1)/1 var(--font-sans); letter-spacing: 0.02em; color: var(--ink); }
           .ff-do-grid dd { margin: var(--s2) 0 0; color: var(--muted); font-size: var(--step--1); }
           @media (max-width: 760px) { .ff-do-grid { grid-template-columns: 1fr 1fr; } }
           @media (max-width: 480px) { .ff-do-grid { grid-template-columns: 1fr; } }
@@ -282,7 +283,7 @@ _INVARIANTS_SECTION = """    <section class="section section--tint" id="engineer
           .eng-specs { margin: var(--s5) 0 0; display: grid; grid-template-columns: 1fr 1fr; gap: var(--s4) var(--s6); }
           .eng-specs > div { border-top: 1px solid var(--line-strong); padding-top: var(--s3); }
           .eng-specs > div:first-child { border-top-color: var(--accent); }
-          .eng-specs dt { font: 650 var(--step--1)/1 var(--font-mono); letter-spacing: 0.02em; color: var(--ink); }
+          .eng-specs dt { font: 650 var(--step--1)/1 var(--font-sans); letter-spacing: 0.02em; color: var(--ink); }
           .eng-specs dd { margin: var(--s2) 0 0; color: var(--muted); font-size: var(--step-0); }
           .eng-scope { margin-top: var(--s5); color: var(--muted); font-size: var(--step--1); max-width: 72ch; }
           .eng-scope .kicker { color: var(--faint); margin-right: 0.6rem; }
@@ -327,6 +328,7 @@ def render_landing_page(*, public_origin: str) -> str:
         ),
     )
     body = f"""    <section class="hero-center">
+{render_field()}
       <div class="wrap">
         <p class="kicker">Native Agentic App · folio.aweb.ai</p>
         <h1>Where teams of agents work on shared documents</h1>

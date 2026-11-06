@@ -325,6 +325,15 @@ func (r *instanceRunner) run(ctx context.Context) {
 	}
 	startChild()
 	defer stopChild()
+	if r.broker.cfg.Heartbeat != nil {
+		heartbeatCtx, cancelHeartbeat := context.WithCancel(ctx)
+		heartbeatDone := make(chan struct{})
+		go func() {
+			defer close(heartbeatDone)
+			r.runHeartbeats(heartbeatCtx)
+		}()
+		defer func() { cancelHeartbeat(); <-heartbeatDone }()
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -395,6 +404,52 @@ func (r *instanceRunner) run(ctx context.Context) {
 			if child != nil {
 				child.Offer(offer.binding, offer.event)
 			}
+		}
+	}
+}
+
+func (r *instanceRunner) runHeartbeats(ctx context.Context) {
+	ticker := time.NewTicker(r.broker.cfg.HeartbeatInterval)
+	defer ticker.Stop()
+	r.heartbeat(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			r.heartbeat(ctx)
+		}
+	}
+}
+
+func (r *instanceRunner) heartbeat(ctx context.Context) {
+	reg := r.registrationSnapshot()
+	inspectCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	inspection, err := r.broker.cfg.Session.Inspect(inspectCtx, reg.Home)
+	cancel()
+	if err != nil {
+		if ctx.Err() == nil {
+			r.broker.cfg.Log("presence inspect failed home=%s err=%v", reg.Home, err)
+		}
+		return
+	}
+	if !inspection.Present || ctx.Err() != nil {
+		return
+	}
+	targets := make([]PresenceIdentity, 0, len(reg.ReceiveIdentities)+len(reg.PresenceIdentities))
+	for _, binding := range reg.ReceiveBindings() {
+		targets = append(targets, PresenceIdentity{IdentityHome: binding.IdentityHome, TeamID: binding.TeamID})
+	}
+	targets = append(targets, reg.PresenceIdentities...)
+	for _, binding := range targets {
+		if ctx.Err() != nil {
+			return
+		}
+		beatCtx, stop := context.WithTimeout(ctx, 5*time.Second)
+		err := r.broker.cfg.Heartbeat(beatCtx, binding.IdentityHome, binding.TeamID)
+		stop()
+		if err != nil && ctx.Err() == nil {
+			r.broker.cfg.Log("presence heartbeat failed identity_home=%s team=%s err=%v", binding.IdentityHome, binding.TeamID, err)
 		}
 	}
 }
@@ -596,6 +651,7 @@ func (r *instanceRunner) snapshot() InstanceStatus {
 		RuntimeDelivery:     r.reg.RuntimeDelivery,
 		PrimaryIdentityHome: r.reg.PrimaryIdentityHome,
 		ReceiveIdentities:   receive,
+		PresenceIdentities:  append([]PresenceIdentity(nil), r.reg.PresenceIdentities...),
 		Backend:             r.reg.Backend,
 		Delivery:            r.reg.Delivery,
 		RegisteredAt:        r.reg.RegisteredAt,

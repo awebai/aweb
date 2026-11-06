@@ -33,17 +33,18 @@ REQUIRED_INCUMBENT_SERVICE_ID = "srv-d8qm4jvavr4c73dhrmgg"
 REQUIRED_INCUMBENT_DEPLOY_ID = "dep-d9koecdbedkc73b582vg"
 REQUIRED_INCUMBENT_COMMIT = "3376af7ee4a571488441794047018af94b06057f"
 REQUIRED_INCUMBENT_SHAPE = "library-materialize.pre-aasb.no-runtime-managed"
-REQUIRED_AW_PATH = Path("/opt/homebrew/bin/aw")
-REQUIRED_AW_SHA256 = "e546aa12294e61c95d02cd0a69a613b115ea72cc43f7716e193dc4ef342d6815"
-REQUIRED_AW_VERSION_OUTPUT = "aw 1.34.0\n  commit: 82d7ca0\n  built:  2026-07-27T20:23:38Z\n"
-REQUIRED_CLAUDE_PATH = Path("/opt/homebrew/bin/claude")
-REQUIRED_CLAUDE_SHA256 = "8addc857f3fe64d5a0368af9ee50321b50afb4a6918ba3ef018ab84f5dbbe081"
-REQUIRED_CLAUDE_MAGIC = bytes.fromhex("cffaedfe")  # 64-bit little-endian Mach-O
-REQUIRED_PI_PATH = Path("/opt/homebrew/bin/pi")
-REQUIRED_PI_SHA256 = "af302f231437eaf6f37691bce4b34234fcb626bcb5eb3910d4fc3f6519bf78ca"
-REQUIRED_NODE_PATH = Path("/opt/homebrew/bin/node")
-REQUIRED_NODE_SHA256 = "70851490e028b3d699a8d6d4e1de909af2a989359ae807974c92af9c6580a8e8"
-HARNESS_PATH = "/opt/homebrew/bin:/usr/bin:/bin"
+# Paths are selected only by the explicit private tool root; artifact hashes remain reviewed.
+REQUIRED_AW_PATH = Path("/unconfigured-library-tools/aw/package/bin/aw")
+REQUIRED_AW_SHA256 = "5530d448f06a6079d5f713e7743b1c7ccf5c70d8c5bbf6e154f58d8ae3931949"
+REQUIRED_AW_VERSION_OUTPUT = "aw 1.36.56\n  commit: 4d5eafdcc9118cfb8204740fa70a0d48acfd18e4 (github.com/awebai/aw)\n  built:  2026-11-06T03:56:47Z\n"
+REQUIRED_CLAUDE_PATH = Path("/unconfigured-library-tools/claude/package/claude")
+REQUIRED_CLAUDE_SHA256 = "708c77b204db30086ff6f1ed34577bda03e1be74ced80557cbf7b54249ebf0bd"
+REQUIRED_CLAUDE_MAGIC = bytes.fromhex("7f454c46")  # ELF, official Linux x86_64 artifact
+REQUIRED_PI_PATH = Path("/unconfigured-library-tools/pi/package/dist/bundle/cli.js")
+REQUIRED_PI_SHA256 = "e79626f2dd6f94aa45d30f3fa63cd84319a6eefcd150b353cfaf274366926774"
+REQUIRED_NODE_PATH = Path("/unconfigured-library-tools/node/node-v26.13.0-linux-x64/bin/node")
+REQUIRED_NODE_SHA256 = "0adde40d1b7dfa57c8bc83cbc319758c3ec6ebba21363bb2fa752ea6b267ad1b"
+HARNESS_PATH = "/usr/bin:/bin"
 HARNESS_ENV_KEYS = ("HOME", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL", "TERM", "SHELL")
 IGNORED_AUTH_FILES = (
     "interaction-log.jsonl",
@@ -675,10 +676,10 @@ def ref_from_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]
 
 
 def validate_profile_pin(
-    ref: dict[str, Any], *, expected_version: str, expected_digest: str
+    ref: dict[str, Any], *, expected_ref: str, expected_version: str, expected_digest: str
 ) -> None:
-    if ref.get("profile_ref") != "developer":
-        raise GateError("profile_ref is not developer")
+    if ref.get("profile_ref") != expected_ref:
+        raise GateError("profile_ref does not match the approved gate pin")
     if ref.get("profile_version") != expected_version:
         raise GateError("profile_version does not match the approved gate pin")
     if ref.get("profile_digest") != expected_digest:
@@ -689,12 +690,18 @@ def validate_candidate_payload(
     payload: dict[str, Any],
     runtime: str,
     *,
+    expected_ref: str,
     expected_version: str,
     expected_digest: str,
 ) -> dict[str, Any]:
     ref, paths = ref_from_payload(payload)
     managed = ref.get("managed_set")
-    validate_profile_pin(ref, expected_version=expected_version, expected_digest=expected_digest)
+    validate_profile_pin(
+        ref,
+        expected_ref=expected_ref,
+        expected_version=expected_version,
+        expected_digest=expected_digest,
+    )
     if ref.get("runtime_kind") != runtime:
         raise GateError(f"candidate runtime_kind does not match {runtime}")
     if not isinstance(managed, list) or not managed or not all(isinstance(p, str) for p in managed):
@@ -719,11 +726,17 @@ def validate_recovery_payload(
     payload: dict[str, Any],
     runtime: str,
     *,
+    expected_ref: str,
     expected_version: str,
     expected_digest: str,
 ) -> dict[str, Any]:
     ref, _ = ref_from_payload(payload)
-    validate_profile_pin(ref, expected_version=expected_version, expected_digest=expected_digest)
+    validate_profile_pin(
+        ref,
+        expected_ref=expected_ref,
+        expected_version=expected_version,
+        expected_digest=expected_digest,
+    )
     if "runtime_kind" in ref or "managed_set" in ref:
         raise GateError("rollback fingerprint is not the known pre-fix behavior")
     return sanitized_summary("raw-recovery", runtime, ref, 0)
@@ -733,6 +746,7 @@ def validate_materialized_ref(
     path: Path,
     runtime: str,
     *,
+    expected_ref: str,
     expected_version: str,
     expected_digest: str,
 ) -> dict[str, Any]:
@@ -741,7 +755,12 @@ def validate_materialized_ref(
     except (OSError, json.JSONDecodeError) as exc:
         raise GateError(f"strict client did not write a valid ref.json for {runtime}") from exc
     managed = ref.get("managed_set")
-    validate_profile_pin(ref, expected_version=expected_version, expected_digest=expected_digest)
+    validate_profile_pin(
+        ref,
+        expected_ref=expected_ref,
+        expected_version=expected_version,
+        expected_digest=expected_digest,
+    )
     if ref.get("runtime_kind") != runtime:
         raise GateError(f"strict client ref.json mismatch for {runtime}")
     if (
@@ -808,7 +827,7 @@ def verify_native_claude(path: Path) -> None:
     except OSError as exc:
         raise GateError("failed to inspect Claude Code executable shape") from exc
     if magic != REQUIRED_CLAUDE_MAGIC:
-        raise GateError("Claude Code artifact is not the reviewed native Mach-O executable")
+        raise GateError("Claude Code artifact is not the reviewed native ELF executable")
 
 
 def verify_released_aw(aw_bin: Path) -> None:
@@ -857,13 +876,14 @@ def raw_materialize(
     runtime: str,
     root: Path,
     *,
+    profile_ref: str,
     origin_tunnel: OriginConnectTunnel | None = None,
 ) -> dict[str, Any]:
     request = root / f"raw-{runtime}.request.json"
     response = root / f"raw-{runtime}.response.json"
     stderr = root / f"raw-{runtime}.stderr"
     request.write_text(
-        json.dumps({"profile_ref": "developer", "runtime_kind": runtime, "target": "local"}) + "\n",
+        json.dumps({"profile_ref": profile_ref, "runtime_kind": runtime, "target": "local"}) + "\n",
         encoding="utf-8",
     )
     if origin_tunnel is not None and (
@@ -873,6 +893,8 @@ def raw_materialize(
     run_checked(
         [
             str(aw_bin),
+            "--identity-home",
+            str(source_home / ".aw"),
             "id",
             "request",
             "POST",
@@ -887,9 +909,7 @@ def raw_materialize(
         stderr=stderr,
         label=f"raw materialize {runtime}",
         env=(
-            origin_proxy_environment(origin_tunnel.proxy_url)
-            if origin_tunnel is not None
-            else None
+            origin_proxy_environment(origin_tunnel.proxy_url) if origin_tunnel is not None else None
         ),
     )
     if stderr.read_text(encoding="utf-8", errors="replace") != "HTTP 200\n":
@@ -924,16 +944,19 @@ def strict_materialize(
     runtime: str,
     root: Path,
     *,
+    expected_ref: str,
     expected_version: str,
     expected_digest: str,
 ) -> dict[str, Any]:
     run_checked(
         [
             str(aw_bin),
+            "--identity-home",
+            str(home / ".aw"),
             "library",
             "materialize",
             "--profile_ref",
-            "developer",
+            expected_ref,
             "--runtime_kind",
             runtime,
             "--target",
@@ -947,13 +970,14 @@ def strict_materialize(
     return validate_materialized_ref(
         home / ".aw" / "profile" / "ref.json",
         runtime,
+        expected_ref=expected_ref,
         expected_version=expected_version,
         expected_digest=expected_digest,
     )
 
 
 def require_recovery_rejection(
-    aw_bin: Path, home: Path, runtime: str, root: Path
+    aw_bin: Path, home: Path, runtime: str, root: Path, *, expected_ref: str
 ) -> dict[str, Any]:
     stdout = root / f"recovery-strict-{runtime}.stdout"
     stderr = root / f"recovery-strict-{runtime}.stderr"
@@ -964,7 +988,7 @@ def require_recovery_rejection(
                 "library",
                 "materialize",
                 "--profile_ref",
-                "developer",
+                expected_ref,
                 "--runtime_kind",
                 runtime,
                 "--target",
@@ -992,10 +1016,12 @@ def require_recovery_rejection(
 
 def expected_provenance(ref_path: Path) -> str:
     ref = json.loads(ref_path.read_text(encoding="utf-8"))
-    return (
-        f"> Profile {ref['profile_ref']} v{ref['profile_version']} · blueprint "
-        f"{ref['source_blueprint_ref']} v{ref['source_blueprint_version']}"
+    source = (
+        f"blueprint {ref['source_blueprint_ref']} v{ref['source_blueprint_version']}"
+        if ref.get("source_blueprint_ref")
+        else "created"
     )
+    return f"> Profile {ref['profile_ref']} v{ref['profile_version']} · {source}"
 
 
 def controlled_harness_environment() -> dict[str, str]:
@@ -1055,15 +1081,53 @@ def run_harness(
         line.strip() for line in stdout.read_text(encoding="utf-8").splitlines() if line.strip()
     ]
     provenance = expected_provenance(home / ".aw" / "profile" / "ref.json")
-    if "# Developer" not in lines or provenance not in lines:
+    title = next(
+        (
+            line
+            for line in (home / "AGENTS.md").read_text(encoding="utf-8").splitlines()
+            if line.startswith("# ")
+        ),
+        None,
+    )
+    if title is None or title not in lines or provenance not in lines:
         raise GateError(f"{runtime} harness did not load expected project instructions")
     return {
         "gate": "real-harness",
         "runtime_kind": runtime,
         "exit": 0,
-        "title": "# Developer",
+        "title": title,
         "provenance": provenance,
     }
+
+
+def source_profile_digest(payload: dict[str, Any]) -> str:
+    from library.digest import PROFILE_PAYLOAD_SCHEMA, payload_digest
+
+    files = []
+    prefix = ".aw/profile/"
+    for entry in payload["home_files"]:
+        path = entry["path"]
+        if path.startswith(prefix) and path != prefix + "ref.json":
+            content = entry["content_utf8"]
+            files.append({"path": path.removeprefix(prefix), "content_utf8": content,
+                          "sha256": "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()})
+    if not files:
+        raise GateError("materialize response contains no source profile files")
+    return payload_digest(files, PROFILE_PAYLOAD_SCHEMA)
+
+
+def run_shelf_pin(args: argparse.Namespace, root: Path) -> list[dict[str, Any]]:
+    summaries = []
+    for runtime in RUNTIMES:
+        payload = raw_materialize(REQUIRED_AW_PATH, args.source_home, args.public_url, runtime, root,
+                                  profile_ref=args.expected_profile_ref)
+        summary = validate_candidate_payload(payload, runtime, expected_ref=args.expected_profile_ref,
+            expected_version=args.expected_profile_version, expected_digest=args.expected_profile_digest)
+        if source_profile_digest(payload) != args.expected_profile_digest:
+            raise GateError(f"{runtime} source content digest does not match the approved shelf pin")
+        summary["gate"] = "shelf-pin-source-digest"
+        summaries.append(summary)
+    return summaries
 
 
 def run_candidate(args: argparse.Namespace, root: Path) -> list[dict[str, Any]]:
@@ -1079,11 +1143,13 @@ def run_candidate(args: argparse.Namespace, root: Path) -> list[dict[str, Any]]:
                 args.public_url,
                 runtime,
                 root,
+                profile_ref=args.expected_profile_ref,
                 origin_tunnel=origin_tunnel,
             )
             summary = validate_candidate_payload(
                 payload,
                 runtime,
+                expected_ref=args.expected_profile_ref,
                 expected_version=args.expected_profile_version,
                 expected_digest=args.expected_profile_digest,
             )
@@ -1093,11 +1159,17 @@ def run_candidate(args: argparse.Namespace, root: Path) -> list[dict[str, Any]]:
             summaries.append(summary)
     for runtime in RUNTIMES:
         payload = raw_materialize(
-            REQUIRED_AW_PATH, args.source_home, args.public_url, runtime, root
+            REQUIRED_AW_PATH,
+            args.source_home,
+            args.public_url,
+            runtime,
+            root,
+            profile_ref=args.expected_profile_ref,
         )
         summary = validate_candidate_payload(
             payload,
             runtime,
+            expected_ref=args.expected_profile_ref,
             expected_version=args.expected_profile_version,
             expected_digest=args.expected_profile_digest,
         )
@@ -1113,6 +1185,7 @@ def run_candidate(args: argparse.Namespace, root: Path) -> list[dict[str, Any]]:
                 home,
                 runtime,
                 root,
+                expected_ref=args.expected_profile_ref,
                 expected_version=args.expected_profile_version,
                 expected_digest=args.expected_profile_digest,
             )
@@ -1186,11 +1259,13 @@ def run_current_incumbent(args: argparse.Namespace, root: Path) -> list[dict[str
                 args.public_url,
                 runtime,
                 root,
+                profile_ref=args.expected_profile_ref,
                 origin_tunnel=origin_tunnel,
             )
             summary = validate_recovery_payload(
                 payload,
                 runtime,
+                expected_ref=args.expected_profile_ref,
                 expected_version=args.expected_profile_version,
                 expected_digest=args.expected_profile_digest,
             )
@@ -1201,11 +1276,17 @@ def run_current_incumbent(args: argparse.Namespace, root: Path) -> list[dict[str
             summaries.append(summary)
     for runtime in RUNTIMES:
         payload = raw_materialize(
-            REQUIRED_AW_PATH, args.source_home, args.public_url, runtime, root
+            REQUIRED_AW_PATH,
+            args.source_home,
+            args.public_url,
+            runtime,
+            root,
+            profile_ref=args.expected_profile_ref,
         )
         summary = validate_recovery_payload(
             payload,
             runtime,
+            expected_ref=args.expected_profile_ref,
             expected_version=args.expected_profile_version,
             expected_digest=args.expected_profile_digest,
         )
@@ -1227,12 +1308,18 @@ def run_recovery(args: argparse.Namespace, root: Path) -> list[dict[str, Any]]:
     summaries: list[dict[str, Any]] = []
     for runtime in RUNTIMES:
         payload = raw_materialize(
-            REQUIRED_AW_PATH, args.source_home, args.public_url, runtime, root
+            REQUIRED_AW_PATH,
+            args.source_home,
+            args.public_url,
+            runtime,
+            root,
+            profile_ref=args.expected_profile_ref,
         )
         summaries.append(
             validate_recovery_payload(
                 payload,
                 runtime,
+                expected_ref=args.expected_profile_ref,
                 expected_version=args.expected_profile_version,
                 expected_digest=args.expected_profile_digest,
             )
@@ -1240,13 +1327,40 @@ def run_recovery(args: argparse.Namespace, root: Path) -> list[dict[str, Any]]:
         home = root / f"home-{runtime}"
         home.mkdir()
         clone_auth_home(args.source_home, home)
-        summaries.append(require_recovery_rejection(REQUIRED_AW_PATH, home, runtime, root))
+        summaries.append(require_recovery_rejection(REQUIRED_AW_PATH, home, runtime, root, expected_ref=args.expected_profile_ref))
+    return summaries
+
+
+def run_runtime_managed_recovery(args: argparse.Namespace, root: Path) -> list[dict[str, Any]]:
+    if (args.rollback_deploy_id, args.rollback_commit) != (
+        "dep-db4prf142hec73eibj7g",
+        "0c490a3627e50e2b3a8b240713d50c3d917659e2",
+    ):
+        raise GateError("rollback target is not the reviewed runtime-managed incumbent")
+    summaries = run_candidate(args, root)
+    summaries.append(
+        {
+            "gate": "runtime-managed-recovery-fingerprint",
+            "commit": args.rollback_commit,
+            "artifact_deploy_id": args.rollback_deploy_id,
+        }
+    )
     return summaries
 
 
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("mode", choices=("candidate", "legacy-aasb", "current-incumbent"))
+    p.add_argument(
+        "mode",
+        choices=("candidate", "shelf-pin", "legacy-aasb", "current-incumbent", "runtime-managed-0c490a362"),
+    )
+    p.add_argument(
+        "--expected-profile-ref",
+        default=os.environ.get("EXPECTED_PROFILE_REF"),
+        required="EXPECTED_PROFILE_REF" not in os.environ,
+    )
+    p.add_argument("--rollback-deploy-id", default=os.environ.get("ROLLBACK_DEPLOY_ID", ""))
+    p.add_argument("--rollback-commit", default=os.environ.get("ROLLBACK_COMMIT", ""))
     source_home = os.environ.get("AW_SOURCE_HOME")
     p.add_argument("--source-home", type=Path, default=Path(source_home) if source_home else None)
     p.add_argument("--public-url", default=REQUIRED_PUBLIC_URL)
@@ -1267,11 +1381,37 @@ def parser() -> argparse.ArgumentParser:
         "--expected-profile-version",
         default=os.environ.get("EXPECTED_PROFILE_VERSION", ""),
     )
+    p.add_argument("--tools-root", type=Path, default=os.environ.get("LIBRARY_GATE_TOOL_ROOT"))
     p.add_argument(
         "--expected-profile-digest",
         default=os.environ.get("EXPECTED_PROFILE_DIGEST", ""),
     )
     return p
+
+
+def configure_tools(root: Path | None) -> None:
+    # Import works both as a script and through pytest's scripts package.
+    try:
+        from scripts.prepare_gate_tools import SetupError, verify_tools
+    except ModuleNotFoundError:
+        from prepare_gate_tools import SetupError, verify_tools
+    if root is None:
+        raise GateError("LIBRARY_GATE_TOOL_ROOT/--tools-root is required")
+    try:
+        paths = verify_tools(root)
+    except (SetupError, OSError) as exc:
+        raise GateError(f"reviewed client setup failed: {exc}") from exc
+    global \
+        REQUIRED_AW_PATH, \
+        REQUIRED_CLAUDE_PATH, \
+        REQUIRED_PI_PATH, \
+        REQUIRED_NODE_PATH, \
+        HARNESS_PATH
+    REQUIRED_AW_PATH = paths["aw"]
+    REQUIRED_CLAUDE_PATH = paths["claude"]
+    REQUIRED_PI_PATH = paths["pi"]
+    REQUIRED_NODE_PATH = paths["node"]
+    HARNESS_PATH = f"{REQUIRED_NODE_PATH.parent}:/usr/bin:/bin"
 
 
 def main() -> int:
@@ -1283,6 +1423,8 @@ def main() -> int:
             raise GateError(f"production public URL must be exactly {REQUIRED_PUBLIC_URL}")
         if args.origin_url != REQUIRED_ORIGIN_URL:
             raise GateError(f"production origin URL must be exactly {REQUIRED_ORIGIN_URL}")
+        if not args.expected_profile_ref:
+            raise GateError("EXPECTED_PROFILE_REF/--expected-profile-ref is required")
         if not args.expected_profile_version:
             raise GateError("EXPECTED_PROFILE_VERSION/--expected-profile-version is required")
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", args.expected_profile_digest):
@@ -1291,8 +1433,9 @@ def main() -> int:
             )
         if args.mode == "current-incumbent":
             validate_current_incumbent_identity(args)
+        configure_tools(args.tools_root)
         verify_released_aw(REQUIRED_AW_PATH)
-        if args.mode == "candidate":
+        if args.mode in {"candidate", "runtime-managed-0c490a362"}:
             verify_file_artifact(
                 REQUIRED_CLAUDE_PATH,
                 expected_path=REQUIRED_CLAUDE_PATH,
@@ -1314,8 +1457,12 @@ def main() -> int:
             )
         with tempfile.TemporaryDirectory(prefix="library-prod-gate-") as temporary:
             root = Path(temporary)
-            if args.mode == "candidate":
+            if args.mode == "shelf-pin":
+                summaries = run_shelf_pin(args, root)
+            elif args.mode == "candidate":
                 summaries = run_candidate(args, root)
+            elif args.mode == "runtime-managed-0c490a362":
+                summaries = run_runtime_managed_recovery(args, root)
             elif args.mode == "current-incumbent":
                 summaries = run_current_incumbent(args, root)
             else:

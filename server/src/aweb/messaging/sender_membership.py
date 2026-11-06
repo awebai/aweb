@@ -15,11 +15,15 @@ class SenderMembership(BaseModel):
     state: Literal["active", "inactive", "unknown"] = "unknown"
 
 
-async def sender_memberships(request: Request | None, db, rows) -> dict[tuple[str, str], SenderMembership]:
+async def sender_memberships(
+    request: Request | None, db, rows, *, member_rows: list[dict] | None = None,
+) -> dict[tuple[str, str], SenderMembership]:
     """Project only stored sender IDs in their stored delivery teams.
 
     Call only after participant authorization. Missing provenance or unavailable
     revocation state cannot establish active membership. No roster discovery.
+    ``member_rows`` are the senders' agent rows when the caller read them with
+    its messages; otherwise they are read here.
     """
     keys = {(str(r.get("team_id") or ""), str(r.get("from_agent_id") or "")) for r in rows}
     result = {key: SenderMembership(team_id=key[0]) for key in keys}
@@ -28,7 +32,7 @@ async def sender_memberships(request: Request | None, db, rows) -> dict[tuple[st
     ids = [UUID(agent) for team, agent in keys if team and agent]
     if not ids:
         return result
-    members = await db.get_manager("aweb").fetch_all(
+    members = member_rows if member_rows is not None else await db.get_manager("aweb").fetch_all(
         "SELECT agent_id, team_id, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, status, deleted_at, certificate_id "
         "FROM {{tables.agents}} WHERE agent_id = ANY($1::uuid[])", ids,
     )

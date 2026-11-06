@@ -47,6 +47,7 @@ func TestPostAPIKeyWorkspaceInitProvesTheDIDKeyHolder(t *testing.T) {
 	}))
 	defer server.Close()
 
+	awid.ForgetRequestCompression(server.URL)
 	if _, err := postAPIKeyWorkspaceInit(context.Background(), server.URL, "aw_sk_test", apiKeyBootstrapRequest{DID: didKey, Alias: "alice"}, signingKey); err != nil {
 		t.Fatal(err)
 	}
@@ -93,6 +94,7 @@ func TestPostAPIKeyWorkspaceInitRefusesWithoutASigningKey(t *testing.T) {
 		t.Error("an unproven request reached the server")
 	}))
 	defer server.Close()
+	awid.ForgetRequestCompression(server.URL)
 	if _, err := postAPIKeyWorkspaceInit(context.Background(), server.URL, "aw_sk_test", apiKeyBootstrapRequest{}, nil); err == nil {
 		t.Fatal("expected a refusal without the agent's signing key")
 	}
@@ -133,6 +135,7 @@ func TestWorkspaceInitProofCoversTheDecodedBodyWhenGzipped(t *testing.T) {
 	}))
 	defer server.Close()
 
+	awid.ForgetRequestCompression(server.URL)
 	if _, err := postAPIKeyWorkspaceInit(context.Background(), server.URL, "aw_sk_test", apiKeyBootstrapRequest{DID: didKey, Alias: "alice"}, signingKey); err != nil {
 		t.Fatal(err)
 	}

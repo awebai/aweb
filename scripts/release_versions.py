@@ -20,6 +20,29 @@ TAG_PATTERN = re.compile(
 )
 
 
+# Build inputs for the paired release lanes in publish_release.py. Keep whole
+# package trees (including their manifests/locks and the naapp testing companion).
+# Dependencies installed from registries are not bundled source. The shared
+# publisher contains build commands/flags; checkout filters can affect sdists.
+PROMOTION_TREES = {
+    "server-v": "server",
+    "awid-service-v": "awid",
+    "aweb-naapp-v": "naapp-lib",
+    "aw-v": "cli/go",
+}
+COMMON_BUILD_INPUTS = {"scripts/publish_release.py", ".gitignore", ".gitattributes"}
+PYTHON_BUILD_INPUTS = {"pyproject.toml", "uv.toml", "uv.lock", ".python-version",
+                       ".github/workflows/pypi-release.yml"}
+GO_BUILD_INPUTS = {"go.work", "go.work.sum", ".github/workflows/aw-release.yml",
+                   "scripts/npm-exact-publish.sh"}
+
+
+def _promotion_input(prefix: str, path: str) -> bool:
+    tree = PROMOTION_TREES[prefix]
+    config = GO_BUILD_INPUTS if prefix == "aw-v" else PYTHON_BUILD_INPUTS
+    return path == tree or path.startswith(tree + "/") or path in COMMON_BUILD_INPUTS | config
+
+
 class VersionRefusal(RuntimeError):
     pass
 
@@ -197,7 +220,7 @@ def _normalize_lock(old: dict, new: dict, path: str, promotions: dict) -> dict:
 def require_final_promotion(root: Path, tag: str, final_commit: str) -> str | None:
     """Return the compared RC tag; paired finals require a prior RC."""
     prefix, version = tag_parts(tag)
-    if final_version(version) or prefix not in {"server-v", "awid-service-v", "aweb-naapp-v", "aw-v"}:
+    if final_version(version) or prefix not in PROMOTION_TREES:
         return None
     suffix = "-rc." if prefix == "aw-v" else "rc"
     candidates = []
@@ -212,32 +235,48 @@ def require_final_promotion(root: Path, tag: str, final_commit: str) -> str | No
     _git(root, "merge-base", "--is-ancestor", rc_commit, final_commit)
     raw = _git(root, "diff", "--raw", "--no-renames", "-z", rc_commit, final_commit).split("\0")
     changes = []
+    promotion_candidates = {}
     for index in range(0, len(raw) - 1, 2):
         header, path = raw[index], raw[index + 1]
         old_mode, new_mode, _old_blob, _new_blob, status = header.split()
-        if status != "M" or old_mode[1:] != new_mode or new_mode != "100644":
+        regular_edit = status == "M" and old_mode[1:] == new_mode == "100644"
+        in_scope = _promotion_input(prefix, path)
+        if not in_scope and not (_manifest(path) and regular_edit):
+            continue
+        if not regular_edit:
             raise VersionRefusal(f"{path}: additions, deletions, renames and mode changes refuse")
         if not _manifest(path) and Path(path).name not in {"uv.lock", "package-lock.json"}:
             raise VersionRefusal(f"{path}: non-version file changed since {rc_tag}")
-        changes.append((path, _read(root, rc_commit, path), _read(root, final_commit, path)))
-    promotions = {}
-    for path, old, new in changes:
+        try:
+            old, new = _read(root, rc_commit, path), _read(root, final_commit, path)
+        except ValueError:
+            if in_scope:
+                raise VersionRefusal(f"{path}: invalid manifest or lock")
+            continue
+        if in_scope:
+            changes.append((path, old, new))
         if _manifest(path):
             before, after = _package(old, path), _package(new, path)
-            if before.get("version") != after.get("version"):
-                prior, current = before.get("version"), after.get("version")
-                if not valid_version(path, prior) or final_version(prior) != current:
-                    raise VersionRefusal(f"{path}: version is not an exact RC-to-final promotion")
-                name = _name(before.get("name", ""))
-                if not name or before.get("name") != after.get("name"):
-                    raise VersionRefusal(f"{path}: package identity changed")
-                if name in promotions and promotions[name] != (prior, current):
-                    raise VersionRefusal(f"{path}: conflicting package promotions")
-                promotions[name] = (prior, current)
+            prior, current = before.get("version"), after.get("version")
+            if prior == current:
+                continue
+            name = _name(before.get("name", ""))
+            exact = (valid_version(path, prior) and final_version(prior) == current
+                     and name and before.get("name") == after.get("name"))
+            if not exact:
+                if in_scope:
+                    raise VersionRefusal(f"{path}: version is not an exact RC-to-final promotion or package identity changed")
+                continue
+            # External manifests only witness promoted dependency pins/floors.
+            # Other packages' source or non-promotion metadata is not an input
+            # to this artifact. Ambiguous identities cannot authorize a pin.
+            promotion_candidates.setdefault(name, set()).add((prior, current))
+    promotions = {name: next(iter(values)) for name, values in promotion_candidates.items()
+                  if len(values) == 1}
     for path, old, new in changes:
         normalized = _normalize_manifest(old, path, promotions) if _manifest(path) else _normalize_lock(old, new, path, promotions)
         if normalized != new:
             raise VersionRefusal(f"{path}: changes beyond version promotion or exact promoted pins or floors")
-    print(f"Source identity matches {rc_tag} plus version promotion only; "
+    print(f"Package source identity ({PROMOTION_TREES[prefix]}) matches {rc_tag} plus version promotion only; "
           "the coordinator must separately verify the Cloud green receipt for that exact RC before final tagging.")
     return rc_tag

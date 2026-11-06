@@ -23,7 +23,8 @@ The HTTP routes, signer binding, subscription matching, and channel-core
 `kind: "app"` consumer ship today. The current delivery implementation is still
 experimental:
 
-- `GET /v1/events/stream` polls app events from a five-minute lookback window;
+- `GET /v1/events/stream` reads app events from a five-minute lookback window
+  when an emit or a change to the agent's subscriptions wakes it;
 - an SSE connection lasts at most 300 seconds and clients reconnect;
 - there is no per-subscriber durable delivery cursor or app-event ack;
 - reconnects may replay an `event_id`, and events older than the lookback are not

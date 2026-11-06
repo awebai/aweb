@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -66,9 +68,10 @@ func TestTeamAdmissionInviteRequiresTeamAdmissionScopeAndDoesNotAcceptInvite(t *
 		t.Fatal(err)
 	}
 
-	var out bytes.Buffer
+	var out, stderr bytes.Buffer
 	cmd := &cobra.Command{Use: "test"}
 	cmd.SetOut(&out)
+	cmd.SetErr(&stderr)
 	if err := runTeamAdmissionInvite(t.Context(), cmd); err != nil {
 		t.Fatalf("runTeamAdmissionInvite: %v", err)
 	}
@@ -79,8 +82,33 @@ func TestTeamAdmissionInviteRequiresTeamAdmissionScopeAndDoesNotAcceptInvite(t *
 	if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
 		t.Fatalf("decode output: %v\n%s", err, out.String())
 	}
-	if decoded.Token != "aw_inv_secret" || !strings.Contains(decoded.JoinCommand, "aw team join aw_inv_secret") || decoded.CanonicalTeamID != "shared:example.aweb.ai" {
+	if decoded.Token != "aw_inv_secret" || decoded.JoinCommand != "aw team join --token-file <file> --name <name>" || decoded.CanonicalTeamID != "shared:example.aweb.ai" {
 		t.Fatalf("output=%+v", decoded)
+	}
+	// Under --json the output is the one JSON document and stderr stays empty.
+	if stderr.Len() != 0 {
+		t.Fatalf("--json admission invite wrote to stderr: %q", stderr.String())
+	}
+
+	// The admission token is the same single-use credential as a team invite:
+	// the human output carries the same warning, with its expiry, and never
+	// the token itself.
+	jsonFlag = false
+	out.Reset()
+	if err := runTeamAdmissionInvite(t.Context(), cmd); err != nil {
+		t.Fatalf("runTeamAdmissionInvite: %v", err)
+	}
+	var expiresAt string
+	for _, line := range strings.Split(out.String(), "\n") {
+		if rest, ok := strings.CutPrefix(line, "expires_at: "); ok {
+			expiresAt = rest
+		}
+	}
+	if want := teamInviteTokenWarning(expiresAt); !strings.Contains(stderr.String(), want) || expiresAt == "" {
+		t.Fatalf("stderr %q does not carry the invite warning %q", stderr.String(), want)
+	}
+	if strings.Contains(stderr.String(), "aw_inv_secret") {
+		t.Fatal("the warning repeats the token")
 	}
 }
 
@@ -296,5 +324,50 @@ func TestTeamAdmissionInviteAuthStatus401And403RefuseBeforeMutation(t *testing.T
 				t.Fatal("admission endpoint was called")
 			}
 		})
+	}
+}
+
+func TestTeamAdmissionInviteTraceShowsEachCallAndItsStatusWithoutSecrets(t *testing.T) {
+	resetAuthCommandGlobals(t)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AW_TRACE", "1")
+	teamAdmissionInviteExpectedAccountID = "acct-test"
+	teamID := "shared:example.aweb.ai"
+	invitePath := strings.Replace(teamAdmissionInvitePathTemplate, "{team_id}", teamID, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/cli-auth/status":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "authorized", "account": map[string]string{"id": "acct-test", "handle": "alice"}})
+		case invitePath:
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_ = json.NewEncoder(w).Encode(map[string]any{"detail": "invalid request_id"})
+		case "/health":
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	saveTeamAdmissionLoginForTest(t, server.URL)
+
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStderr := os.Stderr
+	os.Stderr = stderrW
+	_, issueErr := issueTeamAdmissionInvite(t.Context(), teamID, "a8d857a5-7c44-45e7-8027-bf4996d5088b", "target")
+	os.Stderr = oldStderr
+	stderrW.Close()
+	trace, _ := io.ReadAll(stderrR)
+	stderrR.Close()
+
+	if status, ok := cliAuthHTTPStatusCode(issueErr); !ok || status != http.StatusUnprocessableEntity {
+		t.Fatalf("err=%v, want the invite's 422", issueErr)
+	}
+	want := "AW TRACE call: GET /api/v1/cli-auth/status -> HTTP 200\n" +
+		"AW TRACE call: POST " + invitePath + " -> HTTP 422\n"
+	if string(trace) != want {
+		t.Fatalf("trace=%q\nwant %q", trace, want)
 	}
 }

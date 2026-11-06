@@ -19,6 +19,17 @@ __all__ = ["live_browser", "live_world", "present_world"]
 HEADER = "X-Folio-Edit-Session"
 
 
+async def test_editor_social_card_uses_the_configured_public_origin(present_world, session_http):
+    _, _, settings = present_world
+    assert settings.public_origin != "https://folio.aweb.ai"
+    link = await mint(present_world)
+    response = await session_http.get(urlsplit(link["url"]).path)
+    assert response.status_code == 200
+    card = settings.public_origin + "/brand/field-v1/folio-card.png"
+    assert f'<meta property="og:image" content="{card}">' in response.text
+    assert f'<meta name="twitter:image" content="{card}">' in response.text
+
+
 def target(link):
     parts = urlsplit(link["url"])
     return parts.path, parse_qs(parts.fragment).get("k", [link["token"]])[0]

@@ -9,6 +9,7 @@ from html import escape
 from pathlib import Path
 from urllib.parse import quote
 
+from aweb_naapp import CSS_SHA256
 from aweb_naapp.console import ConsoleRoute, ConsoleSession, ConsoleSessions
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -22,6 +23,7 @@ def _page(title: str, body: str) -> HTMLResponse:
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         f"<title>{escape(title)} · Secrets</title>"
+        f'<link rel="stylesheet" href="/css/aweb.{CSS_SHA256[:12]}.css">'
         '<link rel="stylesheet" href="/console-ui/style.css">'
         '<script src="/console-ui/console.js" defer></script></head>'
         '<body><header><a href="/">Secrets</a></header><main>'

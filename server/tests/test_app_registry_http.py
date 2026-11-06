@@ -125,7 +125,7 @@ def test_reserved_app_ids_are_loaded_from_cli_artifact():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "app_id", ["id", "whoami", "plugin", "mail", "doctor", "introspect", "activity", "org"]
+    "app_id", ["id", "whoami", "plugin", "mail", "doctor", "introspect", "activity", "org", "who"]
 )
 async def test_install_rejects_reserved_app_id(client, origin, app_id):
     body = install_http.confirmation(origin)

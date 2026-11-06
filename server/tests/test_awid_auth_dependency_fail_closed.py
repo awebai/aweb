@@ -121,7 +121,8 @@ async def test_identity_auth_warmed_key_and_address_cache_makes_zero_upstream_ca
             request_counts["key"] += 1
             return httpx.Response(
                 200,
-                json={"did_aw": did_aw, "current_did_key": did_key, "log_head": None},
+                json={"did_aw": did_aw, "current_did_key": did_key, "log_head": None,
+                      "id_tree": {"enrolled": False}},
             )
         if request.url.path == f"/v1/did/{did_aw}/addresses":
             request_counts["addresses"] += 1

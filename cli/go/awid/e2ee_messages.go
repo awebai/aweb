@@ -13,6 +13,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -188,7 +189,7 @@ func (c *Client) DecryptE2EEEnvelopeWithContext(ctx context.Context, envelope *E
 			}
 			return &E2EEInnerPayload{InnerVersion: E2EEMessageVersion, Kind: out.Kind, MessageID: out.MessageID, ConversationID: out.ConversationID, CreatedAt: out.CreatedAt, From: out.From, Recipients: out.Recipients, Subject: out.Subject, Body: out.Body, Attachments: out.Attachments}, nil
 		}
-		return nil, fmt.Errorf("encrypted message requires local encryption private key; restore .aw/encryption-keys or run `aw id encryption-key setup` for future messages")
+		return nil, &DecryptionError{Code: "encryption_key_missing", err: errors.New("encrypted message requires local encryption private key; restore .aw/encryption-keys or run `aw id encryption-key setup` for future messages")}
 	}
 	stableID := c.stableID
 	encryptionKeyID := ""
@@ -269,6 +270,9 @@ func EncryptE2EEMessage(params E2EEEncryptMessageParams) (*E2EEMessageEnvelope, 
 		return nil, fmt.Errorf("sender encryption key assertion: %w", err)
 	}
 
+	if err := refuseCustodialRecipients(params.Recipients, createdAt); err != nil {
+		return nil, err
+	}
 	recipients := make([]E2EERecipientRef, 0, len(params.Recipients))
 	innerRecipients := make([]E2EEIdentityRef, 0, len(params.Recipients))
 	for i, recipient := range params.Recipients {
@@ -442,7 +446,33 @@ func e2eeSingleRecipientField(recipients []E2EERecipientRef, field string) strin
 	}
 }
 
+// DecryptionError is a message this identity could not decrypt. Code is
+// encryption_key_missing when no local encryption private key is available,
+// and decrypt_failed for any other failure to open or validate the envelope.
+type DecryptionError struct {
+	Code string
+	err  error
+}
+
+func (e *DecryptionError) Error() string { return e.err.Error() }
+
+func (e *DecryptionError) Unwrap() error { return e.err }
+
+var errMissingEncryptionPrivateKey = errors.New("missing local encryption private key")
+
 func DecryptE2EEMessage(envelope *E2EEMessageEnvelope, identity E2EEDecryptIdentity) (*E2EEInnerPayload, error) {
+	plain, err := decryptE2EEMessage(envelope, identity)
+	if err != nil {
+		code := "decrypt_failed"
+		if errors.Is(err, errMissingEncryptionPrivateKey) {
+			code = "encryption_key_missing"
+		}
+		return nil, &DecryptionError{Code: code, err: err}
+	}
+	return plain, nil
+}
+
+func decryptE2EEMessage(envelope *E2EEMessageEnvelope, identity E2EEDecryptIdentity) (*E2EEInnerPayload, error) {
 	if envelope == nil {
 		return nil, fmt.Errorf("missing e2ee envelope")
 	}
@@ -468,7 +498,7 @@ func DecryptE2EEMessage(envelope *E2EEMessageEnvelope, identity E2EEDecryptIdent
 		return nil, fmt.Errorf("key_wraps hash mismatch")
 	}
 	if identity.PrivateKey == nil {
-		return nil, fmt.Errorf("missing local encryption private key")
+		return nil, errMissingEncryptionPrivateKey
 	}
 	wrap, err := selectE2EEKeyWrap(envelope, identity)
 	if err != nil {

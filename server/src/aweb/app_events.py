@@ -9,6 +9,7 @@ from typing import Any
 
 from fastapi import Request
 
+from aweb.agent_wake import agent_wake_key, record_agent_wake
 from aweb.app_credentials import APP_EVENT, verify_app_credential
 from aweb.app_registry import (
     get_installed_app_event_type,
@@ -117,15 +118,27 @@ async def emit_app_event(
         default=installed_event.get("default_delivery_intent") or "ambient",
     )
     payload_json = _to_jsonable_payload(payload)
+    # One statement inserts the event and names the agents it reaches.
     row = await db.fetch_one(
         """
-        INSERT INTO {{tables.app_events}} (
-            team_id, app_id, event_type, resource_ref, producer_delivery_intent,
-            payload, producer_key_id, producer_did_key
+        WITH inserted AS (
+            INSERT INTO {{tables.app_events}} (
+                team_id, app_id, event_type, resource_ref, producer_delivery_intent,
+                payload, producer_key_id, producer_did_key
+            )
+            VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6::jsonb, $7, $8)
+            RETURNING event_id, team_id, app_id, event_type, resource_ref,
+                      producer_delivery_intent, payload, created_at
         )
-        VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6::jsonb, $7, $8)
-        RETURNING event_id, team_id, app_id, event_type, resource_ref,
-                  producer_delivery_intent, payload, created_at
+        SELECT inserted.*,
+               ARRAY(
+                   SELECT DISTINCT s.agent_id::text
+                   FROM {{tables.app_event_subscriptions}} AS s
+                   WHERE s.team_id = inserted.team_id
+                     AND s.event_type = inserted.event_type
+                     AND (s.resource_ref IS NULL OR s.resource_ref = inserted.resource_ref)
+               ) AS subscriber_agent_ids
+        FROM inserted
         """,
         auth.team_id,
         auth.app_id,
@@ -136,6 +149,8 @@ async def emit_app_event(
         auth.kid,
         auth.did_key,
     )
+    for agent_id in row["subscriber_agent_ids"] or ():
+        record_agent_wake(agent_wake_key(agent_id), "app")
     return AppEventRecord(
         event_id=str(row["event_id"]),
         team_id=row["team_id"],
@@ -193,6 +208,8 @@ async def upsert_app_event_subscription(
         (resource_ref or "").strip(),
         intent,
     )
+    # A new subscription can surface events already inside the lookback.
+    record_agent_wake(agent_wake_key(str(row["agent_id"])), "app")
     return _subscription_from_row(row)
 
 
@@ -222,6 +239,8 @@ async def delete_app_event_subscription(db, *, team_id: str, agent_id: str, subs
         agent_id,
         subscription_id,
     )
+    if result is not None:
+        record_agent_wake(agent_wake_key(agent_id), "app")
     return result is not None
 
 
