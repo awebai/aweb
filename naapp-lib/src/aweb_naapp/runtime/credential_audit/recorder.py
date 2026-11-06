@@ -412,6 +412,7 @@ class CredentialAudit:
         if self.is_change_approval(event):
             # B2 change ceremonies are local audit. The writer signs the actual
             # governance effect with its retained APPROVE in the same commit.
+            assert self._approvals is not None  # is_change_approval holds only with approvals
             approval = (
                 await self._approvals.approval(tx, event.approval_id) if event.approval_id else None
             )
