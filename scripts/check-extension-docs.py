@@ -217,6 +217,7 @@ HOOK_SOURCES = (
     "server/src/aweb/routes/reservations.py",
     "server/src/aweb/routes/agent_status.py",
     "server/src/aweb/coordination/routes/tasks.py",
+    "server/src/aweb/coordination/routes/app_tasks.py",
     "server/src/aweb/mcp/tools/mail.py",
     "server/src/aweb/mcp/tools/chat.py",
 )

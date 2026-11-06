@@ -14,12 +14,14 @@ import base64
 from datetime import datetime, timedelta, timezone
 import json
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import logging
 
 import pytest
 from redis.asyncio import Redis
+
+from identity_binding_support import register_global_identity
 
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.messaging.activity_stream import SessionActivity
@@ -109,7 +111,8 @@ async def test_team_certificate_caller_publishes_and_the_event_is_relayed(privac
 
 async def _global_member(env, alias="dave"):
     sk, _, did = _make_keypair()
-    agent_id, did_aw = uuid4(), f"did:aw:{alias}{uuid4().hex[:12]}"
+    agent_id = uuid4()
+    did_aw = await register_global_identity(env, SimpleNamespace(sk=sk, did=did), f"example.test/{alias}")
     await env.db.execute(
         "INSERT INTO {{tables.agents}} "
         "(agent_id, team_id, did_key, did_aw, address, alias, identity_scope, inbound_mode) "
@@ -418,6 +421,40 @@ async def _subscribed(env, actor):
     async with asyncio.timeout(5):
         while dict(await env.redis.pubsub_numsub(channel))[channel] < 1:
             await asyncio.sleep(0.02)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key_only", [False, True])
+async def test_global_activity_uses_canonical_participation_and_nullable_projection(privacy_app, key_only):
+    env = privacy_app
+    member = await _global_member(env)
+    admitted = await _team_request(env, "dave", "GET", "/v1/agents/me/inbound-mode")
+    assert admitted.status_code == 200, admitted.text
+    session_id = await _session(env, "bob", "dave")
+    participant = await env.db.fetch_one(
+        "SELECT did, agent_id FROM {{tables.chat_participants}} WHERE session_id=$1 AND did=$2",
+        UUID(session_id), member.did_aw,
+    )
+    assert participant and participant["agent_id"] is None
+    if key_only:
+        await env.db.execute(
+            "UPDATE {{tables.chat_participants}} SET did=$2 WHERE session_id=$1 AND did=$3",
+            UUID(session_id), member.did, member.did_aw,
+        )
+        refused = await _publish(env, "dave", _event(env, "dave", session_id=session_id,
+                                                  from_stable_id=member.did_aw))
+        assert refused.status_code == 404, refused.text
+        assert await _latest(env, "dave") is None
+        return
+
+    async with _stream(env, "bob", session_id, include="agent_activity") as response:
+        assert response.status_code == 200
+        await _subscribed(env, "dave")
+        sent = await _publish(env, "dave", _event(env, "dave", session_id=session_id,
+                                               from_stable_id=member.did_aw))
+        assert sent.status_code == 202, sent.text
+        frame = await _Stream(response.aiter_lines()).next("agent_activity")
+    assert frame["agent"] == "dave" and frame["from_did"] == member.did
 
 
 @pytest.mark.asyncio

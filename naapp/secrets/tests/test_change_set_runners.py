@@ -26,6 +26,7 @@ from aweb_secrets.runners import (
     mint_runner_id,
     register_runner,
 )
+from tests.governance import view
 from tests.test_change_sets import (
     ALICE,
     BOB,
@@ -81,6 +82,7 @@ async def confirm_in(world: World, tx, change):
         operation_id=f"apply-{change['change_id']}",
         fence=world.fence,
         admitted=world.admitted,
+        governance_view=view(),
     )
 
 

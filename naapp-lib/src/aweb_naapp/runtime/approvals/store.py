@@ -99,6 +99,8 @@ class ApprovalStore(Protocol):
 
     async def get(self, approval_id: str) -> Approval | None: ...
 
+    async def get_in(self, approval_id: str, tx: TransactionManager) -> Approval | None: ...
+
     async def get_by_request(self, request_ref: str) -> Approval | None: ...
 
     async def request_canonical(self, request_ref: str) -> bytes: ...
@@ -112,6 +114,10 @@ class ApprovalStore(Protocol):
     ) -> AbstractAsyncContextManager[LockedApproval]: ...
 
     async def lock_many(self, approval_ids: Sequence[str], tx: TransactionManager) -> None: ...
+
+    async def lock_requests(
+        self, request_digests: Sequence[str], tx: TransactionManager
+    ) -> None: ...
 
     async def revoke_many(
         self, approval_ids: Sequence[str], at: datetime, tx: TransactionManager
@@ -420,6 +426,25 @@ class PgApprovalStore:
                 request_ref,
             ),
         )
+
+    async def get_in(self, approval_id: str, tx: TransactionManager) -> Approval | None:
+        """Read on the supplied connection without a savepoint or lock request."""
+        t = TransactionManager(tx.connection, self.db)
+        return await _with_candidates(
+            t,
+            await t.fetch_one(
+                f"SELECT {_APPROVAL_COLUMNS} FROM {{{{tables.approvals}}}} WHERE approval_id=$1",
+                approval_id,
+            ),
+        )
+
+    async def lock_requests(self, request_digests: Sequence[str], tx: TransactionManager) -> None:
+        """After the complete B2 row union, lock request digests in fixed order."""
+        for digest in sorted(set(request_digests)):
+            await tx.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
+                f"{MIGRATION_MODULE}:{digest}",
+            )
 
     async def request_canonical(self, request_ref: str) -> bytes:
         return await self.db.fetch_value(

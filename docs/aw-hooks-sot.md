@@ -84,6 +84,9 @@ public HTTP behavior.
 | `POST /v1/chat/sessions/{session_id}/messages` | `chat.message_sent` | After a continuation message is stored/sent, including federated delivery. |
 | `POST /v1/federation/messages` | `message.sent` or `chat.message_sent` | After an inbound federation envelope is verified, deduplicated, and stored; selected from envelope type. |
 | `POST /v1/tasks` | `task.created` | After task creation. |
+| `POST /v1/tasks/app-requests` | `task.created` | After first verified app-request creation; replay emits nothing. The actor is the authorized member, separate from the transporting app. |
+| `POST /v1/tasks/{ref}/answer` | `task.status_changed`, `task.comment_added` | After the conditional answer commits; replay emits nothing. Context contains identifiers and safe metadata, never answer text, authorization signatures or certificates. |
+| `POST /v1/tasks/app-requests/{id}/cancel` | `task.status_changed`, `task.comment_added` | After first cancellation commits; replay emits nothing. The task service releases claims in that same transaction. |
 | `PATCH /v1/tasks/{ref}` | `task.status_changed` | When status changed. |
 | `PATCH /v1/tasks/{ref}` | `task.updated` | When the update did not change status. |
 | `PATCH /v1/tasks/{ref}` | `task.assignee_changed` | Additionally, when the stored assignee changes, including an implicit claim assignment. |

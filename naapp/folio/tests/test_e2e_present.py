@@ -44,8 +44,8 @@ def test_document_bound_present_links_are_isolated_pinned_revocable_and_sanitize
     aw_workspace_factory: Callable[[str], AWWorkspace],
     tmp_path: Path,
 ) -> None:
-    team_a = _provision_team(aw_workspace_factory("present-a"), alias="alice")
-    team_b = _provision_team(aw_workspace_factory("present-b"), alias="bob")
+    team_a = _provision_team(aw_workspace_factory("present-a"), folio=folio, alias="alice")
+    team_b = _provision_team(aw_workspace_factory("present-b"), folio=folio, alias="bob")
 
     created = _create_document(
         folio,

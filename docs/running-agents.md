@@ -6,6 +6,8 @@ weight: 27
 
 # Running materialized agents
 
+For people setting up aweb.
+
 > **Status: advanced, optional runtime helper.** These commands can create a
 > particular local layout and launch supported tools, but aweb does not own
 > agent definitions, homes, worktrees, runtime choice, process lifecycle, or

@@ -109,41 +109,43 @@ _LAYOUT_ALLOWED = {
 }
 _COLOR_SCHEME_META = {"light": "light", "dark": "dark", "auto": "light dark"}
 _LIGHT_PALETTE = {
-    "--bg": "#f8fafc",
-    "--surface": "#ffffff",
-    "--text": "#111827",
-    "--muted": "#4b5563",
-    "--border": "#e5e7eb",
-    "--accent": "#2563eb",
-    "--code-bg": "#f3f4f6",
+    "--bg": "#ffffff", "--surface": "#ffffff", "--text": "#17191c",
+    "--muted": "#4c515b", "--border": "#c3c9d3", "--accent": "#2342e8",
+    "--accent-ink": "#ffffff", "--code-bg": "#f0f2f5",
+    "--warn": "#b45309", "--danger": "#b91c1c", "--danger-ink": "#ffffff",
 }
 _DARK_PALETTE = {
-    "--bg": "#0b1220",
-    "--surface": "#111827",
-    "--text": "#f3f4f6",
-    "--muted": "#9ca3af",
-    "--border": "#1f2937",
-    "--accent": "#60a5fa",
-    "--code-bg": "#1f2937",
+    "--bg": "#17191c", "--surface": "#17191c", "--text": "#f7f8fb",
+    "--muted": "#bfc5d0", "--border": "#454e5e", "--accent": "#a5b5ff",
+    "--accent-ink": "#17191c", "--code-bg": "#252a33",
+    "--warn": "#e0a544", "--danger": "#f06d6d", "--danger-ink": "#17191c",
 }
-_AWEB_LIGHT_PALETTE = {
-    "--bg": "#fffaf0",
-    "--surface": "#ffffff",
-    "--text": "#17201a",
-    "--muted": "#5f685f",
-    "--border": "#ded6c4",
-    "--accent": "#246b49",
-    "--code-bg": "#eef4ea",
-}
-_AWEB_DARK_PALETTE = {
-    "--bg": "#10180f",
-    "--surface": "#17201a",
-    "--text": "#eff9ef",
-    "--muted": "#9fb0a3",
-    "--border": "#263b2d",
-    "--accent": "#5cb98a",
-    "--code-bg": "#1b241d",
-}
+_AWEB_LIGHT_PALETTE = _LIGHT_PALETTE
+_AWEB_DARK_PALETTE = _DARK_PALETTE
+
+_FONT_FACE = """@font-face {
+      font-family: Archivo; font-style: normal; font-weight: 400 900;
+      font-stretch: 75% 125%; font-display: swap;
+      src: url('/fonts/Archivo-Latin-Variable.woff2') format('woff2');
+    }"""
+
+
+def _identity_meta(public_origin: str | None) -> str:
+    origin = escape((public_origin or "https://folio.aweb.ai").rstrip("/"), quote=True)
+    return f'''<link rel="icon" type="image/svg+xml" href="/brand/field-v1/favicon.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="/brand/field-v1/icon-32.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/brand/field-v1/icon-180.png">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#17191c" media="(prefers-color-scheme: dark)">
+  <meta property="og:image" content="{origin}/brand/field-v1/folio-card.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="folio">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="{origin}/brand/field-v1/folio-card.png">
+  <meta name="twitter:image:alt" content="folio">'''
+
 # Built-in named themes: a preset supplies a (light, dark) base palette applied
 # per color_scheme. Per-team custom color tokens still override the base.
 _BUILTIN_THEMES = {
@@ -268,6 +270,7 @@ def content_security_policy(*, mode: str, nonce: str | None, stream_host: str) -
             "default-src 'none'",
             "img-src 'self'",
             "style-src 'unsafe-inline'",
+            "font-src 'self'",
             f"script-src {script_src}",
             f"frame-src {frame_src}",
             "base-uri 'none'",
@@ -401,8 +404,9 @@ def _root_css(
     block = f""":root {{
       color-scheme: {_COLOR_SCHEME_META[scheme]};
 {_palette_declarations(base, "      ")}
-      --font-body: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-body: Archivo, Arial, sans-serif;
       --font-heading: var(--font-body);
+      --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
     }}"""
     if scheme == "auto":
         block += (
@@ -413,6 +417,25 @@ def _root_css(
     if theme_css:
         block += f"\n    :root {{{theme_css}    }}"
     return block
+
+
+def _editor_theme_css(theme: dict[str, Any] | None) -> str:
+    """Declaration-only editor theme, using the scheme validated for this team.
+
+    Snapshots insert these declarations in a root rule. light-dark() keeps an
+    explicitly automatic theme responsive without changing the snapshot shape.
+    """
+    safe = sanitize_theme_tokens((theme or {}).get("tokens"))
+    scheme = sanitize_layout_tokens(safe)["color_scheme"]
+    light, dark = _resolve_base_palettes((theme or {}).get("preset"))
+    palette = dark if scheme == "dark" else light
+    if scheme == "auto":
+        palette = {name: f"light-dark({value}, {dark[name]})" for name, value in light.items()}
+    return (f"color-scheme: {_COLOR_SCHEME_META[scheme]};\n"
+            + _palette_declarations(palette, "      ")
+            + "\n      --font-body: Archivo, Arial, sans-serif;"
+            + "\n      --font-heading: var(--font-body);\n"
+            + _theme_css(safe))
 
 
 def _theme_css(tokens: dict[str, dict[str, str]] | None) -> str:
@@ -720,7 +743,9 @@ def render_presented_page(
   <meta name="color-scheme" content="{color_scheme_meta}">
   <meta name="robots" content="noindex,nofollow,noarchive">
   <title>{title}</title>
+  {_identity_meta(public_origin)}
   <style>
+    {_FONT_FACE}
     {root_css}
     * {{ box-sizing: border-box; }}
     body {{
@@ -752,7 +777,7 @@ def render_presented_page(
       z-index: 10;
       width: 40px;
       height: 40px;
-      border-radius: 8px;
+      border-radius: 2px;
       border: 1px solid var(--border);
       background: var(--surface);
       color: var(--text);
@@ -766,8 +791,8 @@ def render_presented_page(
       --surface-pad: clamp(24px, 5vw, 56px);
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 18px;
-      box-shadow: 0 20px 45px rgba(15, 23, 42, 0.08);
+      border-radius: 2px;
+      box-shadow: none;
       padding: var(--surface-pad);
     }}
     .eyebrow {{
@@ -791,13 +816,15 @@ def render_presented_page(
     .document-body :first-child {{ margin-top: 0; }}
     .document-body :last-child {{ margin-bottom: 0; }}
     .document-body h1, .document-body h2, .document-body h3 {{ font-family: var(--font-heading); line-height: 1.2; }}
+    .document-body {{ overflow-wrap: anywhere; }}
     .document-body a {{ color: var(--accent); }}
+    :where(a, button, input, textarea):focus-visible {{ outline: 2px solid var(--accent); outline-offset: 3px; }}
     .document-body pre, .document-body code {{
       background: var(--code-bg);
-      border-radius: 8px;
+      border-radius: 2px;
     }}
     .document-body code {{ padding: 0.1rem 0.25rem; }}
-    .document-body pre {{ overflow: auto; padding: 1rem; }}
+    .document-body pre {{ overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 1rem; }}
     .document-body blockquote {{
       border-left: 4px solid var(--border);
       color: var(--muted);
@@ -817,7 +844,7 @@ def render_presented_page(
       width: 100%;
       aspect-ratio: 16 / 9;
       border: 0;
-      border-radius: 14px;
+      border-radius: 2px;
       background: #000;
     }}
     .folio-video figcaption, .folio-video-pending {{ color: var(--muted); font-size: 0.9rem; }}
@@ -825,7 +852,7 @@ def render_presented_page(
     .document-body table {{ border-collapse: collapse; width: 100%; }}
     .document-body th, .document-body td {{ border: 1px solid var(--border); padding: 0.5rem; }}
     .folio-media {{ margin: 1.5em 0; }}
-    .folio-img {{ display: block; width: 100%; height: auto; border-radius: 6px; }}
+    .folio-img {{ display: block; width: 100%; height: auto; border-radius: 2px; }}
     .folio-media figcaption {{ font-size: 0.875em; color: var(--muted); margin-top: 0.5em; line-height: 1.4; }}
     .folio-block.folio-w-quarter {{ max-width: 25%; margin-inline: auto; }}
     .folio-block.folio-w-third {{ max-width: 33.33%; margin-inline: auto; }}
@@ -902,8 +929,6 @@ def render_editor_page(
         allowed_asset_ids=allowed_asset_ids,
         asset_embeds=asset_embeds,
     )
-    safe_tokens = sanitize_theme_tokens((theme or {}).get("tokens"))
-    theme_css = _theme_css(safe_tokens)
     logo_url = str((theme or {}).get("logo_url") or "")
     header = str((theme or {}).get("header") or "")
     footer = str((theme or {}).get("footer") or "")
@@ -915,6 +940,7 @@ def render_editor_page(
     header_html = f'      <header class="theme-header">{escape(header)}</header>\n' if header else ""
     footer_html = f'      <footer class="theme-footer">{escape(footer)}</footer>\n' if footer else ""
     initial_json = _script_json({"body": body, "version_number": version_number, "token": token})
+    root_css = ":root {" + _editor_theme_css(theme) + "}"
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -922,21 +948,14 @@ def render_editor_page(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex,nofollow,noarchive">
   <title>Edit · folio</title>
+  {_identity_meta(public_origin)}
   <style>
+    {_FONT_FACE}
+    {root_css}
     :root {{
-      color-scheme: light;
-      --bg: #f8fafc;
-      --surface: #ffffff;
-      --text: #111827;
-      --muted: #4b5563;
-      --border: #e5e7eb;
-      --accent: #2563eb;
-      --warn: #b45309;
-      --danger: #b91c1c;
-      --font-body: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      --font-heading: var(--font-body);
-      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-      --bar-h: 52px;{theme_css}    }}
+      --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+      --bar-h: 52px;
+    }}
     * {{ box-sizing: border-box; }}
     html, body {{ height: 100%; }}
     body {{ margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-body); line-height: 1.6; }}
@@ -948,27 +967,31 @@ def render_editor_page(
       background: var(--surface);
       border-bottom: 1px solid var(--border);
     }}
-    .brand {{ display: flex; align-items: baseline; gap: 8px; font-weight: 600; letter-spacing: -0.01em; }}
-    .brand .dot {{ color: var(--accent); }}
+    .brand {{ display: flex; align-items: center; gap: 8px; font-weight: 850; letter-spacing: -0.055em; }}
+    .brand .dot {{ color: var(--text); }}
     .brand .sub {{ color: var(--muted); font-weight: 400; font-size: 0.82rem; letter-spacing: 0; }}
-    .tabs {{ display: none; gap: 4px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 2px; }}
-    .tabs button {{ border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 0.82rem; padding: 5px 12px; border-radius: 6px; cursor: pointer; }}
+    .tabs {{ display: none; gap: 4px; background: var(--bg); border: 1px solid var(--border); border-radius: 2px; padding: 2px; }}
+    .tabs button {{ border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 0.82rem; padding: 5px 12px; border-radius: 2px; cursor: pointer; }}
     .tabs button[aria-selected="true"] {{ background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12); }}
     .actions {{ margin-left: auto; display: flex; align-items: center; gap: 12px; min-width: 0; }}
     .status {{ color: var(--muted); font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 38vw; }}
+    .link-recovery {{ padding: 16px; border-bottom: 1px solid var(--border); background: var(--surface); overflow-wrap: anywhere; }}
+    .link-recovery p {{ margin: 0 0 12px; }}
+    .link-recovery p:last-child {{ margin-bottom: 0; }}
+    .link-recovery button {{ margin-bottom: 12px; }}
     .status.is-saving {{ color: var(--accent); }}
     .status.is-conflict {{ color: var(--warn); }}
     .ghost-input {{
       width: 12rem; max-width: 24vw;
       border: 1px solid transparent; background: transparent; color: var(--text);
-      border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 0.84rem;
+      border-radius: 2px; padding: 6px 8px; font: inherit; font-size: 0.84rem;
     }}
     .ghost-input::placeholder {{ color: var(--muted); }}
     .ghost-input:hover {{ border-color: var(--border); }}
     .ghost-input:focus {{ outline: none; border-color: var(--accent); background: var(--bg); }}
     .save {{
-      border: 1px solid var(--accent); background: var(--accent); color: #fff;
-      border-radius: 6px; padding: 8px 16px; font: inherit; font-size: 0.84rem; font-weight: 600;
+      border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink);
+      border-radius: 2px; padding: 8px 16px; font: inherit; font-size: 0.84rem; font-weight: 600;
       cursor: pointer; min-width: 132px; white-space: nowrap;
       transition: opacity 0.15s ease, background 0.15s ease, border-color 0.15s ease;
     }}
@@ -977,11 +1000,16 @@ def render_editor_page(
     .save.is-conflict {{ background: var(--warn); border-color: var(--warn); }}
     .ghost-button {{
       border: 1px solid var(--border); background: var(--surface); color: var(--muted);
-      border-radius: 6px; padding: 8px 14px; font: inherit; font-size: 0.84rem; font-weight: 500;
+      border-radius: 2px; padding: 8px 14px; font: inherit; font-size: 0.84rem; font-weight: 500;
       cursor: pointer; white-space: nowrap; transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease;
     }}
     .ghost-button:hover {{ color: var(--text); border-color: var(--muted); }}
     .ghost-button:disabled {{ opacity: 0.4; cursor: default; }}
+    .bootstrap-status {{
+      position: fixed; top: calc(var(--bar-h) + 16px); left: 16px; right: 16px; z-index: 4;
+      padding: 16px; border: 1px solid var(--border); border-radius: 2px;
+      background: var(--surface); color: var(--text); overflow-wrap: break-word;
+    }}
     .workspace {{ display: grid; grid-template-columns: 1fr 1fr; height: calc(100vh - var(--bar-h)); }}
     .pane {{ height: 100%; overflow-y: auto; }}
     .pane-edit {{ border-right: 1px solid var(--border); background: var(--surface); }}
@@ -995,8 +1023,8 @@ def render_editor_page(
     .pane-preview {{ background: var(--bg); }}
     .pane-preview .surface {{
       max-width: 72ch; margin: 40px auto;
-      background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
-      box-shadow: 0 20px 45px rgba(15, 23, 42, 0.08);
+      background: var(--surface); border: 1px solid var(--border); border-radius: 2px;
+      box-shadow: none;
       padding: clamp(24px, 4vw, 48px);
       transition: opacity 0.18s ease;
     }}
@@ -1014,10 +1042,12 @@ def render_editor_page(
     .document-body :first-child {{ margin-top: 0; }}
     .document-body :last-child {{ margin-bottom: 0; }}
     .document-body h1, .document-body h2, .document-body h3 {{ font-family: var(--font-heading); line-height: 1.2; }}
+    .document-body {{ overflow-wrap: anywhere; }}
     .document-body a {{ color: var(--accent); }}
-    .document-body pre, .document-body code {{ background: #f3f4f6; border-radius: 8px; }}
+    :where(a, button, input, textarea):focus-visible {{ outline: 2px solid var(--accent); outline-offset: 3px; }}
+    .document-body pre, .document-body code {{ font-family: var(--font-mono); background: var(--code-bg); border-radius: 2px; }}
     .document-body code {{ padding: 0.1rem 0.25rem; }}
-    .document-body pre {{ overflow: auto; padding: 1rem; }}
+    .document-body pre {{ overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 1rem; }}
     .document-body blockquote {{ border-left: 4px solid var(--border); color: var(--muted); margin-left: 0; padding-left: 1rem; }}
     .document-body img {{ display: block; max-width: 100%; height: auto; border-radius: 12px; margin: 1rem 0; }}
     .document-body table {{ border-collapse: collapse; width: 100%; }}
@@ -1027,6 +1057,12 @@ def render_editor_page(
       .pane-edit {{ border-right: 0; border-bottom: 1px solid var(--border); }}
     }}
     @media (max-width: 600px) {{
+      :root {{ --bar-h: 104px; }}
+      .bar {{ display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; padding-block: 8px; }}
+      .actions {{ grid-column: 1 / -1; margin-left: 0; justify-content: flex-end; gap: 8px; }}
+      .actions .status {{ margin-right: auto; }}
+      .save {{ min-width: 116px; }}
+      .ghost-button {{ padding-inline: 8px; }}
       .tabs {{ display: inline-flex; }}
       .ghost-input {{ display: none; }}
       .workspace {{ grid-template-columns: 1fr; grid-template-rows: 1fr; }}
@@ -1035,7 +1071,7 @@ def render_editor_page(
       .pane-edit {{ border-bottom: 0; }}
     }}
     .modal {{
-      border: 0; border-radius: 14px; padding: 0; max-width: 440px; width: calc(100% - 32px);
+      border: 0; border-radius: 2px; padding: 0; max-width: 440px; width: calc(100% - 32px);
       background: var(--surface); color: var(--text);
       box-shadow: 0 30px 60px rgba(15, 23, 42, 0.25);
     }}
@@ -1045,31 +1081,53 @@ def render_editor_page(
     .modal-text {{ margin: 0 0 20px; color: var(--muted); font-size: 0.92rem; }}
     .modal-actions {{ display: flex; justify-content: flex-end; gap: 10px; }}
     .btn-danger {{
-      border: 1px solid var(--danger); background: var(--danger); color: #fff;
-      border-radius: 6px; padding: 8px 16px; font: inherit; font-size: 0.84rem; font-weight: 600; cursor: pointer;
+      border: 1px solid var(--danger); background: var(--danger); color: var(--danger-ink);
+      border-radius: 2px; padding: 8px 16px; font: inherit; font-size: 0.84rem; font-weight: 600; cursor: pointer;
     }}
     .btn-danger:hover {{ opacity: 0.92; }}
   </style>
+  <style id="session-theme"></style>
 </head>
 <body>
   <header class="bar">
-    <span class="brand">folio<span class="dot">.</span><span class="sub">editing</span></span>
+    <span class="brand"><svg viewBox="0 0 48 64" width="18" height="24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="5.5"><path stroke="#b76e17" d="M13 3 C12 17 21 22 43 22"/><path d="M3 32 H43"/><path d="M7 61 C16 47 25 42 43 42"/></g></svg>folio<span class="sub">editing</span></span>
     <div class="tabs" role="tablist" aria-label="View">
       <button id="tab-edit" type="button" role="tab" aria-selected="true">Write</button>
       <button id="tab-preview" type="button" role="tab" aria-selected="false">Preview</button>
     </div>
     <div class="actions">
       <span id="status" class="status" role="status" aria-live="polite"></span>
-      <input id="editor-name" class="ghost-input" type="text" maxlength="120" autocomplete="name" placeholder="Name (optional)">
+      <input id="editor-name" aria-label="Name (optional)" class="ghost-input" type="text" maxlength="120" autocomplete="name" placeholder="Name (optional)">
       <button id="discard" class="ghost-button" type="button">Discard changes</button>
       <button id="save" class="save" type="button">Save new version</button>
     </div>
   </header>
+  <div id="link-recovery" class="link-recovery" role="alert" tabindex="-1" hidden>
+    <p id="recovery-message">This edit link has expired or been revoked. Your unsaved text is still in the editor.</p>
+    <button id="copy-draft" class="ghost-button" type="button">Copy your text</button>
+    <p id="reopen-instructions">Return to your dashboard and reopen Edit, then paste your text.</p>
+    <p id="copy-status" role="status"></p>
+  </div>
+  <div id="new-version" class="link-recovery" hidden>
+    <p id="new-version-message" role="status"></p>
+    <button id="load-latest" class="ghost-button" type="button">Load latest version</button>
+  </div>
+  <dialog id="load-dialog" class="modal" aria-labelledby="load-title">
+    <div class="modal-card">
+      <h2 id="load-title" class="modal-title">Load the latest version?</h2>
+      <p class="modal-text">Your unsaved changes will be discarded.</p>
+      <div class="modal-actions">
+        <button id="load-cancel" class="ghost-button" type="button" autofocus>Keep editing</button>
+        <button id="load-confirm" class="btn-danger" type="button">Load latest version</button>
+      </div>
+    </div>
+  </dialog>
   <main class="workspace">
+    <div id="bootstrap-status" class="bootstrap-status" role="status" aria-atomic="true" data-state="loading">Opening the editor…</div>
     <section id="pane-edit" class="pane pane-edit is-active">
-      <textarea id="body" class="editor" spellcheck="false" autofocus placeholder="Start writing in Markdown…"></textarea>
+      <textarea id="body" aria-label="Write" class="editor" spellcheck="false" autofocus disabled placeholder=""></textarea>
     </section>
-    <section id="pane-preview" class="pane pane-preview">
+    <section id="pane-preview" class="pane pane-preview" tabindex="0" aria-label="Preview">
       <article class="surface" id="preview-card">
 {logo_html}        <p class="eyebrow" id="preview-eyebrow">Version {version_number}</p>
 {header_html}        <div class="document-body" id="preview">{preview}</div>
@@ -1087,24 +1145,46 @@ def render_editor_page(
     </div>
   </dialog>
   <script nonce="{escape(nonce, quote=True)}">
+    (() => {{
+    // The fragment must leave history before storage, parsing or requests.
+    let opener = window.location.hash;
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+    opener = /^#k=[A-Za-z0-9_-]{{43}}$/.test(opener) ? opener.slice(3) : '';
     const INITIAL = {initial_json};
+    const sessionKey = 'folio.editSession:' + INITIAL.token;
+    let sessionSecret = null;
+    try {{ sessionSecret = sessionStorage.getItem(sessionKey); }} catch (err) {{}}
+    const endpoint = '/present/edit/' + encodeURIComponent(INITIAL.token);
+    let ready = false;
+    async function sessionFetch(path, options = {{}}) {{
+      return fetch(endpoint + path, {{...options, cache:'no-store', credentials:'omit', referrerPolicy:'no-referrer',
+        headers: {{...options.headers, 'X-Folio-Edit-Session': sessionSecret || ''}}}});
+    }}
     const bodyEl = document.getElementById('body');
     const previewEl = document.getElementById('preview');
     const previewCard = document.getElementById('preview-card');
     const eyebrowEl = document.getElementById('preview-eyebrow');
     const statusEl = document.getElementById('status');
+    const bootstrapEl = document.getElementById('bootstrap-status');
     const nameEl = document.getElementById('editor-name');
     const saveBtn = document.getElementById('save');
     const discardBtn = document.getElementById('discard');
     const discardDialog = document.getElementById('discard-dialog');
+    const recoveryEl = document.getElementById('link-recovery');
+    const copyStatusEl = document.getElementById('copy-status');
     const baseTitle = 'Edit · folio';
     let baseVersion = INITIAL.version_number;
     let savedBody = INITIAL.body;
     let dirty = false;
     let saving = false;
     let conflict = false;
+    let unavailable = false;
+    let pendingVersion = null;
+    const newVersionEl = document.getElementById('new-version');
+    const loadDialog = document.getElementById('load-dialog');
     bodyEl.value = INITIAL.body;
-    nameEl.value = window.localStorage.getItem('folio.editorName') || '';
+    try {{ nameEl.value = window.localStorage.getItem('folio.editorName') || ''; }} catch (err) {{}}
+    bodyEl.disabled = true;
 
     let previewTimer = null;
     let previewSeq = 0;
@@ -1122,15 +1202,17 @@ def render_editor_page(
       }}
     }}
     async function refreshPreview() {{
+      if (unavailable || !ready) return;
       const seq = ++previewSeq;
       let html = null;
       try {{
-        const response = await fetch('/present/' + encodeURIComponent(INITIAL.token) + '/preview', {{
+        const response = await sessionFetch('/preview', {{
           method: 'POST',
           headers: {{'content-type': 'application/json'}},
           body: JSON.stringify({{body: bodyEl.value}})
         }});
         if (seq !== previewSeq) return;
+        if (response.status === 404) {{ showUnavailable(); return; }}
         if (response.ok) html = await response.text();
       }} catch (err) {{ /* keep the last good preview */ }}
       if (seq !== previewSeq) return;
@@ -1138,6 +1220,7 @@ def render_editor_page(
       if (html !== null) applyPreview(html);
     }}
     function schedulePreview() {{
+      if (unavailable || !ready) return;
       previewCard.classList.add('is-updating');
       if (previewTimer) clearTimeout(previewTimer);
       previewTimer = setTimeout(refreshPreview, 350);
@@ -1145,11 +1228,24 @@ def render_editor_page(
 
     function updateButtons() {{
       saveBtn.classList.toggle('is-conflict', conflict);
-      if (saving) {{ saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }}
+      if (unavailable) {{ saveBtn.disabled = true; saveBtn.textContent = 'Link unavailable'; }}
+      else if (!ready) {{ saveBtn.disabled = true; saveBtn.textContent = 'Loading…'; }}
+      else if (saving) {{ saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }}
       else if (conflict) {{ saveBtn.disabled = false; saveBtn.textContent = 'Overwrite?'; }}
       else if (dirty) {{ saveBtn.disabled = false; saveBtn.textContent = 'Save new version'; }}
       else {{ saveBtn.disabled = true; saveBtn.textContent = 'Saved'; }}
       discardBtn.disabled = saving || !(dirty || conflict);
+      if (unavailable) {{
+        document.getElementById('copy-draft').hidden = !dirty;
+        document.getElementById('recovery-message').textContent = dirty
+          ? 'This edit link has expired or been revoked. Your unsaved text is still in the editor.'
+          : 'This edit link has expired or been revoked.';
+        document.getElementById('reopen-instructions').textContent = dirty
+          ? 'Return to your dashboard and reopen Edit, then paste your text.'
+          : 'Return to your dashboard and reopen Edit.';
+        setStatus(dirty ? 'Not saved. Copy your text before reopening Edit.' : 'Link unavailable', dirty ? 'conflict' : null);
+        if (!dirty) copyStatusEl.textContent = '';
+      }}
     }}
 
     function setStatus(message, kind) {{
@@ -1158,8 +1254,10 @@ def render_editor_page(
     }}
 
     function markDirty() {{
-      if (!dirty) {{ dirty = true; document.title = '• ' + baseTitle; }}
-      eyebrowEl.textContent = 'Draft · unsaved';
+      dirty = bodyEl.value !== savedBody;
+      if (!dirty && pendingVersion) {{ applyCurrent(pendingVersion); return; }}
+      document.title = dirty ? '• ' + baseTitle : baseTitle;
+      eyebrowEl.textContent = dirty ? 'Draft · unsaved' : 'Version ' + baseVersion;
       updateButtons();
     }}
 
@@ -1167,12 +1265,12 @@ def render_editor_page(
     nameEl.addEventListener('input', () => window.localStorage.setItem('folio.editorName', nameEl.value));
 
     async function save() {{
-      if (saving || (!dirty && !conflict)) return;
+      if (unavailable || !ready || saving || (!dirty && !conflict)) return;
       saving = true; setStatus('Saving…', 'saving'); updateButtons();
       const sent = bodyEl.value;
       let response;
       try {{
-        response = await fetch('/present/' + encodeURIComponent(INITIAL.token) + '/edit', {{
+        response = await sessionFetch('/edit', {{
           method: 'POST',
           headers: {{'content-type': 'application/json'}},
           body: JSON.stringify({{body: bodyEl.value, base_version: baseVersion, editor_name: nameEl.value || null}})
@@ -1182,10 +1280,16 @@ def render_editor_page(
       }}
       const payload = await response.json().catch(() => ({{}}));
       saving = false;
+      if (response.status === 404) {{
+        showUnavailable();
+        recoveryEl.focus();
+        return;
+      }}
       if (response.status === 409) {{
         const latest = payload.detail || payload;
         conflict = true;
         baseVersion = latest.version_number || baseVersion;
+        showNewVersion(latest);
         setStatus('Someone saved version ' + baseVersion + '. Overwrite to keep your text.', 'conflict');
         updateButtons();
         return;
@@ -1193,14 +1297,26 @@ def render_editor_page(
       if (!response.ok) {{ setStatus('Save failed — the link may be expired or revoked.', 'conflict'); updateButtons(); return; }}
       baseVersion = payload.version_number;
       savedBody = sent;
-      dirty = false; conflict = false;
-      document.title = baseTitle;
-      eyebrowEl.textContent = 'Version ' + baseVersion + ' · saved';
+      dirty = bodyEl.value !== sent; conflict = false;
+      pendingVersion = null; newVersionEl.hidden = true;
+      document.title = dirty ? '• ' + baseTitle : baseTitle;
+      eyebrowEl.textContent = dirty ? 'Draft · unsaved' : 'Version ' + baseVersion + ' · saved';
       setStatus('Saved version ' + baseVersion, null);
       updateButtons();
       refreshPreview();
     }}
 
+    document.getElementById('copy-draft').addEventListener('click', async () => {{
+      try {{
+        await navigator.clipboard.writeText(bodyEl.value);
+        copyStatusEl.textContent = 'Text copied. Reopen Edit from your dashboard and paste it.';
+      }} catch (err) {{
+        activate(true);
+        bodyEl.focus();
+        bodyEl.select();
+        copyStatusEl.textContent = 'Your text is selected. Copy it before reopening Edit from your dashboard.';
+      }}
+    }});
     saveBtn.addEventListener('click', save);
     document.addEventListener('keydown', (event) => {{
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {{
@@ -1210,6 +1326,7 @@ def render_editor_page(
     }});
 
     function discardChanges() {{
+      if (pendingVersion) {{ applyCurrent(pendingVersion); return; }}
       bodyEl.value = savedBody;
       dirty = false; conflict = false;
       document.title = baseTitle;
@@ -1239,22 +1356,150 @@ def render_editor_page(
     tabEdit.addEventListener('click', () => activate(true));
     tabPreview.addEventListener('click', () => activate(false));
 
+    function cancelPreview() {{
+      if (previewTimer) clearTimeout(previewTimer);
+      previewSeq++;
+      previewCard.classList.remove('is-updating');
+    }}
+    function showUnavailable() {{
+      unavailable = true;
+      bootstrapEl.hidden = true;
+      bootstrapEl.textContent = '';
+      sessionSecret = null;
+      try {{ sessionStorage.removeItem(sessionKey); }} catch (err) {{}}
+      bodyEl.disabled = false;
+      cancelPreview();
+      newVersionEl.hidden = true;
+      updateButtons();
+      recoveryEl.hidden = false;
+    }}
+    function applyCurrent(state) {{
+      cancelPreview();
+      const start = bodyEl.selectionStart, end = bodyEl.selectionEnd;
+      if (state.theme) {{
+        document.getElementById('session-theme').textContent = ':root {{' + (state.theme.css || '') + '}}';
+        for (const kind of ['header', 'footer']) {{
+          let el = previewCard.querySelector('.theme-' + kind);
+          if (!el) {{ el = document.createElement(kind); el.className = 'theme-' + kind;
+            if (kind === 'header') previewCard.insertBefore(el, previewEl); else previewCard.append(el); }}
+          el.textContent = state.theme[kind] || '';
+          el.hidden = !el.textContent;
+        }}
+        let logo = previewCard.querySelector('.brand-logo');
+        if (!logo && state.theme.logo_url) {{ logo = document.createElement('img'); logo.className='brand-logo'; logo.alt='Team logo'; previewCard.prepend(logo); }}
+        if (logo) {{ logo.hidden = !state.theme.logo_url; if (state.theme.logo_url) logo.src=state.theme.logo_url; }}
+      }}
+      savedBody = state.body;
+      baseVersion = state.version_number;
+      bodyEl.value = savedBody;
+      bodyEl.setSelectionRange(Math.min(start, savedBody.length), Math.min(end, savedBody.length));
+      dirty = false; conflict = false; pendingVersion = null;
+      newVersionEl.hidden = true;
+      document.title = baseTitle;
+      eyebrowEl.textContent = 'Version ' + baseVersion;
+      if (typeof state.html === 'string') applyPreview(state.html);
+      else refreshPreview();
+      setStatus('Updated to version ' + baseVersion, null);
+      updateButtons();
+    }}
+    function showNewVersion(state) {{
+      pendingVersion = state;
+      newVersionEl.hidden = false;
+      document.getElementById('new-version-message').textContent =
+        'Version ' + state.version_number + ' is available. Your unsaved changes are kept.';
+    }}
+    document.getElementById('load-latest').addEventListener('click', () => {{
+      if (dirty) loadDialog.showModal();
+      else if (pendingVersion) applyCurrent(pendingVersion);
+    }});
+    document.getElementById('load-cancel').addEventListener('click', () => loadDialog.close());
+    document.getElementById('load-confirm').addEventListener('click', () => {{
+      loadDialog.close();
+      if (unavailable || !pendingVersion) return;
+      applyCurrent(pendingVersion);
+      activate(true); bodyEl.focus();
+    }});
+
+    let pollTimer = null;
+    let reading = false;
+    let readController = null;
     async function pollState() {{
+      if (pollTimer) clearTimeout(pollTimer);
+      if (unavailable || !ready || document.hidden || reading) return;
+      reading = true;
+      const controller = new AbortController();
+      readController = controller;
       try {{
-        const response = await fetch('/present/' + encodeURIComponent(INITIAL.token) + '/state');
+        if (saving) return;
+        const known = pendingVersion ? pendingVersion.version_number : baseVersion;
+        const response = await sessionFetch('/state?after_version=' + known,
+          {{cache: 'no-store', referrerPolicy: 'no-referrer', signal: controller.signal}});
+        if (controller.signal.aborted || unavailable) return;
+        if (response.status === 404) {{ showUnavailable(); return; }}
         if (!response.ok) return;
         const state = await response.json();
-        if (state.version_number > baseVersion && !conflict && !saving) {{
-          setStatus(
-            dirty ? 'A newer version exists; saving will ask to overwrite.' : 'A newer version exists. Reload to load it.',
-            'conflict'
-          );
+        if (controller.signal.aborted || unavailable || saving) return;
+        if (typeof state.body === 'string' && state.version_number > baseVersion) {{
+          // Decide on the CURRENT buffer after the read, including typing that
+          // happened while it was in flight. Never overwrite a local draft.
+          if (dirty) showNewVersion(state);
+          else applyCurrent(state);
         }}
-      }} catch (err) {{ /* transient; keep polling */ }}
+      }} catch (err) {{ /* keep the current buffer and retry transient reads */ }}
+      finally {{
+        reading = false; readController = null;
+        if (!unavailable && !document.hidden) pollTimer = setTimeout(pollState, 4000);
+      }}
     }}
-    window.setInterval(pollState, 4000);
+    document.addEventListener('visibilitychange', () => {{
+      if (document.hidden) {{
+        if (pollTimer) clearTimeout(pollTimer);
+        if (readController) readController.abort();
+      }} else pollState();
+    }});
+    window.addEventListener('pagehide', () => {{
+      if (pollTimer) clearTimeout(pollTimer);
+      if (readController) readController.abort();
+    }});
+    window.addEventListener('pageshow', pollState);
+    pollTimer = setTimeout(pollState, 4000);
 
+    async function startSession() {{
+      try {{
+        let response;
+        if (sessionSecret) response = await sessionFetch('/state');
+        else if (opener) response = await fetch(endpoint + '/session', {{
+          method:'POST', cache:'no-store', credentials:'omit', referrerPolicy:'no-referrer',
+          headers: {{'content-type':'application/json'}}, body:JSON.stringify({{opener}})
+        }});
+        else {{ showUnavailable(); return; }}
+        if (response.status === 404) {{ showUnavailable(); return; }}
+        if (!response.ok) throw new Error('session unavailable');
+        const state = await response.json();
+        if (!sessionSecret) {{
+          sessionSecret = state.session_secret;
+          try {{ sessionStorage.setItem(sessionKey, sessionSecret); }} catch (err) {{}}
+        }}
+        opener = '';
+        ready = true;
+        bodyEl.disabled = false;
+        bodyEl.placeholder = 'Start writing in Markdown…';
+        bootstrapEl.hidden = true;
+        bootstrapEl.textContent = '';
+        applyCurrent(state);
+        activate(true);
+        bodyEl.focus();
+        pollState();
+      }} catch (err) {{
+        bootstrapEl.dataset.state = 'retry';
+        const retryMessage = "Couldn't open the editor yet. Retrying…";
+        if (bootstrapEl.textContent !== retryMessage) bootstrapEl.textContent = retryMessage;
+        if (!unavailable) setTimeout(startSession, 4000);
+      }}
+    }}
     updateButtons();
+    startSession();
+    }})();
   </script>
 </body>
 </html>"""

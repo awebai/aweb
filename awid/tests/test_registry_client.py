@@ -191,7 +191,7 @@ async def test_registry_client_closes_every_repeated_failed_response():
     )
     try:
         for _attempt in range(16):
-            with pytest.raises(httpx.ReadError):
+            with pytest.raises(RegistryError):
                 await registry.health()
     finally:
         await registry.aclose()
@@ -206,10 +206,61 @@ async def test_registry_client_enforces_overall_deadline_on_slow_body():
         transport=MockTransport(lambda _request: Response(200, stream=SlowResponseStream())),
     )
     try:
-        with pytest.raises(TimeoutError):
+        with pytest.raises(RegistryError) as unavailable:
             await registry.health()
     finally:
         await registry.aclose()
+    assert (unavailable.value.status_code, unavailable.value.code) == (503, "unavailable")
+    assert type(unavailable.value.__cause__) is TimeoutError
+
+
+def _refused_connection(request: httpx.Request) -> Response:
+    raise httpx.ConnectError("connection refused", request=request)
+
+
+def _timed_out(request: httpx.Request) -> Response:
+    raise httpx.ReadTimeout("no answer", request=request)
+
+
+def _dropped(request: httpx.Request) -> Response:
+    raise httpx.RemoteProtocolError("peer closed the connection", request=request)
+
+
+def _broken_body(request: httpx.Request) -> Response:
+    return Response(200, stream=ClosingErrorStream([]))
+
+
+@pytest.mark.parametrize(
+    ("handler", "cause"),
+    [
+        (_refused_connection, httpx.ConnectError),
+        (_timed_out, httpx.ReadTimeout),
+        (_dropped, httpx.RemoteProtocolError),
+        (_broken_body, httpx.ReadError),
+    ],
+    ids=["connect", "read-timeout", "protocol", "mid-body"],
+)
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda registry: registry.health(),
+        lambda registry: registry.resolve_key("did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"),
+        lambda registry: registry.get_namespace("example.com"),
+        lambda registry: registry.fetch_id_certificate_status("example.com", {"v": 1, "domain": "example.com", "ids": []}),
+    ],
+    ids=["health", "resolve_key", "get_namespace", "id_status"],
+)
+@pytest.mark.asyncio
+async def test_a_transport_failure_is_a_registry_error_saying_the_registry_is_unavailable(handler, cause, call):
+    registry = RegistryClient(registry_url="http://registry.test", transport=MockTransport(handler))
+    try:
+        with pytest.raises(RegistryError) as unavailable:
+            await call(registry)
+    finally:
+        await registry.aclose()
+    assert (unavailable.value.status_code, unavailable.value.code) == (503, "unavailable")
+    assert unavailable.value.detail == f"AWID registry unavailable ({cause.__name__})"
+    assert type(unavailable.value.__cause__) is cause
 
 
 @pytest.mark.asyncio
@@ -289,13 +340,11 @@ async def test_registry_client_enforces_error_limit(body_size: int, should_succe
         transport=MockTransport(lambda _request: Response(500, content=b"x" * body_size)),
     )
     try:
-        if should_succeed:
-            with pytest.raises(RegistryError) as caught:
-                await registry.health()
-            assert caught.value.detail == "x" * (64 * 1024)
-        else:
-            with pytest.raises(ValueError, match="maximum|size|large|limit"):
-                await registry.health()
+        with pytest.raises(RegistryError) as caught:
+            await registry.health()
+        assert caught.value.status_code == 500
+        # An error page past the limit is still the refusal, without its body.
+        assert ("x" * 1024 in caught.value.detail) is should_succeed
     finally:
         await registry.aclose()
 
@@ -1135,9 +1184,9 @@ async def test_cached_revocations_refresh_failure_beyond_grace_fails_closed(monk
 
 
 @pytest.mark.asyncio
-async def test_grace_retention_applies_only_to_revocation_entries():
-    """The grace lengthens Redis retention for the revocations tier only; a
-    non-revocation cached read keeps the shared ttl * stale-multiplier."""
+async def test_revocation_grace_does_not_extend_metadata_retention():
+    """Team metadata keeps its ttl * stale-multiplier retention even though
+    revocations and controller keys have a longer outage grace."""
     from awid.registry import (
         _STALE_MULTIPLIER,
         _TEAM_METADATA_CACHE_TTL_SECONDS,

@@ -20,6 +20,8 @@ import time
 from collections.abc import Awaitable, Callable, Hashable
 from dataclasses import dataclass
 
+from aweb_naapp.runtime.clock import MonotonicClock, seconds_to_ns
+
 FRESHNESS_CEILING_SECONDS = 60
 DEFAULT_REFRESH_TIMEOUT_SECONDS = 5.0
 
@@ -33,10 +35,10 @@ class RefreshTimedOut(Exception):
 
 @dataclass(frozen=True)
 class Fresh[V]:
-    """An answer and the :func:`time.monotonic` deadline after which it must not be used."""
+    """An answer and the :func:`time.monotonic_ns` deadline after which it must not be used."""
 
     value: V
-    fresh_until: float
+    fresh_until: int
 
 
 class FreshnessCache[K: Hashable, V]:
@@ -44,7 +46,7 @@ class FreshnessCache[K: Hashable, V]:
         self,
         *,
         refresh_timeout: float = DEFAULT_REFRESH_TIMEOUT_SECONDS,
-        monotonic: Callable[[], float] = time.monotonic,
+        monotonic: MonotonicClock = time.monotonic_ns,
     ) -> None:
         if (
             isinstance(refresh_timeout, bool)
@@ -80,7 +82,7 @@ class FreshnessCache[K: Hashable, V]:
         # that other callers are waiting on.
         return await asyncio.shield(refresh)
 
-    async def _refresh(self, key: K, fetch: Fetch[V], asked_at: float) -> Fresh[V]:
+    async def _refresh(self, key: K, fetch: Fetch[V], asked_at: int) -> Fresh[V]:
         try:
             try:
                 value, max_age = await asyncio.wait_for(fetch(), self._refresh_timeout)
@@ -89,7 +91,7 @@ class FreshnessCache[K: Hashable, V]:
             if isinstance(max_age, bool) or not isinstance(max_age, int) or max_age < 1:
                 raise ValueError("an answer's max_age_seconds must be a positive whole number")
             fresh = Fresh(
-                value=value, fresh_until=asked_at + min(max_age, FRESHNESS_CEILING_SECONDS)
+                value=value, fresh_until=asked_at + seconds_to_ns(min(max_age, FRESHNESS_CEILING_SECONDS))
             )
             self._entries[key] = fresh
             return fresh

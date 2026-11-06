@@ -111,6 +111,39 @@ change wins, refresh/recompose rather than applying a stale snapshot. The librar
 rejects an already consumed ID; authorized exact-result recovery comes from the
 host's original committed result and never reactivates a removed registration.
 
+For native subject/owner actors, Python embeddings use
+`aweb.human_channels.authority.lock_native_actors(db_infra, connection, expected)`
+inside that host transaction. `db_infra` is the initialized OSS database
+infrastructure; `connection` is the host's already-open asyncpg transaction
+connection (for pgdbm, `tx.connection`). `expected` is a nonempty sequence of
+immutable `NativeMessagingSubject(principal, signing_key_id, actor_id, team_id)`
+references with all four fields populated from independently authorized facts.
+These are exact actor bindings, not aliases to discover or claims from an intent.
+
+The primitive acquires actor row locks in actor-ID order, rechecks active and
+non-deleted state and exact team/principal/current verified signing-key bindings,
+and returns an immutable tuple of checked bindings in input order. Missing or
+inactive/deleted actors refuse as `forbidden`; changed or unverified bindings
+refuse as `stale`. An absent transaction or incomplete reference refuses as
+`invalid`. It performs no network I/O, opens/commits no transaction and requires
+no prepared send or message. It adds no wire record, HTTP route or migration.
+Locks last through the host's outer commit/rollback; do not release a savepoint
+and reuse returned facts after rollback.
+
+Resolve external authority before taking locks. On the same connection, lock and
+recheck the host's account/session/link/consent/ownership/custody authority first,
+then call `lock_native_actors`, compose the presence context using those checked
+identity facts, run the portable verifier and apply the host's generation/request
+CAS. Keep this host-authority-before-actor order consistent with native message
+acceptance. A refusal aborts the host mutation; do not catch it and commit a
+partial activation. The helper supplies projection stability, not permission or
+custody: it cannot replace the caller, owner/issuer, grant or consent checks above.
+
+For a global identity, these locks freeze **only the OSS actor projection**,
+including its verified principal/key binding. Independently current AWID key
+verification is still required; the OSS transaction does not lock the remote
+registry or make a remote rotation atomic with the host's database commit.
+
 Cloud separately proves the exact platform resource/intake and its owner. Neither
 this verifier nor a valid intent proves bot-token ownership. Native registration
 wins overlapping relay scopes; unhealthy native transport produces visible

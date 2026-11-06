@@ -5,6 +5,8 @@ No routing, identity discovery, delivery, or cryptography is mocked.
 """
 from __future__ import annotations
 
+from identity_binding_support import register_global_identity
+
 import asyncio
 import base64
 from contextlib import asynccontextmanager
@@ -43,6 +45,7 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
         address = "example.test/bob" if global_resident and name == "bob" else ""
         stable_id = stable_id_from_did_key(actor.did) if address else ""
         if address:
+            assert await register_global_identity(env, actor, address) == stable_id
             await env.db.execute("UPDATE {{tables.agents}} SET identity_scope = 'global', did_aw = $1, address = $2 WHERE agent_id = $3",
                                  stable_id, address, actor.id)
         assertion = build_encryption_key_assertion(
@@ -64,10 +67,26 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
     source = encrypt_e2ee_mail(sender=human, recipients=[agent], subject="Human question",
                               body="Human private text", message_id=message_id,
                               conversation_id=conversation_id, created_at=now)
-    sent = await _request(env, "alice", "POST", "/v1/messages", {
-        "to_did": agent["did"], "message_id": message_id, "conversation_id": conversation_id,
+    payload = {
+        "to_did": agent["stable_id"] or agent["did"], "message_id": message_id, "conversation_id": conversation_id,
         "content_mode": "encrypted_v2", "message_version": 2, "encrypted_envelope": source,
-    })
+    }
+    if global_resident:
+        # Registering the mapping is not asserting a global messaging subject.
+        # Prove each exact DID/key through real auth before using that projection.
+        from test_messages_http import _signed_identity_headers
+        for name in ("alice", "bob"):
+            identity = identities[name]
+            headers = _signed_identity_headers(identity["signing_key"], identity["did"], identity["stable_id"], b"")
+            checked = await env.client.get("/v1/messages/inbox", headers=headers)
+            assert checked.status_code == 200, checked.text
+        raw = json.dumps(payload).encode()
+        sent = await env.client.post("/v1/messages", content=raw, headers={
+            "Content-Type": "application/json",
+            **_signed_identity_headers(human["signing_key"], human["did"], human["stable_id"], raw),
+        })
+    else:
+        sent = await _request(env, "alice", "POST", "/v1/messages", payload)
     assert sent.status_code == 200, sent.text
     assert source["sender_encryption_key"]["custody"] == "hosted_custodial"
 
@@ -129,30 +148,38 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
                                                     stderr=asyncio.subprocess.STDOUT)
         output, _ = await asyncio.wait_for(reply.communicate(), 30)
         assert reply.returncode == 0, output.decode()
-        # Reply continuity must not make human aliases valid send targets.
+        # An explicit end-to-end reply to the hosted human is refused before any
+        # request: aweb's service holds her key. Nothing is stored.
+        explicit = await asyncio.create_subprocess_exec(str(binary), "mail", "reply", message_id, "--e2ee",
+                                                       "--body-file", str(body_file), "--json", cwd=command_dir,
+                                                       env=command_env, stdout=asyncio.subprocess.PIPE,
+                                                       stderr=asyncio.subprocess.PIPE)
+        explicit_out, _ = await asyncio.wait_for(explicit.communicate(), 30)
+        assert explicit.returncode == 1, explicit_out.decode()
+        assert json.loads(explicit_out)["error"]["code"] == "recipient_custodial_no_e2ee"
+        # Alias encryption to her is refused the same way, and never falls back
+        # to plaintext.
         forbidden = await asyncio.create_subprocess_exec(str(binary), "mail", "send", "--to", "alice",
-                                                        "--e2ee", "--body-file", str(body_file), cwd=command_dir,
+                                                        "--subject", "Private", "--e2ee", "--body-file", str(body_file), cwd=command_dir,
                                                         env=command_env, stdout=asyncio.subprocess.PIPE,
                                                         stderr=asyncio.subprocess.STDOUT)
         refused, _ = await asyncio.wait_for(forbidden.communicate(), 30)
         assert forbidden.returncode != 0
-        assert "recipient agent not found" in refused.decode()
+        assert (await env.db.fetch_one("SELECT count(*) AS n FROM {{tables.messages}}"))["n"] == 2
         response = await _request(env, "alice", "GET", f"/v1/messages/conversations/{conversation_id}")
         assert response.status_code == 200, response.text
         messages = response.json()["messages"]
         assert len(messages) == 2
+        # The unflagged reply inherits no end-to-end request to a hosted
+        # recipient: it is delivered server-readable in the same conversation.
         delivered = next(m for m in messages if m["message_id"] != message_id)
-        assert delivered["content_mode"] == "encrypted_v2"
+        assert delivered["content_mode"] != "encrypted_v2"
         assert delivered["conversation_id"] == conversation_id
-        assert "Agent private reply" not in json.dumps(delivered)
-        plain = decrypt_e2ee_message(delivered["encrypted_envelope"], {
-            **human, "encryption_key_id": human["encryption_key"]["encryption_key_id"],
-        })
-        assert plain["body"] == "Agent private reply"
+        assert delivered["body"] == "Agent private reply"
 
         # Exercise the reported first-send form before any peer conversation exists.
         default_sent = await _cli(binary, command_dir, command_env, "mail", "send", "--to", "carol",
-                                  "--plaintext", "--body-file", str(body_file), "--json")
+                                  "--subject", "First send", "--plaintext", "--body-file", str(body_file), "--json")
         default_read = await _request(env, "carol", "GET", f"/v1/messages/{default_sent['message_id']}")
         assert default_read.status_code == 200, default_read.text
         default_message = default_read.json()
@@ -168,12 +195,12 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
             body_file.write_text(text)
             control = await _cli(binary, command_dir if global_resident else tmp_path,
                                  command_env if global_resident else child_env, "mail", "send", "--to", "carol",
-                                 mode, "--new-conversation", "--body-file", str(body_file), "--json")
+                                 "--subject", "Peer send", mode, "--body-file", str(body_file), "--json")
             control_read = await _request(env, "carol", "GET", f"/v1/messages/{control['message_id']}")
             assert control_read.status_code == 200, control_read.text
             control_message = control_read.json()
             sent = await _cli(binary, command_dir, command_env, "mail", "send", "--to", "carol",
-                              mode, "--new-conversation", "--body-file", str(body_file), "--json")
+                              "--subject", "Peer send", mode, "--body-file", str(body_file), "--json")
             received = await _request(env, "carol", "GET", f"/v1/messages/{sent['message_id']}")
             assert received.status_code == 200, received.text
             delivered = received.json()
@@ -199,10 +226,9 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
                 })
                 assert decrypted["body"] == text
 
-        # Also retain the ordinary send form, including existing-conversation
-        # lookup, rather than proving only --new-conversation sends.
+        # A later send to the same correspondent starts its own thread too.
         default_sent = await _cli(binary, command_dir, command_env, "mail", "send", "--to", "carol",
-                                  "--plaintext", "--body-file", str(body_file), "--json")
+                                  "--subject", "Another topic", "--plaintext", "--body-file", str(body_file), "--json")
         default_read = await _request(env, "carol", "GET", f"/v1/messages/{default_sent['message_id']}")
         assert default_read.status_code == 200, default_read.text
         default_message = default_read.json()

@@ -454,7 +454,7 @@ func TestPluginManagementInstallListRemoveAndRejectBuiltins(t *testing.T) {
 		t.Fatalf("plugin still exists after remove: %v", err)
 	}
 
-	for _, name := range []string{"aw-id", "aw-introspect"} {
+	for _, name := range []string{"aw-id", "aw-introspect", "aw-org", "aw-who"} {
 		reservedSource := filepath.Join(tmp, name)
 		if err := os.WriteFile(reservedSource, []byte("#!/bin/sh\necho reserved\n"), 0o755); err != nil {
 			t.Fatal(err)
@@ -1003,8 +1003,9 @@ func TestPluginInstallDevOriginOverridesSelfHostedOrigin(t *testing.T) {
 
 	// The served manifest advertises a DIFFERENT origin than where it is served,
 	// like a self-hosted Library whose manifest still claims the production
-	// origin. Without an override the install must reject this; with --dev-origin
-	// the operator points aw at the real (self-hosted) base URL.
+	// origin. This empty-home discovery test grants no team authority. Without
+	// an override discovery rejects it; --dev-origin fills the local origin.
+	// Resident installs refuse that rewrite (the wakes journey covers this).
 	manifest := `{"manifest_version":1,"app":{"id":"devlib","version":"1.0.0","origin":"https://library.aweb.ai"},"tools":[{"name":"ping","auth":"none","method":"GET","path":"/v1/ping","input_schema":{"type":"object","properties":{}},"params":[],"mutation":false}]}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if serveNoManifestCatalog(w, r) {

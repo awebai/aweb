@@ -7,6 +7,8 @@ import awid "github.com/awebai/aw/awid"
 
 // Event represents an event received during chat (message or read receipt).
 type Event struct {
+	IDChain              awid.ReceivedIDChain        `json:"id_chain,omitempty"`
+	SignedPayload        string                      `json:"signed_payload,omitempty"`
 	Attachments          []awid.AttachmentDescriptor `json:"attachments,omitempty"`
 	AttachmentsAvailable bool                        `json:"attachments_available"`
 	SenderMembership     *awid.SenderMembership      `json:"sender_membership,omitempty"`

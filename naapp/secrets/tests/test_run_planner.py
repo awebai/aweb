@@ -33,7 +33,7 @@ async def _setup(db, *, subject=None):
     await runners.apply_runner_migrations(db)
     body = after()
     body["credentials"][0]["secret_ref"] = SECRET["ref"]
-    body["env"] = {"DB_ADMIN": {"$credential": SECRET["ref"]}}
+    body["env"] = {"DB_ADMIN": {"$credential": SECRET["ref"], "field": "value"}}
     job = jobs.JobDefinition.from_after(body)
     await _install(
         db,
@@ -283,7 +283,7 @@ async def test_live_planner_clock_survives_a_later_caller_lock_wait(db, fence, e
         )
         body = job.after
         body["credentials"][0]["secret_ref"] = child.ref
-        body["env"] = {"DB_ADMIN": {"$credential": child.ref}}
+        body["env"] = {"DB_ADMIN": {"$credential": child.ref, "field": "value"}}
         job = jobs.JobDefinition.from_after(body)
         await jobs.create_job(tx, INSTALLATION, TEAM, job)
         await records.create_grant(

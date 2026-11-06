@@ -46,16 +46,55 @@ Team certificates remain valid for team membership, local ACLs, and certificate
 verification flows. They are not an address reachability or message routing
 oracle.
 
-Global recipients expose an explicit delivery-time `inbound_mode`:
+Global recipients expose an explicit delivery-time `inbound_mode`. It is an
+identity property across every non-deleted row for the exact `did:aw`, including
+retired or inactive memberships. The effective policy is the strictest valid
+mode present: `contacts_only`, then `team_and_contacts`, then `open`. Any missing
+or invalid row policy fails closed with the migration-required refusal. A mode
+change by the identity updates all those rows; a new membership inherits the
+current effective mode. Team ownership alone does not authorize a policy change.
+A global-scope row without a raw `did:aw` has no link to other memberships:
+its policy is its own explicit mode, with NULL or invalid still migration-required.
+This does not grant it authority to set an identity-wide policy.
+The identity-signed "my inbound mode" route uses the authenticated, AWID-bound
+`did:aw` for the change; a stored membership claim cannot select its write scope.
+
+The modes are:
 
 - `open`: accept valid senders after address route and identity binding
   validation. User-facing label: **All**.
 - `team_and_contacts`: after the same route and identity validation, accept
   verified same-team members or an exact active identity contact for the
   verified sender address. User-facing label: **Team and contacts**.
+- `contacts_only`: after the same route and identity validation, accept only an
+  exact active identity contact bound to the recipient, verified sender address,
+  and sender `did:aw`. Verified team membership does not authorize delivery.
+  User-facing label: **Contacts only**.
 
 Rows without an explicit `inbound_mode` require migration and must fail with an
 explicit migration-required diagnostic rather than silently widening to open.
+
+An authenticated global subject participates as its `did:aw`; its current
+`did:key` proves signatures and is not a second participant reference. Local
+subjects participate as their literal `did:key`. Thread visibility, unread/ack
+scope and continuation use that participant reference. Hosted plaintext signing
+keeps the original key in the signed payload without replacing the participant
+or stored author identity with that key.
+
+Migration 045 normalizes historical participant keys to a global DID only from
+an unambiguous current verified key binding. Duplicate participant rows merge
+without losing join/read state; signed message identity fields remain unchanged.
+The normalized participant retains its key as thread-local attribution evidence,
+not as another participant authority. An ambiguous verified mapping aborts the
+migration rather than guessing the owner.
+
+Inside a thread, canonical participant membership authorizes exact message reads
+as well as the whole thread. A message's original sender/recipient matches that
+participant's canonical DID or its own `current_did_key` in that same thread.
+Inbox, unread and acknowledgements use this attribution and exclude own sends;
+acknowledgements remain incoming-only. There is no cross-thread key lookup.
+Pre-thread messages keep literal-DID access. Older rotated keys not retained on
+the participant remain readable through the thread, without unread attribution.
 
 ## Direct Address Send Protocol
 
@@ -71,6 +110,14 @@ For a send to a global address (`domain/name`):
    resolved recipient identity binding (`to`, `to_stable_id`, `to_did`).
 4. The aweb server authenticates the sender and validates that behavior-shaping
    outer fields match the signed payload.
+   A thread participant is the identity (`did:aw` for a global identity), not
+   a per-team actor. The address selects that identity and its route, never a
+   different address from a membership projection. `agent_id` is nullable
+   display/admission metadata: explicit-address participants leave it null;
+   a team-scoped alias may record its selected membership. Read access and
+   continuation compare participant DIDs, not actor IDs or address equality.
+   Native admission's actor/team facts are a separate current membership
+   projection for the target identity in the authenticated endpoint team.
 5. Federation delivery uses the resolved delivery origin and the target identity
    binding. The recipient server re-resolves the target address/key and fails
    closed on mismatch.
@@ -166,6 +213,44 @@ Missing, stale, malformed, mismatched, or revoked route state fails closed.
 Stored route state is not a policy bypass: continuations still apply the
 recipient's current `inbound_mode` at delivery time.
 
+For a signed mail continuation after key rotation, an unmarked local projection
+may lack the current recipient binding. Verify the message signature before
+using its recipient claims; its stable DID and any signed address must match the
+stored participant exactly. If the gated projection cannot establish that signed
+recipient, require current AWID binding evidence outside database transactions.
+This context validates only the signature: delivery keeps the stored participant
+agent ID, and neither routing facts nor verification markers are populated from
+it. A mismatch refuses delivery; unavailable evidence returns 503.
+
+Federation first-contact target validation checks the cached address binding
+against the envelope's stable DID, current key and exact delivery origin. If
+those facts do not validate, it reads the address once fresh and repeats the
+same checks before refusing. Successful cached validation requires no extra
+registry read. The refresh happens before database locks; unavailable evidence
+returns retryable 503, while a fresh mismatch retains its specific refusal.
+Generic local key/membership selection still requires the verified projection
+marker. After an address has independently resolved to its canonical `did:aw`
+and current key, locality is residence of that exact DID, independent of a
+membership's superseded key or invalidated marker. The address resolution
+supplies the recipient key and route; this residence lookup supplies no actor
+or team authority and does not restore a verification marker.
+
+If that exact identity is not resident and the resolved delivery origin is this
+server's configured public origin (including any accepted ingress origins), mail
+and chat refuse with
+`recipient_identity_not_found` (404, non-retryable), before federation. The
+caller is directed to ask the recipient or operator to check the address and
+messaging setup. This also applies to stored routes and route refreshes: refuse
+before persisting an own-origin remote route or retrying federation. A resident
+identity is handled locally with the same delivery-time policy. For a global
+stored route, the historical participant key is not current binding evidence:
+local handoff requires current AWID binding and validates the signed/encrypted
+target against it before delivery. This validation does not rewrite participant
+routes or membership verification markers; unavailable evidence refuses with
+503. A matching alias
+for a different DID does not supply residence; a foreign-origin route remains
+eligible for federation.
+
 ## Receiver-Wide Replay And Contact Compatibility
 
 Every accepted mail or chat message—local or federated, plaintext or encrypted—
@@ -196,7 +281,8 @@ those effects back and permits retry. The transaction also commits one durable
 is at-least-once across a crash after Redis accepts but before PostgreSQL records
 `delivered_at`.
 
-For `team_and_contacts`, a non-team sender is authorized only by an exact active
+For `contacts_only`, every sender (including a verified teammate), and for
+`team_and_contacts`, every non-team sender, is authorized only by an exact active
 contact bound to the recipient identity, canonical sender address, and sender
 `did:aw`. Address-only legacy contacts are migration-required and inert for
 cross-registry authorization until their owner explicitly binds them by exact
@@ -247,7 +333,7 @@ and `correlation_id`; only rate limiting emits `Retry-After: 1`.
   AWID as private address-read authority.
 - Do not treat address reachability, `visible_to_team_id`, contact membership,
   or conversation ID as routing authority. Contacts authorize only the explicit
-  delivery-time `team_and_contacts`/local-contact gate and never create a
+  delivery-time `team_and_contacts`/`contacts_only`/local-contact gate and never create a
   route. Verified team membership also authorizes `team_and_contacts`, but does
   not create routes.
 - Do not use stale cache entries as evidence for a recipient binding.

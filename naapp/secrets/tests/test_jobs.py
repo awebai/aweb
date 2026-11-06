@@ -29,7 +29,7 @@ def after():
         "exec": {"path": "/usr/local/bin/backup", "sha256": "a" * 64, "files": []},
         "oci": None,
         "argv": ["--", {"$param": "database", "slot": "positional"}],
-        "env": {"DB_ADMIN": {"$credential": "db-admin"}},
+        "env": {"DB_ADMIN": {"$credential": "db-admin", "field": "value"}},
         "cwd": "/srv/backup",
         "timeout_s": 60,
         "output": {"max_bytes": 4096, "projection": ["/exit_code"]},
@@ -37,6 +37,73 @@ def after():
         "credentials": [{"secret_ref": "db-admin", "delivery": "durable", "mint": None}],
         "allow_durable": True,
     }
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        ["value"],
+        ["username"],
+        ["password"],
+        ["username", "password", "password"],
+        ["client_id", "client_secret"],
+        ["client_secret"],
+        ["access_key_id", "secret_access_key", "session_token"],
+        ["session_token"],
+    ],
+)
+def test_credential_env_fields_select_one_whole_mapping_family(fields):
+    body = after()
+    body["env"] = {
+        "CRED_" + str(i): {"$credential": "db-admin", "field": field}
+        for i, field in enumerate(fields)
+    }
+    job = JobDefinition.from_after(body)
+    assert job.after["env"] == body["env"]
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        {"$credential": "db-admin"},
+        {"$credential": "db-admin", "field": "token"},
+        {"$credential": "db-admin", "field": ""},
+        {"$credential": "db-admin", "field": None},
+        {"$credential": "db-admin", "field": ["value"]},
+        {"$credential": "db-admin", "field": "value", "default": ""},
+        {"$credential": "unknown", "field": "value"},
+    ],
+)
+def test_credential_env_fields_refuse_implicit_unknown_or_extended_bindings(binding):
+    body = after()
+    body["env"] = {"DB_ADMIN": binding}
+    with pytest.raises(JobInvalid):
+        JobDefinition.from_after(body)
+
+
+@pytest.mark.parametrize("fields", [["value", "password"], ["client_id", "access_key_id"]])
+def test_credential_slot_cannot_mix_decoder_families(fields):
+    body = after()
+    body["env"] = {
+        "CRED_" + str(i): {"$credential": "db-admin", "field": field}
+        for i, field in enumerate(fields)
+    }
+    with pytest.raises(JobInvalid):
+        JobDefinition.from_after(body)
+
+
+def test_different_credential_slots_can_select_different_families():
+    body = after()
+    body["credentials"].append({"secret_ref": "other", "delivery": "durable", "mint": None})
+    body["env"] = {
+        "DB_ADMIN": {"$credential": "db-admin", "field": "password"},
+        "API_KEY": {"$credential": "other", "field": "value"},
+    }
+    first = JobDefinition.from_after(body)
+    body["env"]["DB_ADMIN"]["field"] = "username"
+    second = JobDefinition.from_after(body)
+    assert second.digest != first.digest
+    assert first.after["env"]["DB_ADMIN"]["field"] == "password"
 
 
 def test_positional_and_option_value_have_different_leading_dash_boundaries():
@@ -66,7 +133,7 @@ def test_positional_and_option_value_have_different_leading_dash_boundaries():
 )
 def test_code_loading_env_targets_are_refused(name):
     body = after()
-    body["env"] = {name: {"$credential": "db-admin"}}
+    body["env"] = {name: {"$credential": "db-admin", "field": "value"}}
     with pytest.raises(JobInvalid):
         JobDefinition.from_after(body)
 
@@ -81,12 +148,12 @@ def test_durable_flag_and_all_template_references_are_checked():
     with pytest.raises(JobInvalid):
         JobDefinition.from_after(body)
     body = after()
-    body["env"] = {"DB_ADMIN": {"$credential": "other-secret"}}
+    body["env"] = {"DB_ADMIN": {"$credential": "other-secret", "field": "value"}}
     with pytest.raises(JobInvalid):
         JobDefinition.from_after(body)
 
 
-def test_oci_requires_a_digest_and_only_declared_readonly_paths():
+def oci_after():
     body = after()
     body.update(
         kind="oci",
@@ -96,10 +163,69 @@ def test_oci_requires_a_digest_and_only_declared_readonly_paths():
             "read_only_paths": ["/srv/config"],
         },
     )
+    body["argv"].insert(0, "/usr/bin/backup")
+    return body
+
+
+def test_oci_requires_a_digest_and_only_declared_readonly_paths():
+    body = oci_after()
     JobDefinition.from_after(body)
     body["oci"]["image"] = "registry.example/backup:latest"
     with pytest.raises(JobInvalid):
         JobDefinition.from_after(body)
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        [],
+        ["backup"],
+        [""],
+        ["--"],
+        ["/usr/../bin/backup"],
+        [{"$param": "database", "slot": "positional"}],
+    ],
+)
+def test_oci_argv_requires_its_own_fixed_absolute_executable(argv):
+    body = oci_after()
+    body["argv"] = argv
+    # Keep the declared parameter used independently of argv, so an absent
+    # executable cannot be refused merely as an unused-parameter side effect.
+    body["env"]["DATABASE"] = {"$param": "database"}
+    with pytest.raises(JobInvalid):
+        JobDefinition.from_after(body)
+
+
+def test_oci_command_is_pinned_without_rewriting_exec_argument_semantics():
+    body = oci_after()
+    first = JobDefinition.from_after(body)
+    assert first.after["argv"] == body["argv"]
+    assert first.params_valid({"database": "orders"})
+    body["argv"][0] = "/opt/backup"
+    edited = JobDefinition.from_after(body)
+    assert edited.digest != first.digest
+    assert first.after["argv"][0] == "/usr/bin/backup"
+    # Exec argv remains arguments only: exec.path supplies its executable.
+    ordinary = after()
+    assert JobDefinition.from_after(ordinary).after["argv"][0] == "--"
+    ordinary["argv"] = []
+    ordinary["params"] = {}
+    assert JobDefinition.from_after(ordinary).after["argv"] == []
+
+
+def test_oci_change_draft_never_inherits_an_image_executable():
+    from aweb_secrets.change import ChangeRefused, validate_change
+    from tests.test_change_records import _change
+
+    body = oci_after()
+    validate_change(_change({"kind": "job", "op": "create", "ref": body["job_id"], "after": body}))
+    body["argv"] = []
+    body["params"] = {}
+    with pytest.raises(ChangeRefused):
+        validate_change(
+            _change({"kind": "job", "op": "create", "ref": body["job_id"], "after": body})
+        )
+    assert body["argv"] == []
 
 
 @pytest.fixture
@@ -255,7 +381,7 @@ def test_durable_descendant_substitution_returns_the_unique_slot(refs):
 
     body = after()
     body["credentials"][0]["secret_ref"] = refs[0]
-    body["env"] = {"DB_ADMIN": {"$credential": refs[0]}}
+    body["env"] = {"DB_ADMIN": {"$credential": refs[0], "field": "value"}}
     job = JobDefinition.from_after(body)
     assert unique_durable_slot(job, lineage_refs=["root-admin", "db-admin", "fresh-child"]) == 0
 
@@ -268,7 +394,10 @@ def test_two_matching_ancestors_and_exact_child_plus_ancestor_are_ambiguous():
         body["credentials"] = [
             {"secret_ref": ref, "delivery": "durable", "mint": None} for ref in selectors
         ]
-        body["env"] = {"CRED_" + str(i): {"$credential": ref} for i, ref in enumerate(selectors)}
+        body["env"] = {
+            "CRED_" + str(i): {"$credential": ref, "field": "value"}
+            for i, ref in enumerate(selectors)
+        }
         job = JobDefinition.from_after(body)
         with pytest.raises(JobRefused) as refused:
             unique_durable_slot(job, lineage_refs=["root-admin", "db-admin", "fresh-child"])
@@ -299,7 +428,7 @@ def test_unique_slot_keeps_other_slots_fixed_and_preserves_the_ordinal():
 
     body = after()
     body["credentials"].insert(0, {"secret_ref": "unrelated", "delivery": "durable", "mint": None})
-    body["env"]["OTHER_ADMIN"] = {"$credential": "unrelated"}
+    body["env"]["OTHER_ADMIN"] = {"$credential": "unrelated", "field": "value"}
     job = JobDefinition.from_after(body)
     assert unique_durable_slot(job, lineage_refs=["db-admin", "fresh-child"]) == 1
     assert job.after == body
@@ -328,7 +457,11 @@ def test_unique_slot_keeps_other_slots_fixed_and_preserves_the_ordinal():
     ],
 )
 def test_additional_loader_and_proxy_env_names_are_refused_for_all_values(name):
-    for value in ["fixed-owner-value", {"$param": "database"}, {"$credential": "db-admin"}]:
+    for value in [
+        "fixed-owner-value",
+        {"$param": "database"},
+        {"$credential": "db-admin", "field": "value"},
+    ]:
         body = after()
         body["env"][name] = value
         with pytest.raises(JobInvalid):
@@ -348,12 +481,8 @@ def test_option_with_attached_value_cannot_take_a_parameter_as_another_argument(
     "path", ["/", "//etc", "/etc/", "/etc//config", "/etc/./config", "/etc/../config"]
 )
 def test_oci_mount_paths_are_normalized_nonroot_paths(path):
-    body = after()
-    body.update(
-        kind="oci",
-        exec=None,
-        oci={"image": "registry.example/backup@sha256:" + "b" * 64, "read_only_paths": [path]},
-    )
+    body = oci_after()
+    body["oci"]["read_only_paths"] = [path]
     with pytest.raises(JobInvalid):
         JobDefinition.from_after(body)
     body["oci"]["read_only_paths"] = ["/etc/config"]

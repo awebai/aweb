@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import base64
 import json
+import secrets
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote_plus
@@ -14,6 +15,7 @@ import pytest
 from aweb_naapp.egress import EgressRefused
 
 from aweb_secrets.broker import SecretVersion, TokenExchangeFailed, broker
+from aweb_secrets.response_audit import ResponseKey
 from aweb_secrets.tokens import ProcessTokenCache, TokenKey
 
 from .harness import OTHER, Upstream, running_upstream
@@ -61,6 +63,7 @@ async def _call(upstream: Upstream, tokens: ProcessTokenCache, *, secret: str | 
         max_bytes=4096,
         projection=None,
         token_issuing=False,
+        response_key=ResponseKey(secrets.token_bytes(32)),
         token_destination=kw.pop("token_destination", None)
         or upstream.destination(path="/oauth2/token", methods=["POST"]),
         tokens=tokens,

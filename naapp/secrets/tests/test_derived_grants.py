@@ -176,7 +176,9 @@ def _job(refs, *, delivery="durable"):
         }
         for ref in refs
     ]
-    body["env"] = {"CREDENTIAL_" + str(i): {"$credential": ref} for i, ref in enumerate(refs)}
+    body["env"] = {
+        "CREDENTIAL_" + str(i): {"$credential": ref, "field": "value"} for i, ref in enumerate(refs)
+    }
     return JobDefinition.from_after(body)
 
 

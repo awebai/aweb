@@ -1,0 +1,513 @@
+{
+  "v": 2,
+  "governing_contract": "docs/id-certificates.md",
+  "interpretation": [
+    "Each creation path is converted only when its actual constructor and real journey prove a chain or the required refusal. Legacy paths retain their existing behavior for now; reasons are explicit.",
+    "Key rotation, team/session/encryption keys and reused projections are not new identity ancestry.",
+    "Cloud coverage belongs to the application repository. Public external runtime paths remain listed with their repository owner.",
+    "The one primitive-use check permits shared verifiers and explicitly named released legacy files. It does not pin call counts or claim complete release qualification."
+  ],
+  "creation_paths": [
+    {
+      "id": "AWID.DID.GENESIS",
+      "repo": "aweb",
+      "files": [
+        "awid/src/awid_service/routes/did.py"
+      ],
+      "status": "legacy",
+      "reason": "Keep DID syntax and key proof; separate ID-tree enrollment from bare DID creation. This creation path has no landed per-path chain-or-refusal journey proof yet."
+    },
+    {
+      "id": "CLI.KEYS.AGENT",
+      "repo": "aweb",
+      "files": [
+        "cli/go/awid/keys.go"
+      ],
+      "status": "legacy",
+      "reason": "Agent file custody stays; human keys must not be placed here. This creation path has no landed per-path chain-or-refusal journey proof yet."
+    },
+    {
+      "id": "CLI.KEYS.HUMAN",
+      "repo": "aweb",
+      "files": [
+        "cli/go/awid/human_key_backup.go",
+        "cli/go/awid/human_signer.go",
+        "cli/go/awconfig/human_keychain.go",
+        "cli/go/awconfig/human_record.go",
+        "cli/go/cmd/aw/id_human.go"
+      ],
+      "status": "converted",
+      "reason": "aw id human init --domain D --as-root creates the human key in the OS keychain, registers its did:aw with the human's own proof and has the local namespace controller issue its certificate, recorded before release. The cross-registry real-DNS journey (scripts/cross-registry-human-journey.py) proves it through a real Secret Service and a PTY, after its wrong-controller refusals, with outsiders verifying the human as nearest_human."
+    },
+    {
+      "id": "CLI.INIT.LOCAL",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/init.go",
+        "cli/go/cmd/aw/init_local.go",
+        "cli/go/cmd/aw/id_team.go"
+      ],
+      "status": "legacy",
+      "reason": "Human-less local coordination remains valid; evidenced parent signs, otherwise unknown. This creation path has no landed per-path chain-or-refusal journey proof yet."
+    },
+    {
+      "id": "CLI.INIT.BYOD",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/id_create.go",
+        "cli/go/cmd/aw/onboarding_wizard.go"
+      ],
+      "status": "legacy",
+      "reason": "Actual root/human/agent parent; key proof and exact domain, no account-label inference. This creation path has no landed per-path chain-or-refusal journey proof yet."
+    },
+    {
+      "id": "CLI.INIT.HOSTED",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/onboarding_wizard.go"
+      ],
+      "status": "legacy",
+      "reason": "Host-supplied exact chain verified before installation; no guessed human on signup. This creation path has no landed per-path chain-or-refusal journey proof yet."
+    },
+    {
+      "id": "CLI.BOOTSTRAP.CONNECT",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/connect.go"
+      ],
+      "status": "legacy",
+      "reason": "Bootstrap redemption creates a fresh local key and may register its stable ID, but does not yet install an ID-parent chain. A bootstrap token is not ancestry evidence."
+    },
+    {
+      "id": "CLI.INIT.APIKEY",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/init.go",
+        "cli/go/cmd/aw/init_apikey.go"
+      ],
+      "status": "legacy",
+      "reason": "API key with and without evidenced parent is chain-or-unknown/refuse, never guessed attribution. This creation path has no landed per-path chain-or-refusal journey proof yet."
+    },
+    {
+      "id": "CLI.CREATE.DOMAIN",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/id_create.go"
+      ],
+      "status": "legacy",
+      "reason": "Keep key/DID/address while explicitly enrolling; addresses do not prove parentage. This creation path has no landed per-path chain-or-refusal journey proof yet."
+    },
+    {
+      "id": "CLI.CREATE.PARENT",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/id_create_parent.go",
+        "cli/go/awid/id_direct_issue.go"
+      ],
+      "status": "converted",
+      "reason": "aw id create --human-parent <did:aw> or --root-parent installs the agent's chain at creation: the named human or the namespace root issues it after verifying current status, records it before release, and the agent registers it with its own key; a parent that cannot issue leaves no agent. The cross-registry real-DNS journey proves both parents and a failed registration resuming with the same ID, key and certificate and one issuance entry; outsiders verify the human-parented agents as nearest_human and the root agent as no_human."
+    },
+    {
+      "id": "CLI.CHILD.EXCHANGE",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/id_child.go",
+        "cli/go/cmd/aw/id_parent.go",
+        "cli/go/awid/id_invitation.go",
+        "cli/go/awid/id_child_exchange.go",
+        "cli/go/awid/id_certificate_request.go",
+        "cli/go/awconfig/id_invitation_store.go",
+        "cli/go/awconfig/id_request_store.go"
+      ],
+      "status": "converted",
+      "reason": "The request exchange: aw id child invite/receive/pending/show/approve/refuse under an explicitly selected issuer, and aw id parent request/import for a prepared human or the current agent, including the root-issued first human; a human child is approved only by a confirmed terminal answer. The cross-registry real-DNS journey (scripts/cross-registry-human-journey.py, AWEB_CROSS_REGISTRY_CSR=1) proves it across separate requester and root machines: a declined fingerprint signs nothing and leaves the request pending, the matching fingerprint is approved with y over a PTY, and the default import registers the human with the same invitation, with outsiders verifying it as nearest_human."
+    },
+    {
+      "id": "CLI.CREATE.HOSTED",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/id_create_hosted.go"
+      ],
+      "status": "legacy",
+      "reason": "Human-session issuance and owner-principal issuance keep their distinct authority. This creation path has no landed per-path chain-or-refusal journey proof yet."
+    },
+    {
+      "id": "CLI.CREATE.OWNER",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/id_create_owner.go"
+      ],
+      "status": "legacy",
+      "reason": "Retain unattended signing owner-agent parent; owner role or owner-team membership alone is not a target parent. This creation path has no landed per-path chain-or-refusal journey proof yet."
+    },
+    {
+      "id": "CLI.INVITE.LOCAL",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/id_team.go",
+        "cli/go/awconfig/team_invites.go"
+      ],
+      "status": "converted",
+      "reason": "Local identity creation composes the real inviter child exchange; CoreDNS verifies immediate human attribution, purpose and outsider Go/Python verification. Chainless inviters remain unknown; existing global acceptance preserves enrollment and chain. CoreDNS also verifies that an outstanding invite from a revoked inviter cannot be accepted and the inviter cannot create a new local invite, with no child identity or issuer-record changes."
+    },
+    {
+      "id": "CLI.INVITE.HOSTED",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/id_team.go",
+        "cli/go/awid/spawn_invites.go"
+      ],
+      "status": "legacy",
+      "reason": "Preserve issuing ID/purpose; exact child and pending recipient-bound human signing, never token-only human attribution. This creation path has no landed per-path chain-or-refusal journey proof yet."
+    },
+    {
+      "id": "CLI.TEAM.REPLACE_KEY",
+      "repo": "aweb",
+      "files": [
+        "cli/go/cmd/aw/team_replace_key.go"
+      ],
+      "status": "legacy",
+      "reason": "Replacement did:key under local team-controller authority; no ID-parent chain until lost-key replacement lands, so ancestry is unknown, never inherited from the old key."
+    },
+    {
+      "id": "SERVER.CONNECT",
+      "repo": "aweb",
+      "files": [
+        "server/src/aweb/routes/connect.py"
+      ],
+      "status": "legacy",
+      "reason": "Connection may create an identity or reuse a projection; it does not yet project a verified host-supplied ID chain. Reconnect must not mint a new origin."
+    },
+    {
+      "id": "OATS.SPAWN",
+      "repo": "oats-aweb",
+      "files": [
+        "oats-package/capabilities/oats-aweb/bin/oats-aweb.mjs"
+      ],
+      "status": "legacy",
+      "reason": "Actual parent signs coordinator/seat/sub-seat; deployment team root is not automatically the identity parent. This creation path has no landed per-path chain-or-refusal journey proof yet."
+    },
+    {
+      "id": "OATS.RESIDENT",
+      "repo": "oats-aweb",
+      "files": [
+        "oats-package/capabilities/oats-aweb/lib/resident.mjs"
+      ],
+      "status": "legacy",
+      "reason": "Unattended owner-ID to resident link; no human gesture per owned spawn. This creation path has no landed per-path chain-or-refusal journey proof yet."
+    },
+    {
+      "id": "OATS.PARENT.METADATA",
+      "repo": "oats",
+      "files": [
+        "lib/core.mjs"
+      ],
+      "status": "legacy",
+      "reason": "Unsigned runtime parent metadata does not establish ancestry. The external runtime provider has not supplied a landed chain-or-refusal creation journey."
+    }
+  ],
+  "primitive_guard": {
+    "legacy_files": [
+      {
+        "file": "awid/src/awid/attestation_records.py",
+        "reason": "Released member-attestation signatures retain their existing verification contract."
+      },
+      {
+        "file": "awid/src/awid/e2ee_keys.py",
+        "reason": "Released e2ee keys signing/key custody; ID-certificate verification uses the shared verifier."
+      },
+      {
+        "file": "awid/src/awid/registry.py",
+        "reason": "Registry request signing derives the current public key; ID-tree signer answers are checked by the shared strict verifier."
+      },
+      {
+        "file": "awid/src/awid/signing.py",
+        "reason": "Released message signatures retain their existing verification contract; ID certificates use the shared verifier."
+      },
+      {
+        "file": "awid/src/awid_service/testing.py",
+        "reason": "Existing reusable real-service test support signs synthetic fixture identities."
+      },
+      {
+        "file": "channel-core/src/api/client.ts",
+        "reason": "Released client signing/key custody; ID-certificate verification uses the shared verifier."
+      },
+      {
+        "file": "channel-core/src/config.ts",
+        "reason": "Released local key configuration and SHA-512 wiring for existing message signatures."
+      },
+      {
+        "file": "channel-core/src/identity/registry.ts",
+        "reason": "Released registry signing/key custody; ID-certificate verification uses the shared verifier."
+      },
+      {
+        "file": "channel-core/src/identity/signing.ts",
+        "reason": "Released message signatures retain their existing verification contract; ID certificates use the shared verifier."
+      },
+      {
+        "file": "channel-core/src/identity/trust.ts",
+        "reason": "Released trust signing/key custody; ID-certificate verification uses the shared verifier."
+      },
+      {
+        "file": "cli/go/awconfig/controllers.go",
+        "reason": "Released controllers signing/key custody; ID-certificate verification uses the shared verifier."
+      },
+      {
+        "file": "cli/go/awconfig/team_keys.go",
+        "reason": "Released team keys signing/key custody; ID-certificate verification uses the shared verifier."
+      },
+      {
+        "file": "cli/go/awid/a2a_publication.go",
+        "reason": "Released a2a publication signing/key custody; ID-certificate verification uses the shared verifier."
+      },
+      {
+        "file": "cli/go/awid/app_task_authorization.go",
+        "reason": "Released app task authorization signing/key custody; ID-certificate verification uses the shared verifier."
+      },
+      {
+        "file": "cli/go/awid/atomic_address_claim.go",
+        "reason": "Released atomic address claim signing/key custody; ID-certificate verification uses the shared verifier."
+      },
+      {
+        "file": "cli/go/awid/attestation_records.go",
+        "reason": "Released member-attestation signatures retain their existing verification contract."
+      },
+      {
+        "file": "cli/go/awid/certificate.go",
+        "reason": "Released team-membership certificate signatures are separate from ID-parent certificates."
+      },
+      {
+        "file": "cli/go/awid/client.go",
+        "reason": "Released client signing/key custody; ID-certificate verification uses the shared verifier."
+      },
+      {
+        "file": "cli/go/awid/custody.go",
+        "reason": "Released custody signing/key custody; ID-certificate verification uses the shared verifier."
+      },
+      {
+        "file": "cli/go/awid/e2ee_keys.go",
+        "reason": "Released e2ee keys signing/key custody; ID-certificate verification uses the shared verifier."
+      },
+      {
+        "file": "cli/go/awid/e2ee_messages.go",
+        "reason": "Released e2ee messages signing/key custody; ID-certificate verification uses the shared verifier."
+      },
+      {
+        "file": "cli/go/awid/human_channels_presence.go",
+        "reason": "Released human channels presence signing/key custody; ID-certificate verification uses the shared verifier."
+      },
+      {
+        "file": "cli/go/awid/human_signer.go",
+        "reason": "Human key custody: the human key, decrypted for one signature after its passphrase prompt, signs exactly the bytes it is given; ID-certificate verification uses the shared verifier."
+      },
+      {
+        "file": "cli/go/awid/keys.go",
+        "reason": "Shared key generation and seed loading for existing custody; key creation alone does not issue an ID certificate."
+      },
+      {
+        "file": "cli/go/awid/onboarding_bootstrap_redeem.go",
+        "reason": "Released onboarding bootstrap redeem signing/key custody; ID-certificate verification uses the shared verifier."
+      },
+      {
+        "file": "cli/go/awid/onboarding_claim_human.go",
+        "reason": "Released onboarding claim human signing/key custody; ID-certificate verification uses the shared verifier."
+      },
+      {
+        "file": "cli/go/awid/onboarding_cli_signup.go",
+        "reason": "Released onboarding cli signup signing/key custody; ID-certificate verification uses the shared verifier."
+      },
+      {
+        "file": "cli/go/awid/onboarding_didkey_signing.go",
+        "reason": "Released message signatures retain their existing verification contract; ID certificates use the shared verifier."
+      },
+      {
+        "file": "cli/go/awid/owneract.go",
+        "reason": "Released controller-signed owner-act family; controller authority stays distinct from identity ancestry."
+      },
+      {
+        "file": "cli/go/awid/registry_client.go",
+        "reason": "Released registry client signing/key custody; ID-certificate verification uses the shared verifier."
+      },
+      {
+        "file": "cli/go/awid/registry_namespace.go",
+        "reason": "Released registry namespace signing/key custody; ID-certificate verification uses the shared verifier."
+      },
+      {
+        "file": "cli/go/awid/rotate.go",
+        "reason": "Released rotate signing/key custody; ID-certificate verification uses the shared verifier."
+      },
+      {
+        "file": "cli/go/awid/signing.go",
+        "reason": "Released message signatures retain their existing verification contract; ID certificates use the shared verifier."
+      },
+      {
+        "file": "cli/go/awid/stable_identity.go",
+        "reason": "Released stable identity signing/key custody; ID-certificate verification uses the shared verifier."
+      },
+      {
+        "file": "cli/go/awid/team_server.go",
+        "reason": "Released team server signing/key custody; ID-certificate verification uses the shared verifier."
+      },
+      {
+        "file": "cli/go/cmd/aw/activity_hook.go",
+        "reason": "Released CLI activity hook signing/key custody; retains its existing signed family."
+      },
+      {
+        "file": "cli/go/cmd/aw/agent_status.go",
+        "reason": "Released CLI agent status signing/key custody; retains its existing signed family."
+      },
+      {
+        "file": "cli/go/cmd/aw/id_create_hosted.go",
+        "reason": "Released CLI id create hosted signing/key custody; retains its existing signed family."
+      },
+      {
+        "file": "cli/go/cmd/aw/id_team.go",
+        "reason": "Released CLI id team signing/key custody; retains its existing signed family."
+      },
+      {
+        "file": "cli/go/cmd/aw/team_ensure.go",
+        "reason": "Released CLI team ensure signing/key custody; retains its existing signed family."
+      },
+      {
+        "file": "cli/go/cmd/aw/team_replace_key.go",
+        "reason": "Released CLI team replace key signing/key custody; retains its existing signed family."
+      },
+      {
+        "file": "cli/go/hookevent/delivery.go",
+        "reason": "Released delivery signing/key custody; ID-certificate verification uses the shared verifier."
+      },
+      {
+        "file": "cli/go/hookevent/envelope.go",
+        "reason": "Released envelope signing/key custody; ID-certificate verification uses the shared verifier."
+      },
+      {
+        "file": "cli/tests/request_auth_v2_driver.go",
+        "reason": "Existing request auth v2 driver test support or fixture signatures; not an identity-tree verifier."
+      },
+      {
+        "file": "naapp-lib/renderer/link-client.mjs",
+        "reason": "Released naapp link client signing/key custody; separate from ID-certificate verification."
+      },
+      {
+        "file": "naapp-lib/src/aweb_naapp/hooks/delivery.py",
+        "reason": "Released naapp delivery signing/key custody; separate from ID-certificate verification."
+      },
+      {
+        "file": "naapp-lib/src/aweb_naapp/hooks/envelope.py",
+        "reason": "Released naapp envelope signing/key custody; separate from ID-certificate verification."
+      },
+      {
+        "file": "naapp-lib/src/aweb_naapp/hooks/owner_act.py",
+        "reason": "Released controller-signed owner-act family; controller authority stays distinct from identity ancestry."
+      },
+      {
+        "file": "naapp-lib/src/aweb_naapp/hooks/producer.py",
+        "reason": "Released naapp producer signing/key custody; separate from ID-certificate verification."
+      },
+      {
+        "file": "naapp-lib/src/aweb_naapp/pages/assets/page-link-client.js",
+        "reason": "Released naapp page link client signing/key custody; separate from ID-certificate verification."
+      },
+      {
+        "file": "naapp-lib/src/aweb_naapp/runtime/app_credentials.py",
+        "reason": "Released naapp app credentials signing/key custody; separate from ID-certificate verification."
+      },
+      {
+        "file": "naapp-lib/src/aweb_naapp/runtime/app_keys.py",
+        "reason": "Released naapp app keys signing/key custody; separate from ID-certificate verification."
+      },
+      {
+        "file": "naapp-lib/src/aweb_naapp/runtime/link_requests.py",
+        "reason": "Released naapp link requests signing/key custody; separate from ID-certificate verification."
+      },
+      {
+        "file": "naapp-lib/src/aweb_naapp/runtime/task_requests.py",
+        "reason": "Released naapp task requests signing/key custody; separate from ID-certificate verification."
+      },
+      {
+        "file": "naapp-lib/src/aweb_naapp/runtime/usage.py",
+        "reason": "Released naapp usage signing/key custody; separate from ID-certificate verification."
+      },
+      {
+        "file": "naapp-lib/src/aweb_naapp/signing_key.py",
+        "reason": "Released naapp signing key signing/key custody; separate from ID-certificate verification."
+      },
+      {
+        "file": "naapp-lib/testing/src/aweb_naapp_testing/__init__.py",
+        "reason": "Existing reusable real-service test support signs synthetic fixture identities."
+      },
+      {
+        "file": "naapp-lib/testing/src/aweb_naapp_testing/owner_acts.py",
+        "reason": "Existing reusable real-service test support signs synthetic fixture identities."
+      },
+      {
+        "file": "naapp/library/src/library/app_emit.py",
+        "reason": "Released naapp app emit signing/key custody; separate from ID-certificate verification."
+      },
+      {
+        "file": "naapp/logs/src/aweb_logs/chain.py",
+        "reason": "Released naapp chain signing/key custody; separate from ID-certificate verification."
+      },
+      {
+        "file": "naapp/logs/src/aweb_logs/ledger.py",
+        "reason": "Released naapp ledger signing/key custody; separate from ID-certificate verification."
+      },
+      {
+        "file": "naapp/secrets/runner/src/aweb_secrets_runner/protocol.py",
+        "reason": "Released naapp protocol signing/key custody; separate from ID-certificate verification."
+      },
+      {
+        "file": "naapp/secrets/runner/src/aweb_secrets_runner/registration.py",
+        "reason": "Released naapp registration signing/key custody; separate from ID-certificate verification."
+      },
+      {
+        "file": "naapp/secrets/runner/src/aweb_secrets_runner/state.py",
+        "reason": "Released naapp state signing/key custody; separate from ID-certificate verification."
+      },
+      {
+        "file": "naapp/secrets/scripts/gen_change_vectors.py",
+        "reason": "Existing gen change vectors test support or fixture signatures; not an identity-tree verifier."
+      },
+      {
+        "file": "naapp/secrets/src/aweb_secrets/run_service.py",
+        "reason": "Released naapp run service signing/key custody; separate from ID-certificate verification."
+      },
+      {
+        "file": "naapp/secrets/src/aweb_secrets/runner_protocol.py",
+        "reason": "Released naapp runner protocol signing/key custody; separate from ID-certificate verification."
+      },
+      {
+        "file": "naapp/secrets/src/aweb_secrets/runner_routes.py",
+        "reason": "Released naapp runner routes signing/key custody; separate from ID-certificate verification."
+      },
+      {
+        "file": "scripts/e2e/folio_uninstall_grant.py",
+        "reason": "Existing folio uninstall grant test support or fixture signatures; not an identity-tree verifier."
+      },
+      {
+        "file": "scripts/e2e/pin-store-multiprocess-gate/orchestrate.mjs",
+        "reason": "Existing orchestrate test support or fixture signatures; not an identity-tree verifier."
+      },
+      {
+        "file": "scripts/freeze_human_channels_presence.py",
+        "reason": "Existing freeze human channels presence test support or fixture signatures; not an identity-tree verifier."
+      },
+      {
+        "file": "scripts/freeze_human_channels_profile.py",
+        "reason": "Existing freeze human channels profile test support or fixture signatures; not an identity-tree verifier."
+      },
+      {
+        "file": "scripts/spikes/human_channels_e2ee.py",
+        "reason": "Existing human channels e2ee test support or fixture signatures; not an identity-tree verifier."
+      },
+      {
+        "file": "server/src/aweb/e2ee_messages.py",
+        "reason": "Released e2ee messages signing/key custody; ID-certificate verification uses the shared verifier."
+      },
+      {
+        "file": "server/src/aweb/human_channels/presence.py",
+        "reason": "Released presence signing/key custody; ID-certificate verification uses the shared verifier."
+      }
+    ]
+  }
+}

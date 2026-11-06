@@ -8,6 +8,7 @@ from typing import Any
 
 import aweb_naapp as naapp
 from aweb_naapp import FooterColumn, NavLink, SiteConfig, aweb_css
+from aweb_naapp.chrome import render_field
 
 from library.aweb_manifest import MANIFEST
 
@@ -106,9 +107,9 @@ _MODEL_DIAGRAM = """<style>
       <marker id="mfd" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="currentColor"/></marker>
       <marker id="mfda" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" style="fill:var(--accent)"/></marker>
     </defs>
-    <rect x="8" y="16" width="212" height="66" rx="11" style="fill:var(--surface);stroke:var(--line)"/>
-    <rect x="274" y="16" width="212" height="66" rx="11" style="fill:var(--surface);stroke:var(--line)"/>
-    <rect x="540" y="16" width="212" height="66" rx="11" style="fill:var(--surface);stroke:var(--line)"/>
+    <rect x="8" y="16" width="212" height="66" rx="2" style="fill:var(--surface);stroke:var(--line)"/>
+    <rect x="274" y="16" width="212" height="66" rx="2" style="fill:var(--surface);stroke:var(--line)"/>
+    <rect x="540" y="16" width="212" height="66" rx="2" style="fill:var(--surface);stroke:var(--line)"/>
     <text x="114" y="45" text-anchor="middle" font-size="17" font-weight="600" fill="currentColor">Catalog</text>
     <text x="114" y="65" text-anchor="middle" font-size="12.5" style="fill:var(--muted)">Public blueprints</text>
     <text x="380" y="45" text-anchor="middle" font-size="17" font-weight="600" fill="currentColor">Agent</text>
@@ -127,9 +128,9 @@ _MODEL_DIAGRAM = """<style>
       <marker id="mfm" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="currentColor"/></marker>
       <marker id="mfma" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" style="fill:var(--accent)"/></marker>
     </defs>
-    <rect x="132" y="12" width="216" height="60" rx="11" style="fill:var(--surface);stroke:var(--line)"/>
-    <rect x="132" y="176" width="216" height="60" rx="11" style="fill:var(--surface);stroke:var(--line)"/>
-    <rect x="132" y="340" width="216" height="60" rx="11" style="fill:var(--surface);stroke:var(--line)"/>
+    <rect x="132" y="12" width="216" height="60" rx="2" style="fill:var(--surface);stroke:var(--line)"/>
+    <rect x="132" y="176" width="216" height="60" rx="2" style="fill:var(--surface);stroke:var(--line)"/>
+    <rect x="132" y="340" width="216" height="60" rx="2" style="fill:var(--surface);stroke:var(--line)"/>
     <text x="240" y="38" text-anchor="middle" font-size="16" font-weight="600" fill="currentColor">Catalog</text>
     <text x="240" y="57" text-anchor="middle" font-size="12" style="fill:var(--muted)">Public blueprints</text>
     <text x="240" y="202" text-anchor="middle" font-size="16" font-weight="600" fill="currentColor">Agent</text>
@@ -235,7 +236,7 @@ _ENGINEERS_SECTION = """    <section class="section section--tint" id="engineers
           .eng-specs { margin: var(--s5) 0 0; display: grid; grid-template-columns: 1fr 1fr; gap: var(--s4) var(--s6); }
           .eng-specs > div { border-top: 1px solid var(--line-strong); padding-top: var(--s3); }
           .eng-specs > div:first-child { border-top-color: var(--accent); }
-          .eng-specs dt { font: 650 var(--step--1)/1 var(--font-mono); letter-spacing: 0.02em; color: var(--ink); }
+          .eng-specs dt { font: 650 var(--step--1)/1.4 var(--font-sans); letter-spacing: 0; color: var(--ink); }
           .eng-specs dd { margin: var(--s2) 0 0; color: var(--muted); font-size: var(--step-0); }
           .eng-scope { margin-top: var(--s5); color: var(--muted); font-size: var(--step--1); max-width: 70ch; }
           .eng-scope .kicker { color: var(--faint); margin-right: 0.6rem; }
@@ -279,7 +280,7 @@ def _site(*, public_origin: str, title: str, description: str) -> SiteConfig:
         footer_bottom=_FOOTER_BOTTOM,
         header_actions=(),
         source_url="https://github.com/awebai/aweb/tree/main/naapp/library",
-        og_image="/og-card.png",
+        og_image="/brand/field-v1/library-card.png",
     )
 
 
@@ -482,6 +483,7 @@ def render_landing_page(*, public_origin: str, blueprints: Any = None) -> str:
       html {{ scroll-padding-top: 5.5rem; }}
     </style>
     <section class="hero-center">
+{render_field()}
       <div class="wrap">
         <p class="kicker">Native Agentic App · library.aweb.ai</p>
         <h1>Where teams of AI agents choose, keep and improve the profiles they run.</h1>
@@ -627,14 +629,12 @@ then launch it in the agent home with this exact line:
 
 ```bash
 cd agents/instances/alice
-claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
+claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
 ```
 
-Both flags are needed: channel messages are delivered to the session only in
-bypass-permissions mode today — in Claude Code's default auto mode (and plan
-mode) the notification arrives and is silently not surfaced, so without
-`--dangerously-skip-permissions` there are no wake-ups. Claude Code asks once to
-confirm `--dangerously-load-development-channels`; that is expected.
+Channel delivery works in any permission mode, including auto and plan. Choose
+the permission mode that suits your workflow. Claude Code asks once to confirm
+`--dangerously-load-development-channels`; that is expected.
 
 **pi** — the other maintained wake-up path. Install the extension once, then
 launch it in the agent home:

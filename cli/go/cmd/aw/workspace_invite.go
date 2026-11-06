@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,9 +29,12 @@ func addWorktreeViaPrimaryInvite(
 		invite.AwebURL = sourceServerURL
 	}
 
-	accepted, err := acceptTeamInviteWithPreferredAwebURL(worktreePath, invite.Token, strings.TrimSpace(invite.AwebURL), alias)
+	accepted, err := acceptTeamInviteWithPreferredAwebURL(primaryDir, primaryIdentityHome, worktreePath, invite.Token, strings.TrimSpace(invite.AwebURL), alias)
 	if err != nil {
-		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
+		var pending *hostedInviteSignaturePendingError
+		if !errors.As(err, &pending) {
+			cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
+		}
 		return connectOutput{}, fmt.Errorf("accept team invite in new worktree: %w", err)
 	}
 
@@ -103,11 +107,11 @@ func createWorkspaceTeamInviteForTeamAt(workingDir, identityHome, explicitTeamID
 	var token string
 	if hasTeamKey {
 		registryURL := registryURLForTeamInviteAt(rootDir, identityHome, domain, awebURL)
-		_, token, err = createTeamInviteToken(domain, team, registryURL, awebURL, true)
+		_, token, err = createTeamInviteTokenAt(domain, team, registryURL, awebURL, true, "", workingDir, identityHome)
 	} else if strings.TrimSpace(awebURL) != "" {
 		_, token, err = createHostedTeamInviteTokenAt(workingDir, identityHome, teamID, true)
 	} else {
-		_, token, err = createTeamInviteToken(domain, team, "", awebURL, true)
+		_, token, err = createTeamInviteTokenAt(domain, team, "", awebURL, true, "", workingDir, identityHome)
 	}
 	if err != nil {
 		return workspaceTeamInvite{}, err
@@ -115,7 +119,7 @@ func createWorkspaceTeamInviteForTeamAt(workingDir, identityHome, explicitTeamID
 	return workspaceTeamInvite{Token: token, AwebURL: awebURL}, nil
 }
 
-func acceptTeamInviteWithPreferredAwebURL(homeDir, token, preferredAwebURL, alias string) (*acceptedTeamInvite, error) {
+func acceptTeamInviteWithPreferredAwebURL(primaryDir, primaryIdentityHome, homeDir, token, preferredAwebURL, alias string) (*acceptedTeamInvite, error) {
 	preferredAwebURL = strings.TrimSpace(preferredAwebURL)
 	opts := teamAcceptInviteOptions{
 		IdentityHome: filepath.Join(filepath.Clean(homeDir), ".aw"),
@@ -123,7 +127,7 @@ func acceptTeamInviteWithPreferredAwebURL(homeDir, token, preferredAwebURL, alia
 		Scope:        awid.IdentityModeLocal,
 	}
 	if preferredAwebURL == "" {
-		return acceptTeamInviteWithDetails(homeDir, token, opts)
+		return acceptProvisionedTeamInvite(primaryDir, primaryIdentityHome, homeDir, token, opts)
 	}
 
 	previous, hadPrevious := os.LookupEnv("AWEB_URL")
@@ -137,5 +141,5 @@ func acceptTeamInviteWithPreferredAwebURL(homeDir, token, preferredAwebURL, alia
 			_ = os.Unsetenv("AWEB_URL")
 		}
 	}()
-	return acceptTeamInviteWithDetails(homeDir, token, opts)
+	return acceptProvisionedTeamInvite(primaryDir, primaryIdentityHome, homeDir, token, opts)
 }

@@ -13,18 +13,20 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from aweb.internal_auth import parse_internal_auth_context
 from aweb.identity_auth_deps import (
     _enforce_current_membership,
     lookup_identity_agent_context,
     resolve_identity_auth,
 )
-from aweb.team_auth_deps import _aweb_db, verify_request_certificate
+from aweb.agent_wake import agent_wake_publisher
+from aweb.identity_binding import refresh_projection_binding, verify_identity_binding
+from aweb.internal_auth import parse_internal_auth_context
 from aweb.mcp.mutations import (
     mutation_callback_from_scope,
     reset_mutation_callback,
     set_mutation_callback,
 )
+from aweb.team_auth_deps import _aweb_db, get_team_identity
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +42,13 @@ class AuthContext:
     did_aw: str | None = None
     address: str | None = None
     workspace_id: str | None = None
+    request: Request | None = None
+    human_channels_service: Any = None
     trusted_proxy: bool = False
     identity_scope: str | None = None
+    # Evidence from get_team_identity verifying the presented certificate,
+    # never from the agent projection's stored certificate_id.
+    certificate_id: str | None = None
 
 
 def auth_dids(auth: AuthContext) -> list[str]:
@@ -64,6 +71,15 @@ _auth_context: contextvars.ContextVar[AuthContext | None] = contextvars.ContextV
 )
 
 
+def current_agent_wake_publisher():
+    """The serving application's agent wake publisher for this MCP request."""
+    ctx = _auth_context.get()
+    request = getattr(ctx, "request", None)
+    if request is None:
+        return None
+    return agent_wake_publisher(request.app.state)
+
+
 def get_auth() -> AuthContext:
     """Return the auth context for the current request.
 
@@ -78,9 +94,10 @@ def get_auth() -> AuthContext:
 class MCPAuthMiddleware:
     """ASGI middleware that resolves identity for MCP requests."""
 
-    def __init__(self, app: ASGIApp, db_infra: Any) -> None:
+    def __init__(self, app: ASGIApp, db_infra: Any, human_channels_service=None) -> None:
         self.app = app
         self.db_infra = db_infra
+        self.human_channels_service = human_channels_service
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -108,6 +125,10 @@ class MCPAuthMiddleware:
             await response(scope, receive, send)
             return
 
+        # The mounted inner Starlette app mutates scope["app"]. Keep the
+        # authenticated parent policy/registry context stable for tool reads.
+        ctx.request = Request(dict(request.scope))
+        ctx.human_channels_service = self.human_channels_service
         cv_token = _auth_context.set(ctx)
         mutation_token = set_mutation_callback(mutation_callback_from_scope(scope))
         try:
@@ -119,7 +140,7 @@ class MCPAuthMiddleware:
     async def _resolve_auth(self, request: Request) -> AuthContext | None:
         internal = parse_internal_auth_context(request)
         if internal is not None:
-            return await self._resolve_proxy_auth(internal)
+            return await self._resolve_proxy_auth(internal, request=request)
 
         auth_header = request.headers.get("authorization", "")
         if not auth_header.startswith("DIDKey "):
@@ -132,6 +153,7 @@ class MCPAuthMiddleware:
                 self.db_infra,
                 did_key=identity.did_key,
                 did_aw=identity.did_aw,
+                request=request,
             )
             # Same enforcement as the HTTP identity-only path (aweb-abfn): a
             # projection whose admitting certificate is revoked must not grant
@@ -148,7 +170,7 @@ class MCPAuthMiddleware:
                 identity_scope=(row or {}).get("identity_scope") or None,
             )
 
-        cert_info = await verify_request_certificate(request, self.db_infra)
+        identity = await get_team_identity(request, self.db_infra)
 
         aweb_db = _aweb_db(self.db_infra)
         row = await aweb_db.fetch_one(
@@ -156,8 +178,8 @@ class MCPAuthMiddleware:
             SELECT agent_id, alias, did_aw, address, identity_scope FROM {{tables.agents}}
             WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL
             """,
-            cert_info["team_id"],
-            cert_info["did_key"],
+            identity.team_id,
+            identity.did_key,
         )
         if not row:
             raise HTTPException(status_code=403, detail="Agent not connected")
@@ -171,21 +193,22 @@ class MCPAuthMiddleware:
             LIMIT 1
             """,
             row["agent_id"],
-            cert_info["team_id"],
+            identity.team_id,
         )
 
         return AuthContext(
-            team_id=cert_info["team_id"],
+            team_id=identity.team_id,
             agent_id=str(row["agent_id"]),
             workspace_id=(str(workspace["workspace_id"]) if workspace else None),
             alias=row["alias"],
-            did_key=cert_info["did_key"],
-            did_aw=(cert_info.get("member_did_aw") or row.get("did_aw") or "").strip() or None,
-            address=(cert_info.get("member_address") or row.get("address") or "").strip() or None,
-            identity_scope=cert_info.get("identity_scope") or row.get("identity_scope") or None,
+            did_key=identity.did_key,
+            did_aw=identity.did_aw or None,
+            address=identity.address or None,
+            identity_scope=identity.identity_scope or None,
+            certificate_id=identity.certificate_id,
         )
 
-    async def _resolve_proxy_auth(self, internal: dict[str, str]) -> AuthContext:
+    async def _resolve_proxy_auth(self, internal: dict[str, str], *, request: Request) -> AuthContext:
         aweb_db = _aweb_db(self.db_infra)
         team_id = internal["team_id"]
         row = await aweb_db.fetch_one(
@@ -199,6 +222,12 @@ class MCPAuthMiddleware:
         )
         if not row:
             raise HTTPException(status_code=403, detail="Agent not connected")
+
+        binding = await verify_identity_binding(
+            request, did_key=row["did_key"], did_aw=row.get("did_aw") or "",
+            address=row.get("address") or "",
+        )
+        await refresh_projection_binding(aweb_db, agent_id=row["agent_id"], did_key=row["did_key"], binding=binding)
 
         workspace = await aweb_db.fetch_one(
             """
@@ -218,8 +247,8 @@ class MCPAuthMiddleware:
             workspace_id=(str(workspace["workspace_id"]) if workspace else None),
             alias=row["alias"],
             did_key=str(row["did_key"]),
-            did_aw=(str(row.get("did_aw") or "").strip() or None),
-            address=(str(row.get("address") or "").strip() or None),
+            did_aw=binding.did_aw or None,
+            address=binding.address or None,
             trusted_proxy=True,
             identity_scope=row.get("identity_scope") or None,
         )

@@ -45,7 +45,7 @@ var eventsStreamCmd = &cobra.Command{
 			defer cancel()
 		}
 
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(commandStdout)
 		printed := newPrintedEvents(printedEventsLimit)
 
 		// A subscription is made of several streams: the server closes every
@@ -260,7 +260,7 @@ func drainEventStream(ctx context.Context, stream *awid.AgentEventStream, enc *j
 				return delivered, nil, err
 			}
 		} else {
-			writeEventText(os.Stdout, os.Stderr, ev)
+			writeEventText(commandStdout, os.Stderr, ev)
 		}
 	}
 }

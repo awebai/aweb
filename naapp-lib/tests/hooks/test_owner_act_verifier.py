@@ -17,7 +17,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
-from aweb_naapp_testing import REGISTRY_URL, SERVICE_TOKEN, did_key
+from aweb_naapp_testing import did_key
+from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager
 

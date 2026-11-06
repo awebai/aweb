@@ -208,6 +208,7 @@ async def test_mcp_roles_show_emits_team_roles_ids(monkeypatch):
         common_tools,
         "get_auth",
         lambda: AuthContext(
+            certificate_id="cert-1",
             team_id="backend:acme.com",
             agent_id="agent-1",
             alias="alice",
@@ -235,6 +236,7 @@ async def test_mcp_instructions_show_falls_back_to_created_at_when_updated_at_mi
         common_tools,
         "get_auth",
         lambda: AuthContext(
+            certificate_id="cert-1",
             team_id="backend:acme.com",
             agent_id="agent-1",
             alias="alice",

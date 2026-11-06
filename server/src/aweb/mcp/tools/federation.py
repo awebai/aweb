@@ -8,6 +8,7 @@ from typing import Any
 from aweb.config import get_settings
 from aweb.identity_auth_deps import MessagingAuth
 from aweb.mcp.auth import AuthContext
+from aweb.federation.origins import public_origins
 from aweb.mcp.mutations import current_mutation_callback
 
 
@@ -26,19 +27,22 @@ def mcp_messaging_auth(auth: AuthContext) -> MessagingAuth:
 def mcp_federation_request(
     *,
     public_origin: str | None = None,
+    request=None,
     mail_transport: Any = None,
     chat_transport: Any = None,
 ):
     origin = (public_origin or "").strip() or get_settings().public_origin
     state = SimpleNamespace(
         public_origin=origin,
+        federation_public_origins=public_origins(request, public_origin=origin),
+        awid_registry_client=getattr(getattr(getattr(request, "app", None), "state", None), "awid_registry_client", None),
         federation_mail_transport=mail_transport,
         federation_chat_transport=chat_transport,
         federation_message_transport=chat_transport,
         on_mutation=current_mutation_callback(),
     )
     app = SimpleNamespace(state=state)
-    return SimpleNamespace(app=app, headers={})
+    return SimpleNamespace(app=app, headers={}, state=SimpleNamespace())
 
 
 def registry_delivery_origin(resolution) -> str:

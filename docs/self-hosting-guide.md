@@ -42,6 +42,14 @@ Default host ports:
 If you want different host ports, change `AWEB_PORT` and `AWID_PORT` in
 `server/.env` before `docker compose up`.
 
+Compose publishes both ports on `127.0.0.1` only, so they are reachable from
+this machine and nowhere else. Docker's published ports bypass host firewalls
+such as ufw: a port published on every interface is open to the network even
+when the firewall says it is closed. To reach the services from other machines,
+set `AWEB_BIND_ADDRESS` in `server/.env` to `0.0.0.0` or to the address of one
+interface, and put a proxy in front of it or filter it with a rule in Docker's
+`DOCKER-USER` chain; a plain ufw rule does not filter it.
+
 Compose refuses to start any container when `AWID_SERVICE_TOKEN` is missing or
 empty. Generate it once as shown above; Compose passes that exact value to both
 aweb and AWID. Do not commit `server/.env`.
@@ -91,10 +99,11 @@ aw team join <invite-token> --name bob
 ```
 
 Joining installs Bob's local identity and team membership and connects the
-workspace using the self-hosted URL carried by the invite. Verify it directly:
+workspace using the self-hosted URL carried by the invite. Verify it against
+the server:
 
 ```bash
-aw check
+aw check --online
 ```
 
 This connects an agent directory you already operate. Aweb does not create its
@@ -308,6 +317,20 @@ For `awid`:
 - `AWID_DATABASE_URL`
 - `AWID_REDIS_URL`
 - optional `AWID_SKIP_DNS_VERIFY=1` for internal non-DNS deployments
+
+### App Task Request Authority Reads
+
+Successful creation and replay checks on `POST /v1/tasks/app-requests` make
+three uncached AWID reads: the team key, revocations, and current certificates.
+The public member answer route repeats these fresh checks before its transaction.
+Paginated lists can require additional HTTP calls. Account for this traffic
+when sizing AWID's per-client rate limits. Registry failures return
+`503 authority_unavailable`; these checks do not use stale authority.
+
+If request volume warrants a future cache, it must have an explicit freshness
+bound measured in seconds and fail closed at expiry, with no stale fallback.
+The general registry outage-grace cache cannot serve this path. See the
+[app task request contract](app-task-requests.md#verification-in-order).
 
 ### Cross-Registry Authority and Migration
 

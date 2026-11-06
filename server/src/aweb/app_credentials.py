@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from fastapi import HTTPException, Request
 
 from awid.dns_auth import enforce_timestamp_skew, require_timestamp
-from awid.log import canonical_server_origin
+from awid.log import canonical_server_origin, require_canonical_server_origin
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 
 from aweb.app_registry import get_active_app_emit_key, get_active_app_key, validate_team_id
@@ -29,6 +29,7 @@ APP_CREDENTIAL_VERSION = 1
 APP_EVENT = "app-event"
 APP_GRANT_READ = "app-grant-read"
 HOOK_RESOLVE = "hook-resolve"
+APP_REQUEST = "app-request"
 
 KeyLookup = Callable[..., Awaitable[dict | None]]
 
@@ -59,6 +60,8 @@ class AppCredential:
     did_key: str
     # The installed digest the key is registered under.
     digest: str
+    installation_id: str | None = None
+    installation_generation: int | None = None
 
 
 async def _emit_key(db, *, purpose: str, team_id: str, app_id: str, kid: str, did_key: str) -> dict | None:
@@ -74,6 +77,14 @@ async def _app_key(db, *, purpose: str, team_id: str, app_id: str, kid: str, did
 
 
 PURPOSES: dict[str, AppCredentialPurpose] = {
+    APP_REQUEST: AppCredentialPurpose(
+        auth=APP_REQUEST,
+        prefix="AWEB-App-Request DIDKey ",
+        label="app request",
+        key_not_registered="app_key_not_registered",
+        lookup_key=_app_key,
+        one_encoding_signature=True,
+    ),
     APP_EVENT: AppCredentialPurpose(
         auth=APP_EVENT,
         prefix="AWEB-App DIDKey ",
@@ -106,7 +117,7 @@ def _allowed_audiences(request: Request) -> set[str]:
     return {canonical_server_origin(configured or get_settings().public_origin)}
 
 
-async def verify_app_credential(request: Request, db, purpose: str) -> AppCredential:
+async def verify_app_credential(request: Request, db, purpose: str, *, installation: dict | None = None) -> AppCredential:
     """Verify an app credential for exactly ``purpose``.
 
     The Authorization prefix selects nothing: it must be the purpose's own
@@ -141,7 +152,11 @@ async def verify_app_credential(request: Request, db, purpose: str) -> AppCreden
     except ValueError as exc:
         raise HTTPException(status_code=401, detail=f"Invalid {label} signed payload") from exc
     try:
-        payload = json.loads(canonical)
+        if purpose == APP_REQUEST:
+            from aweb.task_contracts import strict_json_bytes
+            payload = strict_json_bytes(canonical)
+        else:
+            payload = json.loads(canonical)
     except Exception as exc:
         raise HTTPException(status_code=401, detail=f"Invalid {label} signed payload") from exc
     if not isinstance(payload, dict) or canonical_json_bytes(payload) != canonical:
@@ -159,13 +174,18 @@ async def verify_app_credential(request: Request, db, purpose: str) -> AppCreden
         "body_sha256": body_sha256,
         "timestamp": timestamp,
     }
+    if purpose == APP_REQUEST:
+        if set(payload) != set(expected) | {"aud", "installation_id", "installation_generation"}:
+            raise HTTPException(status_code=401, detail="Invalid app request signed payload")
+        if type(payload.get("installation_generation")) is not int or type(payload.get("v")) is not int:
+            raise HTTPException(status_code=401, detail="Invalid app request signed payload")
     for field, expected_value in expected.items():
         if payload.get(field) != expected_value:
             raise HTTPException(status_code=401, detail=f"{label.capitalize()} signed payload does not match request")
 
     aud = str(payload.get("aud") or "").strip()
     try:
-        canonical_aud = canonical_server_origin(aud)
+        canonical_aud = require_canonical_server_origin(aud) if purpose == APP_REQUEST else canonical_server_origin(aud)
     except Exception as exc:
         raise HTTPException(status_code=401, detail=f"{label.capitalize()} signed payload audience is invalid") from exc
     if canonical_aud not in _allowed_audiences(request):
@@ -176,10 +196,18 @@ async def verify_app_credential(request: Request, db, purpose: str) -> AppCreden
     except ValueError as exc:
         raise HTTPException(status_code=401, detail=f"Invalid {label} signature") from exc
 
+    if purpose == APP_REQUEST:
+        if (installation is None or installation["state"] != "active" or not installation.get("origin_verified", False)
+                or payload["installation_id"] != str(installation["installation_id"])
+                or payload["installation_generation"] != installation["generation"]):
+            raise HTTPException(status_code=403, detail="scope_denied")
+
     row = await spec.lookup_key(db, purpose=purpose, team_id=team_id, app_id=app_id, kid=kid, did_key=did_key)
     if row is None:
         raise HTTPException(status_code=403, detail=spec.key_not_registered)
 
     return AppCredential(
-        purpose=purpose, team_id=team_id, app_id=app_id, kid=kid, did_key=did_key, digest=row["digest"]
+        purpose=purpose, team_id=team_id, app_id=app_id, kid=kid, did_key=did_key, digest=row["digest"],
+        installation_id=str(installation["installation_id"]) if purpose == APP_REQUEST else None,
+        installation_generation=installation["generation"] if purpose == APP_REQUEST else None,
     )

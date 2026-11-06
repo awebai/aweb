@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"os/exec"
@@ -412,6 +414,28 @@ func TestAwWorkspaceDeleteExternalIdentityHomeHasNoGenericFallback(t *testing.T)
 	}
 	if _, err := os.Stat(filepath.Join(instanceHome, ".aw")); !os.IsNotExist(err) {
 		t.Fatalf("external delete fallback mutated caller cwd identity home: %v", err)
+	}
+
+	// Under --json the refusal's reason is its stable code on stdout; stderr
+	// and the exit code are those of the plain refusal.
+	run = exec.CommandContext(ctx, bin, "--identity-home", filepath.Join(principalRoot, ".aw"), "workspace", "delete", selfRetireFixtureWorkspaceID, "--json")
+	run.Env = testCommandEnv(filepath.Join(root, "home"))
+	run.Dir = instanceHome
+	var stdout, stderr bytes.Buffer
+	run.Stdout, run.Stderr = &stdout, &stderr
+	err = run.Run()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 || stderr.String() != text {
+		t.Fatalf("exit %v stderr %q, want exit 2 and %q", err, stderr.String(), text)
+	}
+	var envelope struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil || envelope.Error.Code != aliasReleaseGlobalIdentity || envelope.Error.Message+"\n" != text {
+		t.Fatalf("envelope %q: %+v %v", stdout.String(), envelope, err)
 	}
 }
 

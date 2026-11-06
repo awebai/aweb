@@ -38,6 +38,13 @@ func (s *custodyService) handleSignAppRequest(w http.ResponseWriter, r *http.Req
 	}
 	out, err := s.signAppRequest(r.Context(), &req)
 	if err != nil {
+		var refusal *installationApprovalRefusal
+		if errors.As(err, &refusal) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			writeJSON(w, map[string]string{"error": refusal.Code, "message": refusal.Message})
+			return
+		}
 		writeCustodyError(w, 403, err.Error())
 		return
 	}
@@ -63,13 +70,6 @@ func (s *custodyService) signAppRequest(ctx context.Context, req *awid.AppReques
 	if _, err := s.validateE2EECommon(ctx, req.Operation, fields, req.Nonce, req.Timestamp, ""); err != nil {
 		return nil, err
 	}
-	key, cached, err := s.reserveCustodyReplay(req.GrantID, req.SessionDIDKey, req.Nonce, req.RequestDigest, &awid.AppRequestSignResponse{})
-	if err != nil {
-		return nil, err
-	}
-	if out, _ := cached.(*awid.AppRequestSignResponse); out != nil {
-		return out, nil
-	}
 	snap, err := loadGrantAppToolsSnapshot(s.residentHome, req.GrantID)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -83,6 +83,23 @@ func (s *custodyService) signAppRequest(ctx context.Context, req *awid.AppReques
 	app, ok := snap.Apps[strings.TrimSpace(req.AppID)]
 	if !ok {
 		return nil, fmt.Errorf("app_tool_denied")
+	}
+	if strings.TrimSpace(app.InstallationID) == "" {
+		return nil, installationApprovalError("app_installation_required", app.App.Origin, s.residentHome, snap.TeamID)
+	}
+	current, err := activeInstallation(ctx, s.clientDeps(ctx).client, snap.TeamID, req.AppID)
+	if err != nil {
+		return nil, installationApprovalError(err.Error(), app.App.Origin, s.residentHome, snap.TeamID)
+	}
+	if current.InstallationID != app.InstallationID {
+		return nil, installationApprovalError("app_installation_changed", app.App.Origin, s.residentHome, snap.TeamID)
+	}
+	key, cached, err := s.reserveCustodyReplay(req.GrantID, req.SessionDIDKey, req.Nonce, req.RequestDigest, &awid.AppRequestSignResponse{})
+	if err != nil {
+		return nil, err
+	}
+	if out, _ := cached.(*awid.AppRequestSignResponse); out != nil {
+		return out, nil
 	}
 	var tool *appmanifest.Tool
 	for i := range app.Tools {

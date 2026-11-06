@@ -5,7 +5,7 @@
 #       npm pack once into <dir>, then refuse unless the tgz declares the
 #       expected version, contains the declared main entry, and every
 #       files[] entry contributed at least one path. Prints the sha256.
-#   publish-exact    --tgz <file>
+#   publish-exact    --tgz <file> [--staged-final]
 #       npm publish of the exact staged tgz. Nothing is repacked.
 #   verify-published --tgz <file> --package <name> --version <X.Y.Z>
 #                    [--observed <file>]
@@ -13,10 +13,11 @@
 #       unless its bytes are identical to the staged tgz.
 #   verify-published-bounded --tgz <file> --package <name> --version <X.Y.Z>
 #                    --post-action <publish|adopt>
-#                    [--deadline-seconds <n>] [--backoff-seconds <n>]
+#                    [--dist-tag <tag>] [--deadline-seconds <n>] [--backoff-seconds <n>]
 #       Only after an exact publish/adopt action, retry transient registry
 #       visibility until a strict deadline. Succeeds only on the exact staged
-#       bytes; a present mismatch refuses permanently without retry.
+#       bytes and integrity (plus --dist-tag when supplied); the default
+#       window is 25 minutes. A present mismatch refuses without retry.
 #   require-publishable --manifest <manifest.json>
 #       Refuse unless the staged manifest records mode stage-only; a
 #       verify-only artifact must never continue to publication.
@@ -43,12 +44,14 @@
 # wrapper with the exact aweb-channel server name; pi:
 # pi-extension/scripts/check-package-dist.mjs markers - including the
 # authenticated trust boundary and the bundled channel-core deadline,
-# byte-inactivity watchdog, and settled-backoff listener cleanup - plus the five
-# skill directories; skills:
-# plugin version equals the package version and exactly the five skill
-# directories).
+# byte-inactivity watchdog, and settled-backoff listener cleanup - with no
+# bundled skills; skills: plugin version equals the package version, Pi skills
+# discovery metadata, and exactly the shipped skill directories).
 
 set -euo pipefail
+
+# Publication must not trigger npm's unrelated background self-update lookup.
+export NPM_CONFIG_UPDATE_NOTIFIER=false npm_config_update_notifier=false
 
 fail() { printf 'REFUSE: %s\n' "$1" >&2; exit 1; }
 
@@ -60,7 +63,8 @@ sha256() {
 MODE="${1:-}"; shift || true
 DIR='' VERSION='' OUT='' TGZ='' PACKAGE='' OBSERVED='' PROFILE='' SOURCE_ROOT=''
 MANIFEST='' STAGING='' SHA='' DIGEST='' RUN_ID='' ARTIFACT_ID='' STATUS=''
-POST_ACTION='' DEADLINE_SECONDS='120' BACKOFF_SECONDS='5'
+POST_ACTION='' DEADLINE_SECONDS='' BACKOFF_SECONDS='5' DIST_TAG=''
+STAGED_FINAL=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dir) DIR="$2"; shift 2 ;;
@@ -79,6 +83,8 @@ while [[ $# -gt 0 ]]; do
     --run-id) RUN_ID="$2"; shift 2 ;;
     --artifact-id) ARTIFACT_ID="$2"; shift 2 ;;
     --post-action) POST_ACTION="$2"; shift 2 ;;
+    --dist-tag) DIST_TAG="$2"; shift 2 ;;
+    --staged-final) STAGED_FINAL=1; shift ;;
     --deadline-seconds) DEADLINE_SECONDS="$2"; shift 2 ;;
     --backoff-seconds) BACKOFF_SECONDS="$2"; shift 2 ;;
     *) echo "npm-exact-publish: unknown argument $1" >&2; exit 2 ;;
@@ -106,8 +112,6 @@ PYTGZ
   fi
 fi
 
-EXPECTED_SKILLS="aweb-bootstrap aweb-coordination aweb-identity aweb-messaging aweb-team-membership"
-
 profile_inspect() {
   local tgz="$1"
   [[ -n "$SOURCE_ROOT" ]] || fail "--profile requires --source-root"
@@ -115,6 +119,7 @@ profile_inspect() {
   tar -xzf "$tgz" -C "$unpack"
   case "$PROFILE" in
     channel)
+      [[ ! -d "$unpack/package/skills" ]] || fail "channel tgz must not bundle skills"
       node "$SOURCE_ROOT/channel/scripts/check-package-dist.mjs" \
         --dist "$unpack/package/dist/index.js" \
         || fail "channel package-dist contract (markers/sentinel/version) failed"
@@ -148,15 +153,13 @@ PYPLUGIN
       node "$SOURCE_ROOT/pi-extension/scripts/check-package-dist.mjs" \
         --dist "$unpack/package/dist/index.js" \
         || fail "pi package-dist contract (bundled channel-core markers) failed"
-      local s actual expected
-      for s in $EXPECTED_SKILLS; do
-        [[ -d "$unpack/package/skills/$s" ]] \
-          || fail "pi tgz lacks expected skill directory skills/$s"
-      done
-      actual="$(ls "$unpack/package/skills" 2>/dev/null | sort | tr '\n' ' ')"
-      expected="$(tr ' ' '\n' <<<"$EXPECTED_SKILLS" | sort | tr '\n' ' ')"
-      [[ "$actual" == "$expected" ]] \
-        || fail "pi tgz skill set is [$actual], expected exactly [$expected]"
+      [[ ! -d "$unpack/package/skills" ]] || fail "pi tgz must not bundle skills"
+      python3 - "$unpack/package/package.json" <<'PYPI'
+import json, sys
+pkg = json.load(open(sys.argv[1]))
+if pkg.get("pi", {}).get("skills") != []:
+    sys.exit("REFUSE: pi runtime must disable automatic skills discovery with pi.skills=[]")
+PYPI
       ;;
     skills)
       python3 - "$unpack/package/.claude-plugin/plugin.json" "$VERSION" <<'PYPLUG'
@@ -169,9 +172,17 @@ if plugin.get("version") != sys.argv[2]:
     sys.exit(f"REFUSE: skills plugin version {plugin.get('version')} "
              f"does not equal the package version {sys.argv[2]}")
 PYPLUG
+      python3 - "$unpack/package/package.json" <<'PYSKILLS'
+import json, sys
+pkg = json.load(open(sys.argv[1]))
+if pkg.get("pi", {}).get("skills") != ["./skills"]:
+    sys.exit("REFUSE: optional skills package must expose pi.skills=[./skills]")
+PYSKILLS
       local actual expected
+      local expected_skills
+      expected_skills="$(node "$SOURCE_ROOT/scripts/skill-packaging.mjs" list)"
       actual="$(ls "$unpack/package/skills" 2>/dev/null | sort | tr '\n' ' ')"
-      expected="$(tr ' ' '\n' <<<"$EXPECTED_SKILLS" | sort | tr '\n' ' ')"
+      expected="$(tr ' ' '\n' <<<"$expected_skills" | sort | tr '\n' ' ')"
       [[ "$actual" == "$expected" ]] \
         || fail "skills tgz skill set is [$actual], expected exactly [$expected]"
       ;;
@@ -237,7 +248,20 @@ PY
     ;;
   publish-exact)
     [[ -n "$TGZ" && -f "$TGZ" ]] || fail "publish-exact requires an existing --tgz"
-    npm publish "$TGZ" --ignore-scripts --access public
+    # Select from the staged bytes, not caller environment or a filename.
+    dist_tag="$(python3 - "$TGZ" "$STAGED_FINAL" <<'PYTAG'
+import json, re, sys, tarfile
+with tarfile.open(sys.argv[1]) as archive:
+    version = json.load(archive.extractfile("package/package.json"))["version"]
+base = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+if not isinstance(version, str) or not re.fullmatch(base + r"(?:-rc\.[1-9][0-9]*)?", version):
+    sys.exit("REFUSE: npm version must be X.Y.Z or X.Y.Z-rc.N (N >= 1)")
+if sys.argv[2] == "1" and not re.fullmatch(base, version):
+    sys.exit("REFUSE: staged-final publication requires a final version")
+print("next" if sys.argv[2] == "1" or "-rc." in version else "latest")
+PYTAG
+    )"
+    npm publish "$TGZ" --ignore-scripts --access public --tag "$dist_tag"
     printf 'PUBLISHED: %s sha256 %s\n' "$(basename "$TGZ")" "$(sha256 "$TGZ")"
     ;;
   verify-published)
@@ -260,65 +284,17 @@ PY
       || fail "verify-published-bounded requires --tgz --package --version"
     [[ "$POST_ACTION" == "publish" || "$POST_ACTION" == "adopt" ]] \
       || fail "verify-published-bounded requires --post-action publish or adopt"
-    [[ "$DEADLINE_SECONDS" =~ ^[1-9][0-9]*$ && "$BACKOFF_SECONDS" =~ ^[0-9]+$ ]] \
+    [[ ( -z "$DEADLINE_SECONDS" || "$DEADLINE_SECONDS" =~ ^[1-9][0-9]*$ ) && "$BACKOFF_SECONDS" =~ ^[0-9]+$ ]] \
       || fail "readback deadline must be positive and backoff non-negative integer seconds"
-    readback_tmp="$(mktemp -d)"
-    trap 'rm -rf "$readback_tmp"' EXIT
-    packument="$readback_tmp/packument.json"
-    observed="$readback_tmp/observed.tgz"
-    encoded="$(python3 - "$PACKAGE" <<'PYENC'
-import sys
-import urllib.parse
-print(urllib.parse.quote(sys.argv[1], safe=""))
-PYENC
-    )"
-    registry_url="https://registry.npmjs.org/${encoded}/${VERSION}"
-    deadline=$((SECONDS + DEADLINE_SECONDS))
-    attempts=0
-    last_observation='not attempted'
-    while (( SECONDS < deadline )); do
-      attempts=$((attempts + 1))
-      remaining=$((deadline - SECONDS))
-      if status="$(curl -sS --connect-timeout "$remaining" --max-time "$remaining" \
-          -o "$packument" -w '%{http_code}' "$registry_url")"; then
-        case "$status" in
-          200)
-            tarball="$(python3 - "$packument" <<'PYTARBALL' 2>/dev/null || true
-import json
-import sys
-value = json.load(open(sys.argv[1])).get("dist", {}).get("tarball")
-if isinstance(value, str) and value:
-    print(value)
-PYTARBALL
-            )"
-            remaining=$((deadline - SECONDS))
-            if [[ -n "$tarball" && "$remaining" -gt 0 ]] \
-               && curl -fsSL --connect-timeout "$remaining" --max-time "$remaining" \
-                 -o "$observed" "$tarball"; then
-              staged_digest="$(sha256 "$TGZ")"
-              observed_digest="$(sha256 "$observed")"
-              if [[ "$observed_digest" != "$staged_digest" ]]; then
-                fail "registry serves $observed_digest, staged is $staged_digest; permanent mismatch after $POST_ACTION"
-              fi
-              printf 'VERIFIED: registry equals staged (%s) after %s attempt(s)\n' \
-                "$staged_digest" "$attempts"
-              exit 0
-            fi
-            last_observation='HTTP 200 with unavailable tarball bytes'
-            ;;
-          404) last_observation='HTTP 404 (not yet visible)' ;;
-          *) last_observation="HTTP $status (registry unavailable)" ;;
-        esac
-      else
-        last_observation='registry request unavailable'
-      fi
-      remaining=$((deadline - SECONDS))
-      (( remaining > 0 )) || break
-      sleep_for="$BACKOFF_SECONDS"
-      (( sleep_for <= remaining )) || sleep_for="$remaining"
-      sleep "$sleep_for"
-    done
-    fail "registry readback uncertain at deadline after $attempts attempt(s): $last_observation"
+    readback_args=(--artifact "$PACKAGE=$TGZ" --version "$VERSION"
+      --registry "${NPM_CONFIG_REGISTRY:-https://registry.npmjs.org}"
+      --backoff-seconds "$BACKOFF_SECONDS")
+    [[ -z "$DEADLINE_SECONDS" ]] || readback_args+=(--deadline-seconds "$DEADLINE_SECONDS")
+    [[ -z "$DIST_TAG" ]] || readback_args+=(--dist-tag "$DIST_TAG")
+    # One verifier ships with the aw distribution and serves every npm lane.
+    # Its default is 25 minutes, covering the observed 19-minute registry lag.
+    root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    exec python3 "$root/cli/go/npm/readback.py" "${readback_args[@]}"
     ;;
   decide-npm)
     # Tri-state registry decision: HTTP 404 alone proves absence (PUBLISH);
@@ -387,8 +363,8 @@ PYMAN
   validate-inputs)
     [[ -z "$SHA" ]] || [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] \
       || fail "sha must be exactly 40 lowercase hex characters, got: $SHA"
-    [[ -z "$VERSION" ]] || [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-      || fail "version must be strict X.Y.Z with no prefix, got: $VERSION"
+    [[ -z "$VERSION" ]] || [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.[1-9][0-9]*)?$ ]] \
+      || fail "version must be X.Y.Z or X.Y.Z-rc.N (N >= 1), got: $VERSION"
     [[ -z "$DIGEST" ]] || [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] \
       || fail "digest must be sha256:<64 lowercase hex>, got: $DIGEST"
     [[ -z "$RUN_ID" ]] || [[ "$RUN_ID" =~ ^[0-9]+$ ]] \

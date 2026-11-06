@@ -78,6 +78,11 @@ async def gc_inactive_scopes(db_infra, *, ttl_days: int = 30) -> dict:
               WHERE cs.team_id = t.team_id
                 AND cm.created_at >= $1
           )
+          AND NOT EXISTS (
+              SELECT 1 FROM {{tables.team_rooms}} r
+              JOIN {{tables.room_messages}} m ON m.room_id = r.room_id
+              WHERE r.team_id = t.team_id AND m.created_at >= $1
+          )
         """,
         cutoff,
     )
@@ -187,6 +192,20 @@ async def _hard_delete_scope(aweb_db, *, team_id) -> None:
         )
         await tx.execute(
             "DELETE FROM {{tables.task_dependencies}} WHERE team_id = $1",
+            team_id,
+        )
+        await tx.execute(
+            "DELETE FROM {{tables.task_answer_stage_nonces}} WHERE team_id = $1",
+            team_id,
+        )
+        await tx.execute(
+            """DELETE FROM {{tables.task_answers}} WHERE task_id IN (
+                SELECT task_id FROM {{tables.tasks}} WHERE team_id = $1
+            )""",
+            team_id,
+        )
+        await tx.execute(
+            "DELETE FROM {{tables.task_app_requests}} WHERE team_id = $1",
             team_id,
         )
         await tx.execute(

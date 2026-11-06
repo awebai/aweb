@@ -5,6 +5,8 @@ real PostgreSQL. The embedding application's ``on_mutation`` callback and the
 Redis chat-session publish are recorded at their boundaries.
 """
 
+from identity_binding_support import seed_verified_bindings
+
 import json
 from types import SimpleNamespace
 from uuid import UUID, uuid4
@@ -93,7 +95,9 @@ async def server(aweb_cloud_db, monkeypatch):
         mutations.append((event_type, dict(context)))
 
     redis = _RecordingRedis()
-    app = _build_test_app(db, None)
+    app = _build_test_app(db, object())
+    seed_verified_bindings(app, *((f"did:aw:{alias}", did, f"acme.com/{alias}")
+                                  for alias, (_, did) in keys.items()))
     app.state.on_mutation = record_mutation
     mcp = create_mcp_app(db_infra=app.state.db, redis=redis, hosted_signer=signer)
     app.mount("/mcp", mcp)
@@ -153,8 +157,8 @@ async def test_mcp_send_mail_fires_message_sent_like_rest(server):
     # No pilot/bob mail pair exists yet: the new-conversation path.
     fresh = await server.mcp_call("pilot", "send_mail", to="bob", subject="new", body="fresh", plaintext=True)
     rest = await server.rest_mail("bob", to_alias="pilot", body="from rest")
-    # The pair now exists: the conversation-continuation path.
-    continued = await server.mcp_call("pilot", "send_mail", to="bob", subject="re", body="reply", plaintext=True)
+    # The caller explicitly selects the conversation-continuation path.
+    continued = await server.mcp_call("pilot", "send_mail", conversation_id=fresh["conversation_id"], subject="re", body="reply", plaintext=True)
     assert continued["conversation_id"] == fresh["conversation_id"]
 
     events = _events(server, "message.sent")
@@ -167,7 +171,8 @@ async def test_mcp_send_mail_fires_message_sent_like_rest(server):
         assert set(event) == set(rest_event)
         assert event["team_id"] == TEAM
         assert event["from_agent_id"] == server.agents["pilot"]
-        assert event["to_agent_id"] == server.agents["bob"]
+        # A continuation retains canonical identity without inventing membership.
+        assert event["to_agent_id"] == (server.agents["bob"] if event is events[0] else None)
         assert event["to_alias"] == "bob"
         assert event["from_alias"] == "pilot"
         assert event["from_did_aw"] == "did:aw:pilot"

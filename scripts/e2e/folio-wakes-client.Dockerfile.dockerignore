@@ -1,0 +1,11 @@
+**/.env
+**/.env.*
+**/.venv
+**/.aw
+**/.git
+**/__pycache__
+**/node_modules
+**/dist
+**/*.pem
+**/*.key
+cli/go/aw

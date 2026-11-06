@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
 import pytest_asyncio
-from aweb.app_registry import install_app
+from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.manifest import load_manifest
 from aweb_naapp.runtime.app_credentials import APP_GRANT_READ, AppCredentialSigner
 from aweb_naapp.runtime.app_keys import AppKey
@@ -23,17 +24,26 @@ from aweb_naapp.runtime.team_auth import Principal
 from aweb_naapp.runtime.team_grants import AppIdentity, TeamGrantSource
 from awid.did import did_from_public_key
 from fastapi import FastAPI, HTTPException, Request
+from installation_fixtures import install_fixture_app
 from nacl.signing import SigningKey
 
 TEAM = "backend:grants.example"
+# Public deterministic test material; the identity names the actual pinned bytes.
+READ_KEY = SigningKey(bytes(range(32)))
+MANIFEST = json.dumps({
+    "manifest_version": 2,
+    "app": {"id": "notebook", "origin": "https://notebook.example", "version": "1.0.0"},
+    "tools": [{"name": "list", "method": "GET", "path": "/items", "scopes": ["notebook:read"]}],
+    "app_keys": [{"kid": "read", "did_key": did_from_public_key(bytes(READ_KEY.verify_key)), "purposes": [APP_GRANT_READ]}],
+}).encode()
 IDENTITY = AppIdentity(
-    app_id="notebook", origin="https://notebook.example", digest="sha256:" + "a" * 64
+    app_id="notebook", origin="https://notebook.example", digest="sha256:" + hashlib.sha256(MANIFEST).hexdigest()
 )
 pytestmark = pytest.mark.asyncio
 
 
 class Clock:
-    now = 1000.0
+    now = seconds_to_ns(1000)
 
     def __call__(self):
         return self.now
@@ -49,31 +59,12 @@ async def team_controller(real_stack):
 @pytest_asyncio.fixture
 async def installed(real_stack, team_controller):
     db = real_stack.aweb_db
-    await install_app(
-        db,
-        team_id=TEAM,
-        app_id=IDENTITY.app_id,
-        origin=IDENTITY.origin,
-        digest=IDENTITY.digest,
-        app_version="1.0",
-        manifest_version=2,
-        granted_scopes=["notebook:read"],
+    await install_fixture_app(
+        db, team_id=TEAM, app_id=IDENTITY.app_id, origin=IDENTITY.origin,
+        manifest_version=2, manifest=MANIFEST, granted_scopes=["notebook:read"],
     )
-    key = SigningKey.generate()
+    key = READ_KEY
     did = did_from_public_key(bytes(key.verify_key))
-    # G1-b2b owns deriving this registration from pinned v2 bytes. These tests
-    # exercise the reader and the real verifier against that registration.
-    await db.execute(
-        """INSERT INTO {{tables.team_app_keys}}
-           (team_id, app_id, origin, digest, key_id, did_key, purposes)
-           VALUES ($1, $2, $3, $4, 'read', $5, $6::TEXT[])""",
-        TEAM,
-        IDENTITY.app_id,
-        IDENTITY.origin,
-        IDENTITY.digest,
-        did,
-        [APP_GRANT_READ],
-    )
     clock = Clock()
     signer = AppCredentialSigner(
         app_id=IDENTITY.app_id,
@@ -108,11 +99,13 @@ async def test_reads_only_its_own_grant_and_shares_status_cache(installed):
     assert status.digest == IDENTITY.digest
     assert status.origin == IDENTITY.origin
     assert status.state == "active"
+    assert status.installed_at == await stack.aweb_db.fetch_value("SELECT installed_at FROM {{tables.team_app_installs}} WHERE team_id=$1", TEAM)
     assert status.granted_scopes == grant.scopes == frozenset({"notebook:read"})
-    assert status.installation_id is grant.installation_id is None
-    assert status.generation is grant.generation is None
-    assert status.origin_verified is None
-    assert status.fresh_until == grant.fresh_until == clock.now + 60
+    assert status.installation_id == grant.installation_id
+    assert status.installation_id
+    assert status.generation == grant.generation == 1
+    assert status.origin_verified is True
+    assert status.fresh_until == grant.fresh_until == clock.now + seconds_to_ns(60)
     assert len(stack.aweb.calls) == 1
     request = stack.aweb.calls[0]
     assert request.url.path == "/v1/apps/self/grant"
@@ -178,7 +171,7 @@ async def test_generation_refresh_and_scope_change_share_one_answer(installed):
     stack, source, clock, _ = installed
     change_answer(stack, installation_id="installation-1", generation=1)
     assert (await source.status_for(TEAM)).generation == 1
-    clock.now += 60
+    clock.now += seconds_to_ns(60)
     change_answer(
         stack, installation_id="installation-2", generation=2, granted_scopes=[]
     )
@@ -215,17 +208,15 @@ async def test_install_retry_refreshes_a_missing_key_denial_after_five_seconds(i
     assert await source.status_for(TEAM) is None
     assert len(stack.aweb.calls) == 1
 
-    await install_app(
-        stack.aweb_db,
-        team_id=TEAM, app_id=IDENTITY.app_id, origin=IDENTITY.origin,
-        digest=IDENTITY.digest, app_version="1.0", manifest_version=2,
-        granted_scopes=["notebook:read"],
+    await install_fixture_app(
+        stack.aweb_db, team_id=TEAM, app_id=IDENTITY.app_id, origin=IDENTITY.origin,
+        manifest_version=2, manifest=MANIFEST, granted_scopes=["notebook:read"],
     )
-    clock.now += 4
+    clock.now += seconds_to_ns(4)
     assert await source.grant_for(TEAM) is None
     assert len(stack.aweb.calls) == 1
 
-    clock.now += 1
+    clock.now += seconds_to_ns(1)
     grant = await source.grant_for(TEAM)
     assert grant is not None
     assert grant.scopes == frozenset({"notebook:read"})
@@ -237,7 +228,7 @@ async def test_install_retry_refreshes_a_missing_key_denial_after_five_seconds(i
 async def test_expired_grant_never_survives_failed_refresh(installed):
     stack, source, clock, _ = installed
     assert await source.grant_for(TEAM) is not None
-    clock.now += 60
+    clock.now += seconds_to_ns(60)
     stack.aweb.down = True
     with pytest.raises(GrantUnavailable):
         await source.grant_for(TEAM)
@@ -289,19 +280,19 @@ async def test_slow_answer_does_not_gain_freshness(installed):
     stack, source, clock, _ = installed
 
     def slow(request, response):
-        clock.now += 4
+        clock.now += seconds_to_ns(4)
 
     stack.aweb.fault = slow
     status = await source.status_for(TEAM)
-    assert status.fresh_until == 1060
-    assert status.fresh_until - clock.now == 56
+    assert status.fresh_until == seconds_to_ns(1060)
+    assert status.fresh_until - clock.now == seconds_to_ns(56)
 
 
 async def test_answer_already_expired_on_arrival_is_unavailable(installed):
     stack, source, clock, _ = installed
 
     def expired(request, response):
-        clock.now += 2
+        clock.now += seconds_to_ns(2)
         return httpx.Response(200, json={**response.json(), "max_age_seconds": 1})
 
     stack.aweb.fault = expired
@@ -366,7 +357,7 @@ async def test_b1_maps_missing_to_403_and_unavailable_to_503(installed):
         )
 
     assert (await authorize()).grant.scopes == frozenset({"notebook:read"})
-    clock.now += 60
+    clock.now += seconds_to_ns(60)
     stack.aweb.down = True
     with pytest.raises(HTTPException) as refused:
         await authorize()
@@ -402,8 +393,8 @@ async def test_malformed_or_oversize_body_fails_closed(installed, content):
 async def test_server_window_is_honored_and_capped(installed, max_age, window):
     stack, source, clock, _ = installed
     change_answer(stack, max_age_seconds=max_age)
-    assert (await source.status_for(TEAM)).fresh_until == clock.now + window
-    clock.now += window
+    assert (await source.status_for(TEAM)).fresh_until == clock.now + seconds_to_ns(window)
+    clock.now += seconds_to_ns(window)
     stack.aweb.down = True
     with pytest.raises(GrantUnavailable):
         await source.grant_for(TEAM)
@@ -438,3 +429,11 @@ async def test_server_move_discards_cached_grant_and_signs_the_mount_prefix(inst
         json.loads(base64.urlsafe_b64decode(signed + "=" * (-len(signed) % 4)))["path"]
         == "/api/v1/apps/self/grant"
     )
+
+
+@pytest.mark.parametrize("value", [None, "", "not-a-time", "2026-10-23T12:00:00", 123])
+async def test_installed_at_requires_a_typed_utc_timestamp(installed, value):
+    stack, source, _, _ = installed
+    change_answer(stack, installed_at=value)
+    with pytest.raises(GrantUnavailable):
+        await source.status_for(TEAM)

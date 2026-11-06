@@ -1,4 +1,6 @@
 """Preserve explicit server sender addresses for signed alias-form plaintext."""
+from identity_binding_support import register_global_identity
+
 import asyncio
 import json
 import os
@@ -54,6 +56,7 @@ async def test_cli_preserves_explicit_address_with_signed_alias(privacy_app, tmp
             "memberships": [{**member, "workspace_id": str(actor.workspace)}]}))
         _pem(home / "signing.key", "ED25519 PRIVATE KEY", actor.sk)
         if stable:
+            assert await register_global_identity(env, actor, address) == stable
             (home / "identity.yaml").write_text(json.dumps({"did": actor.did, "stable_id": stable,
                 "address": address, "custody": "self", "identity_scope": scope}))
         child = {k: v for k, v in os.environ.items() if not k.startswith(("AW", "XDG_"))}

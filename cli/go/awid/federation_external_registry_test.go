@@ -58,57 +58,88 @@ func TestStrictGoExternalRegistryFetchesGenesisVerifiedEvidence(t *testing.T) {
 		},
 		"/log": entries,
 	}
-	requests := []string{}
-	client := &http.Client{Transport: strictRoundTrip(func(request *http.Request) (*http.Response, error) {
-		requests = append(requests, request.URL.Path)
-		key := request.URL.Path
-		if strings.HasSuffix(key, "/key") {
-			key = "/key"
-		} else if strings.HasSuffix(key, "/log") {
-			key = "/log"
-		}
-		body, ok := responses[key]
-		if !ok {
-			t.Fatalf("unexpected path %s", request.URL.Path)
-		}
-		encoded, _ := json.Marshal(body)
-		return &http.Response{
-			StatusCode: 200,
-			Header:     http.Header{"Content-Type": {"application/json"}},
-			Body:       io.NopCloser(bytes.NewReader(encoded)),
-			Request:    request,
-		}, nil
-	})}
-	hosts := &strictTestHosts{}
-	factoryCalls := 0
-	resolver := &StrictFederationExternalResolver{
-		TXTResolver: vectorFederationDNS{
-			"_awid.alpha.example.com": {
-				Outcome: "record",
-				Records: []string{"awid=v1; controller=" + identity.Mapping.InitialDIDKey + "; registry=https://registry-a.example;"},
-			},
-		},
-		HostResolver: hosts,
-		HTTPFactory: func(origin string, approved []string, generation int64) (*http.Client, error) {
-			factoryCalls++
-			if origin != "https://registry-a.example" || generation != 4 || len(approved) != 1 || approved[0] != "93.184.216.34" {
-				t.Fatalf("factory origin=%s approved=%v generation=%d", origin, approved, generation)
+	for _, test := range []struct {
+		name, missingPath, reason string
+		contact                   bool
+	}{
+		{name: "verified_sender"},
+		{name: "verified_contact", contact: true},
+		{name: "missing_namespace_sender", missingPath: "/v1/namespaces/alpha.example.com", reason: "sender_identity_not_found", contact: false},
+		{name: "missing_namespace_contact", missingPath: "/v1/namespaces/alpha.example.com", reason: "recipient_identity_not_found", contact: true},
+		{name: "missing_address_sender", missingPath: "/v1/namespaces/alpha.example.com/addresses/Alice", reason: "sender_identity_not_found", contact: false},
+		{name: "missing_address_contact", missingPath: "/v1/namespaces/alpha.example.com/addresses/Alice", reason: "recipient_identity_not_found", contact: true},
+		{name: "missing_key_sender", missingPath: "/key", reason: "sender_identity_not_found", contact: false},
+		{name: "missing_key_contact", missingPath: "/key", reason: "recipient_identity_not_found", contact: true},
+		{name: "missing_log_sender", missingPath: "/log", reason: "sender_identity_unverifiable", contact: false},
+		{name: "missing_log_contact", missingPath: "/log", reason: "sender_identity_unverifiable", contact: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			requests := []string{}
+			client := &http.Client{Transport: strictRoundTrip(func(request *http.Request) (*http.Response, error) {
+				requests = append(requests, request.URL.Path)
+				if request.URL.Path == test.missingPath || (test.missingPath == "/key" && strings.HasSuffix(request.URL.Path, "/key")) || (test.missingPath == "/log" && strings.HasSuffix(request.URL.Path, "/log")) {
+					return &http.Response{StatusCode: http.StatusNotFound, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{}`)), Request: request}, nil
+				}
+				key := request.URL.Path
+				if strings.HasSuffix(key, "/key") {
+					key = "/key"
+				} else if strings.HasSuffix(key, "/log") {
+					key = "/log"
+				}
+				body, ok := responses[key]
+				if !ok {
+					t.Fatalf("unexpected path %s", request.URL.Path)
+				}
+				encoded, _ := json.Marshal(body)
+				return &http.Response{
+					StatusCode: 200,
+					Header:     http.Header{"Content-Type": {"application/json"}},
+					Body:       io.NopCloser(bytes.NewReader(encoded)),
+					Request:    request,
+				}, nil
+			})}
+			hosts := &strictTestHosts{}
+			factoryCalls := 0
+			resolver := &StrictFederationExternalResolver{
+				TXTResolver: vectorFederationDNS{
+					"_awid.alpha.example.com": {
+						Outcome: "record",
+						Records: []string{"awid=v1; controller=" + identity.Mapping.InitialDIDKey + "; registry=https://registry-a.example;"},
+					},
+				},
+				HostResolver: hosts,
+				HTTPFactory: func(origin string, approved []string, generation int64) (*http.Client, error) {
+					factoryCalls++
+					if origin != "https://registry-a.example" || generation != 4 || len(approved) != 1 || approved[0] != "93.184.216.34" {
+						t.Fatalf("factory origin=%s approved=%v generation=%d", origin, approved, generation)
+					}
+					return client, nil
+				},
 			}
-			return client, nil
-		},
-	}
-	evidence, err := resolver.FetchEvidence(context.Background(), "alpha.example.com/Alice", 4, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if evidence.DIDAW != identity.Mapping.DIDAW || evidence.CurrentDIDKey != identity.Mapping.RotatedDIDKey || evidence.VerifiedLog.Seq != 2 {
-		t.Fatalf("unexpected evidence %#v", evidence)
-	}
-	if hosts.calls[0] != "registry-a.example" || factoryCalls != 1 {
-		t.Fatalf("hosts=%v factories=%d", hosts.calls, factoryCalls)
-	}
-	if len(requests) != 4 || !strings.HasSuffix(requests[3], "/log") {
-		t.Fatalf("requests=%v", requests)
+			fetch := resolver.FetchEvidence
+			if test.contact {
+				fetch = resolver.FetchContactEvidence
+			}
+			evidence, err := fetch(context.Background(), "alpha.example.com/Alice", 4, nil)
+			if test.reason != "" {
+				if !IsFederationReason(err, test.reason) || evidence != nil {
+					t.Fatalf("evidence=%#v error=%v, want %s", evidence, err, test.reason)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if evidence.DIDAW != identity.Mapping.DIDAW || evidence.CurrentDIDKey != identity.Mapping.RotatedDIDKey || evidence.VerifiedLog.Seq != 2 {
+				t.Fatalf("unexpected evidence %#v", evidence)
+			}
+			if hosts.calls[0] != "registry-a.example" || factoryCalls != 1 {
+				t.Fatalf("hosts=%v factories=%d", hosts.calls, factoryCalls)
+			}
+			if len(requests) != 4 || !strings.HasSuffix(requests[3], "/log") {
+				t.Fatalf("requests=%v", requests)
+			}
+		})
 	}
 }
 

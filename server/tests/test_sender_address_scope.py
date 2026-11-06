@@ -1,6 +1,8 @@
 """Sender address policy with real OSS/AWID/DB/Redis and authenticated HTTP."""
 from uuid import UUID
 
+from identity_binding_support import register_global_identity
+
 import pytest
 from awid.did import stable_id_from_did_key
 from aweb.messaging.alias_targets import derive_team_address
@@ -13,6 +15,8 @@ async def test_sender_address_preserves_team_context(privacy_app, scope, address
     env = privacy_app
     actor = env.actors["alice"]
     stable = stable_id_from_did_key(actor.did) if scope == "global" else None
+    if stable:
+        assert await register_global_identity(env, actor, address) == stable
     await env.db.execute(
         "UPDATE {{tables.agents}} SET identity_scope=$1, did_aw=$2, address=$3, "
         "certificate_id='privacy-alice' WHERE agent_id=$4", scope, stable, address, actor.id,
@@ -58,6 +62,8 @@ async def test_mcp_sender_scope_from_authenticated_projection(privacy_app, scope
     env = privacy_app
     actor = env.actors["alice"]
     stable = stable_id_from_did_key(actor.did) if scope == "global" else None
+    if stable:
+        assert await register_global_identity(env, actor, address) == stable
     await env.db.execute(
         "UPDATE {{tables.agents}} SET identity_scope=$1, did_aw=$2, address=$3 WHERE agent_id=$4",
         scope, stable, address, actor.id,

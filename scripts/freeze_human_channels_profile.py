@@ -36,8 +36,8 @@ obj("SignedArtifact", {"signed_payload": "text", "signature": "signature"})
 obj("GroupContext", {"session_id": "uuid", "membership_epoch": "uint", "membership_hash": "hash", "author_ref": participant, "message_id": "uuid"})
 obj("ServiceBinding", {"service": "did", "signing_key_id": "didkey", "audience": "text"})
 obj("Capabilities", {"version": enum("aweb-human-channels-capabilities-v1"), "implemented": arr("opaque"), "enabled": arr("opaque"), "refused": arr("opaque")})
-obj("ResolveRequest", {"version": enum("aweb-human-resolve-v1")}, {"team_id": "uuid", "selector": "text", "session_id": "uuid", "participant": participant})
-obj("AuthorityFacts", {"principal": participant, "signing_key_id": "didkey", "route": ref("ServiceBinding"), "custody": enum("self_custodial", "hosted_custodial", "bridge_custodial"), "active": "bool", "access": enum("allowed", "denied"), "inbound": enum("allowed", "consent_required", "denied"), "confidentiality": conf, "capabilities": arr("opaque"), "authorization_revision": "opaque"}, {"actor_id": "uuid", "team_id": "uuid", "key_assertion": "json_object", "ownership_proof": ref("SignedArtifact")})
+obj("ResolveRequest", {"version": enum("aweb-human-resolve-v1")}, {"team_id": "teamid", "selector": "text", "session_id": "uuid", "participant": participant})
+obj("AuthorityFacts", {"principal": participant, "signing_key_id": "didkey", "route": ref("ServiceBinding"), "custody": enum("self_custodial", "hosted_custodial", "bridge_custodial"), "active": "bool", "access": enum("allowed", "denied"), "inbound": enum("allowed", "consent_required", "denied"), "confidentiality": conf, "capabilities": arr("opaque"), "authorization_revision": "opaque"}, {"actor_id": "uuid", "team_id": "teamid", "key_assertion": "json_object", "ownership_proof": ref("SignedArtifact")})
 obj("PrepareRequest", {"version": enum("aweb-human-prepare-v1"), "kind": kind, "message_id": "uuid", "author": participant, "envelope": "text", "format": enum("native_plaintext", "native_encrypted_v2", "managed_chat_plaintext")}, {"target": ref("AuthorityFacts"), "conversation_id": "uuid", "group_context": ref("GroupContext"), "attachment_refs": arr("json_object")})
 obj("PreparedSend", {"version": enum("aweb-prepared-send-v1"), "prepared_id": "uuid", "message_id": "uuid", "kind": kind, "envelope": "text", "envelope_hash": "hash", "authority_revision": "opaque", "expires_at": "timestamp", "author": ref("AuthorProjection"), "recipients": arr(ref("AuthorityFacts"))}, {"attachment_refs": arr("json_object"), "conversation_id": "uuid", "group_context": ref("GroupContext")})
 obj("IngressKey", {"issuer": "did", "namespace": "opaque", "key": "opaque", "input_hash": "hash"})
@@ -101,7 +101,7 @@ COMMIT = 'commitment:'+'11'*32
 
 def sample(rule, depth=0):
     if isinstance(rule, str):
-        return {'did':DID, 'didaw':DID, 'didkey':DIDKEY, 'didkey_list':DIDKEY, 'didaw_list':DID, 'uuid':UUID, 'hash':HASH, 'commitment':COMMIT, 'timestamp':'2026-10-21T00:00:00Z', 'uint':0, 'positive_uint':1, 'limit':100, 'bool':True, 'json_object':{}, 'string':'', 'platform_kind':'telegram', 'opaque':'vector', 'text':'café <>& ☃', 'signature':base64.b64encode(bytes(64)).decode().rstrip('=')}[rule]
+        return {'did':DID, 'didaw':DID, 'didkey':DIDKEY, 'didkey_list':DIDKEY, 'didaw_list':DID, 'uuid':UUID, 'teamid':UUID, 'hash':HASH, 'commitment':COMMIT, 'timestamp':'2026-10-21T00:00:00Z', 'uint':0, 'positive_uint':1, 'limit':100, 'bool':True, 'json_object':{}, 'string':'', 'platform_kind':'telegram', 'opaque':'vector', 'text':'café <>& ☃', 'signature':base64.b64encode(bytes(64)).decode().rstrip('=')}[rule]
     if 'enum' in rule:return rule['enum'][0]
     if 'integer_const' in rule:return rule['integer_const']
     if 'ref' in rule:return sample_object(rule['ref'])
@@ -173,6 +173,13 @@ valid.append({'name':'managed_guest_signer','schema':'ManagedPlaintext','value':
 v=sample_object("PresenceIntent");v.update(issued_at="0001-10-21T00:00:00Z",expires_at="0001-10-21T01:00:00Z")
 canonical=json.dumps(v,sort_keys=True,ensure_ascii=False,separators=(',',':'))
 valid.append({'name':'timestamp_year_0001','schema':'PresenceIntent','value':v,'canonical':canonical,'sha256':'sha256:'+hashlib.sha256(canonical.encode()).hexdigest(),'signature':base64.b64encode(key.sign(canonical.encode()).signature).decode().rstrip('=')})
+# P2 additive correction: public team IDs are name:namespace, not private UUIDs.
+# Retain every P0 positive byte/signature, including UUID compatibility.
+for schema in ("ResolveRequest", "AuthorityFacts"):
+    for team in ("aweb:juan.aweb.ai", "ops:localhost", "backend:example.test"):
+        v=sample_object(schema);v["team_id"]=team
+        canonical=json.dumps(v,sort_keys=True,ensure_ascii=False,separators=(',',':'))
+        valid.append({'name':schema+'_public_team_'+team,'schema':schema,'value':v,'canonical':canonical,'sha256':'sha256:'+hashlib.sha256(canonical.encode()).hexdigest(),'signature':base64.b64encode(key.sign(canonical.encode()).signature).decode().rstrip('=')})
 tampered=[]
 for source,field,replacement in [('NativePlaintext_mail_telegram','via','msteams'),('GroupContext','message_id','22222222-2222-4222-8222-222222222222'),('PresenceIntent','expected_generation',1),('CheckpointReceipt','acceptance_seq',2),('ManagedPlaintext','body','modified')]:
     original=next(x for x in valid if x['name']==source);v=copy.deepcopy(original['value']);v[field]=replacement
@@ -219,6 +226,9 @@ for kind in ("native","bridged"):
     v["signer"]=DID+"-other";bad('managed_signer_mismatch_'+kind,'ManagedPlaintext',v)
 v=sample_object("BridgedParticipant");v['subject']='did:aw:pretend-member';bad('guest_subject_is_not_did','BridgedParticipant',v)
 v=sample_object("SignedArtifact");v['signed_payload']='{ }';v['signature']=base64.b64encode(key.sign(b'{ }').signature).decode().rstrip('=');bad('noncanonical_signed_payload','SignedArtifact',v)
+for value in ("", "aweb", ":example.test", "aweb:", "Aweb:example.test", "aweb:EXAMPLE.test", "aweb:example.test.", " aweb:example.test", "aweb:example.test\n", "aweb:example:test", "a web:example.test"):
+    for schema in ("ResolveRequest", "AuthorityFacts"):
+        v=sample_object(schema);v['team_id']=value;bad(schema+'_invalid_team_'+repr(value),schema,v)
 negative += [{'name':'duplicate_key','schema':'NativeParticipant','json':'{"kind":"native","kind":"bridged","did":"'+DID+'"}','code':'invalid'}, {'name':'unknown_schema','schema':'FutureV9','json':'{}','code':'unsupported'}, {'name':'float_counter','schema':'GroupContext','json':json.dumps(byname['GroupContext']['value']).replace('"membership_epoch": 0','"membership_epoch": 1.0'),'code':'invalid'}]
 vectors={'profile':'aweb-human-channels-v1','provenance':'P0 conformance; public deterministic seed; freeze requires exact-SHA review','public_test_seed_hex':seed.hex(),'public_test_key_hex':bytes(key.verify_key).hex(),'valid':valid,'invalid':negative,'tampered':tampered}
 (ROOT/'docs/vectors/human-channels-v1.json').write_text(json.dumps(vectors,indent=2,ensure_ascii=False)+'\n')

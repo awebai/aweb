@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any
 
 import httpx
-from aweb_naapp_testing import REGISTRY_URL, Registry
+from awid_service.testing import REGISTRY_URL, Registry
 from fastapi import FastAPI, Request
 
 from aweb_naapp.runtime.team_auth import (

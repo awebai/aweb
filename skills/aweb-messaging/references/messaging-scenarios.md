@@ -30,10 +30,12 @@ The exact fields vary by event type. The important pattern is: inspect metadata 
 
 1. Read `from`, `message_id`, `conversation_id`, `subject`, and verification fields.
 2. Decide whether the message needs action.
-3. Reply by message ID when answering directly:
+3. Reply by message ID when answering directly, with the body in a new
+   owner-only file made for this message (never a fixed or shared path):
 
 ```bash
-aw mail reply <message_id> --body "..."
+body=$(mktemp)   # mode 0600; write the reply into "$body"
+aw mail reply <message_id> --body-file "$body"
 ```
 
 4. If no answer is needed, do not create noise.

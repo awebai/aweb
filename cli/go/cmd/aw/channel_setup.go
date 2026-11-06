@@ -126,7 +126,7 @@ func SetupChannelMCP(repoRoot string, askConfirmation bool) *claudeHooksResult {
 	if askConfirmation {
 		answer, err := promptString(
 			"Set up Claude Code aweb-channel plugin for real-time coordination?\n"+
-				"  (Requires starting Claude Code with: claude --dangerously-skip-permissions --dangerously-load-development-channels "+claudeChannelSpec+")\n"+
+				"  (Requires starting Claude Code with: claude --dangerously-load-development-channels "+claudeChannelSpec+")\n"+
 				"  (y/n)", "y")
 		if err != nil {
 			result.Error = err
@@ -154,35 +154,35 @@ func printChannelMCPResult(result *claudeHooksResult) {
 		return
 	}
 	if result.Skipped {
-		fmt.Println("Claude Code aweb-channel plugin: skipped")
+		fmt.Fprintln(commandStdout, "Claude Code aweb-channel plugin: skipped")
 		printManualChannelInstructions()
 		return
 	}
 	if result.Created || result.Updated || result.AlreadyExists {
-		fmt.Println("Claude Code aweb-channel plugin: installed or already present")
+		fmt.Fprintln(commandStdout, "Claude Code aweb-channel plugin: installed or already present")
 		printChannelStartInstructions()
 	}
 }
 
 func printChannelStartInstructions() {
-	fmt.Println("  Start Claude Code with this exact line:")
-	fmt.Println("    claude --dangerously-skip-permissions --dangerously-load-development-channels " + claudeChannelSpec)
-	fmt.Println()
+	fmt.Fprintln(commandStdout, "  Start Claude Code with this exact line:")
+	fmt.Fprintln(commandStdout, "    claude --dangerously-load-development-channels "+claudeChannelSpec)
+	fmt.Fprintln(commandStdout)
 	for _, line := range channelLaunchWhyLines {
-		fmt.Println("  " + line)
+		fmt.Fprintln(commandStdout, "  "+line)
 	}
-	fmt.Println()
+	fmt.Fprintln(commandStdout)
 	for _, line := range channelPiPathLines {
-		fmt.Println("  " + line)
+		fmt.Fprintln(commandStdout, "  "+line)
 	}
-	fmt.Println("  Once channel or broker delivery works, remove an old chat-polling hook with:")
-	fmt.Println("    aw init --remove-notify-hook")
+	fmt.Fprintln(commandStdout, "  Once channel or broker delivery works, remove an old chat-polling hook with:")
+	fmt.Fprintln(commandStdout, "    aw init --remove-notify-hook")
 }
 
 func printManualChannelInstructions() {
-	fmt.Println()
-	fmt.Println("To enable the aweb channel for Claude Code, install the plugin:")
-	fmt.Println("    claude plugin marketplace add " + claudeChannelMarketplace)
-	fmt.Println("    claude plugin install " + claudeChannelPlugin)
+	fmt.Fprintln(commandStdout)
+	fmt.Fprintln(commandStdout, "To enable the aweb channel for Claude Code, install the plugin:")
+	fmt.Fprintln(commandStdout, "    claude plugin marketplace add "+claudeChannelMarketplace)
+	fmt.Fprintln(commandStdout, "    claude plugin install "+claudeChannelPlugin)
 	printChannelStartInstructions()
 }

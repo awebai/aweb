@@ -41,6 +41,95 @@ identity/trust vector family.
 
 ## Accepting protocols awaiting client rollout
 
+### `id-certificates-v1.json` — contract candidate
+
+The [identity certificates contract](../id-certificates.md) freezes
+parent-signed human/agent certificates, their domain binding and bounded chain
+carrier, registered/historical versus local/current issuer-key selection,
+revocation cutoffs, cached status and prospective adoption. Synthetic Ed25519
+known answers pin exact bytes/signatures/digests, a three-agent OATS subtree,
+negative R1–R3/rotation/presentation cases, and pending-invitation/lifecycle
+scenarios. Registry fixtures are independently supplied test authority facts;
+transaction scenarios alone are not runtime proof. Python/Go codec and pure
+ancestry/status tests consume this root fixture. Server
+`test_id_tree_contact_replacement.py` consumes
+`address-replacement-does-not-transfer-contact-trust` through real AWID/aweb
+HTTP and databases. Server `test_id_chain_request_auth.py` uses the public
+synthetic keys/certificate to exercise the fresh enrollment carrier and real
+identity-only enroll/revoke/omit request decisions; remaining lanes follow in
+reviewed transport checkpoints.
+Existing certificate/message fixtures are byte-identical.
+`expected_request` is the request decision; case names describe proof outcomes.
+`ed25519_verification.cases` pins the new ID-certificate family's canonical,
+nonidentity prime-subgroup key/R checks and cofactorless equation; every
+Python/Go/TypeScript CI consumes these probes and the raw-wire negatives.
+Namespace status epochs carry `continuity`: signed rotations retain registered
+children, DNS-only replacement cuts off prior registrations (`root_replaced`).
+The cases also pin namespace epoch admission windows and sequence-only DID-key
+selection; operation cases replace live-ID deletion refusal with retained
+history and delete/re-register discontinuity.
+`namespace_rotation_requests` freezes both DIDKey signatures over the same
+covering-v2 payload, plus wrong-sequence, new-key-only, swapped-role, stale-key
+and replay operation refusals. Epoch observations never create replacement: pre-upgrade
+first enrollment uses the existing authenticated namespace POST once, and
+same-key reverify/temporary DNS failure preserves its epoch. History negatives
+isolate first-epoch continuity, an unretired predecessor and a contiguous-seq
+rotation time gap.
+`child_requests` freezes the child-key-signed canonical CSR bytes, recipient key
+fingerprints and matching response bundles for the explicit file exchange.
+Its operation cases pin parent-local invitation/issuance-log ownership,
+interactive human key approval over a separate trusted channel, competing-key
+invalidation, host-mode isolation, re-sign provenance and exact retry/import.
+They are S3 acceptance inputs, not evidence of an implemented transport.
+`child_requests.file_refusals` constructs raw file bytes by repeating the UTF-8
+`unit_utf8` `repeat` times; request/response caps are measured in bytes before
+JSON parsing, with exact-limit and oversized cases.
+
+`key_response_id_tree` cases freeze parsing the additive field of an otherwise
+valid key-resolution response. `key_response` and `cached_key_response` are
+projections onto that field; `{}` means the field is absent. `expected_parse`
+distinguishes enrolled, not_enrolled, unknown and malformed. For omission,
+`expected_tree_lookup` and `expected_request` apply after ordinary auth passes;
+enrolled cases supply the independent status fixture and authenticated subject
+in `omission_context`. Enrollment alone never grants authority. An old cached
+projection requires the fresh response before deciding, as `expected_key_refetch`
+pins. Malformed response handling may raise the client's typed response error;
+it must not return not_enrolled.
+
+`key_resolution_outcomes` adds the HTTP/error and refresh lifecycle around
+that same carrier. A key-route 404 keeps `detail` and has top-level `id_tree`;
+its stated enrollment is computed independently of the missing mapping, and
+the SDK preserves it as typed data on the refusal. A missing 404 field is
+unknown, never not_enrolled. `expected_parse` applies when there is a response
+object; `expected_enrollment` is the usable enrollment after the lifecycle.
+`key_response:null` with `http_status:null` means a failed refresh with NO
+response, not a successful JSON null body. A failed refresh does not extend
+freshness: enrollment evidence is usable through 60s; expired or missing
+evidence is unavailable. A successful refetch that still omits the field is
+unknown. As in the status vectors, request expectations assume original
+authentication passed and do not extend its
+independent 60s binding bound. A presented chain's differing domain refuses
+before a tree lookup.
+
+`child_requests.requests.root-human-issue` and its matching response freeze
+the namespace-parent first-human CSR. The root operator follows the same
+out-of-band, one-shot human approval rules: show the fingerprint, then require
+an affirmative confirmation at a real terminal. The new operation cases
+distinguish this exchange from same-machine `human init --as-root` (direct issuance,
+no invitation or CSR), and pin automatic registration on human import versus
+explicit `--no-register`. The earlier `csr-human-import-remains-pending` now
+sets `no_register:true`; the ordinary human-approval case records the explicit
+show-and-confirm approval. No typed fingerprint entry is required. All earlier
+signed bytes remain unchanged. These lifecycle cases are acceptance inputs
+for the owning S2/S3/S4
+checkpoints, rather than evidence those paths have already been implemented.
+
+### `member-attribution-v1.json` — superseded, historical only
+
+The [old member attribution proposal](../member-attribution.md) is superseded
+by the identity tree. Its frozen bytes remain evidence, not a new email/SMTP
+implementation contract. No new consumer should implement this record.
+
 ### `awid-controller-request-v2.json`
 
 Controller HTTP envelopes bind the configured registry audience, protocol type,
@@ -72,7 +161,9 @@ and AWID status (missing prefix, non-current key, team mismatch, far-future
 `issued_at`, `issued_at` with non-ASCII digits or an impossible date, not newer
 than the stored record, plain http outside loopback).
 Seeds are public test material. The AWID real-route tests consume these
-bytes. See [the team contract](../awid-sot.md#teams).
+bytes; `awid/tests/test_registry_team_server.py` also checks the Python record
+builder and signer against the frozen Go bytes and signatures.
+See [the team contract](../awid-sot.md#teams).
 
 ### `principal-attestation-v1.json`
 
@@ -95,6 +186,17 @@ refusal case for every verification step on either side. Signing keys are
 fixed seeds; sealed values were generated once and are checked by opening them.
 Credential plaintexts are fixtures. secrets' `test_runner_protocol_vectors.py`
 consumes every case.
+
+### `secrets-runner-http-v1.json`
+
+[Runner protocol §4](../secrets-runner-protocol.md#4-http-bodies-reports-and-credential-fields)
+body bytes and their private request-binding hashes, six-field result refusals,
+combined UTF-8 bounds, declared env-field families and report-state expectations.
+No credential material is present. The contract reference reader in
+`test_runner_protocol_vectors.py` consumes every case. Mounted server/runner
+implementations still owe nonce, release, CAS, late-evidence and redaction-context
+proofs; these examples do not authorize a dispatch. The existing signed/sealed
+`secrets-runner-protocol-v1.json` bytes are unchanged.
 
 ### `message-signing-v1.json`
 
@@ -644,6 +746,9 @@ reference duplication are mutation-tested failures.
 
 | Public fixture | Actual source consumers |
 |---|---|
+| `app-task-authorization-v1.json` | naapp-lib `test_task_request_vectors.py`; Go AWID `app_task_authorization_test.go`; Python aweb `test_c2_vectors.py` |
+| `app-request-credential-v1.json` | naapp-lib `test_task_request_vectors.py`, `test_app_credential_signer.py`; Python aweb `test_c2_vectors.py` |
+| `task-answer-v1.json` | naapp-lib `test_task_request_vectors.py`; Python aweb `test_c2_vectors.py`, including the ordered signed HTTP sequence |
 | `a2a-awid-publication-v1.json` | Python AWID `test_a2a_publication_route.py`; Go AWID `a2a_publication_test.go`; Go shared `conformance_test.go` |
 | `a2a-bridge-envelope-v0.json` | Go gateway `envelope_vector_test.go` |
 | `a2a-v1.json` | Go A2A `card_test.go`; Go gateway `gateway_rpc_test.go`; Go shared `conformance_test.go` |
@@ -653,6 +758,7 @@ reference duplication are mutation-tested failures.
 | `e2ee-v2-cross-language.json` | Python aweb `test_e2ee_crypto_helpers.py` and pre-activation federation harness; Go AWID `e2ee_cross_language_test.go`; TypeScript channel-core `encrypted_dispatch.test.ts` |
 | `egress-address-v1.json` | naapp-lib `test_addresses.py` |
 | `egress-url-v2.json` | naapp-lib `test_url_vectors.py` |
+| `id-certificates-v1.json` | Python AWID `test_id_certificate_vectors.py`, `test_id_chain_vectors.py`, `test_id_key_response_vectors.py`; Go shared `id_certificates_test.go`, `id_chain_test.go`, `id_key_response_test.go`; Python AWID `id_tree_support.py`, read by the registry's operation-case and route tests; Python server `test_id_tree_contact_replacement.py` (contact-trust operation), `test_id_chain_request_auth.py` (enrollment carrier and identity-only requests) |
 | `identity-log-negative-v1.json` | Python AWID `test_identity_log_verify.py`; Go shared `identity_log_negative_test.go`; TypeScript channel-core `registry.test.ts` |
 | `identity-log-raw-wire-v1.json` | Python AWID `test_identity_log_verify.py`; Go shared `identity_log_raw_wire_test.go`; TypeScript channel-core `registry.test.ts` |
 | `identity-log-v1.json` | Python AWID `test_conformance_vectors.py`, `test_did.py`, `test_external_registry.py`, and `test_identity_log_verify.py`; Python aweb `test_identity_conformance_vectors.py` and pre-activation federation harness; Go AWID `registry_register_test.go`, `federation_authority_test.go`, and `federation_external_registry_test.go`; Go shared `conformance_test.go`; TypeScript channel-core `registry.test.ts`, `log_rollback.test.ts`, and `received_sender_trust.test.ts` |
@@ -662,6 +768,7 @@ reference duplication are mutation-tested failures.
 | `rotation-announcements-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
 | `stable-id-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
 | `secrets-runner-protocol-v1.json` | secrets `test_runner_protocol_vectors.py` and production-server `test_runner_server_protocol.py` |
+| `secrets-runner-http-v1.json` | secrets `test_runner_protocol_vectors.py` |
 | `team-auth-envelope-v2.json` | Python aweb `test_team_auth_envelope.py`; naapp-lib `test_team_auth_vectors.py`; Go shared `conformance_test.go`, including its root-equality check for the managed embedded copy |
 | `federation-origin-ip-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |
 | `federation-discovery-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |

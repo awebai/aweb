@@ -18,9 +18,23 @@ lint:
 
 e2e:
 	set -e; \
-	trap 'docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml down -v --remove-orphans' EXIT; \
+	network="$(NAAPP_E2E_PROJECT)_default"; connected=; \
+	cleanup() { \
+		status=$$?; trap - EXIT; \
+		if [ -n "$$connected" ]; then \
+			docker network disconnect "$$network" "$$CANDIDATE_RUNNER_NAME" || status=1; \
+		fi; \
+		docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml down -v --remove-orphans || status=1; \
+		exit "$$status"; \
+	}; trap cleanup EXIT; \
 	docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml down -v --remove-orphans >/dev/null 2>&1 || true; \
 	docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml up --build -d; \
+	if [ -n "$${CANDIDATE_RUNNER_NAME:-}" ]; then \
+		runner_label=$$(docker inspect --format '{{index .Config.Labels "aweb.candidate-gate"}}' "$$CANDIDATE_RUNNER_NAME"); \
+		test "$$runner_label" = "$${AWEB_CANDIDATE_RESOURCE_LABEL:?}"; \
+		docker network connect "$$network" "$$CANDIDATE_RUNNER_NAME"; connected=1; \
+		export NAAPP_E2E_CONTAINER_NETWORK=1; \
+	fi; \
 	FOLIO_E2E=1 uv run pytest -q -m e2e
 
 e2e-up:

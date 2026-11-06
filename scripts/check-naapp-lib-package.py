@@ -9,7 +9,7 @@ and, at the same version, its test support aweb-naapp-testing. For each:
   requirement has a floor the in-repo awid satisfies, and aweb-naapp-testing
   requires exactly the aweb-naapp version it is released with.
 - With every extra it installs from the built wheel into a fresh environment,
-  awid-service and aweb-naapp resolved from their in-repo built wheels and
+  awid-service, aweb and aweb-naapp resolved from their in-repo built wheels and
   everything else from the package index, and every module imports.
 """
 
@@ -25,10 +25,13 @@ from email import message_from_bytes
 from email.message import Message
 from pathlib import Path
 
+from release_versions import PYTHON_VERSION, VersionRefusal, python_version_key
+
 ROOT = Path(__file__).resolve().parents[1]
 NAAPP_LIB = ROOT / "naapp-lib"
 NAAPP_TESTING = NAAPP_LIB / "testing"
 AWID = ROOT / "awid"
+SERVER = ROOT / "server"
 _DIRECT_REFERENCE = re.compile(r"@\s*(file:|git\+|https?:|\.|/)")
 
 
@@ -41,7 +44,10 @@ def _version_text(pyproject: Path) -> str:
 
 
 def _version(pyproject: Path) -> tuple[int, ...]:
-    return tuple(int(part) for part in _version_text(pyproject).split("."))
+    try:
+        return python_version_key(_version_text(pyproject))
+    except VersionRefusal as error:
+        raise PackageRefusal(str(error)) from error
 
 
 def _build(project: Path, out_dir: Path) -> Path:
@@ -83,7 +89,7 @@ def _check_requirements(wheel: Path, metadata: Message, *, aweb_naapp_version: s
             raise PackageRefusal(f"{wheel.name} requires a direct reference: {requirement}")
         name = re.split(r"[\s<>=!~;\[(]", requirement, maxsplit=1)[0]
         if name == "aweb-naapp" and aweb_naapp_version is not None:
-            pinned = re.search(r"==\s*([0-9]+(?:\.[0-9]+)*)\s*($|;)", requirement)
+            pinned = re.search(rf"==\s*({PYTHON_VERSION})\s*($|;)", requirement)
             if pinned is None or pinned.group(1) != aweb_naapp_version:
                 raise PackageRefusal(
                     f"{wheel.name} must require exactly aweb-naapp=={aweb_naapp_version}: {requirement}"
@@ -91,13 +97,17 @@ def _check_requirements(wheel: Path, metadata: Message, *, aweb_naapp_version: s
             required_aweb_naapp = True
         if name != "awid-service":
             continue
-        floor = re.search(r">=\s*([0-9]+(?:\.[0-9]+)*)", requirement)
+        floor = re.search(r">=\s*([^,;\s)]+)", requirement)
         if floor is None:
             raise PackageRefusal(f"{wheel.name}: awid-service needs a floor: {requirement}")
-        if tuple(int(part) for part in floor.group(1).split(".")) > awid_version:
+        try:
+            floor_version = python_version_key(floor.group(1))
+        except VersionRefusal as error:
+            raise PackageRefusal(f"{wheel.name}: {error}: {requirement}") from error
+        if floor_version > awid_version:
             raise PackageRefusal(
                 f"{wheel.name}: awid-service floor {floor.group(1)} is newer than the in-repo awid "
-                f"{'.'.join(map(str, awid_version))}: {requirement}"
+                f"{_version_text(AWID / 'pyproject.toml')}: {requirement}"
             )
     if aweb_naapp_version is not None and not required_aweb_naapp:
         raise PackageRefusal(f"{wheel.name} must require aweb-naapp=={aweb_naapp_version}")
@@ -141,6 +151,7 @@ def main() -> int:
             naapp_wheel = _build(NAAPP_LIB, out / "naapp-lib")
             testing_wheel = _build(NAAPP_TESTING, out / "naapp-testing")
             _build(AWID, out / "awid")
+            _build(SERVER, out / "server")
             for project, wheel, pin in (
                 (NAAPP_LIB, naapp_wheel, None),
                 (NAAPP_TESTING, testing_wheel, naapp_version),
@@ -148,7 +159,7 @@ def main() -> int:
                 _check_contents(project, wheel)
                 metadata = _metadata(wheel)
                 _check_requirements(wheel, metadata, aweb_naapp_version=pin)
-                _check_install(project, wheel, metadata, [out / "awid", out / "naapp-lib"])
+                _check_install(project, wheel, metadata, [out / "awid", out / "naapp-lib", out / "server"])
         except PackageRefusal as refused:
             print(f"check-naapp-lib-package: {refused}", file=sys.stderr)
             return 1

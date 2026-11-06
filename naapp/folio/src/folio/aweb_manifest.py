@@ -13,7 +13,7 @@ from typing import Any
 MANIFEST_PATH = Path(__file__).resolve().parent / "aweb-app.json"
 
 MANIFEST: dict[str, Any] = {
-    "manifest_version": 1,
+    "manifest_version": 2,
     "app": {
         "id": "folio",
         "version": "0.1.0",
@@ -290,8 +290,9 @@ MANIFEST: dict[str, Any] = {
             ),
         }
     ],
-    "event_emitters": [
-        {"kid": "folio:emit-1"},
+    "app_keys": [
+        {"kid": "folio:emit-1", "purposes": ["app-event"]},
+        {"kid": "folio:grant-read-1", "purposes": ["app-grant-read"]},
     ],
 }
 

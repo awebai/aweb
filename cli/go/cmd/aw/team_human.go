@@ -105,8 +105,9 @@ func registerTeamAdminCommand(cmd *cobra.Command, groupID string) {
 }
 
 var teamHumanCreateCmd = &cobra.Command{
-	Use:   "create <name>",
-	Short: "Create a local empty-profile team workspace",
+	Annotations: map[string]string{hostHumanOrgAnnotation: "true"},
+	Use:         "create <name>",
+	Short:       "Create a local empty-profile team workspace",
 	Long: "Create a local empty-profile team workspace.\n\n" +
 		"This wraps aw init for the aw-local path. No --agent/--profile means no Library call\n" +
 		"and no profile materialization. --agent accepts [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME]\n" +
@@ -114,7 +115,9 @@ var teamHumanCreateCmd = &cobra.Command{
 		"server-authoritative next classic name; omitted scope comes from profile.yaml.\n" +
 		"All --agent/--profile specs populate agents/instances for aw team admin up; only\n" +
 		"--home with a single spec uses that spec for the root workspace profile.\n" +
-		"Deprecated --profile is accepted as --agent for transition; @VERSION is dropped.",
+		"Deprecated --profile is accepted as --agent for transition; @VERSION is dropped.\n\n" +
+		"With --org, create a hosted team using human CLI authorization and return an invite.\n" +
+		"This explicit mode creates no local identity or profile; accept the invite separately.",
 	Args: cobra.ExactArgs(1),
 	RunE: runTeamHumanCreate,
 }
@@ -140,7 +143,7 @@ var teamHumanInviteCmd = &cobra.Command{
 
 var teamHumanJoinCmd = &cobra.Command{
 	Annotations: map[string]string{identityCreationTargetAnnotation: "true"},
-	Use:         "join [invite-token]",
+	Use:         "join [invite-token | --token-file <path> | --token-stdin]",
 	Short:       "Join a team from an invite token",
 	Long: "Join a team from an invite token.\n\n" +
 		"Run this in a clean target directory. It refuses to overwrite an existing\n" +
@@ -261,6 +264,9 @@ func init() {
 		&cobra.Group{ID: teamAdminGroupOperations, Title: "Team Administration"},
 	)
 
+	teamHumanCreateCmd.Flags().String("org", "", "Hosted organization slug or ID (requires aw auth login)")
+	teamHumanCreateCmd.Flags().String("request-id", "", "Hosted create UUID (reuse to replay)")
+	teamHumanCreateCmd.Flags().Bool("show-token", false, "Print the hosted invite token in text output")
 	teamHumanCreateCmd.Flags().BoolVar(&teamHumanCreateBYOT, "byot", false, "Create a customer-controlled AWID team with local namespace controller authority")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateName, "name", "", "Team name")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateNamespace, "namespace", "", "Namespace domain for --byot")
@@ -310,6 +316,8 @@ func init() {
 	teamHumanJoinCmd.Flags().StringVar(&teamHumanJoinHarness, "harness", "", "Install team docs; prepare delivery for claude/pi (omitted: no harness changes)")
 	teamHumanJoinCmd.Flags().BoolVar(&teamHumanJoinSetupOnly, "setup-only", false, "Retry harness setup for the connected identity without accepting an invite")
 	teamHumanJoinCmd.Flags().BoolVar(&teamHumanJoinNoConnect, "no-connect", false, "Install identity and membership without connecting this workspace")
+	teamHumanJoinCmd.Flags().String("token-file", "", "Read the invite token from this file instead of an argument")
+	teamHumanJoinCmd.Flags().Bool("token-stdin", false, "Read the invite token from stdin instead of an argument")
 	teamHumanJoinCmd.GroupID = teamGroupMembership
 	teamHumanCmd.AddCommand(teamHumanJoinCmd)
 
@@ -508,6 +516,9 @@ type teamHumanCreateFoundingResult struct {
 }
 
 func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
+	if cmd != nil && cmd.Flags().Changed("org") {
+		return runOrgTeamCreate(cmd, args[0])
+	}
 	teamName := strings.TrimSpace(args[0])
 	if teamName == "" {
 		return usageError("team name is required")
@@ -1086,6 +1097,9 @@ func foundTeamWithNamespaceControllerAuthority(wd, teamName, alias, explicitDoma
 		return nil, err
 	}
 	if err := registry.RegisterCertificate(ctx, strings.TrimSpace(registry.DefaultRegistryURL), domain, strings.ToLower(strings.TrimSpace(teamName)), cert, registration.TeamKey); err != nil {
+		if isAliasConflict(err) {
+			return nil, &plainRefusal{text: nameTakenText(strings.TrimSpace(plan.Name), registration.TeamID, "--first-agent-name"), err: err}
+		}
 		return nil, fmt.Errorf("register certificate at registry: %w", err)
 	}
 	bootstrap := &localTeamBootstrapResult{TeamID: registration.TeamID, TeamDIDKey: registration.TeamDIDKey, TeamKeyPath: registration.TeamKeyPath, Certificate: cert}
@@ -1610,6 +1624,10 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 			} else {
 				accepted, err := resolveOrCreateTeamMemberIdentity(inviteAnchorDir, plans[i], apiKeyBootstrapMode, opts.APIKey)
 				if err != nil {
+					var pending *hostedInviteSignaturePendingError
+					if errors.As(err, &pending) {
+						return reportRosterFailure(i, err)
+					}
 					homeRollbackErr := rollback.Rollback()
 					return reportRosterFailure(i, addPostJoinRollbackError(err, nil, nil, homeRollbackErr))
 				}
@@ -1623,6 +1641,10 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 		} else {
 			accepted, err := resolveOrCreateTeamMemberIdentity(inviteAnchorDir, plans[i], apiKeyBootstrapMode, opts.APIKey)
 			if err != nil {
+				var pending *hostedInviteSignaturePendingError
+				if errors.As(err, &pending) {
+					return reportRosterFailure(i, err)
+				}
 				homeRollbackErr := rollback.Rollback()
 				return reportRosterFailure(i, addPostJoinRollbackError(err, nil, nil, homeRollbackErr))
 			}
@@ -2356,16 +2378,17 @@ func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, gl
 	}
 	var token string
 	if hasTeamKey {
-		_, token, err = createTeamInviteToken(domain, team, registryURL, awebURL, localInvite)
+		_, token, err = createTeamInviteTokenAt(domain, team, registryURL, awebURL, localInvite, "", anchorDir, actorHome.Root)
 	} else if strings.TrimSpace(awebURL) != "" {
 		_, token, err = createHostedTeamInviteToken(anchorDir, awid.BuildTeamID(domain, team), localInvite)
 	} else {
-		_, token, err = createTeamInviteToken(domain, team, registryURL, awebURL, localInvite)
+		_, token, err = createTeamInviteTokenAt(domain, team, registryURL, awebURL, localInvite, "", anchorDir, actorHome.Root)
 	}
 	if err != nil {
 		return nil, err
 	}
-	accepted, err := acceptTeamInviteWithDetails(homeDir, token, teamAcceptInviteOptions{IdentityHome: awconfig.WorktreeIdentityHome(homeDir), Name: alias, Scope: teamAcceptScopeFromGlobal(global), Address: memberAddress})
+	acceptOpts := teamAcceptInviteOptions{IdentityHome: awconfig.WorktreeIdentityHome(homeDir), Name: alias, Scope: teamAcceptScopeFromGlobal(global), Address: memberAddress}
+	accepted, err := acceptProvisionedTeamInvite(anchorDir, actorHome.Root, homeDir, token, acceptOpts)
 	if err != nil {
 		return nil, err
 	}

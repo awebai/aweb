@@ -16,6 +16,7 @@ from nacl.signing import SigningKey
 
 from aweb_naapp.manifest import write_manifest_file
 from aweb_naapp.runtime.app import NaappRuntime
+from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import AWIDTeamCache
 
@@ -52,9 +53,9 @@ def expire(cache):
 
 
 async def test_preflight_proof_keeps_the_original_facts_deadline(registry, cache, member):
-    before = time.monotonic()
+    before = time.monotonic_ns()
     facts = await cache.get(TEAM, member.certificate_id)
-    after = time.monotonic()
+    after = time.monotonic_ns()
     calls = len(registry.transport.calls)
     # Even a changed configured TTL cannot renew or reinterpret an existing entry.
     cache.ttl_seconds = 1
@@ -65,10 +66,11 @@ async def test_preflight_proof_keeps_the_original_facts_deadline(registry, cache
         TEAM, member.certificate_id, member.team_did_key,
     )
     assert before <= proof.checked_at == facts.fetched_at <= after
+    assert type(proof.checked_at) is int and type(proof.fresh_until) is int
     assert proof.fresh_until == facts.expires_at
-    assert 0 < proof.fresh_until - proof.checked_at <= 60
+    assert 0 < proof.fresh_until - proof.checked_at <= seconds_to_ns(60)
     with pytest.raises(FrozenInstanceError):
-        proof.fresh_until = time.monotonic() + 60
+        proof.fresh_until = time.monotonic_ns() + seconds_to_ns(60)
     await asyncio.sleep(0.01)
     again = await cache.check_current_member(
         TEAM, certificate_id=member.certificate_id, team_did_key=member.team_did_key
@@ -185,7 +187,7 @@ async def test_runtime_uses_the_request_verifiers_bounded_cache(registry, member
         key = (TEAM, member.certificate_id)
         cached = cache._certificate_cache[key]
         assert proof.fresh_until == cached.expires_at
-        assert 0 < cached.expires_at - time.monotonic() <= 60
+        assert 0 < cached.expires_at - time.monotonic_ns() <= seconds_to_ns(60)
         await registry.revoke(member.certificate_id)
         await runtime.require_current_member(**evidence)
         cache._certificate_cache[key] = replace(cached, expires_at=-1)

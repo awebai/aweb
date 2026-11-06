@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
 
 import pytest
+import pytest_asyncio
 
 from aweb.coordination.routes import workspaces as workspace_routes
-from aweb.mcp.tools import _common as common_tools
+from aweb.mcp import auth as mcp_auth
+from aweb.mcp.auth import AuthContext
 from aweb.mcp.tools import agents as mcp_agents
 from aweb.routes import agents as agent_routes
 from aweb.team_auth_deps import TeamIdentity
@@ -32,15 +33,26 @@ class _FakeDbInfra:
         return self._db
 
 
-@pytest.mark.asyncio
-async def test_mcp_heartbeat_passes_team_id(monkeypatch):
-    seen: dict[str, str] = {}
-
-    monkeypatch.setattr(
-        common_tools,
-        "get_auth",
-        lambda: SimpleNamespace(agent_id="agent-1", team_id="default:acme.com"),
+@pytest_asyncio.fixture(params=["certificate", "proxy"])
+async def authenticated_mcp_context(request):
+    auth = AuthContext(
+        agent_id="agent-1",
+        team_id="default:acme.com",
+        alias="ivy",
+        did_key="did:key:z6MkIvy",
+        certificate_id="cert-001" if request.param == "certificate" else None,
+        trusted_proxy=request.param == "proxy",
     )
+    token = mcp_auth._auth_context.set(auth)
+    try:
+        yield auth
+    finally:
+        mcp_auth._auth_context.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_mcp_heartbeat_passes_team_id(monkeypatch, authenticated_mcp_context):
+    seen: dict[str, str] = {}
 
     async def _capture_presence(_redis, **kwargs):
         seen.update(kwargs)
@@ -58,14 +70,8 @@ async def test_mcp_heartbeat_passes_team_id(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_mcp_agent_list_reads_presence_by_workspace_id(monkeypatch):
+async def test_mcp_agent_list_reads_presence_by_workspace_id(monkeypatch, authenticated_mcp_context):
     seen: list[str] = []
-
-    monkeypatch.setattr(
-        common_tools,
-        "get_auth",
-        lambda: SimpleNamespace(agent_id="agent-1", team_id="default:acme.com"),
-    )
 
     class _ListDB:
         async def fetch_all(self, _query: str, *_args):

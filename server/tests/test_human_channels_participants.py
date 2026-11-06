@@ -1,4 +1,6 @@
 """P3 identity/storage readiness; public guest traffic remains disabled until P5."""
+from test_dashboard_privacy import TEAM, privacy_app, _request  # noqa: F401
+
 import json
 from pathlib import Path
 from uuid import uuid4
@@ -122,7 +124,6 @@ async def test_future_typed_storage_is_exact_and_retains_opt_out(aweb_cloud_db):
     assert not await db.fetch_value("SELECT EXISTS(SELECT 1 FROM {{tables.chat_participants}} WHERE session_id=$1 AND did='did:aw:bridge')", sid)
 
 
-from test_dashboard_privacy import TEAM, privacy_app, _request  # noqa: F401
 
 
 @pytest.mark.asyncio
@@ -149,6 +150,7 @@ async def test_typed_guest_metadata_never_resolves_the_bridge_as_the_human(aweb_
     await db.execute("INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) VALUES ('team:example.test','example.test','team','did:key:zTeam')")
     await db.execute("INSERT INTO {{tables.agents}} (team_id,did_key,did_aw,alias,identity_scope,inbound_mode) VALUES ('team:example.test','did:key:zBridge','did:aw:bridge','Bridge','global','open')")
     guest = participant(VECTORS['derivations'][0]['expected'])
+    await db.execute("UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE did_aw='did:aw:bridge'")
     meta = await lookup_participant_identity_metadata(db, guest)
     assert meta['participant_kind'] == 'bridged'
     assert 'agent_id' not in meta and 'stable_id' not in meta and 'alias' not in meta

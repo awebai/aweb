@@ -17,6 +17,16 @@ import (
 	"time"
 )
 
+// CustodyError keeps a stable refusal code separate from recovery guidance.
+type CustodyError struct{ Code, Message string }
+
+func (e *CustodyError) Error() string {
+	if e.Message == "" {
+		return e.Code
+	}
+	return e.Code + ": " + e.Message
+}
+
 // PlainMessageSignRequest is the structured local-custody request for signing
 // an ordinary mail/chat message envelope. The resident service, not the
 // worker, decides the final sender identity fields and signs only an internally
@@ -139,12 +149,13 @@ func (c *UnixCustodyClient) do(ctx context.Context, method, path string, in any,
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		var er struct {
-			Error  string `json:"error"`
-			Detail string `json:"detail"`
+			Error   string `json:"error"`
+			Detail  string `json:"detail"`
+			Message string `json:"message"`
 		}
 		_ = json.NewDecoder(resp.Body).Decode(&er)
 		if er.Error != "" {
-			return errors.New(er.Error)
+			return &CustodyError{Code: er.Error, Message: er.Message}
 		}
 		if er.Detail != "" {
 			return errors.New(er.Detail)

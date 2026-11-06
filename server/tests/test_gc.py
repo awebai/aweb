@@ -331,6 +331,37 @@ async def test_gc_inactive_scopes_hard_deletes_populated_team(aweb_cloud_db):
         active_agent_id,
     )
 
+    active_task_id = uuid4()
+    await aweb_db.execute(
+        """INSERT INTO {{tables.tasks}} (task_id,team_id,task_number,task_ref_suffix,title)
+           VALUES ($1,$2,1,'aaaa','Keep the active team decision')""",
+        active_task_id, active_team_id,
+    )
+    # Both teams have all three C2 dependency levels. Cleanup must remove only
+    # the inactive team's evidence, in foreign-key order, before its task.
+    for scope, scoped_task in ((team_id, task_id), (active_team_id, active_task_id)):
+        receipt_id = uuid4()
+        await aweb_db.execute(
+            """INSERT INTO {{tables.task_app_requests}}
+               (task_id,team_id,app_id,installation_id,installation_generation,originator_did,
+                external_request_id,task_body_sha256,task_authorization,receipt)
+               VALUES ($1,$2,'fixture','install-fixture',1,'did:key:originator','request-1',$3,'{}','{}')""",
+            scoped_task, scope, "0" * 64,
+        )
+        await aweb_db.execute(
+            """INSERT INTO {{tables.task_answers}}
+               (receipt_id,task_id,question_rev,task_rev,answer_key,answer_sha256,
+                answered_by_did,certificate_id,stage_receipt)
+               VALUES ($1,$2,1,1,'answer-1',$3,'did:key:answerer','certificate-1','{}')""",
+            receipt_id, scoped_task, "0" * 64,
+        )
+        await aweb_db.execute(
+            """INSERT INTO {{tables.task_answer_stage_nonces}}
+               (team_id,app_id,installation_id,nonce,receipt_id)
+               VALUES ($1,'fixture','install-fixture',$2,$3)""",
+            scope, "a" * 32, receipt_id,
+        )
+
     result = await gc_inactive_scopes(_db_infra(aweb_db), ttl_days=30)
 
     assert result == {"scopes_deleted": 1}
@@ -361,6 +392,9 @@ async def test_gc_inactive_scopes_hard_deletes_populated_team(aweb_cloud_db):
         "repos": ("SELECT COUNT(*) AS count FROM aweb.repos WHERE team_id = $1", (team_id,)),
         "workspaces": ("SELECT COUNT(*) AS count FROM aweb.workspaces WHERE team_id = $1", (team_id,)),
         "tasks": ("SELECT COUNT(*) AS count FROM aweb.tasks WHERE team_id = $1", (team_id,)),
+        "task_app_requests": ("SELECT COUNT(*) AS count FROM aweb.task_app_requests WHERE team_id = $1", (team_id,)),
+        "task_answers": ("SELECT COUNT(*) AS count FROM aweb.task_answers WHERE task_id = $1", (task_id,)),
+        "task_answer_stage_nonces": ("SELECT COUNT(*) AS count FROM aweb.task_answer_stage_nonces WHERE team_id = $1", (team_id,)),
         "task_comments": ("SELECT COUNT(*) AS count FROM aweb.task_comments WHERE team_id = $1", (team_id,)),
         "task_dependencies": ("SELECT COUNT(*) AS count FROM aweb.task_dependencies WHERE team_id = $1", (team_id,)),
         "task_counters": ("SELECT COUNT(*) AS count FROM aweb.task_counters WHERE team_id = $1", (team_id,)),
@@ -387,3 +421,10 @@ async def test_gc_inactive_scopes_hard_deletes_populated_team(aweb_cloud_db):
         active_team_id,
     )
     assert active_team is not None
+    for table in ("tasks", "task_app_requests", "task_answers"):
+        assert await aweb_db.fetch_value(
+            f"SELECT count(*) FROM aweb.{table} WHERE task_id = $1", active_task_id,
+        ) == 1
+    assert await aweb_db.fetch_value(
+        "SELECT count(*) FROM {{tables.task_answer_stage_nonces}} WHERE team_id = $1", active_team_id,
+    ) == 1

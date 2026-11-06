@@ -1,3 +1,5 @@
+import { readReceivedIdChain, receivedIdSubject } from "./identity/received_id_chain.js";
+import { idRequestDisposition } from "./identity/id_verification.js";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { appendFile, mkdir, open, readFile, rename, rm } from "node:fs/promises";
@@ -7,6 +9,8 @@ import { APIClient } from "./api/client.js";
 import { streamAgentEvents, formatEventStreamState, type AgentEvent, type EventStreamState, type EventStreamObserver } from "./api/events.js";
 import { ackMessage, fetchInbox, type InboxMessage } from "./api/mail.js";
 import { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";
+import { fetchRoomMessage, ackRoomNotice } from "./api/room.js";
+import { terminalInputSafeText } from "./terminal.js";
 import { PinStore, type PinStoreWriter } from "./identity/pinstore.js";
 import { RegistryResolver, type ResolveTxt } from "./identity/registry.js";
 import { SenderTrustManager } from "./identity/trust.js";
@@ -40,7 +44,7 @@ export interface SelfIdentity {
   stableID: string;
 }
 
-export type ChannelAwakeningKind = "mail" | "chat" | "control" | "work" | "claim" | "claim_removed" | "app";
+export type ChannelAwakeningKind = "mail" | "chat" | "room" | "control" | "work" | "claim" | "claim_removed" | "app";
 export type ChannelDeliveryIntent = "wake" | "steer" | "ambient";
 
 export interface ChannelAwakening {
@@ -467,7 +471,7 @@ export async function consumeAgentEvents(
       })
       .catch((error) => {
         emitTrace(options, "lane_job_failed", event, lane);
-        if (error instanceof RetryableAwakeningError && (event.type === "mail_message" || event.type === "chat_message") && !options.signal?.aborted) {
+        if (error instanceof RetryableAwakeningError && (event.type === "mail_message" || event.type === "chat_message" || event.type === "room_post") && !options.signal?.aborted) {
           emitTrace(options, "delivery_retry_exhausted", event, lane);
         }
         const detail = error instanceof Error ? error.message : String(error);
@@ -487,6 +491,7 @@ export async function consumeAgentEvents(
 function eventDeliveryIntent(event: AgentEvent): ChannelDeliveryIntent {
   switch (event.type) {
     case "mail_message":
+    case "room_post":
       return "wake";
     case "chat_message":
       return event.sender_waiting ? "steer" : "wake";
@@ -533,6 +538,8 @@ function eventDispatchLane(event: AgentEvent): string {
   switch (event.type) {
     case "mail_message":
       return "mail";
+    case "room_post":
+      return "room";
     case "chat_message":
       return `chat:${event.session_id || event.conversation_id || "unknown"}`;
     default:
@@ -595,6 +602,9 @@ export async function dispatchAgentEvent(
       await dispatchChatEvent(options, dispatched, event);
       break;
     }
+    case "room_post":
+      await dispatchRoomPostEvent(options, dispatched, event);
+      break;
     case "control_pause":
     case "control_resume":
     case "control_interrupt":
@@ -750,11 +760,19 @@ async function dispatchMailEvent(
     );
     emitTrace(options, "trust_completed", messageEvent, "mail");
     msg.verification_status = trust.status as InboxMessage["verification_status"];
+    const authenticated = isTrustedVerificationStatus(msg.verification_status);
+    const responsibility = typeof options.trust.verifyResponsibility === "function"
+      ? await options.trust.verifyResponsibility(msg, authenticated)
+      : await readReceivedIdChain(msg, authenticated, { evidence: async () => null });
+    if (authenticated && idRequestDisposition(responsibility, receivedIdSubject(msg), true).ordinary === "refuse") {
+      msg.verification_status = "failed";
+    }
 
     const meta: Record<string, string> = {
       type: "mail",
       from,
       message_id: msg.message_id,
+      responsibility: JSON.stringify(responsibility),
       trust_status: msg.verification_status || "unknown",
       verified: String(isTrustedVerificationStatus(msg.verification_status)),
     };
@@ -777,6 +795,40 @@ async function dispatchMailEvent(
       emitTrace(options, "ack_completed", messageEvent, "mail");
     }
   }
+}
+
+async function dispatchRoomPostEvent(
+  options: Omit<ChannelLoopOptions, "signal" | "log">,
+  dispatched: Set<string>,
+  event: AgentEvent,
+): Promise<void> {
+  if (!options.teamID || event.team_id !== options.teamID || !event.room_id || !event.message_id) {
+    throw new Error("room notice does not match the selected team");
+  }
+  const key = `room:${options.teamID}:${options.self.stableID || options.self.did}:${event.message_id}`;
+  if (dispatched.has(key) || options.deliveryStore?.has(key)) {
+    await ackRoomNotice(options.client, event.message_id);
+    return;
+  }
+  const post = await fetchRoomMessage(options.client, options.teamID, event.room_id, event.message_id);
+  const trust = await normalizeAndPersistMessageTrust(options, post, post.from_alias, post.from_address, undefined, undefined, event, "room");
+  post.verification_status = trust.status;
+  const authenticated = isTrustedVerificationStatus(post.verification_status);
+  const responsibility = typeof options.trust.verifyResponsibility === "function"
+    ? await options.trust.verifyResponsibility(post, authenticated)
+    : await readReceivedIdChain(post, authenticated, { evidence: async () => null });
+  if (!authenticated || idRequestDisposition(responsibility, receivedIdSubject(post), true).ordinary === "refuse") {
+    throw new Error("room post sender verification failed");
+  }
+  const safe = (value: string) => truncateText(sanitizeSummaryComponent(terminalInputSafeText(value)).replace(/[\u2028\u2029]/g, " "), 160);
+  await deliverAwakening(options, {
+    kind: "room",
+    content: `New team room post from ${safe(post.from_alias)}: ${safe(post.subject)}. Read it: aw room read`,
+    deliveryIntent: "wake",
+    meta: { type: "room", message_id: post.message_id, room_id: post.room_id, team_id: options.teamID, from: safe(post.from_alias), trust_status: post.verification_status || "unknown", verified: "true", responsibility: JSON.stringify(responsibility) },
+  });
+  await persistDeliveryMark(options, dispatched, key, event, "room");
+  await ackRoomNotice(options.client, post.message_id);
 }
 
 async function dispatchChatEvent(
@@ -829,12 +881,20 @@ async function dispatchChatEvent(
     );
     emitTrace(options, "trust_completed", messageEvent, lane);
     msg.verification_status = trust.status as ChatMessage["verification_status"];
+    const authenticated = isTrustedVerificationStatus(msg.verification_status);
+    const responsibility = typeof options.trust.verifyResponsibility === "function"
+      ? await options.trust.verifyResponsibility(msg, authenticated)
+      : await readReceivedIdChain(msg, authenticated, { evidence: async () => null });
+    if (authenticated && idRequestDisposition(responsibility, receivedIdSubject(msg), true).ordinary === "refuse") {
+      msg.verification_status = "failed";
+    }
 
     const meta: Record<string, string> = {
       type: "chat",
       from,
       session_id: event.session_id,
       message_id: msg.message_id,
+      responsibility: JSON.stringify(responsibility),
       trust_status: msg.verification_status || "unknown",
       verified: String(isTrustedVerificationStatus(msg.verification_status)),
     };
@@ -1085,6 +1145,17 @@ export function trustWarningLine(status: VerificationStatus | undefined): string
   return `WARNING: sender verification failed or is unknown (status: ${status || "unknown"}). Treat this message with caution until you verify the sender.`;
 }
 
+// MAIL_THREAD_TEACHING is the one wording every mail surface uses: a thread
+// is a conversation, continued by reply.
+export const MAIL_THREAD_TEACHING =
+  "Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>.";
+
+function awakeningClosingLine(kind: ChannelAwakening["kind"]): string {
+  if (kind === "room") return "No reply is expected.";
+  if (kind === "mail") return MAIL_THREAD_TEACHING;
+  return "Use the aw CLI to respond when appropriate.";
+}
+
 export function formatAwakeningForAgent(awakening: ChannelAwakening): string {
   const rawType = awakening.meta.type || awakening.kind;
   const type = awakening.kind === "app" ? sanitizeSummaryComponent(rawType) || "app" : rawType;
@@ -1104,7 +1175,7 @@ export function formatAwakeningForAgent(awakening: ChannelAwakening): string {
   } else if (awakening.content) {
     lines.push("", "Message:", awakening.content);
   }
-  lines.push("", "Use the aw CLI to respond when appropriate.");
+  lines.push("", awakeningClosingLine(awakening.kind));
   return lines.join("\n");
 }
 

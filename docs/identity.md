@@ -12,6 +12,13 @@ authority. A hosted operator may hold controller or identity private keys only
 for an explicitly hosted-authority or custodial flow. AWID itself never holds
 private keys or signs on anyone's behalf.
 
+The [identity certificates v1 candidate](id-certificates.md) defines a
+parent-signed human/agent tree rooted in DNS namespace authority, alongside
+unchanged team certificates. The nearest human answers for an agent;
+membership, roles and custody stay separate. Implementation follows contract
+review. The former [email attribution candidate](member-attribution.md) is
+superseded and must not be implemented.
+
 ## Entities
 
 ### Agent
@@ -221,6 +228,132 @@ remains a hidden, warning compatibility alias for `--name`. New requests,
 registry storage, and product language use `name` as the concept and
 `identity_scope=local|global` for scope.
 
+### Hosted organization setup (including Omarchy)
+
+A person already signed in can create a managed organization without a namespace
+controller key in the terminal. Account authorization through the CLI grants the hosted service
+permission to create the organization and team; each agent keeps its own signing
+key. Device login prints an approval URL and code, and works without opening a
+browser on the CLI machine:
+
+```bash
+aw auth login --json
+aw org list --json
+aw org availability alice-laptop --json
+aw org create alice-laptop --name "Alice's laptop" --json
+aw team create machine --org alice-laptop --json
+```
+
+Default login requests `cli.workspace_team cli.org_create`. Existing tokens that
+only have `cli.workspace_team` still work for workspace enrollment. Organization
+operations require a new `aw auth login` when that scope is missing; the CLI does
+not substitute an agent credential or start browser approval on its own.
+
+For automatic setup, propose `<username>-<hostname>` for an existing account and
+the hostname for a new account. Default distro hostnames such as `omarchy`,
+`archlinux` and `localhost` should go straight to an available suggestion. Use
+`org availability` for planning: it creates nothing. Explicit slugs use the
+service's existing lowercase handle rules (3–39 characters); the CLI does not
+remove punctuation, truncate, or silently append a suffix. A collision returns
+`org_slug_taken` and a suggestion. Interactive users confirm it or enter another
+slug; JSON and non-interactive invocations exit nonzero with the suggestion.
+
+Choose the same organization when ensuring a workspace team and enrolling its
+member. The selector is covered by the enrollment signature; it does not itself
+grant an account owner's organization authority:
+
+```bash
+aw --identity-home /path/to/principal init --workspace-team \
+  --workspace-key aweb.ai/alice/workspace --org alice-laptop \
+  --expect-account ACCOUNT_ID --json
+```
+
+`aw team create NAME --org ORG` returns a one-use invitation and creates no local
+identity or workspace. Keep its `request_id` and parameters for a deliberate
+retry. A consumed-invitation replay returns the existing team without a token;
+it does not enroll the current caller. `aw id team create --name NAME --org ORG`
+is the primitive with the same behavior. Existing controller creation and
+certificate-authorized sibling creation keep their own authority paths.
+
+To create a **new** self-custodial global member in an explicitly chosen hosted
+team, select a fresh credential root and a Cloud service UUID or canonical team ID:
+
+```bash
+aw --identity-home /path/to/steward id create --org alice-laptop \
+  --team-id SERVICE_TEAM_UUID --name steward \
+  --inbound-mode team-and-contacts --json
+```
+
+The CLI registers its local key with public AWID, then asks the hosted service
+to authorize the address and ordinary member certificate. It receives no API key
+or administrator role. The result names the exact address and canonical team;
+the private key stays in the selected root. A lost reply is retried with the
+same root and original parameters, retaining the same key. Do not discard that
+root or change the organization/team to recover an uncertain result. A name
+held by another key refuses with `identity_name_taken`.
+
+Once creation completes, the recovery file is removed. Repeating creation in
+that completed root refuses and preserves the installed identity. Use ordinary
+commands with that root; another new identity needs a fresh root. This differs
+from retrying an incomplete operation after a lost response, which keeps its
+original key and exact creation parameters.
+
+This explicit creation differs from joining with an existing global identity:
+`aw team join --global` continues to reuse its stored identity and cannot mint
+a new address. The selected root can use ordinary mail commands after creation. An explicit
+`--inbound-mode contacts-only` requests strict `contacts_only`, which admits
+contacts only, including for same-team senders. Before reporting success the CLI
+requires the returned mode and a live certificate-authenticated readback to
+match the requested mode; a service downgrade is an error. Existing global
+creation paths also verify an explicitly selected mode after connecting.
+Unspecified modes keep their existing defaults.
+
+
+A CLI-signup organization's owner principal can authorize this hosted creation
+with its existing native key. Select that authority explicitly, separately from
+the new member's fresh credential directory:
+
+```bash
+aw --identity-home /team-root/.aw inbound-mode --json
+aw --identity-home /steward-root/.aw id create \
+  --owner-identity-home /team-root/.aw --org alice \
+  --team-id TEAM_ID_FROM_INBOUND_MODE --name steward \
+  --inbound-mode contacts-only --json
+```
+
+Pass the read-only first command's `team_id` unchanged as `--team-id`. It may
+be a canonical ID such as `default:alice.aweb.ai` or a service UUID. Cloud
+resolves that selector within the authorized organization and returns both
+the service UUID and canonical ID. The CLI preserves the exact trimmed input
+in its signed intent and recovery state; it does no mapping lookup. `--org`
+takes the organization slug (`alice`) or
+ID, rather than its namespace domain. A newly created signup flow can retain its
+original username as that slug; `whoami.domain` is namespace information rather
+than proof of organization ownership.
+
+Both root flags name the credential directory itself: they append no `.aw` and
+the directory may have another name. The owner root must differ from the fresh
+destination. Its native key signs the authorization request; the hosted service
+checks the principal's live owner authority for the selected organization and
+team. Ordinary team membership and organization administrator status do not
+authorize this path. The service still verifies the new member's separate intent
+proof and returns an ordinary self-custodial global certificate.
+
+This owner path uses the Cloud base from the owner's own workspace binding,
+leaves that root unchanged, and creates no account device session. It does not use
+an API key or grant and does not switch to account login after a refusal. Omitting
+`--owner-identity-home` retains the account `cli.org_create` flow above. Signup and
+claim-human alone do not mint that account device authorization.
+
+The owner-request DIDKey signature covers canonical JSON with `aud` (the
+hosted service's configured public origin, which must equal the owner workspace
+binding's `scheme://host[:port]`), `body_sha256` (the exact transmitted request bytes),
+`method`, `path` and `timestamp`. The service checks the audience and timestamp
+before looking up authority. This is the audience-bound variant for hosted
+identity creation; existing signup, claim-human and bootstrap-redeem signature
+bytes remain unchanged. Recovery pins the original authorizing principal as
+well as the new member key, and success still requires the exact mode readback.
+
 ## Command-to-verb mapping
 
 | Verb | Canonical model action | Current command surface | Notes |
@@ -336,6 +469,72 @@ machine then uses its local identity key to run `aw id team fetch-cert
 installs the certificate locally. The team controller private key never leaves
 the controller machine.
 
+## Verified identity attribution
+
+A team controller authorizes membership, alias and team scope. Certificate
+`member_did_aw` and `member_address` fields are claims about independent identity
+facts; aweb verifies them with AWID before connecting or authenticating a member.
+The current DID-log key must equal the request's member signing key. An address
+must resolve to that same stable identity and current key. Missing or conflicting
+bindings return `403 identity_binding_mismatch`; unavailable registry evidence
+returns `503 identity_binding_unavailable`. Provisioning does no registry I/O
+inside database locks.
+
+If AWID definitively reports no record for a stable identity, the signing key may
+use its own `stable_id_from_did_key` value. This exception does not apply to an
+existing registry record, a rotated-out key, or a registry failure. An address
+still requires its own positive registry binding.
+
+Successful verification is cached by stable identity, signing key and address
+for at most 60 seconds. A connect always rechecks current registry evidence.
+Neither older SDK caches nor stale registry results establish this binding.
+
+Embedding hosts obtain an authoritative observation through the public
+`aweb.identity_binding.observe_identity_binding(registry_client, *, did_key,
+did_aw, address="")` function before opening a provisioning transaction. It
+returns a frozen `IdentityBinding` bound to that exact key and fresh AWID facts;
+mismatch is 403 and unavailable evidence is 503. Pass the result as
+`connect_agent(..., identity_binding=observation)`. Connect requires a fresh,
+typed observation exactly matching every certificate identity/address claim,
+then writes the projection and marker in its transaction without registry I/O.
+The observation cannot add claims absent from the certificate. It is an
+in-process Python value, never a header, request body or certificate field.
+Hosts must not construct it from claims or rewrite verification flags. The OSS
+request verifier returns it as the internal `cert_info["identity_binding"]`
+result, and `/v1/connect` obtains that result through its own fresh verification.
+Claimless local connects need no observation.
+Identity-only and grant authentication apply the same check to their identity
+or grant subject; a grant session key does not become the subject's root key.
+
+`agents.did_aw_verified_key` records the key against which a projection was
+verified. Historical rows start with a null marker. Stable-DID and global-address
+routing, identity expansion and membership checks use a row's global claims only
+when the marker equals its `did_key`. A fresh registry observation during
+an authenticated request or reconnect refreshes its own projection and clears
+markers for other keys of that stable identity in the same transaction.
+A cached binding authenticates without writing or clearing markers. This
+requires no registry I/O under locks and does not add registry reads to recipient
+resolution. Local key-based access remains available
+without attributing unverified global metadata. Policy classification still uses
+`identity_scope = global` or a raw stable-DID claim: withholding a claim never
+relaxes a global recipient's inbound policy. Existing conversation participants
+can be looked up by their raw claims solely to enforce policy; this lookup never
+selects a new recipient or supplies routing identity. Every matching local policy
+row must permit continuation. Lookup errors fail closed. A participant with no
+live local row contributes no local delivery or policy check; a retired group
+member does not prevent continuation for the remaining members. Single-recipient
+mail without a live recipient is not delivered.
+
+After migration 034, operators run `aweb verify-identity-bindings --dry-run`, then
+`aweb verify-identity-bindings` before resuming stable-DID/address delivery. The
+command reads pending live identity projections, observes current AWID evidence
+outside locks, then rechecks the row's key, stable DID and address under a row
+lock. It writes only a verified marker; identities and addresses are never
+rewritten. It reports only counts (`verified`, `self_derived`, `unbound`,
+`awid_error`), is idempotent, and exits nonzero if any row remains unbound or
+unavailable. Operators investigate those counts before proceeding. This command
+requires the server's database and AWID configuration; it performs no migration.
+
 ## Session grants
 
 A session grant lets a worker process act as an identity until revoked (or for an explicit finite window)
@@ -426,6 +625,26 @@ caller-supplied ciphertext; a grant seat does not replace it with its own read.
 and recipient lookup does not decrypt unrelated pending-chat previews. HTTP and
 custody requests retain their individual timeouts; a history page does not share
 one cumulative API timeout. Explicit caller cancellation still stops the work.
+`aw mail show` follows the same rule: its page fetch retains the configured
+HTTP timeout, then each message is unwrapped independently. The custody RPC
+limit remains 10 seconds, with separate 5-second freshness and stored-message
+read limits. An explicit caller deadline still bounds the entire operation.
+
+The opt-in real regression is `scripts/e2e/custody_bulk.py`. With locally built
+service images and a Linux CLI binary matching Docker's CPU, run:
+
+```sh
+python3 scripts/e2e/custody_bulk.py --aw-bin /absolute/path/to/linux/aw \
+  --evidence /tmp/custody-bulk-result
+```
+
+It provisions disposable identities through the CLI and real owned TXT DNS,
+then checks 300 exact verified v2 messages, a delayed page plus unwraps, local
+key reads and individually stalled page/header/body/custody/authority steps.
+It uses only existing local images, an internal network and fresh private
+identity storage, and removes its owned services and volumes on exit. Image
+overrides are available with `--help`; older CLI comparisons may supply a
+separate current provisioning binary with `--provision-aw-bin`.
 
 Scopes are `mail.read`, `mail.send`, `chat.read`, `chat.send`,
 `events.read`, `coord.read`, `coord.write`, `presence.write`,

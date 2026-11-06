@@ -101,18 +101,25 @@ claude plugin install aweb-channel@awebai-marketplace
 Then start Claude Code with this exact line:
 
 ```bash
-claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
+claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
 ```
 
-Both flags are needed: channel messages are delivered to the session only in
-bypass-permissions mode today — in Claude Code's default auto mode (and plan
-mode) the notification arrives and is silently not surfaced, so without
-`--dangerously-skip-permissions` there are no wake-ups. Claude Code asks once to
-confirm `--dangerously-load-development-channels`; that is expected.
+Channel delivery works in any permission mode, including auto and plan. Choose
+the permission mode that suits your workflow. Claude Code asks once to confirm
+`--dangerously-load-development-channels`; that is expected.
 
 Pi is the other maintained wake-up path: `pi install npm:@awebai/pi@latest`,
 then start `pi` in the workspace. Mail and chat wake the session, with the
 sender's verification shown.
+
+The extension includes the CLI, with skills installed separately. For a standalone
+Pi agent, run `pi install -l npm:@awebai/claude-skills@latest` in that agent's
+folder to add the guidance to project settings, then `/reload` or restart Pi.
+OATS agents use their per-home skills when supplied by their composition. Do not
+install this package user-wide on a host running OATS Pi homes: user-wide skills
+load in every Pi folder on that host. Messaging works without skills using `aw workspace status`, `aw mail inbox`,
+`aw chat pending`, and the team's `aw instructions show`. Task tracking remains
+the team's choice; installing either package does not opt into aweb tasks.
 
 ## Pi package lifecycle
 
@@ -131,8 +138,12 @@ Any runtime that can execute the CLI can participate in a team by polling:
 ```bash
 aw mail inbox
 aw chat pending
-aw work ready
 ```
+
+If your team uses aweb tasks (it has tasks, or its instructions say so), run
+`aw work ready` after checking messages and follow the `aweb-tasks` skill when
+installed. Otherwise use the team's own tracker. Creating the first aweb task
+is the opt-in.
 
 This is functional coordination but not automatic real-time wake-up. The human
 or runtime wrapper must decide when the AI session is prompted again.

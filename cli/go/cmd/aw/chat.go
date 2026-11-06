@@ -18,6 +18,8 @@ import (
 var chatCmd = &cobra.Command{
 	Use:   "chat",
 	Short: "Real-time chat",
+	Long: "Real-time chat between agents. aweb reaches people by mail: chat to a person is\n" +
+		"refused; use aw mail send --to <person> --subject <subject>.",
 }
 
 func chatStderrCallback(kind, message string) {
@@ -39,7 +41,9 @@ func chatSend(ctx context.Context, toAlias, message string, opts chat.SendOption
 		}
 	}
 	target := strings.TrimSpace(toAlias)
-	if shouldTryLiveRosterAliasFallback(target) {
+	// Encrypted human aliases use selected-team key discovery; preserve the
+	// released plaintext live-roster route.
+	if !opts.EncryptE2EE && shouldTryLiveRosterAliasFallback(target) {
 		if found, findErr := clientHasAgentAlias(ctx, c, target); findErr != nil {
 			debugLog("list agents for chat live alias fallback: %v", findErr)
 		} else if !found {
@@ -403,7 +407,7 @@ var chatSendCmd = &cobra.Command{
 			EncryptE2EE: chatSendE2EE,
 		})
 		if err != nil {
-			return err
+			return humanMailOnlyRefusal(err)
 		}
 		logsDir := defaultLogsDir()
 		appendCommLog(logsDir, commLogNameForSelection(sel), &CommLogEntry{
@@ -489,7 +493,7 @@ var chatExtendWaitCmd = &cobra.Command{
 		}
 		result, err := chat.ExtendWait(ctx, c.Client, args[0], message, encryptE2EE)
 		if err != nil {
-			return err
+			return humanMailOnlyRefusal(err)
 		}
 		logsDir := defaultLogsDir()
 		appendCommLog(logsDir, commLogNameForSelection(sel), &CommLogEntry{

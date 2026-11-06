@@ -29,7 +29,23 @@ custody boundaries.
 
 - Hosted custodial tools or any server-side surface that receives plaintext are
   not E2E. They may use the encrypted-v2 wire format as server-readable hosted
-  managed encryption, but must not be described as E2E.
+  managed encryption, but must not be described as E2E. An explicit E2EE send to
+  a recipient whose exact delivery-key assertion has signature-verified
+  `custody: hosted_custodial` refuses with HTTP 422,
+  `recipient_custodial_no_e2ee`. The client refuses before sending; ordinary HTTP
+  mail/chat routes also refuse before message storage when that verified key
+  assertion is already available, including local continuations. There is no
+  extra remote-key fetch for this check. The sender must explicitly retry without
+  `--e2ee`; there is no automatic plaintext downgrade. Missing or legacy null
+  custody is not evidence of hosted custody. A hosted sender may also use an
+  ordinary handler for managed sends: only the authenticated sender's exact,
+  non-revoked, signature-verified hosted key assertion exempts that send from
+  the recipient refusal. Every key wrap must name that same sender encryption
+  key. A missing, self or null sender assertion supplies no exemption, and an
+  invalid hosted assertion refuses. Federation ingress, hosted MCP and
+  custodial send paths retain the managed encrypted-v2 wire: ingress cannot
+  distinguish managed encryption from a sender's E2EE intent, and hosted
+  attachments depend on that wire. Such traffic must not be labelled E2EE.
 - The server cannot recover lost encryption keys and cannot decrypt historical
   encrypted messages for support.
 - This contract does not introduce a Signal or MLS-style ratchet. Group chat is
@@ -381,6 +397,19 @@ The server-visible v2 envelope has this shape:
 
 Rules:
 
+- Python builders can guard their output with the public
+  `aweb.e2ee_messages.validate_strict_e2ee_message_envelope`. It accepts mail
+  and chat with the same expected binding arguments as
+  `validate_e2ee_message_envelope`, rejects unknown fields at every object
+  level and wrong JSON types without coercion, then applies the normal
+  cryptographic and binding checks. Expected identities and message identifiers
+  must come from trusted resolved inputs, not from the envelope being checked.
+  Optional fields can be omitted; optional string fields emitted as empty
+  strings by the builder are accepted, while `null` is refused. The input is
+  not changed. Binary encodings remain opaque to this structural check:
+  message text that happens to occur in a valid nonce or ciphertext is accepted.
+  The existing validator retains its compatibility behavior; the strict helper
+  is an additive construction guard, not a new default ingestion requirement.
 - `kind` is `mail` or `chat`.
 - `subject`, `body`, and chat plaintext are absent from the outer envelope.
 - `reply_to_message_id` is omitted when absent.

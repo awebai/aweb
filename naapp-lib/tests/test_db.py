@@ -67,6 +67,7 @@ _SHARED = ("aweb_naapp", "001_observed_principals.sql")
 _OUTBOX = [
     ("aweb_naapp_outbox", "001_outbox.sql"),
     ("aweb_naapp_outbox", "002_outbox_channels.sql"),
+    ("aweb_naapp_outbox", "003_admission_backlog.sql"),
 ]
 
 
@@ -133,7 +134,7 @@ async def test_reconnecting_applies_nothing_twice(database_url: str, tmp_path: P
         await database.connect()
         count = await database.db.fetch_value("SELECT count(*) FROM schema_migrations")
         await database.disconnect()
-        assert count == 4
+        assert count == 5
 
 
 async def test_pool_follows_the_settings(database_url: str, tmp_path: Path) -> None:
@@ -220,7 +221,7 @@ async def test_reconnecting_with_stores_applies_nothing_twice(
         await database.connect()
         count = await database.db.fetch_value("SELECT count(*) FROM schema_migrations")
         await database.disconnect()
-        assert count == 5
+        assert count == 6
 
 
 async def _default_search_path_is_pg_catalog(database_url: str) -> None:

@@ -47,7 +47,17 @@ func validateTeamJoinArgs(cmd *cobra.Command, args []string) error {
 		}
 		return nil
 	}
+	if teamJoinTokenFromFlags(cmd) {
+		// teamJoinTokenArgs reads the token and refuses a positional one too.
+		return nil
+	}
 	return cobra.ExactArgs(1)(cmd, args)
+}
+
+func teamJoinTokenFromFlags(cmd *cobra.Command) bool {
+	path, _ := cmd.Flags().GetString("token-file")
+	fromStdin, _ := cmd.Flags().GetBool("token-stdin")
+	return strings.TrimSpace(path) != "" || fromStdin
 }
 
 func joinHarnessRetryCommand(home awconfig.IdentityHome, harness string) string {
@@ -92,7 +102,7 @@ func setupJoinHarness(workingDir string, home awconfig.IdentityHome, harness str
 			return result, installed.Error
 		}
 		result.Delivery = "native channel plugin installed; session not launched or verified"
-		result.StartCommand = "claude --dangerously-skip-permissions --dangerously-load-development-channels " + claudeChannelSpec
+		result.StartCommand = "claude --dangerously-load-development-channels " + claudeChannelSpec
 	case "pi":
 		if installed := EnsurePiChannelExtension(); installed.Error != nil {
 			return result, installed.Error

@@ -36,6 +36,7 @@ from fastapi import Request
 
 from aweb_naapp.manifest import Attestation, ManifestError
 from aweb_naapp.manifest import caller_context as manifest_caller_context
+from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.team_auth import Principal, signed_payload_bytes
 
 __all__ = [
@@ -105,11 +106,11 @@ class AWIDAttestationRecords:
         self.ttl_seconds = max(0, min(int(ttl_seconds), MAX_RECORD_TTL_SECONDS))
         self._transport = transport
         self._timeout = timeout_seconds
-        self._cache: dict[str, tuple[float, SignedRecord | None]] = {}
+        self._cache: dict[str, tuple[int, SignedRecord | None]] = {}
 
     async def _get(self, path: str) -> SignedRecord | None:
         cached = self._cache.get(path)
-        if cached is not None and time.monotonic() < cached[0]:
+        if cached is not None and time.monotonic_ns() < cached[0]:
             return cached[1]
         try:
             async with httpx.AsyncClient(transport=self._transport, timeout=self._timeout) as client:
@@ -128,7 +129,7 @@ class AWIDAttestationRecords:
             value = {"record": body["record"], "signature": body["signature"]}
         else:
             raise AttestationRefused("authority_unavailable", f"registry answered {response.status_code}")
-        self._cache[path] = (time.monotonic() + self.ttl_seconds, value)
+        self._cache[path] = (time.monotonic_ns() + seconds_to_ns(self.ttl_seconds), value)
         return value
 
     @staticmethod

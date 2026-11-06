@@ -60,3 +60,9 @@ def test_a_send_related_outcome_cannot_become_a_read_receipt():
         results.outcome_unknown(request_id=None, request_ref=INTENT)
     with pytest.raises(ValueError):
         results.completed({}, request_id=None, request_ref=INTENT)
+
+
+def test_uncertain_outcome_names_its_original_association_for_reconciliation_reads():
+    reply = results.outcome_unknown(request_id=REQUEST_ID, request_ref=INTENT)
+    assert reply["reconcile_ref"] == INTENT
+    assert not {"next", "send", "may_send", "dispatch_id", "link_token"} & reply.keys()

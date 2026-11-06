@@ -19,10 +19,12 @@ from aweb_naapp.manifest import canonical_bytes, fill_manifest, load_manifest
 from aweb_naapp.ratelimit import apply_ratelimit_migrations
 from aweb_naapp.runtime.app_keys import AppKeyError
 from aweb_naapp.runtime.authorization import DeclaredTool, Grant
+from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.health import CheckResult, HealthCheck
 from aweb_naapp.runtime.team_auth import Principal
-from aweb_naapp_testing import REGISTRY_URL, Member, attested
+from aweb_naapp_testing import Member, attested
 from awid.did import did_from_public_key
+from awid_service.testing import REGISTRY_URL
 from fastapi import Request
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
@@ -49,14 +51,14 @@ class InstalledTeams:
     def __init__(self, scopes_by_team: dict[str, frozenset[str]]) -> None:
         self.scopes_by_team = scopes_by_team
 
-    async def grant_for(self, team_id: str) -> Grant | None:
+    async def grant_for(self, team_id: str, certificate_id: str | None = None) -> Grant | None:
         scopes = self.scopes_by_team.get(team_id)
         if scopes is None:
             return None
         return Grant(
             team_id=team_id,
             scopes=scopes,
-            fresh_until=time.monotonic() + 60,
+            fresh_until=time.monotonic_ns() + seconds_to_ns(60),
             installation_id=None,
             generation=None,
         )
@@ -98,9 +100,10 @@ async def database_url(test_db_factory) -> str:
 
 
 KEY_PURPOSES = {
-    "secrets:hook-event-1": ["hook-event"],
-    "secrets:hook-delivery-1": ["hook-delivery"],
+    "secrets.hook-event-1": ["hook-event"],
+    "secrets.hook-delivery-1": ["hook-delivery"],
     "secrets:grant-read-1": ["app-grant-read"],
+    "secrets:hook-resolve-1": ["hook-resolve"],
 }
 
 
@@ -425,6 +428,18 @@ async def test_the_served_v2_bytes_come_from_the_template_and_configured_keys(
         assert resolved.manifest_version == 2
         assert {kid: list(purposes) for kid, _, purposes in resolved.app_keys} == KEY_PURPOSES
         assert {kid: did for kid, did, _ in resolved.app_keys} == keys
+        # Producing secrets runtimes must have the purpose-specific resolver
+        # needed by K4, rather than substituting an event or delivery key.
+        assert resolved.app_keys_for("hook-resolve") == {
+            "secrets:hook-resolve-1": keys["secrets:hook-resolve-1"]
+        }
+        assert runtime.hook_resolver() is runtime.hook_resolver()
+        assert runtime.hook_registrations() is runtime.hook_registrations()
+        producer = runtime.hook_producer(
+            installation_id="1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b", generation=1
+        )
+        assert producer.producer.did_key == keys["secrets.hook-event-1"]
+        assert producer.producer.did_key != keys["secrets:hook-resolve-1"]
 
 
 async def test_a_verified_dashboard_member_reaches_every_declared_tool(

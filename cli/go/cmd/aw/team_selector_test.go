@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -353,9 +354,10 @@ func TestMailSendToAddressTeamFlagUsesSelectedCertificateContext(t *testing.T) {
 				t.Fatalf("decode mail body: %v", err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]string{
-				"message_id":   "mail-1",
-				"status":       "delivered",
-				"delivered_at": "2026-04-27T00:00:00Z",
+				"message_id":      "mail-1",
+				"conversation_id": sentConversationIDForTest(mailBody),
+				"status":          "delivered",
+				"delivered_at":    "2026-04-27T00:00:00Z",
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -387,7 +389,7 @@ func TestMailSendToAddressTeamFlagUsesSelectedCertificateContext(t *testing.T) {
 		{TeamID: "ops:acme.com", Alias: "ops-alice", WorkspaceID: "ws-ops", Address: "acme.com/ops-alice"},
 	})
 
-	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext", "--team", "ops:acme.com", "--to-address", "acme.com/randy", "--body", "hello", "--json")
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--subject", "Test thread", "--plaintext", "--team", "ops:acme.com", "--to-address", "acme.com/randy", "--body", "hello", "--json")
 	run.Env = append(withoutEnvForTest(testCommandEnv(tmp), "AWID_REGISTRY_URL"), "AWID_REGISTRY_URL="+registryServer.URL)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
@@ -419,8 +421,12 @@ func TestChatSendBareAliasFallsBackToUniqueLocalTeamMembership(t *testing.T) {
 
 	var postedCertHeader string
 	var postedBody map[string]any
+	var registryReads atomic.Int32
 	apiServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/namespaces/acme.com/teams/backend/members/randy":
+			registryReads.Add(1)
+			http.NotFound(w, r)
 		case "/v1/agents":
 			cert := requireCertificateAuthForTest(t, r)
 			agents := []map[string]any{}
@@ -478,7 +484,7 @@ func TestChatSendBareAliasFallsBackToUniqueLocalTeamMembership(t *testing.T) {
 	})
 
 	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "--plaintext", "randy", "hello", "--json")
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+apiServer.URL)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -495,6 +501,9 @@ func TestChatSendBareAliasFallsBackToUniqueLocalTeamMembership(t *testing.T) {
 	if !ok || len(toAliases) != 1 || toAliases[0] != "randy" {
 		t.Fatalf("to_aliases=%#v, want [randy]", postedBody["to_aliases"])
 	}
+	if got := registryReads.Load(); got != 1 {
+		t.Fatalf("local registry reads=%d, want 1", got)
+	}
 }
 
 func TestChatSendBareAliasRequiresTeamWhenFallbackIsAmbiguous(t *testing.T) {
@@ -508,8 +517,12 @@ func TestChatSendBareAliasRequiresTeamWhenFallbackIsAmbiguous(t *testing.T) {
 	stableID := awid.ComputeStableID(memberPub)
 	var chatPosts int
 
+	var registryReads atomic.Int32
 	apiServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/namespaces/acme.com/teams/backend/members/randy":
+			registryReads.Add(1)
+			http.NotFound(w, r)
 		case "/v1/agents":
 			cert := requireCertificateAuthForTest(t, r)
 			agents := []map[string]any{}
@@ -562,7 +575,7 @@ func TestChatSendBareAliasRequiresTeamWhenFallbackIsAmbiguous(t *testing.T) {
 	})
 
 	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "--plaintext", "randy", "hello")
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+apiServer.URL)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {
@@ -573,6 +586,9 @@ func TestChatSendBareAliasRequiresTeamWhenFallbackIsAmbiguous(t *testing.T) {
 	}
 	if chatPosts != 0 {
 		t.Fatalf("chat posts=%d, want 0", chatPosts)
+	}
+	if got := registryReads.Load(); got != 1 {
+		t.Fatalf("local registry reads=%d, want 1", got)
 	}
 }
 

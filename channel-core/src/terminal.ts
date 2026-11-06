@@ -1,4 +1,5 @@
-import { formatAwakeningForAgent, type ChannelAwakening } from "./channel.js";
+import { formatAwakeningForAgent, isTrustedVerificationStatus, type ChannelAwakening } from "./channel.js";
+import type { VerificationStatus } from "./identity/signing.js";
 
 export type TerminalReadinessState = "idle" | "working" | "blocked" | "shell" | "unknown" | "stopped" | "not-launched";
 
@@ -89,7 +90,7 @@ export function normalizeTerminalReadiness(raw: string | undefined, present = tr
   }
 }
 
-function terminalInputSafeText(text: string): string {
+export function terminalInputSafeText(text: string): string {
   return text
     .replace(/\r\n?/g, "\n")
     .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\u0080-\u009F]/g, "");
@@ -110,6 +111,7 @@ function quotedIdentityHome(home: string): string | undefined {
 }
 
 function messageRecoveryCommand(awakening: ChannelAwakening, awCommand: string): string | undefined {
+  if (awakening.kind === "room") return `${awCommand} room read`;
   const id = validatedNoticeID(awakening.meta.message_id);
   if (awakening.kind === "mail" && id) return `${awCommand} mail show --message-id ${id}`;
   if (awakening.kind === "chat") {
@@ -128,9 +130,9 @@ function safeAwakeningNotice(awakening: ChannelAwakening, awCommand = "aw"): str
 function textForTerminalAwakening(awakening: ChannelAwakening, receivingIdentityHome?: string): string {
   const quotedHome = receivingIdentityHome === undefined ? undefined : quotedIdentityHome(receivingIdentityHome);
   const richText = terminalInputSafeText(formatAwakeningForAgent(awakening));
-  // Mail/chat present actual content before their accepted-input receipt
-  // can mark them read, regardless of harness readiness.
-  if (awakening.kind === "mail" || awakening.kind === "chat") {
+  // Present message content and room notices before their accepted-input
+  // receipt, after the readiness guard permits input.
+  if (awakening.kind === "mail" || awakening.kind === "chat" || awakening.kind === "room") {
     const recovery = quotedHome ? messageRecoveryCommand(awakening, `aw --identity-home ${quotedHome}`) : undefined;
     return recovery ? `${richText}\n\nRecovery: ${recovery}` : richText;
   }
@@ -178,9 +180,9 @@ function rejectItem(item: AmbientItem, error: Error): void {
 }
 
 /**
- * Terminal presentation adapter. Presentation is immediate and serialized
- * across delivery lanes; inspect guards against typing into a bare shell or
- * a blocked harness whose modal could consume the text as an answer.
+ * Terminal presentation adapter. Presentation is serialized across delivery
+ * lanes. Mail and room notices defer while known working; inspect also guards
+ * against a bare shell or blocked harness whose modal could consume the text.
  * Wake/steer awakenings reject on input failure so channel-core
  * can re-dispatch and re-fetch unread state. Ambient awakenings are bounded and
  * piggyback on the next wake/steer input.
@@ -188,6 +190,7 @@ function rejectItem(item: AmbientItem, error: Error): void {
 export function createTerminalAwakeningHandler(options: TerminalAwakeningHandlerOptions): TerminalAwakeningHandler {
   const maxAmbient = options.maxAmbient ?? DEFAULT_MAX_AMBIENT;
   const ambient = new Map<string, AmbientItem>();
+  const heldNotices = new Set<string>();
   let ambientDropped = 0;
   let inputTail: Promise<void> = Promise.resolve();
 
@@ -203,7 +206,15 @@ export function createTerminalAwakeningHandler(options: TerminalAwakeningHandler
 
   const handler = (async (awakening: ChannelAwakening, receivingIdentityHome?: string): Promise<void> => {
     throwIfAborted(options.signal);
-    if (awakening.deliveryIntent === "ambient") {
+    let heldReason: string | undefined;
+    if (awakening.kind === "mail" || awakening.kind === "chat" || awakening.kind === "room") {
+      if (awakening.meta.decrypted === "false") {
+        heldReason = "could not decrypt";
+      } else if (!isTrustedVerificationStatus(awakening.meta.trust_status as VerificationStatus | undefined)) {
+        heldReason = "unverified sender";
+      }
+    }
+    if (awakening.deliveryIntent === "ambient" && !heldReason) {
       return new Promise<void>((resolve, reject) => {
         const key = ambientKey(awakening);
         const previous = ambient.get(key);
@@ -222,16 +233,18 @@ export function createTerminalAwakeningHandler(options: TerminalAwakeningHandler
       });
     }
 
-    const delivery = inputTail.then(() => present(awakening, receivingIdentityHome));
+    const delivery = inputTail.then(() => present(awakening, receivingIdentityHome, heldReason));
     // A failed input must not poison subsequent callers. Ambient work bypasses
     // this queue because it settles only when a wake/steer input carries it.
     inputTail = delivery.catch(() => {});
     return delivery;
   }) as TerminalAwakeningHandler;
 
-  async function present(awakening: ChannelAwakening, receivingIdentityHome?: string): Promise<void> {
+  async function present(awakening: ChannelAwakening, receivingIdentityHome?: string, heldReason?: string): Promise<void> {
     throwIfAborted(options.signal);
     if (options.isPaused?.()) throw new Error("terminal delivery is paused");
+    const heldKey = JSON.stringify([receivingIdentityHome, awakening.kind, awakening.meta.message_id, heldReason]);
+    if (heldReason && heldNotices.has(heldKey)) throw new Error(`terminal delivery held: ${heldReason}`);
     const ambientBatch = [...ambient.values()];
     let inspection: TerminalInspection;
     try {
@@ -243,15 +256,35 @@ export function createTerminalAwakeningHandler(options: TerminalAwakeningHandler
     }
     throwIfAborted(options.signal);
     const state = normalizeTerminalReadiness(inspection.state ?? inspection.rawState, inspection.present ?? true);
+    if (awakening.kind === "room" && state === "working") {
+      throw new Error("terminal delivery deferred while pane is working");
+    }
     if (state === "blocked" || state === "shell" || state === "stopped" || state === "not-launched") {
       throw new TerminalInactiveError(state);
     }
+    // A busy terminal can accept paste/Enter without the harness consuming it.
+    // Reject before input so no delivery mark or ack suppresses an idle re-fetch.
+    // Unknown readiness retains its released behavior: some backends never
+    // identify an idle prompt, and refusing them would strand existing mail.
+    if (awakening.kind === "mail" && state === "working") {
+      throw new Error("terminal mail delivery deferred (state=working)");
+    }
     if (options.isPaused?.()) throw new Error("terminal delivery is paused");
-    const text = [...ambientBatch, { awakening, receivingIdentityHome }]
+    const quotedHome = receivingIdentityHome === undefined ? undefined : quotedIdentityHome(receivingIdentityHome);
+    const command = quotedHome ? `aw --identity-home ${quotedHome}` : "aw";
+    const text = heldReason
+      ? `[aweb] 1 message held (${heldReason}). Run: ${command} ${awakening.kind === "mail" ? "mail inbox" : "chat pending"}`
+      : [...ambientBatch, { awakening, receivingIdentityHome }]
       .map((item) => textForTerminalAwakening(item.awakening, item.receivingIdentityHome))
       .join("\n\n---\n\n");
     throwIfAborted(options.signal);
     await options.session.input(options.home, text);
+    if (heldReason) {
+      heldNotices.add(heldKey);
+      if (heldNotices.size > 1000) heldNotices.delete(heldNotices.values().next().value!);
+      // A notice presents no message content and must not mark it delivered/read.
+      throw new Error(`terminal delivery held: ${heldReason}`);
+    }
     for (const item of ambientBatch) {
       if (ambient.get(item.key) === item) ambient.delete(item.key);
       item.resolve();

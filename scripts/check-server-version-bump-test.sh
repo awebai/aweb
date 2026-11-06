@@ -149,6 +149,17 @@ set_version "$d" 1.0.1
 git -C "$d" commit -qam "server change with bump"
 run_case "unresolvable base falls back to tag floor" pass "$d" 0000000000000000000000000000000000000000
 
+# PEP 440: an RC precedes its same-base final, with numeric RC serials.
+for pair in '1.0.1rc1 1.0.1 pass' '1.0.1 1.0.1rc1 fail' \
+            '1.0.1rc2 1.0.1rc10 pass' '1.0.1rc10 1.0.1rc2 fail'; do
+  read -r before after expected <<<"$pair"
+  d="$TMP/rc-$before-$after"; mkdir "$d"; make_repo "$d" "$before"
+  echo "print('changed')" > "$d/server/src/aweb/app.py"
+  set_version "$d" "$after"
+  git -C "$d" commit -qam "server RC version change"
+  run_case "PEP 440 $before -> $after" "$expected" "$d"
+done
+
 if [ "$failures" -ne 0 ]; then
   echo "$failures scenario(s) failed" >&2
   exit 1

@@ -231,7 +231,7 @@ class BrokerFence:
                 Bounds(max_response_bytes=maximum),
                 maximum,
                 None,
-                [],
+                None,
                 False,
                 "deny",
                 [],
@@ -293,6 +293,18 @@ class BrokerFence:
                     version.installation_id, version.team_id, version.secret_id, version.version
                 ),
             )
+        await self.check_authority(tx, dispatch)
+
+    async def check_authority(self, tx: TransactionManager, dispatch: Dispatch) -> None:
+        """Initial intent/approval commit, without backend observation or release.
+
+        Publication uses check(), including its prepared backend observation.
+        This check lets the initial transaction sample live lineage/window
+        expiry after mint/outbox writes without doing backend network I/O.
+        """
+        if self._tx is not tx or self._forest is None or self._call is None:
+            raise RuntimeError("prepare broker authority in this transaction first")
+        _require(dispatch.dispatch_id == self.dispatch_id, "operation_not_allowed")
         # This is the final awaited authority read. The following expiry and
         # policy checks take no locks and use a live post-wait clock.
         await self.fence.check(tx, self.admission.installation)

@@ -66,7 +66,8 @@ type fakeReissueRegistryCert struct {
 // fakeReissueRegistry is a stateful fake of the AWID registry's team
 // certificate routes. Like the real registry, it enforces one UNREVOKED
 // certificate per (team, alias) - a register that would violate it answers
-// 409 "Alias already active in team", the real partial-index conflict.
+// 409 alias_active ("Alias already active in team"), the real partial-index
+// conflict.
 type fakeReissueRegistry struct {
 	t                *testing.T
 	mu               sync.Mutex
@@ -222,7 +223,7 @@ func (f *fakeReissueRegistry) handler() http.Handler {
 				// The unique active-alias partial index: one unrevoked
 				// certificate per (team, alias).
 				w.WriteHeader(http.StatusConflict)
-				_ = json.NewEncoder(w).Encode(map[string]any{"detail": "Alias already active in team"})
+				_ = json.NewEncoder(w).Encode(map[string]any{"detail": map[string]any{"code": "alias_active", "message": "Alias already active in team"}})
 				return
 			}
 			f.certs = append(f.certs, &fakeReissueRegistryCert{

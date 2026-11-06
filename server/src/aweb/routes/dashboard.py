@@ -36,6 +36,7 @@ from aweb.events import (
     team_events_channel_name,
 )
 from aweb.presence import get_workspace_ids_by_team_id, list_agent_presences_by_workspace_ids
+from aweb.redis_subscriptions import open_subscription, release_subscription
 from aweb.service_errors import ValidationError
 from aweb.team_auth import verify_dashboard_token
 
@@ -282,9 +283,8 @@ async def _build_dashboard_snapshot(db, redis, *, team_id: str) -> dict[str, Any
 
 async def _sse_dashboard_events(*, request: Request, db, redis, team_id: str):
     channel = team_events_channel_name(team_id)
-    async with redis.pubsub() as pubsub:
-        await pubsub.subscribe(channel)
-
+    pubsub = await open_subscription(redis, channel)
+    try:
         yield ": keepalive\n\n"
         yield _format_sse("connected", {"type": "connected", "team_id": team_id, "timestamp": _utc_now_iso()})
 
@@ -346,6 +346,8 @@ async def _sse_dashboard_events(*, request: Request, db, redis, team_id: str):
             if now - last_keepalive >= DASHBOARD_KEEPALIVE_SECONDS:
                 yield ": keepalive\n\n"
                 last_keepalive = now
+    finally:
+        await release_subscription(pubsub)
 
 
 # ---------------------------------------------------------------------------
@@ -362,7 +364,7 @@ async def list_team_agents(
 
     rows = await aweb_db.fetch_all(
         """
-        SELECT a.agent_id, a.alias, a.did_key, a.human_name, a.address, a.agent_type,
+        SELECT a.agent_id, a.alias, a.did_key, a.human_name, CASE WHEN a.did_aw_verified_key = a.did_key THEN a.address END AS address, a.agent_type,
                a.role, a.status, a.identity_scope, a.created_at,
                w.last_seen_at, w.workspace_path
         FROM {{tables.agents}} a
@@ -442,7 +444,7 @@ async def get_team_agent(
 
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, alias, did_key, did_aw, address, role, status, identity_scope,
+        SELECT agent_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, role, status, identity_scope,
                human_name, agent_type, created_at
         FROM {{tables.agents}}
         WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL

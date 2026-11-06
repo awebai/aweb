@@ -16,6 +16,7 @@ import pytest
 
 from aweb_naapp.dispatch import Dispatches, State, apply_dispatch_migrations
 from aweb_naapp.runtime.authorization import Grant, GrantUnavailable
+from aweb_naapp.runtime.clock import NANOSECONDS_PER_SECOND
 from aweb_naapp.runtime.installation import (
     InstallationFence,
     InstallationRefused,
@@ -29,7 +30,7 @@ APP = "fixture"
 def grant(installation_id="installation-1", generation=1, *, ttl=60.0, team_id=TEAM):
     return Grant(
         team_id=team_id, installation_id=installation_id, generation=generation,
-        scopes=frozenset({"fixture:write"}), fresh_until=time.monotonic() + ttl,
+        scopes=frozenset({"fixture:write"}), fresh_until=time.monotonic_ns() + int(ttl * NANOSECONDS_PER_SECOND),
     )
 
 
@@ -40,7 +41,7 @@ class Source:
         self.state = "active"
         self.app_id = APP
 
-    async def grant_for(self, team_id):
+    async def grant_for(self, team_id, certificate_id=None):
         self.calls += 1
         if isinstance(self.current, Exception):
             raise self.current
@@ -553,7 +554,7 @@ async def test_admission_lock_wait_deducts_freshness_only_once(db, setup):
         await asyncio.sleep(0.75)
         assert not admission.done()
     admitted = await asyncio.wait_for(admission, 2)
-    remaining = current.fresh_until - time.monotonic()
+    remaining = (current.fresh_until - time.monotonic_ns()) / NANOSECONDS_PER_SECOND
     stored = await db.fetch_value(
         "SELECT extract(epoch FROM fresh_until - clock_timestamp()) FROM {{tables.installation_fences}}"
     )
@@ -620,3 +621,23 @@ async def test_real_s3_admission_and_dispatch_take_the_installation_fence_first(
 
     for round_number in range(10):
         await run_round(round_number)
+
+
+async def test_member_sql_facade_rolls_back_when_a_resource_wait_exhausts_freshness(db, setup):
+    fence, source = setup
+    source.current = grant(ttl=1.0)
+    await db.execute("CREATE TABLE {{schema}}.member_content (id integer primary key, value text)")
+    await db.execute("INSERT INTO {{schema}}.member_content VALUES (1,'before')")
+    permit = await fence.permit(TEAM)
+    async with db.transaction() as holder:
+        await holder.fetch_one("SELECT id FROM {{schema}}.member_content WHERE id=1 FOR UPDATE")
+        changing = asyncio.create_task(permit.database().execute(
+            "UPDATE {{schema}}.member_content SET value='after' WHERE id=1"))
+        await asyncio.sleep(0.05)
+        assert not changing.done(), "the real resource lock must block the write"
+        # The app row remains locked until the advertised authority has expired.
+        await asyncio.sleep(1.1)
+    with pytest.raises(InstallationRefused) as refused:
+        await changing
+    assert refused.value.code == "authority_unavailable"
+    assert await db.fetch_value("SELECT value FROM {{schema}}.member_content WHERE id=1") == "before"

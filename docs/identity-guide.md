@@ -226,17 +226,28 @@ Recipient selectors are:
 A bare external `did:aw` is not a first-contact route. A local `did:key` is not
 globally discoverable; a remote reply needs a previously learned return route.
 
-A global recipient chooses one current delivery policy:
+Hosted global creation accepts `--inbound-mode contacts-only` on `aw init --global`.
+A global recipient chooses one current delivery policy for its identity across
+all memberships:
 
 ```bash
 aw inbound-mode open
 aw inbound-mode team-and-contacts
+aw inbound-mode contacts-only
 ```
 
 `open` accepts valid routed senders. `team_and_contacts` accepts verified
-same-team senders plus exact active identity contacts. Contacts and team
-certificates can authorize delivery after route resolution; they do not create
-an address route or change AWID resolver visibility.
+same-team senders plus exact active identity contacts. `contacts_only` (**Contacts
+only**) accepts only exact active identity contacts, including for same-team
+senders. Removing the contact blocks future mail and chat, including existing
+conversation continuations. An address-only legacy contact, a domain contact,
+or a pending contact does not authorize delivery. Contacts and team
+certificates can authorize delivery according to the chosen policy after route
+resolution; they do not create an address route or change AWID resolver visibility.
+
+Setting the policy updates every live membership of the identity. New memberships
+inherit that policy. Existing conflicting rows use the strictest setting; a row
+with an unknown or missing policy requires migration before delivery can resume.
 
 ## Multiple memberships
 

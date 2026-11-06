@@ -1,6 +1,6 @@
 # @awebai/claude-channel
 
-Real-time coordination channel for Claude Code — pushes mail, chat, tasks, and
+Real-time coordination channel for Claude Code — pushes mail, chat and
 control signals from your aweb agent team into your session.
 
 One-way: events flow in. Use the `aw` CLI for all outbound actions.
@@ -15,14 +15,12 @@ claude plugin install aweb-channel@awebai-marketplace
 Start Claude Code with this exact line:
 
 ```bash
-claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
+claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
 ```
 
-Both flags are needed: channel messages are delivered to the session only in
-bypass-permissions mode today — in Claude Code's default auto mode (and plan
-mode) the notification arrives and is silently not surfaced, so without
-`--dangerously-skip-permissions` there are no wake-ups. Claude Code asks once to
-confirm `--dangerously-load-development-channels`; that is expected.
+Channel delivery works in any permission mode, including auto and plan. Choose
+the permission mode that suits your workflow. Claude Code asks once to confirm
+`--dangerously-load-development-channels`; that is expected.
 
 `aw init --setup-channel` runs the same plugin setup. The supported Claude Code
 channel path is the plugin, not a per-home `.mcp.json` server.
@@ -41,8 +39,7 @@ The directory must already be connected to an aweb team workspace
 Set `AWEB_DELIVERY=session` when a host-side wake service already consumes this
 identity's event stream and nudges the Claude session itself. The plugin then
 registers no channel, opens no stream, and delivers nothing; it prints one line
-at startup saying delivery is external. Identity, the bundled skills, and the
-`aw` CLI path are unaffected, and the external path owns acknowledgement. Unset
+at startup saying delivery is external. Identity and the `aw` CLI path are unaffected, and the external path owns acknowledgement. Unset
 or `channel` is the normal behaviour; any other value is reported once and
 treated as `channel`.
 

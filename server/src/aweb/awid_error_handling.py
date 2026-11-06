@@ -8,7 +8,8 @@ from fastapi import HTTPException
 from awid.dns_verify import DnsVerificationError
 from awid.registry import RegistryError
 
-# TimeoutError is the registry client's total request deadline (asyncio.timeout).
+# The registry client reports a failed request as RegistryError; TimeoutError is a
+# caller's own deadline around a registry call.
 AWID_DEPENDENCY_ERRORS = (
     DnsVerificationError,
     httpx.RequestError,
@@ -66,6 +67,10 @@ def classify_awid_dependency_error(exc: Exception, *, operation: str = "AWID reg
         if status_code:
             return mapped_status, f"{operation} {status_label} ({class_name} status={status_code}){suffix}"
         return mapped_status, f"{operation} {status_label} ({class_name}){suffix}"
+    if isinstance(exc, RegistryError) and exc.code == "unavailable" and exc.__cause__ is not None:
+        # The registry client reports a transport failure as unavailable; the
+        # failure behind it is what the operator needs to see.
+        return classify_awid_dependency_error(exc.__cause__, operation=operation)
     if isinstance(exc, RegistryError):
         detail = (getattr(exc, "detail", None) or message or class_name).strip()
         status_code = int(getattr(exc, "status_code", 500) or 500)

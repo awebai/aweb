@@ -12,6 +12,7 @@ import pytest
 from aweb_naapp.egress import EgressRefused
 
 from aweb_secrets.broker import broker
+from aweb_secrets.response_audit import ResponseKey
 
 from .harness import OTHER, Upstream, running_upstream
 
@@ -48,6 +49,7 @@ async def _call(upstream: Upstream, kind: str, *, url: str | None = None, header
         max_bytes=4096,
         projection=None,
         token_issuing=False,
+        response_key=ResponseKey(secrets.token_bytes(32)),
     )
 
 
@@ -127,6 +129,7 @@ async def test_a_wrong_credential_is_refused_by_the_upstream(upstream: Upstream)
         max_bytes=4096,
         projection=None,
         token_issuing=False,
+        response_key=ResponseKey(secrets.token_bytes(32)),
     )
     assert call.result.status == 401
 
@@ -150,6 +153,7 @@ async def _sigv4_call(upstream: Upstream, value: dict, *, headers=(), params=Non
         max_bytes=4096,
         projection=None,
         token_issuing=False,
+        response_key=ResponseKey(secrets.token_bytes(32)),
         amz_allowed=["X-Amz-Target"],
     )
 

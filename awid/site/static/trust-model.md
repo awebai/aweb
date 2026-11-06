@@ -404,9 +404,23 @@ stale window, is logged at warning level with the team, the served data's age,
 and the underlying error — and once the last-known set exceeds 15 minutes of
 age the read fails closed. The 15-minute bound is a constant, pinned by test,
 with no configuration knob; the grace decision is made on the stored fetch
-timestamp of the cached data, and the longer retention applies to revocation
-entries only. Messaging thus survives registry outages at the cost of a
-revocation issued mid-outage remaining effective up to the grace window.
+timestamp of the cached data. Messaging thus survives registry outages at the
+cost of a revocation issued mid-outage remaining effective up to the grace window.
+
+Team-controller keys use the same 60-second freshness and 15-minute outage
+grace constants (F-19/F-20). The SDK's public `get_team_public_key` on
+`CachedRegistryClient` refreshes synchronously once freshness expires, without
+using team metadata's longer cache or its stale-while-revalidate window. A
+failed refresh serves the last successful key only while its original fetch
+is at most 15 minutes old, with a warning naming the team, age and error;
+otherwise it fails closed. A successful team-not-found response clears the
+old key and is never cached as authority. `invalidate_team_certificate_cache`
+also clears the key. OSS controller routes for local key replacement and
+status-host designation verify through this SDK read; the local
+`teams.team_did_key` value is a hint, not authority. Without notification or
+explicit invalidation, rotation can therefore take up to 60 seconds to take
+effect at a verifier; during an outage, the accepted grace can extend that to
+15 minutes of data age. Other metadata caches retain their existing bounds.
 
 The committed exit ladder, in order:
 

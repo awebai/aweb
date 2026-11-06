@@ -20,7 +20,7 @@ class Settings(NaappSettings):
     # approves (the aweb-acgh.11 rollout).
     did_aw_profile: DidAwProfile = DidAwProfile.OBSERVE
     default_present_ttl_seconds: int = Field(default=86_400, ge=1)
-    max_present_ttl_seconds: int = Field(default=604_800, ge=1)
+    max_present_ttl_seconds: int = Field(default=2_592_000, ge=1, le=2_592_000)
     cloudflare_api_base: str = Field(default="https://api.cloudflare.com/client/v4")
     cloudflare_account_id: str | None = None
     cloudflare_stream_api_token: str | None = None

@@ -54,7 +54,10 @@ class HTTP:
         self.responses = responses
         self.paths: list[tuple[str, bool]] = []
 
-    async def get_json(self, path: str, *, bypass_cache: bool = False):
+    async def get_json(
+        self, path: str, *, bypass_cache: bool = False,
+        not_found_reason: str = "sender_identity_not_found",
+    ):
         self.paths.append((path, bypass_cache))
         value = self.responses[path]
         if isinstance(value, Exception):

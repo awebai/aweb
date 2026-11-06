@@ -311,9 +311,7 @@ func TestListAgentsReturnsVerifiedLocalEncryptionKey(t *testing.T) {
 	}
 }
 
-func TestListAgentsRejectsInvalidLocalEncryptionKeyAssertion(t *testing.T) {
-	t.Parallel()
-
+func TestListAgentsClearsInvalidLocalEncryptionKeyAssertion(t *testing.T) {
 	pub, priv, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -343,9 +341,22 @@ func TestListAgentsRejectsInvalidLocalEncryptionKeyAssertion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = c.ListAgents(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "omit identity_stable_id") {
-		t.Fatalf("err=%v, want local stable-id rejection", err)
+	var resp *ListAgentsResponse
+	warning := captureStderrForTest(t, func() {
+		resp, err = c.ListAgents(context.Background())
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Agents) != 1 {
+		t.Fatalf("discarded identity: %+v", resp)
+	}
+	agent := resp.Agents[0]
+	if agent.DIDKey != did || agent.DIDAW != "" || agent.Address != "" || agent.EncryptionKey != nil {
+		t.Fatalf("expected unchanged identity and cleared key: %+v", agent)
+	}
+	if strings.Count(warning, "Warning:") != 1 || !strings.Contains(warning, "agent alice: invalid_encryption_key_assertion:") || !strings.Contains(warning, "omit identity_stable_id") {
+		t.Fatalf("expected one alias/reason warning: %q", warning)
 	}
 }
 

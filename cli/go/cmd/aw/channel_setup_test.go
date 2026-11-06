@@ -204,3 +204,16 @@ func TestSetupChannelMCPReportsPluginErrors(t *testing.T) {
 		t.Fatal("expected plugin setup error")
 	}
 }
+
+func TestChannelStartInstructionsLeavePermissionModeToUser(t *testing.T) {
+	text := captureStdout(t, printChannelStartInstructions)
+	if !strings.Contains(text, "claude --dangerously-load-development-channels "+claudeChannelSpec) {
+		t.Fatalf("missing channel launch command:\n%s", text)
+	}
+	if strings.Contains(text, "--dangerously-skip-permissions") {
+		t.Fatalf("channel setup prescribes a permission mode:\n%s", text)
+	}
+	if !strings.Contains(text, "Channel delivery works in any permission mode, including auto and plan.") {
+		t.Fatalf("missing permission-mode guidance:\n%s", text)
+	}
+}

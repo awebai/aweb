@@ -65,18 +65,24 @@ async def approvers_for_secret(
 
 
 async def approvers_for_secrets(
-    tx: TransactionManager, *, installation_id: str, team_id: str, secret_ids: Sequence[str]
+    tx: TransactionManager,
+    *,
+    installation_id: str,
+    team_id: str,
+    secret_ids: Sequence[str],
+    lock: bool = True,
 ) -> list[ApproverRecord]:
     """Records covering any of these stored IDs, deduplicated and locked in
     approver_ref order. Pass the child's recorded ancestry for inherited
-    coverage; this function never discovers or invents ancestry."""
+    coverage; this function never discovers or invents ancestry. A final read
+    under the caller's prepared coverage union passes lock=False."""
     rows = await tx.fetch_all(
         """
         SELECT approver_ref, scope, principal_did, change_id, covers FROM {{tables.approvers}}
         WHERE installation_id = $1 AND team_id = $2 AND covers ?| $3::text[]
         ORDER BY approver_ref
-        FOR SHARE
-        """,
+        """
+        + (" FOR SHARE" if lock else ""),
         installation_id,
         team_id,
         list(secret_ids),

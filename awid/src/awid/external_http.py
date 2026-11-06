@@ -88,7 +88,13 @@ class PinnedRegistryHTTP:
         authority = host if self._port == default_port else f"{host}:{self._port}"
         return f"{self._scheme}://{authority}{path}"
 
-    async def get_json(self, path: str, *, bypass_cache: bool = False) -> Any:
+    async def get_json(
+        self,
+        path: str,
+        *,
+        bypass_cache: bool = False,
+        not_found_reason: str = "sender_identity_not_found",
+    ) -> Any:
         headers: list[tuple[bytes, bytes]] = [
             (b"Host", self._host_header.encode("ascii")),
             (b"Accept", b"application/json"),
@@ -159,7 +165,7 @@ class PinnedRegistryHTTP:
         if 300 <= response.status < 400:
             raise FederationAuthorityError("sender_registry_protocol_invalid")
         if response.status == 404:
-            raise FederationAuthorityError("sender_identity_not_found")
+            raise FederationAuthorityError(not_found_reason)
         if response.status == 429 or response.status >= 500:
             raise FederationAuthorityError("sender_registry_unavailable")
         if not 200 <= response.status < 300:

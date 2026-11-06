@@ -1,13 +1,17 @@
 # `@awebai/claude-skills`
 
-Content-only Claude Code plugin packaging the four canonical aweb skills:
-`aweb-coordination`, `aweb-messaging`, `aweb-team-membership`, and
-`aweb-bootstrap`.
+Content-only skills package for Claude Code and Pi, shipping the canonical
+aweb skills from [`skills/shipped.json`](../../skills/shipped.json): `aweb-coordination`, `aweb-tasks`, `aweb-messaging`,
+`aweb-team-membership`, `aweb-bootstrap`, and `aweb-identity`.
+
+`aweb-tasks` applies only when the team has aweb tasks or its instructions say
+it uses them. Creating the first task is the opt-in; installing this package
+does not choose the team's tracker.
 
 Distinct from [`@awebai/claude-channel`](https://github.com/awebai/aweb/tree/main/channel),
-which ships the real-time channel runtime and is started with both
-`--dangerously-skip-permissions` and
-`--dangerously-load-development-channels`. This package has **no runtime**, no
+which ships the real-time channel runtime and is started with
+`--dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace`
+in any permission mode. This package has **no runtime**, no
 `bin`, no MCP server config — just the skill bodies. Users who only want
 aweb's skill catalog install this one and skip the channel.
 
@@ -29,6 +33,21 @@ No channel launch flags required — those are only for the channel plugin.
 
 After install, Claude Code namespaces the skills as `/aweb-skills:<name>` and
 discovers them automatically.
+
+## Install in Pi
+
+For a standalone agent, run this in that agent's folder to install in project
+settings:
+
+```bash
+pi install -l npm:@awebai/claude-skills@latest
+```
+
+Run `/reload` or restart Pi after installing. This installs guidance only; the
+channel and CLI come from `pi install npm:@awebai/pi@latest`. An orchestrator
+such as OATS may already supply the skills per home; use that composed set. Do not
+install this package user-wide on a host running OATS Pi homes: user-wide skills
+load in every Pi folder on that host. Neither package opts a team into aweb tasks.
 
 ## Publish (maintainers)
 

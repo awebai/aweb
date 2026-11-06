@@ -1,3 +1,5 @@
+import { keyResponseIdTree, type IdTreeEnrollment } from "./id_certificates.js";
+import { IdStatusClient } from "./id_status.js";
 import * as dns from "node:dns/promises";
 import { isIP } from "node:net";
 import { sha256, sha512 } from "@noble/hashes/sha2.js";
@@ -36,6 +38,7 @@ export interface DidKeyEvidence {
 }
 
 export interface DidKeyResolution {
+  id_tree?: unknown;
   did_aw: string;
   current_did_key: string;
   log_head?: DidKeyEvidence | null;
@@ -106,6 +109,7 @@ interface RegistryResolverOptions {
 }
 
 export class RegistryResolver {
+  readonly idStatus: IdStatusClient;
   private registryCache = new Map<string, CacheEntry<DomainAuthority>>();
   private addressCache = new Map<string, CacheEntry<{ registryURL: string; response: AddressResponse }>>();
   private keyCache = new Map<string, CacheEntry<DidKeyResolution>>();
@@ -120,6 +124,7 @@ export class RegistryResolver {
     private readonly now: () => number = () => Date.now(),
     options?: RegistryResolverOptions,
   ) {
+    this.idStatus = new IdStatusClient(fetchImpl, resolveTxtImpl, now);
     this.fallbackRegistryURL = options?.fallbackRegistryURL
       ? canonicalServerOrigin(options.fallbackRegistryURL)
       : "";
@@ -175,6 +180,21 @@ export class RegistryResolver {
     } catch (error) {
       return { registryURL: "", result: { outcome: "OK_DEGRADED", error: String(error) } };
     }
+  }
+
+  /** Enrollment from the very key snapshot used to authenticate an addressless sender. */
+  async receivedIdEnrollment(teamID: string, stableID: string, did: string): Promise<IdTreeEnrollment> {
+    const unknown: IdTreeEnrollment = { state: "unknown", domain: null };
+    const separator = teamID.indexOf(":");
+    if (separator < 1 || teamID.indexOf(":", separator + 1) !== -1) return unknown;
+    try {
+      const registryURL = (await this.discoverRegistry(teamID.slice(separator + 1))).replace(/\/+$/, "");
+      const cached = this.receivedRegistries.get(registryURL)?.keyCache.get(stableID);
+      if (!cached) return unknown;
+      const age = this.now() - (cached.expiresAt - REGISTRY_KEY_TTL_MS);
+      if (age < 0 || age > 60_000 || cached.value.did_aw !== stableID || cached.value.current_did_key !== did) return unknown;
+      return keyResponseIdTree(cached.value);
+    } catch { return unknown; }
   }
 
   private async verifyStableIdentityAtRegistry(
@@ -428,22 +448,8 @@ export async function discoverAuthoritativeRegistry(
   domain: string,
   resolveTxtImpl: ResolveTxt = dns.resolveTxt,
 ): Promise<DomainAuthority> {
-  const authority = await lookupDomainAuthority(domain, true, resolveTxtImpl);
-  return authority ?? {
-    controllerDid: "",
-    registryURL: DEFAULT_AWID_REGISTRY_URL,
-    dnsName: awidTXTName(domain),
-    inherited: false,
-  };
-}
-
-async function lookupDomainAuthority(
-  domain: string,
-  allowAncestors: boolean,
-  resolveTxtImpl: ResolveTxt,
-): Promise<DomainAuthority | null> {
   const canonical = canonicalizeDomain(domain);
-  const candidates = candidateDomainsForLookup(canonical, allowAncestors);
+  const candidates = candidateDomainsForLookup(canonical);
   for (const candidate of candidates) {
     const qname = awidTXTName(candidate);
     let records: string[][];
@@ -451,8 +457,7 @@ async function lookupDomainAuthority(
       records = await resolveTxtImpl(qname);
     } catch (error) {
       if (isTxtNotFound(error)) {
-        if (allowAncestors) continue;
-        throw error;
+        continue;
       }
       throw error;
     }
@@ -460,8 +465,7 @@ async function lookupDomainAuthority(
       .map((parts) => parts.join("").trim())
       .filter((record) => record.startsWith("awid="));
     if (awidRecords.length === 0) {
-      if (allowAncestors) continue;
-      throw new Error(`no awid TXT record found at ${qname}`);
+      continue;
     }
     if (awidRecords.length > 1) {
       throw new Error(`multiple awid TXT records found at ${qname}`);
@@ -472,7 +476,12 @@ async function lookupDomainAuthority(
       inherited: candidate !== canonical,
     };
   }
-  return null;
+  return {
+    controllerDid: "",
+    registryURL: DEFAULT_AWID_REGISTRY_URL,
+    dnsName: awidTXTName(domain),
+    inherited: false,
+  };
 }
 
 export function parseAwidTXTRecord(record: string, dnsName: string): DomainAuthority {
@@ -513,10 +522,9 @@ export function awidTXTName(domain: string): string {
   return `_awid.${canonicalizeDomain(domain)}`;
 }
 
-export function candidateDomainsForLookup(domain: string, allowAncestors: boolean): string[] {
+export function candidateDomainsForLookup(domain: string): string[] {
   const canonical = canonicalizeDomain(domain);
   if (!canonical) return [];
-  if (!allowAncestors) return [canonical];
   const labels = canonical.split(".");
   const boundary = registeredDomainBoundary(canonical);
   const boundaryLabels = boundary.split(".");

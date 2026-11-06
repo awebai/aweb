@@ -212,7 +212,7 @@ func TestTeamEnsureLostFirstEnrollResponseRetriesSameKeyAndBinds(t *testing.T) {
 			if strings.Contains(body["workspace_key_sha256"].(string), "workspace") {
 				t.Fatalf("digest leaked raw workspace key: %#v", body)
 			}
-			_ = json.NewEncoder(w).Encode(workspaceTeamEnsureResponse{State: "ready", TeamID: teamID, CanonicalTeamID: canonicalTeamID, Label: "Demo"})
+			_ = json.NewEncoder(w).Encode(workspaceTeamEnsureResponse{State: "ready", TeamID: teamID, CanonicalTeamID: canonicalTeamID, Label: "Demo", Owner: map[string]any{"slug": "chosen"}, Binding: map[string]any{"reused": true}})
 		case workspaceTeamEnrollPath:
 			enrollCount++
 			if got := r.Header.Get("Authorization"); got != "Bearer awcli_test" {
@@ -310,6 +310,14 @@ func TestTeamEnsureLostFirstEnrollResponseRetriesSameKeyAndBinds(t *testing.T) {
 	var decoded teamEnsureOutput
 	if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
 		t.Fatalf("decode output: %v\n%s", err, out.String())
+	}
+	var public map[string]any
+	if err := json.Unmarshal(out.Bytes(), &public); err != nil {
+		t.Fatal(err)
+	}
+	owner, ok := public["owner"].(map[string]any)
+	if !ok || owner["slug"] != "chosen" {
+		t.Error("CLI output lost ensured organization owner")
 	}
 	if decoded.Status != "bound" || !decoded.CanSpawn || decoded.TeamID != teamID || decoded.CanonicalTeamID != canonicalTeamID || decoded.Created || decoded.AccountID != "acct-test" || decoded.AccountHandle != "alice" {
 		t.Fatalf("output=%+v", decoded)
@@ -846,7 +854,7 @@ func TestWorkspaceTeamEnrollSignatureBindsExpectedAccountID(t *testing.T) {
 	}))
 	defer server.Close()
 	cfg.Issuer = server.URL
-	if _, err := postWorkspaceTeamEnroll(t.Context(), cfg, ensure, strings.Repeat("a", 64), material, "acct-a"); err != nil {
+	if _, err := postWorkspaceTeamEnroll(t.Context(), cfg, ensure, strings.Repeat("a", 64), material, "acct-a", nil); err != nil {
 		t.Fatalf("post enroll: %v", err)
 	}
 	if captured.ExpectedAccountID != "acct-a" {
@@ -1075,5 +1083,86 @@ func TestSelectExpectedWorkspaceTeamAccountIDNormalizesCase(t *testing.T) {
 	}
 	if got != "550e8400-e29b-41d4-a716-446655440000" {
 		t.Fatalf("normalized id=%q", got)
+	}
+}
+
+func TestTeamEnsureSelectedOrgIsForwardedAndProofBound(t *testing.T) {
+	oldKey, oldHome, oldExpected := teamEnsureWorkspaceKey, activeIdentityHome, teamEnsureExpectedAccountID
+	teamEnsureWorkspaceKey = "aweb.ai/org/selected-org"
+	teamEnsureExpectedAccountID = "acct-test"
+	t.Cleanup(func() {
+		teamEnsureWorkspaceKey, activeIdentityHome, teamEnsureExpectedAccountID = oldKey, oldHome, oldExpected
+	})
+	wd := t.TempDir()
+	t.Chdir(wd)
+	activeIdentityHome = awconfig.IdentityHome{Root: filepath.Join(wd, "principal"), Source: awconfig.IdentityHomeFlag}
+	seenEnroll := false
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
+		switch r.URL.Path {
+		case "/api/v1/cli-auth/status":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "authorized", "account": map[string]string{"id": "acct-test", "handle": "alice"}})
+		case workspaceTeamEnsurePath:
+			var request map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&request)
+			if request["org"] != "Chosen-Org" {
+				t.Error("ensure lost explicit organization selector")
+			}
+			_ = json.NewEncoder(w).Encode(workspaceTeamEnsureResponse{State: "ready", TeamID: "service-id", CanonicalTeamID: "machine:chosen.example"})
+		case workspaceTeamEnrollPath:
+			seenEnroll = true
+			var request map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Error(err)
+				w.WriteHeader(400)
+				return
+			}
+			if request["org"] != "Chosen-Org" {
+				t.Error("enroll lost exact trimmed selector")
+			}
+			identity := request["identity"].(map[string]any)
+			proof := request["proof"].(map[string]any)
+			payload := map[string]any{
+				"operation": "workspace_team_member_enroll.v1", "aud": server.URL, "method": "POST", "path": workspaceTeamEnrollPath,
+				"workspace_key_format": 1, "workspace_key_sha256": request["workspace_key_sha256"], "team_id": request["team_id"],
+				"canonical_team_id": request["canonical_team_id"], "expected_account_id": "acct-test", "did": identity["did"],
+				"stable_id": "", "identity_scope": "local", "alias": identity["alias"], "timestamp": proof["timestamp"], "org": "Chosen-Org",
+			}
+			pub, err := awid.ExtractPublicKey(identity["did"].(string))
+			if err != nil {
+				t.Error(err)
+			}
+			sig, err := base64.RawStdEncoding.DecodeString(proof["signature"].(string))
+			if err != nil {
+				t.Error(err)
+			}
+			canonical, _ := awid.CanonicalJSONValue(payload)
+			if !ed25519.Verify(pub, []byte(canonical), sig) {
+				t.Error("enrollment proof did not bind organization selector")
+			}
+			payload["org"] = "another-org"
+			canonical, _ = awid.CanonicalJSONValue(payload)
+			if ed25519.Verify(pub, []byte(canonical), sig) {
+				t.Error("tampered organization verified")
+			}
+			http.Error(w, "stop after verified request", 422)
+		default:
+			t.Errorf("unexpected endpoint %s", r.URL.Path)
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+	writeCLIAuthConfigForTeamEnsureTest(t, server.URL)
+	cmd := &cobra.Command{Use: "test"}
+	cmd.Flags().String("org", "", "")
+	_ = cmd.Flags().Set("org", " Chosen-Org ")
+	if err := runTeamEnsure(t.Context(), cmd); err == nil {
+		t.Error("expected deliberate endpoint refusal")
+	}
+	if !seenEnroll {
+		t.Error("enrollment was not attempted")
 	}
 }

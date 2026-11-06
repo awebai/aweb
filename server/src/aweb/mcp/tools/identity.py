@@ -15,7 +15,7 @@ async def whoami(db_infra) -> str:
     if auth.team_id:
         row = await aweb_db.fetch_one(
             """
-            SELECT did_aw, address
+            SELECT CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address
             FROM {{tables.agents}}
             WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL
             """,
@@ -25,7 +25,7 @@ async def whoami(db_infra) -> str:
     else:
         row = await aweb_db.fetch_one(
             """
-            SELECT did_aw, address
+            SELECT CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address
             FROM {{tables.agents}}
             WHERE did_key = $1 AND deleted_at IS NULL
             ORDER BY created_at DESC

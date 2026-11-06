@@ -46,6 +46,8 @@ async def owner_confirmation_result(
     )
     if not applied:
         raise ChangeRefused("confirmation has not committed", code="change_not_applied")
+    if current.expires_at <= datetime.now(UTC):
+        raise ChangeRefused("owner result unavailable", code="owner_required")
     return {
         **confirmation_receipt(confirmation),
         "runner_registrations": [

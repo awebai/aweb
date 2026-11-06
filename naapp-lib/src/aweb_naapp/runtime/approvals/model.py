@@ -111,6 +111,7 @@ class Refusal(StrEnum):
     OPERATION_MISMATCH = "operation_mismatch"
     OUTCOME_INVALID = "outcome_invalid"
     OUTCOME_FINAL = "outcome_final"
+    DISPATCH_NOT_PREPARED = "dispatch_not_prepared"
 
 
 class ApprovalRefused(Exception):

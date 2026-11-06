@@ -86,6 +86,91 @@ owed it. The drain resolves deliveries with `hook_targets(registrations)`, and
 `HookTransport` re-checks each binding, signs a `hook-delivery` request and sends
 it through the egress guard to the binding's endpoint only.
 
+Producing runtimes install `aweb-naapp[runtime,egress]`. A manifest with
+an implemented app production in `aweb.hooks` v1 must declare and configure a
+`hook-event` key and a `hook-resolve` key in `app_key_files`; the runtime loads
+them at construction.
+A manifest-command production also requires `manifest_request_key_file`, the
+independent random 32-byte commitment key in the shared key-file format.
+No-hook runtimes need none of this configuration.
+Unknown catalogs, versions and hook names remain in the served manifest but
+configure no producer, drain or commitment. Core-only and client-only hooks
+likewise configure no app producer. A supported production in the same manifest
+still requires its own purpose keys.
+
+`runtime.hook_registrations()` returns one `TeamServerRegistrations` source on
+that exact `runtime.hook_resolver()`. Fetch its view outside authority locks.
+`runtime.hook_producer(installation_id=..., generation=...) -> HookProducer`
+uses the installation resolved by the grant/fence, the served app identity and
+the loaded hook-event key. Call its `enqueue(tx, ...)` in the actual effect or
+operational-record transaction; an `Authorization` and a completed HTTP
+response do not provide that transaction. Required enqueue failure rolls back
+the local effect. The runtime starts and joins a separate hooks-channel drain
+in its lifespan, using `HookTransport` with that same registration source/key.
+App-event delivery stays on its own channel. The default egress rejects
+private destinations; a self-hosted operator may explicitly supply
+`hook_egress` and `hook_internal_cidr` under the shared guard's existing rules.
+`hook_events_stalled_after_seconds` and `hook_delivery_timeout_seconds` bound
+retry reporting and each drain call.
+
+For a generic manifest command, `runtime.authorized()` reads the bounded
+original body and prepares the commitment after authenticating, matching the
+tool and resolving its fresh installation grant. It does this before policy or
+credential injection. The effect owner then calls:
+
+```python
+await runtime.record_manifest_command(
+    tx, request=request, authorization=auth, http_status=201,
+    resource_refs=("thing:opaque",), result_ref="result:opaque",
+)
+```
+
+The call enqueues in `tx`; let any enqueue failure roll back the effect. Call
+once for the logical effect, preserving its stored event on replay. No response
+wrapper can supply that transaction. An attributable scope/policy refusal is
+recorded by the guard in its own refusal transaction; successful enqueue
+preserves its HTTP status. Storage failure still fails closed. A handler's own refused outcome uses the same method with
+`refused=True` and no `result_ref`. Refusals without complete bounded bytes,
+verified authentication, a matched tool and installation emit no generic event;
+an over-bound body returns 413 without draining the rest. The bound is
+`manifest_hook_max_request_bytes` (default 1 MiB, maximum 16 MiB).
+
+Mutations fire; reads fire only when listed by that production. Configure
+`hook_tool_effects={"tool": "post-secret-use-hook"}` (or
+`post-governance-hook`) for tools owned by a specific declared production;
+these never also fire the generic hook, including on refusal. The generic
+payload carries only the matched tool, request HMAC and safe outcome/opaque
+refs; concrete paths, query/header/body values never enter it. HMAC context
+comes from the served app and resolved installation. The raw external target
+(including mount prefix), counted Content-Types and exact JSON/raw body bytes
+are bound before injection. Only verified signed trace IDs are propagated.
+Rotate by replacing the configured HMAC key, restarting producer replicas and
+destroying the old key; the key is loaded once per runtime. New runtimes use
+the new key, while existing outbox signing bytes/signatures remain unchanged
+across retries and restarts.
+Hook production still requires owner activation and updated receiver support
+before deployment; none is inferred from a manifest declaration alone.
+
+For admission, call `HookProducer.require_admission(tx, *, team_id, hook,
+occurred_at, view, max_backlog_age)` with a fresh view obtained outside
+authority locks. It reads that team's/hook's eligible target backlog directly
+from the shared outbox, including unmaterialized events. No target refuses
+with `audit_target_unavailable`; all eligible targets beyond the age bound
+refuse with `audit_delivery_stalled`. A healthy target next to a stalled
+secondary admits. View freshness and backlog age are checked again using the
+live clock after the DB query returns, including after a lock wait. Apply the
+outbox's new ordered admission-index migration.
+The helper grants no use authority and replaces no dispatch fence.
+
+`HookProducer.enqueue_refusal(tx, *, team_id, payload, actor, occurred_at,
+signed_trace_id=None)` accepts only secret-use `action=refused` and fixes
+`result_status=denied`. Target availability/backlog cannot block the refusal's
+local record; validation, signing and transactional storage still apply.
+Record the operational/console refusal in that same transaction. With no target
+owed at the event time, zero deliveries are owed: a future target is never sent
+old refusals retroactively. Existing targets receive their backlog after
+recovery. Neither method authorizes an external effect (decision 94).
+
 Operators: a hook target is sent to as a public destination. A self-hosted
 operator who also wants hooks to reach targets inside its own network allows
 internal destinations on the egress and passes that network as
@@ -125,7 +210,7 @@ An observed-principal row or a bare creator DID is not membership evidence.
 This uses the request verifier's AWID cache, with the same maximum 60-second
 revocation window. Success returns the frozen `MembershipProof` from
 `aweb_naapp.runtime.team_auth`: `team_id`, `certificate_id`, `team_did_key`,
-`checked_at` and `fresh_until`. Both times use `time.monotonic()` from the
+`checked_at` and `fresh_until`. Both times are integer nanoseconds from `time.monotonic_ns()`, retaining the
 original facts' fetch-start and expiry. A cache hit does not renew them. The
 proof stays in the same process: never serialize, persist or accept it from a
 request. Facts that expired during lookup raise retryable 503.
@@ -218,6 +303,11 @@ digest=...)` for the exact manifest bytes the app serves, an
 `TeamServerDirectory` as `discovery`. It reads only the team's controller-signed
 server URL; it creates no directory or resolver of its own.
 
+Grant-source implementations accept `grant_for(team_id, certificate_id=None)`.
+Member authorization passes the verified principal's certificate ID;
+`TeamGrantSource` forwards it to discovery so private-team members can use
+AWID's per-certificate status without an AWID service token.
+
 `runtime.team_cache()` and `runtime.team_server_directory()` return the same
 configuration-only objects before, during and after the lifespan; constructing
 them makes no network requests. This permits wiring the grant source and
@@ -288,10 +378,98 @@ before its `active_from`, which the caller compares with an event's
 
 ## Approvals and passkeys
 
+`Passkeys.complete_enrolment(token, credential, fence=...)`,
+`Passkeys.prove_contact(token, fence=...)`,
+`Passkeys.change_contact(scope, new_contact, proof, fence=...)` and
+`Passkeys.cancel_pending_contact(scope, proof, fence=...)` accept an optional
+`PasskeyEffectFence` for the app's completion authority. Prefetch network/registration context first.
+B3 calls `await fence.prepare(tx)` before its first effect statement, then
+performs the effect and audit in that same transaction, then calls
+`await fence.check(tx)` immediately before commit. The app holds its installation
+authority in prepare; check reads without new locks/network and samples live
+time last. Original completion association, current designation/contact/recovery
+and capability expiry are the app's checks. A required app sink must refuse a
+positive completion if its expected fence was omitted or unprepared.
+
+Expected fence refusals use `EnrolmentRefused` or `ContactChangeRefused` for the
+operation. Refusal rolls back link/proof-token consumption, credential/contact
+state and audit together. Enrolment's pre-effect WebAuthn challenge stays spent:
+retry requests new enrolment options and a new registration response with the
+still-valid unused link. A contact change's or cancellation's passkey assertion
+is verified and recorded before the effect and also stays spent: retry requests
+new options and a new assertion. Notices go out only after commit, so a refused
+change or cancellation tells nobody. Cancellation only narrows, and B3 gates it
+on nothing but the fence. Contact-proof retry requires fresh authority/expiry
+checks. Any other exception from a fence propagates unchanged. There is no token
+release or automatic replay. These callbacks change
+neither LOGIN/APPROVE evidence nor the current-approver API below.
+
+For a final authority read in the caller's transaction, use
+`Passkeys.prepare_current_approvers(tx, pairs)` with the complete `(scope,
+subject)` union. It holds all designation rows in scope/subject order, then all
+usable credential rows in subject/credential order. Prepare application,
+forest/grant and covering authority first; B3 precedes B2 and S3. The transaction
+must be READ COMMITTED. Cache the returned `PreparedCurrentApprovers` in the
+application's authority adapter, so its repeat prepare after B2 reuses the handle
+without acquiring more B3 locks.
+
+`Passkeys.check_current_approver(tx, prepared, scope=..., subject=...)` returns
+whether that held designation is current and a held credential remains usable.
+It reads live state without writes or new locks and samples time after its last
+await. Pass the identical original transaction object, including through nested
+store/savepoint wrappers. Transaction end, rollback releasing preparation,
+another Passkeys instance or an unprepared pair returns false. Newly enrolled
+credentials do not repair a handle that held none; prepare again before B2.
+This check grants no login or send authority. Original retained APPROVE evidence
+binding remains separate; `login_evidence_is_current` still requires LOGIN.
+
 `aweb_naapp.runtime.approvals` is the single-use human approval primitive that
 apps share. An agent proposes an exact request; any one of the owner-designated
 humans eligible for it approves or rejects it; a trusted dispatcher then admits
 exactly one dispatch of that exact request.
+
+An app that publishes or sends after awaited dispatch/outbox work can use a
+check-only final fence. Call `prepare_dispatches(tx, bindings, authority=...)`
+before taking dispatch locks; `DispatchBinding` names each original approval,
+exact request and consumed operation. The single-item `prepare_dispatch` takes
+the same fields directly. Preparation first calls the app's
+`DispatchAuthority.prepare(tx, approvals)` once with the whole batch. That
+adapter must prepare the complete authority, forest, grant and covering union
+in the app's established lock order, idempotently if already prepared. B2 then
+locks the complete approval row union in approval-ID order, followed by the
+request advisory lock union in digest order. `lock_many` alone holds rows,
+not the request advisory locks. Do not interleave single-item preparation with
+new app authority locks for another item. Include all relevant approvals,
+including confirming and slot approvals, in the whole-run preparation.
+
+Immediately before the original send/publication, call
+`check_dispatch(tx, prepared)` for each returned `PreparedDispatch`, using the
+original outer caller transaction supplied to preparation. It reads B2 and
+`DispatchAuthority.read(tx, approval)` in that transaction, validates the
+original request/operation, consumed `dispatching` state, current policy,
+decider, minimum assurance, revocation and expiry, and returns `None`. The
+adapter returns `DispatchAuthorityState(policy=..., decider_current=...)` from
+the authority prepared above, without new locks, network calls or refreshes.
+There is no fallback to the older policy/directory adapters, which need not be
+transaction-bound. Preparation and checking make no consumption, outcome or
+audit writes. The final check acquires no new row or advisory locks and samples
+the live clock after its last awaited read.
+
+A handle's immutable `expires_at` is the original prepared deadline. After the
+last awaited check of a multi-approval run, the app must synchronously compare
+all these deadlines with its live clock along with its own forest/window
+deadlines; an earlier successful slot check cannot cover later awaited work.
+Handles refuse another caller transaction, ended/reused connections and a
+rollback that releases their preparation locks. Prepare again after such a
+rollback. Use a live PostgreSQL READ COMMITTED transaction, and keep preparation
+and publication within the same transaction lifetime. The app still owns its
+installation/forest/source checks and sole publication association.
+
+This fence grants no new dispatch admission. Keep the original `may_send`
+decision and business idempotency association: `admit`/`retrieve` still return
+stable consumed history without permission to send again. `not_sent` needs
+the existing transport-retry admission; unknown or final outcomes cannot pass
+the final fence. Do not expose prepared handles through model-visible tools.
 
 - **Frozen request.** `request_sha256` is SHA-256 over
   `aweb.approval-request/1\n` plus the canonical JSON of the request and its

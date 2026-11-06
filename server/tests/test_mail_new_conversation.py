@@ -1,4 +1,4 @@
-"""Fresh mail is additive; a reused ID must not become a continuation."""
+"""Recipient sends start fresh; only an explicit ID selects a continuation."""
 import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
@@ -15,7 +15,8 @@ from test_messages_http import _build_test_app, _insert_agent, _insert_team, _ma
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("target", ["alias", "did", "stable_id", "address"])
-async def test_new_mail_conversation(aweb_cloud_db, target, monkeypatch):
+@pytest.mark.parametrize("new_flag", [False, True])
+async def test_new_mail_conversation(aweb_cloud_db, target, new_flag, monkeypatch):
     db = aweb_cloud_db.aweb_db
     alice_sk, _, alice_key = _make_keypair()
     _, _, bob_key = _make_keypair()
@@ -38,9 +39,9 @@ async def test_new_mail_conversation(aweb_cloud_db, target, monkeypatch):
         original = await client.post("/v1/messages", json={**recipient, "body": "original"})
         assert original.status_code == 200, original.text
         old = original.json()["conversation_id"]
-        ordinary = await client.post("/v1/messages", json={**recipient, "body": "ordinary"})
+        ordinary = await client.post("/v1/messages", json={**recipient, "body": "ordinary", "new_conversation": new_flag})
         assert ordinary.status_code == 200, ordinary.text
-        assert ordinary.json()["conversation_id"] == old
+        assert ordinary.json()["conversation_id"] != old
         fresh, message = str(uuid4()), str(uuid4())
         timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         signed = canonical_json_bytes({
@@ -50,7 +51,7 @@ async def test_new_mail_conversation(aweb_cloud_db, target, monkeypatch):
             "body": "nonce", "priority": "normal", "conversation_id": fresh,
             "message_id": message, "timestamp": timestamp,
         })
-        request = {**recipient, "new_conversation": True, "conversation_id": fresh,
+        request = {**recipient, "new_conversation": new_flag, "conversation_id": fresh,
                    "message_id": message, "from_did": alice_key, "timestamp": timestamp,
                    "subject": "fresh", "body": "nonce", "signature": sign_message(alice_sk, signed),
                    "signed_payload": signed.decode()}
@@ -60,24 +61,18 @@ async def test_new_mail_conversation(aweb_cloud_db, target, monkeypatch):
         assert response.json()["message_id"] == message
         rows = await db.fetch_all("SELECT message_id FROM {{tables.messages}} WHERE conversation_id=$1", UUID(fresh))
         assert [str(row["message_id"]) for row in rows] == [message]
-        before = await db.fetch_all("SELECT * FROM {{tables.conversations}} ORDER BY conversation_id")
-        for identifier in [fresh, old]:
-            duplicate = await client.post("/v1/messages", json={**recipient, "new_conversation": True,
-                                          "conversation_id": identifier, "body": "must not send"})
-            assert duplicate.status_code == 409, duplicate.text
-            assert duplicate.json()["detail"] == "conversation_exists"
-        missing = await client.post("/v1/messages", json={**recipient, "new_conversation": True, "body": "must not send"})
-        assert missing.status_code == 422, missing.text
-        continuation = await client.post("/v1/messages", json={"new_conversation": True, "conversation_id": old, "body": "must not send"})
-        assert continuation.status_code == 422, continuation.text
-        assert before == await db.fetch_all("SELECT * FROM {{tables.conversations}} ORDER BY conversation_id")
+        # The deprecated flag does not change explicit continuation or fresh send.
+        continuation = await client.post("/v1/messages", json={"new_conversation": new_flag,
+                                          "conversation_id": old, "body": "explicit continuation"})
+        assert continuation.status_code == 200, continuation.text
+        assert continuation.json()["conversation_id"] == old
         count = await db.fetch_one("SELECT count(*) AS n FROM {{tables.messages}}")
-        assert count["n"] == 3
+        assert count["n"] == 4
 
-        # The fresh flag does not make a changed signed conversation ID valid.
+        # The accepted flag does not make a changed signed conversation ID valid.
         tampered = await client.post("/v1/messages", json={**request, "conversation_id": str(uuid4())})
         assert tampered.status_code == 422, tampered.text
-        assert (await db.fetch_one("SELECT count(*) AS n FROM {{tables.messages}}"))["n"] == 3
+        assert (await db.fetch_one("SELECT count(*) AS n FROM {{tables.messages}}"))["n"] == 4
 
         await _insert_team(db, "ops:otherco.com")
         _, _, blocked_key = _make_keypair()
@@ -89,7 +84,7 @@ async def test_new_mail_conversation(aweb_cloud_db, target, monkeypatch):
                                    "conversation_id": denied_id, "body": "must not send"})
         assert denied.status_code == 403, denied.text
         assert await db.fetch_one("SELECT conversation_id FROM {{tables.conversations}} WHERE conversation_id=$1", UUID(denied_id)) is None
-        assert (await db.fetch_one("SELECT count(*) AS n FROM {{tables.messages}}"))["n"] == 3
+        assert (await db.fetch_one("SELECT count(*) AS n FROM {{tables.messages}}"))["n"] == 4
 
         if target == "alias":
             # Force both requests past the absence precheck before either INSERT.

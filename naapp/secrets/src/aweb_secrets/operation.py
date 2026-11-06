@@ -24,6 +24,7 @@ from typing import Any
 from aweb_naapp.egress import EgressRefused, InternalDestinations, parse_destination
 from aweb_naapp.egress.headers import ALWAYS_REJECTED, ALWAYS_REJECTED_PREFIXES, GUARD_SET
 from aweb_naapp.pages import inline_schema_errors, inline_value_valid
+from aweb_secrets_values import CAPTURE_FIELDS as CAPTURE_FIELDS
 from awid.signing import canonical_json_bytes
 
 from aweb_secrets.destination import DestinationInvalid, parse_destination_scope
@@ -53,6 +54,7 @@ FIELDS = frozenset(
         "timeout_s",
     }
 )
+OPTIONAL_FIELDS = frozenset({"outcome_unknown_retry"})
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
 PLACEMENTS = ("path", "query", "body")
@@ -70,15 +72,6 @@ CHARSETS: Mapping[str, re.Pattern[str]] = {
     "base64url": re.compile(r"[A-Za-z0-9_-]+"),
 }
 
-# The structured value fields of each kind, which a derived secret captures (§6.2).
-CAPTURE_FIELDS: Mapping[str, tuple[frozenset[str], frozenset[str]]] = {
-    "bearer": (frozenset({"value"}), frozenset()),
-    "header": (frozenset({"value"}), frozenset()),
-    "query": (frozenset({"value"}), frozenset()),
-    "basic": (frozenset({"username", "password"}), frozenset()),
-    "oauth2-client-credentials": (frozenset({"client_id", "client_secret"}), frozenset()),
-    "aws-sigv4": (frozenset({"access_key_id", "secret_access_key"}), frozenset({"session_token"})),
-}
 
 _PARAM_NAME = re.compile(r"[a-z_][a-z0-9_]{0,63}")
 _PATH_PARAM = re.compile(r"\{([a-z_][a-z0-9_]{0,63})\}")
@@ -305,8 +298,35 @@ def _check_store_as_secret(store: Any) -> None:
     )
 
 
+def _check_outcome_unknown_retry(after: Mapping[str, Any]) -> None:
+    retry = after.get("outcome_unknown_retry")
+    if retry is None:
+        return
+    retry = _exact(
+        retry, frozenset({"delay_s", "upstream_honours_idempotency_key"}), "outcome_unknown_retry"
+    )
+    _require(
+        type(retry["delay_s"]) is int and 1 <= retry["delay_s"] <= 60,
+        "retry delay_s is 1 to 60 seconds",
+    )
+    honours = retry["upstream_honours_idempotency_key"]
+    _require(type(honours) is bool, "upstream_honours_idempotency_key is a boolean")
+    _require(after["reconcile"] is None, "a reconcile lookup requires manual settlement")
+    _require(
+        not honours or after["idempotency"] is not None,
+        "the upstream guarantee needs an idempotency header",
+    )
+    _require(
+        after["side_effect"] == "none" or (honours and after["idempotency"] is not None),
+        "an automatic repeat needs side_effect none or an upstream-honoured idempotency header",
+    )
+
+
 def _check(after: Any) -> None:
-    _exact(after, FIELDS, "an operation")
+    _require(
+        isinstance(after, Mapping) and FIELDS <= set(after) <= FIELDS | OPTIONAL_FIELDS,
+        "an operation needs its required fields and only known optional fields",
+    )
     _require(type(after["v"]) is int and after["v"] == 1, "this is operation template v1")
     _require(_matches(IDENTIFIER, after["operation_id"]), "the operation id is a lowercase slug")
     _require(_matches(SECRET_ID, after["secret_id"]), "secret_id is a minted secret id")
@@ -372,6 +392,7 @@ def _check(after: Any) -> None:
         or (_matches(IDENTIFIER, reconcile) and reconcile != after["operation_id"]),
         "reconcile names another operation",
     )
+    _check_outcome_unknown_retry(after)
     timeout = after["timeout_s"]
     _require(type(timeout) is int and 1 <= timeout <= MAX_TIMEOUT_S, "timeout_s is 1 to 30 seconds")
     if handling == "store_as_secret":

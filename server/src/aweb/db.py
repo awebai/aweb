@@ -11,6 +11,7 @@ from pgdbm.migrations import AsyncMigrationManager
 from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations
 
 from .config import get_settings
+from .connection_scope import DatabaseManager
 from awid.db_config import build_database_config
 
 class DatabaseInfra:
@@ -57,7 +58,7 @@ class DatabaseInfra:
 
             self._shared_pool = shared_pool
 
-            self._manager = AsyncDatabaseManager(
+            self._manager = DatabaseManager(
                 pool=shared_pool,
                 schema="aweb",
             )
@@ -108,6 +109,24 @@ class DatabaseInfra:
             )
         assert self._manager is not None
         return self._manager
+
+
+class TransactionInfra:
+    """A DatabaseInfra whose aweb manager is an open transaction.
+
+    Service functions take a db and call db.get_manager("aweb"); handing them
+    this runs their statements in the caller's transaction, and a nested
+    .transaction() becomes a savepoint of it.
+    """
+
+    def __init__(self, original: Any, transaction: Any) -> None:
+        self.original, self.transaction = original, transaction
+
+    def get_manager(self, name: str = "aweb") -> Any:
+        return self.transaction if name == "aweb" else self.original.get_manager(name)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.original, name)
 
 
 db_infra = DatabaseInfra()

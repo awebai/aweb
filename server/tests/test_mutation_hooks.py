@@ -7,6 +7,7 @@ import pytest
 import aweb.lifecycle as lifecycle
 import aweb.mutation_hooks as mutation_hooks
 from aweb.events import (
+    ChatMessageEvent,
     MessageDeliveredEvent,
     ReservationAcquiredEvent,
     TaskClaimedEvent,
@@ -139,6 +140,9 @@ async def test_mutation_handler_backfills_from_did_aw_from_agent_id(aweb_cloud_d
         agent_id,
     )
 
+    await aweb_cloud_db.aweb_db.execute(
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1", agent_id,
+    )
     seen: dict[str, str] = {}
 
     def _capture_translate(event_type: str, ctx: dict):
@@ -511,3 +515,53 @@ async def test_task_status_changed_claims_with_workspace_id_not_agent_id(aweb_cl
     )
     assert str(claim["workspace_id"]) == str(workspace_id)
     assert any(getattr(event, "workspace_id", None) == str(workspace_id) for event in published)
+
+
+@pytest.mark.asyncio
+async def test_a_chat_event_uses_the_aliases_and_preview_its_sender_supplied(aweb_cloud_db, monkeypatch):
+    import asyncpg.connection
+
+    published: list[object] = []
+
+    async def _capture_publish(_redis, event):
+        published.append(event)
+        return 1
+
+    monkeypatch.setattr(mutation_hooks, "publish_event", _capture_publish)
+    chat_reads: list[str] = []
+    execute = asyncpg.connection.Connection._execute
+
+    async def observed(connection, query, *args, **kwargs):
+        if "chat_participants" in query or "chat_messages" in query:
+            chat_reads.append(query)
+        return await execute(connection, query, *args, **kwargs)
+
+    monkeypatch.setattr(asyncpg.connection.Connection, "_execute", observed)
+    import os
+
+    from redis.asyncio import Redis
+
+    async with Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True) as redis:
+        handler = mutation_hooks.create_mutation_handler(redis=redis, db_infra=_DbShim(aweb_cloud_db.aweb_db))
+        await _send_supplied_chat_event(handler)
+
+    chat_events = [event for event in published if isinstance(event, ChatMessageEvent)]
+    assert len(chat_events) == 1
+    assert chat_events[0].to_aliases == ["bob"]
+    assert chat_events[0].preview == "hello bob"
+    assert chat_reads == []
+
+
+async def _send_supplied_chat_event(handler):
+    await handler(
+        "chat.message_sent",
+        {
+            "team_id": "backend:acme.com",
+            "session_id": str(uuid4()),
+            "message_id": str(uuid4()),
+            "from_agent_id": str(uuid4()),
+            "from_alias": "alice",
+            "to_aliases": ["bob"],
+            "preview": "hello bob",
+        },
+    )

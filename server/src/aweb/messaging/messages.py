@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from aweb.agent_wake import record_did_wakes
 from aweb.attachment_service import attachment_transaction
 
 import json
@@ -8,6 +9,13 @@ from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
 
+from aweb.inbound_modes import (
+    INBOUND_MODE_CONTACTS_ONLY,
+    INBOUND_MODE_OPEN,
+    INBOUND_MODE_TEAM_AND_CONTACTS,
+    effective_inbound_mode,
+    normalize_inbound_mode,
+)
 from aweb.messaging.contacts import has_exact_active_identity_contact, normalize_owner_dids
 from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ServiceError, ValidationError
 
@@ -35,7 +43,7 @@ async def get_agent_by_id(db, *, agent_id: str, team_id: str | None = None) -> d
     if team_id is None:
         row = await aweb_db.fetch_one(
             """
-            SELECT agent_id, team_id, alias, did_key, did_aw, address, inbound_mode, status, deleted_at
+            SELECT agent_id, team_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw, inbound_mode, status, deleted_at
             FROM {{tables.agents}}
             WHERE agent_id = $1 AND deleted_at IS NULL
             """,
@@ -44,7 +52,7 @@ async def get_agent_by_id(db, *, agent_id: str, team_id: str | None = None) -> d
     else:
         row = await aweb_db.fetch_one(
             """
-            SELECT agent_id, team_id, alias, did_key, did_aw, address, inbound_mode, status, deleted_at
+            SELECT agent_id, team_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw, inbound_mode, status, deleted_at
             FROM {{tables.agents}}
             WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL
             """,
@@ -61,7 +69,7 @@ async def get_agent_by_alias(db, *, team_id: str, alias: str) -> dict | None:
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, team_id, alias, did_key, did_aw, address, inbound_mode, status, deleted_at
+        SELECT agent_id, team_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw, inbound_mode, status, deleted_at
         FROM {{tables.agents}}
         WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
           AND COALESCE(agent_type, 'agent') != 'human'
@@ -78,10 +86,10 @@ async def resolve_agent_by_did(db, did: str) -> dict | None:
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, team_id, alias, did_key, did_aw, address, inbound_mode, status, deleted_at
+        SELECT agent_id, team_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw, inbound_mode, status, deleted_at
         FROM {{tables.agents}}
         WHERE deleted_at IS NULL
-          AND (did_aw = $1 OR did_key = $1)
+          AND ((did_aw = $1 AND did_aw_verified_key = did_key) OR did_key = $1)
         ORDER BY CASE WHEN did_aw = $1 THEN 0 ELSE 1 END, created_at DESC
         LIMIT 1
         """,
@@ -90,24 +98,46 @@ async def resolve_agent_by_did(db, did: str) -> dict | None:
     return None if not row else dict(row)
 
 
-INBOUND_MODE_OPEN = "open"
-INBOUND_MODE_TEAM_AND_CONTACTS = "team_and_contacts"
-INBOUND_MODE_CONTACTS_ONLY_LEGACY = "contacts_only"
-INBOUND_MODES = {INBOUND_MODE_OPEN, INBOUND_MODE_TEAM_AND_CONTACTS}
+async def policy_rows_for_participant(db, participant: dict) -> list[dict]:
+    """Policy evidence for an existing participant, never new routing authority."""
+    did = str(participant.get("did") or "").strip()
+    if not did:
+        return []
+    rows = await db.get_manager("aweb").fetch_all(
+        """
+        SELECT agent_id, team_id, alias, did_key,
+               CASE WHEN did_aw_verified_key=did_key THEN did_aw END AS did_aw,
+               CASE WHEN did_aw_verified_key=did_key THEN address END AS address,
+               identity_scope, (NULLIF(did_aw,'') IS NOT NULL) AS has_global_claim,
+               did_aw AS policy_did_aw, inbound_mode
+        FROM {{tables.agents}} WHERE deleted_at IS NULL
+          AND (did_key=$1 OR did_aw=$1)
+        ORDER BY agent_id
+        """, did,
+    )
+    # All raw-claim matches must pass policy; none selects a recipient or route.
+    return [dict(row) for row in rows]
 
 
 def _is_global_recipient(recipient_agent: dict) -> bool:
-    return str(recipient_agent.get("did_aw") or "").strip().startswith("did:aw:")
+    return (
+        recipient_agent.get("identity_scope") == "global"
+        or bool(recipient_agent.get("has_global_claim"))
+        or bool(str(recipient_agent.get("did_aw") or "").strip())
+    )
 
 
-def _effective_inbound_mode(recipient_agent: dict) -> str:
-    mode = str(recipient_agent.get("inbound_mode") or "").strip().lower()
-    if mode == INBOUND_MODE_CONTACTS_ONLY_LEGACY:
-        return INBOUND_MODE_TEAM_AND_CONTACTS
-    if mode in INBOUND_MODES:
-        return mode
-
-    raise ForbiddenError("Recipient inbound_mode migration required")
+async def _effective_inbound_mode(db, recipient_agent: dict) -> str:
+    # Raw identity facts select policy, never routing or mutation authority.
+    # Direct service fixtures may omit the separate policy projection.
+    policy_did_aw = recipient_agent.get("policy_did_aw", recipient_agent.get("did_aw"))
+    if policy_did_aw:
+        return await effective_inbound_mode(db.get_manager("aweb"), str(policy_did_aw))
+    # Without a stable identity there is no link to other memberships.
+    try:
+        return normalize_inbound_mode(recipient_agent.get("inbound_mode"), default="")
+    except ValueError as exc:
+        raise ForbiddenError("Recipient inbound_mode migration required") from exc
 
 
 def _identity_dids_from_agent(agent: dict) -> list[str]:
@@ -138,7 +168,7 @@ async def _active_team_ids_for_identity(db, dids: list[str]) -> set[str]:
         SELECT DISTINCT team_id
         FROM {{tables.agents}}
         WHERE deleted_at IS NULL
-          AND (did_aw = ANY($1::text[]) OR did_key = ANY($1::text[]))
+          AND ((did_aw = ANY($1::text[]) AND did_aw_verified_key = did_key) OR did_key = ANY($1::text[]))
         """,
         dids,
     )
@@ -209,10 +239,10 @@ async def authorize_message_delivery(
     )
 
     if _is_global_recipient(recipient_agent):
-        mode = _effective_inbound_mode(recipient_agent)
+        mode = await _effective_inbound_mode(db, recipient_agent)
         if mode == INBOUND_MODE_OPEN:
             return
-        if await _has_verified_same_team_membership(
+        if mode == INBOUND_MODE_TEAM_AND_CONTACTS and await _has_verified_same_team_membership(
             db,
             recipient_agent=recipient_agent,
             sender_verified_team_id=sender_verified_team_id,
@@ -226,6 +256,8 @@ async def authorize_message_delivery(
             sender_did=sender_stable_did,
         ):
             return
+        if mode == INBOUND_MODE_CONTACTS_ONLY:
+            raise ForbiddenError("Recipient only accepts messages from exact active contacts")
         raise ForbiddenError("Recipient only accepts messages from verified team members or exact active contacts")
 
     if stored_route_continuation:
@@ -247,6 +279,44 @@ async def authorize_message_delivery(
     raise ForbiddenError(
         "Local recipient only accepts same-team, exact-contact, or stored-route continuation delivery"
     )
+
+
+async def admit_message_delivery(
+    db,
+    *,
+    recipient: dict,
+    recipient_did: str,
+    to_agent_id: str | None,
+    sender_did: str,
+    sender_address: str | None,
+    team_id: str | None,
+    sender_verified_team_id: str | None,
+    sender_verified_dids,
+    stored_route_continuation: bool,
+) -> None:
+    """The recipient's delivery policy for this sender; raises when it refuses."""
+    if recipient.get("external") and not (stored_route_continuation and not recipient.get("delivery_origin")):
+        return
+    policies = [recipient]
+    if stored_route_continuation:
+        policies = await policy_rows_for_participant(db, {
+            "agent_id": to_agent_id or recipient.get("agent_id"), "did": recipient_did,
+        })
+        if not policies:
+            # Mail has one recipient; absence is not a policy denial and
+            # must not create a local delivery to a retired projection.
+            raise NotFoundError("Recipient agent not found")
+    for policy_recipient in policies:
+        await authorize_message_delivery(
+            db,
+            recipient_agent=policy_recipient,
+            sender_did=sender_did,
+            sender_address=sender_address,
+            sender_team_id=team_id,
+            sender_verified_team_id=sender_verified_team_id,
+            sender_verified_dids=sender_verified_dids,
+            stored_route_continuation=stored_route_continuation,
+        )
 
 
 @attachment_transaction("mail")
@@ -271,6 +341,7 @@ async def deliver_message(
     to_agent_id: str | None = None,
     signature: str | None = None,
     signed_payload: str | None = None,
+    id_chain: dict | None = None,
     content_mode: str = "legacy_plaintext_v1",
     message_version: int = 1,
     encrypted_envelope: dict | None = None,
@@ -278,6 +349,8 @@ async def deliver_message(
     message_id: UUID | None = None,
     conversation_id: str | UUID | None = None,
     skip_policy_check: bool = False,
+    signed_recipient_did: str | None = None,
+    known_new: bool = False,
 ) -> tuple[UUID, datetime]:
     """Deliver a message between identities, not within a team."""
     sender_did = str(from_did or "").strip()
@@ -287,17 +360,19 @@ async def deliver_message(
     if not recipient_did:
         raise ValidationError("Missing to_did")
 
-    recipient = await resolve_agent_by_did(db, recipient_did) or recipient_agent
+    recipient = recipient_agent or await resolve_agent_by_did(db, recipient_did)
     if recipient is None:
         raise NotFoundError("Recipient agent not found")
 
-    if not skip_policy_check and not recipient.get("external"):
-        await authorize_message_delivery(
+    if not skip_policy_check:
+        await admit_message_delivery(
             db,
-            recipient_agent=recipient,
+            recipient=recipient,
+            recipient_did=recipient_did,
+            to_agent_id=to_agent_id,
             sender_did=sender_did,
             sender_address=sender_address,
-            sender_team_id=team_id,
+            team_id=team_id,
             sender_verified_team_id=sender_verified_team_id,
             sender_verified_dids=sender_verified_dids,
             stored_route_continuation=stored_route_continuation,
@@ -308,7 +383,9 @@ async def deliver_message(
     # two values intentionally use different clocks and may disagree.
     created_at = datetime.now(timezone.utc)
     if message_id is None:
+        # A freshly generated id names no stored message.
         message_id = uuid_mod.uuid4()
+        known_new = True
 
     conversation_uuid = _parse_uuid(conversation_id, field_name="conversation_id") if conversation_id else None
     from_uuid = _parse_uuid(from_agent_id, field_name="from_agent_id") if from_agent_id else None
@@ -332,16 +409,19 @@ async def deliver_message(
         encrypted_metadata = {}
 
     aweb_db = db.get_manager("aweb")
+    # known_new: the caller looked this message_id up in this request and
+    # found no row, so the same lookup is not repeated here.
+    existing = None if known_new else await aweb_db.fetch_one(
+        """
+        SELECT message_id, created_at, content_mode, signed_envelope_hash,
+               from_did, signed_payload
+        FROM {{tables.messages}}
+        WHERE message_id = $1
+        """,
+        message_id,
+    )
     if content_mode == "encrypted_v2":
         signed_envelope_hash = str(encrypted_metadata.get("signed_envelope_hash") or "").strip()
-        existing = await aweb_db.fetch_one(
-            """
-            SELECT message_id, created_at, content_mode, signed_envelope_hash
-            FROM {{tables.messages}}
-            WHERE message_id = $1
-            """,
-            message_id,
-        )
         if existing:
             if (
                 str(existing["content_mode"] or "") == "encrypted_v2"
@@ -349,6 +429,15 @@ async def deliver_message(
             ):
                 return UUID(str(existing["message_id"])), existing["created_at"]
             raise ConflictError("message_id already exists with a different encrypted envelope")
+    elif existing:
+        if (
+            existing["content_mode"] == "legacy_plaintext_v1"
+            and existing["from_did"] == sender_did
+            and signed_payload
+            and existing["signed_payload"] == signed_payload
+        ):
+            return UUID(str(existing["message_id"])), existing["created_at"]
+        raise ConflictError("message_id already exists with a different sender or signed payload")
 
     row = await aweb_db.fetch_one(
         """
@@ -358,14 +447,17 @@ async def deliver_message(
              conversation_id, message_version, content_mode, encrypted_envelope,
              encrypted_ciphertext, encrypted_key_wraps, encrypted_ciphertext_hash, encrypted_ciphertext_size,
              encrypted_key_wraps_hash, encrypted_inner_header_hash, encrypted_suite, encrypted_signing_key_id,
-             signed_envelope_hash)
+             signed_envelope_hash, id_chain)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-                $17, $18, $19::jsonb, $20, $21::jsonb, $22, $23, $24, $25, $26, $27, $28)
+                $17, $18, $19::jsonb, $20, $21::jsonb, $22, $23, $24, $25, $26, $27, $28, $29::jsonb)
         RETURNING message_id, created_at
         """,
         message_id,
         sender_did,
-        recipient_did,
+        # A validated same-account succession may deliver to the successor
+        # while preserving its predecessor as the original signed target.
+        # Policy and residence above always use the current delivery identity.
+        signed_recipient_did or recipient_did,
         from_alias_value,
         from_address_value,
         to_alias_value,
@@ -391,8 +483,12 @@ async def deliver_message(
         encrypted_metadata.get("encrypted_suite"),
         encrypted_metadata.get("encrypted_signing_key_id"),
         encrypted_metadata.get("signed_envelope_hash"),
+        json.dumps(id_chain) if id_chain is not None else None,
     )
     if not row:
         raise ServiceError("Failed to create message")
+
+    # Wake the identity this delivery resolved, never a stored address field.
+    record_did_wakes((recipient.get("did_aw"), recipient.get("did_key")), "mail")
 
     return UUID(str(row["message_id"])), row["created_at"]

@@ -16,7 +16,7 @@ import (
 //
 // Two layers:
 //   1. validateInitInboundMode parse-time tests (no network) cover the
-//      flag-shape contract: only {open, team-and-contacts} on --global,
+//      flag-shape contract: {open, team-and-contacts, contacts-only} on --global,
 //      reject on local, reject the withdrawn third value.
 //   2. runAPIKeyBootstrapInit payload tests using the existing
 //      newLocalHTTPServer fixture cover the wire-level translation
@@ -146,7 +146,13 @@ func TestValidateInitInboundModeRejectsBYODGlobal(t *testing.T) {
 // field is omitted when the value is unset. Mirrors the contract for
 // the guided hosted-onboarding global creation path.
 
-func TestProvisionHostedIdentityForwardsInboundModeContactsOnly(t *testing.T) {
+func TestProvisionHostedIdentityForwardsInboundMode(t *testing.T) {
+	for _, mode := range []string{"open", "team_and_contacts", "contacts_only"} {
+		t.Run(mode, func(t *testing.T) { testProvisionHostedIdentityForwardsInboundMode(t, mode) })
+	}
+}
+
+func testProvisionHostedIdentityForwardsInboundMode(t *testing.T, mode string) {
 	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:1")
 
 	teamPub, teamKey, err := awid.GenerateKeypair()
@@ -206,7 +212,7 @@ func TestProvisionHostedIdentityForwardsInboundModeContactsOnly(t *testing.T) {
 		}
 	}))
 
-	_, err = provisionHostedIdentity(server.URL, server.URL, "alice", "laptop", true, "team_and_contacts")
+	_, err = provisionHostedIdentity(server.URL, server.URL, "alice", "laptop", true, mode)
 	if err != nil {
 		t.Fatalf("provisionHostedIdentity: %v", err)
 	}
@@ -214,8 +220,8 @@ func TestProvisionHostedIdentityForwardsInboundModeContactsOnly(t *testing.T) {
 	if !ok {
 		t.Fatalf("cli-signup body should carry inbound_mode; got %v", signupBody["inbound_mode"])
 	}
-	if wire != "team_and_contacts" {
-		t.Fatalf("inbound_mode=%q want team_and_contacts", wire)
+	if wire != mode {
+		t.Fatalf("inbound_mode=%q want %s", wire, mode)
 	}
 }
 
@@ -292,7 +298,22 @@ func TestProvisionHostedIdentityOmitsInboundModeWhenUnset(t *testing.T) {
 // carries the canonical underscored value when the user passed the
 // hyphen flag, and that the field is omitted when the flag is unset.
 
-func TestRunAPIKeyBootstrapInitForwardsInboundModeContactsOnly(t *testing.T) {
+func TestRunAPIKeyBootstrapInitForwardsInboundMode(t *testing.T) {
+	for _, mode := range []string{"open", "team_and_contacts", "contacts_only"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Run("matching", func(t *testing.T) { testAPIKeyExplicitModeReadback(t, mode, mode, false) })
+			wrong := "open"
+			if mode == "open" {
+				wrong = "team_and_contacts"
+			}
+			if mode == "contacts_only" {
+				wrong = "team_and_contacts"
+			}
+			t.Run("mismatched", func(t *testing.T) { testAPIKeyExplicitModeReadback(t, mode, wrong, true) })
+		})
+	}
+}
+func testAPIKeyExplicitModeReadback(t *testing.T, mode, actual string, wantFailure bool) {
 	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:1")
 
 	const apiKey = "aw_sk_test_inbound_mode"
@@ -302,10 +323,14 @@ func TestRunAPIKeyBootstrapInitForwardsInboundModeContactsOnly(t *testing.T) {
 	}
 	teamDIDKey := awid.ComputeDIDKey(teamPub)
 
+	readSeen := false
 	var initBody map[string]any
 	var registeredDIDKey string
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveAPIKeyCreationTeamRead(w, r, "default:alice.aweb.ai") {
+			return
+		}
 		switch {
 		case r.URL.Path == "/v1/did":
 			var body map[string]any
@@ -368,6 +393,10 @@ func TestRunAPIKeyBootstrapInitForwardsInboundModeContactsOnly(t *testing.T) {
 				"repo_id":      "repo-1",
 				"team_did_key": teamDIDKey,
 			})
+		case r.URL.Path == "/v1/agents/me/inbound-mode":
+			requireCertificateAuthForTest(t, r)
+			readSeen = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"agent_id": "agent-1", "team_id": "default:alice.aweb.ai", "identity_scope": "global", "inbound_mode": actual, "configurable": true})
 		case r.URL.Path == "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		case strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/encryption-key"):
@@ -390,17 +419,20 @@ func TestRunAPIKeyBootstrapInitForwardsInboundModeContactsOnly(t *testing.T) {
 		HumanName:   "Alice",
 		AgentType:   "codex",
 		Global:      true,
-		InboundMode: "team_and_contacts", // canonical wire form post-validation
+		InboundMode: mode, // canonical wire form post-validation
 	})
-	if err != nil {
-		t.Fatalf("runAPIKeyBootstrapInit: %v", err)
+	if (err != nil) != wantFailure {
+		t.Fatalf("explicit mode result: %v, want failure=%t", err, wantFailure)
+	}
+	if !readSeen {
+		t.Error("explicit mode creation did not read back effective policy")
 	}
 	wire, ok := initBody["inbound_mode"].(string)
 	if !ok {
 		t.Fatalf("workspaces/init body should carry inbound_mode; got %v", initBody["inbound_mode"])
 	}
-	if wire != "team_and_contacts" {
-		t.Fatalf("inbound_mode=%q want team_and_contacts", wire)
+	if wire != mode {
+		t.Fatalf("inbound_mode=%q want %s", wire, mode)
 	}
 }
 
@@ -418,6 +450,9 @@ func TestRunAPIKeyBootstrapInitOmitsInboundModeWhenUnset(t *testing.T) {
 	var registeredDIDKey string
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveAPIKeyCreationTeamRead(w, r, "default:alice.aweb.ai") {
+			return
+		}
 		switch {
 		case r.URL.Path == "/v1/did":
 			var body map[string]any
@@ -509,5 +544,17 @@ func TestRunAPIKeyBootstrapInitOmitsInboundModeWhenUnset(t *testing.T) {
 	}
 	if v, ok := initBody["inbound_mode"]; ok {
 		t.Fatalf("workspaces/init body should omit inbound_mode when unset; got %v", v)
+	}
+}
+
+func TestInitStrictContactsOnlyWire(t *testing.T) {
+	t.Cleanup(resetInboundModeFlags)
+	initGlobal = true
+	initInboundMode = "contacts-only"
+	if err := validateInitInboundMode(); err != nil {
+		t.Fatal(err)
+	}
+	if got := canonicalInitInboundModeForWire(initInboundMode); got != "contacts_only" {
+		t.Fatalf("wire=%q want contacts_only", got)
 	}
 }

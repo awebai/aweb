@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack, contextmanager
 import hashlib
 import json
 import os
@@ -19,11 +20,14 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-
-SEMVER = r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
-TAG_PATTERN = re.compile(
-    rf"^(server-v|awid-service-v|aweb-naapp-v|awid-v|aw-v|channel-v|pi-v|skills-v|a2a-gw-v)({SEMVER})$"
+from release_versions import (
+    SEMVER,
+    VersionRefusal as PublishRefusal,
+    require_final_promotion,
+    tag_parts,
+    valid_version,
 )
+
 MANIFESTS = {
     "server-v": "server/pyproject.toml",
     "awid-service-v": "awid/pyproject.toml",
@@ -48,10 +52,6 @@ NPM_LANES = {
 }
 
 
-class PublishRefusal(RuntimeError):
-    pass
-
-
 def run(
     root: Path,
     *argv: str,
@@ -60,13 +60,17 @@ def run(
     input_text: str | None = None,
     timeout: int = 7200,
 ) -> str:
+    # npm's background self-update lookup is not part of publication. Cover
+    # direct build commands and nested scripts, regardless of caller config.
+    environment = dict(os.environ if env is None else env)
+    environment.update(NPM_CONFIG_UPDATE_NOTIFIER="false", npm_config_update_notifier="false")
     completed = subprocess.run(
         argv,
         cwd=root,
         text=True,
         input=input_text,
         capture_output=capture,
-        env=env,
+        env=environment,
         timeout=timeout,
         check=False,
     )
@@ -82,7 +86,7 @@ def manifest_version(root: Path, path: str) -> str:
             value = tomllib.load(handle)["project"]["version"]
     else:
         value = json.loads((root / path).read_text(encoding="utf-8"))["version"]
-    if not isinstance(value, str) or not re.fullmatch(SEMVER, value):
+    if not valid_version(path, value):
         raise PublishRefusal(f"{path} has invalid version {value!r}")
     return value
 
@@ -93,16 +97,13 @@ def manifest_version_at(root: Path, source_sha: str, path: str) -> str:
         value = tomllib.loads(raw)["project"]["version"]
     else:
         value = json.loads(raw)["version"]
-    if not isinstance(value, str) or not re.fullmatch(SEMVER, value):
+    if not valid_version(path, value):
         raise PublishRefusal(f"{path} at {source_sha} has invalid version {value!r}")
     return value
 
 
 def tag_identity(root: Path, tag: str) -> tuple[str, str, str]:
-    matched = TAG_PATTERN.fullmatch(tag)
-    if not matched:
-        raise PublishRefusal(f"unsupported release tag {tag!r}")
-    prefix, version = matched.group(1), matched.group(2)
+    prefix, version = tag_parts(tag)
     try:
         source_sha = run(root, "git", "rev-parse", f"{tag}^{{commit}}", timeout=60)
     except PublishRefusal as error:
@@ -114,6 +115,7 @@ def tag_identity(root: Path, tag: str) -> tuple[str, str, str]:
             raise PublishRefusal(
                 f"{tag} does not match {manifest} version {manifest_version_at(root, source_sha, manifest)}"
             )
+    require_final_promotion(root, tag, source_sha)
     return prefix, version, source_sha
 
 
@@ -249,7 +251,9 @@ def require_pi_aw_floor(root: Path, timeout_seconds: float = 180) -> str:
         time.sleep(6)
 
 
-def npm_publish_exact(root: Path, directory: str, package: str, profile: str, version: str) -> None:
+@contextmanager
+def _npm_publish_staged(root: Path, directory: str, package: str, profile: str, version: str, *, staged_final: bool = False):
+    """Publish/adopt once; keep the exact archive alive until readback finishes."""
     token = os.environ.get("NODE_AUTH_TOKEN", "").strip() or os.environ.get("NPM_TOKEN", "").strip()
     if not token:
         raise PublishRefusal("NODE_AUTH_TOKEN or NPM_TOKEN is required")
@@ -303,11 +307,18 @@ def npm_publish_exact(root: Path, directory: str, package: str, profile: str, ve
                 "publish-exact",
                 "--tgz",
                 str(archive),
+                *(["--staged-final"] if staged_final else []),
                 capture=False,
                 env=environment,
             )
         else:
             raise PublishRefusal(f"npm registry returned unexpected HTTP {status}")
+        yield archive, action, environment
+
+
+def npm_publish_exact(root: Path, directory: str, package: str, profile: str, version: str, *, staged_final: bool = False) -> None:
+    with _npm_publish_staged(root, directory, package, profile, version, staged_final=staged_final) as staged:
+        archive, action, environment = staged
         run(
             root,
             "bash",
@@ -321,6 +332,8 @@ def npm_publish_exact(root: Path, directory: str, package: str, profile: str, ve
             version,
             "--post-action",
             action,
+            "--dist-tag",
+            "next" if staged_final or "-" in version else "latest",
             env=environment,
         )
 
@@ -334,13 +347,16 @@ def publish_npm(root: Path, prefix: str, version: str) -> None:
         print("skill ZIPs are staged locally; hosted release assets can be uploaded later")
 
 
-def write_json_version(path: Path, version: str) -> None:
+def write_json_version(path: Path, version: str, git_head: str | None = None) -> None:
     value = json.loads(path.read_text(encoding="utf-8"))
     value["version"] = version
+    # npm records no gitHead for a published tarball; the manifest carries it.
+    if git_head is not None:
+        value["gitHead"] = git_head
     path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
 
 
-def publish_aw_npm(root: Path, version: str, source_sha: str) -> None:
+def publish_aw_npm(root: Path, version: str, source_sha: str, *, staged_final: bool = False) -> None:
     packages = {
         "linux/amd64": ("aw-linux-x64", "aw", "aweb-a2a-gw"),
         "linux/arm64": ("aw-linux-arm64", "aw", "aweb-a2a-gw"),
@@ -385,21 +401,33 @@ def publish_aw_npm(root: Path, version: str, source_sha: str) -> None:
             env=environment,
             capture=False,
         )
-        write_json_version(npm_root / package_dir / "package.json", version)
+        write_json_version(npm_root / package_dir / "package.json", version, source_sha)
     main_manifest = npm_root / "aw/package.json"
     value = json.loads(main_manifest.read_text(encoding="utf-8"))
     value["version"] = version
+    value["gitHead"] = source_sha
     value["optionalDependencies"] = {
         name: version for name in sorted(value.get("optionalDependencies", {}))
     }
     main_manifest.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
-    for package_dir in [item[0] for item in packages.values()] + ["aw"]:
-        npm_publish_exact(
-            root,
-            str(Path("cli/go/npm") / package_dir),
-            "@awebai/" + package_dir,
-            "",
-            version,
+    # Hold all seven once-staged archives through one verifier invocation.
+    # Publishing/adopting never becomes a retry action on readback uncertainty.
+    with ExitStack() as staging:
+        artifacts = []
+        for package_dir in [item[0] for item in packages.values()] + ["aw"]:
+            package = "@awebai/" + package_dir
+            archive, _, environment = staging.enter_context(_npm_publish_staged(
+                root, str(Path("cli/go/npm") / package_dir), package, "", version,
+                staged_final=staged_final,
+            ))
+            artifacts.extend(("--artifact", f"{package}={archive}"))
+        run(
+            root, "python3", str(npm_root / "readback.py"), *artifacts,
+            "--version", version,
+            "--dist-tag", "next" if staged_final or "-" in version else "latest",
+            "--git-head", source_sha,
+            "--registry", environment.get("NPM_CONFIG_REGISTRY", "https://registry.npmjs.org"),
+            env=environment,
         )
     print("npm CLI packages published; hosted binary release assets can be resumed later")
 
@@ -490,6 +518,13 @@ def publish_oci(root: Path, prefix: str, version: str, source_sha: str) -> None:
 
 def publish(root: Path, tag: str) -> None:
     prefix, version, source_sha = tag_identity(root, tag)
+    # The annotated release tag carries the choice across the distribution
+    # repository too; an ambient environment override would be lost there.
+    staged_final = False
+    if prefix == "aw-v":
+        channel = run(root, "python3", "cli/go/npm/publication.py", "channel",
+                      "--version", version, "--tag", tag, "--repository", str(root))
+        staged_final = channel == "next" and "-rc." not in version
     with tempfile.TemporaryDirectory(prefix="aweb-publish-") as temporary:
         checkout = Path(temporary) / "source"
         run(root, "git", "worktree", "add", "--detach", str(checkout), source_sha, timeout=120)
@@ -499,7 +534,7 @@ def publish(root: Path, tag: str) -> None:
             elif prefix in NPM_LANES:
                 publish_npm(checkout, prefix, version)
             elif prefix == "aw-v":
-                publish_aw_npm(checkout, version, source_sha)
+                publish_aw_npm(checkout, version, source_sha, staged_final=staged_final)
             else:
                 publish_oci(checkout, prefix, version, source_sha)
         finally:
@@ -508,10 +543,14 @@ def publish(root: Path, tag: str) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--check-tag", action="store_true", help="validate tag/tree identity without publishing")
     parser.add_argument("tag")
     arguments = parser.parse_args(argv)
     try:
-        publish(Path.cwd().resolve(), arguments.tag)
+        if arguments.check_tag:
+            tag_identity(Path.cwd().resolve(), arguments.tag)
+        else:
+            publish(Path.cwd().resolve(), arguments.tag)
     except (
         PublishRefusal,
         OSError,

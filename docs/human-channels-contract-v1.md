@@ -182,7 +182,10 @@ insert path without supplying the public transaction/authorization semantics.
 
 `ResolveRequest` has exactly one selector alternative: `{version,team_id,selector}`
 for a selected-team alias, or `{version,session_id,participant}` for an exact typed
-participant in an already authorized session. Mixed or partial alternatives
+participant in an already authorized session. Public `team_id` is the canonical
+`name:namespace` string (lowercase team token and namespace, no whitespace or
+trailing dot); UUID strings remain accepted for P0 compatibility. A host's private
+team UUID is separate and is never required by this selector. Mixed or partial alternatives
 refuse. Session-only lookup requires no invented team membership, filler team ID
 or alias; current session authorization and independent identity/bridge proof
 suffice, including for bridged guests. Result actor/team IDs are omitted where
@@ -449,3 +452,7 @@ N1 own the real service, transaction and runtime journeys before capabilities ca
 be emitted. The X-E2/X-GF annexes remain unavailable until their separately bounded
 spikes and Athena review. No active identity-path change, migration, service
 implementation or Cloud table access is included in this P0 definition change.
+
+The [P2 native implementation](human-channels-native-send.md) supplies the
+selected-team human selector, explicit custody/access provider and native
+PostgreSQL UoW/HTTP/MCP ingress families. Managed session families remain gated.

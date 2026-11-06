@@ -49,6 +49,11 @@ from pathlib import Path
 # source and removing those the public server or awid implements. Re-derive with
 # --derive rather than editing by hand.
 HOSTED_ENDPOINT_BASELINE = {
+    # aw org/team/id create for signed-in users (aweb-acke, Juan direct 2026-10-22)
+    "/api/v1/cli/identities",
+    "/api/v1/cli/organizations",
+    "/api/v1/cli/organizations/availability",
+    "/api/v1/cli/teams",
     # Reached by public CLI source.
     "/api/v1/auth/namespaces",
     # Public CLI human-auth status check: aw auth status validates the narrow

@@ -130,3 +130,83 @@ hosted MCP offers no Folio tools for that team. Key rotation likewise adds a
 new declared kid beside the old one, yields a new digest, and needs a re-pin.
 These are separately authorized operator actions; a code landing performs none
 of them.
+
+## Read-only presentation lifetimes
+
+Read-only links accept up to 30 days (`2592000` seconds); the default lifetime
+remains one day (`86400` seconds). Operators may set a shorter ceiling. An
+explicit request above the configured ceiling returns `422` without minting a
+link. Editable openers remain limited to 300 seconds; established edit sessions
+have no expiry, as described below.
+
+For the 30-day rollout, check the existing `FOLIO_MAX_PRESENT_TTL_SECONDS`
+environment setting. If it is `604800` (the former seven-day example), raise it
+to `2592000` or remove it to use the new default. Keeping that override preserves
+the seven-day ceiling even after the code deploys. `.env.example` now uses
+`2592000`. The committed app manifest and its tool schemas do not change, so
+this lifetime change alone needs no manifest re-pin.
+
+## Editable opener and session deployment
+
+Apply forward Folio migration `002_edit_sessions.sql` during deployment. It adds
+hashed opener/consumption/minter-key evidence and a persistent hashed edit-session
+table. Initial migration 001 stays unchanged. No production document rows need
+inspection. Read-only links retain their existing TTL and URL behavior.
+
+Editable URLs now use `/present/edit/<public-id>#k=<opener>`. Their opener is
+single-use and lasts at most 300 seconds; an already-open session never expires
+on time or inactivity. Cloud's exact fragment-URL validation change must deploy
+**before** this Folio build, or dashboard Edit will reject the new URL. Folio's
+manifest bytes/digest remain unchanged, so this change needs no install re-pin.
+
+Old editors still using token paths will enter draft-copy recovery on their next
+request after deployment. There is no compatibility authority path. The person
+copies their unsaved text and reopens Edit from the dashboard. A reload of a new
+session works through its per-link sessionStorage credential; the database keeps
+sessions across app restarts and instances.
+
+Revoke the public link id to end a consumed opener's session. Document deletion,
+minter removal, or replacement/revocation of the minter's certificate also ends
+it. Certificate rotation therefore requires reopening Edit even when the person
+remains a team member. AWID unavailability is a retryable 503, never authority.
+The shared team-facts cache bounds membership freshness at 60 seconds. There is
+no idle timeout or hard session lifetime under Juan's ruling.
+
+Every `/present/` response, including exchange and refusals, carries no-store and
+no-referrer. Neither the fragment opener nor session header reaches access paths.
+Only SHA-256 verifiers reach the database. Folio's access filter also suppresses
+all query strings and redacts old bearer path segments; errors must not log
+request bodies or session headers. Upstream logging must follow the same policy.
+
+Focused proof under the team suite lock:
+
+```sh
+uv run pytest -q tests/test_edit_sessions.py tests/test_editor_browser.py tests/test_live_refresh.py
+```
+
+The session tests use real disposable PostgreSQL/HTTP/Chromium and age only the
+fixture opener to model a hidden tab returning beyond 300 seconds. The existing
+Docker CLI/AWID journey covers actual member signing. The paired Cloud test
+starts at Documents Edit and proves the fragment survives backend validation and
+popup navigation before the Folio shell scrubs it. Exact tested heads and results
+belong to the review and landing receipts, not a production claim.
+
+
+## Installation grant key cutover
+
+Before deploying this build, mount an owner-readable signing-key file for
+`folio:grant-read-1` in `FOLIO_APP_KEY_FILES`. Its purpose is `app-grant-read`
+only, separate from `folio:emit-1` and its existing emit seed/file. A missing
+grant key refuses startup; an emit seed cannot substitute for it.
+
+Folio uses manifest v2. Install by origin so discovery follows the variant
+catalog to `/manifests/v2.json`; `/aweb-app.json` serves the same filled bytes.
+There is no v1 deployment-manifest fallback. The grant key changes the manifest
+digest: deploy the server with installation creation-time grant status first,
+then Folio, then explicitly re-pin every existing team installation. A team
+whose pin cannot authenticate G1 remains refused until its re-pin. Existing
+resident identities and their keys remain unchanged.
+
+The shared TeamGrantSource uses Folio's filled manifest digest and the runtime's
+one TeamServerDirectory. No deploy, key provisioning or pin update is performed
+by landing this code; those are separately authorized operator actions.

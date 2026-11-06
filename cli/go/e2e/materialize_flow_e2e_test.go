@@ -28,9 +28,9 @@
 // advertises its real origin (it serves the manifest origin from
 // LIBRARY_PUBLIC_ORIGIN - the aabq.20 Library-side fix), so a plain
 // `aw plugin install` passes the origin/fetch-URL self-consistency guard with
-// no fixture and no override. This is the real self-hosting path. The
-// --dev-origin escape hatch (for apps you cannot reconfigure) is covered by a
-// unit test (cmd/aw), not here.
+// no origin rewrite. This helper runs with a host store and no resident home:
+// it installs discovery for the materialize tests, granting no team authority.
+// Real resident installation is exercised by the wakes journey.
 package e2e
 
 import (

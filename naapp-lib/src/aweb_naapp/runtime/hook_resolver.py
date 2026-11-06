@@ -46,6 +46,7 @@ from uuid import UUID
 import httpx
 
 from aweb_naapp.runtime.app_credentials import HOOK_RESOLVE, AppCredentialSigner
+from aweb_naapp.runtime.clock import MonotonicClock
 from aweb_naapp.runtime.freshness import (
     DEFAULT_REFRESH_TIMEOUT_SECONDS,
     FRESHNESS_CEILING_SECONDS,
@@ -166,8 +167,8 @@ class Resolution[T]:
     team_id: str
     server_url: str
     items: tuple[T, ...]
-    # The time.monotonic() deadline after which this answer must not be used.
-    fresh_until: float
+    # The time.monotonic_ns() deadline after which this answer must not be used.
+    fresh_until: int
     # The wall-clock time the data is no older than, and the window it is reused for.
     as_of: datetime
     max_age_seconds: int
@@ -186,7 +187,7 @@ class HookResolver:
         app_origin: str,
         transport: httpx.AsyncBaseTransport | None = None,
         refresh_timeout: float = DEFAULT_REFRESH_TIMEOUT_SECONDS,
-        monotonic: Callable[[], float] = time.monotonic,
+        monotonic: MonotonicClock = time.monotonic_ns,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         if signer.purpose != HOOK_RESOLVE:

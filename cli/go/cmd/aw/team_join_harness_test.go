@@ -237,6 +237,9 @@ func TestTeamJoinHarnessCommand(t *testing.T) {
 			if harness == "claude" && !strings.Contains(diagnostic, "installer-chatter") {
 				t.Fatal("installer diagnostic not separated")
 			}
+			if harness == "claude" && setup["start_command"] != "claude --dangerously-load-development-channels "+claudeChannelSpec {
+				t.Fatalf("Claude join start command prescribes a permission mode: %v", setup)
+			}
 			if actual == "codex" && !wantFailure {
 				if _, offered := setup["start_command"]; offered {
 					t.Fatalf("Codex setup must not offer a session launcher: %v", setup)

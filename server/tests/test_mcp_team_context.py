@@ -17,9 +17,9 @@ class _DBInfra:
         raise AssertionError(f"unexpected DB access for {name}")
 
 
-def _identity_only_auth() -> AuthContext:
+def _identity_only_auth(team_id: str | None) -> AuthContext:
     return AuthContext(
-        team_id=None,
+        team_id=team_id,
         agent_id=None,
         alias=None,
         did_key="did:key:z6MkIdentity",
@@ -29,6 +29,7 @@ def _identity_only_auth() -> AuthContext:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("team_id", [None, "ops:acme.com"])
 @pytest.mark.parametrize(
     "call",
     [
@@ -42,7 +43,7 @@ def _identity_only_auth() -> AuthContext:
         lambda infra: instruction_tools.instructions_show(infra),
     ],
 )
-async def test_coordination_mcp_tools_require_team_context(monkeypatch, call):
-    monkeypatch.setattr(common_tools, "get_auth", _identity_only_auth)
+async def test_coordination_mcp_tools_require_team_context(monkeypatch, call, team_id):
+    monkeypatch.setattr(common_tools, "get_auth", lambda: _identity_only_auth(team_id))
     result = json.loads(await call(_DBInfra()))
     assert result == {"error": "This tool requires team context. Use a team certificate."}

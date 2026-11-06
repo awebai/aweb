@@ -154,7 +154,7 @@ def render_landing_page(
     <section class="section" id="use">
       <div class="wrap">
         <div class="section-head"><h2>Connect a vault. Grant a task. Let the team work.</h2>
-          <p>First, install a supported version of aw and connect your team using the <a href="https://aweb.ai/docs/cli-tutorial/">getting-started guide</a>.</p>
+          <p>First, install aw 1.36.47 or newer and connect your team using the <a href="https://aweb.ai/docs/cli-tutorial/">getting-started guide</a>.</p>
         </div>
         {steps}
         <p class="prose-outro">Read the <a href="/reference">API reference</a> for commands and parameters, <a href="/llms.txt">llms.txt</a> for agent instructions, and <a href="/skills/">skills</a> for task workflows.</p>
@@ -255,7 +255,7 @@ Reference: {origin}/reference
 
 ## Getting started
 
-First, install a supported version of aw and connect your team using the
+First, install aw 1.36.47 or newer and connect your team using the
 getting-started guide: https://aweb.ai/docs/cli-tutorial/
 
 Install from the origin: aw plugin install {shlex.quote(origin)}
@@ -339,7 +339,6 @@ def mount_public_surfaces(
             public_origin=origin, console_origin=console_origin, manifest=manifest
         ),
         llms_txt=llms_txt(public_origin=origin, console_origin=console_origin, manifest=manifest),
-        fonts_dir=_PACKAGE / "fonts",
         og_card_png=(_PACKAGE / "og-card.png").read_bytes(),
         health_checks=health_checks,
     )

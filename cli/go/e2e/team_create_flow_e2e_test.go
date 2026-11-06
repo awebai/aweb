@@ -170,6 +170,7 @@ func TestRealStackTeamCreateRosterMaterializesAndConnects(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(developerHome, ".aw", "identity.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("real local home unexpectedly has identity.yaml: %v", err)
 	}
+	assertWhoLegacyLocal(t, bin, env, developerHome, oldIdentity.DIDKey)
 	oldEncryptionCmd := exec.Command(bin, "--json", "id", "encryption-key", "show")
 	oldEncryptionCmd.Dir = developerHome
 	oldEncryptionCmd.Env = env
@@ -228,6 +229,8 @@ func TestRealStackTeamCreateRosterMaterializesAndConnects(t *testing.T) {
 	if err := json.Unmarshal(newIdentityOut, &newIdentity); err != nil || newIdentity.DIDKey != replaced.NewDIDKey {
 		t.Fatalf("replacement signing identity mismatch: got=%+v err=%v\n%s", newIdentity, err, newIdentityOut)
 	}
+	// The replacement key inherits no ancestry from the key it replaces.
+	assertWhoLegacyLocal(t, bin, env, developerHome, replaced.NewDIDKey)
 	newCertCmd := exec.Command(bin, "--json", "id", "cert", "show")
 	newCertCmd.Dir = developerHome
 	newCertCmd.Env = env
@@ -280,5 +283,32 @@ func gitInit(t *testing.T, dir string) {
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
+	}
+}
+
+// assertWhoLegacyLocal checks `aw who` for a local did:key identity made
+// without an id-tree chain: its own did:key, unknown / legacy_no_chain, a null
+// human_id, identity_valid and kind, and no chain.
+func assertWhoLegacyLocal(t *testing.T, bin string, env []string, dir, didKey string) {
+	t.Helper()
+	cmd := exec.Command(bin, "--json", "who")
+	cmd.Dir = dir
+	cmd.Env = env
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("aw who in %s: %v", dir, err)
+	}
+	var who map[string]any
+	if err := json.Unmarshal(out, &who); err != nil {
+		t.Fatalf("decode aw who: %v\n%s", err, out)
+	}
+	_, hasChain := who["chain"]
+	for _, field := range []string{"human_id", "identity_valid", "kind"} {
+		if value, ok := who[field]; !ok || value != nil {
+			t.Fatalf("aw who %s = %v (present %v), want null:\n%s", field, value, ok, out)
+		}
+	}
+	if who["id"] != didKey || who["outcome"] != "unknown" || who["reason"] != "legacy_no_chain" || hasChain {
+		t.Fatalf("aw who for %s:\n%s", didKey, out)
 	}
 }

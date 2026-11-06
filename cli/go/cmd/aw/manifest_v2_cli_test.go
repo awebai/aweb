@@ -379,7 +379,7 @@ func TestCustodyDeniesSnapshotToolOutsideAgentContext(t *testing.T) {
 	}
 }
 
-func TestManifestRegistrationSendsOnlyAppEventKeys(t *testing.T) {
+func TestManifestRegistrationDerivesKeysOnTheServer(t *testing.T) {
 	manifest := map[string]any{}
 	if err := json.Unmarshal(notesManifestV2(t, "https://notes.example", []string{"surface"}), &manifest); err != nil {
 		t.Fatal(err)
@@ -396,14 +396,13 @@ func TestManifestRegistrationSendsOnlyAppEventKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := installRegistrationBody(resolved, "sha256:"+strings.Repeat("0", 64), nil)
-	emitters, ok := body["event_emitters"].([]appmanifest.EventEmitter)
-	if !ok || len(emitters) != 1 || emitters[0].KID != "events" {
-		t.Fatalf("event_emitters = %#v, want only the app-event key", body["event_emitters"])
+	body := installRegistrationBody(resolved, "sha256:"+strings.Repeat("0", 64), nil, resolved.InstallScopes)
+	for _, field := range []string{"event_emitters", "manifest_version", "events", "manifest", "app_version"} {
+		if _, ok := body[field]; ok {
+			t.Fatalf("separately supplied %s in confirmation: %#v", field, body)
+		}
 	}
-	if body["manifest_version"] != 2 {
-		t.Fatalf("manifest_version = %v", body["manifest_version"])
-	}
+
 	scopes, _ := body["granted_scopes"].([]string)
 	if strings.Join(scopes, ",") != "notes:read,notes:write" {
 		t.Fatalf("granted_scopes = %v, want the agent and surface tools' scopes without the hook-only notes:ingest", scopes)

@@ -2,6 +2,279 @@
 
 ## Unreleased
 
+- **Breaking compatibility:** hook catalog v1 `post-secret-use-hook` gains
+  optional opaque `use_ref` after the `aweb-naapp 0.5.0` release, for the public
+  request/refusal-to-audit join. Receivers using the published catalogs in
+  `aweb-naapp 0.2.0`, `0.3.0`, `0.4.0`, `0.5.0rc1`, `0.5.0`,
+  `0.5.1rc1`, `0.5.1rc2`, `0.5.1rc3`, `0.5.1rc4`, `0.5.1rc5` and `0.5.1`
+  refuse events carrying this field and must upgrade before receiving them.
+  Legacy events without it remain valid. Juan explicitly accepted this
+  in-place v1 compatibility break on 2026-10-26. Updated readers/catalogs
+  must be published before new emission.
+
+- AWID SDK: `awid.id_certificate_request` builds and reads the child request
+  exchange as `aw` does. `build_id_certificate_request` writes the signed
+  request file for a first certificate, through a `PayloadSigner`;
+  `id_certificate_request_signing_bytes` returns the bytes it signs; and
+  `parse_id_certificate_response(raw, request=...)` reads the parent's
+  response against the request it answers. A host can run the exchange
+  against `aw id child invite` and `aw id child approve` without copying the
+  wire format.
+
+- AWID SDK: a `RegistryClient` request that gets no answer (a connection,
+  protocol or read failure, or no complete answer within `timeout_seconds`)
+  now raises `RegistryError` with status 503 and code `unavailable`, the
+  transport error as its cause, instead of the raw `httpx` error or
+  `TimeoutError`. Callers catch one exception type. The aweb server reports
+  it with the same 503 detail as before.
+
+- AWID SDK: `CachedRegistryClient` reads its own identity-tree writes.
+  `register_id_certificate` and `revoke_id_certificate` drop the cached
+  `id_chain_evidence` entries of the written domain, so the next read fetches
+  the new state instead of serving evidence up to 60 seconds old (for
+  example a cached `root_replaced` after the identity was re-registered).
+
+- aw: a mail thread is a conversation, titled by its first message's
+  subject. `aw mail send` to a recipient (`--to`, `--to-did` or
+  `--to-address`) always starts a new thread and requires `--subject`; it no
+  longer continues the correspondent's newest conversation, and
+  `--new-conversation` is removed. Continue a thread with `aw mail reply
+  <message_id>` or `aw mail send --conversation-id <id>`; both refuse
+  `--subject`, because a thread's title is fixed. `aw mail threads` lists your
+  threads with their title, participants, last activity, unread count and
+  conversation ID. `aw beads-mail send` and the Gas City mail provider start a
+  new thread for every fresh send. Mail wakes, the channel plugin and the
+  skills teach one rule: "Answer in the conversation: aw mail reply
+  <message_id>. Start a new thread only for a new topic: aw mail send --to
+  <recipient> --subject <subject>."
+
+- AWID and aweb server: an alias conflict now answers 409 with a coded
+  detail, `{"code": "alias_active", "message": ...}`, the shape AWID already
+  uses for `certificate_already_registered`. The server's connect sends
+  `alias_mismatch` when the key is already bound to another alias. aw reports
+  `alias_active` as the `--json` error code `alias_conflict`.
+
+- Self-hosted compose: aweb and awid are now published on 127.0.0.1 only,
+  because Docker's published ports bypass host firewalls such as ufw.
+  Existing installs reached from other machines on a LAN lose that access
+  after pulling this compose file until `server/.env` sets
+  `AWEB_BIND_ADDRESS=0.0.0.0` (or one interface's address).
+- aw: `aw check` names the team, agent and server; `aw team join` and
+  `aw id team accept-invite` take the invite token from `--token-file` or
+  `--token-stdin`; `aw team invite`, `aw id team invite` and
+  `aw team admission-invite` warn on stderr that the printed token is a
+  credential, say when a hosted invite expires (also as `expires_at` in
+  `--json`) or that a local invite is valid until it is used, and print the
+  join command in its `--token-file` form. The admission invite's
+  `join_command` field no longer embeds the token.
+
+- aw: `aw init --new-team` on a local (localhost) registry refuses a team
+  that already exists instead of adding this workspace to it, and
+  `--team <name>` names another team to create. When the local stack has
+  moved, init records the registry it now uses, so invites carry it. The
+  local-namespace refusals say what to do instead in plain words.
+
+- aw: `aw mail send` and `aw chat` say why a recipient was refused. A name
+  that is not on your team or a registered address says to check it with
+  `aw workspace status`. A local identity in another team says it is
+  reachable only from inside its own team, by alias. Other unknown targets
+  still print `agent not found: <target>`.
+
+- aw: `aw mail inbox` and `aw mail show` list each message's ID under it
+  (`Message ID: <id>`) and end with how to reply: `aw mail reply <message-id>
+  --body-file <file>`. `--json` is unchanged.
+
+- aw: an `--e2ee` mail or chat to a recipient on aweb's hosted service,
+  whose signed encryption key assertion says the service holds its key, is
+  refused before anything is sent: "<address> uses aweb's hosted service,
+  which reads its messages, so end-to-end encryption is not possible. Send
+  it again without --e2ee." `--json` reports code
+  `recipient_custodial_no_e2ee` with the addresses in `detail`. A server's
+  422 refusal with that reason reads the same. `aw mail reply` with no mode
+  flag, which encrypts a reply to encrypted mail, replies server-readable to
+  such a recipient instead. Continuing an encrypted chat with a peer that has a
+  global address now encrypts to the key that address resolves to, when it
+  is the session's same participant, instead of failing for a missing key.
+
+- aw: `aw init` with `AWEB_API_KEY` needs the aweb.ai service release that
+  answers the API key's team read (`GET /api/v1/teams/current`). Against an
+  older service it refuses, saying the service does not support creating
+  agents with an API key (or, for HTTP 401/403, that the key may not be
+  current). This aw is promoted to latest only after that service release
+  is deployed.
+
+- aw: `aw mail reply` without `--subject` uses "Re: <original subject>"
+  instead of "Re", and never adds a second "Re:". `aw beads-mail` and
+  `aw gc-mail` replies follow the same rule, now case-insensitively.
+
+- aw: the `--json` refusal shape changes. A failed command run with `--json`
+  now prints one document on stdout,
+  `{"error": {"code", "message", "http_status", "detail", "reason"}}`, and
+  the server's own refusal code (for example `admin_required`) is in
+  `error.reason`. Scripts that parsed the raw server body's `detail.code` out
+  of stderr must read `error.reason` instead; stderr wording is not a
+  contract. `code` is the stable class (`http_error` for a server refusal),
+  `detail` is the server's message, and `reason` is absent when the server
+  gave no code. stderr and exit codes do not change. The codes are listed in
+  the CLI reference. `aw wake status --json` reports a receive stream's
+  error the same way, as `stream_error_detail` beside `stream_error`.
+
+- aw: accepting a hosted invite works when `AWEB_URL` is the server's base
+  URL. The invite preview treats a base URL and its `/api` mount as the same
+  service; a different scheme, host or port is still refused as
+  `server_mismatch`.
+
+- AWID SDK: `RegistryClient.register_did_with_signer(did_key, *, signer,
+  timestamp=None)` registers a did:aw whose key stays behind a signer
+  callback, as the identity-tree writes do. It asks for one signature, over
+  `log_entry_payload(**awid.log.initial_registration_entry(did_key,
+  timestamp=...))`, checks the answer before sending, and returns AWID's
+  receipt without a signed follow-up read. `register_did(did_key,
+  signing_key)` is unchanged and uses the same entry.
+
+- aw: identity-tree commands for a namespace you control. They are opt-in:
+  `aw id create` without the new flags, and every other existing flow, works
+  as before.
+- aw: `aw id human init --domain D --as-root` creates your human ID in D. The
+  human key stays in the OS keychain, encrypted under a passphrase you choose,
+  and every signature asks for that passphrase. The namespace controller key
+  on this machine issues the human's certificate, which is registered at AWID.
+  It needs a human at an interactive terminal, and refuses without one or
+  inside an agent runtime. A run that fails resumes where it stopped without
+  minting a new human, and a second human in the same domain needs
+  `--another`.
+- aw: `aw id create --human-parent <did:aw>` and `--root-parent` create an
+  agent with its ID chain installed: the named human, or the namespace root
+  for an agent with no human, issues its certificate. A human parent first
+  checks its own chain's current status; the root first checks that the
+  domain's _awid record names this machine's controller. The agent then
+  registers that certificate with its own key. If the parent cannot issue, no
+  agent is created.
+- aw: `aw id child invite`, `receive`, `pending`, `show`, `approve` and
+  `refuse` are the issuer side of certificate requests, run as
+  `--as-root --domain D` or `--human <did:aw>`, or as the current agent for an
+  agent child. You fix an invitation first; a request is received only against
+  it. To approve a human child, you confirm at a terminal that its key
+  fingerprint matches what the recipient told you through a separate trusted
+  channel.
+- aw: `aw id parent request` and `import` are the child side. `request`
+  exports a request against the invitation your parent fixed
+  (`--invitation-id`, `--domain`, and `--parent <did:aw>` or `--root-parent`),
+  as `--human <did:aw>` or as the current agent, and shows a fingerprint for
+  you to tell the parent through a separate trusted channel. An identity that
+  already has an ID chain cannot request. `import` verifies the parent's
+  response against your outstanding request, installs the chain and registers
+  it at AWID with your own key, at the registry the domain's _awid record
+  names. A failed registration keeps the response so `import` can retry it,
+  and `--no-register` leaves the registration pending.
+- aw: `aw id human init --domain D` without `--as-root` only prepares the
+  human: an issuer elsewhere, the namespace root or another human, admits it
+  through `aw id parent request` and `import`.
+- aw: `aw id parent request --resign` lets a local agent, whose ID is its
+  did:key, ask the parent of the certificate it carries to re-sign it after
+  the parent rotated its key. The parent, domain and old certificate come
+  from the installed chain. The issuer receives and approves it with the
+  same `aw id child` commands, and approves it only for a certificate its own
+  issuance record shows it issued. `import` installs the re-signed chain
+  with the same ID and key, and writes nothing to AWID. A request ID names
+  one request per issuer, whether it is a first issue or a re-sign.
+- aw: `aw who` verifies the current identity's ID chain against current
+  status from its namespace's registry, and shows the nearest human, no
+  human (none in its chain), unknown or unavailable, with the verifier's
+  reason. It shows the chain only when the chain verifies.
+- **The app id `who` is reserved** for `aw who`, a stated narrowing: the
+  server refuses it at app registration, in app event types and on lookup,
+  and `aw plugin install` refuses an `aw-who` binary. The hosted Cloud had
+  zero uses of `who` in apps, registry entries, installs, event types,
+  emitted events, subscriptions and hooks when measured on 2026-10-30.
+  Self-hosted servers were not measured: one with an app `who` would no
+  longer be able to read it.
+
+- **Security:** did:key decoding refuses Ed25519 public keys that are small
+  order, non-canonical or of mixed order, in Python (`awid.did`), Go
+  (`cli/go/awid`) and TypeScript (`channel-core`). Every signature check, pin
+  and admission path that decodes a did:key now refuses these keys. AWID and
+  the server refuse such keys in request fields, and a namespace controller
+  key of this kind never opens a namespace epoch.
+
+- Identity tree (`docs/id-certificates.md`): DNS-rooted ID certificates chain
+  an agent or human ID to its namespace through its parents. Python
+  (`awid.id_certificates`), Go (`cli/go/awid`) and TypeScript (`channel-core`)
+  share one pure verifier and one set of vectors. Each decodes
+  `X-AWID-ID-Chain` strictly, verifies certificates under the strict Ed25519
+  acceptance rule, verifies the chain against trusted registry evidence
+  (`verify_id_chain` / `VerifyIDChain` / `verifyIdChain`) and decides a
+  request's disposition (`request_disposition`), with no I/O.
+- AWID: stores registered IDs, their revisions and namespace controller
+  epochs (migration 010). `POST /v1/id-certificates/register` admits a
+  certificate through one atomic gate that verifies the parent's whole chain,
+  and `POST /v1/id-certificates/revoke` revokes an ID and is serialized with
+  that gate. `POST /v1/id-certificates/status` returns a consistent snapshot
+  of exact registered IDs, rate limited per IP and per verified caller key.
+  `POST /v1/namespaces/{domain}/rotate` rotates a namespace controller
+  authorized by the previous key. Registration refuses ancestors admitted
+  before the namespace's latest controller replacement.
+- AWID SDK: `RegistryClient.register_id_certificate`,
+  `revoke_id_certificate` and `rotate_namespace_with_previous_key` send the
+  exact requests that `awid.id_tree_requests` builds, so a host can rebuild
+  a covering payload and check it before it signs.
+  `RegistryClient.registry_audience` names the audience that payload signs.
+- AWID SDK: `awid.id_certificates.sign_id_certificate` signs one certificate
+  through a caller-supplied signer, then checks that the answer names the
+  certificate's issuer key and passes the strict verifier.
+- AWID SDK: did:aw key resolution states identity-tree enrollment
+  (`KeyResolution.id_tree`), parsed by the shared enrollment parser in
+  Python and Go, and states it even when the did:aw has no key.
+- AWID SDK: `CachedRegistryClient.id_chain_evidence` serves identity-tree
+  evidence that is at most 60 seconds old, aged on the shared Redis clock.
+  Concurrent callers of the same request share one refresh of older evidence.
+  If that refresh fails, the evidence is unavailable: there is no outage
+  grace.
+
+- Go SDK: `ExportHumanKeyBackup` and `ImportHumanKeyBackup` write and read a
+  passphrase-encrypted PKCS#8 backup of an Ed25519 human key
+  (PBKDF2-HMAC-SHA256 at 600000 iterations, AES-256-CBC). Both refuse an
+  empty passphrase, and import checks the scheme and work factor before
+  deriving the key. The CLI does not expose it yet. The Go module requires
+  `golang.org/x/crypto` v0.58.0.
+
+- **Security:** build the Go CLI and gateway with Go 1.26.10 and
+  `golang.org/x/net` 0.62.0 to fix standard-library, HTTP and HTML advisories,
+  including HTML parsing/rendering issues GO-2026-6860 and GO-2026-6866.
+  Candidate checks now run the live Go vulnerability audit and fail on refusals.
+
+- Release preparation: server 1.27.35. Update the server test fixtures for
+  the shared naapp runtime's integer nanosecond freshness deadlines.
+
+- AWID SDK: `CachedRegistryClient.get_team_public_key` caches controller keys
+  for 60 seconds and serves them during registry failures only through 15
+  minutes of data age. Certificate-cache invalidation also clears the key.
+  OSS local key replacement and controller status-host designation now verify
+  against this AWID read instead of the stored team key hint.
+
+- Server SDK: public `validate_strict_e2ee_message_envelope` guards encrypted-v2
+  mail/chat builder output with recursive unknown-field rejection and strict
+  types before the existing crypto and binding checks. Valid binary encodings
+  containing message text and empty optional identity fields remain accepted.
+
+- aw: local members initialized with an API key now register and approve app
+  installations on their team server through `aw plugin install`, even without
+  global identity metadata. Local members can also update and remove approvals.
+
+- Server install/update and request approval serialize the final host-policy
+  check with the installation write. Concurrent same-app re-pins return a
+  generation conflict instead of a database deadlock; first-install policy
+  checks are serialized too.
+- The shared app credential signer supports `app-request`, signing the required
+  installation id and positive generation. Its bytes match the C2 transport
+  vector; existing app-event, grant-read and hook-resolve credentials are unchanged.
+
+- aw app installation names the resident credential directory and gives an
+  explicit replacement-grant action. Existing grants retain their original
+  app-tool snapshots; denied tools explain the approve/re-mint/restart remedy.
+  Installed app verbs accept the global boolean `--json` without sending it as
+  an app parameter.
+
 - Server: an installed app's hook bindings and their owner activation
   (`docs/app-registry.md`, "Hook bindings"). Migration 032 adds
   `app_hook_bindings`. `GET /v1/apps/hook-bindings` lists them, and
@@ -45,6 +318,9 @@
 
 ### Breaking changes
 
+- MCP team tools now require a team certificate (or a hosted proxy context);
+  identity-only MCP auth keeps mail/chat/contacts.
+
 - aw refuses a tool path parameter value that is blank, is `.` or `..`
   once surrounding whitespace is trimmed, or contains `/`, `\`, `%`, `?`,
   `#`, `;` or an ASCII control character, in manifest versions 1 and 2. Each value fills exactly one path segment, even
@@ -54,6 +330,10 @@
 
 ### Folio
 
+- Folio now serves manifest v2 through `/.well-known/aweb-app-versions.json`
+  and `/manifests/v2.json`; `/aweb-app.json` serves the same filled bytes.
+  The legacy `/.well-known/aweb-app.json` endpoint is no longer served.
+  Install or update Folio with aw 1.36.46 or newer; older clients need an upgrade.
 - Folio runs on the shared `aweb-naapp` runtime: its settings, database,
   manifest serving, public surface (landing, reference, llms.txt, robots, skills,
   fonts) and health routes are naapp-lib's, and `/health` reports the deployed
@@ -72,6 +352,188 @@
   boot applies the shared naapp migrations (observed principals, outbox).
 
 ## Release preparations
+
+### Release preparation: aw 1.36.49
+
+CLI changes are since `aw-v1.36.48`.
+
+Upgrade note: a running `aw custody serve` keeps the binary it started with.
+After upgrading `aw`, restart every resident custody service (for example
+`launchctl kickstart -k gui/$(id -u)/<label>` for a launchd agent). Otherwise
+grant seats that use apps such as Folio fail with
+`app_tool_policy_unavailable`, because the old custody reader refuses the
+installation-bound snapshot.
+
+- In a team member's home that holds a signing key and a team certificate but
+  no `identity.yaml`, such as a member set up with an API key, `aw plugin
+  install` and update register or confirm the team's installation on the
+  server, and `aw plugin remove` clears the member's local approval while the
+  server installation stays. Before, such a home reported a local-only install
+  and the server never saw it. Grant homes, an `identity.yaml` with an empty
+  DID, and homes with no key or team keep their earlier behaviour.
+
+### Release preparation: aw 1.36.48
+
+CLI changes are since `aw-v1.36.47`. The organization, hosted identity and
+team commands need the matching aweb Cloud release.
+
+- `aw org create <slug> [--name]`, `aw org list` and
+  `aw org availability <slug>` manage the organizations you own or admin,
+  under this host's human login. `aw auth login` requests the
+  `cli.org_create` scope by default; an older login is told to sign in again.
+  A taken name is refused with an available suggestion and is never suffixed
+  silently.
+- `--org` selects the organization on `aw init --workspace-team`, workspace
+  team ensure and enroll, and hosted team creation. Team creation also takes
+  `--request-id` to replay a create and `--show-token` to print the invite
+  token.
+- `aw id create --org <org>` creates a hosted global identity in a chosen
+  team (`--team-id`, the team's service UUID or canonical `name:namespace`)
+  with an explicit `--inbound-mode`. `--owner-identity-home` authorizes it
+  with the organization owner's own key instead of a human login, so an
+  account created with `aw init --new-account` can create its steward
+  unattended.
+- `aw inbound-mode contacts-only` (and `aw init --global --inbound-mode`)
+  accepts mail and chat only from saved contacts.
+- `aw plugin uninstall <app-id>` uninstalls an app from the selected team's
+  server installation (team admins). `aw plugin request <origin>` asks a team
+  administrator to install an app and grants nothing itself. Removing a local
+  plugin keeps the team installation.
+- App approvals and delegated tools are bound to the team's installation.
+  After upgrading, run `aw plugin install <origin>` for each team and identity
+  home, mint a fresh grant, and restart custody and workers. Install and grant
+  refusals name the exact approve, re-mint and restart steps.
+- `aw mail send` to a team member by alias keeps working when one of the
+  roster's encryption key assertions is rejected.
+
+### Release preparation: awid-service 0.5.32
+
+`awid_service.testing` runs one AWID registry in-process for tests: a
+`Registry` with signed team-server records, `running_registry`, and
+`ServiceTransport`, which routes a registry client's requests to the in-process
+app. `mount_registry` says that an embedding host mounts the registry under a
+prefix.
+
+`RegistryClient` can publish and read team-server records through its existing
+registry resolution and request path. Shared `build_team_server_record` and
+`sign_team_server_record` helpers match the Go signing vectors.
+
+Trusted-service team-server publication is exempt from the public-IP rate
+limit. Every publication still requires the current team-key signature.
+
+### Release preparation: aweb-naapp 0.5.0
+
+`aweb-naapp` and `aweb-naapp-testing` 0.5.0 are released together. Changes
+since `aweb-naapp-v0.4.0`:
+
+- `GrantSource.grant_for` accepts an optional `certificate_id`; custom sources
+  must accept this argument. Grant reads carry the verified member's certificate
+  through discovery, so private-team members work without an AWID service token.
+- App-request credentials (the C2 transport) are bound to the installation id
+  and positive generation, and the shared signer signs them.
+- Installation-aware runtime: tools, capabilities and member SQL are fenced by
+  the team's current installation; verified grant status includes
+  `installed_at`. A naapp that uses installation grants finds the team server
+  through its `aweb.team-server/1` AWID record and refuses a team without one.
+- Hooks: terminal delivery authority and cancellation evidence, and
+  non-authorizing secret-use lifecycle events.
+- `aweb-naapp-testing` takes its AWID fixtures from `awid_service.testing`
+  (`awid-service>=0.5.32`). Its new `server` extra (`aweb>=1.27.34`) runs a
+  team's coordination server in-process, which a naapp finds through the
+  team's AWID record. It needs Redis at `REDIS_URL`.
+
+### Release preparation: server 1.27.34
+
+Server changes are since `server-v1.27.33`.
+
+- App installation has two policy phases. Before fetching, the optional
+  `app.state.install_admission_policy(tx, subject, *, action, app_id,
+  unverified_origin)` permits only the fetch. After the server verifies the
+  fetched manifest, the final `install_admin_policy` receives
+  `verified_origin=fetched.origin` inside the writing transaction.
+  **Host contract change:** an `InstallAdminPolicy` must accept the
+  `verified_origin` keyword (`docs/app-registry.md`, "Host installation policy
+  interface").
+- `aw plugin uninstall <app-id>` lets a team admin uninstall an app,
+  conditional on its current generation. Uninstall revokes app access within
+  the documented freshness bounds. Approvals and delegated app tools are now
+  bound to each team's installation: after upgrading, run
+  `aw plugin install <origin>` for each selected team and identity home, mint a
+  fresh grant, and restart custody and workers with the upgraded CLI and new
+  grant. Old approvals are never adopted automatically. Grant status now
+  includes `installed_at`, the installation's creation time; a re-pin
+  preserves it.
+- Folio links and edit sessions are bound to the installation that created
+  them. Uninstall ends their access; reinstall never revives them, while a
+  re-pin keeps them working. A legacy link or session is adopted only after a
+  fresh authority check proves that the current installation predates it.
+  Folio now uses manifest v2 and requires the separate `folio:grant-read-1`
+  key configured through `FOLIO_APP_KEY_FILES`. Folio migration
+  `003_installation_capabilities.sql`. Deploy the server first, then Folio,
+  then re-pin each Folio installation.
+- `aweb.testing` runs the coordination server in-process for tests. A
+  library-mode host gives the AWID registry client its transport.
+- Apps can raise task requests to a team, with conditional member answers and
+  signed receipts; uninstalling an app cancels its open requests.
+- Fixed: MCP saved-contact mail and chat sends (`send_message_to_contact`)
+  failed with unexpected federation transport arguments.
+- `GET /v1/agents` returns an encryption key only for the identity it shows: a
+  row whose `did_aw` is masked (binding not yet verified) no longer carries a
+  key assertion bound to that hidden `did_aw`. This removes the 409 on
+  `aw mail send` to existing correspondents while identity verification is
+  pending.
+- **Upgrade step for self-hosted operators:** Folio, and any naapp that uses
+  installation grants, refuses a team with no `aweb.team-server/1` record.
+  Before relying on Folio, run once per team:
+  `aw id team set-server --team <team> --namespace <domain> --url <server origin>`.
+  Hosted aweb.ai teams are published and backfilled by aweb Cloud.
+- **Dependency floors:** `awid-service>=0.5.32` (`aweb.testing` imports
+  `awid_service.testing`) and `aweb-naapp[egress,hooks]>=0.5.0` (the release
+  baseline this server is qualified with; the server and aweb-naapp ship
+  together).
+- **Migrations (aweb schema):** `038_task_revisions.sql`,
+  `039_app_task_requests.sql`, `040_task_answer_stages.sql`. Folio:
+  `003_installation_capabilities.sql` (`002_edit_sessions.sql` is already live
+  with Folio `71f68028b`).
+- **Publish order:** `awid-service` 0.5.32, then `aweb-naapp` 0.5.0, then this
+  server, then `aweb-naapp-testing` 0.5.0 (its `server` extra needs this
+  server on PyPI).
+
+### Release preparation: aweb-naapp 0.4.0
+
+`aweb-naapp` and `aweb-naapp-testing` 0.4.0 carry the naapp-lib changes since
+`aweb-naapp-v0.3.0`: the durable hook-refusal record and shared admission
+backlog gate (outbox migration `003_admission_backlog.sql`), the runner
+signature protocol with its scoped replay store and HPKE helpers, retained
+verified passkey proofs (`003_retained_proof.sql`), session liveness bound to
+the exact login credential, app-authorized designation, the shared nonce store
+(`001_nonces.sql`), and runtime hook production composition. The lock now
+records the runtime extra's `cbor2` dependency.
+
+### Release preparation: server 1.27.33
+
+Server changes are since `server-v1.27.32`.
+
+- **Security:** a team certificate's member identity and address are claims.
+  The server attributes them only when they are verified against the key that
+  signed the request (AWID's current binding, or a did:aw derived from that key
+  that AWID records for no one else), at connect and in team authentication,
+  and resolves recipients only through verified bindings. Rows written before
+  this release are not attributed until an operator pass
+  (`aweb verify-identity-bindings`) verifies them.
+- Admin-only app installation with pending-install origin verification
+  (`aweb verify-pending-app-installations`, `aweb run-installation-verifications`).
+- Strict `contacts_only` inbound mode, evaluated identity-wide across an
+  identity's memberships; contacts created through MCP carry their verified
+  identity.
+- `aw mail --to <alias>` reaches addressless human team members.
+- **Migrations (aweb schema):** `034_agent_identity_binding.sql`,
+  `035_team_app_installation_identity.sql`,
+  `036_app_installation_management.sql`, `037_contacts_only.sql`.
+- **Dependency floor:** `aweb-naapp[egress,hooks]>=0.4.0`.
+- **Deploy order:** publish `aweb-naapp` 0.4.0, then this server. Right after
+  the migrations, run `aweb verify-identity-bindings` (dry run first) and
+  `aweb verify-pending-app-installations`.
 
 ### Release preparation: awid-service 0.5.31
 

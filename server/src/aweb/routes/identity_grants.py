@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from awid.dns_auth import validate_did_key
 from aweb.grant_expiry import add_years, expiry_label, never_expires
 from aweb.deps import get_db
 from aweb.identity_grant_auth import GRANT_AUTH_SCHEME, GRANT_SCOPES
@@ -40,10 +41,7 @@ class GrantMintRequest(BaseModel):
     @field_validator("grant_did_key")
     @classmethod
     def grant_did_key_must_be_did_key(cls, value: str) -> str:
-        value = value.strip()
-        if not value.startswith("did:key:z"):
-            raise ValueError("grant_did_key must be a did:key:z... identifier")
-        return value
+        return validate_did_key(value)
 
     @field_validator("scopes")
     @classmethod
@@ -110,7 +108,7 @@ async def mint_identity_grant(
     )
     if not subject or subject["status"] != "active":
         raise HTTPException(status_code=403, detail="subject identity is not active")
-    subject_did_aw = (identity.did_aw or subject.get("did_aw") or "").strip() or None
+    subject_did_aw = (identity.did_aw or "").strip() or None
 
     now = datetime.now(timezone.utc)
     expires_at = add_years(now, 100) if payload.ttl_seconds in (None, "never") else now + timedelta(seconds=payload.ttl_seconds)

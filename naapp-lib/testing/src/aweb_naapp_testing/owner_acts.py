@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN
 from nacl.signing import SigningKey
 from pgdbm.core import TransactionManager
 
@@ -21,7 +22,7 @@ from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier, PreparedOwnerAct
 from aweb_naapp.hooks.strictjson import canonical
 from aweb_naapp.runtime.passkeys import contact_sha256
 from aweb_naapp.runtime.team_auth import AWIDTeamCache
-from aweb_naapp_testing import REGISTRY_URL, SERVICE_TOKEN, did_key
+from aweb_naapp_testing import did_key
 
 TEAM_ID = "demo:example.com"
 AUDIENCE = "https://app.example.com"

@@ -12,11 +12,13 @@ import sys
 import tomllib
 from pathlib import Path
 
-
-SEMVER = r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
-TAG_PATTERN = re.compile(
-    rf"^(server-v|awid-service-v|aweb-naapp-v|awid-v|aw-v|channel-v|pi-v|skills-v|a2a-gw-v)({SEMVER})$"
+from release_versions import (
+    VersionRefusal as CandidateRefusal,
+    require_final_promotion,
+    tag_parts,
+    valid_version,
 )
+
 MANIFESTS = {
     "server-v": "server/pyproject.toml",
     "awid-service-v": "awid/pyproject.toml",
@@ -28,10 +30,6 @@ MANIFESTS = {
 }
 # Packages a tag lane publishes together with its manifest's, at the same version.
 LOCKSTEP = {"aweb-naapp-v": ["naapp-lib/testing/pyproject.toml"]}
-
-
-class CandidateRefusal(RuntimeError):
-    pass
 
 
 def run(
@@ -62,7 +60,7 @@ def manifest_version(root: Path, path: str) -> str:
             value = tomllib.load(handle)["project"]["version"]
     else:
         value = json.loads((root / path).read_text(encoding="utf-8"))["version"]
-    if not isinstance(value, str) or not re.fullmatch(SEMVER, value):
+    if not valid_version(path, value):
         raise CandidateRefusal(f"{path} has invalid version {value!r}")
     return value
 
@@ -79,10 +77,7 @@ def validate_tags(root: Path, tags: list[str]) -> tuple[str, dict[str, str]]:
         raise CandidateRefusal("git did not return a full source SHA")
     versions: dict[str, str] = {}
     for tag in tags:
-        matched = TAG_PATTERN.fullmatch(tag)
-        if not matched:
-            raise CandidateRefusal(f"unsupported release tag {tag!r}")
-        prefix, version = matched.group(1), matched.group(2)
+        prefix, version = tag_parts(tag)
         if prefix in versions:
             raise CandidateRefusal(f"more than one {prefix} tag was requested")
         versions[prefix] = version
@@ -93,12 +88,15 @@ def validate_tags(root: Path, tags: list[str]) -> tuple[str, dict[str, str]]:
                 )
         if run(root, "git", "tag", "--list", tag):
             raise CandidateRefusal(f"local tag {tag} already exists; tags are never moved")
+        require_final_promotion(root, tag, source_sha)
     return source_sha, versions
 
 
-def create_candidate(root: Path, tags: list[str]) -> str:
+def create_candidate(root: Path, tags: list[str], *, stage_aw_final: bool = False) -> str:
     run(root, "git", "fetch", "--quiet", "origin", "main", "+refs/tags/*:refs/tags/*")
     source_sha, versions = validate_tags(root, tags)
+    if stage_aw_final and ("aw-v" not in versions or "-rc." in versions["aw-v"]):
+        raise CandidateRefusal("--stage-aw-final requires a final aw-vX.Y.Z tag")
     run(root, "git", "merge-base", "--is-ancestor", source_sha, "origin/main")
     environment = {**os.environ, "CANDIDATE_SOURCE_SHA": source_sha}
     # A caller's focused pre-landing selector cannot narrow a release gate.
@@ -114,6 +112,8 @@ def create_candidate(root: Path, tags: list[str]) -> str:
         raise CandidateRefusal("the Docker gate left the candidate checkout dirty")
     for tag in tags:
         message = f"aweb OSS {tag}\n\nDocker candidate gate passed for {source_sha}."
+        if stage_aw_final and tag.startswith("aw-v"):
+            message += "\n\nNpm-Publish-Channel: next"
         run(root, "git", "tag", "-a", tag, source_sha, "-m", message)
     print(f"candidate PASSED: {source_sha}")
     for tag in tags:
@@ -126,10 +126,11 @@ def create_candidate(root: Path, tags: list[str]) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--stage-aw-final", action="store_true", help="publish final aw on next until explicit post-deploy promotion")
     parser.add_argument("tags", nargs="+")
     arguments = parser.parse_args(argv)
     try:
-        create_candidate(Path.cwd().resolve(), arguments.tags)
+        create_candidate(Path.cwd().resolve(), arguments.tags, stage_aw_final=arguments.stage_aw_final)
     except (
         CandidateRefusal,
         OSError,

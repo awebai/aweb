@@ -13,6 +13,9 @@ from pydantic import BaseModel, Field, field_validator, model_serializer, model_
 from awid.dns_auth import validate_did_key, verify_signed_json_request
 from awid.e2ee_keys import validate_encryption_key_assertion
 from awid.team_ids import parse_team_id
+from aweb.agent_wake import agent_wake_key, agent_wake_publisher, agent_wake_scope, record_agent_wake
+from aweb.inbound_modes import INBOUND_MODES, normalize_inbound_mode, effective_inbound_mode, set_identity_inbound_mode
+from aweb.service_errors import ForbiddenError
 from aweb.alias_allocator import candidate_name_prefixes, used_name_prefixes
 from aweb.coordination.roles import ROLE_MAX_LENGTH
 from aweb.coordination.routes.repos import canonicalize_git_url
@@ -21,7 +24,7 @@ from aweb.deps import get_db, get_redis
 from aweb.grant_liveness import grant_liveness_expiry, cleanup_expired_grant_liveness, valid_grant_liveness_by_workspace
 from aweb.role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
 from aweb.auth_context import GRANT_SCOPE_ANY
-from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
+from aweb.team_auth_deps import TeamIdentity, _resolve_team_key, get_team_identity, team_identity_with_grant_scope
 
 from ..presence import list_agent_presences_by_workspace_ids, update_agent_presence
 
@@ -112,12 +115,7 @@ class UpdateAgentInboundModeRequest(BaseModel):
     @field_validator("inbound_mode")
     @classmethod
     def validate_inbound_mode(cls, value: str) -> str:
-        value = (value or "").strip().lower()
-        if value == "contacts_only":
-            return "team_and_contacts"
-        if value not in {"open", "team_and_contacts"}:
-            raise ValueError("inbound_mode must be one of open, team_and_contacts")
-        return value
+        return normalize_inbound_mode(value, default="")
 
 
 class SuggestAliasPrefixRequest(BaseModel):
@@ -377,7 +375,7 @@ async def list_agents(
 
     rows = await aweb_db.fetch_all(
         """
-        SELECT a.agent_id, a.alias, a.did_key, a.did_aw, a.address,
+        SELECT a.agent_id, a.alias, a.did_key, projected.did_aw, projected.address,
                a.human_name, a.agent_type, a.role, a.identity_scope,
                a.inbound_mode, a.status,
                e.encryption_key_id,
@@ -390,8 +388,18 @@ async def list_agents(
                e.not_before_text AS encryption_key_not_before,
                e.expires_at_text AS encryption_key_expires_at,
                e.previous_encryption_key_id,
-               e.assertion_signature AS encryption_key_signature
+               e.assertion_signature AS encryption_key_signature,
+               ctx.workspace_id,
+               ctx.workspace_type,
+               ctx.hostname,
+               ctx.workspace_path,
+               ctx.ws_role,
+               ctx.repo
         FROM {{tables.agents}} a
+        CROSS JOIN LATERAL (
+            SELECT CASE WHEN a.did_aw_verified_key = a.did_key THEN a.did_aw END AS did_aw,
+                   CASE WHEN a.did_aw_verified_key = a.did_key THEN a.address END AS address
+        ) projected
         LEFT JOIN LATERAL (
             SELECT encryption_key_id, encryption_public_key, algorithm,
                    identity_did, identity_stable_id, assertion_custody, created_at_text,
@@ -402,9 +410,9 @@ async def list_agents(
               AND team_id = a.team_id
               AND identity_did = a.did_key
               AND (
-                  (NULLIF(BTRIM(COALESCE(a.did_aw, '')), '') IS NULL
+                  (NULLIF(BTRIM(COALESCE(projected.did_aw, '')), '') IS NULL
                    AND identity_stable_id IS NULL)
-                  OR identity_stable_id = a.did_aw
+                  OR identity_stable_id = projected.did_aw
               )
               AND revoked_at IS NULL
               AND not_before_at <= NOW()
@@ -412,6 +420,20 @@ async def list_agents(
             ORDER BY assertion_created_at DESC, not_before_at DESC, encryption_key_id DESC
             LIMIT 1
         ) e ON TRUE
+        -- Workspace context: an agent's most recently seen live workspace.
+        LEFT JOIN LATERAL (
+            SELECT w.workspace_id,
+                   w.workspace_type,
+                   w.hostname,
+                   w.workspace_path,
+                   w.role AS ws_role,
+                   r.canonical_origin AS repo
+            FROM {{tables.workspaces}} w
+            LEFT JOIN {{tables.repos}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
+            WHERE w.team_id = a.team_id AND w.agent_id = a.agent_id AND w.deleted_at IS NULL
+            ORDER BY w.last_seen_at DESC NULLS LAST, w.created_at DESC, w.workspace_id
+            LIMIT 1
+        ) ctx ON TRUE
         WHERE a.team_id = $1 AND a.deleted_at IS NULL
           AND COALESCE(a.agent_type, 'agent') != 'human'
         ORDER BY a.alias
@@ -419,26 +441,10 @@ async def list_agents(
         identity.team_id,
     )
 
-    # Workspace context for each agent
-    context_rows = await aweb_db.fetch_all(
-        """
-        SELECT w.agent_id,
-               w.workspace_id,
-               w.workspace_type,
-               w.hostname,
-               w.workspace_path,
-               w.role AS ws_role,
-               r.canonical_origin AS repo
-        FROM {{tables.workspaces}} w
-        LEFT JOIN {{tables.repos}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
-        WHERE w.team_id = $1 AND w.deleted_at IS NULL
-        """,
-        identity.team_id,
-    )
-    context_by_agent = {str(r["agent_id"]): r for r in context_rows}
+    context_by_agent = {str(r["agent_id"]): r for r in rows if r["workspace_id"] is not None}
 
     # Presence is keyed by workspace_id, not agent_id.
-    workspace_ids = [str(r["workspace_id"]) for r in context_rows]
+    workspace_ids = [str(r["workspace_id"]) for r in context_by_agent.values()]
     presences = (
         await list_agent_presences_by_workspace_ids(redis, workspace_ids)
         if redis and workspace_ids
@@ -626,7 +632,7 @@ async def _load_current_agent_inbound_mode(
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
         """
-        SELECT agent_id, team_id, alias, identity_scope, inbound_mode
+        SELECT agent_id, team_id, alias, identity_scope, inbound_mode, did_aw
         FROM {{tables.agents}}
         WHERE team_id = $1
           AND agent_id = $2::UUID
@@ -639,9 +645,12 @@ async def _load_current_agent_inbound_mode(
         raise HTTPException(status_code=404, detail="Agent not found")
     identity_scope = str(row.get("identity_scope") or "local")
     inbound_mode = str(row.get("inbound_mode") or "").strip().lower()
-    if inbound_mode == "contacts_only":
-        inbound_mode = "team_and_contacts"
-    if inbound_mode not in {"open", "team_and_contacts"}:
+    if str(row.get("did_aw") or "").startswith("did:aw:"):
+        try:
+            inbound_mode = await effective_inbound_mode(aweb_db, row["did_aw"])
+        except ForbiddenError as exc:
+            raise HTTPException(status_code=409, detail="Agent inbound_mode migration required") from exc
+    if inbound_mode not in INBOUND_MODES:
         raise HTTPException(status_code=409, detail="Agent inbound_mode migration required")
     return AgentInboundModeResponse(
         agent_id=str(row["agent_id"]),
@@ -674,22 +683,14 @@ async def update_my_inbound_mode(
     state = await _load_current_agent_inbound_mode(db, identity)
     if state.identity_scope != "global":
         raise HTTPException(status_code=409, detail="inbound_mode is only configurable for global identities")
+    # Only authentication's verified global identity may select an identity-wide
+    # write. A membership row's raw claim is not identity authority.
+    did_aw = str(identity.did_aw or "").strip()
+    if not did_aw.startswith("did:aw:"):
+        raise HTTPException(status_code=409, detail="Agent identity migration required")
     aweb_db = db.get_manager("aweb")
-    row = await aweb_db.fetch_one(
-        """
-        UPDATE {{tables.agents}}
-        SET inbound_mode = $3
-        WHERE team_id = $1
-          AND agent_id = $2::UUID
-          AND deleted_at IS NULL
-        RETURNING agent_id, team_id, alias, identity_scope, inbound_mode
-        """,
-        identity.team_id,
-        identity.agent_id,
-        payload.inbound_mode,
-    )
-    if row is None:
-        raise HTTPException(status_code=404, detail="Agent not found")
+    async with aweb_db.transaction() as tx:
+        await set_identity_inbound_mode(tx, did_aw, payload.inbound_mode)
     return await _load_current_agent_inbound_mode(db, identity)
 
 
@@ -902,7 +903,7 @@ async def replace_local_identity_key(
 
     aweb_db = db.get_manager("aweb")
     team = await aweb_db.fetch_one(
-        "SELECT team_did_key FROM {{tables.teams}} WHERE team_id = $1",
+        "SELECT team_id FROM {{tables.teams}} WHERE team_id = $1",
         team_id,
     )
     if team is None:
@@ -920,7 +921,7 @@ async def replace_local_identity_key(
             "new_certificate_id": payload.new_certificate_id,
         },
     )
-    if authorizer_did != str(team["team_did_key"]):
+    if authorizer_did != await _resolve_team_key(request, team_id):
         raise HTTPException(
             status_code=403,
             detail="Team controller authorization is required for local identity key replacement",
@@ -1085,15 +1086,17 @@ async def send_control_signal(
     if not target:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    result = await aweb_db.fetch_one(
-        """
-        INSERT INTO {{tables.control_signals}} (team_id, target_agent_id, from_agent_id, signal_type)
-        VALUES ($1, $2, $3, $4)
-        RETURNING signal_id
-        """,
-        identity.team_id,
-        target["agent_id"],
-        UUID(identity.agent_id),
-        payload.signal,
-    )
+    with agent_wake_scope(agent_wake_publisher(request.app.state)):
+        result = await aweb_db.fetch_one(
+            """
+            INSERT INTO {{tables.control_signals}} (team_id, target_agent_id, from_agent_id, signal_type)
+            VALUES ($1, $2, $3, $4)
+            RETURNING signal_id
+            """,
+            identity.team_id,
+            target["agent_id"],
+            UUID(identity.agent_id),
+            payload.signal,
+        )
+        record_agent_wake(agent_wake_key(str(target["agent_id"])), "control")
     return {"signal_id": str(result["signal_id"]), "signal": payload.signal}

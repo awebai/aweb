@@ -120,6 +120,7 @@ def _match(rule: Any, value: Any, field: str) -> None:
     patterns = {
         "platform_kind": r"[a-z][a-z0-9_]{0,31}",
         "uuid": r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+        "teamid": r"(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[a-z0-9](?:[a-z0-9-]*[a-z0-9])?:[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)",
         "hash": r"sha256:[0-9a-f]{64}",
         "commitment": r"commitment:[0-9a-f]{64}",
         "did": r"did:(?:aw:[A-Za-z0-9._:-]+|key:z[1-9A-HJ-NP-Za-km-z]+)",

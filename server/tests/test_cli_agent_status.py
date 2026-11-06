@@ -1,6 +1,8 @@
 """Production aw -> team-auth v2 -> real status routes, PostgreSQL and Redis."""
 from __future__ import annotations
 
+from identity_binding_support import register_global_identity
+
 import asyncio
 import base64
 import json
@@ -30,6 +32,8 @@ async def test_cli_status_designation_publish_and_refusals(privacy_app, tmp_path
         home.mkdir(parents=True, mode=0o700)
         stable = stable_id_from_did_key(actor.did) if global_root else ""
         address = f"example.test/{name}" if global_root else ""
+        if stable:
+            assert await register_global_identity(env, actor, address) == stable
         cert = _make_certificate(env.team_sk, env.team_did, actor.did, team_id=TEAM, alias=name,
                                  identity_scope="global" if global_root else "local",
                                  member_did_aw=stable, member_address=address)

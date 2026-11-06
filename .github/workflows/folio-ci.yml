@@ -66,6 +66,7 @@ jobs:
           cache-dependency-glob: |
             naapp/folio/uv.lock
             naapp-lib/uv.lock
+            server/uv.lock
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -107,6 +108,11 @@ jobs:
 
       - name: Install locked Folio dependencies
         working-directory: naapp/folio
+        run: uv sync --locked
+
+      # The e2e fixture starts this separate project with offline, frozen uv.
+      - name: Install locked coordination server dependencies
+        working-directory: server
         run: uv sync --locked
 
       - name: Build aw from the checkout

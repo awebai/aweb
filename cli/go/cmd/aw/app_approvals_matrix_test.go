@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
@@ -52,8 +53,9 @@ func TestAppApprovalBinaryMintAndDispatchMatrix(t *testing.T) {
 				var mu sync.Mutex
 				keys := map[string]string{}
 				var mintRequests atomic.Int32
+				installation := installationWireFixture(t, func() []byte { return served.Load().([]byte) })
 				coordination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if serveUnadvertisedHealth(w, r) {
+					if serveUnadvertisedHealth(w, r) || installation(w, r) {
 						return
 					}
 					if r.Method != "POST" || r.URL.Path != "/v1/identity-grants" {
@@ -84,6 +86,10 @@ func TestAppApprovalBinaryMintAndDispatchMatrix(t *testing.T) {
 					json.NewEncoder(w).Encode(map[string]any{"grant_id": id, "team_id": team, "subject_did_aw": "did:aw:alice", "subject_alias": "alice", "grant_did_key": request.GrantDIDKey, "scopes": request.Scopes, "issued_at": time.Now().UTC().Format(time.RFC3339), "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339)})
 				}))
 				defer coordination.Close()
+				f.svc.client, err = aweb.NewWithCertificate(coordination.URL, f.svc.signingKey, cert)
+				if err != nil {
+					t.Fatal(err)
+				}
 				f.svc.grantStatus = func(_ context.Context, id string) (custodyGrantStatus, error) {
 					mu.Lock()
 					key := keys[id]
@@ -98,7 +104,12 @@ func TestAppApprovalBinaryMintAndDispatchMatrix(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				instance := t.TempDir()
+				// Worker homes are passed explicitly; use a real path on macOS,
+				// where /tmp is a symlink that the identity-home guard refuses.
+				instance, err := filepath.EvalSymlinks(t.TempDir())
+				if err != nil {
+					t.Fatal(err)
+				}
 				invoke := func(selected, want string, args ...string) []byte {
 					t.Helper()
 					cmd := exec.CommandContext(ctx, bin, append([]string{"--identity-home", selected, "--json"}, args...)...)
@@ -146,8 +157,9 @@ func TestAppApprovalBinaryMintAndDispatchMatrix(t *testing.T) {
 							t.Fatal(err)
 						}
 					}
+					raw = manifestAtTestOrigin(t, raw, f.app.server.URL)
 					served.Store(raw)
-					invoke(home, "", "plugin", "install", f.app.server.URL, "--dev-origin", f.app.server.URL)
+					invoke(home, "", "plugin", "install", f.app.server.URL)
 				}
 				// Empty old grants do not gain authority when the resident later installs.
 				invoke(emptyHome, "app_tool_denied", "folio", "list")
@@ -220,7 +232,7 @@ func TestAppApprovalBinaryMintAndDispatchMatrix(t *testing.T) {
 					{"app_manifest_mismatch", bytes.Replace(raw, []byte(`"id":"folio"`), []byte(`"id":"otherapp"`), 1)},
 					{"app_missing", nil},
 				} {
-					// Stored JSON is compact because --dev-origin re-encodes it.
+					// The fixture fills the deployment origin using compact JSON.
 					if tc.bytes == nil {
 						if err := os.Remove(path); err != nil {
 							t.Fatal(err)

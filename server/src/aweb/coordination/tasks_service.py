@@ -1,17 +1,207 @@
 from __future__ import annotations
 
 import logging
+import re
+import hashlib
+import json
 from datetime import datetime, timezone
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from awid.team_ids import team_slug
 from ..claims import claim_focus_task_ref, resolve_task_claim_apex_on
-from ..service_errors import ConflictError, NotFoundError, ValidationError
+from ..service_errors import ConflictError, ForbiddenError, NotFoundError, ValidationError
+from ..team_auth_deps import TeamIdentity
 
 logger = logging.getLogger(__name__)
 
 _UNSET = object()
+
+
+def answer_comment_projection(*, body_md: str, answer_sha256: str) -> str:
+    """Juan's C2 ruling: every task answer preserves its exact text."""
+    if (isinstance(body_md, str) and 1 <= len(body_md) <= 20000
+            and hashlib.sha256(body_md.encode("utf-8")).hexdigest() == answer_sha256):
+        return body_md
+    raise ValidationError("schema_invalid")
+
+
+def _answer_receipt(row, *, current_question_rev: int, cancelled: bool = False) -> dict[str, Any]:
+    return {
+        "task_answer_ref": str(row["receipt_id"]),
+        "task_id": str(row["task_id"]),
+        "task_rev": row["task_rev"],
+        "question_rev": row["question_rev"],
+        "answer_key": row["answer_key"],
+        "answer_sha256": row["answer_sha256"],
+        "choice": row["choice"],
+        "proposal_rev": row["proposal_rev"],
+        "proposal_sha256": row["proposal_sha256"],
+        "answered_by": {"principal_did": row["answered_by_did"], "certificate_id": row["certificate_id"]},
+        "answered_at": row["answered_at"].astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "current": row["question_rev"] == current_question_rev and not cancelled,
+    }
+
+
+def _task_request_metadata(value):
+    return json.loads(value) if isinstance(value, str) else value or {}
+
+
+def _eligible_task_condition(index: int) -> str:
+    # Absence/null retains single-assignee authority for ordinary/intent tasks.
+    # A present array is authoritative, including an empty array (fail closed).
+    return (f"((jsonb_typeof(app_request->'eligible_dids') = 'array' AND (app_request->'eligible_dids') ? ${index}) OR "
+            f"((app_request->'eligible_dids' IS NULL OR app_request->'eligible_dids' = 'null'::jsonb) "
+            f"AND assignee_did = ${index}))")
+
+
+def _task_list_contract(row):
+    return {"assignee_did": row["assignee_did"], "app_request": _task_request_metadata(row["app_request"]) or None,
+            "rev": row["rev"], "question_rev": row["question_rev"]}
+
+
+async def get_task_answer_on(tx, *, team_id: str, task_id: UUID, answer_key: str) -> dict[str, Any]:
+    """Read an immutable receipt inside the caller's authorization transaction.
+
+    The caller enforces member or installation receipt-read authority first.
+    Holding the task row stable makes `current` consistent with this read.
+    """
+    task = await tx.fetch_one(
+        """SELECT question_rev, cancellation FROM {{tables.tasks}}
+           WHERE task_id = $1 AND team_id = $2 AND deleted_at IS NULL FOR SHARE""",
+        task_id, team_id,
+    )
+    if not task:
+        raise NotFoundError("Task not found")
+    row = await tx.fetch_one(
+        "SELECT * FROM {{tables.task_answers}} WHERE task_id = $1 AND answer_key = $2",
+        task_id, answer_key,
+    )
+    if not row:
+        raise NotFoundError("Answer not found")
+    return _answer_receipt(row, current_question_rev=task["question_rev"], cancelled=task["cancellation"] is not None)
+
+
+async def answer_task_on(
+    tx, *, team_id: str, task_id: UUID, actor: TeamIdentity,
+    expected_task_rev: int, answer_key: str, answer_sha256: str,
+    body_md: str, choice: str | None = None, proposal_rev: int | None = None,
+    proposal_sha256: str | None = None, stage_receipt: dict | None = None, outcome: dict | None = None,
+) -> dict[str, Any]:
+    """Commit an answer using the caller's transaction and verified identity.
+
+    The caller authenticates current certificate authority before entry. The
+    local member projection must still match that certificate and principal.
+    This function never opens/commits a transaction or delivers external mail.
+    """
+    if (not isinstance(answer_key, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", answer_key)
+            or not isinstance(answer_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", answer_sha256)
+            or type(expected_task_rev) is not int or not 1 <= expected_task_rev <= 2**53 - 1
+            or (proposal_rev is not None and (type(proposal_rev) is not int or not 0 <= proposal_rev <= 2**53 - 1))
+            or (proposal_sha256 is not None and (not isinstance(proposal_sha256, str)
+                or not re.fullmatch(r"sha256:[0-9a-f]{64}", proposal_sha256)))):
+        raise ValidationError("schema_invalid")
+    comment_body = answer_comment_projection(body_md=body_md, answer_sha256=answer_sha256)
+    # Installation -> task is F6 retirement's lock order. Keep it identical
+    # here, including when the member API (rather than app transport) answers.
+    source = await tx.fetch_one(
+        "SELECT * FROM {{tables.task_app_requests}} WHERE task_id=$1 AND team_id=$2", task_id, team_id,
+    )
+    installation = None
+    if source:
+        from aweb.app_registry import get_installation_on
+        installation = await get_installation_on(tx, team_id=team_id, app_id=source["app_id"], for_update=True)
+    principal = actor.did_aw or actor.did_key
+    member = await tx.fetch_one(
+        """SELECT COALESCE(NULLIF(did_aw, ''), did_key) AS principal_did, certificate_id
+           FROM {{tables.agents}} WHERE agent_id = $1 AND team_id = $2
+             AND deleted_at IS NULL AND status = 'active' FOR SHARE""",
+        UUID(actor.agent_id), team_id,
+    )
+    if (actor.team_id != team_id or not member or member["principal_did"] != principal
+            or not actor.certificate_id or member["certificate_id"] != actor.certificate_id):
+        raise ForbiddenError("target_mismatch")
+    task = await tx.fetch_one(
+        """SELECT task_id, rev, question_rev, status, assignee_did, app_request, cancellation,
+                  task_ref_suffix, title, assignee_alias
+           FROM {{tables.tasks}} WHERE task_id = $1 AND team_id = $2
+             AND deleted_at IS NULL FOR UPDATE""",
+        task_id, team_id,
+    )
+    if not task:
+        raise NotFoundError("Task not found")
+    existing = await tx.fetch_one(
+        "SELECT * FROM {{tables.task_answers}} WHERE task_id = $1 AND answer_key = $2",
+        task_id, answer_key,
+    )
+    if existing:
+        if existing["answered_by_did"] != principal:
+            raise ForbiddenError("target_mismatch")
+        if any(existing[k] != v for k, v in {
+            "answer_sha256": answer_sha256, "choice": choice,
+            "proposal_rev": proposal_rev, "proposal_sha256": proposal_sha256,
+        }.items()):
+            raise ConflictError("idempotency_conflict")
+        if outcome is not None:
+            outcome["created"] = False
+        return _answer_receipt(existing, current_question_rev=task["question_rev"], cancelled=task["cancellation"] is not None)
+    metadata = _task_request_metadata(task["app_request"])
+    eligible = metadata.get("eligible_dids")
+    answerers = [task["assignee_did"]] if eligible is None else eligible
+    if not isinstance(answerers, list) or principal not in answerers:
+        raise ForbiddenError("target_mismatch")
+    if metadata.get("proposal_rev") is not None:
+        from .app_tasks import verify_answer_stage_on
+        await verify_answer_stage_on(tx, stage=stage_receipt, source=source, installation=installation,
+            task=task, principal=principal, answer_key=answer_key, answer_sha256=answer_sha256,
+            choice=choice, proposal_rev=proposal_rev, proposal_sha256=proposal_sha256)
+    elif stage_receipt is not None:
+        raise ValidationError("schema_invalid")
+    if task["rev"] != expected_task_rev or task["status"] != "open" or task["cancellation"] is not None:
+        raise ConflictError("revision_conflict")
+    if proposal_rev != metadata.get("proposal_rev") or proposal_sha256 != metadata.get("proposal_sha256"):
+        raise ConflictError("approval_changed")
+    choices = metadata.get("choices")
+    choice_values = [entry["value"] for entry in choices] if choices is not None else None
+    if (choice_values is not None and choice not in choice_values) or (choices is None and choice is not None):
+        raise ValidationError("schema_invalid")
+    receipt_id = uuid4()
+    if await tx.fetch_value(
+        "SELECT 1 FROM {{tables.task_answers}} WHERE task_id = $1 AND question_rev = $2",
+        task_id, task["question_rev"],
+    ):
+        raise ConflictError("revision_conflict")
+    comment = await tx.fetch_one(
+        """INSERT INTO {{tables.task_comments}} (task_id, team_id, author_alias, body)
+           VALUES ($1, $2, $3, $4) RETURNING comment_id""",
+        task_id, team_id, actor.alias, comment_body,
+    )
+    updated = await tx.fetch_one(
+        """UPDATE {{tables.tasks}} SET status = 'closed', closed_by_alias = $2,
+               closed_by_did = $3, closed_at = NOW(), updated_at = NOW()
+           WHERE task_id = $1 RETURNING rev""",
+        task_id, actor.alias, principal,
+    )
+    row = await tx.fetch_one(
+        """INSERT INTO {{tables.task_answers}}
+               (task_id, question_rev, task_rev, answer_key, answer_sha256, answered_by_did, certificate_id,
+                receipt_id, choice, proposal_rev, proposal_sha256, stage_receipt)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb) RETURNING *""",
+        task_id, task["question_rev"], updated["rev"], answer_key, answer_sha256, principal, actor.certificate_id,
+        receipt_id, choice, proposal_rev, proposal_sha256, json.dumps(stage_receipt) if stage_receipt else None,
+    )
+    if stage_receipt is not None:
+        await tx.execute(
+            """INSERT INTO {{tables.task_answer_stage_nonces}} (team_id,app_id,installation_id,nonce,receipt_id)
+               VALUES ($1,$2,$3,$4,$5)""",
+            team_id, source["app_id"], source["installation_id"], stage_receipt["payload"]["nonce"], receipt_id,
+        )
+    if outcome is not None:
+        outcome["created"] = True
+        outcome["comment_id"] = str(comment["comment_id"])
+        outcome.update(task_ref=format_task_ref(_get_team_slug(team_id), task["task_ref_suffix"]),
+                       title=task["title"], assignee_alias=task["assignee_alias"])
+    return _answer_receipt(row, current_question_rev=task["question_rev"])
 
 
 def _encode_alpha_component(value: int, *, minimum_width: int = 4) -> str:
@@ -191,18 +381,26 @@ async def create_task(
     labels: list[str] | None = None,
     parent_task_id: str | None = None,
     assignee_alias: str | None = None,
+    created_by_did: str | None = None,
 ) -> dict[str, Any]:
     slug = _get_team_slug(team_id)
     aweb_db = db.get_manager("aweb")
     resolved_parent_task_id: UUID | None = None
     task_ref_suffix: str | None = None
 
-    if assignee_alias:
-        assignee_alias = await _resolve_assignee_alias(
-            db, team_id=team_id, assignee_ref=assignee_alias,
-        )
-
     async with aweb_db.transaction() as tx:
+        if created_by_did is None:
+            creator = await tx.fetch_one(
+                """SELECT COALESCE(NULLIF(did_aw, ''), did_key) AS principal_did
+                   FROM {{tables.agents}} WHERE team_id=$1 AND alias=$2 AND deleted_at IS NULL FOR SHARE""",
+                team_id, created_by_alias,
+            )
+            created_by_did = creator["principal_did"] if creator else None
+        assignee_did = None
+        if assignee_alias:
+            assignee_alias, assignee_did = await _resolve_assignee_on(
+                tx, team_id=team_id, assignee_ref=assignee_alias,
+            )
         task_number = await _allocate_task_number_on(tx, team_id=team_id)
         root_task_seq: int
 
@@ -256,8 +454,8 @@ async def create_task(
             """
             INSERT INTO {{tables.tasks}}
                 (team_id, task_number, root_task_seq, task_ref_suffix, title, description, notes, priority, task_type,
-                 labels, parent_task_id, assignee_alias, created_by_alias)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                 labels, parent_task_id, assignee_alias, created_by_alias, assignee_did, created_by_did)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             RETURNING task_id, created_at, updated_at
             """,
             team_id,
@@ -273,6 +471,8 @@ async def create_task(
             resolved_parent_task_id,
             assignee_alias,
             created_by_alias,
+            assignee_did,
+            created_by_did,
         )
 
     return {
@@ -294,7 +494,34 @@ async def create_task(
         "created_at": row["created_at"].isoformat(),
         "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
         "closed_at": None,
+        "rev": 1,
+        "question_rev": 1,
+        "assignee_did": assignee_did,
+        "created_by_did": created_by_did,
+        "closed_by_did": None,
     }
+
+
+async def _resolve_assignee_on(manager, *, team_id: str, assignee_ref: str) -> tuple[str, str]:
+    """Resolve display alias and immutable principal together, on the write tx."""
+    try:
+        agent_id = UUID(assignee_ref)
+    except ValueError:
+        agent_id = None
+    row = await manager.fetch_one(
+        """
+        SELECT alias, COALESCE(NULLIF(did_aw, ''), did_key) AS principal_did
+        FROM {{tables.agents}}
+        WHERE team_id = $1 AND deleted_at IS NULL
+          AND (($2::uuid IS NOT NULL AND agent_id = $2)
+               OR ($2::uuid IS NULL AND alias = $3))
+        FOR SHARE
+        """,
+        team_id, agent_id, assignee_ref.strip(),
+    )
+    if not row:
+        raise ValidationError("Assignee agent not found in this team")
+    return row["alias"], row["principal_did"]
 
 
 async def _resolve_assignee_alias(
@@ -339,7 +566,8 @@ async def get_task(db, *, team_id: str, ref: str) -> dict[str, Any]:
         SELECT task_id, team_id, task_number, title, description, notes,
                task_ref_suffix, status, priority, task_type, labels, parent_task_id,
                assignee_alias, created_by_alias, closed_by_alias,
-               created_at, updated_at, closed_at
+               created_at, updated_at, closed_at, rev, question_rev,
+               assignee_did, created_by_did, closed_by_did, app_request, cancellation, picked_up
         FROM {{tables.tasks}}
         WHERE task_id = $1 AND deleted_at IS NULL
         """,
@@ -377,6 +605,13 @@ async def get_task(db, *, team_id: str, ref: str) -> dict[str, Any]:
             "status": r["status"],
         }
 
+    answer = await aweb_db.fetch_one(
+        "SELECT * FROM {{tables.task_answers}} WHERE task_id = $1 AND question_rev = $2",
+        task_id, row["question_rev"],
+    )
+    def json_value(value):
+        return json.loads(value) if isinstance(value, str) else value
+
     return {
         "task_id": str(row["task_id"]),
         "task_ref": format_task_ref(slug, row["task_ref_suffix"]),
@@ -398,6 +633,16 @@ async def get_task(db, *, team_id: str, ref: str) -> dict[str, Any]:
         "closed_at": row["closed_at"].isoformat() if row["closed_at"] else None,
         "blocked_by": [_dep_view(r) for r in blocked_by_rows],
         "blocks": [_dep_view(r) for r in blocks_rows],
+        "rev": row["rev"],
+        "question_rev": row["question_rev"],
+        "assignee_did": row["assignee_did"],
+        "created_by_did": row["created_by_did"],
+        "closed_by_did": row["closed_by_did"],
+        "app_request": json_value(row["app_request"]),
+        "cancellation": json_value(row["cancellation"]),
+        "picked_up": row["picked_up"],
+        "answer": _answer_receipt(answer, current_question_rev=row["question_rev"],
+                                  cancelled=row["cancellation"] is not None) if answer else None,
     }
 
 
@@ -407,6 +652,7 @@ async def list_tasks(
     team_id: str,
     status: str | None = None,
     assignee_alias: str | None = None,
+    eligible_did: str | None = None,
     task_type: str | None = None,
     priority: int | None = None,
     labels: list[str] | None = None,
@@ -435,6 +681,10 @@ async def list_tasks(
         )
         conditions.append(f"assignee_alias = ${idx}")
         params.append(resolved_alias)
+        idx += 1
+    if eligible_did is not None:
+        conditions.append(_eligible_task_condition(idx))
+        params.append(eligible_did)
         idx += 1
     if task_type is not None:
         conditions.append(f"task_type = ${idx}")
@@ -469,7 +719,7 @@ async def list_tasks(
         f"""
         SELECT task_id, task_number, task_ref_suffix, title, status, priority, task_type,
                assignee_alias, created_by_alias, parent_task_id, labels,
-               created_at, updated_at
+               created_at, updated_at, assignee_did, app_request, rev, question_rev
         FROM {{{{tables.tasks}}}}
         WHERE {' AND '.join(conditions)}
         ORDER BY task_number ASC
@@ -478,6 +728,7 @@ async def list_tasks(
     )
     return [
         {
+            **_task_list_contract(r),
             "task_id": str(r["task_id"]),
             "task_ref": format_task_ref(slug, r["task_ref_suffix"]),
             "task_number": r["task_number"],
@@ -502,6 +753,7 @@ async def list_tasks_paginated(
     team_id: str,
     status: str | None = None,
     assignee_alias: str | None = None,
+    eligible_did: str | None = None,
     task_type: str | None = None,
     priority: int | None = None,
     labels: list[str] | None = None,
@@ -532,6 +784,10 @@ async def list_tasks_paginated(
         )
         conditions.append(f"assignee_alias = ${idx}")
         params.append(resolved_alias)
+        idx += 1
+    if eligible_did is not None:
+        conditions.append(_eligible_task_condition(idx))
+        params.append(eligible_did)
         idx += 1
     if task_type is not None:
         conditions.append(f"task_type = ${idx}")
@@ -567,7 +823,7 @@ async def list_tasks_paginated(
         f"""
         SELECT t.task_id, t.task_number, t.task_ref_suffix, t.title, t.description, t.status,
                t.priority, t.task_type, t.assignee_alias, t.created_by_alias, t.parent_task_id,
-               t.labels, t.created_at, t.updated_at,
+               t.labels, t.created_at, t.updated_at, t.assignee_did, t.app_request, t.rev, t.question_rev,
                (
                    SELECT COUNT(*)
                    FROM {{{{tables.task_dependencies}}}} d
@@ -584,6 +840,7 @@ async def list_tasks_paginated(
     )
     return [
         {
+            **_task_list_contract(r),
             "task_id": str(r["task_id"]),
             "task_ref": format_task_ref(slug, r["task_ref_suffix"]),
             "task_number": r["task_number"],
@@ -879,7 +1136,7 @@ async def update_task(
 
         current = await tx.fetch_one(
             """
-            SELECT task_id, status, assignee_alias, task_ref_suffix
+            SELECT task_id, status, assignee_alias, task_ref_suffix, assignee_did, app_request
             FROM {{tables.tasks}}
             WHERE task_id = $1 AND deleted_at IS NULL
             FOR UPDATE
@@ -955,18 +1212,18 @@ async def update_task(
                 idx += 1
 
         if assignee_alias is not _UNSET:
-            resolved_assignee_alias = (
-                await _resolve_assignee_alias(
-                    db,
-                    team_id=team_id,
-                    assignee_ref=str(assignee_alias),
-                )
-                if assignee_alias
-                else None
+            resolved_assignee_alias, resolved_assignee_did = (
+                await _resolve_assignee_on(tx, team_id=team_id, assignee_ref=str(assignee_alias))
+                if assignee_alias else (None, None)
             )
             if status != "in_progress":
+                if current["app_request"] is not None and resolved_assignee_did != current["assignee_did"]:
+                    raise ForbiddenError("target_mismatch")
                 sets.append(f"assignee_alias = ${idx}")
                 params.append(resolved_assignee_alias)
+                idx += 1
+                sets.append(f"assignee_did = ${idx}")
+                params.append(resolved_assignee_did)
                 idx += 1
 
         auto_closed: list[dict[str, Any]] = []
@@ -1039,6 +1296,19 @@ async def update_task(
                 sets.append(f"assignee_alias = ${idx}")
                 params.append(actor_alias)
                 idx += 1
+                actor = await tx.fetch_one(
+                    """SELECT COALESCE(NULLIF(did_aw, ''), did_key) AS principal_did
+                       FROM {{tables.agents}}
+                       WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
+                       FOR SHARE""",
+                    team_id, actor_alias,
+                )
+                if current["app_request"] is not None and (not actor or actor["principal_did"] != current["assignee_did"]):
+                    raise ForbiddenError("target_mismatch")
+                sets.append(f"assignee_did = ${idx}")
+                params.append(actor["principal_did"] if actor else None)
+                idx += 1
+                sets.append("picked_up = TRUE")
 
             sets.append(f"status = ${idx}")
             params.append(status)

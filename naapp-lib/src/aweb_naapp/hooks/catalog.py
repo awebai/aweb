@@ -29,7 +29,7 @@ PAYLOAD_ERRORS = (
 )
 HOOK_CLASSES = ("server", "client")
 PRODUCER_KINDS = ("core", "app", "client")
-AUDIT_CRITICAL = ("always", "widening_acts", "never")
+AUDIT_CRITICAL = ("always", "widening_acts", "action_rules", "never")
 DIRECTIONS = ("widening", "narrowing")
 MAX_SAFE_INTEGER = 2**53 - 1
 
@@ -147,6 +147,23 @@ class MutationType:
 
 
 @dataclass(frozen=True)
+class ActionAuditRule:
+    """One action's fixed classification, optionally split by an enum field."""
+
+    critical: bool = True
+    field: str | None = None
+    values: Mapping[str, bool] | None = None
+
+    def is_critical(self, payload: Mapping[str, Any]) -> bool:
+        if self.field is None:
+            return self.critical
+        assert self.values is not None
+        # Validation normally runs first. An unclassified value never obtains
+        # an availability exception when this predicate is called directly.
+        return self.values.get(str(payload.get(self.field)), True)
+
+
+@dataclass(frozen=True)
 class Hook:
     name: str
     hook_class: str
@@ -159,6 +176,7 @@ class Hook:
     excluded_core_events: Mapping[str, str] | None = None
     act_directions: Mapping[str, str] | None = None
     command_classes: Mapping[str, tuple[str, ...]] | None = None
+    action_audit_critical: Mapping[str, ActionAuditRule] | None = None
 
 
 @dataclass(frozen=True)
@@ -178,6 +196,10 @@ class Catalog:
             return True
         if spec.audit_critical == "never":
             return False
+        if spec.audit_critical == "action_rules":
+            assert spec.action_audit_critical is not None
+            rule = spec.action_audit_critical.get(str(payload.get("action")))
+            return True if rule is None else rule.is_critical(payload)
         assert spec.act_directions is not None
         return spec.act_directions.get(str(payload.get("act"))) == "widening"
 
@@ -218,6 +240,11 @@ class Catalog:
         if spec.act_directions is not None:
             if spec.act_directions[payload["act"]] != payload["direction"]:
                 raise PayloadRefused("direction_mismatch", "direction")
+            if (
+                payload["act"] == "resource.changed"
+                and payload["before_ref"] == payload["after_ref"]
+            ):
+                raise PayloadRefused("rule_violation", "after_ref")
         if spec.command_classes is not None:
             allowed = spec.command_classes[payload["command_class"]]
             if any(effect not in allowed for effect in payload["local_effects"]):
@@ -292,6 +319,7 @@ HOOK_OPTIONAL_KEYS = {
     "excluded_core_events",
     "act_directions",
     "command_classes",
+    "action_audit_critical",
 }
 
 
@@ -394,6 +422,31 @@ class _Reader:
         if (spec["audit_critical"] == "widening_acts") != (act_directions is not None):
             raise CatalogError(f"hook {name} audit_critical needs act directions")
 
+        action_audit_critical = None
+        if "action_audit_critical" in spec:
+            entries = self._mapping(spec["action_audit_critical"], f"{name} action_audit_critical")
+            action = fields.get("action")
+            if action is None or action.enum is None or set(entries) != set(action.enum):
+                raise CatalogError(f"hook {name} audit classification differs from its action enum")
+            action_audit_critical = {}
+            for action_name, entry in entries.items():
+                if type(entry) is bool:
+                    action_audit_critical[action_name] = ActionAuditRule(critical=entry)
+                    continue
+                entry = self._object(entry, f"{name} action {action_name}", {"field", "values"})
+                field_name = self._string(entry["field"], f"{name} audit field")
+                field = fields.get(field_name)
+                values = self._mapping(entry["values"], f"{name} audit values")
+                if field is None or field.enum is None or set(values) != set(field.enum):
+                    raise CatalogError(f"hook {name} audit values differ from their field enum")
+                if any(type(value) is not bool for value in values.values()):
+                    raise CatalogError(f"hook {name} audit classifications must be booleans")
+                action_audit_critical[action_name] = ActionAuditRule(
+                    field=field_name, values=values
+                )
+        if (spec["audit_critical"] == "action_rules") != (action_audit_critical is not None):
+            raise CatalogError(f"hook {name} audit_critical needs action rules")
+
         command_classes = None
         if "command_classes" in spec:
             command_classes = {
@@ -424,6 +477,7 @@ class _Reader:
             excluded_core_events=excluded,
             act_directions=act_directions,
             command_classes=command_classes,
+            action_audit_critical=action_audit_critical,
         )
 
     def _fields(self, owner: str, specs: Any) -> dict[str, FieldSpec]:

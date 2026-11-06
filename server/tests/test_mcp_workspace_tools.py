@@ -56,6 +56,7 @@ async def test_work_ready_uses_workspace_id_not_agent_id(aweb_cloud_db, monkeypa
         common_tools,
         "get_auth",
         lambda: AuthContext(
+            certificate_id="cert-1",
             team_id=team_id,
             agent_id=str(agent_id),
             workspace_id=str(workspace_id),
@@ -141,6 +142,7 @@ async def test_workspace_status_uses_workspace_rows_as_primary_identity(aweb_clo
         common_tools,
         "get_auth",
         lambda: AuthContext(
+            certificate_id="cert-1",
             team_id=team_id,
             agent_id=str(alice_agent_id),
             workspace_id=str(alice_workspace_id),

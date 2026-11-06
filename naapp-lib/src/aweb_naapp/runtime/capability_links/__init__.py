@@ -24,7 +24,6 @@ import base64
 import hashlib
 import hmac
 import json
-import math
 import re
 import secrets
 import time
@@ -41,13 +40,14 @@ from pgdbm.core import TransactionManager
 from aweb_naapp.idempotency import IdempotencyConflict, IdempotencyExpired
 from aweb_naapp.pages import validate_page
 from aweb_naapp.ratelimit import Charge, Decision, take
+from aweb_naapp.runtime.clock import MonotonicClock
 from aweb_naapp.runtime.link_requests import (
     LinkRequestRefused,
     check_session_did_key,
     secret_verifier,
     verify_link_request_bytes,
 )
-from aweb_naapp.runtime.team_auth import MAX_TEAM_FACTS_TTL_SECONDS, MembershipProof
+from aweb_naapp.runtime.team_auth import MembershipProof
 
 MIGRATIONS_PATH = Path(__file__).resolve().parent / "migrations"
 MIGRATIONS_MODULE = "aweb_naapp_capability_links"
@@ -770,7 +770,7 @@ async def exchange(
     now: datetime,
     proof: MembershipProof | None = None,
     check_current_member: Callable[[LinkCreator], Awaitable[MembershipProof]] | None = None,
-    proof_clock: Callable[[], float] = time.monotonic,
+    proof_clock: MonotonicClock = time.monotonic_ns,
 ) -> LinkSession:
     """Exchange a link's secret for a session bound to a browser key (§2).
 
@@ -986,7 +986,7 @@ async def _require_current_creator(
     record: Mapping[str, Any],
     *,
     proof: MembershipProof | None,
-    clock: Callable[[], float],
+    clock: MonotonicClock,
 ) -> LinkCreator:
     """Consume the original runtime proof locally AFTER the existing link lock."""
     creator = _link_creator(record)
@@ -996,9 +996,7 @@ async def _require_current_creator(
         or proof.team_id != creator.scope.team_id
         or proof.certificate_id != creator.certificate_id
         or proof.team_did_key != creator.team_did_key
-        or not all(math.isfinite(t) for t in (proof.checked_at, proof.fresh_until, checked_now))
-        or not 0 <= proof.fresh_until - proof.checked_at <= MAX_TEAM_FACTS_TTL_SECONDS
-        or not proof.checked_at <= checked_now <= proof.fresh_until
+        or not proof.is_fresh_at(checked_now)
     ):
         raise LinkRefused(
             "current_member_required", 403, reason="missing, mismatched or expired proof"
@@ -1088,7 +1086,7 @@ async def read(
     projection: Mapping[str, Any] | None = None,
     now: datetime,
     proof: MembershipProof | None = None,
-    proof_clock: Callable[[], float] = time.monotonic,
+    proof_clock: MonotonicClock = time.monotonic_ns,
 ) -> LinkRead:
     """Admit a projection read under FOR SHARE (§4–§6).
 
@@ -1261,7 +1259,7 @@ async def admit(
     client: str,
     now: datetime,
     proof: MembershipProof | None = None,
-    proof_clock: Callable[[], float] = time.monotonic,
+    proof_clock: MonotonicClock = time.monotonic_ns,
 ) -> ActionReceipt:
     """Admit an edit or anonymous intent (§4–§6), in the caller's transaction.
 

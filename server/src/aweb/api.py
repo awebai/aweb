@@ -1,9 +1,10 @@
-import asyncio
+import hashlib
 import logging
 import os
 from contextlib import asynccontextmanager
 from typing import Optional
 
+import httpx
 from fastapi import FastAPI, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
@@ -16,17 +17,20 @@ from awid.registry import CachedRegistryClient, RegistryClient
 from awid.federation_errors import FederationAuthorityError
 from .config import get_public_origin, get_settings
 from awid.log import canonical_server_origin
+from .connection_scope import ConnectionScopeMiddleware
 from .db import DatabaseInfra
 from .db import db_infra as default_db_infra
 from awid.log_config import configure_logging
-from .lifecycle import replay_lifecycle_side_effects
 from .federation.activation import build_federation_authority_activation
 from .federation.errors import authority_error_body
-from .federation.delivery import replay_federation_mutation_outbox
+from .agent_wake import AgentWakeHub, AgentWakePublisher
 from .mutation_hooks import create_mutation_handler
+from .outbox_recovery import OutboxRecoveryStarter, start_outbox_recovery, stop_outbox_recovery
 from awid.ratelimit import build_rate_limiter
 from .routing_utils import move_mount_before_spa_fallback
 from .service_errors import ServiceError
+from .messaging.chat_policy import HumanChatRefused
+from .install_admins import install_admin_setup_message
 from .mcp.server import NormalizeMountedMCPPathMiddleware
 from .request_compression import RequestDecompressionFastAPI
 from .routes.agent_activity import router as agent_activity_router
@@ -45,6 +49,7 @@ from .routes.events import router as events_router
 from .routes.federation import router as federation_router
 from .routes.identity_grants import router as identity_grants_router
 from .routes.messages import router as messages_router
+from .routes.room import router as room_router
 from .routes.reservations import router as reservations_router
 from .routes.session_leases import router as session_leases_router
 from .routes.service_registration import router as service_registration_router
@@ -57,9 +62,6 @@ from .coordination.routes.workspaces import router as workspaces_router
 
 logger = logging.getLogger(__name__)
 
-_LIFECYCLE_OUTBOX_REPLAY_BATCH_SIZE = 100
-_LIFECYCLE_OUTBOX_MAX_BATCHES_PER_TRIGGER = 10
-
 
 def _cached_body_receive(body: bytes):
     """Return an ASGI receive callable that replays a cached request body.
@@ -68,6 +70,8 @@ def _cached_body_receive(body: bytes):
     immediately with an empty request-body event. Waiting on the original
     receive callable here can hang POST error responses under Uvicorn because
     Starlette may poll the request stream after the endpoint has already raised.
+    A non-GET route must not return a streaming response, and MCP must keep
+    json_response=True: a disconnect listener would spin on this receive.
     """
     replayed = False
 
@@ -79,6 +83,81 @@ def _cached_body_receive(body: bytes):
         return {"type": "http.request", "body": b"", "more_body": False}
 
     return _receive
+
+
+# Above the largest body a released client sends: aw reads a --body-file
+# of up to 10 MiB, which end-to-end encryption carries as about 13.4 MiB of
+# base64. Every route's tighter bound still applies on top of this one.
+DEFAULT_MAX_REQUEST_BODY_BYTES = 16 * 1024 * 1024
+
+
+def _max_request_body_bytes() -> int:
+    """The deployment's request-body cap, from AWEB_MAX_REQUEST_BODY_BYTES."""
+    raw = os.getenv("AWEB_MAX_REQUEST_BODY_BYTES")
+    if raw is None:
+        return DEFAULT_MAX_REQUEST_BODY_BYTES
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value < 1:
+        raise ValueError("AWEB_MAX_REQUEST_BODY_BYTES must be a positive whole number of bytes")
+    return value
+
+
+class RequestBodyCacheMiddleware:
+    """Cache each HTTP request's body and its SHA-256 for signature verification.
+
+    Sets ``request.state.cached_body`` and ``request.state.body_sha256``. A
+    GET, HEAD or OPTIONS request has an empty body and keeps its receive. Any
+    other request is read whole before the app runs and replayed to it, so
+    FastAPI still parses it. A body over ``max_body_bytes`` is refused with
+    413 as soon as it is declared or read past the cap, before the app runs,
+    so no request buffers more than the cap. Pure ASGI: unlike a
+    BaseHTTPMiddleware, it holds no tasks of its own for a long-lived
+    streaming response.
+    """
+
+    def __init__(self, app, *, max_body_bytes: int = DEFAULT_MAX_REQUEST_BODY_BYTES) -> None:
+        if max_body_bytes < 1:
+            raise ValueError("max_body_bytes must be positive")
+        self.app = app
+        self.max_body_bytes = max_body_bytes
+
+    async def _refuse(self, scope, receive, send) -> None:
+        await JSONResponse({"detail": "Request body too large"}, status_code=413)(scope, receive, send)
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        state = scope.setdefault("state", {})
+        if scope.get("method") in {"GET", "HEAD", "OPTIONS"}:
+            state["cached_body"] = b""
+            state["body_sha256"] = hashlib.sha256(b"").hexdigest()
+            await self.app(scope, receive, send)
+            return
+        declared = next((value for name, value in scope.get("headers", []) if name.lower() == b"content-length"), None)
+        if declared is not None and declared.isdigit() and int(declared) > self.max_body_bytes:
+            await self._refuse(scope, receive, send)
+            return
+        chunks, received = [], 0
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return  # The client left before sending its body; nobody to answer.
+            chunk = message.get("body", b"")
+            received += len(chunk)
+            if received > self.max_body_bytes:
+                await self._refuse(scope, receive, send)
+                return
+            chunks.append(chunk)
+            if not message.get("more_body", False):
+                break
+        body = b"".join(chunks)
+        state["cached_body"] = body
+        state["body_sha256"] = hashlib.sha256(body).hexdigest()
+        await self.app(scope, _cached_body_receive(body), send)
 
 
 async def _mount_mcp_app(
@@ -115,83 +194,26 @@ async def _shutdown_mcp_app(app: FastAPI) -> None:
     app.state.mcp_app = None
 
 
-def _schedule_lifecycle_outbox_replay(app: FastAPI) -> None:
-    """Schedule a bounded replay without delaying the current request.
+async def start_agent_wakes(app: FastAPI, redis: Redis) -> None:
+    """Start the process's agent wake publisher and subscriber on ``app.state``.
 
-    Mounted FastAPI sub-applications do not receive lifespan events, so this
-    request-path trigger is also the restart recovery hook for embedded hosts.
+    Both lifespans call this. A host that mounts the app as a sub-application,
+    whose lifespan never runs, must call it at mount (and ``stop_agent_wakes``
+    at shutdown); without it, writes publish no wakes and streams fall back to
+    their 15 s reconcile from Postgres.
     """
-    db_infra = getattr(app.state, "db", None)
-    redis = getattr(app.state, "redis", None)
-    if db_infra is None or redis is None:
-        return
-
-    loop = asyncio.get_running_loop()
-    next_at = float(getattr(app.state, "lifecycle_outbox_replay_next_at", 0.0))
-    task = getattr(app.state, "lifecycle_outbox_replay_task", None)
-    if (task is not None and not task.done()) or loop.time() < next_at:
-        return
-    app.state.lifecycle_outbox_replay_next_at = loop.time() + 1.0
-
-    async def _replay() -> None:
-        try:
-            for _ in range(_LIFECYCLE_OUTBOX_MAX_BATCHES_PER_TRIGGER):
-                result = await replay_lifecycle_side_effects(
-                    db_infra.get_manager("aweb"),
-                    redis,
-                    limit=_LIFECYCLE_OUTBOX_REPLAY_BATCH_SIZE,
-                )
-                if result.attempted_count < _LIFECYCLE_OUTBOX_REPLAY_BATCH_SIZE:
-                    break
-                await asyncio.sleep(0)
-        except Exception:
-            logger.warning("Lifecycle outbox replay failed", exc_info=True)
-
-    app.state.lifecycle_outbox_replay_task = asyncio.create_task(_replay())
+    app.state.agent_wake_publisher = AgentWakePublisher(redis)
+    app.state.agent_wake_hub = AgentWakeHub(redis)
+    await app.state.agent_wake_hub.start()
 
 
-def _schedule_federation_outbox_replay(app: FastAPI) -> None:
-    db_infra = getattr(app.state, "db", None)
-    callback = getattr(app.state, "on_mutation", None)
-    if db_infra is None or callback is None:
-        return
-    task = getattr(app.state, "federation_outbox_replay_task", None)
-    if task is not None and not task.done():
-        return
-
-    async def _replay() -> None:
-        try:
-            await replay_federation_mutation_outbox(
-                app,
-                db_infra.get_manager("aweb"),
-                limit=100,
-            )
-        except Exception:
-            logger.warning("Federation outbox replay failed", exc_info=True)
-
-    app.state.federation_outbox_replay_task = asyncio.create_task(_replay())
-
-
-async def _shutdown_federation_outbox_replay(app: FastAPI) -> None:
-    task = getattr(app.state, "federation_outbox_replay_task", None)
-    if task is None or task.done():
-        return
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
-
-
-async def _shutdown_lifecycle_outbox_replay(app: FastAPI) -> None:
-    task = getattr(app.state, "lifecycle_outbox_replay_task", None)
-    if task is None or task.done():
-        return
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
+async def stop_agent_wakes(app: FastAPI) -> None:
+    hub = getattr(app.state, "agent_wake_hub", None)
+    if hub is not None:
+        await hub.close()
+    publisher = getattr(app.state, "agent_wake_publisher", None)
+    if publisher is not None:
+        await publisher.close()
 
 
 async def _shutdown_federation_authority(app: FastAPI) -> None:
@@ -210,12 +232,14 @@ async def _shutdown_awid_registry_client(app: FastAPI) -> None:
     app.state.awid_registry_client = None
 
 
-def _build_awid_registry_client(app: FastAPI, redis: Redis | None) -> RegistryClient:
+def _build_awid_registry_client(
+    app: FastAPI, redis: Redis | None, transport: httpx.AsyncBaseTransport | None = None
+) -> RegistryClient:
     settings = get_settings()
     registry_url = settings.awid_registry_url
     service_token = settings.awid_service_token
     client_class = CachedRegistryClient if redis is not None else RegistryClient
-    client_kwargs = {"registry_url": registry_url, "service_token": service_token}
+    client_kwargs = {"registry_url": registry_url, "service_token": service_token, "transport": transport}
     if redis is not None:
         return client_class(redis_client=redis, **client_kwargs)
     return client_class(**client_kwargs)
@@ -254,6 +278,10 @@ def _make_standalone_lifespan():
             await default_db_infra.initialize()
             db_initialized = True
             logger.info("Database initialized")
+            if getattr(app.state, "install_admin_policy", None) is None:
+                setup_message = await install_admin_setup_message(default_db_infra.get_manager())
+                if setup_message:
+                    logger.info(setup_message)
 
             # Phase 2: Only assign to app.state after ALL initialization succeeds
             app.state.redis = redis
@@ -273,8 +301,8 @@ def _make_standalone_lifespan():
                 app.state.awid_registry_client,
                 app.state.federation_authority,
             )
-            _schedule_lifecycle_outbox_replay(app)
-            _schedule_federation_outbox_replay(app)
+            await start_agent_wakes(app, redis)
+            start_outbox_recovery(app)
 
         except Exception:
             # Log which phase failed
@@ -295,17 +323,19 @@ def _make_standalone_lifespan():
         finally:
             logger.info("Shutting down aweb coordination server")
             await _shutdown_mcp_app(app)
-            await _shutdown_lifecycle_outbox_replay(app)
-            await _shutdown_federation_outbox_replay(app)
+            await stop_outbox_recovery(app)
             await _shutdown_federation_authority(app)
             await _shutdown_awid_registry_client(app)
+            await stop_agent_wakes(app)
             await redis.aclose()
             await default_db_infra.close()
 
     return lifespan
 
 
-def _make_library_lifespan(db_infra: DatabaseInfra, redis: Redis):
+def _make_library_lifespan(
+    db_infra: DatabaseInfra, redis: Redis, awid_transport: httpx.AsyncBaseTransport | None
+):
     """Create lifespan for library mode (uses externally provided connections)."""
 
     @asynccontextmanager
@@ -320,7 +350,7 @@ def _make_library_lifespan(db_infra: DatabaseInfra, redis: Redis):
         app.state.db = db_infra
         app.state.rate_limiter = build_rate_limiter(redis=redis)
         app.state.on_mutation = create_mutation_handler(redis, db_infra)
-        app.state.awid_registry_client = _build_awid_registry_client(app, redis)
+        app.state.awid_registry_client = _build_awid_registry_client(app, redis, awid_transport)
         app.state.federation_authority = build_federation_authority_activation(
             db_infra,
             public_origin=app.state.public_origin,
@@ -333,18 +363,18 @@ def _make_library_lifespan(db_infra: DatabaseInfra, redis: Redis):
             app.state.awid_registry_client,
             app.state.federation_authority,
         )
-        _schedule_lifecycle_outbox_replay(app)
-        _schedule_federation_outbox_replay(app)
+        await start_agent_wakes(app, redis)
+        start_outbox_recovery(app)
 
         try:
             yield
         finally:
             # Don't close connections in library mode - caller manages them
             await _shutdown_mcp_app(app)
-            await _shutdown_lifecycle_outbox_replay(app)
-            await _shutdown_federation_outbox_replay(app)
+            await stop_outbox_recovery(app)
             await _shutdown_federation_authority(app)
             await _shutdown_awid_registry_client(app)
+            await stop_agent_wakes(app)
             logger.info("Aweb coordination server stopping (library mode)")
 
     return lifespan
@@ -356,6 +386,8 @@ def create_app(
     redis: Optional[Redis] = None,
     attachment_backend=None,
     public_origin: str | None = None,
+    awid_transport: httpx.AsyncBaseTransport | None = None,
+    host_runs_outbox_recovery: bool = False,
 ) -> FastAPI:
     """Create the aweb coordination FastAPI application.
 
@@ -366,6 +398,13 @@ def create_app(
                If None, creates own connection (standalone mode).
         public_origin: Configured external origin for request signature checks.
                        Defaults to public-origin settings captured at construction.
+        awid_transport: The transport the AWID registry client uses (library
+                        mode only), such as a host's in-process AWID. The
+                        startup health check and every AWID call go through it.
+        host_runs_outbox_recovery: The host runs aweb.outbox_recovery's
+                        recover_outboxes on its own scheduler. Otherwise an app
+                        that receives no lifespan (a mount) starts the recovery
+                        loop on its first request.
 
     Library mode requires both db_infra and redis to be provided.
     Standalone mode requires neither (will create its own).
@@ -400,6 +439,8 @@ def create_app(
         )
 
     library_mode = db_infra is not None
+    if awid_transport is not None and not library_mode:
+        raise ValueError("awid_transport is available in library mode only")
 
     # Validate db_infra is initialized in library mode
     if library_mode:
@@ -410,7 +451,7 @@ def create_app(
                 "Call 'await db_infra.initialize()' before creating the app."
             )
         assert redis is not None  # Required when db_infra is provided
-        lifespan = _make_library_lifespan(db_infra, redis)
+        lifespan = _make_library_lifespan(db_infra, redis, awid_transport)
     else:
         lifespan = _make_standalone_lifespan()
 
@@ -424,31 +465,7 @@ def create_app(
     app.include_router(attachment_router)
     app.add_middleware(NormalizeMountedMCPPathMiddleware, mount_path="/mcp")
 
-    @app.middleware("http")
-    async def lifecycle_outbox_replay_middleware(request: Request, call_next):
-        _schedule_lifecycle_outbox_replay(request.app)
-        _schedule_federation_outbox_replay(request.app)
-        return await call_next(request)
-
-    @app.middleware("http")
-    async def cache_body_middleware(request: Request, call_next):
-        """Cache request body and compute SHA256 for signature verification.
-
-        Replaces the receive callable so FastAPI can still read the body
-        for Pydantic parsing after we've consumed the stream.
-        """
-        import hashlib as _hashlib
-
-        if request.method in {"GET", "HEAD", "OPTIONS"}:
-            request.state.cached_body = b""
-            request.state.body_sha256 = _hashlib.sha256(b"").hexdigest()
-            return await call_next(request)
-
-        body = await request.body()
-        request.state.cached_body = body
-        request.state.body_sha256 = _hashlib.sha256(body).hexdigest() if body else _hashlib.sha256(b"").hexdigest()
-        request._receive = _cached_body_receive(body)
-        return await call_next(request)
+    app.add_middleware(RequestBodyCacheMiddleware, max_body_bytes=_max_request_body_bytes())
 
     @app.exception_handler(RequestValidationError)
     async def _request_validation_error_handler(
@@ -491,6 +508,12 @@ def create_app(
             content=authority_error_body(exc, correlation_id=correlation_id),
             headers=headers,
         )
+
+    @app.exception_handler(HumanChatRefused)
+    async def _human_chat_refused_handler(request: Request, exc: HumanChatRefused):
+        return JSONResponse(status_code=422, content=exc.body(
+            correlation_id=request.headers.get("X-Correlation-ID"),
+        ))
 
     @app.exception_handler(ServiceError)
     async def _service_error_handler(request: Request, exc: ServiceError):
@@ -545,7 +568,10 @@ def create_app(
     app.include_router(events_router)
     app.include_router(federation_router)
     app.include_router(identity_grants_router)
+    from aweb.routes.messaging import router as messaging_router
+    app.include_router(messaging_router)
     app.include_router(messages_router)
+    app.include_router(room_router)
     app.include_router(reservations_router)
     app.include_router(session_leases_router)
     app.include_router(service_registration_router)
@@ -555,6 +581,12 @@ def create_app(
     app.include_router(tasks_router)
     app.include_router(workspaces_router)
     app.include_router(repos_router)
+
+    if not host_runs_outbox_recovery:
+        app.add_middleware(OutboxRecoveryStarter)
+    # Added last, so it is outermost: one connection for every statement a
+    # request runs before its response starts, middleware included.
+    app.add_middleware(ConnectionScopeMiddleware)
 
     return app
 

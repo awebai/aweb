@@ -14,12 +14,14 @@ from uuid import UUID
 
 import pytest
 import pytest_asyncio
-from nacl.signing import SigningKey
-
-from awid.did import did_from_public_key
 from aweb.app_credentials import HOOK_RESOLVE
-from aweb.app_registry import install_app
-from aweb.hook_bindings import PRODUCTION, REGISTRATION, HookBindingDeclaration, write_pending_bindings
+from aweb.hook_bindings import (
+    PRODUCTION,
+    REGISTRATION,
+    HookBindingDeclaration,
+    write_pending_bindings,
+)
+from aweb_naapp.runtime.clock import seconds_to_ns, NANOSECONDS_PER_SECOND
 from aweb_naapp.hooks.producer import (
     HOOKS_CHANNEL,
     HookProducer,
@@ -32,6 +34,9 @@ from aweb_naapp.outbox import StoredEvent, apply_outbox_migrations
 from aweb_naapp.runtime.app_credentials import AppCredentialSigner
 from aweb_naapp.runtime.app_keys import AppKey
 from aweb_naapp.runtime.hook_resolver import HookResolver
+from awid.did import did_from_public_key
+from nacl.signing import SigningKey
+from tests.installation_fixtures import seed_hook_installation
 
 TEAM = "backend:producer.example"
 HOOK = "post-secret-use-hook"
@@ -59,22 +64,19 @@ class Clock:
     """Monotonic time for the resolver's cache and wall time for its data, moved together."""
 
     def __init__(self) -> None:
-        self.now = 1000.0
+        self.now = seconds_to_ns(1000)
         self.wall = datetime.now(UTC).replace(microsecond=0)
 
-    def __call__(self) -> float:
+    def __call__(self) -> int:
         return self.now
 
     def advance(self, seconds: float) -> None:
-        self.now += seconds
+        self.now += int(seconds * NANOSECONDS_PER_SECOND)
         self.wall += timedelta(seconds=seconds)
 
 
 async def _install(db, app: dict, installation_id: str, declarations) -> dict:
-    await install_app(
-        db, team_id=TEAM, app_id=app["app_id"], origin=app["origin"], app_version="1.0.0",
-        manifest_version=2, digest=app["digest"], granted_scopes=[],
-    )
+    await seed_hook_installation(db, app, team_id=TEAM, installation_id=installation_id)
     async with db.transaction() as tx:
         written = await write_pending_bindings(
             tx, team_id=TEAM, app_id=app["app_id"], origin=app["origin"], digest=app["digest"],

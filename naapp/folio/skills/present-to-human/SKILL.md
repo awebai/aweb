@@ -31,11 +31,14 @@ aw id request GET "$FOLIO_ORIGIN/v1/documents/<slug>/versions" --team-auth --raw
 ## 2. Mint the present link
 
 Use the document slug. `version` is optional; omit it to pin the current latest.
-`ttl_seconds` is optional and capped by server config.
+`ttl_seconds` is optional: read-only links default to one day (`86400` seconds)
+and accept up to 30 days (`2592000` seconds), or the operator's lower configured
+maximum. An explicit TTL above that maximum returns `422`; it is not silently
+shortened. Editable links (`"editable":true`) remain limited to 300 seconds.
 
 ```bash
 cat > present.json <<'JSON'
-{"slug":"<slug>","version":1,"ttl_seconds":86400}
+{"slug":"<slug>","version":1,"ttl_seconds":2592000}
 JSON
 aw id request POST "$FOLIO_ORIGIN/v1/present" --team-auth --raw \
   --body-file present.json \

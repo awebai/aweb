@@ -6,7 +6,6 @@ import os
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-from aweb_naapp_testing import Registry
 from aweb_naapp_testing.owner_acts import (
     TeamOwner,
     designation_subject,
@@ -14,6 +13,7 @@ from aweb_naapp_testing.owner_acts import (
     team_owner,
 )
 from aweb_naapp_testing.webauthn import SoftAuthenticator, b64url
+from awid_service.testing import Registry
 from pgdbm import AsyncDatabaseManager
 
 from aweb_naapp.console import MAX_SESSION, ConsoleSessions, apply_console_migrations

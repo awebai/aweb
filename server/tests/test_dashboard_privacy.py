@@ -18,14 +18,12 @@ import httpx
 import pytest
 import pytest_asyncio
 from redis.asyncio import Redis
+from redis.asyncio.client import PubSub
 from starlette.requests import Request
 import uvicorn
 
-from aweb.api import (
-    create_app,
-    _shutdown_federation_outbox_replay,
-    _shutdown_lifecycle_outbox_replay,
-)
+from aweb.api import create_app
+from aweb.outbox_recovery import stop_outbox_recovery
 from aweb.db import DatabaseInfra
 from aweb.events import MessageDeliveredEvent, ChatMessageEvent, TaskCreatedEvent, publish_event, team_events_channel_name
 from aweb.mutation_hooks import create_mutation_handler
@@ -48,6 +46,10 @@ from test_messages_http import (
 # Avoid channel/key collisions when sharing the gate Redis with other runs.
 TEAM_NAME = f"privacy-{uuid4().hex[:12]}"
 TEAM = f"{TEAM_NAME}:example.test"
+# This module names one team even when its databases are recreated. Preserve
+# that team's authority across fixtures: shared Redis may still cache its key
+# when an ephemeral registry origin is reused.
+_TEAM_SIGNING_KEY, _, _TEAM_DID_KEY = _make_keypair()
 
 
 @pytest_asyncio.fixture
@@ -93,7 +95,7 @@ async def privacy_app(shared_test_pool, monkeypatch):
 
             app.state.on_mutation = observe_mutation
             manager = db.get_manager("aweb")
-            team_sk, _, team_did = _make_keypair()
+            team_sk, team_did = _TEAM_SIGNING_KEY, _TEAM_DID_KEY
             await manager.execute(
                 "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) "
                 "VALUES ($1, 'example.test', $2, $3)", TEAM, TEAM_NAME, team_did,
@@ -126,7 +128,7 @@ async def privacy_app(shared_test_pool, monkeypatch):
             sock = socket.socket()
             sock.bind(("127.0.0.1", 0))
             app.state.public_origin = f"http://127.0.0.1:{sock.getsockname()[1]}"
-            server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="error"))
+            server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="error", ws="none"))
             serving = asyncio.create_task(server.serve(sockets=[sock]))
             try:
                 for _ in range(100):
@@ -146,8 +148,7 @@ async def privacy_app(shared_test_pool, monkeypatch):
                 server.should_exit = True
                 await asyncio.wait_for(serving, 5)
                 sock.close()
-                await _shutdown_lifecycle_outbox_replay(app)
-                await _shutdown_federation_outbox_replay(app)
+                await stop_outbox_recovery(app)
                 await registry.aclose()
         await registry_db.close()
         await db.close()
@@ -396,7 +397,7 @@ async def test_status_stream_keeps_mail_private_and_team_tasks_visible(privacy_a
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("colliding_workspace", [False, True])
-async def test_embedded_public_status_reader_never_gets_messaging(privacy_app, colliding_workspace):
+async def test_embedded_public_status_reader_never_gets_messaging(privacy_app, colliding_workspace, monkeypatch):
     """Exercise the real embedded route with its host-supplied public identity.
 
     The standalone app does not authenticate public principals. The host's
@@ -416,6 +417,28 @@ async def test_embedded_public_status_reader_never_gets_messaging(privacy_app, c
             "INSERT INTO {{tables.workspaces}} (workspace_id, team_id, agent_id, alias) "
             "VALUES ($1, $2, $3, 'public-collision')", UUID(workspace_id), TEAM, UUID(actor_id),
         )
+    # Observe this stream's own server acknowledgement, not a second
+    # connection's count. Redis transport and the route's filters stay real.
+    channel = f"events:{workspace_id}"
+    subscribed = asyncio.Event()
+    subscribe = PubSub.subscribe
+    handle_message = PubSub.handle_message
+
+    async def delayed_subscribe(pubsub, *channels, **kwargs):
+        if not colliding_workspace and channel in channels:
+            # Reproduce a cold start beyond the old five-second poll budget.
+            await asyncio.sleep(6)
+        return await subscribe(pubsub, *channels, **kwargs)
+
+    async def observe_ack(pubsub, response, *args, **kwargs):
+        result = await handle_message(pubsub, response, *args, **kwargs)
+        if response[0] in ("subscribe", b"subscribe") and response[1] in (channel, channel.encode()):
+            subscribed.set()
+        return result
+
+    monkeypatch.setattr(PubSub, "subscribe", delayed_subscribe)
+    monkeypatch.setattr(PubSub, "handle_message", observe_ack)
+
     header = build_internal_auth_header_value(
         secret="disposable-embedding-test-secret", team_id=TEAM,
         principal_type="p", principal_id="anonymous", actor_id=actor_id,
@@ -435,10 +458,13 @@ async def test_embedded_public_status_reader_never_gets_messaging(privacy_app, c
     )
     stream = response.body_iterator
     next_item = asyncio.create_task(anext(stream))
+    subscription_ready = asyncio.create_task(subscribed.wait())
     try:
-        async with asyncio.timeout(5):
-            while not (await env.redis.pubsub_numsub(f"events:{workspace_id}"))[0][1]:
-                await asyncio.sleep(0.01)
+        done, _ = await asyncio.wait(
+            {next_item, subscription_ready}, return_when=asyncio.FIRST_COMPLETED,
+        )
+        if next_item in done:
+            pytest.fail(f"Stream ended before its subscription acknowledgement: {next_item.result()!r}")
         for event in (
             MessageDeliveredEvent(workspace_id=workspace_id, subject="private subject"),
             ChatMessageEvent(workspace_id=workspace_id, session_id="private-session"),
@@ -450,7 +476,65 @@ async def test_embedded_public_status_reader_never_gets_messaging(privacy_app, c
         assert event["type"] == "task.created"
         assert event["task_ref"] == "public-control"
     finally:
-        if not next_item.done():
-            next_item.cancel()
-            await asyncio.gather(next_item, return_exceptions=True)
+        for task in (next_item, subscription_ready):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(next_item, subscription_ready, return_exceptions=True)
         await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_agent_roster_masks_keys_bound_to_unverified_stable_identity(privacy_app):
+    """An unrelated global row must not invalidate a local caller's roster."""
+    from awid.e2ee_keys import build_encryption_key_assertion, validate_encryption_key_assertion
+    from aweb.e2ee_messages import generate_x25519_keypair
+
+    env = privacy_app
+    bob = env.actors["bob"]
+    registered = await env.app.state.awid_registry_client.register_did(bob.did, bob.sk)
+    await env.db.execute(
+        "UPDATE {{tables.agents}} SET did_aw=$1, identity_scope='global' WHERE agent_id=$2",
+        registered.did_aw, bob.id,
+    )
+    certificate = _encode_certificate(_make_certificate(
+        env.team_sk, env.team_did, bob.did, team_id=TEAM, alias="bob",
+        identity_scope="global", member_did_aw=registered.did_aw,
+    ))
+    _, public = generate_x25519_keypair()
+    assertion = build_encryption_key_assertion(
+        signing_key=bob.sk, identity_did=bob.did, identity_stable_id=registered.did_aw,
+        encryption_public_key=public,
+    )
+    content = json.dumps(assertion).encode()
+    published = await env.client.put("/v1/agents/me/encryption-key", content=content, headers={
+        **_signed_team_headers(bob.sk, bob.did, TEAM, certificate, content),
+        "Content-Type": "application/json",
+    })
+    assert published.status_code == 200, published.text
+    alice = env.actors["alice"]
+    for verified in (False, True):
+        # Models the migration/reverification window after a key was published.
+        await env.db.execute(
+            "UPDATE {{tables.agents}} SET did_aw_verified_key=$1 WHERE agent_id=$2",
+            bob.did if verified else None, bob.id,
+        )
+        response = await env.client.get("/v1/agents", headers=_signed_team_headers(
+            alice.sk, alice.did, TEAM, alice.certificate,
+        ))
+        assert response.status_code == 200, response.text
+        rows = response.json()["agents"]
+        peer = next(row for row in rows if row["alias"] == "bob")
+        assert peer["did_key"] == bob.did
+        assert peer["did_aw"] == (registered.did_aw if verified else None)
+        for row in rows:
+            if row.get("encryption_key"):
+                # Same identity-binding rule used by released aw's verifier.
+                validate_encryption_key_assertion(
+                    row["encryption_key"], current_did_key=row["did_key"],
+                    stable_id=row.get("did_aw"), now=datetime.now(timezone.utc),
+                )
+        assert peer.get("encryption_key") == (published.json()["encryption_key"] if verified else None)
+        marker = await env.db.fetch_one(
+            "SELECT did_aw_verified_key FROM {{tables.agents}} WHERE agent_id=$1", bob.id,
+        )
+        assert marker["did_aw_verified_key"] == (bob.did if verified else None)

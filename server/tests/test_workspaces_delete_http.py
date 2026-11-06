@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from identity_binding_support import seed_verified_bindings
+
 import base64
 import json
 from datetime import datetime, timedelta, timezone
@@ -681,6 +683,7 @@ async def test_delete_workspace_rejects_persistent_identity(aweb_cloud_db):
     )
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    seed_verified_bindings(app, ("did:aw:maintainer", agent_did_key, "acme.com/maintainer"))
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",

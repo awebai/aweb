@@ -13,9 +13,9 @@ from pathlib import Path
 
 import httpx
 import pytest
-from aweb_naapp_testing import REGISTRY_URL
 from awid.attestation_records import sign_record
 from awid.signing import canonical_json_bytes
+from awid_service.testing import REGISTRY_URL
 
 from aweb_naapp.runtime.attestation import (
     AttestationRefused,

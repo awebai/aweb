@@ -19,6 +19,7 @@ set -euo pipefail
 #
 # Usage: check-server-version-bump.sh [BASE_REF]
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$(git rev-parse --show-toplevel)"
 
 if [ ! -f server/pyproject.toml ]; then
@@ -41,9 +42,13 @@ require_greater() {
     echo "Bump the version in server/pyproject.toml (and run 'uv lock' in server/) so the next release tag covers these changes." >&2
     exit 1
   fi
-  local highest
-  highest="$(printf '%s\n%s\n' "$from_version" "$current_version" | sort -V | tail -n 1)"
-  if [ "$highest" != "$current_version" ]; then
+  if ! python3 - "$SCRIPT_DIR" "$from_version" "$current_version" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from release_versions import python_version_key
+raise SystemExit(0 if python_version_key(sys.argv[3]) > python_version_key(sys.argv[2]) else 1)
+PY
+  then
     echo "ERROR: server/pyproject.toml version $current_version is lower than $from_label ($from_version)." >&2
     exit 1
   fi

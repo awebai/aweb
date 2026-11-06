@@ -20,9 +20,12 @@ from aweb_logs.ledger import (
     LogsSigner,
     OriginMismatch,
     append,
+    append_on,
+    checkpoint_moved_heads,
     issue_checkpoint,
     load_epoch,
     open_next_epoch,
+    verify_epoch,
 )
 from aweb_logs.verify import verify_chain
 
@@ -285,3 +288,150 @@ async def test_a_checkpoint_waiting_on_an_epoch_move_witnesses_the_new_epoch(
         )
     checkpoint = open_checkpoint(*await waiting)
     assert (checkpoint.chain_epoch, checkpoint.team_seq) == (2, 0)
+
+
+async def _checkpoint_seqs(db: AsyncDatabaseManager, team_id: str = TEAM_ID) -> list[tuple[int, int]]:
+    rows = await db.fetch_all(
+        "SELECT chain_epoch, team_seq FROM {{tables.chain_checkpoints}}"
+        " WHERE team_id = $1 ORDER BY position",
+        team_id,
+    )
+    return [(row["chain_epoch"], row["team_seq"]) for row in rows]
+
+
+async def test_a_pass_checkpoints_each_head_that_moved_and_nothing_else(
+    db: AsyncDatabaseManager,
+) -> None:
+    await _append(db, team_id=TEAM_ID)
+    await _append(db, team_id=TEAM_ID, seq=2)
+    await _append(db, team_id=OTHER_TEAM)
+    assert sorted(await checkpoint_moved_heads(db, SIGNER, issued_at=START)) == sorted(
+        [TEAM_ID, OTHER_TEAM]
+    )
+    assert await _checkpoint_seqs(db) == [(1, 2)]
+    assert await checkpoint_moved_heads(db, SIGNER, issued_at=START) == []
+
+    await _append(db, team_id=TEAM_ID, seq=3)
+    assert await checkpoint_moved_heads(db, SIGNER, issued_at=START) == [TEAM_ID]
+    assert await _checkpoint_seqs(db) == [(1, 2), (1, 3)]
+    checkpoints = await db.fetch_all(
+        "SELECT signing_bytes, signature FROM {{tables.chain_checkpoints}}"
+        " WHERE team_id = $1 ORDER BY position",
+        TEAM_ID,
+    )
+    report = await _verify(
+        db, checkpoints=[(bytes(row["signing_bytes"]), row["signature"]) for row in checkpoints]
+    )
+    assert report.intact
+
+
+async def test_a_pass_skips_an_epoch_with_no_events_yet(db: AsyncDatabaseManager) -> None:
+    await _append(db)
+    await open_next_epoch(db, SIGNER, TEAM_ID, at=START)
+    assert await checkpoint_moved_heads(db, SIGNER, issued_at=START) == []
+    assert await _checkpoint_seqs(db) == [(1, 1)]
+
+
+async def test_a_pass_leaves_an_epoch_of_another_origin_to_it(db: AsyncDatabaseManager) -> None:
+    await _append(db)
+    await open_next_epoch(db, SIGNER, TEAM_ID, at=START, logs_origin=MOVED.logs_origin)
+    signing, signature = signed_event("core", event_id=str(uuid.uuid4()), seq=2)
+    await append(
+        db,
+        MOVED,
+        event=hook_envelope.verify(signing, signature, team_id=TEAM_ID),
+        signing_bytes=signing,
+        signature=signature,
+        key_evidence=_evidence(signing),
+        received_at=START,
+    )
+    assert await checkpoint_moved_heads(db, SIGNER, issued_at=START) == []
+    assert await checkpoint_moved_heads(db, MOVED, issued_at=START) == [TEAM_ID]
+    assert await _checkpoint_seqs(db) == [(1, 1), (2, 1)]
+
+
+async def test_concurrent_passes_sign_each_moved_head_once(db: AsyncDatabaseManager) -> None:
+    for seq in range(1, 4):
+        await _append(db, seq=seq)
+    passes = await asyncio.gather(
+        *(checkpoint_moved_heads(db, SIGNER, issued_at=START) for _ in range(6))
+    )
+    assert sorted(team for result in passes for team in result) == [TEAM_ID]
+    assert await _checkpoint_seqs(db) == [(1, 3)]
+
+
+async def test_caller_transaction_rolls_back_its_effect_and_chain_append(
+    db: AsyncDatabaseManager,
+) -> None:
+    await db.execute("CREATE TABLE {{tables.caller_effects}} (effect_id INTEGER PRIMARY KEY)")
+    signing, signature = signed_event("app", event_id=str(uuid.uuid4()))
+    event = hook_envelope.verify(signing, signature, team_id=TEAM_ID)
+    with pytest.raises(RuntimeError, match="forced caller rollback"):
+        async with db.transaction() as tx:
+            await tx.execute("INSERT INTO {{tables.caller_effects}} VALUES (1)")
+            result = await append_on(
+                tx, SIGNER, event=event, signing_bytes=signing, signature=signature,
+                key_evidence=_evidence(signing), received_at=START,
+            )
+            assert isinstance(result, Appended) and not result.duplicate
+            assert await tx.fetch_value("SELECT count(*) FROM {{tables.chain_events}}") == 1
+            raise RuntimeError("forced caller rollback")
+    for table in ("caller_effects", "chain_events", "chain_epochs", "chain_heads"):
+        assert await db.fetch_value("SELECT count(*) FROM {{tables." + table + "}}") == 0
+
+
+async def test_caller_transaction_commits_the_original_receipt_for_later_redelivery(
+    db: AsyncDatabaseManager,
+) -> None:
+    await db.execute("CREATE TABLE {{tables.caller_effects}} (effect_id INTEGER PRIMARY KEY)")
+    event_id = str(uuid.uuid4())
+    signing, signature = signed_event("app", event_id=event_id)
+    event = hook_envelope.verify(signing, signature, team_id=TEAM_ID)
+    async with db.transaction() as tx:
+        await tx.execute("INSERT INTO {{tables.caller_effects}} VALUES (1)")
+        first = await append_on(
+            tx, SIGNER, event=event, signing_bytes=signing, signature=signature,
+            key_evidence=_evidence(signing), received_at=START,
+        )
+    delivered = await append(
+        db, SIGNER, event=event, signing_bytes=signing, signature=signature,
+        key_evidence=_evidence(signing), received_at=START + timedelta(seconds=1),
+    )
+    assert isinstance(first, Appended) and isinstance(delivered, Appended)
+    assert not first.duplicate and delivered.duplicate and delivered.receipt == first.receipt
+    assert await db.fetch_value("SELECT count(*) FROM {{tables.caller_effects}}") == 1
+    assert await db.fetch_value("SELECT team_seq FROM {{tables.chain_heads}}") == 1
+    assert (await _verify(db, receipts=[first.receipt])).intact
+
+
+async def test_verify_reports_conflicts_in_this_team_epoch_without_returning_refused_content(db):
+    event_id = str(uuid.uuid4())
+    await _append(db, event_id=event_id, seq=40)
+    await _append(db, event_id=event_id, seq=41)
+    await _append(db, team_id=OTHER_TEAM)
+    report = await verify_epoch(db, TEAM_ID, 1, receipt_keys=LOGS_KEYS, checkpoint_keys=LOGS_KEYS)
+    assert report["intact"] is True
+    conflict, = report["conflicts"]
+    assert conflict["event_id"] == event_id
+    assert conflict["team_seq"] == 1
+    assert conflict["kind"] == "event_conflict"
+    assert set(conflict) == {"fault_id", "event_id", "team_seq", "kind", "refused_sha256", "recorded_at"}
+    assert (await verify_epoch(db, OTHER_TEAM, 1, receipt_keys=LOGS_KEYS, checkpoint_keys=LOGS_KEYS))["conflicts"] == []
+    await open_next_epoch(db, SIGNER, TEAM_ID, at=START + timedelta(hours=1))
+    assert (await verify_epoch(db, TEAM_ID, 2, receipt_keys=LOGS_KEYS, checkpoint_keys=LOGS_KEYS))["conflicts"] == []
+
+
+async def test_duplicate_keeps_each_admitted_binding_context_but_the_original_receipt(db):
+    signing, signature = signed_event("app", event_id=str(uuid.uuid4()))
+    event = hook_envelope.verify(signing, signature, team_id=TEAM_ID)
+    receipts = []
+    for binding_id in ("first", "second", "second"):
+        evidence = {**_evidence(signing), "admissions": [{"registration": {"binding_id": binding_id}}]}
+        result = await append(db, SIGNER, event=event, signing_bytes=signing, signature=signature,
+                              key_evidence=evidence, received_at=START)
+        assert isinstance(result, Appended)
+        receipts.append(result.receipt)
+    assert receipts[0] == receipts[1] == receipts[2]
+    _, events = await load_epoch(db, TEAM_ID, 1)
+    stored, = events
+    assert [a["registration"]["binding_id"] for a in stored.key_evidence["admissions"]] == ["first", "second"]

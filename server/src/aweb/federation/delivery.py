@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from aweb.agent_wake import record_did_wakes
+from aweb.messaging.chat_policy import HumanChatRefused, recipient_label
+from aweb.messaging.messages import _is_global_recipient
+
 import hashlib
 import json
 import logging
@@ -16,6 +20,8 @@ from awid.federation_errors import FederationAuthorityError
 from pgdbm.errors import AsyncDBError
 from awid.signing import canonical_json_bytes
 
+from aweb.inbound_modes import INBOUND_MODES, effective_inbound_mode
+from aweb.service_errors import ForbiddenError
 from aweb.e2ee_messages import encrypted_message_storage_metadata
 from aweb.federation.authority_state import AuthoritySecurityToken
 from aweb.federation.envelope import FederationEnvelope
@@ -242,19 +248,36 @@ async def _lock_current_recipient(
     agent_id = recipient.get("agent_id")
     if agent_id is None:
         raise FederationAuthorityError("recipient_identity_not_found")
+    # Lock the whole identity in stable order before touching the selected row.
+    # SHARE suffices for the selected row too; upgrading to UPDATE would deadlock
+    # concurrent deliveries that address different memberships of this identity.
+    identity_did = str(await tx.fetch_value(
+        "SELECT did_aw FROM {{tables.agents}} WHERE agent_id=$1 AND deleted_at IS NULL",
+        agent_id,
+    ) or "")
+    identity_mode = None
+    if identity_did.startswith("did:aw:"):
+        try:
+            identity_mode = await effective_inbound_mode(tx, identity_did, for_share=True)
+        except ForbiddenError as exc:
+            raise FederationAuthorityError("recipient_policy_rejected") from exc
     row = await tx.fetch_one(
         """
-        SELECT agent_id, team_id, did_key, did_aw, address, alias,
-               inbound_mode, identity_scope
+        SELECT agent_id, team_id, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, alias,
+               inbound_mode, agent_type, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw
         FROM {{tables.agents}}
         WHERE agent_id = $1 AND deleted_at IS NULL
-        FOR UPDATE
+        FOR SHARE
         """,
         agent_id,
     )
     if row is None:
         raise FederationAuthorityError("recipient_identity_not_found")
     current = dict(row)
+    if str(current.get("policy_did_aw") or "") != identity_did:
+        raise FederationAuthorityError("recipient_identity_not_found")
+    if identity_mode is not None:
+        current["inbound_mode"] = identity_mode
     target_did = str(envelope.target_did_aw or "").strip()
     if target_did.startswith("did:aw:"):
         if str(current.get("did_aw") or "").strip() != target_did:
@@ -329,23 +352,23 @@ async def _authorize_policy(
     stored_route_continuation: bool,
 ) -> None:
     mode = str(recipient.get("inbound_mode") or "").strip().lower()
-    recipient_global = str(recipient.get("did_aw") or "").startswith("did:aw:")
+    recipient_global = _is_global_recipient(recipient)
     if recipient_global and mode == "open":
         return
-    if recipient_global and mode not in {"team_and_contacts", "contacts_only"}:
+    if recipient_global and mode not in INBOUND_MODES:
         raise FederationAuthorityError("recipient_policy_rejected")
     if not recipient_global and stored_route_continuation:
         return
 
     recipient_team = str(recipient.get("team_id") or "").strip()
-    if recipient_team:
+    if recipient_team and not (recipient_global and mode == "contacts_only"):
         same_team = await tx.fetch_one(
             """
             SELECT agent_id FROM {{tables.agents}}
             WHERE team_id = $1 AND deleted_at IS NULL
-              AND (did_aw = $2 OR did_key = $2)
+              AND ((did_aw = $2 AND did_aw_verified_key = did_key) OR did_key = $2)
             LIMIT 1
-            FOR UPDATE
+            FOR SHARE
             """,
             recipient_team,
             envelope.sender_did_aw,
@@ -605,7 +628,7 @@ async def _upsert_conversation_participants(
         raise FederationAuthorityError("federation_conversation_invalid")
 
 
-async def _store_mail(tx, envelope: FederationEnvelope, signature: str, recipient: dict):
+async def _store_mail(tx, envelope: FederationEnvelope, signature: str, recipient: dict, id_chain=None):
     metadata = (
         encrypted_message_storage_metadata(envelope.encrypted_envelope or {})
         if envelope.content_mode == "encrypted_v2"
@@ -621,11 +644,11 @@ async def _store_mail(tx, envelope: FederationEnvelope, signature: str, recipien
             encrypted_ciphertext, encrypted_key_wraps, encrypted_ciphertext_hash,
             encrypted_ciphertext_size, encrypted_key_wraps_hash,
             encrypted_inner_header_hash, encrypted_suite,
-            encrypted_signing_key_id, signed_envelope_hash
+            encrypted_signing_key_id, signed_envelope_hash, id_chain
         ) VALUES (
             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL, $11,
             $12, $13, clock_timestamp(), $14, $15, $16, $17::jsonb,
-            $18, $19::jsonb, $20, $21, $22, $23, $24, $25, $26
+            $18, $19::jsonb, $20, $21, $22, $23, $24, $25, $26, $27::jsonb
         ) RETURNING message_id, created_at
         """,
         UUID(envelope.message_id),
@@ -654,6 +677,7 @@ async def _store_mail(tx, envelope: FederationEnvelope, signature: str, recipien
         metadata.get("encrypted_suite"),
         metadata.get("encrypted_signing_key_id"),
         metadata.get("signed_envelope_hash"),
+        json.dumps(id_chain) if id_chain is not None else None,
     )
     await tx.execute(
         "UPDATE {{tables.conversations}} SET updated_at = clock_timestamp() WHERE conversation_id = $1",
@@ -662,7 +686,7 @@ async def _store_mail(tx, envelope: FederationEnvelope, signature: str, recipien
     return row
 
 
-async def _store_chat(tx, envelope: FederationEnvelope, signature: str):
+async def _store_chat(tx, envelope: FederationEnvelope, signature: str, id_chain=None):
     metadata = (
         encrypted_message_storage_metadata(envelope.encrypted_envelope or {})
         if envelope.content_mode == "encrypted_v2"
@@ -686,11 +710,11 @@ async def _store_chat(tx, envelope: FederationEnvelope, signature: str):
             encrypted_ciphertext_hash, encrypted_ciphertext_size,
             encrypted_key_wraps_hash, encrypted_inner_header_hash,
             encrypted_suite, encrypted_signing_key_id, signed_envelope_hash,
-            created_at
+            created_at, id_chain
         ) VALUES (
             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
             $11, $12, $13, $14, $15::jsonb, $16, $17::jsonb,
-            $18, $19, $20, $21, $22, $23, $24, clock_timestamp()
+            $18, $19, $20, $21, $22, $23, $24, clock_timestamp(), $25::jsonb
         ) RETURNING message_id, created_at
         """,
         UUID(envelope.message_id),
@@ -717,6 +741,7 @@ async def _store_chat(tx, envelope: FederationEnvelope, signature: str):
         metadata.get("encrypted_suite"),
         metadata.get("encrypted_signing_key_id"),
         metadata.get("signed_envelope_hash"),
+        json.dumps(id_chain) if id_chain is not None else None,
     )
     await tx.execute(
         """
@@ -741,6 +766,10 @@ async def replay_federation_mutation_outbox(app, manager, *, limit: int = 100) -
     callback = getattr(app.state, "on_mutation", None)
     if callback is None:
         return 0
+    return await deliver_federation_mutation_outbox(manager, callback, limit=limit)
+
+
+async def deliver_federation_mutation_outbox(manager, callback, *, limit: int = 100) -> int:
     delivered = 0
     async with manager.transaction() as tx:
         rows = await tx.fetch_all(
@@ -795,6 +824,7 @@ async def _deliver_federated_phase_b(
     envelope: FederationEnvelope,
     signature: str,
     recipient: dict,
+    id_chain: dict | None = None,
     authority_token: AuthoritySecurityToken | None,
     stored_route_continuation: bool = False,
     stored_route_snapshot: dict | None = None,
@@ -843,6 +873,8 @@ async def _deliver_federated_phase_b(
             envelope=envelope,
             recipient=recipient,
         )
+        if envelope.type == "chat" and recipient.get("agent_type") == "human":
+            raise HumanChatRefused(recipient_label(recipient))
         if stored_route_continuation:
             if stored_route_snapshot is None:
                 raise FederationAuthorityError("federation_conversation_invalid")
@@ -894,7 +926,7 @@ async def _deliver_federated_phase_b(
                 recipient,
                 preserve_existing_route=stored_route_continuation,
             )
-            message = await _store_mail(tx, envelope, signature, recipient)
+            message = await _store_mail(tx, envelope, signature, recipient, id_chain)
         else:
             await _ensure_chat_session(
                 tx,
@@ -902,7 +934,10 @@ async def _deliver_federated_phase_b(
                 recipient,
                 preserve_existing_route=stored_route_continuation,
             )
-            message = await _store_chat(tx, envelope, signature)
+            message = await _store_chat(tx, envelope, signature, id_chain)
+        # Wake the recipient row this delivery resolved and locked, never the
+        # envelope's target or the stored to_did.
+        record_did_wakes((recipient.get("did_aw"), recipient.get("did_key")), envelope.type)
 
         created_at: datetime = message["created_at"]
         result: dict[str, object] = {
@@ -959,6 +994,7 @@ async def deliver_federated_phase_b(
     envelope: FederationEnvelope,
     signature: str,
     recipient: dict,
+    id_chain: dict | None = None,
     authority_token: AuthoritySecurityToken | None,
     stored_route_continuation: bool = False,
     stored_route_snapshot: dict | None = None,
@@ -971,6 +1007,7 @@ async def deliver_federated_phase_b(
             envelope=envelope,
             signature=signature,
             recipient=recipient,
+            id_chain=id_chain,
             authority_token=authority_token,
             stored_route_continuation=stored_route_continuation,
             stored_route_snapshot=stored_route_snapshot,

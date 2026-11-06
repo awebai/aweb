@@ -12,6 +12,71 @@ The design is [the audit substrate](../../docs/design/audit-substrate.md),
 Part B. The artefacts logs signs, and the chain they commit to, are specified
 in [the logs chain](../../docs/logs-chain.md).
 
+## Configuration
+
+logs reads its settings from `LOGS_`-prefixed environment variables:
+
+- `LOGS_DATABASE_URL` and `LOGS_PUBLIC_ORIGIN`;
+- `LOGS_AWID_REGISTRY_URL` and, for private team facts, `LOGS_AWID_SERVICE_TOKEN`;
+- `LOGS_APP_ID`, the deployment's own app id. The hosted id `logs` is refused at
+  any other origin a team can reach. Keep it for the deployment's lifetime:
+  changing it orphans every team's installation;
+- `LOGS_APP_KEY_FILES`, a JSON object from each kid the committed manifest
+  declares (`logs-chain`, `logs-resolve`) to the path of that kid's key file.
+
+The committed manifest is a template: logs serves it with its app id, origin and
+each kid's did:key derived from these key files, and does not start without a
+key for every declared kid or with a key file for any other. The `logs-chain`
+key signs receipts and checkpoints.
+
+## Running
+
+```bash
+uvicorn aweb_logs.app:serve --factory
+docker build -f naapp/logs/Dockerfile .   # from the repository root
+```
+
+The image takes the same environment; mount the key files, never build them in.
+
+While logs runs, each team whose chain has new events gets a signed checkpoint
+every `LOGS_CHECKPOINT_INTERVAL_SECONDS` (default 300); an idle team gets none.
+
+## Ingestion
+
+`POST /v1/hooks/ingest` accepts the shared `AWEB-Hook DIDKey` delivery
+credential, not ordinary team-auth requests. Admission checks transport,
+logs' active registration, the producer's registered authority, then the
+packaged catalog's payload schema before deduplication and append. Unavailable
+binding or producer authority returns 503 so the sender can retry.
+
+Client certificates are verified against a fresh controller-key read and the
+runtime's shared certificate publication/revocation policy. Client quotas are
+per member certificate in fixed UTC minute windows:
+
+- `LOGS_CLIENT_EVENTS_PER_MINUTE` defaults to **30**;
+- `LOGS_CLIENT_BYTES_PER_MINUTE` defaults to **131072** (128 KiB), counted from
+  the canonical delivery body.
+
+Both limits are configurable. The quota charge and append share one
+transaction. Identical redelivery returns the original receipt without
+spending quota; conflicting bytes return `409 event_conflict` and record a
+fault without replacing the original event. Successful responses include
+`event_id`, `disposition` (`appended` or `duplicate`), and `receipt`, whose
+`signing_bytes` are unpadded base64url and whose `signature` is the chain
+signer's detached signature.
+
+The receiver requires an active binding. Terminal revocation delivery remains
+subject to the paired producer/receiver contract amendment; it has no special
+admission exception here.
+
+When a local governance effect and its chain entry must commit together, use
+`aweb_logs.ledger.append_on(tx, signer, ...)` with the caller's transaction.
+`append(db, signer, ...)` opens its own transaction and delegates to that same
+implementation. The caller passes the shared producer's verified immutable
+event bytes after ordinary production authorization and widening admission;
+self-append does not waive those checks or deliveries owed to other targets.
+A later delivery of those bytes returns the original receipt.
+
 ## Development
 
 ```bash

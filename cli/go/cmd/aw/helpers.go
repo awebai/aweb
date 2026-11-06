@@ -531,6 +531,11 @@ func resolveClientSelectionForAliasTarget(ctx context.Context, targetAlias strin
 	if found {
 		return c, sel, nil
 	}
+	// Preserve a current-team human alias before native-agent fallback searches
+	// another local membership with the same display label.
+	if _, live, lookupErr := resolveLiveTeamMemberAliasTarget(ctx, sel, targetAlias); lookupErr == nil && live {
+		return c, sel, nil
+	}
 
 	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(sel.WorkspacePath)
 	if err != nil || workspace == nil {
@@ -774,6 +779,20 @@ func configureResolvedClientWithRoster(c, rosterClient *aweb.Client, sel *awconf
 		c.SetStableID(sel.StableID)
 	}
 	c.SetRequireRecipientBindingForDirectAddresses(strings.TrimSpace(sel.IdentityScope) == awid.IdentityModeGlobal || strings.TrimSpace(sel.StableID) != "")
+	// The chain belongs to the identity (or grant subject), never the team.
+	chainHome := strings.TrimSpace(sel.IdentityHome)
+	if chainHome == "" {
+		chainHome = awconfig.WorktreeIdentityHome(sel.WorkingDir)
+	}
+	installed, err := awconfig.LoadInstalledIDChain(chainHome)
+	if err != nil {
+		return fmt.Errorf("load ID chain %s: %w", filepath.Join(chainHome, "id-chain.json"), err)
+	}
+	if installed != nil {
+		if err := c.SetIDChain(installed.Bundle); err != nil {
+			return err
+		}
+	}
 
 	pinPath, err := awconfig.DefaultKnownAgentsPath()
 	if err != nil {
@@ -1591,7 +1610,7 @@ func formatJSONOutput(v any) string {
 }
 
 func printJSON(v any) {
-	fmt.Println(formatJSONOutput(v))
+	fmt.Fprintln(commandStdout, formatJSONOutput(v))
 }
 
 func addJSONNameCompat(v any) any {
@@ -1626,7 +1645,7 @@ func writeOutput(w io.Writer, v any, formatter func(v any) string) error {
 }
 
 func printOutput(v any, formatter func(v any) string) {
-	_ = writeOutput(os.Stdout, v, formatter)
+	_ = writeOutput(commandStdout, v, formatter)
 }
 
 func parseTimeBestEffort(value string) (time.Time, bool) {
@@ -1740,15 +1759,42 @@ func checkVerificationRequired(err error) string {
 // is "aweb: http 404: ..." which looks like a broken endpoint. This rewrites it
 // to mention the target address.
 func networkError(err error, target string) error {
+	if refused := humanMailOnlyRefusal(err); refused != err {
+		return refused
+	}
 	var recipientErr *awid.RecipientResolutionError
 	if errors.As(err, &recipientErr) {
 		return err
 	}
 	code, ok := awid.HTTPStatusCode(err)
 	if ok && code == 404 {
+		switch httpErrorReason(err) {
+		case "recipient_identity_not_found":
+			if detail := awid.DescribeError(err).Detail; detail != "" && detail != "recipient_identity_not_found" {
+				return &plainRefusal{text: termtext.Line(detail), err: err}
+			}
+			return fmt.Errorf("%s is not a member of your team or a registered address. Check the name with `aw workspace status`.", target)
+		case "local_recipient_route_missing":
+			return errors.New(awid.UnreachableAddressText(target))
+		}
 		return fmt.Errorf("agent not found: %s", target)
 	}
 	return err
+}
+
+// httpErrorReason returns the stable reason of a server refusal body.
+func httpErrorReason(err error) string {
+	body, ok := awid.HTTPErrorBody(err)
+	if !ok {
+		return ""
+	}
+	var envelope struct {
+		Reason string `json:"reason"`
+	}
+	if json.Unmarshal([]byte(strings.TrimSpace(body)), &envelope) != nil {
+		return ""
+	}
+	return strings.TrimSpace(envelope.Reason)
 }
 
 func httpErrorDetail(err error) string {
@@ -1898,7 +1944,9 @@ func loadSelectedTeamState(workingDir string, home awconfig.IdentityHome) (*awco
 // Validate only the selected principal. Team/workspace commands resolve any
 // additional membership state they need from this same home.
 func validateSelectedIdentityHome(home awconfig.IdentityHome) error {
-	fail := func(err error) error { return fmt.Errorf("selected identity home %s: %w", home.Root, err) }
+	fail := func(err error) error {
+		return fmt.Errorf("selected identity home %s: %w; --identity-home must name the credential directory containing signing.key or grant.yaml (usually <workspace>/.aw, not its parent)", home.Root, err)
+	}
 	if awconfig.IsGrantHome(home.Root) {
 		if _, err := awconfig.LoadGrantHome(home.Root); err != nil {
 			return fail(err)

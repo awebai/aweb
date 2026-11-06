@@ -8,7 +8,8 @@ credential signed for one purpose is never accepted for another
 those of the app-event credential, byte-identical to the Go signer for
 ``app-event`` and to ``test-vectors/app-read-credential-v1.json`` for the read
 purposes. Signatures are unpadded standard base64, the one encoding the server
-accepts for read purposes.
+accepts for read purposes. ``app-request`` additionally signs the installation
+id and generation (docs/app-task-requests.md §2).
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ APP_CREDENTIAL_VERSION = 1
 
 APP_EVENT = "app-event"
 APP_GRANT_READ = "app-grant-read"
+APP_REQUEST = "app-request"
 HOOK_RESOLVE = "hook-resolve"
 
 
@@ -41,6 +43,7 @@ class AppCredentialPurpose:
 PURPOSES: dict[str, AppCredentialPurpose] = {
     APP_EVENT: AppCredentialPurpose(auth=APP_EVENT, prefix="AWEB-App DIDKey "),
     APP_GRANT_READ: AppCredentialPurpose(auth=APP_GRANT_READ, prefix="AWEB-App-Grant-Read DIDKey "),
+    APP_REQUEST: AppCredentialPurpose(auth=APP_REQUEST, prefix="AWEB-App-Request DIDKey "),
     HOOK_RESOLVE: AppCredentialPurpose(auth=HOOK_RESOLVE, prefix="AWEB-App-Hook-Resolve DIDKey "),
 }
 
@@ -77,8 +80,14 @@ def sign_app_credential(
     key_id: str,
     body: bytes,
     timestamp: str,
+    installation_id: str | None = None,
+    installation_generation: int | None = None,
 ) -> AppCredential:
-    """Sign one request for ``purpose`` with the 32-byte Ed25519 seed ``private_key``."""
+    """Sign one request with a 32-byte Ed25519 seed.
+
+    ``app-request`` requires a nonempty installation id and a positive integer
+    generation. Other purposes keep their existing payload without those fields.
+    """
     spec = PURPOSES.get(purpose)
     if spec is None:
         raise ValueError(f"unknown app credential purpose {purpose!r}")
@@ -94,6 +103,11 @@ def sign_app_credential(
         raise ValueError("key_id is required")
     if not timestamp:
         raise ValueError("timestamp is required")
+    if purpose == APP_REQUEST:
+        if not isinstance(installation_id, str) or not installation_id.strip():
+            raise ValueError("app-request requires an installation_id")
+        if type(installation_generation) is not int or installation_generation <= 0:
+            raise ValueError("app-request requires a positive integer installation_generation")
 
     audience, path = _request_target(target)
     body_sha256 = hashlib.sha256(body).hexdigest()
@@ -112,6 +126,9 @@ def sign_app_credential(
         "body_sha256": body_sha256,
         "timestamp": timestamp,
     }
+    if purpose == APP_REQUEST:
+        payload["installation_id"] = installation_id
+        payload["installation_generation"] = installation_generation
     canonical = canonical_json_bytes(payload)
     signature_b64 = sign_message(private_key, canonical)
     signed_payload_b64url = base64.urlsafe_b64encode(canonical).rstrip(b"=").decode("ascii")
@@ -166,6 +183,8 @@ class AppCredentialSigner:
         team_id: str,
         body: bytes = b"",
         timestamp: str | None = None,
+        installation_id: str | None = None,
+        installation_generation: int | None = None,
     ) -> AppCredential:
         """Sign a request to ``target``, an absolute URL whose origin is the audience."""
         return sign_app_credential(
@@ -178,4 +197,6 @@ class AppCredentialSigner:
             key_id=self._key.kid,
             body=body,
             timestamp=_utc_seconds_now() if timestamp is None else timestamp,
+            installation_id=installation_id,
+            installation_generation=installation_generation,
         )

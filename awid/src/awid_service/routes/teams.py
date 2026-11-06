@@ -784,7 +784,7 @@ async def _bounded_rotate_body(request: Request) -> TeamRotateKeyRequest:
 @router.post(
     "/{name}/rotate",
     response_model=TeamRotateResponse,
-    dependencies=[Depends(rate_limit_dep("team_rotate"))],
+    dependencies=[Depends(rate_limit_dep("team_rotate", allow_trusted_service=True))],
 )
 async def rotate_team_key(
     request: Request,
@@ -889,7 +889,10 @@ async def register_certificate(
             raise
         constraint_name = getattr(cause, "constraint_name", "")
         if constraint_name == "idx_team_certificates_alias_active":
-            raise HTTPException(status_code=409, detail="Alias already active in team")
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "alias_active", "message": "Alias already active in team"},
+            )
         raise HTTPException(
             status_code=409,
             detail={
@@ -1169,7 +1172,7 @@ async def _team_server_body(request: Request) -> TeamServerRecordBody:
 @router.put(
     "/{name}/server",
     response_model=TeamServerRecordBody,
-    dependencies=[Depends(rate_limit_dep("team_server_publish"))],
+    dependencies=[Depends(rate_limit_dep("team_server_publish", allow_trusted_service=True))],
 )
 async def publish_team_server(
     request: Request,

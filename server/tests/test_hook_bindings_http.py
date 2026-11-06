@@ -106,6 +106,34 @@ async def test_another_teams_bindings_are_not_listed(env, monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("authenticated_team,expected_status", [(TEAM, 200), (OTHER_TEAM, 404)])
+async def test_internal_binding_reader_keeps_the_verified_team_boundary(env, monkeypatch, authenticated_team, expected_status):
+    from aweb.internal_auth import build_internal_auth_header_value
+
+    await _install(env.db)
+    await _bindings(env)
+    secret = "hook-reader-internal-test-secret"
+    principal = "00000000-0000-0000-0000-000000000111"
+    actor = "00000000-0000-0000-0000-000000000112"
+    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "true")
+    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", secret)
+    headers = {
+        "X-Team-ID": authenticated_team,
+        "X-User-ID": principal,
+        "X-AWEB-Actor-ID": actor,
+        "X-AWEB-Auth": build_internal_auth_header_value(
+            secret=secret, team_id=authenticated_team, principal_type="u", principal_id=principal, actor_id=actor,
+        ),
+    }
+    async with AsyncClient(transport=ASGITransport(app=_app(env, env.registry)), base_url="http://test") as client:
+        response = await client.get("/v1/apps/hook-bindings", params={"team_id": TEAM, "app_id": "logs"}, headers=headers)
+    assert response.status_code == expected_status, response.text
+    if expected_status == 200:
+        assert response.json()["team_id"] == TEAM
+        assert len(response.json()["bindings"]) == 2
+
+
+@pytest.mark.asyncio
 async def test_the_owner_activates_and_revokes_over_http(env, monkeypatch):
     await _install(env.db)
     await _hook_keys(env.db)

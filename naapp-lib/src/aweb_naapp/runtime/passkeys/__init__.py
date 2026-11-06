@@ -1,5 +1,6 @@
 """App-local WebAuthn passkey approvers for the approval primitive."""
 
+from aweb_naapp.runtime.passkeys.current_approver import PreparedCurrentApprovers
 from aweb_naapp.runtime.passkeys.proof import (
     PasskeyInstallationContext,
     PasskeyProofUnavailable,
@@ -24,6 +25,7 @@ from aweb_naapp.runtime.passkeys.service import (
     OwnerApproval,
     PasskeyAuthenticator,
     PasskeyDelivery,
+    PasskeyEffectFence,
     PasskeyEvidence,
     PasskeyLogin,
     Passkeys,
@@ -60,9 +62,11 @@ __all__ = [
     "OwnerApproval",
     "PasskeyAuthenticator",
     "PasskeyDelivery",
+    "PasskeyEffectFence",
     "PasskeyEvidence",
     "PasskeyLogin",
     "Passkeys",
+    "PreparedCurrentApprovers",
     "RetirementProtection",
     "RetirementRefused",
     "RegisteredPasskey",

@@ -71,9 +71,15 @@ class BrokerInput:
         try:
             if "operation" in body:
                 _require(isinstance(operation, str) and bool(operation))
+                # Discovery may miss a definition before S8 classifies the
+                # caller's grant. This remains inert; the service must match
+                # a resolved pin before persisting a dispatch context.
                 _require(
-                    isinstance(operation_digest, str)
-                    and _DIGEST.fullmatch(operation_digest) is not None
+                    operation_digest is None
+                    or (
+                        isinstance(operation_digest, str)
+                        and _DIGEST.fullmatch(operation_digest) is not None
+                    )
                 )
                 _require(not ({"method", "url", "data"} & body.keys()))
                 params = body.get("params", {})

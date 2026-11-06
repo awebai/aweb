@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -239,7 +238,7 @@ func (c *Client) ChatCreateSession(ctx context.Context, req *ChatCreateSessionRe
 		}
 		var out ChatCreateSessionResponse
 		if err := c.Post(ctx, "/v1/chat/sessions", &payload, &out); err != nil {
-			return nil, err
+			return nil, serverCustodialRefusal(err, payload.Encrypted)
 		}
 		return &out, nil
 	}
@@ -317,6 +316,9 @@ func (c *Client) prepareE2EEChatCreate(ctx context.Context, payload *ChatCreateS
 	}
 	recipients, err := c.e2eeChatRecipients(ctx, payload.ToAliases, payload.ToDIDs, payload.ToAddresses)
 	if err != nil {
+		return err
+	}
+	if err := refuseCustodialRecipients(recipients, time.Now().UTC()); err != nil {
 		return err
 	}
 	messageID, err := GenerateUUID4()
@@ -402,6 +404,9 @@ func (c *Client) prepareE2EEChatSend(ctx context.Context, sessionID string, payl
 	if err != nil {
 		return err
 	}
+	if err := refuseCustodialRecipients(recipients, time.Now().UTC()); err != nil {
+		return err
+	}
 	messageID, err := GenerateUUID4()
 	if err != nil {
 		return err
@@ -458,6 +463,11 @@ func (c *Client) prepareE2EEChatSend(ctx context.Context, sessionID string, payl
 }
 
 func (c *Client) e2eeChatRecipientsForSession(ctx context.Context, sessionID string) ([]E2EERecipientKey, error) {
+	if recipient, ok, err := c.addressedSessionParticipant(ctx, sessionID); err != nil {
+		return nil, err
+	} else if ok {
+		return []E2EERecipientKey{recipient}, nil
+	}
 	to, err := c.toAddressForSession(ctx, sessionID, true)
 	if err != nil {
 		return nil, err
@@ -474,6 +484,80 @@ func (c *Client) e2eeChatRecipientsForSession(ctx context.Context, sessionID str
 		}
 	}
 	return c.e2eeChatRecipients(ctx, aliases, dids, addresses)
+}
+
+// addressedSessionParticipant resolves the other participant of a one-to-one
+// session through its address or team alias, when the session lists one. It is
+// that participant only if resolution matches the session's did:key; a name
+// now held by another identity cannot replace the participant.
+func (c *Client) addressedSessionParticipant(ctx context.Context, sessionID string) (E2EERecipientKey, bool, error) {
+	resp, err := c.ChatListSessions(ctx)
+	if err != nil {
+		return E2EERecipientKey{}, false, err
+	}
+	for _, session := range resp.Sessions {
+		if session.SessionID != sessionID {
+			continue
+		}
+		otherDIDs, otherAddresses := OtherConversationParticipants(session.ParticipantDIDs, session.ParticipantAddresses, c.stableID, c.did, c.address)
+		if len(otherDIDs) != 1 || len(otherAddresses) != 1 || !isLocalDIDKey(otherDIDs[0]) {
+			return E2EERecipientKey{}, false, nil
+		}
+		aliases, _, addresses := classifyE2EEChatTargets(otherAddresses[0])
+		if len(aliases) == 1 {
+			// Use the same verified roster lookup as alias mail. Missing alias
+			// metadata is not a new authority requirement for an existing peer.
+			agent, err := c.e2eeRecipientAgent(ctx, "", aliases[0])
+			if err != nil {
+				if status, ok := HTTPStatusCode(err); !ok || status != http.StatusNotFound {
+					return E2EERecipientKey{}, false, err
+				}
+			} else {
+				if strings.TrimSpace(agent.DIDKey) != strings.TrimSpace(otherDIDs[0]) {
+					return E2EERecipientKey{}, false, errNoPublishedEncryptionKey
+				}
+				// An invalid publication must not become an absent publication;
+				// nor may a global identity use local history instead of AWID.
+				if agent.EncryptionKey != nil || agent.encryptionKeyRejected || strings.TrimSpace(agent.DIDAW) != "" {
+					recipient, err := c.e2eeRecipientFromAgent(ctx, agent)
+					if err != nil {
+						return E2EERecipientKey{}, false, err
+					}
+					if strings.TrimSpace(recipient.DID) != strings.TrimSpace(otherDIDs[0]) {
+						return E2EERecipientKey{}, false, errNoPublishedEncryptionKey
+					}
+					return recipient, true, nil
+				}
+			}
+			// A local peer without a current roster publication may supply its
+			// key in a verified envelope from this conversation and exact DID.
+			recipients, _, err := c.learnedE2EEChatRecipients(ctx, sessionID)
+			if err != nil {
+				return E2EERecipientKey{}, false, err
+			}
+			for _, recipient := range recipients {
+				if strings.TrimSpace(recipient.DID) == strings.TrimSpace(otherDIDs[0]) {
+					return recipient, true, nil
+				}
+			}
+			return E2EERecipientKey{}, false, errNoPublishedEncryptionKey
+		}
+		if len(addresses) != 1 {
+			return E2EERecipientKey{}, false, nil
+		}
+		identity, err := c.ResolveIdentity(ctx, otherAddresses[0])
+		if err != nil || identity == nil || identity.EncryptionKey == nil || strings.TrimSpace(identity.DID) != strings.TrimSpace(otherDIDs[0]) {
+			return E2EERecipientKey{}, false, nil
+		}
+		return E2EERecipientKey{
+			Address:        strings.TrimSpace(identity.Address),
+			DID:            strings.TrimSpace(identity.DID),
+			StableID:       strings.TrimSpace(identity.StableID),
+			EncryptionKey:  identity.EncryptionKey,
+			DeliveryOrigin: strings.TrimSpace(identity.DeliveryOrigin),
+		}, true, nil
+	}
+	return E2EERecipientKey{}, false, nil
 }
 
 func hasGlobalDIDTarget(dids []string) bool {
@@ -497,6 +581,11 @@ func (c *Client) learnedE2EEChatRecipients(ctx context.Context, sessionID string
 	recipients := make([]E2EERecipientKey, 0, 1)
 	seen := map[string]bool{}
 	for _, msg := range history.Messages {
+		// A valid envelope from another conversation, or a projection that
+		// failed verification, cannot authorize this conversation's reply key.
+		if msg.VerificationStatus != Verified || msg.ConversationID != sessionID || msg.Encrypted == nil || msg.Encrypted.ConversationID != sessionID {
+			continue
+		}
 		recipient, ok, err := c.learnedE2EERecipientFromEnvelope(msg.Encrypted)
 		if err != nil {
 			return nil, true, err
@@ -591,7 +680,10 @@ func (c *Client) e2eeChatRecipients(ctx context.Context, aliases []string, dids 
 		for _, alias := range aliases {
 			agent, ok := agentsByAlias[strings.TrimSpace(alias)]
 			if !ok {
-				return nil, fmt.Errorf("recipient agent not found: %s", alias)
+				agent, err = c.e2eeRecipientAgent(ctx, "", alias)
+				if err != nil {
+					return nil, err
+				}
 			}
 			recipient, err := c.e2eeRecipientFromAgent(ctx, agent)
 			if err != nil {
@@ -606,7 +698,7 @@ func (c *Client) e2eeChatRecipients(ctx context.Context, aliases []string, dids 
 			return nil, err
 		}
 		if identity.EncryptionKey == nil {
-			return nil, errors.New("recipient has no published E2E encryption key; ask them to upgrade aw/Pi/channel and run `aw id encryption-key setup`, or explicitly send a server-readable upgrade note with --plaintext")
+			return nil, errNoPublishedEncryptionKey
 		}
 		recipients = append(recipients, E2EERecipientKey{
 			Address:        strings.TrimSpace(identity.Address),
@@ -628,7 +720,7 @@ func (c *Client) e2eeChatRecipients(ctx context.Context, aliases []string, dids 
 				recipients = append(recipients, recipient)
 				continue
 			}
-			return nil, errors.New("recipient has no published E2E encryption key; ask them to upgrade aw/Pi/channel and run `aw id encryption-key setup`, or explicitly send a server-readable upgrade note with --plaintext")
+			return nil, errNoPublishedEncryptionKey
 		}
 		recipients = append(recipients, E2EERecipientKey{
 			Address:        strings.TrimSpace(identity.Address),
@@ -695,6 +787,7 @@ type ChatHistoryResponse struct {
 }
 
 type ChatMessage struct {
+	IDChain                 ReceivedIDChain          `json:"id_chain,omitempty"`
 	Attachments             []AttachmentDescriptor   `json:"attachments,omitempty"`
 	AttachmentsAvailable    bool                     `json:"attachments_available"`
 	SenderMembership        *SenderMembership        `json:"sender_membership,omitempty"`
@@ -1006,7 +1099,7 @@ func (c *Client) ChatSendMessage(ctx context.Context, sessionID string, req *Cha
 		}
 		var out ChatSendMessageResponse
 		if err := c.Post(ctx, "/v1/chat/sessions/"+urlPathEscape(sessionID)+"/messages", &payload, &out); err != nil {
-			return nil, err
+			return nil, serverCustodialRefusal(err, payload.Encrypted)
 		}
 		return &out, nil
 	}
