@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -19,6 +20,8 @@ from test_e2e_smoke import (
     aw_workspace_factory,
     folio,
 )
+
+from folio.presentation import _AWEB_DARK_PALETTE, _AWEB_LIGHT_PALETTE
 
 __all__ = ["folio", "aw_workspace_factory"]
 
@@ -183,12 +186,13 @@ def test_builtin_aweb_preset_themes_present_page_per_scheme(
     assert saved["preset"] == "aweb"
     assert _get_theme(folio, team)["preset"] == "aweb"
 
-    # Document/light default → the warm-green brand palette.
+    # Document/light default uses the aweb identity light palette.
     light_style = httpx.get(_mint_present(folio, team, slug="brand")["url"], timeout=10.0).text.split(
         "</style>", 1
     )[0]
-    assert "--bg: #fffaf0;" in light_style
-    assert "--accent: #246b49;" in light_style
+    light_colors = dict(re.findall(r"(--[\w-]+):\s*([^;]+);", light_style))
+    for name, value in _AWEB_LIGHT_PALETTE.items():
+        assert light_colors[name] == value
 
     # Same preset, dark presentation scheme → the brand's dark palette.
     _put_theme(
@@ -199,8 +203,31 @@ def test_builtin_aweb_preset_themes_present_page_per_scheme(
     dark_style = httpx.get(_mint_present(folio, team, slug="brand")["url"], timeout=10.0).text.split(
         "</style>", 1
     )[0]
-    assert "--bg: #10180f;" in dark_style
-    assert "--accent: #5cb98a;" in dark_style
+    dark_colors = dict(re.findall(r"(--[\w-]+):\s*([^;]+);", dark_style))
+    for name, value in _AWEB_DARK_PALETTE.items():
+        assert dark_colors[name] == value
+
+    # Custom tokens override the preset rather than being shadowed by its base.
+    _put_theme(
+        folio,
+        team,
+        {
+            "preset": "aweb",
+            "tokens": {
+                "layout": {"color_scheme": "dark", "mode": "presentation"},
+                "colors": {"background": "#001122", "accent": "rgb(1, 2, 3)"},
+            },
+        },
+    )
+    custom_style = httpx.get(_mint_present(folio, team, slug="brand")["url"], timeout=10.0).text.split(
+        "</style>", 1
+    )[0]
+    custom_colors = dict(re.findall(r"(--[\w-]+):\s*([^;]+);", custom_style))
+    assert custom_colors["--bg"] == "#001122"
+    assert custom_colors["--accent"] == "rgb(1, 2, 3)"
+    for name, value in _AWEB_DARK_PALETTE.items():
+        if name not in {"--bg", "--accent"}:
+            assert custom_colors[name] == value
 
     # The reserved 'preset' key inside tokens fails closed over the wire.
     collision = _aw_request(

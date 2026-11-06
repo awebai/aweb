@@ -44,7 +44,8 @@ const (
 	// DefaultReconcile is how often the daemon re-reads registry.d, so a
 	// registration written by the socket fallback while the daemon was busy is
 	// picked up without a restart.
-	DefaultReconcile = 10 * time.Second
+	DefaultReconcile         = 10 * time.Second
+	DefaultHeartbeatInterval = 5 * time.Minute
 )
 
 // Config configures a Broker.
@@ -57,6 +58,10 @@ type Config struct {
 	// injected so the broker can be tested with no server and no credentials,
 	// and so credential resolution stays in cmd/aw where it already lives.
 	OpenStream func(identityHome, teamID string) (run.EventStreamOpener, error)
+	// Heartbeat uses the same explicit identity/team selection as OpenStream.
+	// The runner calls it only after this tick's fresh inspect says present.
+	Heartbeat         func(ctx context.Context, identityHome, teamID string) error
+	HeartbeatInterval time.Duration
 
 	MaxStreams    int
 	Coalesce      time.Duration // Deprecated: ignored.
@@ -79,6 +84,9 @@ type Config struct {
 }
 
 func (c *Config) applyDefaults() {
+	if c.HeartbeatInterval <= 0 {
+		c.HeartbeatInterval = DefaultHeartbeatInterval
+	}
 	if c.MaxStreams <= 0 {
 		c.MaxStreams = DefaultMaxStreams
 	}
@@ -800,6 +808,7 @@ func enrichInstancesWithStreamStatus(instances []InstanceStatus, streams []Strea
 			instances[i].ReceiveIdentities[j].StreamAdmitted = stream.Admitted
 			instances[i].ReceiveIdentities[j].StreamPhase = stream.Phase
 			instances[i].ReceiveIdentities[j].StreamError = stream.LastError
+			instances[i].ReceiveIdentities[j].StreamErrorDetail = stream.LastErrorDetail
 			instances[i].ReceiveIdentities[j].UnreadCount = stream.UnreadCount
 			instances[i].ReceiveIdentities[j].ConnectedAt = stream.ConnectedAt
 		}

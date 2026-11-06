@@ -130,7 +130,7 @@ func beadsMailRecordBead(sel *awconfig.Selection, m beadsMailAddressMap, subject
 	}
 	beads[resp.MessageID] = beadID
 	saveBeadsMailBeadMap(sel, beads)
-	fmt.Printf("recorded as %s\n", termtext.Line(beadID))
+	fmt.Fprintf(commandStdout, "recorded as %s\n", termtext.Line(beadID))
 }
 
 func beadsMailRecordGap(detail string) {

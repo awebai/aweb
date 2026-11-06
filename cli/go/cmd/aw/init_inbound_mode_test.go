@@ -328,6 +328,9 @@ func testAPIKeyExplicitModeReadback(t *testing.T, mode, actual string, wantFailu
 	var registeredDIDKey string
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveAPIKeyCreationTeamRead(w, r, "default:alice.aweb.ai") {
+			return
+		}
 		switch {
 		case r.URL.Path == "/v1/did":
 			var body map[string]any
@@ -447,6 +450,9 @@ func TestRunAPIKeyBootstrapInitOmitsInboundModeWhenUnset(t *testing.T) {
 	var registeredDIDKey string
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveAPIKeyCreationTeamRead(w, r, "default:alice.aweb.ai") {
+			return
+		}
 		switch {
 		case r.URL.Path == "/v1/did":
 			var body map[string]any

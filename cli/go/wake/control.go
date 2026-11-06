@@ -317,6 +317,7 @@ func StatusFromStore(store *Store, maxStreams int) (Status, error) {
 			RuntimeDelivery:     reg.RuntimeDelivery,
 			PrimaryIdentityHome: reg.PrimaryIdentityHome,
 			ReceiveIdentities:   receive,
+			PresenceIdentities:  append([]PresenceIdentity(nil), reg.PresenceIdentities...),
 			Backend:             reg.Backend,
 			Delivery:            reg.Delivery,
 			RegisteredAt:        reg.RegisteredAt,

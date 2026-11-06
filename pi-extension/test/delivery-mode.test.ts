@@ -46,7 +46,7 @@ test("AWEB_DELIVERY=session starts a Pi session that opens no event stream", asy
     // The external wake path owns the one per-identity stream; this extension
     // must not open a second consumer of it.
     await settle(1_000);
-    assert.deepEqual(harness.requests, []);
+    assert.deepEqual(harness.requests.filter(p => p !== "/v1/agents/heartbeat"), []);
     assert.ok(
       harness.messages.some((message) => message.content === PI_EXTERNAL_DELIVERY_NOTICE),
       `expected the external-delivery notice, got ${JSON.stringify(harness.messages)}`,
@@ -71,7 +71,7 @@ test("an unset AWEB_DELIVERY starts a Pi session that opens the event stream", a
   const harness = await startSession(undefined);
   try {
     await harness.waitForRequest();
-    assert.match(harness.requests[0] || "", /^\/v1\/events\/stream\?deadline=/);
+    assert.match(harness.requests.find(p => p.startsWith("/v1/events/stream?")) || "", /^\/v1\/events\/stream\?deadline=/);
     const deadline = Date.now() + 5_000;
     while (!existsSync(harness.receiptPath) && Date.now() < deadline) await settle(10);
     const receipt = JSON.parse(readFileSync(harness.receiptPath, "utf8"));
@@ -90,7 +90,7 @@ test("an unknown AWEB_DELIVERY warns once and still opens the event stream", asy
   const harness = await startSession("external");
   try {
     await harness.waitForRequest();
-    assert.match(harness.requests[0] || "", /^\/v1\/events\/stream\?deadline=/);
+    assert.match(harness.requests.find(p => p.startsWith("/v1/events/stream?")) || "", /^\/v1\/events\/stream\?deadline=/);
     const warnings = harness.messages.filter((message) => String(message.content).includes("AWEB_DELIVERY"));
     assert.equal(warnings.length, 1);
     assert.match(String(warnings[0].content), /external/);
@@ -98,6 +98,33 @@ test("an unknown AWEB_DELIVERY warns once and still opens the event stream", asy
     await harness.close();
   }
 });
+
+for (const delivery of ["session", undefined]) {
+  test(`Pi presence heartbeats in ${delivery || "channel"} mode and stops at shutdown`, async (t) => {
+    t.mock.timers.enable({ apis: ["setInterval"] });
+    const harness = await startSession(delivery);
+    try {
+      if (!delivery) await harness.waitForRequest();
+      const beats = () => harness.requests.filter(p => p === "/v1/agents/heartbeat").length;
+      const waitForBeat = async (count: number) => {
+        const deadline = Date.now() + 2000;
+        while (Date.now() < deadline && beats() < count) await settle(10);
+        assert.equal(beats(), count);
+      };
+      await waitForBeat(1);
+      t.mock.timers.tick(299999);
+      assert.equal(beats(), 1);
+      t.mock.timers.tick(1);
+      await waitForBeat(2);
+      await harness.close();
+      t.mock.timers.tick(600000);
+      assert.equal(beats(), 2);
+    } finally {
+      await harness.close();
+      t.mock.timers.reset();
+    }
+  });
+}
 
 test("a stopped channel reports to the operator without injecting a model turn", async () => {
   const harness = await startSession(undefined, true);
@@ -172,6 +199,7 @@ async function startSession(delivery: string | undefined, corruptDeliveryStore =
   assert.ok(sessionStart, "extension did not register a session_start handler");
   await sessionStart({}, ctx);
 
+  let closed = false;
   return {
     receiptPath: join(workdir, ".aw/receive/stream.json"),
     messages,
@@ -180,10 +208,12 @@ async function startSession(delivery: string | undefined, corruptDeliveryStore =
     statuses,
     waitForRequest: async () => {
       const deadline = Date.now() + 5_000;
-      while (Date.now() < deadline && requests.length === 0) await settle(25);
-      assert.ok(requests.length > 0, "the Pi extension never opened the event stream");
+      while (Date.now() < deadline && !requests.some(p => p.startsWith("/v1/events/stream?"))) await settle(25);
+      assert.ok(requests.some(p => p.startsWith("/v1/events/stream?")), "the Pi extension never opened the event stream");
     },
     close: async () => {
+      if (closed) return;
+      closed = true;
       const shutdown = handlers.get("session_shutdown");
       if (shutdown) await shutdown({}, ctx);
       if (originalDelivery === undefined) {
@@ -203,6 +233,14 @@ async function startSession(delivery: string | undefined, corruptDeliveryStore =
 async function startProbeServer(requests: string[]): Promise<Server> {
   const server = createServer((request: IncomingMessage, response) => {
     requests.push(request.url || "");
+    if (request.url === "/v1/agents/heartbeat") {
+      assert.equal(request.method, "POST");
+      assert.match(String(request.headers.authorization), /^DIDKey /);
+      assert.ok(request.headers["x-awid-team-certificate"]);
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+      return;
+    }
     response.writeHead(200, {
       "cache-control": "no-cache",
       connection: "keep-alive",

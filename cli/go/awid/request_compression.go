@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -47,6 +49,30 @@ func DoServerRequestWithTimeout(client *http.Client, req *http.Request, serverBa
 }
 
 func doServerRequest(client *http.Client, req *http.Request, serverBase string, timeout time.Duration) (*http.Response, error) {
+	resp, err := sendServerRequest(client, req, serverBase, timeout)
+	traceServerCall(req, resp)
+	return resp, err
+}
+
+// traceServerCall writes one line per call under AW_TRACE: method, path and
+// status only. Queries, headers and bodies can carry credentials and invite
+// tokens, so they are never written here.
+func traceServerCall(req *http.Request, resp *http.Response) {
+	if !traceEnabled() || req == nil || req.URL == nil {
+		return
+	}
+	path := req.URL.Path
+	if isAttachmentFetchPath(path) {
+		path = "<participant-scoped attachment>"
+	}
+	outcome := "no response"
+	if resp != nil {
+		outcome = "HTTP " + strconv.Itoa(resp.StatusCode)
+	}
+	fmt.Fprintf(os.Stderr, "AW TRACE call: %s %s -> %s\n", req.Method, path, outcome)
+}
+
+func sendServerRequest(client *http.Client, req *http.Request, serverBase string, timeout time.Duration) (*http.Response, error) {
 	// A relocating transport must negotiate after it selects each actual base.
 	if client != nil {
 		if owner, ok := client.Transport.(interface{ HandlesServerRequestCompression() bool }); ok && owner.HandlesServerRequestCompression() {
@@ -173,6 +199,24 @@ func compressedServerRequest(client *http.Client, req *http.Request, serverBase 
 	// would; the clone owns the encoded reader that the transport closes.
 	req.Body.Close()
 	return wire, support
+}
+
+// ForgetRequestCompression drops what this process learned about whether the
+// server at serverBase's origin accepts gzip request bodies, for every base
+// mounted on that origin, so the next request to any of them probes again.
+// One origin can be served by different servers over time, such as a test
+// server on a port an earlier one closed.
+func ForgetRequestCompression(serverBase string) {
+	origin, err := url.Parse(strings.TrimRight(strings.TrimSpace(serverBase), "/"))
+	if err != nil {
+		return
+	}
+	requestCompressionServers.Range(func(key, _ any) bool {
+		if base, err := url.Parse(key.(string)); err == nil && base.Scheme == origin.Scheme && base.Host == origin.Host {
+			requestCompressionServers.Delete(key)
+		}
+		return true
+	})
 }
 
 func serverCompressionSupport(ctx context.Context, client *http.Client, base *url.URL) *requestCompressionSupport {

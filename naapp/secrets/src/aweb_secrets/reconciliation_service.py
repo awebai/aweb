@@ -224,7 +224,11 @@ class ReconciliationControls:
         if approval is None or view is None:
             raise UseAuditUnavailable()
         return ReconciliationControlStatus(
-            control, view.state, approval.state_at(self._clock()), approval.delivery_status
+            control,
+            view.state,
+            approval.state_at(self._clock()),
+            approval.delivery_status,
+            repeat_state=view.repeat_state,
         )
 
     async def present(

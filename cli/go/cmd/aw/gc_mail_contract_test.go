@@ -170,6 +170,7 @@ func TestGCMailExecProviderContract(t *testing.T) {
 		Subject        string `json:"subject"`
 		Body           string `json:"body"`
 		Priority       string `json:"priority"`
+		NewThread      bool   `json:"new_conversation"`
 	}
 	var sends []sentRequest
 	var userAgents []string
@@ -229,7 +230,7 @@ func TestGCMailExecProviderContract(t *testing.T) {
 				sends = append(sends, got)
 				_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{
 					MessageID:      sentID,
-					ConversationID: conversationID,
+					ConversationID: got.ConversationID,
 					Status:         "delivered",
 					DeliveredAt:    "2026-09-02T12:00:00Z",
 				})
@@ -298,8 +299,10 @@ func TestGCMailExecProviderContract(t *testing.T) {
 	if sends[0].ToAddress != "acme.example/mayor" || sends[0].Subject != "Patrol check" || sends[0].Body != "check patrol status" {
 		t.Errorf("send request %+v", sends[0])
 	}
-	if sent.ID != sentID || sent.ThreadID != conversationID {
-		t.Errorf("send result %+v", sent)
+	// A send starts a new thread: its thread is the request's fresh
+	// conversation, never the existing one with that correspondent.
+	if sent.ID != sentID || sent.ThreadID != sends[0].ConversationID || sent.ThreadID == conversationID || !sends[0].NewThread {
+		t.Errorf("send result %+v, request %+v", sent, sends[0])
 	}
 	// Disclosure: the returned "to" is the RESOLVED aweb address, which is
 	// what `gc mail send --json` and `gc mail reply` show the operator.

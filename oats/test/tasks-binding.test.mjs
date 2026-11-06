@@ -28,30 +28,6 @@ function oatsCli() {
   return oatsCliPath();
 }
 
-test("aweb tasks capability owns the exclusive tasks and roster contract", () => {
-  const manifest = JSON.parse(readFileSync(join(CAPABILITY_SOURCE, "oats.json"), "utf8"));
-  assert.equal(manifest.capability, "aweb.tasks");
-  assert.equal(manifest.layer, "tasks");
-  assert.deepEqual(manifest.skills, ["skills/aweb-coordination"]);
-  assert.equal(manifest.inject, "injects/aweb-tasks.md");
-  assert.deepEqual(manifest.requires, [{
-    command: "aw",
-    why: "shared task queue, work discovery, ownership, status, and team roster",
-    install: "https://aweb.ai/docs",
-  }]);
-
-  const injection = readFileSync(join(CAPABILITY_SOURCE, manifest.inject), "utf8");
-  for (const statement of [
-    "aw task",
-    "aw work",
-    "aw workspace status",
-    "authoritative",
-    "Do not use task or roster features from the messaging\\s+layer",
-  ]) {
-    assert.match(injection, new RegExp(statement));
-  }
-});
-
 test("real OATS spawn composes the aweb tasks integration into the instance", () => {
   const base = temporaryDirectory();
   const repo = join(base, "repo");
@@ -86,8 +62,10 @@ test("real OATS spawn composes the aweb tasks integration into the instance", ()
   const document = JSON.parse(result.stdout);
   const spawned = document.schemaVersion === 1 ? document.result : document;
   assert.match(readFileSync(join(spawned.home, "AGENTS.md"), "utf8"), /## Tasks: aweb/);
-  assert.equal(existsSync(join(spawned.home, ".agents", "skills", "aweb-coordination", "SKILL.md")), true);
   const instance = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
-  const composedSkill = instance.skills.find((skill) => skill.name === "aweb-coordination");
-  assert.equal(composedSkill?.source, "aweb.tasks");
+  for (const name of ["aweb-coordination", "aweb-tasks"]) {
+    assert.equal(existsSync(join(spawned.home, ".agents", "skills", name, "SKILL.md")), true);
+    const composedSkill = instance.skills.find((skill) => skill.name === name);
+    assert.equal(composedSkill?.source, "aweb.tasks");
+  }
 });

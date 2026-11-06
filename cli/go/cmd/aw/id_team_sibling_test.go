@@ -318,6 +318,8 @@ func TestHostedSiblingInviteAcceptsIntoFreshExternalHome(t *testing.T) {
 			writePublishEncryptionKeyResponseForTest(t, w, "agent-bob", teamID, "bob")
 		case "/api/v1/discovery":
 			json.NewEncoder(w).Encode(map[string]any{"onboarding_url": serverURL, "aweb_url": serverURL + "/api", "registry_url": serverURL})
+		case "/api/v1/spawn/invite-preview":
+			writeLegacyHostedPreviewForTest(t, w, r, teamID, serverURL)
 		case "/api/v1/spawn/accept-invite":
 			accepts.Add(1)
 			body, _ := io.ReadAll(r.Body)

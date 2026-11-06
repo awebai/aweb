@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from awid.signing import canonical_json_bytes
 
+from aweb.agent_wake import agent_wake_scope
+from aweb.mcp.auth import current_agent_wake_publisher
 from aweb.mcp.signing import encrypt_hosted_message, sign_hosted_message
 from aweb.mcp.tools.federation import mcp_messaging_auth
 
@@ -22,8 +24,9 @@ async def send_mcp_native(
     """Called only for requests carrying the complete stable ingress headers.
 
     Before signing, session insertion or wake: recover the prior result and
-    compare the canonical logical tool input. Stable IDs derive from the
-    authenticated ingress namespace/key, not timestamps or platform account IDs.
+    compare the canonical logical tool input. The stable message ID derives
+    from the authenticated ingress namespace/key. New mail gets a fresh
+    conversation ID, retained in the committed ingress result for replay.
     """
     service = auth.human_channels_service
     if service is None:
@@ -120,32 +123,20 @@ async def send_mcp_native(
     recipient = await _target(
         auth.request, payload, caller, db, kind, cid if kind == "chat" else None
     )
-    if not cid:
-        if kind == "mail":
-            from aweb.messaging.conversations import (
-                find_active_one_to_one_conversation_between,
-            )
+    if not cid and kind == "chat":
+        from aweb.messaging.chat import find_session_between
 
-            existing = await find_active_one_to_one_conversation_between(
-                db,
-                conversation_type="mail",
-                did_a=_principal(caller),
-                did_b=recipient["did_aw"] or recipient["did_key"],
-            )
-            cid = existing["conversation_id"] if existing else None
-        else:
-            from aweb.messaging.chat import find_session_between
-
-            cid = await find_session_between(
-                db,
-                did_a=_principal(caller),
-                did_b=recipient["did_aw"] or recipient["did_key"],
-            )
-    cid = (
-        str(cid)
-        if cid
-        else str(uuid5(NAMESPACE_URL, "aweb-native-ingress-conversation:" + namespace))
-    )
+        cid = await find_session_between(
+            db,
+            did_a=_principal(caller),
+            did_b=recipient["did_aw"] or recipient["did_key"],
+        )
+    if cid:
+        cid = str(cid)
+    elif kind == "mail":
+        cid = str(uuid4())
+    else:
+        cid = str(uuid5(NAMESPACE_URL, "aweb-native-ingress-conversation:" + namespace))
     target = await service._facts(caller, recipient)
     signed = dict(
         type=kind,
@@ -215,32 +206,34 @@ async def send_mcp_native(
             },
         ),
     )
-    async with service.unit_of_work(caller) as uow:
-        previous = await uow.claim_ingress(key)
-        if previous is not None:
-            if previous.value["result"].get("logical_input_hash") != logical_hash:
-                raise ContractError("replay_conflict", "native MCP input")
-            return previous.value["result"]["response"]
-        accepted = await uow.accept(prepared)
-        response = {"message_id": mid, "conversation_id": cid, "status": "delivered"}
-        if kind == "chat":
-            response.update(session_id=cid, delivered=True)
-        else:
-            response["to"] = recipient["alias"]
-        await uow.finish_ingress(
-            _dto(
-                "IngressResult",
-                {
-                    "version": "aweb-ingress-result-v1",
-                    "key": key.value,
-                    "accepted": accepted.value,
-                    "result": {
-                        "logical_input_hash": logical_hash,
-                        "response": response,
+    # Wakes are published after the unit of work commits.
+    with agent_wake_scope(current_agent_wake_publisher()):
+        async with service.unit_of_work(caller) as uow:
+            previous = await uow.claim_ingress(key)
+            if previous is not None:
+                if previous.value["result"].get("logical_input_hash") != logical_hash:
+                    raise ContractError("replay_conflict", "native MCP input")
+                return previous.value["result"]["response"]
+            accepted = await uow.accept(prepared)
+            response = {"message_id": mid, "conversation_id": cid, "status": "delivered"}
+            if kind == "chat":
+                response.update(session_id=cid, delivered=True)
+            else:
+                response["to"] = recipient["alias"]
+            await uow.finish_ingress(
+                _dto(
+                    "IngressResult",
+                    {
+                        "version": "aweb-ingress-result-v1",
+                        "key": key.value,
+                        "accepted": accepted.value,
+                        "result": {
+                            "logical_input_hash": logical_hash,
+                            "response": response,
+                        },
                     },
-                },
+                )
             )
-        )
     # Blocking chat waits belong to the existing read path after commit. This
     # adapter returns the committed send, never holds a UoW while waiting.
     return response

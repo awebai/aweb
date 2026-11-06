@@ -357,17 +357,51 @@ async def record_lineage(
     )
 
 
-async def current_operation(
-    tx: TransactionManager, nodes: Sequence[LineageNode], operation_id: str
+async def _nearest_current_operation(
+    tx: TransactionManager,
+    path: Sequence[tuple[str, str]],
+    operation_id: str,
+    *,
+    lock: bool,
 ) -> OperationTemplate | None:
-    """Select the nearest CURRENT definition once; the caller checks child pins."""
-    for node in reversed(nodes):
+    for installation_id, secret_id in reversed(path):
         operation = await records.current_operation(
             tx,
-            node.installation_id,
-            node.secret.record.secret_id,
+            installation_id,
+            secret_id,
             operation_id,
+            lock=lock,
         )
         if operation is not None:
             return operation
     return None
+
+
+async def current_operation(
+    tx: TransactionManager, nodes: Sequence[LineageNode], operation_id: str
+) -> OperationTemplate | None:
+    """Select the nearest CURRENT definition once; the caller checks child pins."""
+    return await _nearest_current_operation(
+        tx,
+        tuple((node.installation_id, node.secret.record.secret_id) for node in nodes),
+        operation_id,
+        lock=True,
+    )
+
+
+async def current_operation_snapshot(
+    tx: TransactionManager,
+    installation_id: str,
+    team_id: str,
+    secret_id: str,
+    operation_id: str,
+) -> OperationTemplate | None:
+    """The SAME nearest CURRENT in a plain snapshot, never admission authority.
+
+    The caller supplies its consistent metadata transaction; malformed ancestry
+    retains ancestry_ids' typed refusal. No history or liveness is inferred.
+    """
+    ids = await ancestry_ids(tx, installation_id, team_id, secret_id)
+    return await _nearest_current_operation(
+        tx, tuple((installation_id, item) for item in ids), operation_id, lock=False
+    )

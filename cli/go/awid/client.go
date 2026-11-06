@@ -64,7 +64,16 @@ func (e *RecipientResolutionError) Error() string {
 	if e.Err == nil {
 		return fmt.Sprintf("resolve recipient %q for signed %s", e.Target, msgType)
 	}
+	if code, ok := HTTPStatusCode(e.Err); ok && code == http.StatusNotFound && isRoutableAddressTarget(e.Target) {
+		return fmt.Sprintf("resolve recipient %q for signed %s: %s (%v)", e.Target, msgType, UnreachableAddressText(e.Target), e.Err)
+	}
 	return fmt.Sprintf("resolve recipient %q for signed %s: %v", e.Target, msgType, e.Err)
+}
+
+// UnreachableAddressText says that an address has no registered identity and
+// how local and global identities are reached.
+func UnreachableAddressText(address string) string {
+	return fmt.Sprintf("%s is not a registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned", address)
 }
 
 func (e *RecipientResolutionError) Unwrap() error {
@@ -252,6 +261,7 @@ type agentMeta struct {
 // - the `aw` CLI
 // - higher-level coordination products built on the same transport
 type Client struct {
+	idChainHeader           string // optional adjacent public proof, outside signed message formats
 	baseURL                 string
 	httpClient              *http.Client
 	sseClient               *http.Client       // No response timeout; SSE connections are long-lived.
@@ -496,6 +506,21 @@ func (c *Client) SetStableID(id string) {
 	if strings.TrimSpace(id) != "" {
 		c.requireRecipientBinding = true
 	}
+}
+
+// SetIDChain sets the optional public proof presented on authenticated requests.
+// Encoding checks shape, limits and signatures, never ancestry authority.
+func (c *Client) SetIDChain(bundle map[string]any) error {
+	if bundle == nil {
+		c.idChainHeader = ""
+		return nil
+	}
+	header, err := EncodeIDChainHeader(bundle)
+	if err != nil {
+		return err
+	}
+	c.idChainHeader = header
+	return nil
 }
 
 // StableID returns the client's stable identifier, if configured.
@@ -1666,8 +1691,20 @@ func decorateTimeoutError(method string, err error) error {
 	if !errors.As(err, &netErr) || !netErr.Timeout() {
 		return err
 	}
-	return fmt.Errorf("%w\nRequest timed out before a response was received; it may have applied. Check current state before retrying.", err)
+	return &OutcomeUnknownError{err: err}
 }
+
+// OutcomeUnknownError is a mutating request that timed out before its
+// response arrived: it may or may not have applied.
+type OutcomeUnknownError struct {
+	err error
+}
+
+func (e *OutcomeUnknownError) Error() string {
+	return e.err.Error() + "\nRequest timed out before a response was received; it may have applied. Check current state before retrying."
+}
+
+func (e *OutcomeUnknownError) Unwrap() error { return e.err }
 
 // requestAuthPayload binds the final external URL and decoded body bytes.
 // Identity-only requests bind did_aw; certificate requests bind team_id.
@@ -1716,6 +1753,9 @@ func SignRequestCredential(key ed25519.PrivateKey, method string, target *url.UR
 // signRequest is shared by JSON/raw, event SSE and chat SSE requests. Grant
 // credentials keep their already target-bound protocol; root credentials use v2.
 func (c *Client) signRequest(req *http.Request, body []byte) error {
+	if c.idChainHeader != "" {
+		req.Header.Set("X-AWID-ID-Chain", c.idChainHeader)
+	}
 	if c.signingKey == nil {
 		return nil
 	}

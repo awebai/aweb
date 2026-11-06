@@ -46,6 +46,14 @@ func TestExternalIdentityHomeWorkspaceAndSigningLifecycle(t *testing.T) {
 	claimRequests := make(chan signedClaim, 1)
 	certificateRequests := make(chan map[string]any, 1)
 	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+principalStableID+"/key" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw":          principalStableID,
+				"current_did_key": principalDID,
+				"id_tree":         map[string]any{"enrolled": false},
+			})
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/namespaces/alice.aweb.ai/teams/backend/certificates" {
 			t.Fatalf("unexpected registry request %s %s", r.Method, r.URL.Path)
 		}

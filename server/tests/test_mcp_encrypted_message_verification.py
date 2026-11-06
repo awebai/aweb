@@ -78,8 +78,8 @@ async def _insert_agents(aweb_db, *identities: dict) -> None:
         await aweb_db.execute(
             """
             INSERT INTO {{tables.agents}}
-                (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
-            VALUES ($1, $2, $3, $4, $5, $6, 'global', 'active', 'open')
+                (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode, did_aw_verified_key)
+            VALUES ($1, $2, $3, $4, $5, $6, 'global', 'active', 'open', $3)
             """,
             identity["agent_id"],
             TEAM_ID,

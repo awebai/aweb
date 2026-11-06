@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
+from aweb_naapp.identity_assets import identity_asset
 from aweb_naapp.runtime.app import NOINDEX_ROBOTS_HEADER, NaappRuntime, mount_naapp_routes
 from aweb_naapp.runtime.authorization import Authorization
 from aweb_naapp.runtime.installation import InstallationRefused, apply_installation_migrations
@@ -38,13 +39,12 @@ from folio.models import (
     VideoDirectUploadResponse,
 )
 from folio.presentation import (
-    _theme_css,
+    _editor_theme_css,
     content_security_policy,
     render_editor_page,
     render_presented_markdown,
     render_presented_page,
     sanitize_layout_tokens,
-    sanitize_theme_tokens,
     theme_contrast_error,
 )
 from folio.privacy import PresentationPrivacy, install_access_filter
@@ -76,7 +76,9 @@ from folio.surfaces import (
 from folio.templates import render_declarative_template
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
-_OG_CARD_BYTES = (_PACKAGE_DIR / "assets" / "og-card.png").read_bytes()
+_OG_CARD = identity_asset("folio-card.png")
+assert _OG_CARD is not None
+_OG_CARD_BYTES = _OG_CARD[0]
 _FONTS_DIR = _PACKAGE_DIR / "fonts"
 _MIGRATIONS_DIR = _PACKAGE_DIR / "migrations"
 # Present links and asset URLs are user content: crawlers skip them and every
@@ -351,7 +353,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         row = await database.fetch_one("SELECT tokens,logo_asset_id,header,footer FROM {{tables.themes}} WHERE team_id=$1", team_id)
         theme = _theme_from_row(row, public_origin=resolved.public_origin) if row else None
         return {"body": body, "version_number": version_number,
-                "theme": {"css": _theme_css(sanitize_theme_tokens((theme or {}).get("tokens"))),
+                "theme": {"css": _editor_theme_css(theme),
                           "header": (theme or {}).get("header"), "footer": (theme or {}).get("footer"),
                           "logo_url": (theme or {}).get("logo_url")},
                 "html": render_presented_markdown(body, public_origin=resolved.public_origin,
@@ -361,7 +363,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def editor_shell(link_id: str) -> HTMLResponse:
         nonce = secrets.token_urlsafe(16)
         return HTMLResponse(
-            render_editor_page(token=link_id, body="", version_number=1, nonce=nonce),
+            render_editor_page(token=link_id, body="", version_number=1, nonce=nonce,
+                               public_origin=resolved.public_origin),
             headers={"Content-Security-Policy": f"default-src 'self'; img-src 'self'; script-src 'nonce-{nonce}'; style-src 'unsafe-inline' 'self'; base-uri 'none'; frame-ancestors 'none'"},
         )
 

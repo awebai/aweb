@@ -27,7 +27,57 @@ function fixture(kind: "mail" | "chat", state: string | (() => string), input: (
 }
 
 describe.each(["mail", "chat"] as const)("terminal %s presentation acknowledgment", (kind) => {
-  test.each(["idle", "working", "unknown"])("%s delivers full sanitized text and acknowledges only accepted input", async (state) => {
+  test.each(["unverified", "unknown", "failed", "identity_mismatch", "verification_stale", "pin_conflict", "verified_legacy", undefined])("holds %s sender state with only a fixed notice and no acknowledgment", async (status) => {
+    const input = vi.fn(async (_home: string, _text: string) => {});
+    const { client, options } = fixture(kind, "idle", input);
+    options.trust.normalizeResolvedTrust = vi.fn(async () => ({ status, stored: false })) as never;
+    const dispatched = new Set<string>();
+    await expect(dispatchAgentEvent(options, dispatched, {
+      type: kind === "mail" ? "mail_message" : "chat_message", message_id: messageID, session_id: sessionID,
+    })).rejects.toThrow("terminal delivery held");
+    expect(input).toHaveBeenCalledExactlyOnceWith("/agent", `[aweb] 1 message held (unverified sender). Run: aw ${kind === "mail" ? "mail inbox" : "chat pending"}`);
+    expect(client.post).not.toHaveBeenCalled();
+    expect(dispatched.size).toBe(0);
+  });
+
+  test("holds local decryption failure with a fixed notice", async () => {
+    const input = vi.fn(async (_home: string, _text: string) => {});
+    const { client, deliver } = fixture(kind, "idle", input);
+    client.get.mockResolvedValue({ messages: [{
+      message_id: messageID, from_alias: "alice", from_agent: "alice", from_address: "acme.com/alice",
+      created_at: "2026-01-01T00:00:00Z", timestamp: "2026-01-01T00:00:00Z",
+      content_mode: "encrypted_v2", message_version: 2, encrypted_envelope: {},
+    }] } as never);
+    await expect(deliver()).rejects.toThrow("terminal delivery held");
+    expect(input).toHaveBeenCalledExactlyOnceWith("/agent", `[aweb] 1 message held (could not decrypt). Run: aw ${kind === "mail" ? "mail inbox" : "chat pending"}`);
+    expect(client.post).not.toHaveBeenCalled();
+  });
+
+  test("retries a held message without repeating an accepted notice", async () => {
+    const input = vi.fn(async () => {});
+    const { client, options } = fixture(kind, "idle", input);
+    options.trust.normalizeResolvedTrust = vi.fn(async () => ({ status: "unverified", stored: false })) as never;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      await expect(dispatchAgentEvent(options, new Set(), {
+        type: kind === "mail" ? "mail_message" : "chat_message", message_id: messageID, session_id: sessionID,
+      })).rejects.toThrow("terminal delivery held");
+    }
+    expect(input).toHaveBeenCalledOnce();
+    expect(client.post).not.toHaveBeenCalled();
+  });
+
+  test.each(["verified", "verified_custodial"])("accepts %s authorship", async (status) => {
+    const input = vi.fn(async () => {});
+    const { client, options } = fixture(kind, "idle", input);
+    options.trust.normalizeResolvedTrust = vi.fn(async () => ({ status, stored: false })) as never;
+    await dispatchAgentEvent(options, new Set(), {
+      type: kind === "mail" ? "mail_message" : "chat_message", message_id: messageID, session_id: sessionID,
+    });
+    expect(input).toHaveBeenCalledOnce();
+    expect(client.post).toHaveBeenCalledOnce();
+  });
+
+  test.each(kind === "mail" ? ["idle", "unknown"] : ["idle", "working", "unknown"])("%s delivers full sanitized text and acknowledges only accepted input", async (state) => {
     let accept!: () => void;
     const accepted = new Promise<void>((resolve) => { accept = resolve; });
     const input = vi.fn(async (_home: string, _text: string) => accepted);
@@ -51,6 +101,49 @@ describe.each(["mail", "chat"] as const)("terminal %s presentation acknowledgmen
     if (kind === "mail") expect(client.post).toHaveBeenCalledWith(`/v1/messages/${messageID}/ack`);
     else expect(client.post).toHaveBeenCalledWith(`/v1/chat/sessions/${sessionID}/read`, { message_ids: [messageID] });
   });
+
+  if (kind === "mail") {
+    test.each(["working", "busy", "running"])("%s mail remains unread and unmarked until an idle re-fetch", async (initialState) => {
+      vi.useFakeTimers();
+      try {
+        let state = initialState;
+        const input = vi.fn(async () => {});
+        const { client, options } = fixture(kind, () => state, input);
+        const dispatched = new Set<string>();
+        const onTrace = vi.fn();
+        const event = { type: "mail_message", message_id: messageID };
+        const snapshot = () => consumeAgentEvents({ ...options, onTrace }, dispatched, (async function* () { yield event; })());
+        const refused = snapshot();
+        await vi.advanceTimersByTimeAsync(850);
+        await refused;
+        expect(client.get).toHaveBeenCalledTimes(4);
+        expect(input).not.toHaveBeenCalled();
+        expect(client.post).not.toHaveBeenCalled();
+        expect(dispatched.size).toBe(0);
+        expect(onTrace.mock.calls.filter(([entry]) => entry.stage === "delivery_retry_exhausted")).toHaveLength(1);
+        state = "idle";
+        await snapshot();
+        expect(client.get).toHaveBeenCalledTimes(5);
+        expect(input).toHaveBeenCalledOnce();
+        expect(client.post).toHaveBeenCalledOnce();
+        await snapshot();
+        expect(input).toHaveBeenCalledOnce();
+      } finally { vi.useRealTimers(); }
+    });
+
+    test("working held mail sends no notice until idle and never acknowledges", async () => {
+      let state = "working";
+      const input = vi.fn(async () => {});
+      const { client, options, deliver } = fixture(kind, () => state, input);
+      options.trust.normalizeResolvedTrust = vi.fn(async () => ({ status: "unverified", stored: false })) as never;
+      await expect(deliver()).rejects.toThrow("working");
+      expect(input).not.toHaveBeenCalled();
+      state = "idle";
+      await expect(deliver()).rejects.toThrow("terminal delivery held");
+      expect(input).toHaveBeenCalledExactlyOnceWith("/agent", "[aweb] 1 message held (unverified sender). Run: aw mail inbox");
+      expect(client.post).not.toHaveBeenCalled();
+    });
+  }
 
   test.each(["idle", "unknown"])("blocked remains unmarked and unread until a later %s snapshot", async (nextState) => {
     vi.useFakeTimers();
@@ -103,7 +196,7 @@ describe.each(["mail", "chat"] as const)("exhausted %s presentation", (kind) => 
     vi.useFakeTimers();
     try {
       const input = vi.fn(async () => { throw new Error("refused"); });
-      const { client, options } = fixture(kind, "working", input);
+      const { client, options } = fixture(kind, "idle", input);
       const onTrace = vi.fn();
       const pending = consumeAgentEvents({ ...options, onTrace }, new Set(), (async function* () {
         yield { type: kind === "mail" ? "mail_message" : "chat_message", message_id: messageID, session_id: sessionID };

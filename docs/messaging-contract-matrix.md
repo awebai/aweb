@@ -74,8 +74,8 @@ Cover these cases for mail and chat wherever the operation exists:
 17. Local trust-pin fallback applies only to an already-known peer and never
     creates first-contact address authority.
 18. Mismatched recipient identity/address bindings fail closed.
-19. Duplicate active one-to-one conversations are rejected or repaired rather
-    than creating ambiguous routing.
+19. Recipient-only mail sends start new conversations; explicit conversation
+    IDs select continuations. Chat retains active one-to-one session reuse.
 20. Closed or expired conversations cannot be continued.
 21. Conversation listing returns only conversations where the actor is a
     participant.

@@ -1,5 +1,5 @@
 .PHONY: test test-server lint compile run e2e e2e-up e2e-down api-serve api-stop \
-	prod-ops-test prod-public-identity prod-status prod-health-client-proof prod-deploy prod-wait prod-verify prod-rollback prod-recovery \
+	prod-tools-prepare prod-shelf-pin prod-ops-test prod-public-identity prod-status prod-health-client-proof prod-move-build prod-deploy prod-wait prod-verify prod-rollback prod-recovery \
 	prod-gate-candidate prod-gate-recovery prod-gate-current-incumbent \
 	aatk-predicate-inventory aatk-spec-check aatk-validate-preplan aatk-validate-release
 
@@ -14,7 +14,9 @@ CURRENT_COMMIT ?=
 ROLLBACK_DEPLOY_ID ?=
 ROLLBACK_COMMIT ?=
 CONFIRM_SERVICE_ID ?=
+LIBRARY_GATE_TOOL_ROOT ?=
 AW_SOURCE_HOME ?=
+EXPECTED_PROFILE_REF ?=
 EXPECTED_PROFILE_VERSION ?=
 EXPECTED_PROFILE_DIGEST ?=
 INCUMBENT_SERVICE_ID ?=
@@ -30,9 +32,9 @@ AATK_EVIDENCE_INDEX ?=
 export PROD_CONFIG RENDER_ENV_FILE PROD_COMMIT PROD_DEPLOY_ID CURRENT_DEPLOY_ID CURRENT_COMMIT
 export ROLLBACK_DEPLOY_ID
 export ROLLBACK_COMMIT CONFIRM_SERVICE_ID AW_SOURCE_HOME EXPECTED_PROFILE_VERSION
-export EXPECTED_PROFILE_DIGEST INCUMBENT_SERVICE_ID INCUMBENT_DEPLOY_ID INCUMBENT_COMMIT
+export EXPECTED_PROFILE_REF EXPECTED_PROFILE_DIGEST INCUMBENT_SERVICE_ID INCUMBENT_DEPLOY_ID INCUMBENT_COMMIT
 export ALLOW_LEGACY_MISSING_BUILD_FOR APPLY PROD_EVIDENCE_DIR
-export AATK_EVIDENCE_INDEX
+export AATK_EVIDENCE_INDEX LIBRARY_GATE_TOOL_ROOT
 
 test:
 	uv run pytest -q -m "not e2e"
@@ -73,8 +75,14 @@ api-stop:
 
 # Production Render operations are intentionally Make-only. Never replace these
 # targets with inline curl/shell mutations in a release session.
+prod-tools-prepare:
+	uv run python scripts/prepare_gate_tools.py
+
+prod-shelf-pin:
+	uv run python scripts/library_prod_gate.py shelf-pin
+
 prod-ops-test:
-	uv run pytest -q tests/test_render_ops.py tests/test_library_prod_gate.py
+	uv run pytest -q tests/test_render_ops.py tests/test_library_prod_gate.py tests/test_prepare_gate_tools.py
 
 prod-public-identity:
 	uv run python scripts/render_ops.py public-identity
@@ -84,6 +92,10 @@ prod-status:
 
 prod-health-client-proof:
 	uv run python scripts/render_ops.py health-client-proof
+
+prod-move-build:
+	git fetch --quiet origin main
+	uv run python scripts/render_ops.py move-build --repo-root ../..
 
 prod-deploy:
 	git fetch --quiet origin
@@ -99,7 +111,7 @@ prod-verify:
 prod-rollback:
 	uv run python scripts/render_ops.py rollback
 
-# This recovery fingerprint is specific to the pre-aasb rollback artifact. Future
+# This recovery fingerprint is specific to the 0c490a362 rollback artifact. Future
 # releases must add and review their own exact recovery gate rather than reusing it.
 prod-recovery:
 	$(MAKE) prod-rollback
@@ -109,7 +121,7 @@ prod-gate-candidate:
 	uv run python scripts/library_prod_gate.py candidate
 
 prod-gate-recovery:
-	uv run python scripts/library_prod_gate.py legacy-aasb
+	uv run python scripts/library_prod_gate.py runtime-managed-0c490a362
 
 # Read-only semantic probe for the exact pre-aasb incumbent. It does not query Render
 # identity or authorize AATK receipts; later orchestration binds these asserted pins.

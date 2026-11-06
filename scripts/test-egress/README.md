@@ -23,7 +23,8 @@ This proxy is a **soft** guard: a client disabling proxy support bypasses it.
 `make test-isolated` is the hard Go/Python/Node suite gate: dependencies are built
 into an image before execution; the runner has only an internal Docker network,
 no Docker socket, and a DNS sink with no upstream. It disables the native
-proxy so refused DNS retains normal connection-error semantics. PostgreSQL and Redis share
+proxy and the host's DNS search domains, keeping reserved fixture lookups from
+expanding into queries for the host's network. Refused DNS retains normal connection-error semantics. PostgreSQL and Redis share
 the runner's network namespace, so fixtures remain loopback. A denied DNS query
 fails the run independently of the test process status. Logs and network inspect
 receipts remain in `TEST_EGRESS_EVIDENCE` (a new directory per run).
@@ -37,3 +38,18 @@ The real AWID init fixture registers the DID before publishing. It uses the
 suite's PG/Redis when supplied, otherwise disposable local Docker services, and
 runs the repository AWID service. No identity, registry-selection or release
 code carries any of these mechanisms.
+
+The Docker resolver qualification reproduces a CI host's inherited search domain
+using the real Docker CLI, DNS sink and child `getaddrinfo`. Run it under the host
+test policy with an existing Python image; no dependency image build is needed.
+The DNS sidecar reads the repository DNS sink from a read-only bind mount:
+
+```sh
+python3 scripts/test-egress/test_docker_dns.py --image python:3.12-slim --evidence /tmp/dns-proof
+```
+
+A reserved-name lookup must leave the guard green even when the host supplies a
+search domain; a public-name lookup must still fail the guard while the child
+handles the DNS refusal successfully. Each control retains resolver configuration,
+DNS logs, runner inspection and the child exit in its evidence directory. Neither
+control needs an external DNS service or a route out of the internal network.

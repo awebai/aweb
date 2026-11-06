@@ -21,10 +21,10 @@ for (const [entry, name] of [
   } else await writeFile(destination, bytes);
 }
 
-// Reuse the canonical OSS Paper/Clay tokens, including manual and OS dark mode.
+// Reuse the shared identity tokens, including manual and OS dark mode.
 const design = await readFile("../src/aweb_naapp/assets/aweb.css", "utf8");
 const tokens = design.slice(
-  design.indexOf(":root {"),
+  design.indexOf("@font-face {"),
   design.indexOf("/* ---- base ---- */"),
 );
 const css = tokens + (await readFile("styles.css", "utf8"));

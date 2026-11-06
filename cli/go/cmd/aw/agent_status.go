@@ -125,7 +125,7 @@ func printStatusCommandError(err error) {
 	if !errors.As(err, &refusal) {
 		refusal = statusLocalError("local", err)
 	}
-	_ = json.NewEncoder(os.Stdout).Encode(refusal.result)
+	_ = json.NewEncoder(commandStdout).Encode(refusal.result)
 }
 
 func statusSigningIdentity() (*localSigningIdentity, string, error) {

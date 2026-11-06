@@ -14,6 +14,7 @@ one skill per ZIP with `SKILL.md` at the root, not an npm package.
 ```bash
 ./build-zips.sh
 # → dist/aweb-coordination.zip
+# → dist/aweb-tasks.zip
 # → dist/aweb-messaging.zip
 # → dist/aweb-team-membership.zip
 ```
