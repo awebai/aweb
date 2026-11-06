@@ -1,12 +1,36 @@
 "use strict";
 
-(() => {
+(async () => {
   const api = window.awebSecretsConsole;
   const status = document.querySelector("#form-status");
   let token = new URLSearchParams(window.location.hash.slice(1)).get("token") || "";
   // Strip the personal locator immediately; keep it only in this transient closure.
   if (window.location.hash) history.replaceState(null, "", window.location.pathname + window.location.search);
   const actions = document.querySelector("[data-console-scope]");
+
+  if (document.querySelector("[data-approval-entry]") && token) {
+    const pages = Object.freeze({
+      change_set: "/approvals", use: "/use-approvals", run: "/run-approvals",
+      reconciliation_control: "/reconciliation-approvals",
+    });
+    try {
+      const route = await api.post("/approvals/dispatch", {token});
+      if (!route || Object.keys(route).sort().join(",") !== "kind,path" ||
+          !Object.hasOwn(pages, route.kind) || route.path !== pages[route.kind]) {
+        throw new Error("Approval unavailable");
+      }
+      if (route.kind !== "change_set") {
+        const fragment = "#token=" + encodeURIComponent(token);
+        token = "";
+        location.replace(route.path + fragment);
+        return;
+      }
+    } catch {
+      token = "";
+      status.textContent = "This approval link is unavailable. Open the link sent to you.";
+      return;
+    }
+  }
 
   function inlineLogin() {
     const existing = document.querySelector("#approval-login");

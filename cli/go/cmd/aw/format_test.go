@@ -561,3 +561,31 @@ func TestFormatChatSendPendingTreatsAliasTargetStableReplyAsIncoming(t *testing.
 		t.Fatalf("pending chat send output should not misclassify stable-id reply to alias target as outgoing:\n%s", out)
 	}
 }
+
+// Mail listings show each message's id and how to reply with it, since
+// aw mail reply takes the exact message id.
+func TestFormatMailListingsShowMessageIDsForReply(t *testing.T) {
+	resp := &awid.InboxResponse{
+		Messages: []awid.InboxMessage{
+			{MessageID: "e95d090c-df77-41a0-8727-79263ae69e74", ConversationID: "98bcbd3a-9fa9-4ba4-ae5e-af0b39ec793b", FromAlias: "dave", Subject: "hello", Body: "Hello"},
+			{MessageID: "07f8afd8-b8b7-461b-b7e4-1ea778be8e9d", ConversationID: "98bcbd3a-9fa9-4ba4-ae5e-af0b39ec793b", FromAlias: "bob", Subject: "re", Body: "Hi"},
+		},
+	}
+	for name, out := range map[string]string{
+		"inbox":        formatMailInbox(resp),
+		"conversation": formatMailShowResponse(resp, ""),
+	} {
+		for _, id := range []string{"e95d090c-df77-41a0-8727-79263ae69e74", "07f8afd8-b8b7-461b-b7e4-1ea778be8e9d"} {
+			if !strings.Contains(out, "  Message ID: "+id+"\n") {
+				t.Fatalf("%s does not show message id %s:\n%s", name, id, out)
+			}
+		}
+		if n := strings.Count(out, "To reply: aw mail reply <message-id> --body-file <file>"); n != 1 {
+			t.Fatalf("%s shows the reply hint %d times:\n%s", name, n, out)
+		}
+	}
+	noID := formatMailInbox(&awid.InboxResponse{Messages: []awid.InboxMessage{{FromAlias: "dave", Body: "Hello"}}})
+	if strings.Contains(noID, "Message ID") || strings.Contains(noID, "To reply") {
+		t.Fatalf("a message without an id shows id or reply lines:\n%s", noID)
+	}
+}

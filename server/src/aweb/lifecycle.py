@@ -27,6 +27,7 @@ from .events import (
     publish_team_event,
 )
 from .identity_scope import normalize_identity_scope
+from .agent_wake import did_wake_key, send_agent_wakes
 from .messaging.waiting import unregister_waiting_strict
 from .presence import clear_workspace_presence
 
@@ -917,8 +918,19 @@ async def _enqueue_lifecycle_side_effects(
         )
 
 
+async def _wake_chat_sessions(db, redis: Redis, session_ids: set[str]) -> None:
+    """The remaining participants' streams see the cleared waiting and roster."""
+    rows = await db.fetch_all(
+        "SELECT DISTINCT did FROM {{tables.chat_participants}} WHERE session_id = ANY($1::uuid[])",
+        [UUID(session_id) for session_id in session_ids],
+    )
+    if rows:
+        await send_agent_wakes(redis, {did_wake_key(row["did"]): {"chat"} for row in rows})
+
+
 async def _deliver_lifecycle_side_effect(
     redis: Redis,
+    db,
     *,
     effect_kind: str,
     payload: dict,
@@ -956,6 +968,7 @@ async def _deliver_lifecycle_side_effect(
         status, cleared_count = await _clear_chat_waiting(redis, participants)
         if status != "cleared":
             raise RuntimeError(f"chat waiting cleanup returned {status}")
+        await _wake_chat_sessions(db, redis, {session_id for session_id, _ in participants})
         return 0, 0, int(cleared_count or 0), 0
     if effect_kind == "presence_clear":
         workspace_ids = [str(value) for value in payload.get("workspace_ids", [])]
@@ -1048,6 +1061,7 @@ async def replay_lifecycle_side_effects(
                 workspace_count, team_count, waiting_count, presence_count = (
                     await _deliver_lifecycle_side_effect(
                         redis,
+                        tx,
                         effect_kind=effect_kind,
                         payload=payload,
                     )

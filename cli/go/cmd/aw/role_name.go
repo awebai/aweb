@@ -89,6 +89,6 @@ func runRoleNameSet(cmd *cobra.Command, args []string) error {
 	if err := awconfig.SaveWorktreeWorkspaceTo(workspacePath, workspace); err != nil {
 		return fmt.Errorf("write %s: %w", workspacePath, err)
 	}
-	fmt.Printf("Role name set to %s\n", updatedRoleName)
+	fmt.Fprintf(commandStdout, "Role name set to %s\n", updatedRoleName)
 	return nil
 }

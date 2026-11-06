@@ -17,6 +17,7 @@ from nacl.signing import SigningKey
 from awid.did import did_from_public_key
 from awid.signing import canonical_json_bytes, sign_message
 import aweb.routes.events as events_module
+from aweb.messaging.participant_succession import MailSuccessionScope
 from aweb.routes.events import router as events_router
 from aweb.team_auth_deps import TeamIdentity
 
@@ -148,8 +149,9 @@ async def _open_test_event_stream(aweb_db, agent_id, monkeypatch, *, redis=None)
         async def is_disconnected(self):
             return False
 
-    monkeypatch.setattr(events_module, "EVENTS_POLL_INTERVAL", 0.01)
-    monkeypatch.setattr(events_module, "EVENTS_HEARTBEAT_INTERVAL", 0.01)
+    # As in production, a heartbeat is due only after a reconcile had its turn.
+    monkeypatch.setattr(events_module, "EVENTS_RECONCILE_INTERVAL", 0.01)
+    monkeypatch.setattr(events_module, "EVENTS_HEARTBEAT_INTERVAL", 0.05)
     stream = events_module._sse_agent_events(
         request=_ConnectedRequest(),
         db=_DbShim(),
@@ -294,7 +296,7 @@ async def test_events_stream_sends_idle_heartbeats(aweb_cloud_db, monkeypatch):
         bob_did_key,
     )
 
-    monkeypatch.setattr(events_module, "EVENTS_POLL_INTERVAL", 0.01)
+    monkeypatch.setattr(events_module, "EVENTS_RECONCILE_INTERVAL", 0.01)
     monkeypatch.setattr(events_module, "EVENTS_HEARTBEAT_INTERVAL", 0.01)
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
@@ -431,6 +433,7 @@ async def test_current_actionable_mail_includes_from_stable_id_for_current_sende
     actionable = await events_module._current_actionable_mail(
         aweb_cloud_db.aweb_db,
         inbox_dids=["did:aw:bob", "did:key:z6MkBobCurrent"],
+        mail_scope=MailSuccessionScope(),
     )
 
     assert len(actionable) == 1
@@ -459,6 +462,7 @@ async def test_current_actionable_mail_prefers_stored_sender_address_without_loc
     actionable = await events_module._current_actionable_mail(
         aweb_cloud_db.aweb_db,
         inbox_dids=["did:aw:bob"],
+        mail_scope=MailSuccessionScope(),
     )
 
     assert len(actionable) == 1
@@ -492,6 +496,7 @@ async def test_current_actionable_mail_redacts_encrypted_subject(aweb_cloud_db):
     actionable = await events_module._current_actionable_mail(
         aweb_cloud_db.aweb_db,
         inbox_dids=["did:aw:bob"],
+        mail_scope=MailSuccessionScope(),
     )
 
     assert len(actionable) == 1
@@ -832,6 +837,7 @@ async def test_events_stream_emits_only_new_arrival_for_full_mail_window(
     current = await events_module._current_actionable_mail(
         aweb_cloud_db.aweb_db,
         inbox_dids=["did:aw:bob"],
+        mail_scope=MailSuccessionScope(),
     )
     newest = next(item for item in current if item["message_id"] == newest_message_id)
     assert newest["conversation_id"] == newest_conversation_id
@@ -855,6 +861,7 @@ async def test_events_stream_emits_only_new_arrival_for_full_mail_window(
     after_ack = await events_module._current_actionable_mail(
         aweb_cloud_db.aweb_db,
         inbox_dids=["did:aw:bob"],
+        mail_scope=MailSuccessionScope(),
     )
     assert {item["message_id"] for item in after_ack} == omitted_ids
 

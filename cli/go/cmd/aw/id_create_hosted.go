@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
@@ -34,15 +35,21 @@ type hostedIdentityContext struct {
 	Name        string `json:"name"`
 	InboundMode string `json:"inbound_mode"`
 	RegistryURL string `json:"registry_url"`
+	Domain      string `json:"domain,omitempty"`
+	ParentID    string `json:"parent_id,omitempty"`
+	ParentKind  string `json:"parent_kind,omitempty"`
 }
 
 type hostedIdentityRecovery struct {
-	Version     int                   `json:"version"`
-	Context     hostedIdentityContext `json:"context"`
-	SigningSeed string                `json:"signing_seed"`
+	ResponseJSON string                `json:"response_json,omitempty"`
+	Version      int                   `json:"version"`
+	Context      hostedIdentityContext `json:"context"`
+	SigningSeed  string                `json:"signing_seed"`
+	IDTree       *hostedIDTreeRecovery `json:"id_tree"`
 }
 
 type hostedIdentityResponse struct {
+	awid.IDTreeCreationResponse
 	TeamID          string `json:"team_id"`
 	CanonicalTeamID string `json:"canonical_team_id"`
 	IdentityID      string `json:"identity_id"`
@@ -131,9 +138,44 @@ func runHostedIdentityCreate(cmd *cobra.Command) error {
 			return err
 		}
 	}
+	var selectedIssuer *selectedChildIssuer
+	var human *hostedHumanParent
+	if owner != nil {
+		if idCreateHumanParent != "" || idCreateRootParent {
+			return usageError("the selected native owner is the parent; omit --human-parent and --root-parent")
+		}
+		selectedIssuer, err = hostedOwnerIssuer(ctx, wd, owner, registry, nil)
+	} else {
+		human, err = selectHostedPersonParent(account, strings.TrimSpace(idCreateHumanParent), idCreateRootParent)
+	}
+	if err != nil {
+		return err
+	}
+	if human != nil {
+		if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "Human parent: %s (%s)\n", human.ID, human.Domain); err != nil {
+			return err
+		}
+	}
 	association := hostedIdentityContext{Issuer: cfg.Issuer, AccountID: account.ID, Org: org, TeamID: teamID, Name: name, InboundMode: mode, RegistryURL: registry.DefaultRegistryURL}
 	if owner != nil {
 		association.OwnerDIDKey = owner.did
+	}
+	if selectedIssuer != nil {
+		association.Domain = selectedIssuer.domain
+		association.ParentKind = "identity"
+		association.ParentID = selectedIssuer.parent["id"].(string)
+	}
+	if human != nil {
+		association.Domain = human.Domain
+		association.ParentKind = "identity"
+		association.ParentID = human.ID
+	}
+	if association.Domain != "" {
+		_, origin, routeErr := childIssuerRegistry(ctx, idChildOptions{RegistryURL: idCreateRegistryURL}, association.Domain)
+		if routeErr != nil {
+			return routeErr
+		}
+		association.RegistryURL = origin
 	}
 	statePath := filepath.Join(home.Root, "hosted-identity-create.json")
 	if err := pathpreflight.PreflightDir(home.Root, "hosted identity credential root", pathpreflight.Options{}); err != nil {
@@ -160,29 +202,104 @@ func runHostedIdentityCreate(cmd *cobra.Command) error {
 	} else if mapping == nil || mapping.DIDAW != material.StableID || mapping.CurrentDIDKey != material.DIDKey {
 		return errors.New("registry response does not match the original hosted identity")
 	}
+	state, err := loadHostedIdentityRecovery(statePath)
+	if err != nil {
+		return err
+	}
+	var nativeChain map[string]any
+	if selectedIssuer != nil && state.ResponseJSON == "" {
+		step := agentChainStep{issuer: selectedIssuer.childIssuer, agentID: material.StableID, agentDIDKey: material.DIDKey, agentKey: material.SigningKey, domain: association.Domain, registryURL: association.RegistryURL, registry: registry, identityDir: home.Root, now: time.Now().UTC()}
+		nativeChain, err = step.issue(ctx)
+		if err != nil {
+			return err
+		}
+		header, headerErr := awid.EncodeIDChainHeader(nativeChain)
+		if headerErr != nil {
+			return headerErr
+		}
+		if state.IDTree.NativeChainHeader != "" && state.IDTree.NativeChainHeader != header {
+			return errors.New("native owner retry changed the original child certificate")
+		}
+		state.IDTree.NativeChainHeader = header
+		if err := saveHostedIdentityRecovery(statePath, state); err != nil {
+			return err
+		}
+		if _, err := finishHostedIDTree(ctx, state.IDTree, awid.IDTreeCreationResponse{IDChain: awid.ReceivedIDChain(nativeChain), RegistrationRequest: &awid.IDTreeRegistrationRequest{}}, material, home.Root, registry, nil); err != nil {
+			return err
+		}
+	} else if selectedIssuer != nil {
+		nativeChain, err = awid.DecodeIDChainHeader(state.IDTree.NativeChainHeader)
+		if err != nil {
+			return err
+		}
+	}
 	timestamp := time.Now().UTC().Format(time.RFC3339)
 	audience, err := cliAuthIssuerAudience(cfg.Issuer)
 	if err != nil {
 		return err
 	}
 	payload := map[string]any{"operation": "cli_global_identity_create.v1", "aud": audience, "method": http.MethodPost, "path": cliIdentityCreatePath, "org": org, "team_id": teamID, "name": name, "did": material.DIDKey, "inbound_mode": mode, "timestamp": timestamp}
+	treeRequest := state.IDTree.request(nativeChain)
+	if treeRequest != nil {
+		// Both the child intent and outer owner envelope cover the complete object.
+		treeJSON, marshalErr := json.Marshal(treeRequest)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		var treeValue map[string]any
+		decoder := json.NewDecoder(bytes.NewReader(treeJSON))
+		decoder.UseNumber()
+		if err := decoder.Decode(&treeValue); err != nil {
+			return err
+		}
+		payload["id_tree"] = treeValue
+	}
 	canonical, err := awid.CanonicalJSONValue(payload)
 	if err != nil {
 		return err
 	}
 	request := map[string]any{"org": org, "team_id": teamID, "name": name, "did": material.DIDKey, "inbound_mode": mode, "proof": workspaceTeamEnrollProof{Type: "didkey-intent-v1", Timestamp: timestamp, Signature: base64.RawStdEncoding.EncodeToString(ed25519.Sign(material.SigningKey, []byte(canonical)))}}
-	var response hostedIdentityResponse
-	if owner != nil {
-		err = postHostedOwnerIdentity(ctx, owner, request, &response)
-	} else {
-		err = postCLIAuthJSON(ctx, cfg.Issuer, cliIdentityCreatePath, cfg.AccessToken, request, &response)
+	if treeRequest != nil {
+		request["id_tree"] = treeRequest
 	}
+	var response hostedIdentityResponse
+	err = readHostedCreationResponse(state.ResponseJSON, &response, func() error {
+		if owner != nil {
+			return postHostedOwnerIdentity(ctx, owner, request, &response)
+		}
+		return postCLIAuthJSON(ctx, cfg.Issuer, cliIdentityCreatePath, cfg.AccessToken, request, &response)
+	})
 	if err != nil {
+		if nativeChain != nil {
+			return fmt.Errorf("identity independently registered; hosted membership could not be confirmed: %w", err)
+		}
 		return orgCommandError(cmd, err)
 	}
 	cert, err := validateHostedIdentityResponse(response, association, material)
 	if err != nil {
 		return err
+	}
+	if err := state.IDTree.retainResponse(response.IDTreeCreationResponse); err != nil {
+		return err
+	}
+	if state.ResponseJSON == "" {
+		state.ResponseJSON, err = canonicalHostedCreationResponse(response, response.IDTreeCreationResponse)
+		if err != nil {
+			return err
+		}
+	}
+	if err := saveHostedIdentityRecovery(statePath, state); err != nil {
+		return err
+	}
+	if nativeChain != nil {
+		header, headerErr := awid.EncodeIDChainHeader(map[string]any(response.IDChain))
+		if headerErr != nil || header != state.IDTree.NativeChainHeader || response.RegistrationRequest != nil {
+			return errors.New("hosted response did not accept the original registered native chain")
+		}
+	}
+	responsibility, err := finishHostedIDTree(ctx, state.IDTree, response.IDTreeCreationResponse, material, home.Root, registry, nil)
+	if err != nil {
+		return fmt.Errorf("hosted membership created; attribution installation incomplete: %w", err)
 	}
 	enrollment := &workspaceTeamEnrollResponse{TeamID: response.TeamID, CanonicalTeamID: response.CanonicalTeamID, Alias: name, DID: response.DID, StableID: response.StableID, IdentityScope: response.IdentityScope, IdentityID: response.IdentityID, AgentID: response.AgentID}
 	if err := installWorkspaceTeamEnrollment(home.Root, home.Root, apiBase, material, enrollment, cert, association.RegistryURL); err != nil {
@@ -203,10 +320,19 @@ func runHostedIdentityCreate(cmd *cobra.Command) error {
 		status = "created"
 	}
 	out := map[string]any{"status": status, "team_id": response.CanonicalTeamID, "service_team_id": response.TeamID, "identity_home": home.Root, "identity_scope": "global", "custody": "self", "did_key": material.DIDKey, "did_aw": material.StableID, "address": response.Address, "inbound_mode": mode}
+	out["id_registration"] = "unknown"
+	out["responsibility"] = awid.IDChainResult{Outcome: "unknown", Reason: "legacy_no_chain"}
+	if responsibility != nil {
+		out["id_registration"] = "registered"
+		out["responsibility"] = responsibility
+	}
+	if human != nil {
+		out["human_parent"] = human.ID
+	}
 	if jsonFlag {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 	}
-	_, err = fmt.Fprintf(cmd.OutOrStdout(), "Status: %s\nAddress: %s\nTeam: %s\nIdentity home: %s\nInbound mode: %s\n", status, response.Address, response.CanonicalTeamID, home.Root, mode)
+	_, err = fmt.Fprintf(cmd.OutOrStdout(), "Status: %s\nAddress: %s\nTeam: %s\nIdentity home: %s\nInbound mode: %s\nID registration: %s\n", status, response.Address, response.CanonicalTeamID, home.Root, mode, out["id_registration"])
 	return err
 }
 
@@ -237,6 +363,15 @@ func prepareHostedIdentity(root, statePath string, association hostedIdentityCon
 			return workspaceTeamIdentityMaterial{}, errors.New("invalid signing material in hosted identity recovery state")
 		}
 		key = ed25519.NewKeyFromSeed(seed)
+		if state.IDTree == nil {
+			state.IDTree, err = newHostedIDTreeRecovery(association)
+			if err != nil {
+				return workspaceTeamIdentityMaterial{}, err
+			}
+			if err := saveHostedIdentityRecovery(statePath, &state); err != nil {
+				return workspaceTeamIdentityMaterial{}, err
+			}
+		}
 	case os.IsNotExist(err):
 		entries, err := os.ReadDir(root)
 		if err != nil {
@@ -251,7 +386,11 @@ func prepareHostedIdentity(root, statePath string, association hostedIdentityCon
 		if err != nil {
 			return workspaceTeamIdentityMaterial{}, err
 		}
-		data, err = json.Marshal(hostedIdentityRecovery{Version: 1, Context: association, SigningSeed: base64.StdEncoding.EncodeToString(key.Seed())})
+		tree, err := newHostedIDTreeRecovery(association)
+		if err != nil {
+			return workspaceTeamIdentityMaterial{}, err
+		}
+		data, err = json.Marshal(hostedIdentityRecovery{Version: 1, Context: association, SigningSeed: base64.StdEncoding.EncodeToString(key.Seed()), IDTree: tree})
 		if err != nil {
 			return workspaceTeamIdentityMaterial{}, err
 		}
@@ -336,5 +475,18 @@ func requireCreatedIdentityInboundMode(cmd *cobra.Command, workingDir, identityR
 	if actual == nil || actual.InboundMode != expected || actual.IdentityScope != awid.IdentityModeGlobal || actual.AgentID == "" {
 		return usageError("inbound_mode_mismatch: created identity's effective mode does not match %s; retain the original root for reconciliation", expected)
 	}
+	return nil
+}
+
+func (response *hostedIdentityResponse) UnmarshalJSON(raw []byte) error {
+	type plain hostedIdentityResponse
+	if err := json.Unmarshal(raw, (*plain)(response)); err != nil {
+		return err
+	}
+	tree, err := awid.DecodeIDTreeCreationResponse(raw)
+	if err != nil {
+		return err
+	}
+	response.IDTreeCreationResponse = tree
 	return nil
 }

@@ -1,7 +1,9 @@
 """MCP tools for async mail messaging."""
 
 from __future__ import annotations
+from aweb.messaging.mail_attribution import incoming_mail_sql
 
+from aweb.identity_auth_deps import participant_dids
 from aweb.messaging.participants import messaging_participant_by_alias
 
 from aweb.attachments import readable_attachments
@@ -15,7 +17,10 @@ from fastapi import HTTPException
 
 from awid.federation_errors import FederationAuthorityError
 from aweb.awid_error_handling import awid_registry_not_configured_detail
-from aweb.mcp.auth import auth_dids, get_auth, primary_auth_did
+from aweb.federation.origins import public_origins
+from aweb.federation.errors import RecipientNotResidentError
+from aweb.agent_wake import agent_wake_scope, record_did_wakes
+from aweb.mcp.auth import auth_dids, current_agent_wake_publisher, get_auth, primary_auth_did
 from aweb.mcp.mutations import fire_mcp_mutation_hook
 from aweb.mcp.signing import (
     HostedMessageDecryptor,
@@ -41,7 +46,14 @@ from aweb.messaging.alias_targets import (
     get_agent_by_namespace_alias,
     namespace_exists,
 )
-from aweb.messaging.address_auth import local_recipient_visible_to_auth
+from aweb.messaging.address_auth import (
+    identity_recipient,
+    local_recipient_for_address_binding,
+    local_recipient_visible_to_auth,
+    refuse_same_origin_nonresident,
+    local_recipient_for_own_route,
+    unreachable_address_refusal,
+)
 from aweb.messaging.contacts import resolve_local_namespace_controller_did
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
 from aweb.messaging.messages import (
@@ -60,17 +72,33 @@ from aweb.messaging.verification import (
 )
 from aweb.messaging.mail_routing import (
     mail_continuation_context,
+    ParticipantRetiredError,
     participant_is_remote,
     recipient_for_conversation_participant,
     remote_recipient_from_participant,
-    with_requested_address as _with_requested_address,
 )
 from aweb.routes.messages import (
     SendMessageRequest,
     _deliver_remote_mail_and_project_locally,
-    _existing_mail_conversation_for_target,
 )
 from aweb.service_errors import ForbiddenError, NotFoundError, ServiceError, ValidationError
+
+async def list_threads(
+    db, *, limit: int = 50, cursor: str = "", participant_did: str = "",
+    participant_address: str = "",
+) -> str:
+    from aweb.routes.conversations import list_conversations_for_auth
+
+    try:
+        response = await list_conversations_for_auth(
+            db, mcp_messaging_auth(get_auth()), conversation_type="mail", limit=limit,
+            cursor=cursor or None, participant_did=participant_did or None,
+            participant_address=participant_address or None,
+        )
+    except HTTPException as exc:
+        return json.dumps({"error": exc.detail})
+    return response.model_dump_json()
+
 
 VALID_PRIORITIES: set[str] = set(MessagePriority.__args__)  # type: ignore[attr-defined]
 
@@ -235,6 +263,8 @@ async def send_mail(
                     hosted_encryptor=hosted_encryptor,
                 )
             )
+        except ParticipantRetiredError as error:
+            return json.dumps({"error": error.detail, "effects": "none"})
         except ContractError as error:
             return json.dumps({"error": error.code, "effects": "none"})
     sender_address = _sender_address(auth)
@@ -253,34 +283,8 @@ async def send_mail(
     if not recipient_ref and not conversation_ref:
         return json.dumps({"error": "Recipient or conversation_id is required"})
 
-    if recipient_ref:
-        if recipient_ref.startswith("did:aw:"):
-            selector = "to_stable_id"
-        elif recipient_ref.startswith("did:key:"):
-            selector = "to_did"
-        elif "/" in recipient_ref:
-            selector = "to_address"
-        else:
-            if not auth.team_id:
-                return json.dumps({"error": "Alias delivery requires team context"})
-            selector = "to_alias"
-        # Select the same active pair as HTTP before custody signs/encrypts.
-        # The continuation below still checks participants and recipient policy.
-        try:
-            existing = await _existing_mail_conversation_for_target(
-                db_infra,
-                auth=mcp_messaging_auth(auth),
-                sender_did=primary_auth_did(auth),
-                sender_address=sender_address,
-                # Read-only lookup data: MCP already validates its own inputs.
-                # Do not impose HTTP's stricter selector/body validators here.
-                payload=SendMessageRequest.model_construct(body=body, **{selector: recipient_ref}),
-                request=auth.request,
-            )
-        except (HTTPException, ServiceError) as exc:
-            return json.dumps({"error": exc.detail})
-        if existing is not None:
-            conversation_ref = existing["conversation_id"]
+    if recipient_ref and not recipient_ref.startswith("did:") and "/" not in recipient_ref and not auth.team_id:
+        return json.dumps({"error": "Alias delivery requires team context"})
 
     if conversation_ref:
         message_id = uuid_mod.uuid4()
@@ -296,7 +300,7 @@ async def send_mail(
                 db_infra,
                 conversation_id=conversation_ref,
                 sender_did=sender_did,
-                equivalent_dids=auth_dids(auth),
+                equivalent_dids=participant_dids(auth),
             )
             recipient_participant = continuation.recipient_participant
             if participant_is_remote(recipient_participant):
@@ -304,6 +308,16 @@ async def send_mail(
                     registry_client,
                     recipient_participant,
                 )
+                local = await local_recipient_for_own_route(
+                    db_infra, remote_recipient, request=auth.request,
+                    origins=public_origins(auth.request, public_origin=public_origin),
+                )
+                if local is not None:
+                    remote_recipient["did_key"] = local["did_key"]
+        except HTTPException as exc:
+            return json.dumps({"error": exc.detail})
+        except RecipientNotResidentError as exc:
+            return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
         except (ValidationError, NotFoundError, ForbiddenError) as exc:
             return json.dumps({"error": exc.detail})
         except ServiceError as exc:
@@ -370,7 +384,6 @@ async def send_mail(
             except HostedMessageSigningError as exc:
                 return json.dumps({"error": str(exc)})
             if signed is not None:
-                sender_did = signed.from_did
                 signature = signed.signature
                 signed_payload = signed.signed_payload
         try:
@@ -386,13 +399,13 @@ async def send_mail(
                     priority=cast(MessagePriority, priority),
                     message_id=str(message_id),
                     timestamp=_utc_iso(sender_attested_at),
-                    from_did=sender_did,
+                    from_did=auth.did_key,
                     signature=None if encrypted is not None else signature,
                     signed_payload=None if encrypted is not None else signed_payload,
                 )
                 response = await _deliver_remote_mail_and_project_locally(
                     mcp_federation_request(
-                        public_origin=public_origin,
+                        public_origin=public_origin, request=auth.request,
                         mail_transport=federation_transport,
                     ),
                     payload,
@@ -416,33 +429,36 @@ async def send_mail(
                         "to": recipient_participant.get("alias") or recipient_did,
                     }
                 )
-            message_id, server_received_at = await deliver_message(
-                db_infra,
-                registry_client=registry_client,
-                recipient_agent=recipient,
-                from_did=sender_did,
-                to_did=recipient_did,
-                team_id=continuation.conversation.get("team_id") or auth.team_id,
-                from_agent_id=auth.agent_id,
-                from_alias=auth.alias,
-                sender_address=sender_address,
-                to_agent_id=recipient_participant.get("agent_id"),
-                to_alias=recipient_participant.get("alias"),
-                subject="" if encrypted is not None else subject,
-                body="" if encrypted is not None else body,
-                priority=cast(MessagePriority, priority),
-                signature=None if encrypted is not None else signature,
-                signed_payload=None if encrypted is not None else signed_payload,
-                content_mode=encrypted.content_mode if encrypted is not None else "legacy_plaintext_v1",
-                message_version=encrypted.message_version if encrypted is not None else 1,
-                encrypted_envelope=encrypted.encrypted_envelope if encrypted is not None else None,
-                encrypted_metadata=encrypted_metadata,
-                message_id=message_id,
-                conversation_id=conversation_ref,
-                sender_verified_dids=auth_dids(auth),
-                stored_route_continuation=True,
-            )
+            with agent_wake_scope(current_agent_wake_publisher()):
+                message_id, server_received_at = await deliver_message(
+                    db_infra,
+                    registry_client=registry_client,
+                    recipient_agent=recipient,
+                    from_did=sender_did,
+                    to_did=recipient_did,
+                    team_id=continuation.conversation.get("team_id") or auth.team_id,
+                    from_agent_id=auth.agent_id,
+                    from_alias=auth.alias,
+                    sender_address=sender_address,
+                    to_agent_id=recipient.get("agent_id"),
+                    to_alias=recipient_participant.get("alias"),
+                    subject="" if encrypted is not None else subject,
+                    body="" if encrypted is not None else body,
+                    priority=cast(MessagePriority, priority),
+                    signature=None if encrypted is not None else signature,
+                    signed_payload=None if encrypted is not None else signed_payload,
+                    content_mode=encrypted.content_mode if encrypted is not None else "legacy_plaintext_v1",
+                    message_version=encrypted.message_version if encrypted is not None else 1,
+                    encrypted_envelope=encrypted.encrypted_envelope if encrypted is not None else None,
+                    encrypted_metadata=encrypted_metadata,
+                    message_id=message_id,
+                    conversation_id=conversation_ref,
+                    sender_verified_dids=auth_dids(auth),
+                    stored_route_continuation=True,
+                )
             await touch_conversation_activity(db_infra, conversation_id=conversation_ref)
+        except RecipientNotResidentError as exc:
+            return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
         except Exception as exc:
             detail = getattr(exc, "detail", None)
             return json.dumps({"error": detail or str(exc)})
@@ -450,7 +466,7 @@ async def send_mail(
         await _fire_message_sent(
             auth,
             from_did=sender_did,
-            to_agent_id=recipient_participant.get("agent_id"),
+            to_agent_id=recipient.get("agent_id"),
             to_alias=recipient_participant.get("alias"),
             message_id=message_id,
             conversation_id=conversation_ref,
@@ -474,6 +490,11 @@ async def send_mail(
     if recipient_ref.startswith("did:aw:") or recipient_ref.startswith("did:key:"):
         recipient_did = recipient_ref
         recipient = await resolve_agent_by_did(db_infra, recipient_did)
+        if recipient is not None:
+            recipient = identity_recipient(recipient)
+            # An explicit current key selects the verified identity; it is
+            # signature evidence, not a second global participant.
+            recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or recipient_ref).strip()
     elif "/" in recipient_ref:
         domain, name = recipient_ref.split("/", 1)
         try:
@@ -491,9 +512,9 @@ async def send_mail(
                     contact_current_did_key=str(recipient.get("did_key") or ""),
                 )
                 if controller_did is None:
-                    return json.dumps({"error": f"Address '{recipient_ref}' not found"})
+                    return json.dumps({"error": unreachable_address_refusal(recipient_ref)})
                 recipient["authority_controller_did"] = controller_did
-            recipient = _with_requested_address(recipient, recipient_ref)
+            recipient = identity_recipient(recipient, recipient_ref)
             recipient_did = (
                 recipient.get("did_aw") or recipient.get("did_key") or ""
             ).strip()
@@ -514,11 +535,16 @@ async def send_mail(
                 )
             if resolved is not None and resolved.did_aw:
                 recipient_did = resolved.did_aw
-                recipient = await resolve_agent_by_did(db_infra, recipient_did)
+                recipient = await local_recipient_for_address_binding(db_infra, resolved, recipient_ref)
                 if recipient is None:
-                    recipient = _external_recipient_from_address(
-                        recipient_ref, resolved
-                    )
+                    try:
+                        refuse_same_origin_nonresident(
+                            registry_delivery_origin(resolved),
+                            origins=public_origins(auth.request, public_origin=public_origin),
+                        )
+                    except RecipientNotResidentError as exc:
+                        return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
+                    recipient = _external_recipient_from_address(recipient_ref, resolved)
         if recipient is None:
             if await namespace_exists(db_infra, domain):
                 return json.dumps({"error": f"Agent '{recipient_ref}' not found"})
@@ -530,7 +556,7 @@ async def send_mail(
                         ),
                     }
                 )
-            return json.dumps({"error": f"Address '{recipient_ref}' not found"})
+            return json.dumps({"error": unreachable_address_refusal(recipient_ref)})
         if not recipient_did:
             return json.dumps({"error": f"Agent '{recipient_ref}' not found"})
     else:
@@ -609,7 +635,6 @@ async def send_mail(
         except HostedMessageSigningError as exc:
             return json.dumps({"error": str(exc)})
         if signed is not None:
-            sender_did = signed.from_did
             signature = signed.signature
             signed_payload = signed.signed_payload
 
@@ -637,13 +662,13 @@ async def send_mail(
                 priority=cast(MessagePriority, priority),
                 message_id=str(message_id),
                 timestamp=_utc_iso(sender_attested_at),
-                from_did=sender_did,
+                from_did=auth.did_key,
                 signature=None if encrypted is not None else signature,
                 signed_payload=None if encrypted is not None else signed_payload,
             )
             response = await _deliver_remote_mail_and_project_locally(
                 mcp_federation_request(
-                    public_origin=public_origin,
+                    public_origin=public_origin, request=auth.request,
                     mail_transport=federation_transport,
                 ),
                 payload,
@@ -690,31 +715,34 @@ async def send_mail(
             ],
             team_id=auth.team_id,
         )
-        message_id, server_received_at = await deliver_message(
-            db_infra,
-            registry_client=registry_client,
-            recipient_agent=recipient,
-            from_did=sender_did,
-            to_did=recipient_did,
-            team_id=auth.team_id,
-            from_agent_id=auth.agent_id,
-            from_alias=auth.alias,
-            sender_address=sender_address,
-            to_agent_id=str(recipient["agent_id"]) if recipient.get("agent_id") else None,
-            to_alias=recipient_alias,
-            subject="" if encrypted is not None else subject,
-            body="" if encrypted is not None else body,
-            priority=cast(MessagePriority, priority),
-            signature=None if encrypted is not None else signature,
-            signed_payload=None if encrypted is not None else signed_payload,
-            content_mode=encrypted.content_mode if encrypted is not None else "legacy_plaintext_v1",
-            message_version=encrypted.message_version if encrypted is not None else 1,
-            encrypted_envelope=encrypted.encrypted_envelope if encrypted is not None else None,
-            encrypted_metadata=encrypted_metadata,
-            message_id=message_id,
-            conversation_id=conversation["conversation_id"],
-            skip_policy_check=True,
-        )
+        with agent_wake_scope(current_agent_wake_publisher()):
+            message_id, server_received_at = await deliver_message(
+                db_infra,
+                registry_client=registry_client,
+                recipient_agent=recipient,
+                from_did=sender_did,
+                to_did=recipient_did,
+                team_id=auth.team_id,
+                from_agent_id=auth.agent_id,
+                from_alias=auth.alias,
+                sender_address=sender_address,
+                to_agent_id=str(recipient["agent_id"]) if recipient.get("agent_id") else None,
+                to_alias=recipient_alias,
+                subject="" if encrypted is not None else subject,
+                body="" if encrypted is not None else body,
+                priority=cast(MessagePriority, priority),
+                signature=None if encrypted is not None else signature,
+                signed_payload=None if encrypted is not None else signed_payload,
+                content_mode=encrypted.content_mode if encrypted is not None else "legacy_plaintext_v1",
+                message_version=encrypted.message_version if encrypted is not None else 1,
+                encrypted_envelope=encrypted.encrypted_envelope if encrypted is not None else None,
+                encrypted_metadata=encrypted_metadata,
+                message_id=message_id,
+                conversation_id=conversation["conversation_id"],
+                skip_policy_check=True,
+            )
+    except RecipientNotResidentError as exc:
+        return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
     except Exception as exc:
         detail = getattr(exc, "detail", None)
         return json.dumps({"error": detail or str(exc)})
@@ -752,7 +780,7 @@ async def check_inbox(
     """List inbox messages for the authenticated agent."""
     auth = get_auth()
     aweb_db = db_infra.get_manager("aweb")
-    inbox_dids = auth_dids(auth)
+    inbox_dids = participant_dids(auth)
     if not inbox_dids:
         return json.dumps({"error": "Authenticated identity is missing a routing DID"})
 
@@ -762,13 +790,13 @@ async def check_inbox(
         return json.dumps({"error": "limit must be an integer"})
 
     rows = await aweb_db.fetch_all(
-        """
+        f"""
         SELECT message_id, conversation_id, from_agent_id, from_alias, from_address, to_alias,
                subject, body, priority, read_at, created_at,
                from_did, to_did, signature, signed_payload, content_mode, message_version,
                encrypted_envelope
-        FROM {{tables.messages}}
-        WHERE to_did = ANY($1::text[])
+        FROM {{{{tables.messages}}}} m
+        WHERE {incoming_mail_sql('$1')}
           AND ($2::bool IS FALSE OR read_at IS NULL)
         ORDER BY created_at DESC
         LIMIT $3
@@ -781,18 +809,21 @@ async def check_inbox(
     # Auto-acknowledge unread messages
     unread_message_ids = [r["message_id"] for r in rows if r["read_at"] is None]
     if unread_message_ids:
-        acknowledged = await aweb_db.fetch_all(
-            """
-            UPDATE {{tables.messages}}
-            SET read_at = NOW()
-            WHERE to_did = ANY($1::text[])
-              AND message_id = ANY($2::uuid[])
-              AND read_at IS NULL
-            RETURNING message_id, from_alias, subject, content_mode
-            """,
-            inbox_dids,
-            unread_message_ids,
-        )
+        with agent_wake_scope(current_agent_wake_publisher()):
+            acknowledged = await aweb_db.fetch_all(
+                f"""
+                UPDATE {{{{tables.messages}}}} m
+                SET read_at = NOW()
+                WHERE {incoming_mail_sql('$1')}
+                  AND message_id = ANY($2::uuid[])
+                  AND read_at IS NULL
+                RETURNING message_id, from_alias, subject, content_mode
+                """,
+                inbox_dids,
+                unread_message_ids,
+            )
+            if acknowledged:
+                record_did_wakes(inbox_dids, "mail")
         for row in acknowledged:
             await fire_mcp_mutation_hook(
                 "message.acknowledged",

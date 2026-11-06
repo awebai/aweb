@@ -121,12 +121,20 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 	ev := Event{
 		Type: sseEvent.Event,
 	}
-	signedPayload := ""
-
 	var data map[string]any
 	if err := json.Unmarshal([]byte(sseEvent.Data), &data); err != nil {
 		return ev
 	}
+
+	// Decode proof integers independently of the display/event JSON map.
+	var proof struct {
+		IDChain awid.ReceivedIDChain `json:"id_chain"`
+	}
+	if err := json.Unmarshal([]byte(sseEvent.Data), &proof); err != nil {
+		ev.VerificationStatus = awid.Failed
+		return ev
+	}
+	ev.IDChain = proof.IDChain
 
 	if raw, ok := data["sender_membership"]; ok {
 		encoded, err := json.Marshal(raw)
@@ -223,7 +231,7 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 		ev.SigningKeyID = v
 	}
 	if v, ok := data["signed_payload"].(string); ok {
-		signedPayload = v
+		ev.SignedPayload = v
 	}
 	if v, ok := data["is_contact"].(bool); ok {
 		ev.IsContact = &v
@@ -265,7 +273,7 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 		}
 	}
 
-	if meta, ok := parseSignedEnvelopeMetadata(signedPayload); ok {
+	if meta, ok := parseSignedEnvelopeMetadata(ev.SignedPayload); ok {
 		// The chat stream row may carry a stable DID in from_did/to_did when the
 		// session participant was stored under did:aw. The signed payload is the
 		// verification authority and carries the did:key that signed the message;
@@ -311,8 +319,8 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 		SigningKeyID: ev.SigningKeyID,
 	}
 	// Error is encoded in VerificationStatus; discard it.
-	if signedPayload != "" {
-		ev.VerificationStatus, _ = awid.VerifySignedPayload(signedPayload, ev.Signature, ev.FromDID, ev.SigningKeyID)
+	if ev.SignedPayload != "" {
+		ev.VerificationStatus, _ = awid.VerifySignedPayload(ev.SignedPayload, ev.Signature, ev.FromDID, ev.SigningKeyID)
 	} else {
 		ev.VerificationStatus, _ = awid.VerifyMessage(env)
 	}
@@ -951,6 +959,8 @@ func buildMessages(messages []awid.ChatMessage) []Event {
 	events := make([]Event, len(messages))
 	for i, m := range messages {
 		events[i] = Event{
+			IDChain:                 m.IDChain,
+			SignedPayload:           m.SignedPayload,
 			Type:                    "message",
 			SenderMembership:        m.SenderMembership,
 			MessageID:               m.MessageID,

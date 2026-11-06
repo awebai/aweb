@@ -110,7 +110,7 @@ def agent_event_allowed(identity: TeamIdentity, event: dict[str, Any]) -> bool:
     event_type = str(event.get("type") or "")
     if event_type == "actionable_mail":
         return grant_has_scope(identity, "mail.read")
-    if event_type == "actionable_chat":
+    if event_type in {"actionable_chat", "actionable_room_post"}:
         return grant_has_scope(identity, "chat.read")
     if event_type.startswith("control_") or event_type in GRANT_TERMINAL_DETAILS:
         return grant_has_scope(identity, "events.read")

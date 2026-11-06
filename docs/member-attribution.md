@@ -1,6 +1,9 @@
 # Member attribution v1
 
-Status: **contract candidate; implementation follows review**. The public
+Status: **SUPERSEDED by [identity certificates](id-certificates.md)**.
+The email/fingerprint record and email-claim implementation described here must
+not be built. This document and its frozen vectors remain historical evidence;
+existing member_person/member_custody contracts are unaffected. The public
 fixtures are [`vectors/member-attribution-v1.json`](vectors/member-attribution-v1.json).
 This adds a controller statement about the human behind a member. It changes
 neither v1 certificate bytes nor existing membership, message, custody or grant

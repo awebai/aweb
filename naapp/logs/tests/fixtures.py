@@ -132,15 +132,26 @@ _TEMPLATES = {
 
 
 def signed_event(
-    kind: str, *, event_id: str | None = None, seq: int = 1, team_id: str = TEAM_ID
+    kind: str,
+    *,
+    event_id: str | None = None,
+    seq: int = 1,
+    team_id: str = TEAM_ID,
+    payload: dict[str, Any] | None = None,
+    occurred_at: str | None = None,
 ) -> tuple[bytes, str]:
     """A real envelope from a ``core``, ``app`` or ``client`` producer, signed by
-    that producer's test key: its signing bytes and signature."""
+    that producer's test key: its signing bytes and signature. ``payload`` and
+    ``occurred_at`` replace the template's; ``fired_at`` follows ``occurred_at``."""
     template, key_seed = _TEMPLATES[kind]
     event = copy.deepcopy(template)
     event["team_id"] = team_id
     if event_id is not None:
         event["event_id"] = event_id
+    if payload is not None:
+        event["payload"] = payload
+    if occurred_at is not None:
+        event["occurred_at"] = event["fired_at"] = occurred_at
     if kind != "client":
         event["producer"]["seq"] = seq
     return hook_envelope.sign(key_seed, event)

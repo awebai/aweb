@@ -36,6 +36,7 @@ from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pydantic import BaseModel
 
 from aweb_naapp import ratelimit
+from aweb_naapp.console.assets import console_assets_router as console_assets_router
 from aweb_naapp.runtime.approvals import AuthenticationFailed
 from aweb_naapp.runtime.passkeys import Passkeys
 

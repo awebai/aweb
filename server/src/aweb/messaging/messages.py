@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from aweb.agent_wake import record_did_wakes
 from aweb.attachment_service import attachment_transaction
 
 import json
@@ -99,10 +100,6 @@ async def resolve_agent_by_did(db, did: str) -> dict | None:
 
 async def policy_rows_for_participant(db, participant: dict) -> list[dict]:
     """Policy evidence for an existing participant, never new routing authority."""
-    if participant.get("agent_id") is not None:
-        row = await get_agent_by_id(db, agent_id=str(participant["agent_id"]))
-        if row is not None:
-            return [row]
     did = str(participant.get("did") or "").strip()
     if not did:
         return []
@@ -284,6 +281,44 @@ async def authorize_message_delivery(
     )
 
 
+async def admit_message_delivery(
+    db,
+    *,
+    recipient: dict,
+    recipient_did: str,
+    to_agent_id: str | None,
+    sender_did: str,
+    sender_address: str | None,
+    team_id: str | None,
+    sender_verified_team_id: str | None,
+    sender_verified_dids,
+    stored_route_continuation: bool,
+) -> None:
+    """The recipient's delivery policy for this sender; raises when it refuses."""
+    if recipient.get("external") and not (stored_route_continuation and not recipient.get("delivery_origin")):
+        return
+    policies = [recipient]
+    if stored_route_continuation:
+        policies = await policy_rows_for_participant(db, {
+            "agent_id": to_agent_id or recipient.get("agent_id"), "did": recipient_did,
+        })
+        if not policies:
+            # Mail has one recipient; absence is not a policy denial and
+            # must not create a local delivery to a retired projection.
+            raise NotFoundError("Recipient agent not found")
+    for policy_recipient in policies:
+        await authorize_message_delivery(
+            db,
+            recipient_agent=policy_recipient,
+            sender_did=sender_did,
+            sender_address=sender_address,
+            sender_team_id=team_id,
+            sender_verified_team_id=sender_verified_team_id,
+            sender_verified_dids=sender_verified_dids,
+            stored_route_continuation=stored_route_continuation,
+        )
+
+
 @attachment_transaction("mail")
 async def deliver_message(
     db,
@@ -306,6 +341,7 @@ async def deliver_message(
     to_agent_id: str | None = None,
     signature: str | None = None,
     signed_payload: str | None = None,
+    id_chain: dict | None = None,
     content_mode: str = "legacy_plaintext_v1",
     message_version: int = 1,
     encrypted_envelope: dict | None = None,
@@ -313,6 +349,8 @@ async def deliver_message(
     message_id: UUID | None = None,
     conversation_id: str | UUID | None = None,
     skip_policy_check: bool = False,
+    signed_recipient_did: str | None = None,
+    known_new: bool = False,
 ) -> tuple[UUID, datetime]:
     """Deliver a message between identities, not within a team."""
     sender_did = str(from_did or "").strip()
@@ -322,41 +360,32 @@ async def deliver_message(
     if not recipient_did:
         raise ValidationError("Missing to_did")
 
-    recipient = await resolve_agent_by_did(db, recipient_did) or recipient_agent
+    recipient = recipient_agent or await resolve_agent_by_did(db, recipient_did)
     if recipient is None:
         raise NotFoundError("Recipient agent not found")
 
-    if not skip_policy_check and (
-        not recipient.get("external")
-        or (stored_route_continuation and not recipient.get("delivery_origin"))
-    ):
-        policies = [recipient]
-        if stored_route_continuation:
-            policies = await policy_rows_for_participant(db, {
-                "agent_id": to_agent_id or recipient.get("agent_id"), "did": recipient_did,
-            })
-            if not policies:
-                # Mail has one recipient; absence is not a policy denial and
-                # must not create a local delivery to a retired projection.
-                raise NotFoundError("Recipient agent not found")
-        for policy_recipient in policies:
-            await authorize_message_delivery(
-                db,
-                recipient_agent=policy_recipient,
-                sender_did=sender_did,
-                sender_address=sender_address,
-                sender_team_id=team_id,
-                sender_verified_team_id=sender_verified_team_id,
-                sender_verified_dids=sender_verified_dids,
-                stored_route_continuation=stored_route_continuation,
-            )
+    if not skip_policy_check:
+        await admit_message_delivery(
+            db,
+            recipient=recipient,
+            recipient_did=recipient_did,
+            to_agent_id=to_agent_id,
+            sender_did=sender_did,
+            sender_address=sender_address,
+            team_id=team_id,
+            sender_verified_team_id=sender_verified_team_id,
+            sender_verified_dids=sender_verified_dids,
+            stored_route_continuation=stored_route_continuation,
+        )
 
     # The sender-attested time remains in signed_payload or encrypted_envelope.
     # created_at is when this server received the message for ordering, so the
     # two values intentionally use different clocks and may disagree.
     created_at = datetime.now(timezone.utc)
     if message_id is None:
+        # A freshly generated id names no stored message.
         message_id = uuid_mod.uuid4()
+        known_new = True
 
     conversation_uuid = _parse_uuid(conversation_id, field_name="conversation_id") if conversation_id else None
     from_uuid = _parse_uuid(from_agent_id, field_name="from_agent_id") if from_agent_id else None
@@ -380,16 +409,19 @@ async def deliver_message(
         encrypted_metadata = {}
 
     aweb_db = db.get_manager("aweb")
+    # known_new: the caller looked this message_id up in this request and
+    # found no row, so the same lookup is not repeated here.
+    existing = None if known_new else await aweb_db.fetch_one(
+        """
+        SELECT message_id, created_at, content_mode, signed_envelope_hash,
+               from_did, signed_payload
+        FROM {{tables.messages}}
+        WHERE message_id = $1
+        """,
+        message_id,
+    )
     if content_mode == "encrypted_v2":
         signed_envelope_hash = str(encrypted_metadata.get("signed_envelope_hash") or "").strip()
-        existing = await aweb_db.fetch_one(
-            """
-            SELECT message_id, created_at, content_mode, signed_envelope_hash
-            FROM {{tables.messages}}
-            WHERE message_id = $1
-            """,
-            message_id,
-        )
         if existing:
             if (
                 str(existing["content_mode"] or "") == "encrypted_v2"
@@ -397,6 +429,15 @@ async def deliver_message(
             ):
                 return UUID(str(existing["message_id"])), existing["created_at"]
             raise ConflictError("message_id already exists with a different encrypted envelope")
+    elif existing:
+        if (
+            existing["content_mode"] == "legacy_plaintext_v1"
+            and existing["from_did"] == sender_did
+            and signed_payload
+            and existing["signed_payload"] == signed_payload
+        ):
+            return UUID(str(existing["message_id"])), existing["created_at"]
+        raise ConflictError("message_id already exists with a different sender or signed payload")
 
     row = await aweb_db.fetch_one(
         """
@@ -406,14 +447,17 @@ async def deliver_message(
              conversation_id, message_version, content_mode, encrypted_envelope,
              encrypted_ciphertext, encrypted_key_wraps, encrypted_ciphertext_hash, encrypted_ciphertext_size,
              encrypted_key_wraps_hash, encrypted_inner_header_hash, encrypted_suite, encrypted_signing_key_id,
-             signed_envelope_hash)
+             signed_envelope_hash, id_chain)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-                $17, $18, $19::jsonb, $20, $21::jsonb, $22, $23, $24, $25, $26, $27, $28)
+                $17, $18, $19::jsonb, $20, $21::jsonb, $22, $23, $24, $25, $26, $27, $28, $29::jsonb)
         RETURNING message_id, created_at
         """,
         message_id,
         sender_did,
-        recipient_did,
+        # A validated same-account succession may deliver to the successor
+        # while preserving its predecessor as the original signed target.
+        # Policy and residence above always use the current delivery identity.
+        signed_recipient_did or recipient_did,
         from_alias_value,
         from_address_value,
         to_alias_value,
@@ -439,8 +483,12 @@ async def deliver_message(
         encrypted_metadata.get("encrypted_suite"),
         encrypted_metadata.get("encrypted_signing_key_id"),
         encrypted_metadata.get("signed_envelope_hash"),
+        json.dumps(id_chain) if id_chain is not None else None,
     )
     if not row:
         raise ServiceError("Failed to create message")
+
+    # Wake the identity this delivery resolved, never a stored address field.
+    record_did_wakes((recipient.get("did_aw"), recipient.get("did_key")), "mail")
 
     return UUID(str(row["message_id"])), row["created_at"]

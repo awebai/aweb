@@ -81,8 +81,8 @@ export class APIClient {
     return this.request("GET", path, undefined, true);
   }
 
-  async post<T>(path: string, body?: unknown): Promise<T> {
-    return this.request("POST", path, body);
+  async post<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+    return this.request("POST", path, body, false, signal);
   }
 
   /** POST to a route that answers without a body, such as a 202. */
@@ -96,8 +96,9 @@ export class APIClient {
     path: string,
     body?: unknown,
     noCache: boolean = false,
+    signal?: AbortSignal,
   ): Promise<T> {
-    return readBoundedJSON<T>(await this.send(method, path, body, noCache));
+    return readBoundedJSON<T>(await this.send(method, path, body, noCache, signal));
   }
 
   private async send(
@@ -105,6 +106,7 @@ export class APIClient {
     path: string,
     body?: unknown,
     noCache: boolean = false,
+    signal?: AbortSignal,
   ): Promise<Response> {
     const url = this.baseURL + path;
     const bodyText = body === undefined ? "" : JSON.stringify(body);
@@ -117,7 +119,7 @@ export class APIClient {
       method,
       headers,
       redirect: "error",
-      signal: AbortSignal.timeout(30_000),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
     };
 
     if (body !== undefined) {

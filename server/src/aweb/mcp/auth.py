@@ -18,6 +18,7 @@ from aweb.identity_auth_deps import (
     lookup_identity_agent_context,
     resolve_identity_auth,
 )
+from aweb.agent_wake import agent_wake_publisher
 from aweb.identity_binding import refresh_projection_binding, verify_identity_binding
 from aweb.internal_auth import parse_internal_auth_context
 from aweb.mcp.mutations import (
@@ -68,6 +69,15 @@ def primary_auth_did(auth: AuthContext) -> str:
 _auth_context: contextvars.ContextVar[AuthContext | None] = contextvars.ContextVar(
     "aweb_mcp_auth", default=None
 )
+
+
+def current_agent_wake_publisher():
+    """The serving application's agent wake publisher for this MCP request."""
+    ctx = _auth_context.get()
+    request = getattr(ctx, "request", None)
+    if request is None:
+        return None
+    return agent_wake_publisher(request.app.state)
 
 
 def get_auth() -> AuthContext:

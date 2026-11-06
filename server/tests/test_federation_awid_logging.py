@@ -10,6 +10,7 @@ import pytest
 from awid.federation_errors import FederationAuthorityError
 from aweb.federation.envelope import FederationEnvelope
 from aweb.routes.federation import _resolve_target_identity
+from did_key_fixtures import named_did_key
 
 
 class TargetIdentityRegistryUnavailable:
@@ -26,12 +27,12 @@ def _envelope() -> FederationEnvelope:
     return FederationEnvelope(
         type="mail",
         sender_did_aw="did:aw:sender",
-        sender_current_did_key="did:key:sender-current",
+        sender_current_did_key=named_did_key("sender-current"),
         sender_address="sender.example/alice",
         sender_delivery_origin="https://sender.example",
         target_address="target.example/bob",
         target_did_aw="did:aw:target",
-        target_current_did_key="did:key:target-current",
+        target_current_did_key=named_did_key("target-current"),
         target_delivery_origin="https://local.example",
         body="hello",
         message_id=str(uuid4()),

@@ -60,14 +60,14 @@ polling: aw init --setup-channel.`,
 			if err != nil {
 				return err
 			}
-			fmt.Println(string(encoded))
+			fmt.Fprintln(commandStdout, string(encoded))
 		case beadsMailCheckInject:
 			if unread > 0 {
-				fmt.Println(formatHookOutput(fmt.Sprintf("You have %d%s unread bd mail message(s). Run: bd mail inbox", unread, suffix)))
+				fmt.Fprintln(commandStdout, formatHookOutput(fmt.Sprintf("You have %d%s unread bd mail message(s). Run: bd mail inbox", unread, suffix)))
 			}
 		default:
 			if unread > 0 {
-				fmt.Printf("You have %d%s unread bd mail message(s). Run: bd mail inbox\n", unread, suffix)
+				fmt.Fprintf(commandStdout, "You have %d%s unread bd mail message(s). Run: bd mail inbox\n", unread, suffix)
 			}
 		}
 		return nil

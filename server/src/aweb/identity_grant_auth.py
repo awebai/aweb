@@ -24,6 +24,7 @@ from aweb.config import get_settings, require_registered_certificates
 from aweb.grant_expiry import never_expires
 from aweb.identity_auth_deps import MessagingAuth
 from aweb.identity_binding import refresh_projection_binding, verify_identity_binding
+from aweb.id_chain_auth import authenticate_id_chain
 from aweb.team_auth_deps import (
     TeamIdentity,
     _aweb_db,
@@ -68,6 +69,8 @@ def required_grant_scope(method: str, path: str) -> str | None:
         return None
     if path == "/v1/agents" and method in _READ_METHODS:
         return None
+    if path == "/v1/conversations/unread-counts" and method in _READ_METHODS:
+        return "mail.read"
     if path == "/v1/conversations" and method in _READ_METHODS:
         # The conversations index can return mail, chat, or both depending on
         # query parameters. Authenticate the grant here; the route enforces the
@@ -212,6 +215,7 @@ async def _verify_identity_grant_row(request: Request, db, *, required_scope=_US
         request, did_key=row["subject_did_key"], did_aw=row.get("did_aw") or "",
         address=row.get("address") or "",
     )
+    await authenticate_id_chain(request, binding)
     await refresh_projection_binding(aweb_db, agent_id=row["agent_id"], did_key=row["subject_did_key"], binding=binding)
     row = {**dict(row), "did_aw": binding.did_aw, "address": binding.address}
     grant = GrantContext(
@@ -238,6 +242,7 @@ async def verify_identity_grant_auth(request: Request, db) -> MessagingAuth:
         certificate_id=None,
         verified_team_id=row["team_id"],
         grant=grant,
+        id_chain=getattr(request.state, "id_chain", None),
     )
 
 

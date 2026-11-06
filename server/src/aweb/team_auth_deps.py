@@ -27,6 +27,7 @@ from aweb.awid_error_handling import (
 )
 from aweb.config import require_registered_certificates
 from aweb.deps import get_db
+from aweb.id_chain_auth import authenticate_id_chain
 from aweb.identity_binding import (
     IdentityBinding,
     refresh_projection_binding,
@@ -96,14 +97,19 @@ async def resolve_team_identity(
     team_id = cert_info["team_id"]
     did_key = cert_info["did_key"]
 
-    row = await db.fetch_one(
-        """
-        SELECT agent_id, certificate_id, did_aw, address FROM {{tables.agents}}
-        WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL
-        """,
-        team_id,
-        did_key,
-    )
+    # A host that already read this member's agent row while verifying the
+    # same request passes it as cert_info["agent_row"]; it is used only for the
+    # exact (team_id, did_key) this certificate verified.
+    row = cert_info.get("agent_row")
+    if not (isinstance(row, dict) and row.get("team_id") == team_id and row.get("did_key") == did_key):
+        row = await db.fetch_one(
+            """
+            SELECT agent_id, certificate_id, did_aw, address FROM {{tables.agents}}
+            WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL
+            """,
+            team_id,
+            did_key,
+        )
 
     if not row:
         raise ValueError(
@@ -283,6 +289,7 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
         address=cert_info.get("member_address", ""),
         fresh=fresh,
     )
+    await authenticate_id_chain(request, binding)
     cert_info["identity_binding"] = binding
     cert_info["identity_binding_fresh"] = binding.fresh_observation
     cert_info["verified_member_did_aw"] = binding.did_aw

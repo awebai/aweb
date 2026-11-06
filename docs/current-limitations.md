@@ -30,9 +30,11 @@ must not be used as a prerequisite in a shipped tutorial.
 - The hosted BYOT wizard path is not currently a rendered onboarding option.
 - A keys-only agent port remains gated on CLI work in the current release
   train; the executed whole-home copy procedure is the supported path today.
-- Full `aw team remove` teardown is not a shipped one-command lifecycle. Do not
-  imply that deleting local layout files revokes membership or removes a global
-  identity.
+- Retiring an agent takes the command for its case: `aw workspace delete` in
+  its own folder retires a team-only agent on a hosted team and frees its name;
+  `aw team admin remove-agent` retires another agent, releasing its task claims
+  and then revoking its certificate. Deleting local files alone does not revoke
+  membership or remove a global identity.
 - CLI-founded owner-authority still requires the supported account-owner bridge; agents
   do not independently claim an account owner's authority.
 

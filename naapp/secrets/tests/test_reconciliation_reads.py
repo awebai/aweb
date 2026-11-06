@@ -48,6 +48,7 @@ async def test_broker_projection_uses_only_original_opaque_scoped_records_withou
     async with db.transaction() as tx:
         view = await reads.get(tx, scope=scope, reconcile_ref=admission.intent_id)
         assert view is not None and view.state is State.OUTCOME_UNKNOWN
+        assert view.repeat_state is None
         original = view.original
         assert (original.reconcile_ref, original.request_id, original.dispatch_id) == (
             admission.intent_id,
@@ -93,6 +94,7 @@ async def test_run_projection_keeps_frozen_job_and_resources_and_never_returns_o
         reads = ReconciliationReads(enable_runs=True)
         view = await reads.get(tx, scope=scope, reconcile_ref=admitted.body["request_ref"])
         assert view is not None and view.state is State.OUTCOME_UNKNOWN
+        assert view.repeat_state is None
         original = view.original
         assert original.reconcile_ref == admitted.body["request_ref"]
         assert original.request_id == admitted.body["request_id"]

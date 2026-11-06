@@ -17,6 +17,9 @@ import {
   SenderTrustManager,
   startChannelLoop,
 } from "../src/index.js";
+import * as ed from "@noble/ed25519";
+import { computeDIDKey } from "../src/identity/did.js";
+import { readReceivedIdChain } from "../src/identity/received_id_chain.js";
 import { canonicalJSON, signMessage, type MessageEnvelope } from "../src/identity/signing.js";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
@@ -27,6 +30,14 @@ const vectors = JSON.parse(
   did: string;
   stableID: string;
 };
+
+// These signature/dispatch fixtures predate ID-tree enrollment. Supply the
+// authoritative legacy enrollment fact without manufacturing a chain verdict.
+const verifyLegacyResponsibility: SenderTrustManager["verifyResponsibility"] = (message, authenticated) =>
+  readReceivedIdChain(message, authenticated, {
+    enrollmentFor: async () => ({ state: "not_enrolled", domain: null }),
+    evidence: async () => null,
+  });
 
 function b64ToBytes(value: string): Uint8Array {
   return Uint8Array.from(Buffer.from(value, "base64"));
@@ -780,6 +791,12 @@ describe("channel-core dispatchAgentEvent", () => {
       post: vi.fn().mockResolvedValue(undefined),
     };
     const registry = {
+      idStatus: {
+        enrollmentFor: vi.fn(async () => {
+          expect(lockHeld).toBe(false);
+          return { state: "not_enrolled", domain: null };
+        }),
+      },
       resolveIdentity: vi.fn(async () => {
         expect(lockHeld).toBe(false);
         throw new Error("team aliases must use the authenticated roster");
@@ -1944,7 +1961,7 @@ describe("channel-core dispatchAgentEvent", () => {
       {
         client: client as never,
         pinStore: new PinStore(),
-        trust: { normalizeResolvedTrust: normalizeTrust } as unknown as SenderTrustManager,
+        trust: { normalizeResolvedTrust: normalizeTrust, verifyResponsibility: verifyLegacyResponsibility } as unknown as SenderTrustManager,
         self,
         onAwakening,
       },
@@ -1977,7 +1994,8 @@ describe("channel-core dispatchAgentEvent", () => {
       message_id: "mail-projected-local",
     };
     const signature = await signMessage(b64ToBytes(vectors.seed), env);
-    const rosterDID = vectors.did.slice(0, -1) + (vectors.did.endsWith("1") ? "2" : "1");
+    // The roster names alice with another real key.
+    const rosterDID = computeDIDKey(ed.getPublicKey(new Uint8Array(32).fill(7)));
     const wrongRecipientEnv: MessageEnvelope = {
       ...env,
       message_id: "mail-projected-local-wrong-recipient",
@@ -2186,6 +2204,25 @@ describe("channel-core dispatchAgentEvent", () => {
     expect(rendered).toContain("retry verification");
   });
 
+  test("a mail wake teaches answering in the conversation; chat keeps its own line", () => {
+    const mail = formatAwakeningForAgent({
+      kind: "mail",
+      content: "hello",
+      deliveryIntent: "wake",
+      meta: { type: "mail", from: "acme.com/alice", message_id: "mail-1" },
+    });
+    expect(mail.endsWith(
+      "Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>.",
+    )).toBe(true);
+    const chat = formatAwakeningForAgent({
+      kind: "chat",
+      content: "hello",
+      deliveryIntent: "wake",
+      meta: { type: "chat", from: "acme.com/alice", session_id: "session-1" },
+    });
+    expect(chat.endsWith("Use the aw CLI to respond when appropriate.")).toBe(true);
+  });
+
   test("chat trust uses signed-payload did:key when envelope carries stable did:aw", async () => {
     const onAwakening = vi.fn();
     const env: MessageEnvelope = {
@@ -2246,7 +2283,7 @@ describe("channel-core dispatchAgentEvent", () => {
       {
         client: client as never,
         pinStore: new PinStore(),
-        trust: { normalizeResolvedTrust: normalizeTrust } as unknown as SenderTrustManager,
+        trust: { normalizeResolvedTrust: normalizeTrust, verifyResponsibility: verifyLegacyResponsibility } as unknown as SenderTrustManager,
         self,
         onAwakening,
       },
@@ -2308,6 +2345,12 @@ describe("channel-core dispatchAgentEvent", () => {
     };
     let lockHeld = false;
     const registry = {
+      idStatus: {
+        enrollmentFor: vi.fn(async () => {
+          expect(lockHeld).toBe(false);
+          return { state: "not_enrolled", domain: null };
+        }),
+      },
       verifyStableIdentity: vi.fn(async () => {
         expect(lockHeld).toBe(false);
         return { outcome: "OK_VERIFIED", currentDidKey: vectors.did };
@@ -2415,6 +2458,7 @@ describe("channel-core dispatchAgentEvent", () => {
     const trust = new SenderTrustManager(
       client as never,
       {
+        idStatus: { enrollmentFor: async () => ({ state: "not_enrolled", domain: null }) },
         verifyStableIdentity: async () => ({ outcome: "OK_VERIFIED", currentDidKey: vectors.did }),
         resolveIdentity: async () => ({
           did: vectors.did,

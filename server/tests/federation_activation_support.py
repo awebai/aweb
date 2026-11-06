@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from awid.federation_errors import FederationAuthorityError
+from awid.registry import Address, IDTreeEnrollment, KeyResolution
+from types import SimpleNamespace
 from aweb.federation.activation import AuthorizedFederationSender, ResolvedContactIdentity
 from aweb.federation.authority_state import AuthoritySecurityToken
+from did_key_fixtures import named_did_key
 
 
 class TestFederationAuthority:
@@ -13,6 +18,24 @@ class TestFederationAuthority:
     def __init__(self, manager, registry) -> None:
         self.manager = manager
         self.registry = registry
+
+    @asynccontextmanager
+    async def received_registry_client(self, token, did_key, redis):
+        # This legacy fixture declares an unenrolled sender. Production ingress
+        # evidence (including an enrolled chain) uses the real TLS registry tests.
+        async def key(did_aw):
+            assert did_aw == token.did_aw
+            return KeyResolution(did_aw=did_aw, current_did_key=did_key,
+                                 id_tree=IDTreeEnrollment(enrolled=False, domain=None))
+
+        async def address(domain, name):
+            assert f"{domain}/{name}" == token.canonical_address
+            return Address(address_id="fixture-sender", domain=domain, name=name,
+                           did_aw=token.did_aw, current_did_key=did_key,
+                           reachability="public", created_at="2026-10-26T00:00:00Z")
+
+        yield SimpleNamespace(registry_url="https://registry.test", resolve_key_fresh=key,
+                              resolve_address_fresh=address)
 
     async def authorize(self, claim, *, source_ip: str):
         del source_ip
@@ -47,16 +70,17 @@ class TestFederationAuthority:
                 authoritative_read_completed_at, expires_at,
                 generation, revision, publishing_fence
             ) VALUES (
-                $1, 'dns', '_awid.test', 'did:key:z6Mktestcontroller',
+                $1, 'dns', '_awid.test', 'did:key:z6MksdtzGW313q4RQicECqqpSv25FBPhcJBcGAXMZ5RbRPQ7' /* z6Mktestcontroller */,
                 'aweb.federation-authority.dns.v1', $2, FALSE, TRUE,
                 'https://registry.test', $3, $4, 1, $5, 1, $6,
-                clock_timestamp(), clock_timestamp() + INTERVAL '59 seconds',
+                statement_timestamp(), statement_timestamp() + INTERVAL '59 seconds',
                 1, 1, 1
             )
             ON CONFLICT (canonical_address) DO UPDATE SET
                 bound_did_aw = EXCLUDED.bound_did_aw,
                 bound_current_did_key = EXCLUDED.bound_current_did_key,
                 authoritative_delivery_origin = EXCLUDED.authoritative_delivery_origin,
+                authoritative_read_completed_at = EXCLUDED.authoritative_read_completed_at,
                 expires_at = EXCLUDED.expires_at,
                 updated_at = clock_timestamp()
             """,
@@ -88,6 +112,6 @@ class TestFederationAuthority:
             canonical_address=address,
             did_aw=resolution.did_aw,
             current_did_key=resolution.current_did_key,
-            controller_did="did:key:z6Mktestcontroller",
+            controller_did=named_did_key("z6Mktestcontroller"),
             delivery_origin=str(getattr(delivery, "origin", "") or ""),
         )

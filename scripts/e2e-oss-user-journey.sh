@@ -80,7 +80,9 @@ REDIS_PORT="${AWEB_E2E_REDIS:-6399}"
 PG_PORT="${AWEB_E2E_PG:-5452}"
 DOCKER_PUBLISHED_HOST="${AWEB_DOCKER_PUBLISHED_HOST:-127.0.0.1}"
 case "$DOCKER_PUBLISHED_HOST" in
-  127.0.0.1|aweb-docker.test) ;;
+  127.0.0.1) DOCKER_BIND_ADDRESS=127.0.0.1 ;;
+  # The candidate gate reaches published ports through the Docker host gateway.
+  aweb-docker.test) DOCKER_BIND_ADDRESS=0.0.0.0 ;;
   *) echo "unsupported AWEB_DOCKER_PUBLISHED_HOST: $DOCKER_PUBLISHED_HOST" >&2; exit 2 ;;
 esac
 AWID_E2E_SERVICE_TOKEN="${AWEB_E2E_SERVICE_TOKEN:-$(openssl rand -hex 32)}"
@@ -417,6 +419,20 @@ run_success() {
   return 0
 }
 
+# assert_who_legacy_local checks `aw who --json` for a local did:key identity
+# made without an id-tree chain: its own did:key, unknown/legacy_no_chain,
+# human_id, identity_valid and kind null, and no chain.
+assert_who_legacy_local() {
+  local label="$1" workdir="$2"
+  local who_out whoami_out did
+  capture_success whoami_out "$label whoami" run_aw_in "$workdir" whoami --json
+  did="$(echo "$whoami_out" | jq_field did)"
+  assert_not_empty "$label did" "$did"
+  capture_success who_out "$label who" run_aw_in "$workdir" who --json
+  assert_eq "$label who result" "$did|unknown|legacy_no_chain|null|null|null|no-chain" \
+    "$(echo "$who_out" | python3 -c 'import sys,json; d=json.load(sys.stdin); n=lambda k: "null" if k in d and d[k] is None else "set"; print("|".join([d.get("id",""), d.get("outcome",""), d.get("reason",""), n("human_id"), n("identity_valid"), n("kind"), "chain" if "chain" in d else "no-chain"]))' 2>/dev/null || echo unparsed)"
+}
+
 # Like run_aw_in but strips AWID_REGISTRY_URL from the env so the CLI must
 # fall back to identity.yaml's registry_url. Used by the aako-pattern
 # reproducer to exercise the env-unset-with-identity-fallback code path
@@ -668,6 +684,7 @@ POSTGRES_PASSWORD=aweb-e2e-test
 POSTGRES_DB=aweb
 AWEB_PORT=$AWEB_PORT
 AWID_PORT=$AWID_PORT
+AWEB_BIND_ADDRESS=$DOCKER_BIND_ADDRESS
 REDIS_PORT=$REDIS_PORT
 POSTGRES_PORT=$PG_PORT
 AWEB_PUBLIC_ORIGIN=$AWEB_URL
@@ -929,6 +946,7 @@ assert_eq "fresh local join used invite service URL" "$AWEB_URL" "$GSK_JOIN_AWEB
 capture_success gsk_check "gsk_check" run_aw_in "$GSK_DIR" check --online --json
 GSK_CHECK_STATUS="$(echo "$gsk_check" | jq_field status)"
 assert_eq "fresh local check after join" "ok" "$GSK_CHECK_STATUS"
+assert_who_legacy_local "gsk" "$GSK_DIR"
 
 run_success "fresh local mail lands after join without setup commands" run_aw_in "$GSK_DIR" mail send --plaintext \
   --to alice \
@@ -953,6 +971,7 @@ capture_success nokey_accept "nokey_accept" run_aw_in "$NO_KEY_DIR" id team acce
 NOKEY_ACCEPT_STATUS="$(echo "$nokey_accept" | jq_field status)"
 assert_eq "nokey accepted" "accepted" "$NOKEY_ACCEPT_STATUS"
 run_success "nokey init" run_aw_in "$NO_KEY_DIR" init --url "$AWEB_URL"
+assert_who_legacy_local "nokey" "$NO_KEY_DIR"
 psql_exec "DELETE FROM aweb.agent_encryption_keys e USING aweb.agents a WHERE e.agent_id = a.agent_id AND a.team_id = 'devteam:test.local' AND a.alias = 'nokey';"
 echo ""
 
@@ -1544,6 +1563,7 @@ assert_eq "alice adds bob to contacts" "0" "$contacts_add_exit"
 
 if bob_direct_out="$(run_aw_in "$BOB_DIR" mail send --plaintext \
   --to-address "test.local/alice" \
+  --subject "Address hello" \
   --body "Address hello from bob" 2>&1)"; then
   bob_direct_exit=0
 else
@@ -1560,6 +1580,7 @@ assert_eq "alice receives bob address message" "Address hello from bob" "$alice_
 
 if carol_direct_out="$(run_aw_in "$CAROL_DIR" mail send --plaintext \
   --to-address "test.local/alice" \
+  --subject "Blocked hello" \
   --body 'Blocked hello from carol' 2>&1)"; then
   carol_direct_exit=0
 else
@@ -1576,6 +1597,7 @@ fi
 set_inbound_mode "$ALICE_DID_AW" "open"
 run_success "carol retry mail send --plaintext" run_aw_in "$CAROL_DIR" mail send --plaintext \
   --to-address "test.local/alice" \
+  --subject "Address hello" \
   --body "Address hello from carol"
 carol_retry_exit=$?
 assert_eq "carol direct mail succeeds after inbound mode change" "0" "$carol_retry_exit"
@@ -2029,7 +2051,6 @@ sse_capture_pid=$!
 sleep 2
 if sse_reply_out="$(run_aw_in "$ALICE_DIR" mail send --plaintext \
   --conversation-id "$sse_conversation_id" \
-  --subject "SSE continuation reply" \
   --body "SSE continuation live event" \
   --json 2>&1)"; then
   sse_reply_exit=0
@@ -2038,11 +2059,12 @@ else
 fi
 assert_eq "sse continuation reply mail exit" "0" "$sse_reply_exit"
 sse_reply_conversation_id="$(echo "$sse_reply_out" | jq_field conversation_id)"
+sse_reply_message_id="$(echo "$sse_reply_out" | jq_field message_id)"
 assert_eq "sse continuation reply keeps conversation_id" "$sse_conversation_id" "$sse_reply_conversation_id"
 wait "$sse_capture_pid" 2>/dev/null || true
 sse_event_conversation_id="$(python3 -c "
 import sys, json
-capture_path, subject = sys.argv[1], sys.argv[2]
+capture_path, message_id = sys.argv[1], sys.argv[2]
 with open(capture_path, 'r', encoding='utf-8') as f:
     for line in f:
         line = line.strip()
@@ -2052,12 +2074,12 @@ with open(capture_path, 'r', encoding='utf-8') as f:
             event = json.loads(line)
         except Exception:
             continue
-        if event.get('type') == 'actionable_mail' and event.get('subject') == subject:
+        if event.get('type') == 'actionable_mail' and event.get('message_id') == message_id:
             print(event.get('conversation_id', ''))
             break
     else:
         print('')
-" "$sse_capture_file" "SSE continuation reply")"
+" "$sse_capture_file" "$sse_reply_message_id")"
 assert_eq "sse live event carries continuation conversation_id" "$sse_conversation_id" "$sse_event_conversation_id"
 
 if cross_ns_mail_out="$(run_aw_in "$ALICE_DIR" mail send --plaintext \
@@ -2078,7 +2100,6 @@ assert_not_empty "cross-namespace global initial returns conversation_id" "$cros
 
 if cross_ns_reply_out="$(run_aw_in "$PARTNER_BOB_DIR" mail send --plaintext \
   --conversation-id "$cross_ns_conversation_id" \
-  --subject "Cross namespace reply" \
   --body "Cross namespace response" \
   --json 2>&1)"; then
   cross_ns_reply_exit=0
@@ -2090,10 +2111,11 @@ if [[ "$cross_ns_reply_exit" != "0" ]]; then
   echo "  cross namespace reply output: ${cross_ns_reply_out:0:240}"
 fi
 cross_ns_reply_conversation_id="$(echo "$cross_ns_reply_out" | jq_field conversation_id)"
+cross_ns_reply_message_id="$(echo "$cross_ns_reply_out" | jq_field message_id)"
 assert_eq "cross-namespace global reply stays in conversation" "$cross_ns_conversation_id" "$cross_ns_reply_conversation_id"
 
 capture_success alice_cross_ns_inbox "alice_cross_ns_inbox" run_aw_in "$ALICE_DIR" mail inbox --json --show-all
-alice_cross_ns_reply_body="$(echo "$alice_cross_ns_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')=='$cross_ns_conversation_id' and m.get('subject')=='Cross namespace reply'), ''))" 2>/dev/null || echo "")"
+alice_cross_ns_reply_body="$(echo "$alice_cross_ns_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')=='$cross_ns_conversation_id' and m.get('message_id')=='$cross_ns_reply_message_id'), ''))" 2>/dev/null || echo "")"
 assert_eq "cross-namespace global reply delivered" "Cross namespace response" "$alice_cross_ns_reply_body"
 echo ""
 
@@ -2175,7 +2197,6 @@ assert_eq "global conversation alice receives bob initiation" "Bob starts a glob
 
 if alice_hidden_reply_out="$(run_aw_in "$ALICE_DIR" mail send --plaintext \
   --conversation-id "$bob_hidden_conversation_id" \
-  --subject "Global conversation reply" \
   --body "Reply through stored participant route" \
   --json 2>&1)"; then
   alice_hidden_reply_exit=0
@@ -2187,15 +2208,15 @@ if [[ "$alice_hidden_reply_exit" != "0" ]]; then
   echo "  global reply output: ${alice_hidden_reply_out:0:240}"
 fi
 alice_hidden_reply_conversation_id="$(echo "$alice_hidden_reply_out" | jq_field conversation_id)"
+alice_hidden_reply_message_id="$(echo "$alice_hidden_reply_out" | jq_field message_id)"
 assert_eq "global conversation reply stays in same conversation" "$bob_hidden_conversation_id" "$alice_hidden_reply_conversation_id"
 
 capture_success bob_hidden_reply_inbox "bob_hidden_reply_inbox" run_aw_in "$BOB_DIR" mail inbox --json --show-all
-bob_hidden_reply_body="$(echo "$bob_hidden_reply_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')=='$bob_hidden_conversation_id' and m.get('subject')=='Global conversation reply'), ''))" 2>/dev/null || echo "")"
+bob_hidden_reply_body="$(echo "$bob_hidden_reply_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')=='$bob_hidden_conversation_id' and m.get('message_id')=='$alice_hidden_reply_message_id'), ''))" 2>/dev/null || echo "")"
 assert_eq "global conversation bob receives stored-route reply" "Reply through stored participant route" "$bob_hidden_reply_body"
 
 if carol_leaked_conversation_out="$(run_aw_in "$CAROL_DIR" --trace mail send --plaintext \
   --conversation-id "$bob_hidden_conversation_id" \
-  --subject "Conversation leaked id" \
   --body "Carol should not enter this conversation" 2>&1)"; then
   carol_leaked_conversation_exit=0
 else
@@ -2211,7 +2232,6 @@ fi
 
 if missing_conversation_out="$(run_aw_in "$ALICE_DIR" --trace mail send --plaintext \
   --conversation-id "99999999-9999-4999-8999-999999999999" \
-  --subject "Missing conversation" \
   --body "Missing conversation should fail" 2>&1)"; then
   missing_conversation_exit=0
 else
@@ -2265,7 +2285,6 @@ fi
 psql_exec "UPDATE aweb.conversations SET status = 'closed' WHERE conversation_id = '${bob_hidden_conversation_id}'::uuid;"
 if closed_conversation_out="$(run_aw_in "$ALICE_DIR" mail send --plaintext \
   --conversation-id "$bob_hidden_conversation_id" \
-  --subject "Closed conversation" \
   --body "Closed conversation should fail" 2>&1)"; then
   closed_conversation_exit=0
 else
@@ -2297,7 +2316,6 @@ assert_not_empty "conversation ttl slide initial returns conversation_id" "$ttl_
 psql_exec "UPDATE aweb.conversations SET expires_at = NOW() + INTERVAL '1 day' WHERE conversation_id = '${ttl_conversation_id}'::uuid;"
 if ttl_reply_out="$(run_aw_in "$BOB_DIR" mail send --plaintext \
   --conversation-id "$ttl_conversation_id" \
-  --subject "Conversation TTL reply" \
   --body "TTL reply" \
   --json 2>&1)"; then
   ttl_reply_exit=0
@@ -2329,7 +2347,6 @@ expired_two_code="$E2E_CWD/expired-two.code"
   set +e
   run_aw_in "$BOB_DIR" mail send --plaintext \
     --conversation-id "$expired_conversation_id" \
-    --subject "Expired one" \
     --body "Expired one" >"$expired_one_out" 2>&1
   echo $? >"$expired_one_code"
 ) &
@@ -2338,7 +2355,6 @@ expired_one_pid=$!
   set +e
   run_aw_in "$BOB_DIR" mail send --plaintext \
     --conversation-id "$expired_conversation_id" \
-    --subject "Expired two" \
     --body "Expired two" >"$expired_two_out" 2>&1
   echo $? >"$expired_two_code"
 ) &
@@ -2402,7 +2418,6 @@ assert_not_empty "conversation bob rotation returns new did:key" "$bob_rotated_n
 
 if rotation_reply_out="$(run_aw_in "$BOB_DIR" mail send --plaintext \
   --conversation-id "$rotation_conversation_id" \
-  --subject "Conversation rotation reply" \
   --body "Rotation reply after did:key change" \
   --json 2>&1)"; then
   rotation_reply_exit=0
@@ -2414,10 +2429,11 @@ if [[ "$rotation_reply_exit" != "0" ]]; then
   echo "  rotation reply output: ${rotation_reply_out:0:240}"
 fi
 rotation_reply_conversation_id="$(echo "$rotation_reply_out" | jq_field conversation_id)"
+rotation_reply_message_id="$(echo "$rotation_reply_out" | jq_field message_id)"
 assert_eq "conversation rotated reply stays in conversation" "$rotation_conversation_id" "$rotation_reply_conversation_id"
 
 capture_success alice_rotation_inbox "alice_rotation_inbox" run_aw_in "$ALICE_DIR" mail inbox --json --show-all
-alice_rotation_reply_body="$(echo "$alice_rotation_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')=='$rotation_conversation_id' and m.get('subject')=='Conversation rotation reply'), ''))" 2>/dev/null || echo "")"
+alice_rotation_reply_body="$(echo "$alice_rotation_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')=='$rotation_conversation_id' and m.get('message_id')=='$rotation_reply_message_id'), ''))" 2>/dev/null || echo "")"
 assert_eq "conversation rotated reply delivered" "Rotation reply after did:key change" "$alice_rotation_reply_body"
 
 if partner_bob_bare_mail_out="$(run_aw_in "$PARTNER_BOB_DIR" mail send --plaintext \
@@ -2513,10 +2529,9 @@ echo ""
 # driving the verbs directly exercises exactly what bd delivers. This phase
 # exists because the delegate's first live exchange caught two defects the
 # fake-server tests could not (docs/beads-mail-delegate.md §8): a fresh send
-# between agents who already correspond must continue the pair's existing
-# conversation (the server refuses a second active one), and --reply-to must
-# be able to reference the sender's own sent mail. Both repros run here
-# against the real server.
+# between agents who already correspond starts a new thread of its own, and
+# --reply-to must be able to reference the sender's own sent mail. Both run
+# here against the real server.
 # ---------------------------------------------------------------------------
 echo "=== Phase 16b: Beads mail delegate ==="
 
@@ -2535,8 +2550,7 @@ capture_success bob_beads_check0 "bob beads check before" run_aw_in "$BOB_DIR" b
 bob_unread0="$(echo "$bob_beads_check0" | beads_json_line | python3 -c "import sys,json; print(json.load(sys.stdin).get('unread',-1))" 2>/dev/null || echo "-1")"
 assert_not_empty "bob beads unread baseline" "$bob_unread0"
 
-# Live-defect repro 1: alice and bob already correspond, so this fresh send
-# must transparently continue the existing conversation and say so.
+# Alice and bob already correspond; a fresh send still starts a new thread.
 if beads_send1_out="$(run_aw_in "$ALICE_DIR" beads-mail send bob/ \
   -s "Beads delegate journey" -m "hello through the bd seam" 2>&1)"; then
   beads_send1_exit=0
@@ -2548,7 +2562,7 @@ if [[ "$beads_send1_exit" != "0" ]]; then
   echo "$beads_send1_out"
 fi
 assert_contains "beads send disclosure" "$beads_send1_out" "sent to bob/ -> test.local/bob"
-assert_contains "beads send continuation disclosed" "$beads_send1_out" "continuing the existing conversation"
+assert_not_contains "beads send starts its own thread" "$beads_send1_out" "continuing the existing conversation"
 BEADS_MSG1_ID="$(echo "$beads_send1_out" | sed -n 's/.*message_id=\([0-9a-f-]*\).*/\1/p' | head -1)"
 assert_not_empty "beads send message id" "$BEADS_MSG1_ID"
 
@@ -2731,7 +2745,7 @@ revocation_flush_out="$(
 echo "$revocation_flush_out"
 
 if bob_mail_out="$(run_aw_in "$BOB_DIR" mail send --plaintext \
-  --to alice --body "should fail" 2>&1)"; then
+  --to alice --subject "Should fail" --body "should fail" 2>&1)"; then
   bob_mail_exit=0
 else
   bob_mail_exit=$?
@@ -2940,6 +2954,7 @@ phase_aw_init_local_quickstart() {
     fail=$((fail + 1))
   fi
   assert_file_exists "wizard signing.key written" "$WIZARD_BYOD_DIR/.aw/signing.key"
+  assert_who_legacy_local "wizard" "$WIZARD_BYOD_DIR"
   assert_file_exists "wizard workspace.yaml written" "$WIZARD_BYOD_DIR/.aw/workspace.yaml"
   assert_file_exists "wizard teams.yaml written" "$WIZARD_BYOD_DIR/.aw/teams.yaml"
   assert_file_mode "wizard signing.key mode" "$WIZARD_BYOD_DIR/.aw/signing.key" "600"

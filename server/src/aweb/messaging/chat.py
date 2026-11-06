@@ -4,6 +4,7 @@ from aweb.human_channels.contract import ContractError
 from aweb.human_channels.participants import require_native_participant_input
 from aweb.service_errors import ValidationError
 
+from aweb.agent_wake import agent_wake_scope, record_did_wakes
 from aweb.attachment_service import attachment_transaction
 
 import logging
@@ -18,7 +19,6 @@ from pgdbm.errors import QueryError
 
 from aweb.service_errors import ConflictError, NotFoundError, ServiceError, ValidationError
 from aweb.messaging.conversations import (
-    _equivalent_identity_refs,
     find_active_one_to_one_conversation_between,
 )
 
@@ -75,6 +75,28 @@ def _participant_did(row: dict[str, Any]) -> str:
     except ContractError as error:
         raise ValidationError(str(error)) from error
     return (row.get("did") or row.get("did_aw") or row.get("did_key") or "").strip()
+
+
+async def record_chat_session_wakes(aweb_db, *, session_id: UUID) -> None:
+    """Record a chat wake for each participant of a session (departed ones too:
+    leaving does not end their pending state)."""
+    rows = await aweb_db.fetch_all(
+        "SELECT did FROM {{tables.chat_participants}} WHERE session_id = $1",
+        session_id,
+    )
+    record_did_wakes((row["did"] for row in rows), "chat")
+
+
+async def wake_chat_session_participants(aweb_db, publisher, *, session_id: UUID) -> None:
+    """Wake every participant after a change only Redis records: waiting
+    presence changes sender_waiting and lifts a viewer's own suppression."""
+    if publisher is None:
+        return
+    try:
+        with agent_wake_scope(publisher):
+            await record_chat_session_wakes(aweb_db, session_id=session_id)
+    except Exception:
+        logger.warning("Chat session wake failed for %s", session_id, exc_info=True)
 
 
 async def get_agent_by_id(db, *, agent_id: str, team_id: str | None = None) -> dict[str, Any] | None:
@@ -154,39 +176,15 @@ async def find_session_between(
     *,
     did_a: str,
     did_b: str,
-    did_key_a: str | None = None,
-    did_key_b: str | None = None,
-    agent_id_a: str | UUID | None = None,
-    agent_id_b: str | UUID | None = None,
-    address_a: str | None = None,
-    address_b: str | None = None,
 ) -> UUID | None:
     conversation = await find_active_one_to_one_conversation_between(
         db,
         conversation_type="chat",
         did_a=did_a,
         did_b=did_b,
-        did_key_a=did_key_a,
-        did_key_b=did_key_b,
-        agent_id_a=agent_id_a,
-        agent_id_b=agent_id_b,
-        address_a=address_a,
-        address_b=address_b,
     )
     if conversation is None:
-        # Fallback: legacy chat_sessions row without a matching conversations
-        # row. Use _equivalent_identity_refs so the multi-team agent expansion
-        # is the same here as in the conversations-table path: single shared
-        # walk anchored on did_key, collision-resistant against did_aw collisions.
-        dids_a, agent_ids_a = await _equivalent_identity_refs(
-            db, did_a, did_key=did_key_a, agent_id=agent_id_a
-        )
-        dids_b, agent_ids_b = await _equivalent_identity_refs(
-            db, did_b, did_key=did_key_b, agent_id=agent_id_b
-        )
-        # Addresses can be reassigned; they do not establish identity continuity.
-        if not (dids_a or agent_ids_a) or not (dids_b or agent_ids_b):
-            return None
+        # Legacy sessions use the same DID participant identity as canonical threads.
         aweb_db = db.get_manager("aweb")
         rows = await aweb_db.fetch_all(
             """
@@ -196,14 +194,8 @@ async def find_session_between(
               ON pa.session_id = s.session_id
             JOIN {{tables.chat_participants}} pb
               ON pb.session_id = s.session_id
-            WHERE (
-                    ($2::uuid[] <> '{}'::uuid[] AND pa.agent_id = ANY($2::uuid[]))
-                 OR ($2::uuid[] = '{}'::uuid[] AND pa.did = ANY($1::text[]))
-              )
-              AND (
-                    ($4::uuid[] <> '{}'::uuid[] AND pb.agent_id = ANY($4::uuid[]))
-                 OR ($4::uuid[] = '{}'::uuid[] AND pb.did = ANY($3::text[]))
-              )
+            WHERE pa.did = $1
+              AND pb.did = $2
               AND pa.did <> pb.did
               AND NOT EXISTS (
                     SELECT 1 FROM {{tables.conversations}} c
@@ -217,10 +209,8 @@ async def find_session_between(
             ORDER BY s.created_at DESC, s.session_id DESC
             LIMIT 2
             """,
-            dids_a,
-            agent_ids_a,
-            dids_b,
-            agent_ids_b,
+            did_a,
+            did_b,
         )
         if not rows:
             return None
@@ -276,29 +266,34 @@ async def validate_session_id(
     *,
     session_id: UUID,
     actor_dids: list[str],
-    actor_agent_id: str | UUID | None = None,
 ) -> bool:
     """Allow a fresh UUID or an existing chat's active caller; never grant membership."""
+    exists, _ = await _chat_session_state(db, session_id=session_id, actor_dids=actor_dids)
+    return exists
+
+
+async def _chat_session_state(db, *, session_id: UUID, actor_dids: list[str]) -> tuple[bool, bool]:
+    """validate_session_id's answer, and whether the session has its conversation row."""
     row = await db.get_manager("aweb").fetch_one(
         """
         SELECT s.session_id, c.conversation_type,
                EXISTS (
                    SELECT 1 FROM {{tables.chat_participants}} p
                    WHERE p.session_id = s.session_id AND p.left_at IS NULL
-                     AND (p.did = ANY($2::text[]) OR p.agent_id = $3::uuid)
+                     AND p.did = ANY($2::text[])
                ) AS caller_participant
         FROM {{tables.conversations}} c
         FULL OUTER JOIN {{tables.chat_sessions}} s ON s.session_id = c.conversation_id
         WHERE COALESCE(c.conversation_id, s.session_id) = $1
         """,
-        session_id, actor_dids, _uuid_or_none(actor_agent_id),
+        session_id, actor_dids,
     )
     if row is None:
-        return False
+        return False, False
     if (row["conversation_type"] not in (None, "chat")
             or row["session_id"] is None or not row["caller_participant"]):
         raise ConflictError("session_id is not an existing chat session of the caller")
-    return True
+    return True, row["conversation_type"] is not None
 
 
 async def _backfill_legacy_chat_conversation(db, *, session_id: UUID) -> None:
@@ -369,30 +364,24 @@ async def ensure_session(
         raise ServiceError("Chat session requires at least two participants")
 
     actor = normalized_participants[0]  # Supplied by the authenticated adapter, never by target resolution.
-    actor_dids = list(dict.fromkeys(d for d in (actor["did"], actor.get("did_key")) if d))
-    if session_id is not None and await validate_session_id(
-        db, session_id=session_id, actor_dids=actor_dids, actor_agent_id=actor["agent_id"],
-    ):
-        await _backfill_legacy_chat_conversation(db, session_id=session_id)
-        return UUID(str(session_id))
+    actor_dids = [actor["did"]]
+    if session_id is not None:
+        exists, has_conversation = await _chat_session_state(db, session_id=session_id, actor_dids=actor_dids)
+        if exists:
+            if not has_conversation:
+                await _backfill_legacy_chat_conversation(db, session_id=session_id)
+            return UUID(str(session_id))
 
     if session_id is None and len(normalized_participants) == 2:
         existing = await find_session_between(
             db,
             did_a=normalized_participants[0]["did"],
             did_b=normalized_participants[1]["did"],
-            did_key_a=normalized_participants[0].get("did_key"),
-            did_key_b=normalized_participants[1].get("did_key"),
-            agent_id_a=normalized_participants[0].get("agent_id"),
-            agent_id_b=normalized_participants[1].get("agent_id"),
-            address_a=normalized_participants[0].get("address"),
-            address_b=normalized_participants[1].get("address"),
         )
         if existing is not None:
-            await validate_session_id(
-                db, session_id=existing, actor_dids=actor_dids, actor_agent_id=actor["agent_id"],
-            )
-            await _backfill_legacy_chat_conversation(db, session_id=existing)
+            _, has_conversation = await _chat_session_state(db, session_id=existing, actor_dids=actor_dids)
+            if not has_conversation:
+                await _backfill_legacy_chat_conversation(db, session_id=existing)
             return existing
 
     try:
@@ -456,6 +445,7 @@ async def send_in_session(
     hang_on: bool = False,
     signature: str | None = None,
     signed_payload: str | None = None,
+    id_chain: dict[str, Any] | None = None,
     content_mode: str = "legacy_plaintext_v1",
     message_version: int = 1,
     encrypted_envelope: dict[str, Any] | None = None,
@@ -483,19 +473,39 @@ async def send_in_session(
     sender_agent_uuid = _uuid_or_none(sender_agent_id) or participant.get("agent_id")
     encrypted_metadata = encrypted_metadata or {}
 
-    msg_row = await aweb_db.fetch_one(
+    # One statement inserts the message and the sender's read receipt for it,
+    # and names the participants to wake.
+    inserted = await aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.chat_messages}}
-            (message_id, session_id, from_agent_id, from_did, from_alias, from_address,
-             body, sender_leaving, hang_on, reply_to, signature, signed_payload,
-             content_mode, message_version, encrypted_envelope, encrypted_ciphertext,
-             encrypted_key_wraps, encrypted_ciphertext_hash, encrypted_ciphertext_size,
-             encrypted_key_wraps_hash, encrypted_inner_header_hash, encrypted_suite,
-             encrypted_signing_key_id, signed_envelope_hash, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-                $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-                $21, $22, $23, $24, $25)
-        RETURNING message_id, created_at
+        WITH message AS (
+            INSERT INTO {{tables.chat_messages}}
+                (message_id, session_id, from_agent_id, from_did, from_alias, from_address,
+                 body, sender_leaving, hang_on, reply_to, signature, signed_payload,
+                 content_mode, message_version, encrypted_envelope, encrypted_ciphertext,
+                 encrypted_key_wraps, encrypted_ciphertext_hash, encrypted_ciphertext_size,
+                 encrypted_key_wraps_hash, encrypted_inner_header_hash, encrypted_suite,
+                 encrypted_signing_key_id, signed_envelope_hash, created_at, id_chain)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                    $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+                    $21, $22, $23, $24, $25, $26::jsonb)
+            RETURNING message_id, created_at
+        ), receipt AS (
+            INSERT INTO {{tables.chat_read_receipts}}
+                (session_id, did, agent_id, last_read_message_id, last_read_at)
+            SELECT $2, $4, $3, message_id, created_at FROM message
+            ON CONFLICT (session_id, did) DO UPDATE
+            SET last_read_message_id = EXCLUDED.last_read_message_id,
+                agent_id = EXCLUDED.agent_id,
+                last_read_at = EXCLUDED.last_read_at
+            WHERE {{tables.chat_read_receipts}}.last_read_at IS NULL
+               OR EXCLUDED.last_read_at > {{tables.chat_read_receipts}}.last_read_at
+        )
+        SELECT message.message_id, message.created_at,
+               ARRAY(
+                   SELECT p.did FROM {{tables.chat_participants}} p
+                   WHERE p.session_id = $2 AND p.did <> $4
+               ) AS wake_dids
+        FROM message
         """,
         effective_message_id,
         session_id,
@@ -522,26 +532,12 @@ async def send_in_session(
         encrypted_metadata.get("encrypted_signing_key_id"),
         encrypted_metadata.get("signed_envelope_hash"),
         effective_created_at,
+        json.dumps(id_chain) if id_chain is not None else None,
     )
+    msg_row = {"message_id": inserted["message_id"], "created_at": inserted["created_at"]}
 
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.chat_read_receipts}}
-            (session_id, did, agent_id, last_read_message_id, last_read_at)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (session_id, did) DO UPDATE
-        SET last_read_message_id = EXCLUDED.last_read_message_id,
-            agent_id = EXCLUDED.agent_id,
-            last_read_at = EXCLUDED.last_read_at
-        WHERE {{tables.chat_read_receipts}}.last_read_at IS NULL
-           OR EXCLUDED.last_read_at > {{tables.chat_read_receipts}}.last_read_at
-        """,
-        session_id,
-        participant["did"],
-        sender_agent_uuid,
-        msg_row["message_id"],
-        msg_row["created_at"],
-    )
+    # Departed participants are woken too: leaving does not end their pending state.
+    record_did_wakes(inserted["wake_dids"] or (), "chat")
 
     return dict(msg_row)
 
@@ -561,10 +557,9 @@ async def get_pending_conversations(
         """
         WITH mine AS MATERIALIZED (
             SELECT DISTINCT ON (participant.session_id)
-                participant.session_id, participant.did, participant.agent_id
+                participant.session_id, participant.did, participant.agent_id, participant.current_did_key
             FROM {{tables.chat_participants}} participant
             WHERE participant.did = $1
-               OR ($3::uuid IS NOT NULL AND participant.agent_id = $3)
             ORDER BY participant.session_id,
                      CASE WHEN participant.did = $1 THEN 0 ELSE 1 END
         )
@@ -611,6 +606,7 @@ async def get_pending_conversations(
             FROM {{tables.chat_messages}} m
             WHERE m.session_id = s.session_id
               AND m.from_did <> p.did
+              AND m.from_did IS DISTINCT FROM p.current_did_key
               AND NOT EXISTS (
                   SELECT 1
                   FROM {{tables.chat_message_reads}} mr
@@ -637,7 +633,7 @@ async def get_pending_conversations(
                 )
                 AND (
                     lm.from_did IS NULL
-                    OR lm.from_did <> p.did
+                    OR (lm.from_did <> p.did AND lm.from_did IS DISTINCT FROM p.current_did_key)
                     OR COALESCE(lm.hang_on, FALSE) = TRUE
                 )
                 AND s.wait_started_at
@@ -711,9 +707,9 @@ async def get_message_history(
             SELECT message_id, from_alias, from_address,
                    CASE WHEN content_mode = 'encrypted_v2' THEN '' ELSE body END AS body,
                    created_at, sender_leaving, from_agent_id, reply_to, from_did,
-                   signature, signed_payload, content_mode, message_version,
+                   signature, signed_payload, id_chain, content_mode, message_version,
                    encrypted_envelope
-            FROM {{tables.chat_messages}}
+            FROM {{tables.chat_messages}} m
             WHERE session_id = $1
               AND message_id = $2
             ORDER BY created_at DESC
@@ -728,20 +724,24 @@ async def get_message_history(
             SELECT message_id, from_alias, from_address,
                    CASE WHEN content_mode = 'encrypted_v2' THEN '' ELSE body END AS body,
                    created_at, sender_leaving, from_agent_id, reply_to, from_did,
-                   signature, signed_payload, content_mode, message_version,
+                   signature, signed_payload, id_chain, content_mode, message_version,
                    encrypted_envelope
-            FROM {{tables.chat_messages}}
+            FROM {{tables.chat_messages}} m
             WHERE session_id = $1
               AND (
                 $2::bool IS FALSE
                 OR (
-                    from_did <> $3
+                    NOT EXISTS (
+                        SELECT 1 FROM {{tables.chat_participants}} own
+                        WHERE own.session_id = m.session_id AND own.did = $3
+                          AND (m.from_did = own.did OR m.from_did = NULLIF(own.current_did_key, ''))
+                    )
                     AND NOT EXISTS (
                         SELECT 1
                         FROM {{tables.chat_message_reads}} mr
-                        WHERE mr.session_id = {{tables.chat_messages}}.session_id
+                        WHERE mr.session_id = m.session_id
                           AND mr.did = $3
-                          AND mr.message_id = {{tables.chat_messages}}.message_id
+                          AND mr.message_id = m.message_id
                     )
                 )
               )
@@ -770,6 +770,7 @@ async def get_message_history(
             "reply_to": str(row["reply_to"]) if row.get("reply_to") is not None else None,
             "signature": row.get("signature"),
             "signed_payload": row.get("signed_payload"),
+            "id_chain": _json_object(row.get("id_chain")),
             "content_mode": row.get("content_mode") or "legacy_plaintext_v1",
             "message_version": int(row.get("message_version") or 1),
             "encrypted_envelope": _json_object(row.get("encrypted_envelope")),
@@ -828,7 +829,11 @@ async def mark_messages_read(
             FROM {{tables.chat_messages}} m
             WHERE m.session_id = $1
               AND m.message_id = ANY($5::uuid[])
-              AND m.from_did <> $2
+              AND NOT EXISTS (
+                        SELECT 1 FROM {{tables.chat_participants}} own
+                        WHERE own.session_id = m.session_id AND own.did = $2
+                          AND (m.from_did = own.did OR m.from_did = NULLIF(own.current_did_key, ''))
+                    )
             ON CONFLICT (session_id, did, message_id) DO NOTHING
             RETURNING message_id
             """,
@@ -855,6 +860,7 @@ async def mark_messages_read(
             read_time,
         )
 
+    record_did_wakes([participant_did], "chat")
     return {
         "session_id": str(session_id),
         "messages_marked": len(marked),
@@ -907,7 +913,11 @@ async def mark_messages_read_up_to(
             SELECT $1, $2, m.message_id, $3, $4
             FROM {{tables.chat_messages}} m
             WHERE m.session_id = $1
-              AND m.from_did <> $2
+              AND NOT EXISTS (
+                        SELECT 1 FROM {{tables.chat_participants}} own
+                        WHERE own.session_id = m.session_id AND own.did = $2
+                          AND (m.from_did = own.did OR m.from_did = NULLIF(own.current_did_key, ''))
+                    )
               AND m.created_at <= $5
             ON CONFLICT (session_id, did, message_id) DO NOTHING
             RETURNING message_id
@@ -942,6 +952,7 @@ async def mark_messages_read_up_to(
             watermark["created_at"],
         )
 
+    record_did_wakes([participant_did], "chat")
     return {
         "session_id": str(session_id),
         "messages_marked": len(marked),
