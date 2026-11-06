@@ -81,6 +81,30 @@ async def styled(locator, prop: str) -> str:
     return await locator.first.evaluate("(el, prop) => getComputedStyle(el)[prop]", prop)
 
 
+async def text_contrast(locator) -> float:
+    """WCAG contrast of the element's rendered text against the backgrounds it sits on,
+    translucent layers composited up to the page."""
+    return await locator.first.evaluate(
+        """el => {
+        const rgba = c => { const [r, g, b, a = 1] = c.match(/[\\d.]+/g).map(Number); return [r, g, b, a]; };
+        const over = (top, under) => top.slice(0, 3).map((v, i) => v * top[3] + under[i] * (1 - top[3]));
+        const layers = [];
+        for (let node = el; node; node = node.parentElement) {
+            const bg = rgba(getComputedStyle(node).backgroundColor);
+            if (bg[3] > 0) layers.push(bg);
+        }
+        let ground = [255, 255, 255];
+        for (const layer of layers.reverse()) ground = over(layer, ground);
+        const text = over(rgba(getComputedStyle(el).color), ground);
+        const lum = c => { const [r, g, b] = c.map(v => { v /= 255;
+            return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+        const [hi, lo] = [lum(text), lum(ground)].sort((a, b) => b - a);
+        return (hi + 0.05) / (lo + 0.05);
+    }"""
+    )
+
+
 async def tab_to(page, selector: str) -> None:
     for _ in range(80):
         await page.keyboard.press("Tab")
@@ -152,13 +176,22 @@ async def test_access_colours_come_from_the_console_toolkit_in_either_theme(
         expected = [
             (".access-flags .flag-write", "color", "--stop"),
             (".access-flags .flag-write", "backgroundColor", "--stop-soft"),
-            (".access-flags .flag-sensitive", "color", "--wait"),
+            (".access-flags .flag-sensitive", "color", "--ink"),
             (".access-flags .flag-sensitive", "backgroundColor", "--wait-soft"),
             (".access-note", "color", "--muted"),
             (".principal-team", "color", "--muted"),
             (".access-agent", "borderBottomColor", "--line"),
             (".access-grant", "borderLeftColor", "--line"),
         ]
+        # Small text needs 4.5:1 against what it is drawn on (WCAG 1.4.3).
+        for selector in (
+            ".access-flags .flag-write",
+            ".access-flags .flag-sensitive",
+            ".access-use .flag-write",
+            ".access-note",
+            ".principal-team",
+        ):
+            assert await text_contrast(page.locator(selector)) >= 4.5, selector
         for selector, prop, token in expected:
             assert await styled(page.locator(selector), prop) == await token_color(page, token), (
                 selector,
@@ -250,6 +283,7 @@ async def test_a_failed_revoke_far_down_the_page_is_reported_where_the_owner_is(
         await expect(failure).to_be_in_viewport()
         await expect(control).to_be_focused()
         assert await styled(failure, "color") == await token_color(page, "--stop")
+        assert await text_contrast(failure) >= 4.5
 
 
 async def test_keyboard_only_list_secret_return_and_cancelled_narrowing(
