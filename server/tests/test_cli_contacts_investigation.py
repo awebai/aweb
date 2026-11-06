@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import pytest
 import pytest_asyncio
 
+from awid.signing import canonical_json_bytes, sign_message
 from aweb.federation.activation import build_federation_authority_activation
 from identity_binding_support import register_global_identity
 from test_cli_human_reply import _pem
@@ -44,6 +45,10 @@ async def contacts_stack(privacy_app, tmp_path, monkeypatch, aw_cli_binary):
             cert = _make_certificate(env.team_sk, env.team_did, actor.did, team_id=TEAM,
                                      alias=alias, identity_scope=scope, member_did_aw=stable,
                                      member_address=address, certificate_id=f"contacts-{alias}")
+            if not stable:
+                for field in ("signature", "member_did_aw", "member_address"):
+                    cert.pop(field, None)
+                cert["signature"] = sign_message(env.team_sk, canonical_json_bytes(cert))
             await registry.register_team_certificate(
                 "example.test", TEAM.split(":", 1)[0], team_controller_signing_key=env.team_sk,
                 certificate_id=cert["certificate_id"], member_did_key=actor.did,
@@ -116,13 +121,15 @@ async def test_released_cli_contacts_and_local_delivery(contacts_stack, owner_ki
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(not os.environ.get("AW_CONTACTS_PUBLIC_PROBE"), reason="explicit public-address probe only")
-async def test_public_address_contact_through_released_grant(contacts_stack, monkeypatch):
+@pytest.mark.parametrize("owner_kind", ["grant", "resident", "local"])
+async def test_public_address_contact_through_released_grant(contacts_stack, monkeypatch, owner_kind):
     s = contacts_stack
     # Real public DNS/HTTPS, with no test default-registry substitution.
     monkeypatch.delenv("AWEB_FEDERATION_TEST_DEFAULT_REGISTRY")
     authority = build_federation_authority_activation(s.env.infra, public_origin=s.env.app.state.public_origin)
     s.env.app.state.federation_authority = authority
     try:
-        await s.run(s.grant, "contacts", "add", os.environ["AW_CONTACTS_PUBLIC_PROBE"], "--json")
+        owner = {"grant": s.grant, "resident": s.homes["bob"], "local": s.homes["alice"]}[owner_kind]
+        await s.run(owner, "contacts", "add", os.environ["AW_CONTACTS_PUBLIC_PROBE"], "--json")
     finally:
         await authority.aclose()
