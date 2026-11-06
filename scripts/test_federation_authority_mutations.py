@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from fixture_repo import init_fixture_repo, run_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -40,8 +41,8 @@ def copy_checkout(destination: Path) -> None:
         ROOT / "scripts" / "pytest_tracked_collection.py",
         destination / "scripts" / "pytest_tracked_collection.py",
     )
-    subprocess.run(["git", "init", "-q"], cwd=destination, check=True)
-    subprocess.run(
+    init_fixture_repo(destination)
+    run_fixture(
         [
             "git",
             "add",
@@ -69,7 +70,7 @@ def run_test(root: Path, pattern: str) -> subprocess.CompletedProcess[str]:
         **os.environ,
         "GOCACHE": os.environ.get("GOCACHE", "/tmp/go-build"),
     }
-    return subprocess.run(
+    return run_fixture(
         ["go", "test", "./awid", "-run", pattern, "-count=1"],
         cwd=root / "cli" / "go",
         env=environment,
@@ -86,9 +87,8 @@ def run_python_test(
     environment = {
         **os.environ,
         "UV_CACHE_DIR": os.environ.get("UV_CACHE_DIR", "/tmp/uv-cache"),
-        "PYTHONPYCACHEPREFIX": os.environ.get("PYTHONPYCACHEPREFIX", "/tmp/pycache"),
     }
-    return subprocess.run(
+    return run_fixture(
         ["uv", "run", "--frozen", "pytest", "-q", test_file, "-k", pattern],
         cwd=root / "awid",
         env=environment,
@@ -103,9 +103,8 @@ def run_server_tests(root: Path, *nodes: str) -> subprocess.CompletedProcess[str
     environment = {
         **os.environ,
         "UV_CACHE_DIR": os.environ.get("UV_CACHE_DIR", "/tmp/uv-cache"),
-        "PYTHONPYCACHEPREFIX": os.environ.get("PYTHONPYCACHEPREFIX", "/tmp/pycache"),
     }
-    return subprocess.run(
+    return run_fixture(
         ["uv", "run", "--frozen", "pytest", "-q", *nodes],
         cwd=root / "server",
         env=environment,
