@@ -6,6 +6,8 @@ import tempfile
 import unittest
 import importlib.util
 
+from fixture_repo import init_fixture_repo
+
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('user_paths_result', ROOT / 'scripts/e2e/user_paths_result.py')
 result_model = importlib.util.module_from_spec(spec)
@@ -164,10 +166,6 @@ class FrozenGateInput(unittest.TestCase):
                 (repo / 'candidate-gate/Dockerfile').write_text('FROM scratch\n')
                 (repo / 'naapp/library/test-vectors/blueprints/team').mkdir(parents=True)
                 (repo / 'naapp/library/test-vectors/blueprints/team/proof').touch()
-                # The real freeze import writes bytecode before input_identity
-                # rechecks this checkout. Own the same ignore rule as the source
-                # repo instead of relying on the caller's Python cache settings.
-                (repo / '.gitignore').write_text('__pycache__/\n')
                 (repo / 'Makefile').write_text(''' .DEFAULT:
 \t@true
 naapp-e2e-packages:
@@ -178,7 +176,7 @@ e2e-user-paths:
 '''.lstrip())
                 def git(*args):
                     return subprocess.run(['git', '-C', str(repo), *args], check=True, capture_output=True, text=True).stdout.strip()
-                git('init', '-qb', 'main')
+                init_fixture_repo(repo)
                 git('config', 'user.name', 'entrypoint test')
                 git('config', 'user.email', 'gate@example.test')
                 git('add', '.')
