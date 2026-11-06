@@ -36,7 +36,7 @@ from test_messages_http import _make_certificate, _encode_certificate, _make_key
 ])
 async def test_delegated_namespace_authority(privacy_app, tmp_path, aw_cli_binary, case, accepted, route):
     env = privacy_app
-    domain = "child.example.test"
+    domain = "child.example.com"
     address = domain + "/carol"
     child_sk, _, child_key = _make_keypair()
     if case == "inherited_same_key":
@@ -46,6 +46,10 @@ async def test_delegated_namespace_authority(privacy_app, tmp_path, aw_cli_binar
     target = env.actors["carol"]
     async with registry_listener(env) as (registry, registry_origin):
         owner_did = await register_global_identity(env, actor, "example.test/bob")
+        await env.registry_db.execute(
+            "INSERT INTO {{tables.dns_namespaces}} (domain, controller_did, verification_status) "
+            "VALUES ('example.com', $1, 'verified')", env.team_did,
+        )
         await registry.register_namespace(domain, child_key, child_sk,
                                           parent_signing_key=env.team_sk,
                                           default_delivery_origin="https://sender.example.test")
@@ -62,7 +66,7 @@ async def test_delegated_namespace_authority(privacy_app, tmp_path, aw_cli_binar
                     return DNSLookup("nodata")
                 return await super().lookup_txt(name)
 
-        dns = DNS(domain if exact else "example.test", child_key if case == "exact" else env.team_did, registry_origin)
+        dns = DNS(domain if exact else "example.com", child_key if case == "exact" else env.team_did, registry_origin)
         resolver = StrictExternalRegistry(txt_resolver=dns, origin_context=OriginContext(
             app_env="development", federation_test_enabled=True, listener_origin=env.app.state.public_origin,
         ))
@@ -78,7 +82,7 @@ async def test_delegated_namespace_authority(privacy_app, tmp_path, aw_cli_binar
                 paths.append(path)
                 if path == "/v1/namespaces/" + domain:
                     assert value["delegation"] == {
-                        "parent_domain": "example.test", "parent_controller_key": env.team_did,
+                        "parent_domain": "example.com", "parent_controller_key": env.team_did,
                         "controller_key": child_key,
                     }
                     if case in {"missing", "inherited_same_key"}:
@@ -88,13 +92,17 @@ async def test_delegated_namespace_authority(privacy_app, tmp_path, aw_cli_binar
                     elif case == "wrong_child_key":
                         value["delegation"]["controller_key"] = env.team_did
                     elif case in {"wrong_ancestor", "non_ancestor"}:
-                        value["delegation"]["parent_domain"] = "test" if case == "wrong_ancestor" else "other.test"
+                        value["delegation"]["parent_domain"] = "com" if case == "wrong_ancestor" else "other.com"
                 return value
 
             async def aclose(self):
                 await self.inner.aclose()
 
-        resolver.http_factory = lambda *args: WitnessFault(real_factory(*args))
+        def http_factory(origin, *args):
+            assert origin == registry_origin, "test must never contact a public registry"
+            return WitnessFault(real_factory(origin, *args))
+
+        resolver.http_factory = http_factory
         activation = FederationAuthorityActivation(
             core=FederationAuthorityCore(AuthorityRepository(env.db)), work=AuthorityWorkRepository(env.db),
             resolver=resolver, txt_resolver=dns,
