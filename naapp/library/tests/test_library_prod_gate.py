@@ -53,6 +53,7 @@ def current_incumbent_args(tmp_path: Path, **overrides) -> Namespace:
         "source_home": tmp_path,
         "public_url": "https://library.example",
         "origin_url": "https://library-origin.example",
+        "expected_profile_ref": "developer",
         "expected_profile_version": EXPECTED_VERSION,
         "expected_profile_digest": EXPECTED_DIGEST,
         "incumbent_service_id": "srv-d8qm4jvavr4c73dhrmgg",
@@ -67,6 +68,7 @@ def test_candidate_requires_positional_managed_set() -> None:
     summary = gate.validate_candidate_payload(
         payload("claude-code"),
         "claude-code",
+        expected_ref="developer",
         expected_version=EXPECTED_VERSION,
         expected_digest=EXPECTED_DIGEST,
     )
@@ -76,6 +78,7 @@ def test_candidate_requires_positional_managed_set() -> None:
         gate.validate_candidate_payload(
             payload("claude-code", managed=same_set_wrong_order),
             "claude-code",
+            expected_ref="developer",
             expected_version=EXPECTED_VERSION,
             expected_digest=EXPECTED_DIGEST,
         )
@@ -104,6 +107,7 @@ def test_candidate_rejects_unapproved_profile_pin() -> None:
         gate.validate_candidate_payload(
             payload("pi"),
             "pi",
+            expected_ref="developer",
             expected_version=EXPECTED_VERSION,
             expected_digest=f"sha256:{'b' * 64}",
         )
@@ -114,6 +118,7 @@ def test_candidate_rejects_duplicates() -> None:
         gate.validate_candidate_payload(
             payload("pi", managed=[".aw/profile/ref.json", "AGENTS.md", "AGENTS.md"]),
             "pi",
+            expected_ref="developer",
             expected_version=EXPECTED_VERSION,
             expected_digest=EXPECTED_DIGEST,
         )
@@ -124,6 +129,7 @@ def test_recovery_requires_known_old_fingerprint() -> None:
     summary = gate.validate_recovery_payload(
         old,
         "pi",
+        expected_ref="developer",
         expected_version=EXPECTED_VERSION,
         expected_digest=EXPECTED_DIGEST,
     )
@@ -132,6 +138,7 @@ def test_recovery_requires_known_old_fingerprint() -> None:
         gate.validate_recovery_payload(
             payload("pi"),
             "pi",
+            expected_ref="developer",
             expected_version=EXPECTED_VERSION,
             expected_digest=EXPECTED_DIGEST,
         )
@@ -145,6 +152,7 @@ def test_recovery_requires_known_old_fingerprint() -> None:
         gate.validate_recovery_payload(
             present_but_empty,
             "pi",
+            expected_ref="developer",
             expected_version=EXPECTED_VERSION,
             expected_digest=EXPECTED_DIGEST,
         )
@@ -154,7 +162,7 @@ def test_recovery_rejects_unrelated_nonzero_exit(tmp_path: Path) -> None:
     home = tmp_path / "home"
     home.mkdir()
     with pytest.raises(gate.GateError, match="expected schema rejection"):
-        gate.require_recovery_rejection(Path("/usr/bin/false"), home, "pi", tmp_path)
+        gate.require_recovery_rejection(Path("/usr/bin/false"), home, "pi", tmp_path, expected_ref="developer")
 
 
 def test_recovery_accepts_only_exact_schema_rejection(
@@ -172,7 +180,7 @@ def test_recovery_accepts_only_exact_schema_rejection(
     monkeypatch.setattr(gate.subprocess, "run", expected_failure)
     home = tmp_path / "home"
     home.mkdir()
-    result = gate.require_recovery_rejection(Path("/released/aw"), home, "pi", tmp_path)
+    result = gate.require_recovery_rejection(Path("/released/aw"), home, "pi", tmp_path, expected_ref="developer")
     assert result["exit"] == 1
 
 
@@ -195,6 +203,7 @@ def test_materialized_ref_is_strict(tmp_path: Path) -> None:
         gate.validate_materialized_ref(
             path,
             "pi",
+            expected_ref="developer",
             expected_version=EXPECTED_VERSION,
             expected_digest=EXPECTED_DIGEST,
         )["runtime_kind"]
@@ -204,6 +213,7 @@ def test_materialized_ref_is_strict(tmp_path: Path) -> None:
         gate.validate_materialized_ref(
             path,
             "claude-code",
+            expected_ref="developer",
             expected_version=EXPECTED_VERSION,
             expected_digest=EXPECTED_DIGEST,
         )
@@ -232,6 +242,7 @@ def test_materialized_ref_rejects_broken_or_escaping_symlinks(tmp_path: Path) ->
         gate.validate_materialized_ref(
             ref_path,
             "pi",
+            expected_ref="developer",
             expected_version=EXPECTED_VERSION,
             expected_digest=EXPECTED_DIGEST,
         )
@@ -243,6 +254,7 @@ def test_materialized_ref_rejects_broken_or_escaping_symlinks(tmp_path: Path) ->
         gate.validate_materialized_ref(
             ref_path,
             "pi",
+            expected_ref="developer",
             expected_version=EXPECTED_VERSION,
             expected_digest=EXPECTED_DIGEST,
         )
@@ -301,7 +313,7 @@ def test_wrong_interpreter_or_entrypoint_artifact_is_refused(tmp_path: Path) -> 
 
 def test_harness_artifact_overrides_are_not_exposed() -> None:
     with pytest.raises(SystemExit):
-        gate.parser().parse_args(["candidate", "--pi-bin", "/tmp/fake-pi"])
+        gate.parser().parse_args(["candidate", "--expected-profile-ref", "developer", "--pi-bin", "/tmp/fake-pi"])
 
 
 def test_fake_pi_printing_expected_lines_is_refused(tmp_path: Path) -> None:
@@ -328,7 +340,7 @@ def test_claude_artifact_shape_is_native_macho(tmp_path: Path) -> None:
 
     script = tmp_path / "claude"
     script.write_text("#!/bin/sh\n")
-    with pytest.raises(gate.GateError, match="native Mach-O"):
+    with pytest.raises(gate.GateError, match="native ELF"):
         gate.verify_native_claude(script)
 
 
@@ -344,6 +356,7 @@ def test_pi_harness_bypasses_fake_path_node(
     home = tmp_path / "home"
     ref_path = home / ".aw" / "profile" / "ref.json"
     ref_path.parent.mkdir(parents=True)
+    (home / "AGENTS.md").write_text("# Developer\n")
     ref_path.write_text(
         json.dumps(
             {
@@ -568,10 +581,12 @@ def test_origin_raw_materialize_keeps_canonical_url_and_requires_tunnel(
         "https://library.example",
         "pi",
         tmp_path,
+        profile_ref="developer",
         origin_tunnel=tunnel,
     )
     assert result == payload("pi")
-    assert seen["command"][4] == "https://library.example/v1/materialize"
+    assert seen["command"][1:3] == ["--identity-home", str(tmp_path / ".aw")]
+    assert seen["command"][6] == "https://library.example/v1/materialize"
     environment = seen["environment"]
     assert environment["HTTPS_PROXY"] == tunnel.proxy_url
     assert environment["NO_PROXY"] == ""
@@ -599,6 +614,7 @@ def test_origin_raw_materialize_keeps_canonical_url_and_requires_tunnel(
             "https://library.example",
             "pi",
             tmp_path,
+            profile_ref="developer",
             origin_tunnel=BypassedTunnel(),
         )
 
@@ -613,7 +629,12 @@ def test_raw_materialize_requires_exact_http_200(
     monkeypatch.setattr(gate, "run_checked", redirected_aw)
     with pytest.raises(gate.GateError, match="did not return exact HTTP 200"):
         gate.raw_materialize(
-            Path("/released/aw"), tmp_path, "https://library.example", "pi", tmp_path
+            Path("/released/aw"),
+            tmp_path,
+            "https://library.example",
+            "pi",
+            tmp_path,
+            profile_ref="developer",
         )
 
 
@@ -635,7 +656,9 @@ def test_candidate_runs_origin_functional_probes_before_public_edge(
         def __exit__(self, *args):
             return False
 
-    def fake_raw(aw_bin, source_home, public_url, runtime, root, *, origin_tunnel=None):
+    def fake_raw(
+        aw_bin, source_home, public_url, runtime, root, *, profile_ref, origin_tunnel=None
+    ):
         calls.append((runtime, public_url, origin_tunnel is not None))
         return payload(runtime)
 
@@ -652,6 +675,7 @@ def test_candidate_runs_origin_functional_probes_before_public_edge(
         source_home=tmp_path,
         public_url="https://library.example",
         origin_url="https://library-origin.example",
+        expected_profile_ref="developer",
         expected_profile_version=EXPECTED_VERSION,
         expected_profile_digest=EXPECTED_DIGEST,
     )
@@ -691,7 +715,9 @@ def test_candidate_cannot_pass_when_canonical_public_probe_fails(
         def __exit__(self, *args):
             return False
 
-    def public_failure(aw_bin, source_home, public_url, runtime, root, *, origin_tunnel=None):
+    def public_failure(
+        aw_bin, source_home, public_url, runtime, root, *, profile_ref, origin_tunnel=None
+    ):
         is_origin = origin_tunnel is not None
         calls.append((runtime, is_origin))
         if not is_origin:
@@ -711,6 +737,7 @@ def test_candidate_cannot_pass_when_canonical_public_probe_fails(
         source_home=tmp_path,
         public_url="https://library.example",
         origin_url="https://library-origin.example",
+        expected_profile_ref="developer",
         expected_profile_version=EXPECTED_VERSION,
         expected_profile_digest=EXPECTED_DIGEST,
     )
@@ -772,7 +799,7 @@ def test_current_incumbent_identity_has_no_drifting_parser_defaults(
 ) -> None:
     for key in ("INCUMBENT_SERVICE_ID", "INCUMBENT_DEPLOY_ID", "INCUMBENT_COMMIT"):
         monkeypatch.delenv(key, raising=False)
-    args = gate.parser().parse_args(["current-incumbent"])
+    args = gate.parser().parse_args(["current-incumbent", "--expected-profile-ref", "developer"])
     assert args.incumbent_service_id == ""
     assert args.incumbent_deploy_id == ""
     assert args.incumbent_commit == ""
@@ -826,7 +853,9 @@ def test_current_incumbent_runs_pinned_origin_then_mandatory_public_for_both_run
         def __exit__(self, *args):
             return False
 
-    def fake_raw(aw_bin, source_home, public_url, runtime, root, *, origin_tunnel=None):
+    def fake_raw(
+        aw_bin, source_home, public_url, runtime, root, *, profile_ref, origin_tunnel=None
+    ):
         calls.append((runtime, origin_tunnel is not None))
         return legacy_payload(runtime)
 
@@ -847,9 +876,7 @@ def test_current_incumbent_runs_pinned_origin_then_mandatory_public_for_both_run
         "raw-current-incumbent-public",
         "current-incumbent-predicate-inventory",
     ]
-    assert {summary["output_class"] for summary in summaries} == {
-        "current-incumbent-debug"
-    }
+    assert {summary["output_class"] for summary in summaries} == {"current-incumbent-debug"}
     assert summaries[0] == {
         "gate": "current-incumbent-identity",
         "output_class": "current-incumbent-debug",
@@ -875,9 +902,7 @@ def test_current_incumbent_runs_pinned_origin_then_mandatory_public_for_both_run
     ]
     assert summaries[-1]["predicate_paths"] == gate.current_incumbent_predicate_paths()
     emitted = {
-        predicate_id
-        for summary in summaries[1:-1]
-        for predicate_id in summary["predicate_ids"]
+        predicate_id for summary in summaries[1:-1] for predicate_id in summary["predicate_ids"]
     }
     assert emitted == set(gate.current_incumbent_predicate_inventory())
 
@@ -925,7 +950,7 @@ def test_current_incumbent_public_failure_is_fatal_per_runtime(
             return False
 
     def injected_public_failure(
-        aw_bin, source_home, public_url, runtime, root, *, origin_tunnel=None
+        aw_bin, source_home, public_url, runtime, root, *, profile_ref, origin_tunnel=None
     ):
         is_origin = origin_tunnel is not None
         calls.append((runtime, is_origin))
@@ -996,3 +1021,70 @@ def test_clone_auth_home_removes_profile_and_delivery_state(tmp_path: Path) -> N
     assert (destination / ".aw" / "signing.key").read_text() == "secret"
     assert not (destination / ".aw" / "profile").exists()
     assert not (destination / ".aw" / "interaction-log.jsonl").exists()
+
+
+def test_current_release_recovery_accepts_modern_contract_and_rejects_wrong_artifact(
+    tmp_path, monkeypatch
+):
+    args = Namespace(
+        rollback_deploy_id="dep-db4prf142hec73eibj7g",
+        rollback_commit="0c490a3627e50e2b3a8b240713d50c3d917659e2",
+    )
+    calls = []
+    monkeypatch.setattr(
+        gate, "run_candidate", lambda args, root: calls.append(root) or [{"gate": "real-harness"}]
+    )
+    assert gate.run_runtime_managed_recovery(args, tmp_path)[-1]["commit"] == args.rollback_commit
+    assert calls == [tmp_path]
+    args.rollback_commit = "a" * 40
+    with pytest.raises(gate.GateError):
+        gate.run_runtime_managed_recovery(args, tmp_path)
+    assert calls == [tmp_path]
+
+
+def test_created_profile_provenance_has_no_invented_blueprint(tmp_path):
+    ref = tmp_path / "ref.json"
+    ref.write_text(json.dumps({"profile_ref": "operations", "profile_version": "0.1.6"}))
+    assert gate.expected_provenance(ref) == "> Profile operations v0.1.6 · created"
+
+
+def test_profile_ref_parameter_supports_operations_without_accepting_other_profile():
+    ref = {
+        "profile_ref": "operations",
+        "profile_version": "0.1.6",
+        "profile_digest": EXPECTED_DIGEST,
+    }
+    gate.validate_profile_pin(
+        ref, expected_ref="operations", expected_version="0.1.6", expected_digest=EXPECTED_DIGEST
+    )
+    with pytest.raises(gate.GateError):
+        gate.validate_profile_pin(
+            ref, expected_ref="developer", expected_version="0.1.6", expected_digest=EXPECTED_DIGEST
+        )
+
+
+def test_profile_ref_parameter_is_required(monkeypatch):
+    monkeypatch.delenv("EXPECTED_PROFILE_REF", raising=False)
+    with pytest.raises(SystemExit):
+        gate.parser().parse_args(["candidate"])
+
+
+@pytest.mark.parametrize("runtime", gate.RUNTIMES)
+def test_shelf_pin_recomputes_created_profile_digest_from_actual_source_files(runtime):
+    from library.blueprint import materialize_home
+    from library.digest import PROFILE_PAYLOAD_SCHEMA, payload_digest
+
+    files = [
+        {"path": "profile.yaml", "content_utf8": "id: operations\nname: Operations\nversion: 0.1.6\ninstructions: instructions.md\n"},
+        {"path": "instructions.md", "content_utf8": "Operate the service.\n"},
+    ]
+    for item in files:
+        item["sha256"] = "sha256:" + hashlib.sha256(item["content_utf8"].encode()).hexdigest()
+    digest = payload_digest(files, PROFILE_PAYLOAD_SCHEMA)
+    home_files = materialize_home(files, profile_ref="operations", profile_version="0.1.6",
+        profile_digest=digest, source_blueprint_ref=None, source_blueprint_version=None,
+        source_blueprint_digest=None, runtime_kind=runtime)
+    value = {"home_files": home_files}
+    assert gate.source_profile_digest(value) == digest
+    next(item for item in home_files if item["path"] == ".aw/profile/instructions.md")["content_utf8"] = "Changed"
+    assert gate.source_profile_digest(value) != digest
