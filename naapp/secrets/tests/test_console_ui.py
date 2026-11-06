@@ -67,7 +67,14 @@ async def application(world: World, *, human_origin: str = ORIGIN, agent_origin:
 
 def safe(response: httpx.Response) -> None:
     for header, value in CONSOLE_HEADERS.items():
-        assert response.headers[header] == value
+        if (
+            header.lower() == "cache-control"
+            and response.url.path.startswith(("/css/aweb.", "/fonts/"))
+            and response.status_code == 200
+        ):
+            assert response.headers[header] == "public, max-age=31536000, immutable"
+        else:
+            assert response.headers[header] == value
 
 
 async def test_home_requires_a_current_passkey_session_and_links_to_owner_pages(world: World):

@@ -21,6 +21,7 @@ from aweb_naapp.console import (
     ConsoleSession,
     ConsoleSessions,
     LoginLimiter,
+    console_assets_router,
     console_login_router,
 )
 from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier
@@ -44,7 +45,6 @@ from pgdbm import AsyncDatabaseManager
 
 from aweb_secrets.change import ChangeRefused
 from aweb_secrets.change_policy import keep_four_eyes_owners
-from aweb_secrets.console_assets import console_assets_router
 from aweb_secrets.credential_audit import GovernanceUnavailable
 from aweb_secrets.owners import OWNER_ROLE, OwnerDirectory, OwnerRequired, owner_scope, record_owner
 from aweb_secrets.principal import is_principal
