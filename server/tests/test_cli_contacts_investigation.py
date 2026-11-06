@@ -98,7 +98,9 @@ async def test_released_cli_contacts_and_local_delivery(contacts_stack, owner_ki
     # also own a contact to an addressed global target.
     owner = {"grant": s.grant, "resident": s.homes["bob"], "local": s.homes["alice"]}[owner_kind]
     added = json.loads(await s.run(owner, "contacts", "add", "example.test/carol", "--json"))
-    assert added["contact_did_aw"].startswith("did:aw:")
+    assert added["contact_address"] == "example.test/carol"
+    binding = await s.env.db.fetch_value("SELECT contact_did_aw FROM {{tables.contacts}} WHERE contact_id=$1::uuid", added["contact_id"])
+    assert binding.startswith("did:aw:")
     await s.run(owner, "contacts", "remove", "example.test/carol")
     missing = await s.run(owner, "contacts", "add", "example.test/alice", ok=False)
     assert "recipient_identity_not_found" in missing, missing
