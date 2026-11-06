@@ -281,11 +281,13 @@ def test_landing_route_teaser_renders_catalog_read_success(monkeypatch) -> None:
     assert 'href="/blueprints/aweb.team"' in response.text
 
 
-def test_rendered_pages_use_brand_word_not_legacy_brand_mark() -> None:
+def test_rendered_pages_use_monochrome_wordmark_and_incoming_symbol() -> None:
     landing = _client().get("/").text
     reference = _client().get("/reference").text
     for html in (landing, reference):
-        assert "brand-mark" not in html
+        assert 'class="brand-mark" viewBox="0 0 48 64"' in html
+        assert 'stroke="var(--brand-amber)"' in html
+        assert 'class="dot"' not in html
         assert (
             'library is a Native Agentic App on the <span class="brand-word">aweb</span>.ai hub. '
             '<span class="brand-word">awid</span> is the identity authority.'

@@ -178,7 +178,7 @@ def test_seo_meta_social_card_and_design_assets() -> None:
     assert '<link rel="canonical" href="https://folio.aweb.ai/">' in text
     assert '<meta property="og:title"' in text
     assert '<meta name="twitter:card" content="summary_large_image">' in text
-    assert '<meta property="og:image" content="https://folio.aweb.ai/og-card.png">' in text
+    assert '<meta property="og:image" content="https://folio.aweb.ai/brand/field-v1/folio-card.png">' in text
     # The social card image is served as a real PNG.
     og = client.get("/og-card.png")
     assert og.status_code == 200
@@ -187,8 +187,8 @@ def test_seo_meta_social_card_and_design_assets() -> None:
 
     css = client.get("/css/aweb.css")
     assert css.status_code == 200
-    assert '/fonts/BerkeleyMono-Regular.woff2' in css.text
-    font = client.get("/fonts/BerkeleyMono-Regular.woff2")
+    assert '/fonts/Archivo-Latin-Variable.woff2' in css.text
+    font = client.get("/fonts/Archivo-Latin-Variable.woff2")
     assert font.status_code == 200
     assert font.headers["content-type"] == "font/woff2"
     assert font.headers["cache-control"] == "public, max-age=31536000, immutable"

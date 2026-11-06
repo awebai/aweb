@@ -34,7 +34,7 @@ files and must not be group- or world-writable; symlinks to regular files are
 supported. Read permissions are left to the deployment platform. For example:
 
 ```text
-SECRETS_APP_KEY_FILES={"secrets:hook-event-1":"/run/keys/hook-event","secrets:hook-delivery-1":"/run/keys/hook-delivery","secrets:grant-read-1":"/run/keys/grant-read","secrets:hook-resolve-1":"/run/keys/hook-resolve"}
+SECRETS_APP_KEY_FILES={"secrets.hook-event-1":"/run/keys/hook-event","secrets.hook-delivery-1":"/run/keys/hook-delivery","secrets:grant-read-1":"/run/keys/grant-read","secrets:hook-resolve-1":"/run/keys/hook-resolve"}
 ```
 
 The keys sign hook content, hook delivery, team grant reads and hook resolution
@@ -191,11 +191,28 @@ The fresh-confirmation HTTP routes support `create` items for backend credential
 grants, policies, plain roles, jobs and runners. Every such effect requires the
 actual retained APPROVE commitment and atomic signed governance recording.
 Job credentials must name same-installation/team secrets and compatible structured
-fields; this slice supports durable slots. Job updates, mint slots and B3
-approver/contact changes retain their integration guards.
+fields; this slice supports durable slots. Job updates and mint slots retain
+their integration guards. Self-contact and contact-change cancellation remain
+unmounted.
 Mount it only on the human application, sharing the same services:
 
+`OwnerConsole` and `ChangeSets` require the same `credential_audit` instance
+used by the shared B3 sink. The console prepares owner-act, enrolment and
+contact-proof context before the effect transaction; completion holds its F6
+fence in the original B3 transaction. The sole confirmation writer supplies
+the admitted owner approval and its prefetched governance view for designation
+and contact scheduling. Their fixed governance refusals return 503 and roll
+back the effect. Approver creation and owner-scheduled contact changes use the
+existing draft, review and confirmation routes.
+
+The frozen operation review states whether an unknown outcome requires manual
+settlement or permits one automatic repeat after the configured delay. It names
+any owner-asserted upstream idempotency-header guarantee and warns that an
+incorrect assertion can duplicate an effect. This display uses the frozen
+operation terms; it does not change dispatch or settlement authority.
+
 ```python
+from aweb_secrets.approval_kind import approval_kind
 from aweb_secrets.console_changes import ConsoleChanges, console_changes_router
 
 console_changes = ConsoleChanges(
@@ -204,9 +221,20 @@ console_changes = ConsoleChanges(
     approvals=approvals,
     registrations=hook_registrations,
     after_commit=containment.evict,
+    approval_kind=approval_kind,
 )
 human_app.include_router(console_changes_router(console_changes))
 ```
+
+The sole `/approvals#token=...` entry first calls read-only `POST /approvals/dispatch`
+with `{token}`. It returns only a closed `kind` and fixed `path` from exact
+persisted associations. Change sets continue in the same document; use, run and
+reconciliation controls hand the transient fragment to their own typed pages.
+Those pages retain their own LOGIN/VIEW/APPROVE and session/installation checks.
+The app-owned `approval_kind` helper must share the database and use-audit
+migrations. Composition binds `enable_runs` and `enable_reconciliation` to the
+services whose migrations and routers it actually mounts; defaults query neither
+optional table. No routing policy belongs in the root.
 
 Authenticated POSTs require JSON, the S4 cookie and this tab's `X-CSRF-Token`. Browser
 forms call `window.awebSecretsConsole.post(path, body)`. Under

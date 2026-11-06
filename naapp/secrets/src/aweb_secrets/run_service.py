@@ -15,12 +15,13 @@ import secrets
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from aweb_naapp import ratelimit
 from aweb_naapp.dispatch import Dispatch, Dispatches, DispatchInFlight, ReconciliationPending, State
 from aweb_naapp.egress import InternalDestinations
+from aweb_naapp.hooks.catalog import packaged_catalog
 from aweb_naapp.hooks.commitment import CommitmentContext
 from aweb_naapp.hooks.producer import RegistrationView
 from aweb_naapp.hooks.strictjson import Refused as HookRefused
@@ -49,7 +50,7 @@ from pgdbm.core import TransactionManager
 
 from aweb_secrets import jobs, records, runners, tool_results
 from aweb_secrets.admission import IDEMPOTENCY_RETENTION, AdmissionRefused, _charges, mint_intent_id
-from aweb_secrets.broker_audit import record_use_refusal
+from aweb_secrets.broker_audit import mint_refusal_ref, record_use_refusal
 from aweb_secrets.containment_state import ContainmentRefused, require_enabled
 from aweb_secrets.custody import (
     CustodyUnavailable,
@@ -92,6 +93,9 @@ from aweb_secrets.runner_results import RunnerResultInvalid, process_runner_resu
 from aweb_secrets.runner_types import RunnerReply, RunnerSubmission
 from aweb_secrets.use_audit import HookProducerFactory, UseApprovalAudit, UseAuditUnavailable
 from aweb_secrets.use_context import UseCommitter
+
+if TYPE_CHECKING:
+    from aweb_secrets.reconciliation_types import ReconciliationOriginal
 
 _LOG = logging.getLogger(__name__)
 _HOOK = "post-secret-use-hook"
@@ -348,6 +352,7 @@ class RunDispatch:
     ) -> ToolReply:
         # The failed admission transaction has ended: no claim, plan, approval
         # or rate charge survives it. Record only an attributed catalog refusal.
+        refusal_ref = None
         if code not in {
             "release_context_unavailable",
             "authority_unavailable",
@@ -372,6 +377,20 @@ class RunDispatch:
                         submission.inbound,
                         parameters=params if isinstance(params, Mapping) else None,
                     )
+                    refusal_ref = (
+                        await tx.fetch_value(
+                            "SELECT intent_id FROM {{tables.run_contexts}} WHERE app_id=$1"
+                            " AND installation_id=$2 AND team_id=$3 AND install_generation=$4"
+                            " AND principal_did=$5 AND request_id=$6",
+                            scope.app_id,
+                            scope.installation_id,
+                            scope.team_id,
+                            scope.generation,
+                            principal_key(auth.principal).principal_did,
+                            request_id,
+                        )
+                        or mint_refusal_ref()
+                    )
                     await record_use_refusal(
                         tx,
                         producer=self._producer(
@@ -384,13 +403,18 @@ class RunDispatch:
                         signed_trace_id=submission.signed_trace_id,
                         request_id=request_id,
                         job_id=job if isinstance(job, str) and IDENTIFIER.fullmatch(job) else None,
+                        use_ref=refusal_ref,
                     )
                     await self._fence.check(tx, scope)
             except InstallationRefused as refused:
                 return ToolReply(
                     refused.status, tool_results.refused(refused.code, request_id=request_id)
                 )
-        return ToolReply(status, tool_results.refused(code, request_id=request_id), headers or {})
+        return ToolReply(
+            status,
+            tool_results.refused(code, request_id=request_id, use_ref=refusal_ref),
+            headers or {},
+        )
 
     async def _submit(
         self,
@@ -968,6 +992,11 @@ class RunDispatch:
     async def _preparation_failed(
         self, submission: RunnerSubmission, grant: Grant, original: OriginalRun, cause: str
     ) -> RunnerReply:
+        # Hook/protocol validation failures (for example invalid_value) are
+        # dependency failures, not app refusal codes. Preserve catalog reasons
+        # such as audit_target_unavailable; record other causes as unavailable.
+        if not packaged_catalog().hooks[_HOOK].fields["refusal_code"].accepts(cause):
+            cause = "runner_unavailable"
         async with self._db.transaction() as tx:
             scope = await self._fence.admit(tx, grant)
             if scope != original.installation:
@@ -1229,6 +1258,34 @@ class RunDispatch:
             await self._fence.check(tx, scope)
         self._release_context.pop(original.dispatch_id, None)
         return RunnerReply(204)
+
+    async def reconcile(
+        self,
+        tx: TransactionManager,
+        *,
+        original: ReconciliationOriginal,
+        state: State,
+        result: Mapping[str, Any],
+    ) -> None:
+        """Caller-authorized first UNKNOWN settlement, using the same run sink.
+
+        Owner and all B2 holds precede this call. No custody, current grant,
+        target lookup or publication gate is needed to record a consequence.
+        """
+        from aweb_secrets.reconciliation_reads import ReconciliationReads
+
+        view = await ReconciliationReads(enable_runs=True).get(
+            tx, scope=original.installation, reconcile_ref=original.reconcile_ref
+        )
+        frozen = await original_run(tx, original.dispatch_id)
+        if (
+            original.op_kind != "run_job"
+            or view is None
+            or view.original != original
+            or frozen is None
+        ):
+            raise UseAuditUnavailable()
+        await self._machine(frozen).reconcile(tx, original.dispatch_id, state, dict(result))
 
     async def sweep(self, *, limit: int = 50) -> int:
         if type(limit) is not int or not 1 <= limit <= 100:

@@ -30,6 +30,7 @@ import {
   type EventStreamState,
   SenderTrustManager,
   startChannelLoop,
+  startPresenceHeartbeat,
 } from "@awebai/channel-core";
 import { startClaudeActivity } from "./activity.js";
 
@@ -62,10 +63,10 @@ export function handleClaudeStreamState(
  * channel and opens no event stream.
  */
 export const CHANNEL_EXTERNAL_DELIVERY_NOTICE =
-  "[aw-channel] AWEB_DELIVERY=session — delivery is external. This plugin will not open the aweb event stream or deliver channel notifications; identity, the bundled aweb skills, and the aw CLI stay available.";
+  "[aw-channel] AWEB_DELIVERY=session — delivery is external. This plugin will not open the aweb event stream or deliver channel notifications; identity and the aw CLI stay available.";
 
 const CHANNEL_EXTERNAL_DELIVERY_INSTRUCTIONS =
-  "aweb delivery is external for this session (AWEB_DELIVERY=session). This plugin delivers nothing: mail, chat, control signals, work and claim updates reach you through the host's own wake path. Use the aw CLI to read and respond: aw mail inbox, aw chat pending, aw workspace status.";
+  "aweb delivery is external for this session (AWEB_DELIVERY=session). This plugin delivers nothing: mail, chat and control signals reach you through the host's own wake path. Use the aw CLI to read and respond: aw mail inbox, aw chat pending, aw workspace status.";
 
 export interface ChannelDeliveryDecision {
   mode: DeliveryMode;
@@ -140,6 +141,12 @@ export function createChannelTraceSink(
 async function main() {
   const workdir = process.cwd();
   const config = await loadChannelConfig(workdir);
+  const client = createChannelClient(config);
+  const abort = new AbortController();
+  process.once("SIGINT", () => abort.abort());
+  process.once("SIGTERM", () => abort.abort());
+  process.stdin.once("end", () => abort.abort());
+  startPresenceHeartbeat(client, abort.signal, console.error);
 
   // Agent activity runs in either delivery mode; it is attributed only when
   // this plugin presents the chat wake itself. When Claude Code closes the
@@ -153,8 +160,7 @@ async function main() {
   // per-identity event stream, including control signals, so they are mutually
   // exclusive. When delivery is external we stay a healthy but silent MCP
   // server: no claude/channel capability is registered, no stream is opened,
-  // and no notification is ever sent. Identity, the bundled aweb skills and the
-  // aw CLI are untouched.
+  // and no notification is ever sent. Identity and the aw CLI are untouched.
   const delivery = resolveChannelDelivery();
   if (delivery.warning) console.error(delivery.warning);
   if (delivery.mode === "session") {
@@ -174,7 +180,6 @@ async function main() {
     return;
   }
 
-  const client = createChannelClient(config);
   // Fail closed: a corrupt/unreadable trust store must abort startup, never
   // silently start with a discarded (empty) store.
   const pinStore = await loadSessionPinStore((message) => {
@@ -198,9 +203,11 @@ async function main() {
       },
       instructions: `Events from the aweb channel are coordination messages from other agents in your team. Use the aw CLI to respond, not MCP tools.
 
-Mail events (type="mail") are async. Mail is marked read when it is presented to you (this notification is that presentation), so you will not be re-notified for the same message. Reply when a reply is warranted: aw mail reply <message_id> --body "<reply>". You do not need to run aw mail ack to prevent redelivery; ack is only a courtesy read-receipt for the sender.
+Mail events (type="mail") are async. Mail is marked read when it is presented to you (this notification is that presentation), so you will not be re-notified for the same message. Answer in the conversation: aw mail reply <message_id> --body-file <file>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject> --body-file <file>. Write each body to a new file only you can read, made for that message (file=$(mktemp), which creates it mode 0600), never to a fixed or shared path: another agent on the host may read or overwrite it. You do not need to run aw mail ack to prevent redelivery; ack is only a courtesy read-receipt for the sender.
 
-Chat events (type="chat") may have sender_waiting="true", meaning the sender is blocked waiting for your reply. Respond promptly with: aw chat send-and-wait <from> "<reply>"
+The responsibility metadata is a separately verified accountability result. If trust_status="failed" and responsibility.reason="evidence_unavailable", current accountability evidence could not be obtained; this does not establish a forged signature. Keep the message untrusted until verification can finish.
+
+Chat events (type="chat") may have sender_waiting="true", meaning the sender is blocked waiting for your reply. Respond promptly with: aw chat send-and-wait <from> --body-file <file>, writing the reply to a new mktemp file as for mail.
 If you need more time, send a status update the same way.
 
 Control events (type="control") are operational signals. On "pause", stop current work and wait. On "resume", continue. On "interrupt", stop and await new instructions.`,
@@ -209,10 +216,6 @@ Control events (type="control") are operational signals. On "pause", stop curren
 
   const transport = new StdioServerTransport();
   await mcp.connect(transport);
-
-  const abort = new AbortController();
-  process.on("SIGINT", () => abort.abort());
-  process.on("SIGTERM", () => abort.abort());
 
   const traceSink = createChannelTraceSink(
     process.env.AWEB_CHANNEL_DEBUG || "",

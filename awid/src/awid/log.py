@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+from typing import Any
 from urllib.parse import urlparse
 
+from awid.did import stable_id_from_did_key
 from awid.signing import canonical_json_bytes
 
 
@@ -83,6 +85,27 @@ def identity_state_hash(*, did_aw: str, current_did_key: str) -> str:
         }
     )
     return sha256_hex(payload)
+
+
+def initial_registration_entry(did_key: str, *, timestamp: str) -> dict[str, Any]:
+    """The first log entry of the did:aw that ``did_key`` derives, self-authorized.
+
+    ``log_entry_payload(**entry)`` is what the key signs, and the entry plus
+    that ``proof`` is the registration body. Raises ValueError for a did_key
+    that does not decode strictly.
+    """
+    did_aw = stable_id_from_did_key(did_key)
+    return {
+        "did_aw": did_aw,
+        "seq": 1,
+        "operation": "register_did",
+        "previous_did_key": None,
+        "new_did_key": did_key,
+        "prev_entry_hash": None,
+        "state_hash": identity_state_hash(did_aw=did_aw, current_did_key=did_key),
+        "authorized_by": did_key,
+        "timestamp": timestamp,
+    }
 
 
 def state_hash(

@@ -10,18 +10,18 @@ const rotate = vectors.entries.find((e: { name: string }) => e.name === "rotate_
 const wire = (entry: typeof register) => ({ ...entry.entry_payload, entry_hash: entry.entry_hash, signature: entry.signature_b64 });
 const team = "support:acme.com";
 const membership: SenderMembership = { team_id: team, member_did_aw: stableID, state: "active" };
-function setup() {
+function setup(enrollment: unknown = { enrolled: false }, now: () => number = () => Date.now()) {
   const client = { get: vi.fn(() => { throw new Error("must not read agent listings"); }) } as unknown as APIClient;
   let key = initialKey, code = 200;
   const requests: string[] = [];
   const registry = new RegistryResolver(vi.fn(async (input) => {
     const url = String(input); requests.push(url);
     if (code !== 200) return new Response("unavailable", { status: code });
-    if (url.endsWith("/key")) return Response.json({ did_aw: stableID, current_did_key: key, log_head: wire(key === initialKey ? register : rotate) });
+    if (url.endsWith("/key")) return Response.json({ did_aw: stableID, current_did_key: key, log_head: wire(key === initialKey ? register : rotate), id_tree: enrollment });
     if (url.endsWith("/log")) return Response.json([wire(register), wire(rotate)]);
     throw new Error(`unexpected registry read ${url}`);
   }) as typeof fetch, vi.fn(async hostname => [[`awid=v1; controller=${initialKey}; registry=https://${hostname.includes("other.com") ? "other" : "team"}.registry.test;`]]),
-  () => Date.now(), { identityAddress: "unrelated.com/resident" });
+  now, { identityAddress: "unrelated.com/resident" });
   const store = new PinStore();
   const trust = new SenderTrustManager(client, registry, team, initialKey);
   async function receive({ status = "verified", did = key, member = membership, recipient = initialKey,
@@ -121,4 +121,39 @@ describe("cross-team received local sender", () => {
     expect(env.requests).toEqual([]);
     expect(env.store.pins.size).toBe(0); expect(env.store.addresses.size).toBe(0);
   });
+});
+
+
+test("addressless chainless global sender keeps verified trust and unknown accountability through the same registry", async () => {
+  const env = setup();
+  expect((await env.receive()).status).toBe("verified");
+  const before = [...env.requests];
+  const accountability = await env.trust.verifyResponsibility({ from_did: initialKey, from_stable_id: stableID }, true);
+  expect(accountability).toMatchObject({ outcome: "unknown", reason: "unregistered_identity", human_id: null });
+  expect(env.requests).toEqual(before); // Reuse the actual verified key-resolution snapshot.
+});
+
+
+test.each([undefined, null, { enrolled: true, domain: "other.example" }])("addressless enrollment remains unknown or follows its authoritative domain: %j", async enrollment => {
+  const env = setup(enrollment === undefined ? {} : enrollment);
+  expect((await env.receive()).status).toBe("verified");
+  if (enrollment && typeof enrollment === "object" && "domain" in enrollment) {
+    expect(await env.registry.receivedIdEnrollment(team, stableID, initialKey)).toEqual({ state: "enrolled", domain: "other.example" });
+  }
+  const responsibility = await env.trust.verifyResponsibility({ from_did: initialKey, from_stable_id: stableID }, true);
+  expect(responsibility.human_id).toBeNull();
+  expect(responsibility.outcome).toBe("unavailable");
+});
+
+test("addressless enrollment key snapshots expire beyond 60 seconds and cannot be rebound to another key", async () => {
+  let now = Date.now();
+  const env = setup({ enrolled: false }, () => now);
+  expect((await env.receive()).status).toBe("verified");
+  const sender = { from_did: initialKey, from_stable_id: stableID };
+  now += 60_000;
+  expect((await env.trust.verifyResponsibility(sender, true)).reason).toBe("unregistered_identity");
+  now += 1000;
+  expect((await env.trust.verifyResponsibility(sender, true)).reason).toBe("evidence_unavailable");
+  now -= 61_000;
+  expect((await env.trust.verifyResponsibility({ ...sender, from_did: rotatedKey }, true)).reason).toBe("evidence_unavailable");
 });

@@ -12,6 +12,13 @@ authority. A hosted operator may hold controller or identity private keys only
 for an explicitly hosted-authority or custodial flow. AWID itself never holds
 private keys or signs on anyone's behalf.
 
+The [identity certificates v1 candidate](id-certificates.md) defines a
+parent-signed human/agent tree rooted in DNS namespace authority, alongside
+unchanged team certificates. The nearest human answers for an agent;
+membership, roles and custody stay separate. Implementation follows contract
+review. The former [email attribution candidate](member-attribution.md) is
+superseded and must not be implemented.
+
 ## Entities
 
 ### Agent
@@ -224,7 +231,7 @@ registry storage, and product language use `name` as the concept and
 ### Hosted organization setup (including Omarchy)
 
 A person already signed in can create a managed organization without a namespace
-controller key in the terminal. Human CLI authorization grants the hosted service
+controller key in the terminal. Account authorization through the CLI grants the hosted service
 permission to create the organization and team; each agent keeps its own signing
 key. Device login prints an approval URL and code, and works without opening a
 browser on the CLI machine:
@@ -253,7 +260,7 @@ slug; JSON and non-interactive invocations exit nonzero with the suggestion.
 
 Choose the same organization when ensuring a workspace team and enrolling its
 member. The selector is covered by the enrollment signature; it does not itself
-grant human organization authority:
+grant an account owner's organization authority:
 
 ```bash
 aw --identity-home /path/to/principal init --workspace-team \
@@ -333,10 +340,10 @@ authorize this path. The service still verifies the new member's separate intent
 proof and returns an ordinary self-custodial global certificate.
 
 This owner path uses the Cloud base from the owner's own workspace binding,
-leaves that root unchanged, and creates no human device session. It does not use
-an API key or grant and does not switch to human login after a refusal. Omitting
-`--owner-identity-home` retains the human `cli.org_create` flow above. Signup and
-claim-human alone do not mint that human device authorization.
+leaves that root unchanged, and creates no account device session. It does not use
+an API key or grant and does not switch to account login after a refusal. Omitting
+`--owner-identity-home` retains the account `cli.org_create` flow above. Signup and
+claim-human alone do not mint that account device authorization.
 
 The owner-request DIDKey signature covers canonical JSON with `aud` (the
 hosted service's configured public origin, which must equal the owner workspace
@@ -618,6 +625,26 @@ caller-supplied ciphertext; a grant seat does not replace it with its own read.
 and recipient lookup does not decrypt unrelated pending-chat previews. HTTP and
 custody requests retain their individual timeouts; a history page does not share
 one cumulative API timeout. Explicit caller cancellation still stops the work.
+`aw mail show` follows the same rule: its page fetch retains the configured
+HTTP timeout, then each message is unwrapped independently. The custody RPC
+limit remains 10 seconds, with separate 5-second freshness and stored-message
+read limits. An explicit caller deadline still bounds the entire operation.
+
+The opt-in real regression is `scripts/e2e/custody_bulk.py`. With locally built
+service images and a Linux CLI binary matching Docker's CPU, run:
+
+```sh
+python3 scripts/e2e/custody_bulk.py --aw-bin /absolute/path/to/linux/aw \
+  --evidence /tmp/custody-bulk-result
+```
+
+It provisions disposable identities through the CLI and real owned TXT DNS,
+then checks 300 exact verified v2 messages, a delayed page plus unwraps, local
+key reads and individually stalled page/header/body/custody/authority steps.
+It uses only existing local images, an internal network and fresh private
+identity storage, and removes its owned services and volumes on exit. Image
+overrides are available with `--help`; older CLI comparisons may supply a
+separate current provisioning binary with `--provision-aw-bin`.
 
 Scopes are `mail.read`, `mail.send`, `chat.read`, `chat.send`,
 `events.read`, `coord.read`, `coord.write`, `presence.write`,

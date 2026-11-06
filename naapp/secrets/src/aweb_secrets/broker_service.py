@@ -58,7 +58,12 @@ from pgdbm.core import TransactionManager
 from aweb_secrets import derived_lineage, tool_results
 from aweb_secrets.admission import Admission, AdmissionRefused, admit_use
 from aweb_secrets.broker import broker_operation
-from aweb_secrets.broker_audit import BrokerAudit, freeze_broker_audit, record_broker_refusal
+from aweb_secrets.broker_audit import (
+    BrokerAudit,
+    freeze_broker_audit,
+    mint_refusal_ref,
+    record_broker_refusal,
+)
 from aweb_secrets.broker_fence import BrokerFence, PreparedBrokerCall
 from aweb_secrets.broker_input import BrokerInput
 from aweb_secrets.custody import CustodyUnavailable, SealContext, ValueInvalid, decode_value
@@ -75,6 +80,8 @@ from aweb_secrets.use_context import UseCommitter, store_use_context, use_contex
 
 if TYPE_CHECKING:
     from aweb_naapp.runtime.approvals.dispatch_fence import DispatchAuthority, PreparedDispatch
+
+    from aweb_secrets.reconciliation_types import ReconciliationOriginal
 
 _LOG = logging.getLogger(__name__)
 _HOOK = "post-secret-use-hook"
@@ -429,6 +436,9 @@ class BrokerRequests:
     ) -> _PreparedUse | ToolReply:
         auth = submission.authorization
         pending = None
+        refusal_ref = None
+        candidate_id = body.get("request_id")
+        request_id = candidate_id if isinstance(candidate_id, str) and candidate_id else None
         async with self._db.transaction() as tx:
             scope = await self._fence.admit(tx, auth.grant)
             context = CommitmentContext(
@@ -599,6 +609,24 @@ class BrokerRequests:
             if refused is not None:
                 # Configuration/context failures have no catalog refusal code.
                 if refused.code != "release_context_unavailable":
+                    # Resolve only the authenticated original association after
+                    # the failed savepoint has unwound. Never hash/echo the
+                    # caller's request ID into the public signed reference.
+                    refusal_ref = (
+                        await tx.fetch_value(
+                            "SELECT i.intent_id FROM {{tables.intents}} i"
+                            " JOIN {{tables.use_contexts}} c"
+                            " USING(intent_id,installation_id,team_id,install_generation)"
+                            " WHERE i.installation_id=$1 AND i.team_id=$2 AND i.install_generation=$3"
+                            " AND i.principal_did=$4 AND i.request_id=$5",
+                            scope.installation_id,
+                            scope.team_id,
+                            scope.generation,
+                            principal_key(auth.principal).principal_did,
+                            request_id,
+                        )
+                        or mint_refusal_ref()
+                    )
                     await record_broker_refusal(
                         tx,
                         producer=self._producer(
@@ -609,12 +637,19 @@ class BrokerRequests:
                         code=refused.code,
                         occurred_at=self._clock(),
                         signed_trace_id=submission.signed_trace_id,
-                        request_id=None if inputs is None else inputs.request.request_id,
+                        request_id=request_id,
                         secret_ref=secret,
+                        use_ref=refusal_ref,
                     )
                 await self._fence.check(tx, scope)
         if refused is not None:
-            raise refused
+            # No reference escapes before the outer audit transaction commits.
+            headers = {"Retry-After": str(refused.retry_after_s)} if refused.retry_after_s else {}
+            return ToolReply(
+                refused.status,
+                tool_results.refused(refused.code, request_id=request_id, use_ref=refusal_ref),
+                headers,
+            )
         if pending is not None:
             approvals, _ = self._approval_services()
             await approvals.deliver(pending.pending)
@@ -867,6 +902,29 @@ class BrokerRequests:
                 # original S3 winner and record this evidence exactly once.
                 return await record(tx, dispatch_id, dict(reply.body))
         return await record(tx, dispatch_id, dict(reply.body))
+
+    async def reconcile(
+        self,
+        tx: TransactionManager,
+        *,
+        original: ReconciliationOriginal,
+        state: State,
+        result: Mapping[str, Any],
+    ) -> None:
+        """Record a caller-authorized consequence through this service's S3 sink.
+
+        The caller prepares owner authority and the complete B2 union first.
+        This opens/sends nothing and applies no publication availability gate.
+        S3 locks the original and permits only its first UNKNOWN settlement.
+        """
+        from aweb_secrets.reconciliation_reads import ReconciliationReads
+
+        view = await ReconciliationReads().get(
+            tx, scope=original.installation, reconcile_ref=original.reconcile_ref
+        )
+        if original.op_kind != "broker" or view is None or view.original != original:
+            raise UseAuditUnavailable()
+        await self._machine(None).reconcile(tx, original.dispatch_id, state, dict(result))
 
     async def sweep(self, *, limit: int = 50) -> int:
         """Recover bounded stale broker publications through the sole S3.

@@ -235,7 +235,7 @@ than choosing silently.
 
 - Use `aw` for coordination work.
 - Treat `.aw/workspace.yaml` as the repo-local coordination identity for this worktree.
-- Default to mail for non-blocking coordination: `aw mail send --to <agent> --body-file <body-path>`.
+- Default to mail for non-blocking coordination: `aw mail send --to <agent> --subject "<subject>" --body-file <body-path>` starts a new thread; answer in the conversation with `aw mail reply <message-id> --body-file <body-path>`.
 - Use chat when you need a synchronous answer: `aw chat pending`, then `aw chat send-and-wait <agent> --body-file <body-path>`.
 - Respond promptly to waiting conversations.
 - Check `aw workspace status` before doing coordination work.
@@ -279,8 +279,7 @@ file that never had any, "none present" cannot distinguish "I wrote none" from
 ## Mail
 
 ```bash
-aw mail send --to <alias> --body-file <body-path>
-aw mail send --to <alias> --subject "API design" --body-file <body-path>
+aw mail send --to <alias> --subject "<subject>" --body-file <body-path>
 aw mail inbox
 ```
 

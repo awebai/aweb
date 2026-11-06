@@ -203,7 +203,7 @@ async def test_approved_records_original_requester_and_sole_retained_proof_commi
     audit, view, pending, _, _ = await composition(uses)
     with audit.prepared_view(view):
         await approve(uses, pending, "finance@acme.com")
-    events = await envelopes(uses.world.db)
+    events = [e for e in await envelopes(uses.world.db) if e["hook"] == "post-secret-use-hook"]
     assert [e["payload"]["action"] for e in events] == ["approval_requested", "approval_decided"]
     result = events[-1]
     assert result["actor"]["did_key"] == REQUESTER.did_key
@@ -231,6 +231,7 @@ async def test_approved_records_original_requester_and_sole_retained_proof_commi
 
 async def test_positive_decision_rolls_back_without_a_target_but_rejection_records(uses):
     audit, view, pending, _, _ = await composition(uses)
+    before = await envelopes(uses.world.db)
     with audit.prepared_view(replace(view, registrations=())):
         with pytest.raises(Refused) as refused:
             await approve(uses, pending, "finance@acme.com")
@@ -242,7 +243,7 @@ async def test_positive_decision_rolls_back_without_a_target_but_rejection_recor
         await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.use_approval_audit_proofs}}")
         == 0
     )
-    assert len(await envelopes(uses.world.db)) == 1
+    assert await envelopes(uses.world.db) == before
     await approve(uses, pending, "finance@acme.com", decision=Decision.REJECT)
     assert (await envelopes(uses.world.db))[-1]["payload"]["approval_decision"] == "denied"
 
@@ -308,10 +309,11 @@ async def test_s3_closes_after_the_actual_matching_use_lifecycle_record(uses, de
     assert before == await uses.world.db.fetch_one(
         "SELECT * FROM {{tables.approvals}} WHERE approval_id=$1", approval_id
     )
-    assert [e["payload"].get("approval_decision") for e in await envelopes(uses.world.db)] == [
-        None,
-        decision,
-    ]
+    assert [
+        e["payload"].get("approval_decision")
+        for e in await envelopes(uses.world.db)
+        if e["hook"] == "post-secret-use-hook"
+    ] == [None, decision]
 
 
 @pytest.mark.parametrize("state", [State.APPROVAL_DENIED, State.APPROVAL_EXPIRED, State.CANCELLED])
@@ -340,7 +342,8 @@ async def test_s3_cannot_start_waiting_when_the_requested_receipt_is_missing(use
 
 async def test_expiry_cannot_be_recorded_before_the_live_b2_deadline(uses):
     audit, _, pending, _, _ = await composition(uses)
+    before = await envelopes(uses.world.db)
     with pytest.raises(UseAuditUnavailable):
         async with uses.world.db.transaction() as tx:
             await audit.expired(tx, pending.pending.approval.approval_id)
-    assert len(await envelopes(uses.world.db)) == 1
+    assert await envelopes(uses.world.db) == before

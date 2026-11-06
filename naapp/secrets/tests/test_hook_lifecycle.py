@@ -207,6 +207,13 @@ async def test_actual_b2_and_secret_transition_roll_back_with_failed_local_recor
             "ALTER TABLE {{tables.outbox_events}} ADD CONSTRAINT reject_lifecycle "
             "CHECK (kind <> 'post-secret-use-hook')"
         )
+    before_outbox = {
+        table: [
+            dict(row)
+            for row in await db.fetch_all("SELECT * FROM {{tables." + table + "}} ORDER BY 1")
+        ]
+        for table in ("outbox_events", "outbox_sequences")
+    }
     expected = (
         RuntimeError
         if fault == "rollback"
@@ -225,4 +232,10 @@ async def test_actual_b2_and_secret_transition_roll_back_with_failed_local_recor
         == "active"
     )
     assert await revocations(db) == []
-    assert await db.fetch_value("SELECT count(*) FROM {{tables.outbox_sequences}}") == 0
+    assert {
+        table: [
+            dict(row)
+            for row in await db.fetch_all("SELECT * FROM {{tables." + table + "}} ORDER BY 1")
+        ]
+        for table in ("outbox_events", "outbox_sequences")
+    } == before_outbox

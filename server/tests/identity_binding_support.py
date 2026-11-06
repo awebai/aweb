@@ -3,17 +3,19 @@ from collections import OrderedDict
 from time import monotonic
 
 from aweb.identity_binding import IdentityBinding
+from awid.registry import IDTreeEnrollment
 
 
 def seed_verified_bindings(app, *bindings):
-    """Supply an explicit positive cache fact without replacing authentication."""
+    """Supply positive binding and unenrolled evidence for legacy routing fixtures."""
     cache = getattr(app.state, "identity_binding_cache", None)
     if cache is None:
         cache = app.state.identity_binding_cache = OrderedDict()
     for did_aw, did_key, address in bindings:
         for claim_address in {"", address or ""}:
             cache[(did_aw, did_key, claim_address)] = (
-                monotonic() + 60, IdentityBinding(did_aw=did_aw, address=claim_address, did_key=did_key),
+                monotonic() + 60, IdentityBinding(did_aw=did_aw, address=claim_address, did_key=did_key,
+                                               id_tree=IDTreeEnrollment(False, None)),
             )
 
 

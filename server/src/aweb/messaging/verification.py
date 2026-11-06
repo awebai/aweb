@@ -54,6 +54,25 @@ def message_verification_status(row: dict[str, Any]) -> VerificationStatus:
     return "failed"
 
 
+def verified_signed_recipient_fields(row: dict[str, Any]) -> dict[str, str]:
+    """Project plaintext recipient display from the verified original bytes.
+
+    These fields describe what the author signed; participant queries still
+    authorize reads. Never reconstruct or replace the retained signed_payload.
+    Encrypted recipient metadata belongs to client-side decryption instead.
+    """
+    if str(row.get("content_mode") or "") == "encrypted_v2":
+        return {}
+    if message_verification_status(row) not in ("verified", "verified_legacy"):
+        return {}
+    payload = json.loads(row["signed_payload"])
+    return {
+        name: payload[name]
+        for name in ("to_did", "to_stable_id")
+        if isinstance(payload.get(name), str)
+    }
+
+
 def _encrypted_message_verification_status(row: dict[str, Any]) -> VerificationStatus:
     # An encrypted message carries its sender signature inside the envelope;
     # the row's legacy signature columns stay empty by contract.

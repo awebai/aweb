@@ -20,7 +20,7 @@ service's reviewed targets rather than improvising production mutations.
 ## Pinned production topology
 
 `ops/render-production.json` is the fail-closed topology allowlist. The tooling refuses
-to proceed if Render reports a different service ID, name, region, repository, branch,
+to proceed if Render reports a different service ID, display name, unique slug, region, repository, branch,
 root directory, Dockerfile path, Docker build context, origin URL, suspension state, or
 auto-deploy setting. An absent root directory and an empty one both mean the repository
 root.
@@ -60,6 +60,13 @@ Those public surfaces and headers do not expose the Render region. Render's
 exposes service identity and origin fields, but no service-region field; a second manually
 configured region string would be circular.
 
+`service_name` in the health deployment metadata comes from Render’s automatic
+`RENDER_SERVICE_NAME`, its unique identifier (`library-02jf`), rather than API display
+name (`library`). The API exposes these separately as `slug` and `name`. Both remain
+exactly pinned; public health compares the slug and top-level service `library`.
+See [Render runtime variables](https://render.com/docs/environment-variables) and
+[service fields](https://api-docs.render.com/reference/service-fields).
+
 Region drift is therefore checked at the credentialed operations boundary, by design.
 `make prod-status` reads the live Render API and fails closed unless every field in
 `ops/render-production.json` matches, including `virginia`. Run that preflight before any
@@ -77,7 +84,7 @@ docker build -f naapp/library/Dockerfile .    # from the aweb repository root
 ```
 
 The Dockerfile copies only the paths the service needs: `awid/` and `naapp-lib/`, and
-Library's `pyproject.toml`, `uv.lock`, `README.md`, `src/`, `skills/` and `site/static/`.
+Library's `pyproject.toml`, `uv.lock`, `README.md`, `src/` and `skills/`.
 Those trees are copied whole, so `naapp/library/Dockerfile.dockerignore` is what keeps
 files local to a checkout out of the build context and the image: `.env` files,
 virtualenvs, bytecode, tool caches, `.aw` identity homes (aw's signing key, encryption keys
@@ -96,8 +103,8 @@ in the image as they do in a checkout.
 | Health check path | `/health` |
 
 `ops/render-production.json` pins these values. Until the live service's settings move to
-this build, `make prod-status` fails closed and names `rootDir`, `dockerfilePath` and
-`dockerContext`, so the move is visible before it is made.
+this build, `make prod-status` fails closed and names the fields that differ. The established incumbent has `rootDir=naapp/library`,
+`dockerfilePath=./Dockerfile`, and `dockerContext=.`; only the first two change.
 
 ### Moving the live service onto this build
 
@@ -111,6 +118,14 @@ The settings change and the first deploy of a commit with this Dockerfile go tog
    `make prod-rollback`, which redeploys an earlier deploy's built artifact and does not
    rebuild; a commit deploy of a pre-change commit is not a rollback path.
 3. Record the live deploy ID and commit before the change as the rollback target.
+   Run `make prod-move-build` with the candidate and rollback pins, `APPLY=1`, the
+   exact service confirmation and a fresh evidence directory. It accepts only the
+   established before-values above, validates the entire topology and live artifact,
+   and changes exactly `rootDir` and `dockerfilePath` in one Render PATCH. It checks
+   the after-values and that the live deploy did not change. Render’s settings update
+   does not start a deploy; run `make prod-deploy` next.
+   Artifact rollback does not reverse these build settings: it reuses the existing
+   image without rebuilding and leaves future builds on the reviewed repository-root layout.
 4. Verify the new deploy with `make prod-verify` and an authenticated read, which
    exercises team-certificate verification through the in-repo awid.
 
@@ -120,10 +135,18 @@ Before requesting production approval, record all of the following:
 
 - exact full lowercase 40-character candidate SHA, already at `origin/main`;
 - exact current live rollback deploy ID and full commit SHA;
-- exact expected developer shelf profile version and `sha256:` digest;
+- explicit expected shelf profile ref, version and `sha256:` digest (no default ref);
 - expected rendered behavior for Claude Code and Pi;
 - the independent review verdict;
-- the human approval that names this service and candidate.
+- the human approval for this service, including any candidate constraints it imposes.
+
+`prod-deploy` fetches origin and refuses unless `PROD_COMMIT` is exactly the fetched
+`origin/main` tip. Arrange the deploy immediately after the reviewed train lands. If
+main moves first, stop and reconcile the new candidate with the coordinator and reviewer;
+do not substitute a different SHA, force a ref, or bypass the comparison.
+Use a clean clone from `https://github.com/awebai/aweb`; a local SSH host alias such as
+`github-aweb` is not the pinned repository identity. `prod-verify` checks its clean
+executing source and exact deployed artifact; it does not fetch or demand a later main tip.
 
 Never deploy a tag, short SHA, local `HEAD`, or an unmerged commit. Never infer the
 rollback artifact after starting the deploy.
@@ -132,11 +155,14 @@ rollback artifact after starting the deploy.
 
 | Target | Effect |
 |---|---|
+| `make prod-tools-prepare` | Downloads and verifies the reviewed Linux x86_64 clients in an empty operator-owned mode-0700 `LIBRARY_GATE_TOOL_ROOT`; changes no global tools. |
+| `make prod-shelf-pin` | Read-only public materialization for both runtimes; checks explicit ref/version/digest and recomputes the content digest from source profile files before deploy. |
 | `make prod-ops-test` | Mocked operations and gate tests; no network mutation. |
 | `make prod-public-identity` | Credential-less comparison of public automatic Render metadata with the pinned topology; validates commit identity but cannot attest region. |
 | `make prod-status` | Read-only topology and current-live-deploy preflight. |
 | `make prod-health-client-proof ...` | Makes exactly two bounded canonical health requests: the known-blocked baseline UA must return 403 and the honest gate UA must return the exact 200 payload; persists both artifacts. |
 | `make prod-gate-current-incumbent ...` | Read-only semantic probe of the exact pinned pre-aasb incumbent: authenticated generated-origin then mandatory public materialization for both runtimes, validating only the pinned legacy response shape. It does not prove the asserted deploy is live or emit AATK receipts. |
+| `make prod-move-build ... APPLY=1` | Performs only the pinned incumbent-to-repository-root build-settings transition; verifies the live artifact remains unchanged. |
 | `make prod-deploy ... APPLY=1` | Validates topology and rollback pin, fetches and verifies exact `origin/main`, starts a clear-cache deploy, waits for `live`, then waits boundedly for exact origin and public health readiness. |
 | `make prod-wait ...` | Restartable read-only wait for one exact deploy ID and commit. |
 | `make prod-verify ...` | Requires the exact deploy to be the sole live artifact, checks origin/public health, then runs generated-origin raw, public raw, released-client, and real-harness gates. |
@@ -145,7 +171,7 @@ rollback artifact after starting the deploy.
 
 Run `make prod-ops-test` before release planning. The mutation targets deliberately
 require `APPLY=1` and `CONFIRM_SERVICE_ID=srv-d8qm4jvavr4c73dhrmgg` in addition to the
-artifact pins. Deploy, verify, rollback, and health-client proof also require a fresh
+artifact pins. Settings move, deploy, verify, rollback, and health-client proof also require a fresh
 absolute `PROD_EVIDENCE_DIR` outside the repository. The directory must not exist; its
 parent must be an operator-owned exact-mode-0700 path with no symlink component. The tooling
 retains no-follow directory descriptors, detects path replacement before and after publication,
@@ -186,12 +212,36 @@ make prod-verify \
   PROD_COMMIT=<40-char-candidate> \
   PROD_EVIDENCE_DIR=/absolute/operator-owned/verify-run \
   AW_SOURCE_HOME=/absolute/path/to/certified-agent-home \
+  LIBRARY_GATE_TOOL_ROOT=/absolute/operator-owned/private-tools \
+  EXPECTED_PROFILE_REF=<approved-shelf-ref> \
   EXPECTED_PROFILE_VERSION=<approved-shelf-version> \
   EXPECTED_PROFILE_DIGEST=sha256:<64-hex-digest>
 ```
 
 `AW_SOURCE_HOME` must be an established agent home with the correct team certificate.
-The gate clones only into a private temporary directory and removes it on exit.
+The gate clones only into a private temporary directory and removes it on exit. Every
+`aw` materialization explicitly selects that source or cloned `.aw` home, so an ambient
+identity selection cannot substitute another agent. A created shelf profile renders
+`> Profile <ref> v<version> · created`; an imported profile retains blueprint provenance.
+Both runtime gates check the actual materialized title and provenance. The operator’s
+previously materialized local profile does not set the shelf pin.
+
+The reviewed Linux tool versions, official archive URLs and SHA-256 hashes live in
+`ops/release-client-artifacts.json`. `prod-tools-prepare` checks archive hashes before
+extraction and executable hashes afterward; the gate rechecks executable hashes and
+all Pi package files. It requires no Homebrew paths or global replacement. The bundled
+Pi CLI needs no dependency install for this tools-disabled, extensions-disabled journey.
+The real harness still uses the operator’s own provider login.
+
+Library must already be installed and approved for the operator identity’s team before
+the strict-client check. `prod-verify` never installs or grants an app. Any needed
+`aw plugin install` is a separate, explicitly authorized operator step in the release
+record, with the served manifest digest checked against the reviewed pin.
+
+Every Library health request, Render API request and private-tool download identifies
+itself as `aweb-library-deploy-gate/1.0`. Materialization and plugin requests use the
+released `aw` client’s own User-Agent; Claude Code and Pi use their provider clients.
+These are not health probes and do not inherit the Python health User-Agent.
 
 ## Verification surfaces
 
@@ -209,26 +259,22 @@ commit; do not choose a convenient artifact from the dashboard. The rollback tar
 must be a previously live artifact (`live` or Render's historical `deactivated` state),
 never a failed build with a matching commit.
 
-For the `aweb-aasb` rollout only, `prod-recovery` has the explicit `legacy-aasb`
-fingerprint: both raw runtime responses omit (rather than merely empty)
-`runtime_kind` and `managed_set`, and released strict materialization rejects both with
-the exact runtime-schema error. An unrelated auth, route, network, or process failure
-does not certify recovery:
+The current `prod-recovery` fingerprint is `runtime-managed-0c490a362`, pinned to
+artifact `dep-db4prf142hec73eibj7g` at
+`0c490a3627e50e2b3a8b240713d50c3d917659e2`. This artifact already has build identity
+and runtime-specific `ref.json`/`managed_set`. Recovery checks generated-origin and
+public raw materialization, successful released strict-client materialization, and the
+real Claude Code and Pi instruction rendering, using the same explicit shelf pins as
+verification. It requires no missing-build exception. Pass the failed candidate’s
+exact live deploy ID and SHA as `CURRENT_DEPLOY_ID`/`CURRENT_COMMIT`, plus the
+pre-recorded rollback artifact as `ROLLBACK_DEPLOY_ID`/`ROLLBACK_COMMIT`, and a fresh
+`PROD_EVIDENCE_DIR`. `prod-rollback` verifies the newly created rollback deploy’s health
+against the full rollback SHA before the functional fingerprint runs.
 
-```text
-make prod-recovery \
-  APPLY=1 \
-  CONFIRM_SERVICE_ID=srv-... \
-  CURRENT_DEPLOY_ID=dep-... \
-  CURRENT_COMMIT=<40-char-current-live> \
-  ROLLBACK_DEPLOY_ID=dep-... \
-  ROLLBACK_COMMIT=<40-char-rollback> \
-  ALLOW_LEGACY_MISSING_BUILD_FOR=<same-40-char-rollback> \
-  PROD_EVIDENCE_DIR=/absolute/operator-owned/recovery-run \
-  AW_SOURCE_HOME=/absolute/path/to/certified-agent-home \
-  EXPECTED_PROFILE_VERSION=<approved-shelf-version> \
-  EXPECTED_PROFILE_DIGEST=sha256:<64-hex-digest>
-```
+The historical `legacy-aasb` mode remains only for its July artifact; it is not this
+release’s recovery path. It expects raw responses without runtime/managed-set fields
+and the precise strict-client schema rejection. Applying it to the October incumbent
+would incorrectly reject working runtime-specific materialization.
 
 `ALLOW_LEGACY_MISSING_BUILD_FOR` is never defaulted or stored as an exception list. It is
 accepted only when it is a full SHA exactly equal to the approved target for that invocation.

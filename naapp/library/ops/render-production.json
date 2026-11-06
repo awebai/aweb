@@ -1,6 +1,7 @@
 {
   "service_id": "srv-d8qm4jvavr4c73dhrmgg",
   "service_name": "library",
+  "service_slug": "library-02jf",
   "region": "virginia",
   "repo": "https://github.com/awebai/aweb",
   "root_dir": "",

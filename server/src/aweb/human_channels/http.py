@@ -8,7 +8,8 @@ from uuid import UUID
 from awid.signing import canonical_json_bytes
 from fastapi import HTTPException
 
-from aweb.identity_auth_deps import auth_dids
+from aweb.agent_wake import agent_wake_publisher, agent_wake_scope
+from aweb.identity_auth_deps import participant_dids
 
 from .contract import ContractError
 from .native import _dto, _hash, _principal
@@ -169,23 +170,25 @@ async def accept_native_http(request, payload, *, auth, db, kind, session_id=Non
                 ),
             ),
         )
-        async with service.unit_of_work(auth) as uow:
-            previous = await uow.claim_ingress(key)
-            if previous is not None:
-                _exact(previous, mid, cid, kind, digest)
-                return previous.value["accepted"]
-            accepted = await uow.accept(prepared)
-            await uow.finish_ingress(
-                _dto(
-                    "IngressResult",
-                    {
-                        "version": "aweb-ingress-result-v1",
-                        "key": key.value,
-                        "accepted": accepted.value,
-                        "result": {},
-                    },
+        # Wakes are published after the unit of work commits.
+        with agent_wake_scope(agent_wake_publisher(request.app.state)):
+            async with service.unit_of_work(auth) as uow:
+                previous = await uow.claim_ingress(key)
+                if previous is not None:
+                    _exact(previous, mid, cid, kind, digest)
+                    return previous.value["accepted"]
+                accepted = await uow.accept(prepared)
+                await uow.finish_ingress(
+                    _dto(
+                        "IngressResult",
+                        {
+                            "version": "aweb-ingress-result-v1",
+                            "key": key.value,
+                            "accepted": accepted.value,
+                            "result": {},
+                        },
+                    )
                 )
-            )
         return accepted.value
     except ContractError as error:
         raise _refusal(error, "accept") from error
@@ -207,6 +210,7 @@ def _exact(result, message_id, conversation_id, kind, envelope_hash):
 
 async def _target(request, payload, auth, db, kind, session_id):
     from aweb.messaging.messages import get_agent_by_id, resolve_agent_by_did
+    from aweb.messaging.address_auth import identity_recipient
     from aweb.routes.messages import _resolve_message_alias
 
     aliases = (
@@ -243,23 +247,31 @@ async def _target(request, payload, auth, db, kind, session_id):
             db,
             conversation_id=payload.conversation_id,
             sender_did=_principal(auth),
-            equivalent_dids=auth_dids(auth),
+            equivalent_dids=participant_dids(auth),
         )
-        recipient = await resolve_agent_by_did(db, route.recipient_participant["did"])
+        participant = route.recipient_participant
+        recipient = await resolve_agent_by_did(db, participant["did"])
+        if recipient is not None:
+            recipient = identity_recipient(recipient, str(participant.get("address") or ""))
+            recipient["alias"] = participant.get("alias") or participant["did"]
     elif kind == "chat" and session_id:
         rows = await db.get_manager("aweb").fetch_all(
-            """SELECT p.did FROM {{tables.chat_participants}} p
+            """SELECT p.did, p.alias, p.address FROM {{tables.chat_participants}} p
                WHERE p.session_id=$1 AND p.left_at IS NULL AND NOT (p.did=ANY($2::text[]))
                  AND EXISTS (SELECT 1 FROM {{tables.chat_participants}} a
                    WHERE a.session_id=p.session_id AND a.left_at IS NULL AND a.did=ANY($2::text[]))""",
             UUID(session_id),
-            auth_dids(auth),
+            participant_dids(auth),
         )
         if len(rows) == 1:
-            recipient = await resolve_agent_by_did(db, rows[0]["did"])
+            participant = rows[0]
+            recipient = await resolve_agent_by_did(db, participant["did"])
+            if recipient is not None:
+                recipient = identity_recipient(recipient, str(participant.get("address") or ""))
+                recipient["alias"] = participant.get("alias") or participant["did"]
     if recipient is None:
         raise ContractError(
             "unsupported" if getattr(payload, "to_address", None) else "not_found",
             "same-service recipient",
         )
-    return recipient
+    return identity_recipient(recipient)

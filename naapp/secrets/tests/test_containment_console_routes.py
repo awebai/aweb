@@ -46,6 +46,7 @@ async def clients(context, *, lookup=None):
         fence=w.fence,
         verifier=w.owner.verifier,
         installation=installation,
+        credential_audit=w.credential_audit,
     )
     svc = await service(context)
     human_app = FastAPI()
@@ -67,10 +68,13 @@ async def test_console_containment_commits_with_login_proof_despite_audit_availa
 
     await seed(uses)
     w = uses.world
+    before = await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}")
     async with clients(uses) as (human, agent, svc):
         if stalled:
             await act(svc, uses, "disable-installation", None, "earlier-event")
-            event_id = await w.db.fetch_value("SELECT event_id FROM {{tables.outbox_events}}")
+            event_id = await w.db.fetch_value(
+                "SELECT event_id FROM {{tables.outbox_events}} ORDER BY position DESC LIMIT 1"
+            )
             await w.db.execute(
                 "INSERT INTO {{tables.outbox_deliveries}} (event_id,target_id,state,attempts)"
                 " VALUES ($1,'stalled-target','stalled',40)",
@@ -92,7 +96,7 @@ async def test_console_containment_commits_with_login_proof_despite_audit_availa
     rows = await w.db.fetch_all(
         "SELECT payload,signature FROM {{tables.outbox_events}} ORDER BY position"
     )
-    assert len(rows) == (2 if stalled else 1)
+    assert len(rows) == before + (2 if stalled else 1)
     row = rows[-1]
     event = verify(bytes(row["payload"]), row["signature"], team_id=TEAM).fields
     assert event["actor"] == {"authority_mode": "system", "attestations": []}
@@ -125,6 +129,7 @@ async def test_console_narrowing_routes_share_the_real_containment_actions(uses,
 
     grant_id = await seed(uses)
     w = uses.world
+    before = await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}")
     target = grant_id
     if action == "revoke-approvals":
         _, _, pending = await request(uses)
@@ -154,12 +159,13 @@ async def test_console_narrowing_routes_share_the_real_containment_actions(uses,
         assert await w.db.fetch_value(
             "SELECT disabled_at IS NOT NULL FROM {{tables.containment_installations}}"
         )
-    assert await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == 1
+    assert await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == before + 1
 
 
 async def test_console_containment_requires_session_csrf_and_exact_request_shape(uses):
     await seed(uses)
     w = uses.world
+    before = await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}")
     async with clients(uses) as (human, _, _):
         assert (await human.post(PATH, json=BODY)).status_code == 401
         logged = await login(w, human, owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did))
@@ -171,7 +177,7 @@ async def test_console_containment_requires_session_csrf_and_exact_request_shape
         assert (
             await human.post(PATH, json={**BODY, "action": "reenable"}, headers=headers)
         ).status_code == 400
-    assert await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == 0
+    assert await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == before
 
 
 @pytest.mark.parametrize("member", [False, True])
@@ -182,6 +188,7 @@ async def test_final_f6_check_rolls_back_effect_and_outbox_after_awaited_writes(
 
     await seed(uses)
     w = uses.world
+    before = await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}")
     # A real local database transition during the action's final awaited write.
     # It rolls back with the effect when the final live fence check refuses.
     await w.db.execute(
@@ -203,7 +210,7 @@ async def test_final_f6_check_rolls_back_effect_and_outbox_after_awaited_writes(
                 PATH, json=BODY, headers={"X-CSRF-Token": logged.json()["csrf_token"]}
             )
             assert response.status_code in {409, 503}
-    assert await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == 0
+    assert await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == before
     assert await w.db.fetch_value("SELECT count(*) FROM {{tables.containment_receipts}}") == 0
     assert (
         await w.db.fetch_value("SELECT state FROM {{tables.secrets}} WHERE secret_id=$1", SECRET_ID)
@@ -215,6 +222,7 @@ async def test_final_f6_check_rolls_back_effect_and_outbox_after_awaited_writes(
 async def test_console_rechecks_login_and_admitted_context_after_request_entry(uses, change):
     await seed(uses)
     w = uses.world
+    before = await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}")
 
     async def withdraw():
         if change == "proof":
@@ -237,7 +245,7 @@ async def test_console_rechecks_login_and_admitted_context_after_request_entry(u
             PATH, json=BODY, headers={"X-CSRF-Token": logged.json()["csrf_token"]}
         )
         assert response.status_code in {401, 409, 503}
-    assert await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == 0
+    assert await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == before
     assert (
         await w.db.fetch_value("SELECT state FROM {{tables.secrets}} WHERE secret_id=$1", SECRET_ID)
         == "active"
@@ -247,6 +255,7 @@ async def test_console_rechecks_login_and_admitted_context_after_request_entry(u
 async def test_logout_during_installation_lookup_refuses_the_inflight_action(uses):
     await seed(uses)
     w = uses.world
+    before = await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}")
     entered = asyncio.Event()
     resume = asyncio.Event()
 
@@ -271,7 +280,7 @@ async def test_logout_during_installation_lookup_refuses_the_inflight_action(use
                 action.cancel()
             await asyncio.gather(action, return_exceptions=True)
     assert await w.db.fetch_value("SELECT count(*) FROM {{tables.containment_receipts}}") == 0
-    assert await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == 0
+    assert await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == before
     assert (
         await w.db.fetch_value("SELECT state FROM {{tables.secrets}} WHERE secret_id=$1", SECRET_ID)
         == "active"
@@ -281,6 +290,7 @@ async def test_logout_during_installation_lookup_refuses_the_inflight_action(use
 async def test_final_session_check_rolls_back_effect_after_awaited_action_work(uses):
     await seed(uses)
     w = uses.world
+    before = await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}")
     await w.db.execute(
         "CREATE FUNCTION close_containment_session() RETURNS trigger LANGUAGE plpgsql AS $$ "
         "BEGIN UPDATE {{tables.console_sessions}} SET closed_at=clock_timestamp(); "
@@ -297,7 +307,7 @@ async def test_final_session_check_rolls_back_effect_after_awaited_action_work(u
         )
         assert response.status_code == 401
     assert await w.db.fetch_value("SELECT count(*) FROM {{tables.containment_receipts}}") == 0
-    assert await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == 0
+    assert await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == before
     assert (
         await w.db.fetch_value("SELECT state FROM {{tables.secrets}} WHERE secret_id=$1", SECRET_ID)
         == "active"

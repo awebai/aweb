@@ -34,6 +34,7 @@ from aweb_naapp.runtime.approvals.dispatch_fence import (
     DispatchBinding,
     PreparedDispatch,
     check_dispatch,
+    prepare_continuation,
     prepare_dispatches,
 )
 from aweb_naapp.runtime.approvals.model import (
@@ -851,8 +852,27 @@ class Approvals:
         """
         return await prepare_dispatches(self, tx, dispatches, authority=authority)
 
+    async def prepare_continuation(
+        self,
+        tx: TransactionManager,
+        approval_id: str,
+        request: Mapping[str, Any],
+        operation_id: str,
+        *,
+        authority: DispatchAuthority,
+    ) -> PreparedDispatch:
+        """Prepare the final fence of the one repeat of a dispatch whose outcome is unknown.
+
+        operation_id is the original consumed operation, whose outcome must be
+        OUTCOME_UNKNOWN. Like prepare_dispatch it writes nothing: the
+        approval's outcome changes only when the original is reconciled.
+        """
+        return await prepare_continuation(
+            self, tx, DispatchBinding(approval_id, request, operation_id), authority=authority
+        )
+
     async def check_dispatch(self, tx: TransactionManager, prepared: PreparedDispatch) -> None:
-        """Check the original DISPATCHING attempt, with no new locks or writes.
+        """Check the prepared attempt, with no new locks or writes.
 
         This issues no may_send and does not change stable retrieval. The app
         keeps its original admission and sole-publication association and must

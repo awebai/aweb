@@ -1,7 +1,7 @@
 # Tool image for the complete local candidate suite.
 FROM python:3.12-bookworm
 
-ARG GO_VERSION=1.24.13
+ARG GO_VERSION=1.26.10
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -29,7 +29,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /uvx /opt/uv/
 
 RUN python3 --version \
     && node --version | grep '^v22\.' \
-    && test "$(go env GOVERSION)" = "go1.24.13" \
+    && test "$(go env GOVERSION)" = "go1.26.10" \
     && docker --version \
     && uv --version \
     && tmux -V
@@ -47,4 +47,19 @@ RUN uv run --frozen --no-sync --project naapp-lib \
         playwright install --with-deps --only-shell chromium \
     && rm -rf /var/lib/apt/lists/* \
     && chmod -R a+rX /opt/ms-playwright
+
+# Prepare the standing user-path runtime here. The test stage itself performs
+# no image builds, dependency installs or registry pulls.
+RUN uv sync --frozen --no-dev --project server
+COPY cli/go /opt/user-paths/go
+RUN cd /opt/user-paths/go && CGO_ENABLED=0 go build -trimpath -o /opt/user-paths/aw ./cmd/aw
+COPY channel-core/package.json channel-core/package-lock.json /journey/channel-core/
+WORKDIR /journey/channel-core
+RUN npm ci
+COPY channel-core/tsconfig.json ./
+COPY channel-core/src ./src
+RUN npm run build
+COPY --from=coredns/coredns:1.11.3 /coredns /opt/user-paths/coredns
+ARG USER_PATHS_SOURCE_TREE
+LABEL aweb.user-paths-ready="1" aweb.user-paths-source-tree="${USER_PATHS_SOURCE_TREE}"
 WORKDIR /

@@ -222,6 +222,11 @@ async function main(): Promise<void> {
           status({ binding_id: msg.binding_id, error: lastError });
           continue;
         }
+        if ((type === "actionable_room_post" || type === "room_post") && !capabilities.scopes.has("chat.read")) {
+          lastError = "grant lacks chat.read";
+          status({ binding_id: msg.binding_id, error: lastError });
+          continue;
+        }
       }
       const queue = queues.get(msg.binding_id);
       if (!queue) {

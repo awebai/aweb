@@ -110,7 +110,7 @@ async def test_run_request_decision_proof_and_activity_keep_the_original_slot(us
             uses.world.devices["finance@acme.com"].get(dict(options)),
             link_token=token,
         )
-    events = await envelopes(uses.world.db)
+    events = [e for e in await envelopes(uses.world.db) if e["hook"] == "post-secret-use-hook"]
     assert [event["payload"]["action"] for event in events] == [
         "approval_requested",
         "approval_decided",
@@ -162,6 +162,7 @@ async def test_b2_run_request_cannot_be_associated_with_another_original_plan(us
 async def test_required_run_audit_failure_rolls_back_plan_approval_and_dispatch(uses):
     context = await setup(uses, approval_required=True)
     context.available[0] = False
+    before = await envelopes(uses.world.db)
     with pytest.raises(Refused) as refused:
         await stage(context)
     assert refused.value.code == "audit_target_unavailable"
@@ -173,7 +174,7 @@ async def test_required_run_audit_failure_rolls_back_plan_approval_and_dispatch(
         "dispatches",
     ):
         assert await uses.world.db.fetch_value("SELECT count(*) FROM {{tables." + table + "}}") == 0
-    assert await envelopes(uses.world.db) == []
+    assert await envelopes(uses.world.db) == before
 
 
 async def test_joint_run_admission_and_b2_final_check_use_the_whole_prepared_authority(uses):

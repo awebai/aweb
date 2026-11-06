@@ -12,6 +12,7 @@ from aweb_naapp.roles import PrincipalKey, assign
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.origins import split_origins
 from aweb_naapp_testing import Member
+from awid_service.testing import REGISTRY_URL
 from fastapi import FastAPI
 
 from aweb_secrets.app import MIGRATIONS_PATH, MODULE_NAME, STORES
@@ -49,6 +50,16 @@ async def running(uses, registry):
             awid_transport=registry.transport,
             stores=STORES,
         )
+        discovery_domains = []
+
+        async def registry_override(domain):
+            discovery_domains.append(domain)
+            assert domain == TEAM.split(":", 1)[1]
+            return REGISTRY_URL
+
+        # Bootstrap governance receipts use the real drain and directory, whose
+        # external discovery answer must name this in-process registry too.
+        runtime.team_server_directory()._registry_override = registry_override
         api = FastAPI(lifespan=runtime.lifespan)
         api.include_router(
             containment_api_router(
@@ -62,6 +73,7 @@ async def running(uses, registry):
                 transport=httpx.ASGITransport(app=app), base_url=API
             ) as client:
                 yield client
+        assert discovery_domains
 
 
 async def test_signed_owner_can_contain_and_unsigned_cookie_or_console_cannot(uses, registry):

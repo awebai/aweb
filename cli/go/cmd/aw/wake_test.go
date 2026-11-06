@@ -54,7 +54,7 @@ func TestWakeBrokerOpensGrantHomeStream(t *testing.T) {
 		grantID string
 	}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/events/stream" {
+		if r.URL.Path != "/v1/events/stream" && r.URL.Path != "/v1/agents/heartbeat" {
 			http.NotFound(w, r)
 			return
 		}
@@ -63,6 +63,14 @@ func TestWakeBrokerOpensGrantHomeStream(t *testing.T) {
 			auth    string
 			grantID string
 		}{path: r.URL.Path, auth: r.Header.Get("Authorization"), grantID: r.Header.Get("X-AWEB-Grant-ID")}
+		if r.URL.Path == "/v1/agents/heartbeat" {
+			if r.Method != "POST" {
+				t.Errorf("heartbeat method=%s", r.Method)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("event: connected\ndata: {\"agent_id\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"team_id\":\"backend:acme.com\"}\n\n"))
 		if flusher, ok := w.(http.Flusher); ok {
@@ -151,6 +159,38 @@ func TestWakeBrokerOpensGrantHomeStream(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatalf("broker never opened grant-home event stream")
+	}
+	if err := wakeHeartbeat(ctx, grantHome, "backend:acme.com"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-requestSeen:
+		if got.path != "/v1/agents/heartbeat" || got.grantID != grantID || !strings.HasPrefix(got.auth, "AWEB-Grant DIDKey ") {
+			t.Fatalf("heartbeat lost grant identity: %+v", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("grant heartbeat was not sent")
+	}
+	if err := wakeHeartbeat(ctx, grantHome, "wrong:team"); err == nil {
+		t.Fatal("conflicting grant team accepted")
+	}
+	// Stream opens and heartbeat ticks resolve clients concurrently in a daemon.
+	// They must not write the CLI's process-global error-reporting client.
+	errors := make(chan error, 2)
+	for range 2 {
+		go func() { errors <- wakeHeartbeat(ctx, grantHome, "backend:acme.com") }()
+	}
+	for range 2 {
+		select {
+		case <-requestSeen:
+		case <-time.After(2 * time.Second):
+			t.Fatal("concurrent heartbeat missing")
+		}
+	}
+	for range 2 {
+		if err := <-errors; err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -584,7 +624,8 @@ func TestWakeCommandsFallBackToFilesWhenTheDaemonIsDown(t *testing.T) {
 	joinedHome := filepath.Join(root, "joined-home")
 	primaryHome := filepath.Join(root, "primary-home")
 	multiHome := filepath.Join(root, "multi-agent-home")
-	for _, home := range []string{joinedHome, primaryHome, multiHome} {
+	pollHome := filepath.Join(root, "poll-only-home")
+	for _, home := range []string{joinedHome, primaryHome, multiHome, pollHome} {
 		if err := os.MkdirAll(filepath.Join(home, ".aw"), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -595,6 +636,7 @@ func TestWakeCommandsFallBackToFilesWhenTheDaemonIsDown(t *testing.T) {
 		Delivery:            wake.RuntimeDeliveryNativePi,
 		RuntimeDelivery:     wake.RuntimeDeliveryNativePi,
 		PrimaryIdentityHome: filepath.Join(primaryHome, ".aw"),
+		PresenceIdentities:  []wake.PresenceIdentity{{IdentityHome: filepath.Join(pollHome, ".aw"), TeamID: "team:poll"}},
 		ReceiveIdentities: []wake.ReceiveIdentity{{
 			IdentityHome:  filepath.Join(joinedHome, ".aw"),
 			TeamID:        "team:joined",
@@ -625,6 +667,9 @@ func TestWakeCommandsFallBackToFilesWhenTheDaemonIsDown(t *testing.T) {
 	}
 
 	out := run("wake", "status", "--state-dir", stateDir)
+	if !strings.Contains(out, "presence identity_home="+filepath.Join(pollHome, ".aw")+" team=team:poll") {
+		t.Fatalf("presence-only identity absent from CLI status:\n%s", out)
+	}
 	if !strings.Contains(out, "not running") || !strings.Contains(out, instanceHome) {
 		t.Fatalf("status with the daemon down did not read the files:\n%s", out)
 	}

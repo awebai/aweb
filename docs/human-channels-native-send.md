@@ -146,8 +146,12 @@ also refuse here; use the immutable attachment references and configured backend
 
 For hosted MCP ingress, pass `human_channels_service` to `create_mcp_app` and
 supply the same headers. Ordinary `send_mail`/`chat_send` then use this UoW before
-session or message insertion. The authenticated key determines stable message
-and initial-conversation UUIDs. Original-result recovery also compares the
+session or message insertion. The authenticated ingress namespace/key determines
+stable message UUIDs. A new mail intent gets a fresh conversation UUID, retained
+in its committed ingress result for original-result recovery. Chat selection is
+unchanged: use the explicit session or the existing active pair session; if
+neither exists, the authenticated ingress namespace/key determines the stable
+initial chat conversation UUID. Original-result recovery also compares the
 canonical logical tool input before signing again. Changed tool input refuses.
 Explicit encryption requires the hosted encryptor; no plaintext fallback is
 available. Legacy calls without ingress headers keep their existing behavior.

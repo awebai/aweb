@@ -82,9 +82,9 @@ def test_aweb_css_served_verbatim() -> None:
     assert "text/css" in response.headers["content-type"]
     # Byte-for-byte the aweb design system the toolkit ships (its own sha pin).
     assert hashlib.sha256(response.content).hexdigest() == CSS_SHA256
-    assert "--accent: #cf4a26;" in response.text  # redesigned light palette
-    assert "--bg: #0b0a09;" in response.text  # warm-charcoal dark palette
-    assert "--accent: #ff6a2c;" in response.text  # orange dark-mode accent
+    assert "--accent: #2342e8;" in response.text  # redesigned light palette
+    assert "--bg: #17191c;" in response.text  # carbon dark palette
+    assert "--accent: #a5b5ff;" in response.text  # blue dark-mode action
 
 
 def test_og_card_and_fingerprinted_css_served() -> None:
@@ -102,13 +102,11 @@ def test_og_card_and_fingerprinted_css_served() -> None:
     assert "immutable" in css.headers["cache-control"]
 
 
-def test_berkeley_mono_fonts_are_served_for_aweb_css() -> None:
+def test_packaged_open_font_is_served_for_aweb_css() -> None:
     client = TestClient(_app())
     css = client.get("/css/aweb.css").text
     for font_name in (
-        "BerkeleyMono-Light.woff2",
-        "BerkeleyMono-Regular.woff2",
-        "BerkeleyMono-SemiBold.woff2",
+        "Archivo-Latin-Variable.woff2",
     ):
         assert f'url("/fonts/{font_name}")' in css
         response = client.get(f"/fonts/{font_name}")
@@ -119,6 +117,7 @@ def test_berkeley_mono_fonts_are_served_for_aweb_css() -> None:
         assert response.content.startswith(b"wOF2")
 
     assert client.get("/fonts/NotAFont.woff2").status_code == 404
+    assert client.get("/fonts/BerkeleyMono-Regular.woff2").status_code == 404
 
 
 def test_health_endpoints_are_public() -> None:

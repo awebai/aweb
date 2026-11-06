@@ -44,6 +44,7 @@ async def application(world: World, *, human_origin: str, agent_origin: str):
     console = OwnerConsole(
         db=world.db,
         passkeys=world.passkeys,
+        credential_audit=world.credential_audit,
         directory=world.directory,
         fence=world.fence,
         verifier=world.owner.verifier,
@@ -200,19 +201,71 @@ async def test_enrolment_page_uses_the_delivered_fragment_and_real_registration(
 async def test_contact_page_confirms_only_the_delivered_candidate(
     world: World, browser, service: str, tmp_path
 ):
-    contact, candidate = "owner@example.com", "candidate@example.com"
-    scope = await designate_owner(world, service, contact)
-    [enrolment] = world.inbox.enrolments[contact]
-    device = SoftAuthenticator(service)
-    await world.passkeys.complete_enrolment(
-        enrolment, device.create(await world.passkeys.enrolment_options(enrolment))
+    from aweb_secrets.owners import approver_scope
+    from aweb_secrets.revisions import config_revision
+    from tests.governance import view
+    from tests.test_change_sets import (
+        by_member,
+        change_approver_contact,
+        change_set,
+        decide,
+        designate_approver,
+        draft,
     )
+
+    owner_contact, contact, candidate = (
+        "owner@example.com",
+        "finance@example.com",
+        "candidate@example.com",
+    )
+    await designate_owner(world, service, owner_contact)
+    [enrolment] = world.inbox.enrolments[owner_contact]
+    device = SoftAuthenticator(service)
+    prepared = await world.credential_audit.prepare_enrolment(enrolment)
+    with world.credential_audit.prepared(prepared):
+        await world.passkeys.complete_enrolment(
+            enrolment,
+            device.create(await world.passkeys.enrolment_options(enrolment)),
+            fence=prepared,
+        )
+    world.devices[owner_contact] = device
+
+    async def apply(items):
+        request = change_set(
+            drafter=by_member(ALICE),
+            changes=items,
+            base_revision=await config_revision(world.db, INSTALLATION_ID),
+        )
+        await decide(world, await draft(world, request), owner_contact)
+        async with world.db.transaction() as tx:
+            return await world.change_sets.confirm(
+                tx,
+                request["change_id"],
+                operation_id="confirm-" + request["change_id"],
+                fence=world.fence,
+                admitted=world.admitted,
+                governance_view=view(),
+            )
+
+    designation = await apply([designate_approver("finance", contact, ["sec_19ab42"])])
+    await world.change_sets.deliver(designation)
+    [token] = world.inbox.enrolments[contact]
+    prepared = await world.credential_audit.prepare_enrolment(token)
+    with world.credential_audit.prepared(prepared):
+        await world.passkeys.complete_enrolment(
+            token,
+            SoftAuthenticator(service).create(await world.passkeys.enrolment_options(token)),
+            fence=prepared,
+        )
+    scope = approver_scope(INSTALLATION_ID, TEAM, "finance")
     with SmtpServer(tmp_path / "smtp", password=secrets.token_urlsafe(32)) as smtp:
         world.passkeys._delivery = PasskeyEmailDelivery(
             mailer=mailer(smtp, tmp_path), console_origin=service
         )
-        options = await world.passkeys.contact_change_options(scope, candidate)
-        effective_at = await world.passkeys.change_contact(scope, candidate, device.get(options))
+        confirmation = await apply([change_approver_contact("finance", candidate)])
+        [change] = confirmation.contact_changes
+        effective_at = change.effective_at
+        await world.change_sets.deliver(confirmation)
         url = delivered_url(smtp.received, contact=candidate, path="/contact-proof")
     async with await browser.new_context() as context:
         page = await context.new_page()

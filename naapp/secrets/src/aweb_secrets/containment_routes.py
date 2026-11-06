@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from aweb_secrets.console import OwnerConsole
 from aweb_secrets.containment import Containment, ContainmentRefused
+from aweb_secrets.credential_audit import GovernanceUnavailable
 
 
 async def _request(request: Request) -> dict[str, Any]:
@@ -72,7 +73,7 @@ def containment_api_router(
                     **body,
                 )
             )
-        except (ContainmentRefused, InstallationRefused) as refused:
+        except (ContainmentRefused, InstallationRefused, GovernanceUnavailable) as refused:
             raise HTTPException(status_code=refused.status, detail=refused.code) from None
 
     return router
@@ -96,7 +97,7 @@ def containment_console_router(
             if admitted.installation_id != installation_id:
                 raise HTTPException(403, "owner_required")
             return asdict(await services.by_console(admitted=admitted, session=current, **body))
-        except (ContainmentRefused, InstallationRefused) as refused:
+        except (ContainmentRefused, InstallationRefused, GovernanceUnavailable) as refused:
             if refused.status == 401:
                 await console.sessions.close(current)
                 response = Response()

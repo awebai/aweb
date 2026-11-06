@@ -15,6 +15,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -1209,14 +1210,38 @@ func TestMailE2EEConversationReplyLearnsLocalOnlySenderKey(t *testing.T) {
 
 func TestChatE2EEContinuationLearnsLocalOnlySenderKey(t *testing.T) {
 	t.Parallel()
+	for _, scenario := range []string{"addressless", "alias_without_published_key", "wrong_history_DID", "expired_history", "invalid_roster_assertion", "reassigned_alias",
+		"absent_roster", "absent_roster_wrong_history_DID", "absent_roster_expired_history",
+		"absent_roster_foreign_history", "absent_roster_empty_history", "absent_roster_mismatched_projection", "lookup_forbidden"} {
+		t.Run(scenario, func(t *testing.T) {
+			testChatE2EEContinuationLearnsLocalOnlySenderKey(t, scenario)
+		})
+	}
+}
+
+func testChatE2EEContinuationLearnsLocalOnlySenderKey(t *testing.T, scenario string) {
 
 	self := newE2EETestLocalIdentity(t)
 	remote := newE2EETestLocalIdentity(t)
+	historySender := remote
+	if strings.HasSuffix(scenario, "wrong_history_DID") {
+		historySender = newE2EETestLocalIdentity(t)
+	}
+	if strings.HasSuffix(scenario, "expired_history") {
+		historySender.assertion.ExpiresAt = "2026-05-27T12:00:00Z"
+		if err := SignEncryptionKeyAssertion(historySender.assertion, historySender.priv); err != nil {
+			t.Fatal(err)
+		}
+	}
+	historySessionID := "22222222-2222-4222-8222-222222222232"
+	if scenario == "absent_roster_foreign_history" {
+		historySessionID = "22222222-2222-4222-8222-222222222233"
+	}
 	env, err := EncryptE2EEChat(E2EEEncryptMessageParams{
 		Sender: E2EESenderKey{
-			DID:           remote.did,
-			EncryptionKey: remote.assertion,
-			SigningKey:    remote.priv,
+			DID:           historySender.did,
+			EncryptionKey: historySender.assertion,
+			SigningKey:    historySender.priv,
 		},
 		Recipients: []E2EERecipientKey{{
 			DID:           self.did,
@@ -1224,7 +1249,7 @@ func TestChatE2EEContinuationLearnsLocalOnlySenderKey(t *testing.T) {
 		}},
 		Body:           "incoming chat",
 		MessageID:      "11111111-1111-4111-8111-111111111132",
-		ConversationID: "22222222-2222-4222-8222-222222222232",
+		ConversationID: historySessionID,
 		CreatedAt:      time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC),
 		DeliveryOrigin: "https://alpha.example",
 	})
@@ -1238,19 +1263,52 @@ func TestChatE2EEContinuationLearnsLocalOnlySenderKey(t *testing.T) {
 			return
 		}
 		switch r.URL.Path {
+		case "/v1/agents":
+			if strings.HasPrefix(scenario, "absent_roster") || scenario == "lookup_forbidden" {
+				_ = json.NewEncoder(w).Encode(ListAgentsResponse{})
+				return
+			}
+			row := AgentView{Alias: "remote", DIDKey: remote.did, IdentityScope: IdentityModeLocal}
+			if scenario == "invalid_roster_assertion" {
+				invalid := *remote.assertion
+				invalid.Signature = self.assertion.Signature
+				row.EncryptionKey = &invalid
+			}
+			if scenario == "reassigned_alias" {
+				row.DIDKey, row.EncryptionKey = self.did, self.assertion
+			}
+			_ = json.NewEncoder(w).Encode(ListAgentsResponse{Agents: []AgentView{row}})
+		case "/v1/messaging/participants/remote":
+			if scenario == "lookup_forbidden" {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			http.NotFound(w, r)
 		case "/v1/chat/sessions":
-			_ = json.NewEncoder(w).Encode(ChatListSessionsResponse{Sessions: []ChatSessionItem{{
+			session := ChatSessionItem{
 				SessionID:       "22222222-2222-4222-8222-222222222232",
 				Participants:    []string{"self", "remote"},
 				ParticipantDIDs: []string{self.did, remote.did},
-			}}})
+			}
+			if scenario != "addressless" {
+				session.ParticipantAddresses = []string{"self", "remote"}
+			}
+			_ = json.NewEncoder(w).Encode(ChatListSessionsResponse{Sessions: []ChatSessionItem{session}})
 		case "/v1/chat/sessions/22222222-2222-4222-8222-222222222232/messages":
 			if r.Method == http.MethodGet {
+				if scenario == "absent_roster_empty_history" {
+					_ = json.NewEncoder(w).Encode(ChatHistoryResponse{})
+					return
+				}
+				projectedMessageID := env.MessageID
+				if scenario == "absent_roster_mismatched_projection" {
+					projectedMessageID = "11111111-1111-4111-8111-111111111133"
+				}
 				_ = json.NewEncoder(w).Encode(ChatHistoryResponse{Messages: []ChatMessage{{
-					MessageID:      env.MessageID,
+					MessageID:      projectedMessageID,
 					ConversationID: env.ConversationID,
 					FromAgent:      "remote",
-					FromDID:        remote.did,
+					FromDID:        historySender.did,
 					ContentMode:    ContentModeEncryptedV2,
 					MessageVersion: E2EEMessageVersion,
 					Encrypted:      env,
@@ -1283,6 +1341,12 @@ func TestChatE2EEContinuationLearnsLocalOnlySenderKey(t *testing.T) {
 		Body:        "reply chat",
 		EncryptE2EE: true,
 	})
+	if scenario != "addressless" && scenario != "alias_without_published_key" && scenario != "absent_roster" {
+		if err == nil || posted.Encrypted != nil || posted.Body != "" {
+			t.Fatalf("invalid reply authority must refuse without POST: err=%v posted=%#v", err, posted)
+		}
+		return
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2334,15 +2398,7 @@ func TestNewLeavesIdentityNil(t *testing.T) {
 func TestPutHelper(t *testing.T) {
 	t.Parallel()
 
-	var gotMethod, gotPath string
-	var gotBody map[string]string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod = r.Method
-		gotPath = r.URL.Path
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	}))
-	t.Cleanup(server.Close)
+	server, captured := newClientJSONRequestServer(t, http.MethodPut, "/v1/agents/me/rotate", map[string]string{"status": "ok"})
 
 	c, err := New(server.URL)
 	if err != nil {
@@ -2353,12 +2409,7 @@ func TestPutHelper(t *testing.T) {
 	if err := c.Put(context.Background(), "/v1/agents/me/rotate", map[string]string{"key": "val"}, &out); err != nil {
 		t.Fatal(err)
 	}
-	if gotMethod != http.MethodPut {
-		t.Fatalf("method=%s, want PUT", gotMethod)
-	}
-	if gotPath != "/v1/agents/me/rotate" {
-		t.Fatalf("path=%s", gotPath)
-	}
+	gotBody := captured()
 	if out["status"] != "ok" {
 		t.Fatalf("status=%q", out["status"])
 	}
@@ -2432,16 +2483,11 @@ func TestSendMessageSignsWhenIdentitySet(t *testing.T) {
 	}
 	did := ComputeDIDKey(pub)
 
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"message_id":   "msg-1",
-			"status":       "delivered",
-			"delivered_at": "2026-02-22T00:00:00Z",
-		})
-	}))
-	t.Cleanup(server.Close)
+	server, captured := newClientJSONRequestServer(t, http.MethodPost, "/v1/messages", map[string]string{
+		"message_id":   "msg-1",
+		"status":       "delivered",
+		"delivered_at": "2026-02-22T00:00:00Z",
+	})
 
 	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
@@ -2461,6 +2507,7 @@ func TestSendMessageSignsWhenIdentitySet(t *testing.T) {
 	}
 
 	// Verify identity fields are present.
+	gotBody := captured()
 	if gotBody["from_did"] != did {
 		t.Fatalf("from_did=%v, want %s", gotBody["from_did"], did)
 	}
@@ -2495,16 +2542,11 @@ func TestSendMessageUsesCertAliasForSignedPayloadFrom(t *testing.T) {
 	}
 	did := ComputeDIDKey(pub)
 
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"message_id":   "msg-1",
-			"status":       "delivered",
-			"delivered_at": "2026-04-13T00:00:00Z",
-		})
-	}))
-	t.Cleanup(server.Close)
+	server, captured := newClientJSONRequestServer(t, http.MethodPost, "/v1/messages", map[string]any{
+		"message_id":   "msg-1",
+		"status":       "delivered",
+		"delivered_at": "2026-04-13T00:00:00Z",
+	})
 
 	cert := testTeamCertificate(t, priv, "alice")
 	c, err := NewWithCertificate(server.URL, priv, cert)
@@ -2521,6 +2563,7 @@ func TestSendMessageUsesCertAliasForSignedPayloadFrom(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	gotBody := captured()
 	env := signedPayloadMap(t, gotBody)
 	if env["from"] != "alice" {
 		t.Fatalf("signed payload from=%v, want cert alias alice", env["from"])
@@ -2539,16 +2582,11 @@ func TestSendMessageIdentityAuthStillUsesAddressDerivedAlias(t *testing.T) {
 	}
 	did := ComputeDIDKey(pub)
 
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"message_id":   "msg-1",
-			"status":       "delivered",
-			"delivered_at": "2026-04-13T00:00:00Z",
-		})
-	}))
-	t.Cleanup(server.Close)
+	server, captured := newClientJSONRequestServer(t, http.MethodPost, "/v1/messages", map[string]any{
+		"message_id":   "msg-1",
+		"status":       "delivered",
+		"delivered_at": "2026-04-13T00:00:00Z",
+	})
 
 	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
@@ -2564,6 +2602,7 @@ func TestSendMessageIdentityAuthStillUsesAddressDerivedAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	gotBody := captured()
 	env := signedPayloadMap(t, gotBody)
 	if env["from"] != "owner" {
 		t.Fatalf("signed payload from=%v, want address-derived alias owner", env["from"])
@@ -2582,16 +2621,11 @@ func TestSendMessageIncludesSignedPayload(t *testing.T) {
 	}
 	did := ComputeDIDKey(pub)
 
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"message_id":   "msg-1",
-			"status":       "delivered",
-			"delivered_at": "2026-03-17T00:00:00Z",
-		})
-	}))
-	t.Cleanup(server.Close)
+	server, captured := newClientJSONRequestServer(t, http.MethodPost, "/v1/messages", map[string]string{
+		"message_id":   "msg-1",
+		"status":       "delivered",
+		"delivered_at": "2026-03-17T00:00:00Z",
+	})
 
 	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
@@ -2608,6 +2642,7 @@ func TestSendMessageIncludesSignedPayload(t *testing.T) {
 	}
 
 	// signed_payload must be present in the request body.
+	gotBody := captured()
 	sp, ok := gotBody["signed_payload"].(string)
 	if !ok || sp == "" {
 		t.Fatal("signed_payload missing or empty in request body")
@@ -2636,16 +2671,11 @@ func TestSendMessageSignsCanonicalToForPlainAlias(t *testing.T) {
 	}
 	did := ComputeDIDKey(pub)
 
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"message_id":   "msg-1",
-			"status":       "delivered",
-			"delivered_at": "2026-02-22T00:00:00Z",
-		})
-	}))
-	t.Cleanup(server.Close)
+	server, captured := newClientJSONRequestServer(t, http.MethodPost, "/v1/messages", map[string]string{
+		"message_id":   "msg-1",
+		"status":       "delivered",
+		"delivered_at": "2026-02-22T00:00:00Z",
+	})
 
 	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
@@ -2664,6 +2694,7 @@ func TestSendMessageSignsCanonicalToForPlainAlias(t *testing.T) {
 
 	// Same-project local delivery verifies against the signed_payload returned
 	// by the client (which contains the canonical envelope JSON).
+	gotBody := captured()
 	sp, ok := gotBody["signed_payload"].(string)
 	if !ok || sp == "" {
 		t.Fatal("signed_payload missing or empty in request body")
@@ -2687,16 +2718,11 @@ func TestSendMessageSignsLocalAlias(t *testing.T) {
 	}
 	did := ComputeDIDKey(pub)
 
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"message_id":   "msg-1",
-			"status":       "delivered",
-			"delivered_at": "2026-02-22T00:00:00Z",
-		})
-	}))
-	t.Cleanup(server.Close)
+	server, captured := newClientJSONRequestServer(t, http.MethodPost, "/v1/messages", map[string]string{
+		"message_id":   "msg-1",
+		"status":       "delivered",
+		"delivered_at": "2026-02-22T00:00:00Z",
+	})
 
 	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
@@ -2713,6 +2739,7 @@ func TestSendMessageSignsLocalAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	gotBody := captured()
 	sp, ok := gotBody["signed_payload"].(string)
 	if !ok || sp == "" {
 		t.Fatal("signed_payload missing or empty in request body")
@@ -2730,16 +2757,11 @@ func TestSendMessageSignsLocalAlias(t *testing.T) {
 func TestSendMessageNoSignatureWithoutIdentity(t *testing.T) {
 	t.Parallel()
 
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"message_id":   "msg-1",
-			"status":       "delivered",
-			"delivered_at": "2026-02-22T00:00:00Z",
-		})
-	}))
-	t.Cleanup(server.Close)
+	server, captured := newClientJSONRequestServer(t, http.MethodPost, "/v1/messages", map[string]string{
+		"message_id":   "msg-1",
+		"status":       "delivered",
+		"delivered_at": "2026-02-22T00:00:00Z",
+	})
 
 	c, err := New(server.URL)
 	if err != nil {
@@ -2754,6 +2776,7 @@ func TestSendMessageNoSignatureWithoutIdentity(t *testing.T) {
 	}
 
 	// Identity fields should not be present.
+	gotBody := captured()
 	if _, exists := gotBody["from_did"]; exists {
 		t.Fatal("from_did should not be set for unsigned client")
 	}
@@ -2774,16 +2797,11 @@ func TestSendMessageSignsWithToAgentID(t *testing.T) {
 	}
 	did := ComputeDIDKey(pub)
 
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"message_id":   "msg-1",
-			"status":       "delivered",
-			"delivered_at": "2026-02-22T00:00:00Z",
-		})
-	}))
-	t.Cleanup(server.Close)
+	server, captured := newClientJSONRequestServer(t, http.MethodPost, "/v1/messages", map[string]string{
+		"message_id":   "msg-1",
+		"status":       "delivered",
+		"delivered_at": "2026-02-22T00:00:00Z",
+	})
 
 	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
@@ -2800,6 +2818,7 @@ func TestSendMessageSignsWithToAgentID(t *testing.T) {
 	}
 
 	// Verify using signed_payload from the request body.
+	gotBody := captured()
 	sp, ok := gotBody["signed_payload"].(string)
 	if !ok || sp == "" {
 		t.Fatal("signed_payload missing or empty in request body")
@@ -2830,16 +2849,11 @@ func TestSendMessageByIdentityUsesToDID(t *testing.T) {
 	}
 	recipientCurrentDID := ComputeDIDKey(recipientPub)
 
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"message_id":   "msg-1",
-			"status":       "delivered",
-			"delivered_at": "2026-04-10T00:00:00Z",
-		})
-	}))
-	t.Cleanup(server.Close)
+	server, captured := newClientJSONRequestServer(t, http.MethodPost, "/v1/messages", map[string]string{
+		"message_id":   "msg-1",
+		"status":       "delivered",
+		"delivered_at": "2026-04-10T00:00:00Z",
+	})
 
 	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
@@ -2862,6 +2876,7 @@ func TestSendMessageByIdentityUsesToDID(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	gotBody := captured()
 	if gotBody["to_did"] != recipientCurrentDID {
 		t.Fatalf("to_did=%v, want %s", gotBody["to_did"], recipientCurrentDID)
 	}
@@ -2907,16 +2922,11 @@ func TestSendMessageByIdentityStableTargetSignsResolvedRecipientBinding(t *testi
 	recipientStableID := "did:aw:recipient-123"
 	recipientCurrentDID := "did:key:z6MkrRecipientCurrent"
 
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"message_id":   "msg-1",
-			"status":       "delivered",
-			"delivered_at": "2026-04-10T00:00:00Z",
-		})
-	}))
-	t.Cleanup(server.Close)
+	server, captured := newClientJSONRequestServer(t, http.MethodPost, "/v1/messages", map[string]string{
+		"message_id":   "msg-1",
+		"status":       "delivered",
+		"delivered_at": "2026-04-10T00:00:00Z",
+	})
 
 	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
@@ -2944,6 +2954,7 @@ func TestSendMessageByIdentityStableTargetSignsResolvedRecipientBinding(t *testi
 		t.Fatal(err)
 	}
 
+	gotBody := captured()
 	if gotBody["to_did"] != recipientCurrentDID {
 		t.Fatalf("wire to_did=%v, want resolved current did %q", gotBody["to_did"], recipientCurrentDID)
 	}
@@ -3022,16 +3033,11 @@ func TestSendMessageByIdentityUsesToStableID(t *testing.T) {
 	}
 	recipientCurrentDID := ComputeDIDKey(recipientPub)
 
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"message_id":   "msg-1",
-			"status":       "delivered",
-			"delivered_at": "2026-04-10T00:00:00Z",
-		})
-	}))
-	t.Cleanup(server.Close)
+	server, captured := newClientJSONRequestServer(t, http.MethodPost, "/v1/messages", map[string]string{
+		"message_id":   "msg-1",
+		"status":       "delivered",
+		"delivered_at": "2026-04-10T00:00:00Z",
+	})
 
 	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
@@ -3054,6 +3060,7 @@ func TestSendMessageByIdentityUsesToStableID(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	gotBody := captured()
 	if gotBody["to_stable_id"] != recipientStableID {
 		t.Fatalf("wire to_stable_id=%v, want stable target %q", gotBody["to_stable_id"], recipientStableID)
 	}
@@ -3085,16 +3092,11 @@ func TestSendMessageByIdentityUsesToAddress(t *testing.T) {
 	}
 	did := ComputeDIDKey(pub)
 
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"message_id":   "msg-1",
-			"status":       "delivered",
-			"delivered_at": "2026-04-10T00:00:00Z",
-		})
-	}))
-	t.Cleanup(server.Close)
+	server, captured := newClientJSONRequestServer(t, http.MethodPost, "/v1/messages", map[string]string{
+		"message_id":   "msg-1",
+		"status":       "delivered",
+		"delivered_at": "2026-04-10T00:00:00Z",
+	})
 
 	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
@@ -3110,6 +3112,7 @@ func TestSendMessageByIdentityUsesToAddress(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	gotBody := captured()
 	if gotBody["to_address"] != "otherco/monitor" {
 		t.Fatalf("to_address=%v", gotBody["to_address"])
 	}
@@ -3349,15 +3352,10 @@ func TestChatCreateSessionSignsWhenIdentitySet(t *testing.T) {
 	}
 	did := ComputeDIDKey(pub)
 
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"session_id": "sess-1",
-			"message_id": "msg-1",
-		})
-	}))
-	t.Cleanup(server.Close)
+	server, captured := newClientJSONRequestServer(t, http.MethodPost, "/v1/chat/sessions", map[string]any{
+		"session_id": "sess-1",
+		"message_id": "msg-1",
+	})
 
 	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
@@ -3371,6 +3369,7 @@ func TestChatCreateSessionSignsWhenIdentitySet(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	gotBody := captured()
 	if gotBody["from_did"] != did {
 		t.Fatalf("from_did=%v", gotBody["from_did"])
 	}
@@ -3401,15 +3400,10 @@ func TestChatCreateSessionUsesCertAliasForSignedPayloadFrom(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(ChatCreateSessionResponse{
-			SessionID: "sess-1",
-			MessageID: "msg-1",
-		})
-	}))
-	t.Cleanup(server.Close)
+	server, captured := newClientJSONRequestServer(t, http.MethodPost, "/v1/chat/sessions", ChatCreateSessionResponse{
+		SessionID: "sess-1",
+		MessageID: "msg-1",
+	})
 
 	cert := testTeamCertificate(t, priv, "alice")
 	c, err := NewWithCertificate(server.URL, priv, cert)
@@ -3426,6 +3420,7 @@ func TestChatCreateSessionUsesCertAliasForSignedPayloadFrom(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	gotBody := captured()
 	env := signedPayloadMap(t, gotBody)
 	if env["from"] != "alice" {
 		t.Fatalf("signed payload from=%v, want cert alias alice", env["from"])
@@ -3441,15 +3436,10 @@ func TestChatCreateSessionSignedPayloadIncludesReplyAndLeaving(t *testing.T) {
 	}
 	did := ComputeDIDKey(pub)
 
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"session_id": "sess-1",
-			"message_id": "msg-1",
-		})
-	}))
-	t.Cleanup(server.Close)
+	server, captured := newClientJSONRequestServer(t, http.MethodPost, "/v1/chat/sessions", map[string]any{
+		"session_id": "sess-1",
+		"message_id": "msg-1",
+	})
 
 	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
@@ -3467,6 +3457,7 @@ func TestChatCreateSessionSignedPayloadIncludesReplyAndLeaving(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	gotBody := captured()
 	sp, ok := gotBody["signed_payload"].(string)
 	if !ok || sp == "" {
 		t.Fatal("signed_payload missing")
@@ -3492,15 +3483,10 @@ func TestChatCreateSessionSignedPayloadIncludesWaitSeconds(t *testing.T) {
 	}
 	did := ComputeDIDKey(pub)
 
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"session_id": "sess-1",
-			"message_id": "msg-1",
-		})
-	}))
-	t.Cleanup(server.Close)
+	server, captured := newClientJSONRequestServer(t, http.MethodPost, "/v1/chat/sessions", map[string]any{
+		"session_id": "sess-1",
+		"message_id": "msg-1",
+	})
 
 	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
@@ -3518,6 +3504,7 @@ func TestChatCreateSessionSignedPayloadIncludesWaitSeconds(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	gotBody := captured()
 	sp, ok := gotBody["signed_payload"].(string)
 	if !ok || sp == "" {
 		t.Fatal("signed_payload missing")
@@ -3540,15 +3527,10 @@ func TestChatCreateSessionSupportsIdentityTargets(t *testing.T) {
 	}
 	did := ComputeDIDKey(pub)
 
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"session_id": "sess-1",
-			"message_id": "msg-1",
-		})
-	}))
-	t.Cleanup(server.Close)
+	server, captured := newClientJSONRequestServer(t, http.MethodPost, "/v1/chat/sessions", map[string]any{
+		"session_id": "sess-1",
+		"message_id": "msg-1",
+	})
 
 	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
@@ -3564,6 +3546,7 @@ func TestChatCreateSessionSupportsIdentityTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	gotBody := captured()
 	dids, ok := gotBody["to_dids"].([]any)
 	if !ok || len(dids) != 2 {
 		t.Fatalf("to_dids=%v", gotBody["to_dids"])
@@ -3593,15 +3576,10 @@ func TestChatCreateSessionSingleStableTargetSignsResolvedRecipientBinding(t *tes
 	recipientStableID := "did:aw:recipient-123"
 	recipientCurrentDID := "did:key:z6MkrRecipientCurrent"
 
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"session_id": "sess-1",
-			"message_id": "msg-1",
-		})
-	}))
-	t.Cleanup(server.Close)
+	server, captured := newClientJSONRequestServer(t, http.MethodPost, "/v1/chat/sessions", map[string]any{
+		"session_id": "sess-1",
+		"message_id": "msg-1",
+	})
 
 	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
@@ -3629,6 +3607,7 @@ func TestChatCreateSessionSingleStableTargetSignsResolvedRecipientBinding(t *tes
 		t.Fatal(err)
 	}
 
+	gotBody := captured()
 	sp, ok := gotBody["signed_payload"].(string)
 	if !ok || sp == "" {
 		t.Fatal("signed_payload missing")
@@ -3694,15 +3673,10 @@ func TestChatCreateSessionSingleAddressTargetSignsResolvedRecipientBinding(t *te
 	recipientAddress := "otherco/monitor"
 	recipientCurrentDID := "did:key:z6MkrRecipientCurrent"
 
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"session_id": "sess-1",
-			"message_id": "msg-1",
-		})
-	}))
-	t.Cleanup(server.Close)
+	server, captured := newClientJSONRequestServer(t, http.MethodPost, "/v1/chat/sessions", map[string]any{
+		"session_id": "sess-1",
+		"message_id": "msg-1",
+	})
 
 	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
@@ -3730,6 +3704,7 @@ func TestChatCreateSessionSingleAddressTargetSignsResolvedRecipientBinding(t *te
 		t.Fatal(err)
 	}
 
+	gotBody := captured()
 	sp, ok := gotBody["signed_payload"].(string)
 	if !ok || sp == "" {
 		t.Fatal("signed_payload missing")
@@ -3894,15 +3869,10 @@ func TestChatCreateSessionBareAliasDoesNotResolveRecipientDID(t *testing.T) {
 	did := ComputeDIDKey(pub)
 	recipientAlias := "monitor"
 
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"session_id": "sess-1",
-			"message_id": "msg-1",
-		})
-	}))
-	t.Cleanup(server.Close)
+	server, captured := newClientJSONRequestServer(t, http.MethodPost, "/v1/chat/sessions", map[string]any{
+		"session_id": "sess-1",
+		"message_id": "msg-1",
+	})
 
 	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
@@ -3923,6 +3893,7 @@ func TestChatCreateSessionBareAliasDoesNotResolveRecipientDID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	gotBody := captured()
 	if aliases, ok := gotBody["to_aliases"].([]any); !ok || len(aliases) != 1 || aliases[0] != recipientAlias {
 		t.Fatalf("to_aliases=%v, want [%s]", gotBody["to_aliases"], recipientAlias)
 	}
@@ -3955,15 +3926,10 @@ func TestChatSendMessageSignsWhenIdentitySet(t *testing.T) {
 	}
 	did := ComputeDIDKey(pub)
 
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"message_id": "msg-1",
-			"delivered":  true,
-		})
-	}))
-	t.Cleanup(server.Close)
+	server, captured := newClientJSONRequestServer(t, http.MethodPost, "/v1/chat/sessions/sess-1/messages", map[string]any{
+		"message_id": "msg-1",
+		"delivered":  true,
+	})
 
 	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
@@ -3976,6 +3942,7 @@ func TestChatSendMessageSignsWhenIdentitySet(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	gotBody := captured()
 	if gotBody["from_did"] != did {
 		t.Fatalf("from_did=%v", gotBody["from_did"])
 	}
@@ -4099,15 +4066,10 @@ func TestChatSendMessageSignedPayloadIncludesReplyAndHangOn(t *testing.T) {
 	}
 	did := ComputeDIDKey(pub)
 
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"message_id": "msg-1",
-			"delivered":  true,
-		})
-	}))
-	t.Cleanup(server.Close)
+	server, captured := newClientJSONRequestServer(t, http.MethodPost, "/v1/chat/sessions/sess-1/messages", map[string]any{
+		"message_id": "msg-1",
+		"delivered":  true,
+	})
 
 	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
@@ -4123,6 +4085,7 @@ func TestChatSendMessageSignedPayloadIncludesReplyAndHangOn(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	gotBody := captured()
 	sp, ok := gotBody["signed_payload"].(string)
 	if !ok || sp == "" {
 		t.Fatal("signed_payload missing")
@@ -4148,15 +4111,10 @@ func TestSendMessageSignedPayloadIncludesPriority(t *testing.T) {
 	}
 	did := ComputeDIDKey(pub)
 
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"message_id": "msg-1",
-			"status":     "delivered",
-		})
-	}))
-	t.Cleanup(server.Close)
+	server, captured := newClientJSONRequestServer(t, http.MethodPost, "/v1/messages", map[string]any{
+		"message_id": "msg-1",
+		"status":     "delivered",
+	})
 
 	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
@@ -4174,6 +4132,7 @@ func TestSendMessageSignedPayloadIncludesPriority(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	gotBody := captured()
 	sp, ok := gotBody["signed_payload"].(string)
 	if !ok || sp == "" {
 		t.Fatal("signed_payload missing")
@@ -4633,16 +4592,11 @@ func TestRotateKeySendsSignedRequest(t *testing.T) {
 func TestRotateKeyCustodialOmitsKeyMaterial(t *testing.T) {
 	t.Parallel()
 
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"status":  "rotated",
-			"new_did": "did:key:z6MkServerGenerated",
-			"custody": CustodyCustodial,
-		})
-	}))
-	t.Cleanup(server.Close)
+	server, captured := newClientJSONRequestServer(t, http.MethodPut, "/v1/agents/me/rotate", map[string]string{
+		"status":  "rotated",
+		"new_did": "did:key:z6MkServerGenerated",
+		"custody": CustodyCustodial,
+	})
 
 	// Custodial client: no signing key.
 	c, err := New(server.URL)
@@ -4657,6 +4611,7 @@ func TestRotateKeyCustodialOmitsKeyMaterial(t *testing.T) {
 	}
 
 	// Verify key material is absent.
+	gotBody := captured()
 	if _, ok := gotBody["new_did"]; ok {
 		t.Fatal("custodial rotation should not include new_did")
 	}
@@ -5620,16 +5575,11 @@ func TestSendMessageNoResolverLeavesToDIDEmpty(t *testing.T) {
 	}
 	did := ComputeDIDKey(pub)
 
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"message_id":   "msg-1",
-			"status":       "delivered",
-			"delivered_at": "2026-02-22T00:00:00Z",
-		})
-	}))
-	t.Cleanup(server.Close)
+	server, captured := newClientJSONRequestServer(t, http.MethodPost, "/v1/messages", map[string]string{
+		"message_id":   "msg-1",
+		"status":       "delivered",
+		"delivered_at": "2026-02-22T00:00:00Z",
+	})
 
 	c, err := NewWithIdentity(server.URL, priv, did)
 	if err != nil {
@@ -5647,6 +5597,7 @@ func TestSendMessageNoResolverLeavesToDIDEmpty(t *testing.T) {
 	}
 
 	// Verify to_did is absent on the wire.
+	gotBody := captured()
 	if v, ok := gotBody["to_did"]; ok {
 		t.Fatalf("to_did should be absent on wire, got %v", v)
 	}
@@ -7925,5 +7876,122 @@ func TestGrantClientE2EEInboxUsesCustodyUnwrap(t *testing.T) {
 func TestTraceRedactsTheDIDKeyProofSignature(t *testing.T) {
 	if !shouldRedactTraceHeader("X-AWEB-DIDKey-Signature") {
 		t.Fatal("the DIDKey proof signature is not redacted from traces")
+	}
+}
+
+// Capture one endpoint body by ownership transfer, rather than sharing a map
+// with the handler or treating health negotiation as a message request.
+func newClientJSONRequestServer(t *testing.T, method, path string, response any) (*httptest.Server, func() map[string]any) {
+	t.Helper()
+	bodies := make(chan map[string]any, 1)
+	server := newCompressionTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
+		// In-session signing reads the participant list before its POST.
+		// These two signature-only fixtures intentionally have no session row.
+		if method == http.MethodPost && strings.HasSuffix(path, "/messages") && strings.HasPrefix(path, "/v1/chat/sessions/") && r.Method == http.MethodGet && r.URL.Path == "/v1/chat/sessions" {
+			if err := json.NewEncoder(w).Encode(ChatListSessionsResponse{}); err != nil {
+				t.Errorf("encode sessions: %v", err)
+			}
+			return
+		}
+		if r.Method != method || r.URL.Path != path {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode %s %s (Content-Encoding=%q): %v", r.Method, r.URL.Path, r.Header.Get("Content-Encoding"), err)
+			http.Error(w, "invalid fixture JSON", http.StatusBadRequest)
+			return
+		}
+		select {
+		case bodies <- body:
+		default:
+			t.Error("duplicate captured request")
+			http.Error(w, "duplicate request", http.StatusConflict)
+			return
+		}
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server, func() map[string]any {
+		t.Helper()
+		select {
+		case body := <-bodies:
+			return body
+		default:
+			t.Fatal("no endpoint body captured")
+			return nil
+		}
+	}
+}
+
+// An unrelated earlier fixture can advertise gzip at a reused raw origin.
+// Warm that actual production cache through HTTP, not a fabricated cache entry.
+func TestClientJSONCaptureAfterCompressionAdvertisement(t *testing.T) {
+	server, captured := newClientJSONRequestServer(t, http.MethodPost, "/v1/messages", map[string]string{"message_id": "msg-1", "status": "delivered"})
+	plain := server.Config.Handler
+	var advertising, compressedWarm atomic.Bool
+	advertising.Store(true)
+	server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Logf("request %s %s encoding=%q", r.Method, r.URL.Path, r.Header.Get("Content-Encoding"))
+		if advertising.Load() {
+			if r.Method == http.MethodPost && r.URL.Path == "/warm" {
+				compressedWarm.Store(r.Header.Get("Content-Encoding") == "gzip")
+			}
+			w.Header().Set("Accept-Encoding", "gzip")
+			w.Write([]byte(`{}`))
+			return
+		}
+		plain.ServeHTTP(w, r)
+	})
+	parsed, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin := parsed.Scheme + "://" + parsed.Host
+	ForgetRequestCompression(origin)
+	t.Cleanup(func() { ForgetRequestCompression(origin) })
+	warm, err := New(origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := warm.DoRaw(context.Background(), http.MethodPost, "/warm", "application/json", map[string]string{"body": "prime"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if !compressedWarm.Load() {
+		t.Fatal("control did not establish real gzip support")
+	}
+	advertising.Store(false)
+	pub, key, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	client, err := NewWithIdentity(server.URL, key, did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.SetAddress("myco/agent")
+	_, err = client.SendMessage(context.Background(), &SendMessageRequest{ToAlias: "monitor", Body: "hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := captured()
+	sp := signedPayloadMap(t, body)
+	if sp["to"] != "monitor" {
+		t.Fatalf("signed recipient=%v", sp["to"])
+	}
+	status, err := VerifySignedPayload(body["signed_payload"].(string), body["signature"].(string), did, did)
+	if err != nil || status != Verified {
+		t.Fatalf("verification=%v %v", status, err)
 	}
 }

@@ -53,6 +53,7 @@ func TestRequestCompressionBodyBoundaries(t *testing.T) {
 				w.Write([]byte(`{}`))
 			}))
 			defer srv.Close()
+			ForgetRequestCompression(srv.URL)
 			req, _ := http.NewRequest(""+tc.method, srv.URL+"/v1/test", bytes.NewReader(tc.body))
 			req.Header.Set("X-Original", "kept")
 			req.Header.Set("Content-Encoding", tc.encoding)
@@ -78,6 +79,7 @@ func TestRequestCompressionDiscoveryIsUnauthenticatedAndNeverFollowsRedirects(t 
 		w.Header().Set("Accept-Encoding", "gzip")
 	}))
 	defer target.Close()
+	ForgetRequestCompression(target.URL)
 	for _, status := range []int{200, 302, 503} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			var probes atomic.Int32
@@ -102,6 +104,7 @@ func TestRequestCompressionDiscoveryIsUnauthenticatedAndNeverFollowsRedirects(t 
 				}
 			}))
 			defer srv.Close()
+			ForgetRequestCompression(srv.URL)
 			jar, _ := cookiejar.New(nil)
 			u, _ := url.Parse(srv.URL)
 			jar.SetCookies(u, []*http.Cookie{{Name: "session", Value: "secret"}})
@@ -141,6 +144,7 @@ func TestRequestCompressionProbeDeadlineAndCanceledWaiter(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
+	ForgetRequestCompression(srv.URL)
 	firstDone := make(chan error, 1)
 	go func() {
 		req, _ := http.NewRequest("POST", srv.URL+"/v1/test", strings.NewReader("test"))
@@ -181,6 +185,7 @@ func TestRequestCompressionFailedProbeFallsBackWithinDiscoveryBudget(t *testing.
 		}
 	}))
 	defer srv.Close()
+	ForgetRequestCompression(srv.URL)
 	start := time.Now()
 	for n := 0; n < 2; n++ {
 		req, _ := http.NewRequest("POST", srv.URL+"/v1/test", strings.NewReader("test"))
@@ -223,6 +228,7 @@ func TestClientRequestCompressionPreservesSendRetryPolicy(t *testing.T) {
 				w.Write([]byte(`{}`))
 			}))
 			defer srv.Close()
+			ForgetRequestCompression(srv.URL)
 			c, _ := New(srv.URL)
 			resp, err := c.DoRaw(context.Background(), "POST", path, "application/json", map[string]string{"message_id": "stable-id", "body": "test"})
 			if err != nil {
@@ -263,6 +269,7 @@ func TestOnboardingRequestCompression(t *testing.T) {
 				w.Write([]byte(`{}`))
 			}))
 			defer srv.Close()
+			ForgetRequestCompression(srv.URL)
 			c, _ := NewWithIdentity(srv.URL+"/api", key, did)
 			var err error
 			switch kind {

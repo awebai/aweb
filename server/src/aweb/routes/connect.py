@@ -54,9 +54,16 @@ class ConnectResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class AliasConflictError(ValueError):
-    """Raised when an alias is already owned by another active agent."""
+    """Raised when a connect would give an alias or a did_key two owners.
 
-    pass
+    code is the stable wire code: alias_active when another active agent holds
+    the alias, alias_mismatch when the did_key is already bound to another
+    alias in the team.
+    """
+
+    def __init__(self, message: str, *, code: str) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 async def _ensure_team(
@@ -109,7 +116,8 @@ async def _ensure_agent(
         existing_alias = existing_agent["alias"]
         if existing_alias != alias:
             raise AliasConflictError(
-                f"cert claims alias {alias!r} but did_key is already bound to alias {existing_alias!r} in team {team_id}"
+                f"cert claims alias {alias!r} but did_key is already bound to alias {existing_alias!r} in team {team_id}",
+                code="alias_mismatch",
             )
         await db.execute(
             """
@@ -140,7 +148,8 @@ async def _ensure_agent(
     )
     if existing_alias and existing_alias["did_key"] != did_key:
         raise AliasConflictError(
-            f"alias {alias!r} is already in use by another active agent in team {team_id}"
+            f"alias {alias!r} is already in use by another active agent in team {team_id}",
+            code="alias_active",
         )
 
     inbound_mode = "open"
@@ -187,7 +196,8 @@ async def _ensure_agent(
             existing_alias = existing_agent["alias"]
             if existing_alias != alias:
                 raise AliasConflictError(
-                    f"cert claims alias {alias!r} but did_key is already bound to alias {existing_alias!r} in team {team_id}"
+                    f"cert claims alias {alias!r} but did_key is already bound to alias {existing_alias!r} in team {team_id}",
+                    code="alias_mismatch",
                 ) from exc
             await db.execute(
                 """
@@ -217,7 +227,8 @@ async def _ensure_agent(
         )
         if existing_alias and existing_alias["did_key"] != did_key:
             raise AliasConflictError(
-                f"alias {alias!r} is already in use by another active agent in team {team_id}"
+                f"alias {alias!r} is already in use by another active agent in team {team_id}",
+                code="alias_active",
             ) from exc
         raise
 
@@ -285,7 +296,8 @@ async def _ensure_workspace(
     if existing:
         if str(existing["agent_id"]) != agent_id:
             raise AliasConflictError(
-                f"alias {alias!r} is already in use by another active agent in team {team_id}"
+                f"alias {alias!r} is already in use by another active agent in team {team_id}",
+                code="alias_active",
             )
         return await _update_existing_workspace(existing["workspace_id"])
 
@@ -319,7 +331,8 @@ async def _ensure_workspace(
         if existing and str(existing["agent_id"]) == agent_id:
             return await _update_existing_workspace(existing["workspace_id"])
         raise AliasConflictError(
-            f"alias {alias!r} is already in use by another active agent in team {team_id}"
+            f"alias {alias!r} is already in use by another active agent in team {team_id}",
+            code="alias_active",
         ) from exc
 
 
@@ -494,7 +507,7 @@ async def connect_endpoint(
             agent_type=payload.agent_type,
         )
     except AliasConflictError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
     except ValueError as exc:
         if str(exc) == "identity_binding_mismatch":
             raise HTTPException(status_code=403, detail="identity_binding_mismatch") from exc

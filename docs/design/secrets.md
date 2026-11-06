@@ -1764,6 +1764,16 @@ There is one settlement per original reference, including when the automatic
 and owner paths race. Settlement reopens no credential, sends nothing, and
 rearms no approval. A repeated decision cannot replace the first outcome.
 
+The separate owner control ceremony has a durable, value-free B2 association
+and retained-passkey-proof audit in the caller transaction. Its request and
+decision do not emit hooks in the first release and never enter the secret-use
+approval sink or its target/backlog gate. Only actual settlement of the original
+S3 dispatch emits its existing `reconciled` hook, in that same transaction.
+Pending, undecided, rejected or refused controls never emit `reconciled`. The
+customer-visible effect is settlement; this local control audit preserves the
+fresh APPROVE binding without misdescribing the ceremony as a secret-use
+approval or adding a public hook shape.
+
 **Retry block.** While a principal has an unreconciled `outcome_unknown` on
 `(secret, operation)` (or the canonical method and URL for open requests), new
 requests from that principal for the same pair are refused with

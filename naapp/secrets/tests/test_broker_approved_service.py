@@ -226,7 +226,11 @@ async def test_actual_broker_pending_decision_resubmission_and_stored_replay(
             )
             assert await service.submit(secret=SECRET["ref"], submission=submission) == result
             assert upstream.paths == ["/bearer/echo"]
-            actions = [e["payload"]["action"] for e in await envelopes(uses.world.db)]
+            actions = [
+                e["payload"]["action"]
+                for e in await envelopes(uses.world.db)
+                if e["hook"] == "post-secret-use-hook"
+            ]
             assert actions == [
                 "approval_requested",
                 "approval_decided",
@@ -295,7 +299,11 @@ async def test_cancelled_approved_sender_recovers_original_b2_and_s3_together(us
             receipt = await service.submit(secret=SECRET["ref"], submission=submission)
             assert receipt.status == 200 and receipt.body["state"] == "outcome_unknown"
             assert upstream.paths == ["/bearer/crash"]
-            assert [e["payload"]["action"] for e in await envelopes(uses.world.db)] == [
+            assert [
+                e["payload"]["action"]
+                for e in await envelopes(uses.world.db)
+                if e["hook"] == "post-secret-use-hook"
+            ] == [
                 "approval_requested",
                 "approval_decided",
                 "admitted",
