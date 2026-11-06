@@ -1,14 +1,13 @@
 ---
 type: Decision
 title: Admission init never starts its own login
-description: aw init --admission-team-id never starts a device login; without a cli.team_admission login for its target host it refuses, naming the host and the exact aw auth login command, because unattended commands must not start interactive authorization and a login on a host the user did not choose is worse than a refusal. Decided, not yet landed.
+description: aw init --admission-team-id never starts a device login; without a cli.team_admission login for its target host it refuses, naming the host and the exact aw auth login command, because unattended commands must not start interactive authorization and a login on a host the user did not choose is worse than a refusal. Decided; on main and in aw-v1.36.56.
 tags: [decision, aw-cli, init, auth, admission]
 timestamp: 2026-11-05
 ---
 
-**Status:** decided on 2026-11-05 and implemented on a CLI branch for the
-reply and admission-init fixes; not on main when recorded. On main, admission
-init still offers to start a bounded device login.
+**Status (verified 2026-11-06):** decided on 2026-11-05; on main (4760e85a4)
+and first released in aw-v1.36.56.
 
 # Decision
 

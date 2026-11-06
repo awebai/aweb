@@ -1,14 +1,13 @@
 ---
 type: Decision
 title: aw mail reply answers received mail only
-description: aw mail reply refuses a message the caller sent and names aw mail send --conversation-id instead of resolving it, because an encrypted reply is addressed to the source's verified sender and would be encrypted to the caller. Decided, not yet landed.
+description: aw mail reply refuses a message the caller sent and names aw mail send --conversation-id instead of resolving it, because an encrypted reply is addressed to the source's verified sender and would be encrypted to the caller. Decided; on main and in aw-v1.36.56.
 tags: [decision, aw-cli, mail, encryption]
 timestamp: 2026-11-05
 ---
 
-**Status:** decided on 2026-11-05 and implemented on a CLI branch for the
-reply and admission-init fixes; not on main when recorded. On main, replying
-to a message one sent still reports "mail message not found".
+**Status (verified 2026-11-06):** decided on 2026-11-05; on main (91a7f99e2)
+and first released in aw-v1.36.56.
 
 # Decision
 
