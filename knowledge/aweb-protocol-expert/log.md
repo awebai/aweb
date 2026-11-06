@@ -1,6 +1,7 @@
 # Knowledge log
 
 ## 2026-11-06
+* **Fix**: [humans use mail; recipient kind is authoritative](/aweb-protocol-expert/decisions/humans-use-mail.md) records its verified status: e4398055d is on main and first released in server-v1.27.45, not "not yet on main" as harvested.
 * **Harvest**: third OKF proposal from seat aweb-protocol-expert-stream-push, about the wake scope and the outermost transaction.
 * **Update**: [the agent event stream is push-driven](/aweb-protocol-expert/decisions/agent-event-stream-is-push-driven.md) now says why the wake scope must enclose the outermost transaction: a wake published inside it is lost until the kind's counter next moves. It adds the rule to move the scope outward whenever a write path gains or widens a transaction, and how to test publish-on-every-exit. Its status is now on aweb main since the 2026-11-04 hot-path merge.
 
@@ -11,6 +12,10 @@
 * **Fix**: [the agent event stream is push-driven](/aweb-protocol-expert/decisions/agent-event-stream-is-push-driven.md) publishes wakes on every exit of the scope, exceptions included, not only on normal exit (review ruling R1).
 * **Update**: the same decision gains bookmark advancement only for kinds read, bounded and transient-failure reads staying pending, the hard-writer-crash ruling with a 2 s shutdown flush, and the rejected durable outbox and periodic probe.
 * **Creation**: lesson [process helpers keep no idle tasks](/aweb-protocol-expert/lessons/process-helpers-keep-no-idle-tasks.md).
+
+## 2026-10-31
+* **Harvest**: OKF proposal from aweb-protocol-expert-who-agent with backing note humans-use-mail.md; the operator's D8 acceptance is source-reported.
+* **Creation**: decision [humans use mail; recipient kind is authoritative](/aweb-protocol-expert/decisions/humans-use-mail.md) (accepted, not yet on main). No supersession of [owner binding needs independent authorities](/aweb-protocol-expert/decisions/owner-binding-needs-independent-authorities.md).
 
 ## 2026-10-29
 * **Harvest**: manual harvest of seat aweb-protocol-expert-acmj-binding from its proposal and three backing notes, task aweb-acmj.19. Public contract decisions and rejected alternatives are retained; application implementation details and mail receipts are omitted.
