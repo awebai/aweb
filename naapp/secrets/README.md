@@ -237,7 +237,7 @@ services whose migrations and routers it actually mounts; defaults query neither
 optional table. No routing policy belongs in the root.
 
 Authenticated POSTs require JSON, the S4 cookie and this tab's `X-CSRF-Token`. Browser
-forms call `window.awebSecretsConsole.post(path, body)`. Under
+forms call `window.awebConsole.post(path, body)`. Under
 `/installations/{installation_id}/change-sets`:
 
 - `POST` takes exactly `{changes, sealed, reason}`. `changes` uses existing

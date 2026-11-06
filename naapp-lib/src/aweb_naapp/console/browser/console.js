@@ -1,7 +1,9 @@
 "use strict";
 
 (() => {
-  const csrfKey = "aweb.secrets.console.csrf";
+  // The app's page names this tab's CSRF storage key and the copy shown here.
+  const config = document.body.dataset;
+  const csrfKey = config.consoleCsrfKey;
   const notice = document.querySelector("#notice");
 
   // A session cookie is shared across tabs; its CSRF token is tab-local.
@@ -81,16 +83,16 @@
     return response.json();
   }
 
-  // Custody forms use this same helper so stale cookies/tokens recover in
-  // exactly the same way as the shell's logout, without duplicated fetch code.
-  window.awebSecretsConsole = Object.freeze({post, assertion});
+  // An app's own forms use this same helper so stale cookies/tokens recover
+  // in exactly the same way as the shell's logout, without duplicated fetch code.
+  window.awebConsole = Object.freeze({post, assertion, csrfKey});
 
   const login = document.querySelector("#login");
   if (login) login.addEventListener("submit", async event => {
     event.preventDefault();
     const button = login.querySelector("button");
     button.disabled = true;
-    notice.textContent = "Waiting for your passkey…";
+    notice.textContent = config.copyWaiting;
     try {
       const scope = login.dataset.scope;
       const options = await post("/login/options", {scope});
@@ -99,7 +101,7 @@
       sessionStorage.setItem(csrfKey, result.csrf_token);
       window.location.replace("/");
     } catch {
-      notice.textContent = "Sign-in could not be completed. Try your passkey again.";
+      notice.textContent = config.copyFailed;
     } finally {
       button.disabled = false;
     }
@@ -117,7 +119,7 @@
       window.location.replace("/login");
     } catch (error) {
       if (!(error instanceof SessionRequired)) {
-        notice.textContent = "Sign-out could not be completed. Try again.";
+        notice.textContent = config.copySignOutFailed;
       }
       button.disabled = false;
     }
