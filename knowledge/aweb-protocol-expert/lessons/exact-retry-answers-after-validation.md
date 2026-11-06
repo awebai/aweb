@@ -42,9 +42,9 @@ the winner's commit, as observed with Postgres 16 at the default isolation
 level. A stricter isolation level, or a deferred constraint, needs the
 reasoning redone.
 
-**Status (2026-11-04):** reviewed by the auth/data reviewer, as the source
-reported; the OSS runtime review was pending. Not on main: commits fa5542a7d
-and 4c963ae47 on the source seat's branch (at 455b22404), tested by
-`server/tests/test_mail_send_retry.py`.
+**Status (verified 2026-11-06):** reviewed by the auth/data reviewer, as the
+source reported; on main (28a6e70f3, with the continuation admission check
+656c37505), tested by `server/tests/test_mail_send_retry.py`, and first
+released in server-v1.27.47.
 
 Evidence: OKF proposal from aweb-protocol-expert/aweb-protocol-expert-db-access, 2026-11-04; notes/exact-retry-after-validation-and-race-loser.md.

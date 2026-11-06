@@ -28,11 +28,9 @@ went from 33 to 16.
   the savepoint, and also a lookup of a message id the code had just
   generated, which could never match. Neither was in the plan.
 
-This is about the savepoint's round-trip cost. Its durability semantics are
-covered in aweb-cloud's lesson on remote write durability, in the aweb-cloud
-base.
+This is about the savepoint's round-trip cost, not its durability semantics.
 
-**Status (2026-11-04):** commit 34930b32b on the source seat's branch, not on
-main.
+**Status (verified 2026-11-06):** the savepoint skip is on main (f09be84f7) and
+first released in server-v1.27.47.
 
 Evidence: OKF proposal from aweb-protocol-expert/aweb-protocol-expert-db-access, 2026-11-04; notes/pgdbm-nested-transaction-is-a-savepoint.md.
