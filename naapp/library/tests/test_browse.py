@@ -7,6 +7,31 @@ from library import browse
 ORIGIN = "https://library.aweb.ai"
 
 
+def test_catalog_and_profile_lists_have_native_list_item_semantics() -> None:
+    from html.parser import HTMLParser
+
+    class Lists(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.stack = []
+
+        def handle_starttag(self, tag, attrs):
+            if self.stack and self.stack[-1] in {"ul", "ol"}:
+                assert tag == "li", f"{self.stack[-1]} contains {tag} instead of a list item"
+            if tag not in {"meta", "link", "img", "input", "br", "hr"}:
+                self.stack.append(tag)
+
+        def handle_endtag(self, tag):
+            if tag in self.stack:
+                self.stack = self.stack[:len(self.stack) - 1 - self.stack[::-1].index(tag)]
+
+    for html in (
+        browse.render_catalog_page(public_origin=ORIGIN, blueprints=[_blueprint()]),
+        browse.render_profile_page(public_origin=ORIGIN, profile=_profile()),
+    ):
+        Lists().feed(html)
+
+
 def _css_link() -> str:
     return f'<link rel="stylesheet" href="/css/aweb.{CSS_SHA256[:12]}.css">'
 

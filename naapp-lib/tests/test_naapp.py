@@ -145,10 +145,10 @@ def test_head_has_seo_and_social_meta() -> None:
     assert '<meta property="og:title" content="library — API reference">' in html
     assert '<meta property="og:url" content="https://library.aweb.ai/">' in html
     assert '<meta name="twitter:card" content="summary_large_image">' in html
-    # og:image only when an image is configured.
+    # Explicit images override the coherent toolkit default.
     assert '<meta property="og:image" content="https://library.aweb.ai/og-card.png">' in html
     assert '<meta property="og:image:width" content="1200">' in html
-    assert "og:image" not in naapp.page(_site(), "    <section>hi</section>")
+    assert 'content="https://library.aweb.ai/brand/field-v1/aweb-card.png"' in naapp.page(_site(), "    <section>hi</section>")
 
 
 def test_reference_documents_every_operation_dual() -> None:
