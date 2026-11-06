@@ -70,7 +70,7 @@ async def test_fresh_address_delivery_after_cli_rotation_is_local(
             env.app.mount("/mcp", mcp)
             await mcp.startup()
 
-        async def fresh_send(label, *, claims=None, expected_status=200):
+        async def fresh_send(label, *, claims=None, expected_status=200, expected_reason=None):
             resolved = await registry.resolve_address_fresh("example.test", "bob")
             assert resolved.did_aw == stable
             if adapter == "mcp":
@@ -126,6 +126,9 @@ async def test_fresh_address_delivery_after_cli_rotation_is_local(
                 "Content-Type": "application/json", **_signed_identity_headers(alice.sk, alice.did, "", raw),
             })
             assert response.status_code == expected_status, response.text
+            if expected_reason:
+                assert response.json()["reason"] == expected_reason
+                assert response.json()["retryable"] is False
             if expected_status != 200:
                 after_counts = {name: await env.db.fetch_val("SELECT count(*) FROM {{tables." + name + "}}") for name in tables}
                 assert after_counts["messages"] == before_counts["messages"]
@@ -177,9 +180,11 @@ async def test_fresh_address_delivery_after_cli_rotation_is_local(
                     await fresh_send("Invalid binding", claims=claims, expected_status=422)
                 assert before == await env.db.fetch_one("SELECT * FROM {{tables.agents}} WHERE agent_id=$1", bob.id)
                 # A deleted row no longer establishes residence. The valid
-                # address route must then take federation, with no local message.
+                # address now requires foreign first contact; a local sender
+                # without team proof is refused before transport.
                 await env.db.execute("UPDATE {{tables.agents}} SET deleted_at=clock_timestamp() WHERE agent_id=$1", bob.id)
-                await fresh_send("No local residence", expected_status=502)
+                await fresh_send("No local residence", expected_status=422,
+                                 expected_reason="local_sender_certificate_required")
         finally:
             if mcp is not None:
                 await mcp.shutdown()

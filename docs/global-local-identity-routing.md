@@ -148,21 +148,28 @@ record, so binding a certificate ID as well would stop no additional attack.
 
 The label is display-only. It is never resolved, never pinned as an address,
 never stored as a participant `address`, and never matched against contacts.
-When a federated plaintext `from` contains `/`, the envelope parser projects it
-into `sender_address`. For a local `did:key` sender, ingress clears that value
-after the label check, before any storage or policy use.
+A signed `<team_id>/<alias>` label from a local `did:key` sender is never
+projected into `sender_address`, including on a legacy continuation. The full
+signed bytes remain unchanged for verification.
 
 **Sending server.**
 - It attaches the certificate the sender authenticated with as
   `sender_certificate`. This is a new federation envelope field: base64 of the
   exact certificate JSON, the `X-AWID-Team-Certificate` encoding.
 - The field is part of the federation envelope hash.
-- Before federating, the sending server checks three things:
+- Before federating first contact (no stored conversation with this target),
+  the sending server checks three things:
   - the certificate's `member_did_key` is the signer;
   - its `team_id` and `alias` equal the signed team binding;
   - the team's current team-server record verifies and names this server's
     public origin.
-- A failure is refused locally (see Refusals). Nothing is sent to the recipient.
+- A first-contact failure is refused locally (see Refusals). Nothing is sent
+  to the recipient.
+- For a stored-route continuation, the sending server forwards as before,
+  attaching its authenticated certificate when present as presentation only.
+  It does not require team proof or re-check the team server origin. The receiver
+  retains authority: legacy participants keep strict equality without upgrade;
+  participants with a team route require the re-vouch below.
 
 **Receiving server.** These steps run in order. The envelope signature,
 recipient binding and the 300-second timestamp skew are verified first, as

@@ -43,7 +43,8 @@ from aweb.id_chain_auth import stored_id_chain
 from aweb.identity_metadata import lookup_identity_metadata_by_did
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, get_messaging_auth
 from aweb.messaging.sender_address import sender_address as _sender_address
-from aweb.federation.team_routes import authorize_local_sender, outbound_certificate, persist_accepted_team_route
+from aweb.federation.errors import AuthorityErrorRoute
+from aweb.federation.team_routes import authorize_outbound_local_sender, outbound_certificate, persist_accepted_team_route
 from aweb.messaging.alias_targets import (
     AmbiguousLocalAddressError,
     derive_team_address,
@@ -101,7 +102,7 @@ from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL, ConflictError, Forbid
 from aweb.messaging.participants import messaging_participant_by_alias
 from aweb.messaging.sender_membership import SenderMembership, sender_memberships
 
-router = APIRouter(prefix="/v1/messages", tags=["aweb-mail"])
+router = APIRouter(route_class=AuthorityErrorRoute, prefix="/v1/messages", tags=["aweb-mail"])
 
 
 async def _resolve_message_alias(db, auth: MessagingAuth, raw_alias: str, request: Request | None = None) -> dict | None:
@@ -941,7 +942,7 @@ async def _deliver_remote_mail_and_project_locally(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     if not auth.did_aw:
-        await authorize_local_sender(request, envelope, outbound=True)
+        await authorize_outbound_local_sender(request, envelope, db)
 
     try:
         remote = await deliver_federated_mail(

@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from awid.dns_auth import validate_did_key
 from awid.log import canonical_server_origin
 from awid.signing import verify_did_key_signature
+from awid.team_ids import parse_team_id
 from aweb.e2ee_messages import E2EEEnvelopeError, validate_e2ee_message_envelope
 from aweb.messaging.signatures import (
     MessageSignatureShapeError,
@@ -281,6 +282,17 @@ def _enforce_signed_payload_binding(model: FederationEnvelope) -> str | None:
         if signed_sender is not None and "/" in signed_sender
         else None
     )
+    if signed_sender_address and model.sender_did_aw.startswith("did:key:"):
+        # A full team/alias label is signed membership selection, not an AWID
+        # address. This is true even on a legacy route where no team proof is
+        # admitted; the preserved bytes still reach that route's verifier.
+        team, _, _alias = signed_sender_address.partition("/")
+        try:
+            parse_team_id(team)
+        except ValueError:
+            pass
+        else:
+            signed_sender_address = None
     if model.conversation_id is not None:
         _expect_signed_value(payload, "conversation_id", model.conversation_id)
     elif payload.get("conversation_id"):

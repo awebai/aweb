@@ -225,6 +225,32 @@ async def authorize_local_sender(request, envelope, *, stored_team_id=None, outb
     return route
 
 
+async def authorize_outbound_local_sender(request, envelope, db):
+    """Preflight first contact; existing conversations retain receiver authority.
+
+    A presented certificate on a continuation is forwarded unchanged. Only the
+    receiver knows whether its participant is legacy or requires team re-vouching.
+    A caller-selected conversation UUID alone does not establish continuation.
+    """
+    manager = db.get_manager("aweb") if hasattr(db, "get_manager") else db
+    established = await manager.fetch_value(
+        """
+        SELECT EXISTS (
+            SELECT 1 FROM {{tables.conversation_participants}} sender
+            JOIN {{tables.conversation_participants}} target
+              ON target.conversation_id = sender.conversation_id
+            JOIN {{tables.conversations}} c ON c.conversation_id = sender.conversation_id
+            WHERE c.conversation_id = $1 AND c.conversation_type = $2
+              AND sender.did = $3 AND target.did = $4
+        )
+        """,
+        UUID(envelope.conversation_id), envelope.type,
+        envelope.sender_did_aw, envelope.target_did_aw,
+    ) if envelope.conversation_id else False
+    if not established:
+        await authorize_local_sender(request, envelope, outbound=True)
+
+
 def outbound_certificate(request) -> str | None:
     proof = getattr(getattr(request, "state", None), "sender_certificate", None)
     return proof if proof is not None else request.headers.get("X-AWID-Team-Certificate")

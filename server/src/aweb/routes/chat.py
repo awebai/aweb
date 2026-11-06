@@ -56,7 +56,8 @@ from aweb.messaging.chat_policy import require_agent_chat
 from aweb.identity_auth_deps import participant_dids
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, get_messaging_auth
 from aweb.messaging.sender_address import sender_address as _sender_address
-from aweb.federation.team_routes import authorize_local_sender, outbound_certificate, refresh_recipient_team_route, persist_accepted_team_route
+from aweb.federation.errors import AuthorityErrorRoute
+from aweb.federation.team_routes import authorize_outbound_local_sender, outbound_certificate, refresh_recipient_team_route, persist_accepted_team_route
 from aweb.messaging.alias_targets import (
     AmbiguousLocalAddressError,
     get_agent_by_namespace_alias,
@@ -122,7 +123,7 @@ from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL, ConflictError, Forbid
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/v1/chat", tags=["aweb-chat"])
+router = APIRouter(route_class=AuthorityErrorRoute, prefix="/v1/chat", tags=["aweb-chat"])
 
 MAX_CHAT_STREAM_DURATION = 300
 CHAT_STREAM_FALLBACK_POLL_SECONDS = 2.0
@@ -152,7 +153,8 @@ def _parse_deadline(value: str) -> datetime:
 
 def _message_sender_address(row, identity_map, viewer_team_id):
     did = str(row.get("from_did") or "")
-    if did.startswith("did:key:") and not row.get("from_agent_id"):
+    if (did.startswith("did:key:") and not row.get("from_agent_id")
+            and not identity_map.get(did, {}).get("stable_id", "").startswith("did:aw:")):
         return ""  # A learned local sender has a team label, never an address.
     return row.get("from_address") or routable_chat_address(
         identity_map.get(did, {}), viewer_team_id, row["from_alias"],
@@ -871,7 +873,7 @@ async def _deliver_federated_chat(
         return {"conversation_id": session_id, "message_id": str(payload.message_id)}
 
     if not auth.did_aw:
-        await authorize_local_sender(request, envelope, outbound=True)
+        await authorize_outbound_local_sender(request, envelope, db)
 
     try:
         return await deliver_federated_message(

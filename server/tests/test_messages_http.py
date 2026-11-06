@@ -4714,8 +4714,9 @@ async def test_receive_federated_mail_first_contact_to_unknown_local_didkey_fail
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/federation/messages", json=payload)
 
-    assert resp.status_code == 422, resp.text
-    assert resp.json()["reason"] == "federation_envelope_invalid"
+    assert resp.status_code == 404, resp.text
+    assert resp.json()["reason"] == "local_recipient_route_missing"
+    # Sender authentication still precedes the missing local-target refusal.
     registry.resolve_key.assert_awaited_once_with("did:aw:alice")
     assert await aweb_cloud_db.aweb_db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}}") == 0
 
@@ -4751,8 +4752,8 @@ async def test_receive_federated_mail_existing_local_didkey_first_contact_fails_
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/federation/messages", json=payload)
 
-    assert resp.status_code == 422, resp.text
-    assert resp.json()["reason"] == "federation_envelope_invalid"
+    assert resp.status_code == 404, resp.text
+    assert resp.json()["reason"] == "local_recipient_route_missing"
     assert await aweb_cloud_db.aweb_db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}}") == 0
 
 

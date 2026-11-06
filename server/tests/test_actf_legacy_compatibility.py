@@ -47,3 +47,28 @@ async def test_legacy_continuation_with_new_label_does_not_require_team_server(
     assert refused.json()["reason"] == "local_sender_route_mismatch"
     assert await _effects(target) == before
     assert await _route_rows(target, first.cid, source.local.did) == routes
+
+
+@pytest.mark.asyncio
+async def test_team_local_history_does_not_promote_unverified_global_projection(route_pair):
+    from test_messages_http import _signed_team_headers
+
+    source, target = route_pair.source, route_pair.target
+    response, sent = await _send(source.local, target.global_actor, "chat")
+    assert response.status_code == 200, response.text
+    await target.db.execute(
+        "INSERT INTO {{tables.agents}} (team_id,alias,did_key,did_aw,address,identity_scope) "
+        "VALUES ($1,'unverified-projection',$2,'did:aw:unverified','unverified.test/local','global')",
+        target.team_id, source.local.did,
+    )
+    recipient = target.global_actor
+    response = await target.client.get(
+        f"/v1/chat/sessions/{sent.cid}/messages",
+        headers=_signed_team_headers(recipient.sk, recipient.did, target.team_id,
+                                     recipient.encoded_certificate, b""),
+    )
+    assert response.status_code == 200, response.text
+    message = next(row for row in response.json()["messages"] if row["message_id"] == str(sent.mid))
+    assert not message.get("from_address")
+    assert not message.get("from_stable_id")
+    assert message["sender_membership"]["team_id"] == source.team_id

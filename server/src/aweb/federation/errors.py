@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import uuid4
+
+from fastapi.routing import APIRoute
+from starlette.responses import JSONResponse
 
 from awid.federation_errors import FederationAuthorityError
 
@@ -60,3 +64,25 @@ def authority_error_body(
     if error.observed_sequence is not None:
         body["observed_sequence"] = error.observed_sequence
     return body
+
+
+# Routers are also mounted by hosted applications and focused API fixtures.
+# Keep typed authority refusals at the HTTP boundary even without the full
+# application's exception-handler installation. MCP keeps its own serializer.
+class AuthorityErrorRoute(APIRoute):
+    def get_route_handler(self):
+        handler = super().get_route_handler()
+
+        async def authority_route(request):
+            try:
+                return await handler(request)
+            except FederationAuthorityError as exc:
+                return JSONResponse(
+                    status_code=exc.http_status,
+                    content=authority_error_body(
+                        exc, correlation_id=request.headers.get("X-Correlation-ID") or str(uuid4()),
+                    ),
+                    headers={"Retry-After": "1"} if exc.retry_after_required else None,
+                )
+
+        return authority_route
