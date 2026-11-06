@@ -269,6 +269,9 @@ func TestStrictNamespaceDelegationAuthority(t *testing.T) {
 					key = child
 				}
 				dns := vectorFederationDNS{anchor: {Outcome: "record", Records: []string{"awid=v1; controller=" + key + "; registry=https://registry-a.example;"}}}
+				if !exact {
+					dns["_awid.alpha.example.com"] = FederationTXTLookup{Outcome: "nodata"}
+				}
 				requests := []string{}
 				client := &http.Client{Transport: strictRoundTrip(func(request *http.Request) (*http.Response, error) {
 					requests = append(requests, request.URL.Path)

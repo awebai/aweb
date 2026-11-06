@@ -48,7 +48,7 @@ async def test_delegated_namespace_authority(privacy_app, tmp_path, aw_cli_binar
         owner_did = await register_global_identity(env, actor, "example.test/bob")
         await registry.register_namespace(domain, child_key, child_sk,
                                           parent_signing_key=env.team_sk,
-                                          default_delivery_origin=env.app.state.public_origin)
+                                          default_delivery_origin="https://sender.example.test")
         target_did = await register_global_identity(env, target, address)
         await env.db.execute(
             "UPDATE {{tables.agents}} SET did_aw=$1, did_aw_verified_key=did_key, "
@@ -103,11 +103,11 @@ async def test_delegated_namespace_authority(privacy_app, tmp_path, aw_cli_binar
         try:
             if route == "sender":
                 claim = AuthorityClaim(canonical_address=address, did_aw=target_did,
-                                       current_did_key=target.did, delivery_origin=env.app.state.public_origin)
+                                       current_did_key=target.did, delivery_origin="https://sender.example.test")
                 if accepted:
                     authorized = await activation.authorize(claim, source_ip="127.0.0.1")
                     assert authorized.canonical_address == address
-                    assert authorized.token.controller_did == child_key
+                    assert authorized.token.did_aw == target_did
                 else:
                     with pytest.raises(FederationAuthorityError) as caught:
                         await activation.authorize(claim, source_ip="127.0.0.1")
