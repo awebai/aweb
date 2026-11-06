@@ -1,5 +1,8 @@
 # Knowledge log
 
+## 2026-11-06
+* **Fix**: [humans use mail; recipient kind is authoritative](/aweb-protocol-expert/decisions/humans-use-mail.md) records its verified status: e4398055d is on main and first released in server-v1.27.45, not "not yet on main" as harvested.
+
 ## 2026-10-31
 * **Harvest**: OKF proposal from aweb-protocol-expert-who-agent with backing note humans-use-mail.md; the operator's D8 acceptance is source-reported.
 * **Creation**: decision [humans use mail; recipient kind is authoritative](/aweb-protocol-expert/decisions/humans-use-mail.md) (accepted, not yet on main). No supersession of [owner binding needs independent authorities](/aweb-protocol-expert/decisions/owner-binding-needs-independent-authorities.md).

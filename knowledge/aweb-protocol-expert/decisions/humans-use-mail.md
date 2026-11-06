@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Humans use mail; recipient kind is authoritative
-description: Humans are reached by mail while agent chat remains; the backend refuses chat only on authoritative human-type evidence, never on labels, address shape or missing records, an agent with a responsible human is still an agent, and clients render the backend's refusal instead of inferring kind themselves. Accepted, not yet on main.
+description: Humans are reached by mail while agent chat remains; the backend refuses chat only on authoritative human-type evidence, never on labels, address shape or missing records, an agent with a responsible human is still an agent, and clients render the backend's refusal instead of inferring kind themselves. Accepted; on main and in server-v1.27.45.
 tags: [decision, messaging, chat, mail, human-channels, recipient-kind]
 timestamp: 2026-10-31
 ---
@@ -11,10 +11,9 @@ Accepted by the operator as decision D8 on 2026-10-31. The acceptance is
 coordinator also relayed the binding conditions on what counts as human
 evidence. No independently readable acceptance record exists.
 
-**Status:** accepted product boundary. The implementing commit
-`e4398055d` ("Refuse chat only to authoritative human recipients") is on the
-pushed source branch, contained by `ad0958b77`; it is not on main, and its
-implementation review, final qualification and release are pending. Nothing
+**Status (verified 2026-11-06):** accepted product boundary. The implementing
+commit `e4398055d` ("Refuse chat only to authoritative human recipients") is on
+main, and the first server release that contains it is server-v1.27.45. Nothing
 here claims deployed behaviour.
 
 # Decision
