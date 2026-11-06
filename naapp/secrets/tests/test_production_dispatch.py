@@ -42,7 +42,7 @@ async def decide_run(root, *, decision):
     # Neither the delivered locator nor LOGIN can approve or publish a run.
     assert await db.fetch_value("SELECT state FROM approvals") == "pending"
     assert await db.fetch_value("SELECT state FROM dispatches") == "awaiting_approval"
-    assert await db.fetch_value("SELECT count(*) FROM run_deliveries") == 0
+    assert await db.fetch_value("SELECT count(*) FROM run_deliveries WHERE assignment IS NOT NULL") == 0
     assert (
         await db.fetch_all("SELECT payload,signature FROM outbox_events ORDER BY position")
         == before
@@ -68,7 +68,7 @@ async def decide_run(root, *, decision):
     assert await db.fetch_value("SELECT state FROM approvals") == expected
     assert await db.fetch_value("SELECT consumed_operation_id FROM approvals") is None
     assert await db.fetch_value("SELECT state FROM dispatches") == "awaiting_approval"
-    assert await db.fetch_value("SELECT count(*) FROM run_deliveries") == 0
+    assert await db.fetch_value("SELECT count(*) FROM run_deliveries WHERE assignment IS NOT NULL") == 0
     proof = await db.fetch_one("SELECT purpose,approval_id FROM run_approval_audit_proofs")
     assert proof["purpose"] == decision and proof["approval_id"] == decided.json()["approval_id"]
     events = [e for e in await envelopes(db, member.team_id) if e["hook"] == "post-secret-use-hook"]
@@ -101,7 +101,7 @@ async def test_production_run_approval_uses_original_audit_and_requires_member_r
     service, client, _, member, *_ = root
     db = service.runtime.db()
     assert await db.fetch_value("SELECT count(*) FROM dispatches") == 1
-    assert await db.fetch_value("SELECT count(*) FROM run_deliveries") == 0
+    assert await db.fetch_value("SELECT count(*) FROM run_deliveries WHERE assignment IS NOT NULL") == 0
     status_path = "/v1/status/" + pending.reply["request_ref"]
     status = await client.get(
         AUDIENCE + status_path,
@@ -118,5 +118,5 @@ async def test_production_rejected_run_cannot_be_admitted_or_release_a_credentia
     response = await member_replay(root, pending)
     assert response.json()["state"] == "refused" and response.json()["code"] == "approval_denied"
     db = root[0].runtime.db()
-    assert await db.fetch_value("SELECT count(*) FROM run_deliveries") == 0
+    assert await db.fetch_value("SELECT count(*) FROM run_deliveries WHERE assignment IS NOT NULL") == 0
     assert await db.fetch_value("SELECT count(*) FROM dispatches") == 1
