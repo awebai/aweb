@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-06
+* **Harvest**: third OKF proposal from seat aweb-protocol-expert-stream-push, about the wake scope and the outermost transaction.
+* **Update**: [the agent event stream is push-driven](/aweb-protocol-expert/decisions/agent-event-stream-is-push-driven.md) now says why the wake scope must enclose the outermost transaction: a wake published inside it is lost until the kind's counter next moves. It adds the rule to move the scope outward whenever a write path gains or widens a transaction, and how to test publish-on-every-exit. Its status is now on aweb main since the 2026-11-04 hot-path merge.
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from seat aweb-protocol-expert-stream-push with five backing notes; three accepted stream decisions (implemented on a review branch, not on main) and two runtime lessons.
 * **Creation**: decisions [stream wakes target the resolved identity](/aweb-protocol-expert/decisions/stream-wakes-target-the-resolved-identity.md), [the agent event stream is push-driven](/aweb-protocol-expert/decisions/agent-event-stream-is-push-driven.md) and [stream room authority is re-proved lazily](/aweb-protocol-expert/decisions/stream-room-authority-is-re-proved-lazily.md); lessons [SSE cleanup is cancelled on client disconnect](/aweb-protocol-expert/lessons/sse-cleanup-is-cancelled-on-disconnect.md) and [a mounted app gets no lifespan](/aweb-protocol-expert/lessons/a-mounted-app-gets-no-lifespan.md).

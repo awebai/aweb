@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: The agent event stream is push-driven
-description: Writers record wakes in a scope owned by the outermost transaction and publish after its commit on every exit, never through the replaceable on_mutation hook; lost wakes are recovered by a 15 s reconcile that is one Redis MGET of change counters with no database statements when idle, and bookmarks advance only for kinds actually read; a hard writer crash is an accepted residue with a 2 s shutdown flush; a per-tick snapshot, Postgres change-mark triggers, a durable outbox and a periodic Postgres probe were rejected. Accepted, not yet on main.
+description: Writers record wakes in a scope owned by the outermost transaction and publish after its commit on every exit, never through the replaceable on_mutation hook; lost wakes are recovered by a 15 s reconcile that is one Redis MGET of change counters with no database statements when idle, and bookmarks advance only for kinds actually read; a hard writer crash is an accepted residue with a 2 s shutdown flush; a per-tick snapshot, Postgres change-mark triggers, a durable outbox and a periodic Postgres probe were rejected. On aweb main since the 2026-11-04 hot-path merge.
 tags: [decision, event-stream, wake, redis, performance, transactions]
 timestamp: 2026-11-04
 ---
@@ -11,8 +11,9 @@ Ruled by the security and identity reviewer on 2026-11-04 in the push-driven str
 ruling followed a gate budget for idle streams: at most one round trip per
 15 s and at most 0.1 ms CPU per stream-second.
 
-**Status:** accepted; implemented on the source's review branch, not on main,
-and not yet run in production. The figures below are a local bench.
+**Status:** accepted; on aweb main since the 2026-11-04 hot-path merge
+(server 1.27.47rc1, a release candidate). This record does not show it running
+in production. The figures below are a local bench.
 
 # Decision
 
@@ -22,6 +23,20 @@ and not yet run in production. The figures below are a local bench.
   exceptions included: a request can commit and then fail inside the scope,
   and dropping its wakes left the recipient waiting for the 300 s stream cap.
   A wake for a write that rolled back costs only one snapshot.
+  - **The scope encloses the outermost transaction, not the inner call.** A
+    wake published inside the transaction lets the stream take its snapshot
+    before the row is visible. The stream still stores the moved counter, so
+    the reconcile sees nothing new and the miss lasts until that kind's
+    counter next moves. Eventual-reconcile tests do not catch this quickly.
+    Any change that adds or widens a transaction on a write path must
+    therefore move the scope outward to the new outermost transaction. This
+    happened when a first mail send became one transaction for its
+    conversation and first message. A per-request lent connection that opens
+    no transaction does not change where the scope belongs.
+  - **Testing publish-on-every-exit** needs a write that commits on its own
+    before the failure, such as a continuation send. When a single-transaction
+    write such as a first send fails, everything rolls back, so no wake is due
+    and the test proves nothing.
 - **Not through `on_mutation`.** An embedder can replace that hook, which
   would silently drop wakes.
 - **Publisher failure is retried** by one process-wide task with coalesced
@@ -95,3 +110,4 @@ Related:
 
 Evidence: OKF proposal from aweb-protocol-expert/aweb-protocol-expert-stream-push, 2026-11-04; notes/stream-reconcile-redis-counters.md.
 Recovery rules: second OKF proposal from aweb-protocol-expert/aweb-protocol-expert-stream-push, 2026-11-04; notes/stream-reconcile-redis-counters.md (revised).
+Outermost-transaction scope and its test: OKF proposal from aweb-protocol-expert/aweb-protocol-expert-stream-push, 2026-11-04; notes/wake-scope-encloses-outermost-transaction.md.
