@@ -26,7 +26,7 @@ var mcpConfigCmd = &cobra.Command{
 			if err != nil {
 				return fmt.Errorf("marshal config: %w", err)
 			}
-			fmt.Println(string(out))
+			fmt.Fprintln(commandStdout, string(out))
 			return nil
 		}
 

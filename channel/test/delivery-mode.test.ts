@@ -54,6 +54,15 @@ describe("resolveChannelDelivery", () => {
 });
 
 describe("packaged Claude channel delivery mode", () => {
+  test.each(["session", undefined])("packaged channel heartbeats at start in %s mode", async (delivery) => {
+    const launched = await launchFixtureChild(delivery);
+    await vi.waitFor(() => expect(probe?.requests, launched.stderr()).toContain("/v1/agents/heartbeat"));
+    const stopped = new Promise<void>((resolve) => child!.once("exit", () => resolve()));
+    child!.stdin.end();
+    child!.kill("SIGTERM");
+    await stopped;
+  }, 10000);
+
   test("AWEB_DELIVERY=session opens no event stream and registers no channel", async () => {
     const launched = await launchFixtureChild("session");
 
@@ -64,7 +73,7 @@ describe("packaged Claude channel delivery mode", () => {
     // The whole point of the opt-out: the external wake path owns the one
     // per-identity stream, so this process must never open it.
     await settle(1_500);
-    expect(probe?.requests).toEqual([]);
+    expect(probe?.requests.filter(p => p !== "/v1/agents/heartbeat")).toEqual([]);
     expect(existsSync(receiptPath)).toBe(false);
   }, 20_000);
 
@@ -114,10 +123,10 @@ async function launchFixtureChild(delivery: string | undefined) {
 async function expectStreamOpened(stderr: () => string): Promise<void> {
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
-    if (probe && probe.requests.length > 0) break;
+    if (probe?.requests.some(p => p.startsWith("/v1/events/stream?"))) break;
     await settle(50);
   }
-  expect(probe?.requests[0], `channel did not open the event stream\n${stderr()}`)
+  expect(probe?.requests.find(p => p.startsWith("/v1/events/stream?")), `channel did not open the event stream\n${stderr()}`)
     .toMatch(/^\/v1\/events\/stream\?deadline=/);
 }
 
@@ -125,6 +134,14 @@ async function startProbeServer(): Promise<ProbeServer> {
   const requests: string[] = [];
   const server = createServer((request: IncomingMessage, response) => {
     requests.push(request.url || "");
+    if (request.url === "/v1/agents/heartbeat") {
+      expect(request.method).toBe("POST");
+      expect(request.headers.authorization).toMatch(/^DIDKey /);
+      expect(request.headers["x-awid-team-certificate"]).toBeTruthy();
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+      return;
+    }
     response.writeHead(200, {
       "cache-control": "no-cache",
       connection: "keep-alive",

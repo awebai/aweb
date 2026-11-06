@@ -354,9 +354,10 @@ func TestMailSendToAddressTeamFlagUsesSelectedCertificateContext(t *testing.T) {
 				t.Fatalf("decode mail body: %v", err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]string{
-				"message_id":   "mail-1",
-				"status":       "delivered",
-				"delivered_at": "2026-04-27T00:00:00Z",
+				"message_id":      "mail-1",
+				"conversation_id": sentConversationIDForTest(mailBody),
+				"status":          "delivered",
+				"delivered_at":    "2026-04-27T00:00:00Z",
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -388,7 +389,7 @@ func TestMailSendToAddressTeamFlagUsesSelectedCertificateContext(t *testing.T) {
 		{TeamID: "ops:acme.com", Alias: "ops-alice", WorkspaceID: "ws-ops", Address: "acme.com/ops-alice"},
 	})
 
-	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext", "--team", "ops:acme.com", "--to-address", "acme.com/randy", "--body", "hello", "--json")
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--subject", "Test thread", "--plaintext", "--team", "ops:acme.com", "--to-address", "acme.com/randy", "--body", "hello", "--json")
 	run.Env = append(withoutEnvForTest(testCommandEnv(tmp), "AWID_REGISTRY_URL"), "AWID_REGISTRY_URL="+registryServer.URL)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()

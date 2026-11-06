@@ -430,5 +430,5 @@ func printRegistryRead(out registryReadEnvelope, formatter func(registryReadEnve
 		printJSON(out)
 		return
 	}
-	fmt.Print(termtext.Body(formatter(out)))
+	fmt.Fprint(commandStdout, termtext.Body(formatter(out)))
 }

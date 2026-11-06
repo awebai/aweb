@@ -46,3 +46,12 @@ func TestVersionReportClaimsNoOriginWhenItWasNotGivenOne(t *testing.T) {
 		t.Fatalf("version output named an origin it was never given:\n%s", got)
 	}
 }
+
+// OATS resolves its CLI compatibility from the first aw version line.
+func TestVersionReportStartsWithCLIVersion(t *testing.T) {
+	withVersionVars(t, "1.36.50", "abc1234", "github.com/awebai/aw", "2026-10-27T00:00:00Z")
+	first, _, ok := strings.Cut(versionReport(), "\n")
+	if !ok || first != "aw 1.36.50" {
+		t.Fatalf("first version line must identify the CLI: %q", first)
+	}
+}

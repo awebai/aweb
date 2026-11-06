@@ -204,7 +204,7 @@ def _router(services: ConsoleUseApprovals, kind: Kind) -> APIRouter:
         '<script src="/console-use-approvals/approvals.js" defer></script>'
     )
     content = (
-        f'<div id="use-approval" data-root="{root}"><h1>{title}</h1>'
+        f'<div id="use-approval" data-root="{root}" hidden><h1>{title}</h1>'
         '<p id="approval-status" role="status" aria-live="polite">'
         "Open the approval link sent to your registered contact.</p>"
         '<button id="view-request" type="button" disabled>Review with your passkey</button>'

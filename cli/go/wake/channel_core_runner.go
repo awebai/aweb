@@ -788,6 +788,9 @@ func agentEventForChannelCore(ev awid.AgentEvent) map[string]any {
 	if ev.Type == awid.AgentEventActionableChat {
 		typ = "chat_message"
 	}
+	if ev.Type == awid.AgentEventActionableRoomPost {
+		typ = "room_post"
+	}
 	out := map[string]any{"type": typ}
 	put := func(k, v string) {
 		if strings.TrimSpace(v) != "" {
@@ -799,6 +802,7 @@ func agentEventForChannelCore(ev awid.AgentEvent) map[string]any {
 	put("wake_mode", ev.WakeMode)
 	put("channel", ev.Channel)
 	put("message_id", ev.MessageID)
+	put("room_id", ev.RoomID)
 	put("conversation_id", ev.ConversationID)
 	put("from_alias", ev.FromAlias)
 	put("from_stable_id", ev.FromStableID)

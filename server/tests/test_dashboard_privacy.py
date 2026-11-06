@@ -18,14 +18,12 @@ import httpx
 import pytest
 import pytest_asyncio
 from redis.asyncio import Redis
+from redis.asyncio.client import PubSub
 from starlette.requests import Request
 import uvicorn
 
-from aweb.api import (
-    create_app,
-    _shutdown_federation_outbox_replay,
-    _shutdown_lifecycle_outbox_replay,
-)
+from aweb.api import create_app
+from aweb.outbox_recovery import stop_outbox_recovery
 from aweb.db import DatabaseInfra
 from aweb.events import MessageDeliveredEvent, ChatMessageEvent, TaskCreatedEvent, publish_event, team_events_channel_name
 from aweb.mutation_hooks import create_mutation_handler
@@ -48,6 +46,10 @@ from test_messages_http import (
 # Avoid channel/key collisions when sharing the gate Redis with other runs.
 TEAM_NAME = f"privacy-{uuid4().hex[:12]}"
 TEAM = f"{TEAM_NAME}:example.test"
+# This module names one team even when its databases are recreated. Preserve
+# that team's authority across fixtures: shared Redis may still cache its key
+# when an ephemeral registry origin is reused.
+_TEAM_SIGNING_KEY, _, _TEAM_DID_KEY = _make_keypair()
 
 
 @pytest_asyncio.fixture
@@ -93,7 +95,7 @@ async def privacy_app(shared_test_pool, monkeypatch):
 
             app.state.on_mutation = observe_mutation
             manager = db.get_manager("aweb")
-            team_sk, _, team_did = _make_keypair()
+            team_sk, team_did = _TEAM_SIGNING_KEY, _TEAM_DID_KEY
             await manager.execute(
                 "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) "
                 "VALUES ($1, 'example.test', $2, $3)", TEAM, TEAM_NAME, team_did,
@@ -146,8 +148,7 @@ async def privacy_app(shared_test_pool, monkeypatch):
                 server.should_exit = True
                 await asyncio.wait_for(serving, 5)
                 sock.close()
-                await _shutdown_lifecycle_outbox_replay(app)
-                await _shutdown_federation_outbox_replay(app)
+                await stop_outbox_recovery(app)
                 await registry.aclose()
         await registry_db.close()
         await db.close()
@@ -396,7 +397,7 @@ async def test_status_stream_keeps_mail_private_and_team_tasks_visible(privacy_a
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("colliding_workspace", [False, True])
-async def test_embedded_public_status_reader_never_gets_messaging(privacy_app, colliding_workspace):
+async def test_embedded_public_status_reader_never_gets_messaging(privacy_app, colliding_workspace, monkeypatch):
     """Exercise the real embedded route with its host-supplied public identity.
 
     The standalone app does not authenticate public principals. The host's
@@ -416,6 +417,28 @@ async def test_embedded_public_status_reader_never_gets_messaging(privacy_app, c
             "INSERT INTO {{tables.workspaces}} (workspace_id, team_id, agent_id, alias) "
             "VALUES ($1, $2, $3, 'public-collision')", UUID(workspace_id), TEAM, UUID(actor_id),
         )
+    # Observe this stream's own server acknowledgement, not a second
+    # connection's count. Redis transport and the route's filters stay real.
+    channel = f"events:{workspace_id}"
+    subscribed = asyncio.Event()
+    subscribe = PubSub.subscribe
+    handle_message = PubSub.handle_message
+
+    async def delayed_subscribe(pubsub, *channels, **kwargs):
+        if not colliding_workspace and channel in channels:
+            # Reproduce a cold start beyond the old five-second poll budget.
+            await asyncio.sleep(6)
+        return await subscribe(pubsub, *channels, **kwargs)
+
+    async def observe_ack(pubsub, response, *args, **kwargs):
+        result = await handle_message(pubsub, response, *args, **kwargs)
+        if response[0] in ("subscribe", b"subscribe") and response[1] in (channel, channel.encode()):
+            subscribed.set()
+        return result
+
+    monkeypatch.setattr(PubSub, "subscribe", delayed_subscribe)
+    monkeypatch.setattr(PubSub, "handle_message", observe_ack)
+
     header = build_internal_auth_header_value(
         secret="disposable-embedding-test-secret", team_id=TEAM,
         principal_type="p", principal_id="anonymous", actor_id=actor_id,
@@ -435,10 +458,13 @@ async def test_embedded_public_status_reader_never_gets_messaging(privacy_app, c
     )
     stream = response.body_iterator
     next_item = asyncio.create_task(anext(stream))
+    subscription_ready = asyncio.create_task(subscribed.wait())
     try:
-        async with asyncio.timeout(5):
-            while not (await env.redis.pubsub_numsub(f"events:{workspace_id}"))[0][1]:
-                await asyncio.sleep(0.01)
+        done, _ = await asyncio.wait(
+            {next_item, subscription_ready}, return_when=asyncio.FIRST_COMPLETED,
+        )
+        if next_item in done:
+            pytest.fail(f"Stream ended before its subscription acknowledgement: {next_item.result()!r}")
         for event in (
             MessageDeliveredEvent(workspace_id=workspace_id, subject="private subject"),
             ChatMessageEvent(workspace_id=workspace_id, session_id="private-session"),
@@ -450,9 +476,10 @@ async def test_embedded_public_status_reader_never_gets_messaging(privacy_app, c
         assert event["type"] == "task.created"
         assert event["task_ref"] == "public-control"
     finally:
-        if not next_item.done():
-            next_item.cancel()
-            await asyncio.gather(next_item, return_exceptions=True)
+        for task in (next_item, subscription_ready):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(next_item, subscription_ready, return_exceptions=True)
         await stream.aclose()
 
 

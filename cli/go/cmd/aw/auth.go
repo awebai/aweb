@@ -38,8 +38,8 @@ var (
 
 var authCmd = &cobra.Command{
 	Use:   "auth",
-	Short: "Authenticate this host aw CLI to a human aweb account",
-	Long: "Authenticate this host aw CLI to a human aweb account.\n\n" +
+	Short: "Authenticate this host aw CLI to your aweb account",
+	Long: "Authenticate this host aw CLI to your aweb account.\n\n" +
 		"Credentials are stored only in the host aw config directory, not in workspace or identity homes.",
 }
 
@@ -57,7 +57,7 @@ var authLoginCmd = &cobra.Command{
 
 var authStatusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show host CLI human-auth status without printing tokens",
+	Short: "Show host CLI account-auth status without printing tokens",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runAuthStatus(cmd.Context(), cmd)
@@ -66,7 +66,7 @@ var authStatusCmd = &cobra.Command{
 
 var authLogoutCmd = &cobra.Command{
 	Use:   "logout",
-	Short: "Revoke host CLI human-auth tokens and remove local credentials",
+	Short: "Revoke host CLI account-auth tokens and remove local credentials",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runAuthLogout(cmd.Context(), cmd)
@@ -168,8 +168,9 @@ func (e *cliOAuthError) Error() string {
 }
 
 type cliAuthAccount struct {
-	ID     string `json:"id"`
-	Handle string `json:"handle,omitempty"`
+	ID              string              `json:"id"`
+	Handle          string              `json:"handle,omitempty"`
+	HumanIdentities []hostedHumanParent `json:"human_identities"`
 }
 
 type cliAuthStatusOutput struct {
@@ -631,6 +632,13 @@ func resolveCLIAuthIssuer(existing string) (string, error) {
 	if raw == "" {
 		raw = DefaultAwebURL
 	}
+	return normalizeCLIAuthIssuer(raw)
+}
+
+// normalizeCLIAuthIssuer reduces a server name or base URL to the issuer
+// origin that CLI logins are stored under.
+func normalizeCLIAuthIssuer(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
 	if !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") {
 		derived, err := awconfig.DeriveBaseURLFromServerName(raw)
 		if err != nil {

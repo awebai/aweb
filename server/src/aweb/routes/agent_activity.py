@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from aweb.agent_activity import ActivityEventError, relay_activity, verify_activity_event
 from aweb.deps import get_db, get_redis
+from aweb.identity_auth_deps import participant_dids
 from aweb.messaging.chat import resolve_session_actor_did
 from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL
 from aweb.team_auth_deps import TeamIdentity, team_identity_with_grant_scope
@@ -65,7 +66,7 @@ async def _enforce_rate(redis, agent_id: str) -> None:
 
 
 async def _require_participant(db, identity: TeamIdentity, session_id: str) -> None:
-    actor_dids = [did for did in (identity.did_aw, identity.did_key) if did]
+    actor_dids = participant_dids(identity)
     if not await resolve_session_actor_did(db, session_id=UUID(session_id), actor_dids=actor_dids):
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 

@@ -147,6 +147,10 @@ deleted and the suite installs the manifest the real way.
 
 ## Environment overrides
 
+These defaults apply to manual runs. The candidate gate allocates unused host
+ports before starting its isolated runner and passes the same values to the CLI
+harness and Compose stack. Explicit port overrides remain supported.
+
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `LIBRARY_E2E_AWID_PORT` | 18010 | awid host port |

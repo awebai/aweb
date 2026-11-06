@@ -12,10 +12,10 @@ from fastapi import HTTPException, Request
 from fastapi.routing import APIRoute
 
 from awid.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_timestamp, verify_signed_json_request
+from awid.id_tree_requests import CONTROLLER_REQUEST_TYPE
 from awid.log import canonical_server_origin
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 
-CONTROLLER_REQUEST_TYPE = 'aweb.awid-controller-request'
 CONTROLLER_OPERATIONS = frozenset({
     'register', 'update_namespace', 'rotate_controller', 'delete_namespace',
     'authorize_subdomain_registration', 'authorize_subdomain_rotation',
@@ -23,6 +23,8 @@ CONTROLLER_OPERATIONS = frozenset({
     'register_certificate', 'revoke_certificate',
     'publish_team_custodian', 'publish_member_custody', 'publish_member_person',
     'register_address', 'update_address', 'delete_address', 'reassign_address',
+    'register_id_certificate', 'revoke_id_certificate', 'rotate_namespace_controller',
+    'read_id_certificate_status',
 })
 logger = logging.getLogger(__name__)
 

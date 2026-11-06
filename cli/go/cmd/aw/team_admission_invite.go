@@ -27,8 +27,9 @@ var teamAdmissionInviteCmd = &cobra.Command{
 	Long: "Issue a shared-team admission invite token.\n\n" +
 		"This uses host CLI auth with scope cli.team_admission to request an ordinary\n" +
 		"single-use aw_inv_ token for a chosen recipient. It does not accept the invite,\n" +
-		"install membership, or bind this workspace; use aw team join or aw id team\n" +
-		"accept-invite with the returned token in the target identity root.",
+		"install membership, or bind this workspace; save the returned token to a file\n" +
+		"and run aw team join --token-file (or aw id team accept-invite --token-file)\n" +
+		"in the target identity root.",
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runTeamAdmissionInvite(cmd.Context(), cmd)
@@ -99,6 +100,7 @@ func runTeamAdmissionInvite(ctx context.Context, cmd *cobra.Command) error {
 	if jsonFlag {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 	}
+	fmt.Fprintln(cmd.ErrOrStderr(), teamInviteTokenWarning(out.ExpiresAt))
 	fmt.Fprintf(cmd.OutOrStdout(), "invite_id: %s\n", out.InviteID)
 	fmt.Fprintf(cmd.OutOrStdout(), "token: %s\n", out.Token)
 	fmt.Fprintf(cmd.OutOrStdout(), "join_command: %s\n", out.JoinCommand)
@@ -165,7 +167,7 @@ func teamAdmissionInviteOutputFromResponse(resp teamAdmissionInviteResponse, req
 		NamespaceSlug:   resp.NamespaceSlug,
 		Namespace:       resp.Namespace,
 		ServerURL:       resp.ServerURL,
-		JoinCommand:     "aw team join " + resp.Token + " --name <name>",
+		JoinCommand:     "aw team join --token-file <file> --name <name>",
 	}
 }
 

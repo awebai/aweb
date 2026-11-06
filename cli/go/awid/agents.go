@@ -22,6 +22,7 @@ type HeartbeatResponse struct {
 }
 
 type AgentView struct {
+	encryptionKeyRejected  bool                    // Local verification result; distinguishes an invalid published key from no publication.
 	sameServiceParticipant bool                    // Set only by authenticated messaging participant discovery; never a wire claim.
 	AgentID                string                  `json:"agent_id"`
 	Alias                  string                  `json:"alias"`
@@ -292,6 +293,7 @@ func (c *Client) ListAgents(ctx context.Context) (*ListAgentsResponse, error) {
 		}
 		if err := agent.VerifyEncryptionKey(time.Now().UTC()); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: agent %s: invalid_encryption_key_assertion: %v; encryption key unavailable\n", agent.Alias, err)
+			agent.encryptionKeyRejected = true
 			agent.EncryptionKey = nil
 		}
 	}

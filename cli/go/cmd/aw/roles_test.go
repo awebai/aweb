@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -682,6 +683,64 @@ func TestAwRolesSetAcceptsArrayBundleShape(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "Activated team roles v2 (roles-2)") {
 		t.Fatalf("unexpected output:\n%s", string(out))
+	}
+}
+
+// A refused roles set under --json names the server's refusal code as
+// error.reason, so a script can tell why without parsing the message.
+func TestAwRolesSetJSONRefusalCarriesTheServerReason(t *testing.T) {
+	t.Parallel()
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requireCertificateAuthForTest(t, r)
+		switch r.URL.Path {
+		case "/v1/roles/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_roles_id":        "roles-1",
+				"active_team_roles_id": "roles-1",
+				"team_id":              "backend:proj-1",
+				"version":              1,
+				"updated_at":           "2026-03-10T10:00:00Z",
+				"roles":                map[string]any{},
+				"adapters":             map[string]any{},
+			})
+		case "/v1/roles":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"detail":{"code":"admin_required","message":"Only an admin human can publish roles."}}`))
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeTestConfig(t, tmp, server.URL)
+
+	run := exec.CommandContext(ctx, bin, "roles", "set", "--bundle-file", "-", "--json")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	run.Stdin = strings.NewReader(`{"roles":{"developer":{"title":"Developer","playbook_md":"Ship code."}}}`)
+	var stdout, stderr bytes.Buffer
+	run.Stdout, run.Stderr = &stdout, &stderr
+	if err := run.Run(); exitCode(err) != 1 {
+		t.Fatalf("roles set exit: %v\nstdout=%s\nstderr=%s", err, &stdout, &stderr)
+	}
+	var envelope struct {
+		Error map[string]any `json:"error"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil {
+		t.Fatalf("stdout is not one JSON document: %q: %v", stdout.String(), err)
+	}
+	body := envelope.Error
+	if body["code"] != "http_error" || body["reason"] != "admin_required" || body["http_status"] != float64(403) {
+		t.Fatalf("envelope %v", body)
 	}
 }
 

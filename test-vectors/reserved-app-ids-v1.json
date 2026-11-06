@@ -36,6 +36,7 @@
     "reset",
     "role-name",
     "roles",
+    "room",
     "run",
     "service",
     "session",
@@ -46,6 +47,7 @@
     "upgrade",
     "version",
     "wake",
+    "who",
     "whoami",
     "work",
     "workspace"

@@ -4,6 +4,7 @@ export type AgentEventType =
   | "connected"
   | "mail_message"
   | "chat_message"
+  | "room_post"
   | "control_pause"
   | "control_resume"
   | "control_interrupt"
@@ -29,6 +30,7 @@ export interface AgentEvent {
   agent_id?: string;
   team_id?: string;
   message_id?: string;
+  room_id?: string;
   conversation_id?: string;
   from_alias?: string;
   session_id?: string;
@@ -268,7 +270,7 @@ const KNOWN_TYPES: Set<string> = new Set([
   "connected", "mail_message", "chat_message",
   "control_pause", "control_resume", "control_interrupt",
   "work_available", "claim_update", "claim_removed", "app_event", "error",
-  "actionable_mail", "actionable_chat",
+  "actionable_mail", "actionable_chat", "actionable_room_post", "room_post",
 ]);
 
 class GrantStreamError extends Error {}
@@ -298,6 +300,7 @@ export function parseAgentEvent(eventName: string, data: string): AgentEvent | n
 
   if (eventName === "actionable_mail") eventName = "mail_message";
   if (eventName === "actionable_chat") eventName = "chat_message";
+  if (eventName === "actionable_room_post") eventName = "room_post";
 
   try {
     const payload = JSON.parse(data);

@@ -1,5 +1,5 @@
 # The real wakes client runs beside the services, including inside candidate-gate.
-FROM golang:1.24.13-bookworm AS cli
+FROM golang:1.26.10-bookworm AS cli
 ENV GOMAXPROCS=2 CGO_ENABLED=0
 WORKDIR /src
 COPY cli/go/go.mod cli/go/go.sum ./

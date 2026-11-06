@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-04
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
+* **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
+* **Creation**: lesson [skipping the train skips the only full run](/aweb-expert/lessons/skipping-the-train-skips-the-only-full-run.md).
+
 ## 2026-10-25
 * **Harvest**: manual harvest of seats aweb-expert-security-audit, -security-review-2, -naapps-verify, -naapp-approvals, -pages-data, -pages-requests and the retired -secrets-site, with corroborating evidence from aweb-protocol-expert seats. Notes, STATE, logs and session transcripts were read; seats, the OSS coordinator and the security reviewer's recorded rulings were consulted. Hosted material was routed to the aweb-cloud harvester.
 * **Creation**: decisions [evidence and reproduction standard](/aweb-expert/decisions/evidence-and-reproduction-standard.md), [review blocks only on realistic failures](/aweb-expert/decisions/review-blocks-only-on-realistic-failures.md), [one principal and one policy per request](/aweb-expert/decisions/one-principal-and-policy-per-request.md), [keep the roster row, clear only the bad key](/aweb-expert/decisions/keep-the-roster-row-clear-the-bad-key.md), [a signed conversation id is immutable](/aweb-expert/decisions/signed-conversation-id-is-immutable.md).

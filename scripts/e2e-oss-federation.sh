@@ -967,7 +967,6 @@ assert_eq "alice decrypts federated sender self-copy" "$fed_e2ee_body" "$alice_e
 fed_e2ee_reply_body="FED_E2EE_REPLY_BODY_SENTINEL_260526"
 if fed_e2ee_reply_out="$(run_aw_in "$BOB_DIR" mail send \
   --conversation-id "$fed_e2ee_conversation_id" \
-  --subject "FED_E2EE_REPLY_SUBJECT_SENTINEL_260526" \
   --body "$fed_e2ee_reply_body" \
   --e2ee 2>&1)"; then
   fed_e2ee_reply_exit=0
@@ -1100,9 +1099,9 @@ public_conversation_id="$(echo "$bob_inbox" | json_first_field_matching subject 
 assert_eq "public federated mail delivered to beta" "1" "$public_mail_count"
 assert_not_empty "public federated mail conversation id" "$public_conversation_id"
 
-run_success "public federated reply send" run_aw_in "$BOB_DIR" mail send --plaintext --conversation-id "$public_conversation_id" --subject "Public federated reply" --body "reply from beta bob"
+run_success "public federated reply send" run_aw_in "$BOB_DIR" mail send --plaintext --conversation-id "$public_conversation_id" --body "reply from beta bob"
 capture_success alice_inbox "alice_inbox" run_aw_in "$ALICE_DIR" mail inbox --json --show-all
-reply_count="$(echo "$alice_inbox" | json_count_matching subject "Public federated reply")"
+reply_count="$(echo "$alice_inbox" | json_count_matching body "reply from beta bob")"
 assert_eq "public federated mail reply delivered to alpha" "1" "$reply_count"
 
 run_success "public federated chat send" run_aw_in "$ALICE_DIR" chat send-and-leave --plaintext beta.test.local/bob "public federated chat"
