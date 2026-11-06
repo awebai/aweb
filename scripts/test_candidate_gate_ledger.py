@@ -11,6 +11,7 @@ import sys
 import tempfile
 
 from test_candidate_ports import held_library_default
+from fixture_repo import init_fixture_repo
 
 ROOT = Path(__file__).resolve().parents[1]
 STAGES = "checks user-paths unit artifacts integration"
@@ -106,7 +107,7 @@ candidate-gate:
 \tbash scripts/candidate-docker-gate.sh
 '''
         (repo / "Makefile").write_text(recipes)
-        checked(repo, "git", "init", "-qb", "main")
+        init_fixture_repo(repo)
         checked(repo, "git", "config", "user.name", "gate integration")
         checked(repo, "git", "config", "user.email", "gate@example.test")
         checked(repo, "git", "add", ".")

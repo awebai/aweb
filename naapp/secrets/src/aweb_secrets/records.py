@@ -374,16 +374,24 @@ async def create_operation(
 
 
 async def current_operation(
-    tx: TransactionManager, installation_id: str, secret_id: str, operation_id: str
+    tx: TransactionManager,
+    installation_id: str,
+    secret_id: str,
+    operation_id: str,
+    *,
+    lock: bool = True,
 ) -> OperationTemplate | None:
-    """The operation's current template, locked against replacement until the transaction ends."""
+    """CURRENT, normally locked against replacement until the transaction ends.
+
+    ``lock=False`` is inert configured-access discovery, never send authority.
+    """
     record = await tx.fetch_value(
         """
         SELECT t.record FROM {{tables.current_operations}} c
         JOIN {{tables.operation_templates}} t USING (installation_id, secret_id, operation_id, digest)
         WHERE c.installation_id = $1 AND c.secret_id = $2 AND c.operation_id = $3
-        FOR SHARE OF c
-        """,
+        """
+        + (" FOR SHARE OF c" if lock else ""),
         installation_id,
         secret_id,
         operation_id,

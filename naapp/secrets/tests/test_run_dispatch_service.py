@@ -39,8 +39,10 @@ class Context(RunWorld):
         return admitted, claim, json.loads(claim.body)
 
 
-async def setup(uses, *, approval_required=False):
-    original = await setup_world(uses, approval_required=approval_required)
+async def setup(uses, *, approval_required=False, producer_clock=None):
+    original = await setup_world(
+        uses, approval_required=approval_required, producer_clock=producer_clock
+    )
     return Context(**vars(original))
 
 

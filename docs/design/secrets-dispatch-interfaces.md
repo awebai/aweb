@@ -345,6 +345,19 @@ request ID, S3 dispatch UUID, original requester and value-free resource/job or
 operation pins. `ReconciliationView` adds the current S3 state. It contains no
 request parameters, response entity, proof or personal link.
 
+`ReconciliationView` and `ReconciliationControlStatus` append
+`repeat_state: State | None = None`. After authorizing the original scope and
+generation, the reader observes its unique broker continuation in the same
+caller transaction with a plain SELECT. No continuation means `None`; a
+mismatched or multiple association refuses. Run originals retain `None`.
+Shared S3 migrations, including 002 continuations, must be applied before
+constructing or serving this reader. The observation adds no authority and
+never changes `ReconciliationOriginal` or the covered control request/hash.
+The page can show an admitted/dispatching repeat in flight, an unknown repeat
+as uncertain, and a settled original whose unknown repeat no longer blocks
+the pair while retaining its result as evidence. The owner may still settle
+an uncertain original while the repeat is in flight; status grants no action.
+
 `ReconciliationControl` freezes the original association, chosen
 `completed|failed|unknown-closed` outcome, control UUID, actual B2 approval ID,
 approval reference and covered-request hash/policy identity, exact owner
@@ -455,3 +468,27 @@ broker/run backend refuses before any control write. Its methods are:
 `InstallationRefused` retains its fixed code/status; `UseAuditUnavailable`
 remains 503 `release_context_unavailable`. Caller 401 session and 403 owner
 refusals pass through; other database failures propagate and roll back.
+
+## Public signed use correlation
+
+For newly admitted broker/run uses, signed `post-secret-use` payload `use_ref`
+is exactly the member response's existing server-minted `request_ref`. Frozen
+audit contexts retain it through approval decisions, resubmission, transport
+and result replay, uncertainty and owner settlement. Separate executions have
+separate refs; `dispatch_id`, `job_id` and `job_digest` retain their meanings.
+
+An attributable pre-admission refusal commits a fresh random 128-bit `use_`
+reference in the signed event and its local correlation in the same outer
+refusal transaction. Only after commit does the refused response present
+`use_ref`. A repeated refusal creates another attempt/ref without an intent,
+idempotency claim, dispatch or rate charge. If the authenticated scoped original
+use already exists, the refusal retains that original intent ref. Unattributed
+failures and rolled-back recording present no audit ref. The ref grants no
+lookup, retry, deduplication or execution authority.
+
+Member input models reject `use_ref`; refs never contain caller request IDs,
+parameters, reasons or credential material. Owners join the actual response ref
+to signed retained `payload.use_ref`, installation/generation, team and canonical
+actor DID. Legacy events may omit it and are not backfilled. Compatible receiver
+publication must precede new emission; the catalog v1 compatibility decision and
+upgrade requirement are recorded in the hook contract/changelog.

@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import json
 from contextlib import asynccontextmanager
+from datetime import timedelta
 
 import httpx
 from aweb_naapp.hooks.strictjson import encode_base64url
@@ -181,6 +182,11 @@ async def test_mounted_stream_key_rotation_rechecks_authority_and_rolls_back_rep
 ):
     async with mounted(uses, registry, tmp_path) as (client, context, run):
         await run.submit(job=context.job.job_id, submission=context.submission)
+        # Simulate elapsed host time without sleeping: S3's database clock is
+        # now ahead of the frozen application clock beyond the hook skew pad.
+        uses.clock.now = await uses.world.db.fetch_value("SELECT clock_timestamp()") - timedelta(
+            seconds=6
+        )
         claim = context.signed("/runner/v1/claim")
         assigned = await client.post(claim.raw_target, content=claim.body, headers=headers(claim))
         assert assigned.status_code == 200

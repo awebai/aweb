@@ -35,7 +35,7 @@ aweb-naapp-testing = { path = "../../naapp-lib/testing", editable = true }
 
 [dependency-groups]
 dev = [
-  "aweb-naapp-testing",
+  "aweb-naapp-testing[server]",
   "pytest>=9.0.0",
   "pytest-asyncio>=1.2.0",
   "ruff>=0.14.0",

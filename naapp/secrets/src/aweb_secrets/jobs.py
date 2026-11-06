@@ -473,10 +473,12 @@ async def create_job(
 
 
 async def current_job(
-    tx: TransactionManager, installation_id: str, job_id: str
+    tx: TransactionManager, installation_id: str, job_id: str, *, lock: bool = True
 ) -> JobDefinition | None:
+    """CURRENT, locked by default; ``lock=False`` supplies only display metadata."""
     raw = await tx.fetch_value(
-        "SELECT d.record FROM {{tables.current_jobs}} c JOIN {{tables.job_definitions}} d USING (installation_id,job_id,digest) WHERE c.installation_id=$1 AND c.job_id=$2 FOR SHARE OF c",
+        "SELECT d.record FROM {{tables.current_jobs}} c JOIN {{tables.job_definitions}} d USING (installation_id,job_id,digest) WHERE c.installation_id=$1 AND c.job_id=$2"
+        + (" FOR SHARE OF c" if lock else ""),
         installation_id,
         job_id,
     )

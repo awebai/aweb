@@ -149,6 +149,7 @@ async def test_exact_fresh_approve_settles_once_without_open_send_or_availabilit
         status = await service.status(tx, scope=scope, approval_id=pending.approval.approval_id)
     assert again == receipt and await snapshot(db) == settled
     assert status is not None and "personal_token" not in repr(status)
+    assert status.repeat_state is None
 
 
 async def test_competing_outcomes_preserve_one_settlement_and_roll_back_the_loser(uses):

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Breaking compatibility:** hook catalog v1 `post-secret-use-hook` gains
+  optional opaque `use_ref` after the `aweb-naapp 0.5.0` release, for the public
+  request/refusal-to-audit join. Receivers using the published catalogs in
+  `aweb-naapp 0.2.0`, `0.3.0`, `0.4.0`, `0.5.0rc1`, `0.5.0`,
+  `0.5.1rc1`, `0.5.1rc2`, `0.5.1rc3`, `0.5.1rc4`, `0.5.1rc5` and `0.5.1`
+  refuse events carrying this field and must upgrade before receiving them.
+  Legacy events without it remain valid. Juan explicitly accepted this
+  in-place v1 compatibility break on 2026-10-26. Updated readers/catalogs
+  must be published before new emission.
+
 - AWID SDK: `awid.id_certificate_request` builds and reads the child request
   exchange as `aw` does. `build_id_certificate_request` writes the signed
   request file for a first certificate, through a `PayloadSigner`;

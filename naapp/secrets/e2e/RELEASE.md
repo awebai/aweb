@@ -51,7 +51,19 @@ than inserted into the database by the test.
 | 3. Approve a use | Mark the API secret `approve_only` through a confirmed console change; an agent requests a use; the human opens the delivered email link and approves with a browser passkey. | The pending use has not reached the upstream. The agent receives an approval reference without an email link. Status reads do not dispatch. After approval, the agent resubmits through MCP and exactly one use reaches the upstream. A replay cannot consume the approval again. |
 | 4. Run a job | Agent submits a job to the registered runner; a human approves its required credential use; the real runner claims and executes the pinned job as its separate OS user. | The job authenticates to its test target using the 1Password password. Durable release is bound to this approved job, and the job reaches its expected terminal result. Model-visible submission/status/result data contains no password. An unapproved job obtains no credential and makes no authenticated target call. |
 | 5. Revoke | Owner removes one agent from the role through the supported control, then that agent and the surviving role member each attempt a fresh API use. | The removed agent is refused before upstream dispatch; the other agent still succeeds. Use this individual-role-removal option to preserve the surviving-agent control: revoking a grant shared by both agents would refuse both. |
-| 6. Inspect activity | Owner opens the console activity view. | It correlates the recorded request/job IDs to the correct agent, secret and operation, time and outcome, including approval wait, successful broker/runner uses and refused post-revocation use. No secret value appears. Trace the resulting real signed events through hook delivery and logs ingest, and verify attribution/outcome through logs' real read path. Outbox enqueue alone does not complete audit acceptance. |
+| 6. Inspect access and activity | Owner opens the per-agent access view, narrows the displayed DB-write access, then opens the console activity view. | The access and revocation observations below are required. Activity correlates the recorded request/job IDs to the correct agent, secret and operation, time and outcome, including approval wait, successful broker/runner uses and refused post-revocation use. No secret value appears. Trace the resulting real signed events through hook delivery and logs ingest, and verify attribution/outcome through logs' real read path. Outbox enqueue alone does not complete audit acceptance. |
+
+Step 6 includes the required per-agent access view (`aweb-acgh.18.11.2`).
+Arrange the confirmed configuration in step 1 so the surviving agent from step 5
+still holds DB-write: a named operation@digest with `side_effect` other than
+`none`, on a sensitive secret. The owner must see that agent, secret and
+operation prominently flagged as sensitive and write-type, with the actual
+direct-principal grant or named role explaining the access. Effective access
+must agree with real admission; drafts must not appear. Revoke the displayed
+grant or remove that agent from its granting role through the existing narrowing
+control, without a passkey, then verify the access disappears and a fresh use
+is refused before upstream dispatch. Verify the owner view at 375 and 1440
+pixels and refusal of a non-owner read. No secret value may appear.
 
 ## Step 1 scenario: connect the team's vault and create a referenced secret
 
