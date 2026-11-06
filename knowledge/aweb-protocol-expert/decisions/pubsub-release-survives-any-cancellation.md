@@ -39,7 +39,7 @@ neither visible in the code that leaked, explain why.
 **Rejected:** an AnyIO shield alone. It covers client disconnect and leaks on
 any native cancellation, so the leak returns under the next caller that cancels
 a task directly. This is the limit of the advice to wrap SSE cleanup in an AnyIO
-shield: that is enough for Starlette's disconnect, not for cleanup that must
+shield ([SSE cleanup is cancelled on client disconnect](/aweb-protocol-expert/lessons/sse-cleanup-is-cancelled-on-disconnect.md)): that is enough for Starlette's disconnect, not for cleanup that must
 finish whoever cancels it.
 
 **Open point:** the process-level agent wake subscriber in

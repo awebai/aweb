@@ -19,11 +19,11 @@ request connection. When the request-body cache layer became pure ASGI
 (da22d0974), that delay disappeared: the scope now closes first, and the stream's
 opening read checks out its own connection.
 
-Cloud's 0.8.76 release-candidate gate caught it as a hot-path budget for opening
-an event stream going from 19 to 20 checkouts. Wheels from aweb 131713729 gave
-19; da22d0974 and later gave 20. The asyncpg reset count went from 9 to 10, and a
+A mounting host's release-candidate gate caught it as a hot-path budget for
+opening an event stream going from 19 to 20 checkouts. Wheels from aweb
+131713729 gave 19; da22d0974 and later gave 20. The asyncpg reset count went from 9 to 10, and a
 per-call-site checkout trace put the extra checkout at the stream's opening
-viewer read in `routes/events.py`. The ceiling was raised to 20.
+viewer read in `routes/events.py`. The host raised its ceiling to 20.
 
 # How to apply
 
@@ -37,10 +37,12 @@ viewer read in `routes/events.py`. The ceiling was raised to 20.
   `connection_scope()`. Do not move the request scope's close past
   `http.response.start`.
 
+Related: [one connection per request](/aweb-protocol-expert/decisions/one-connection-per-request-is-lent-never-a-transaction.md).
+
 # Measuring gotcha
 
 To run a test suite against a specific package version, use
 `uv run --with pkg==X python -m pytest`. `uv run --with pkg==X pytest` runs the
 project's own version: the `pytest` script's shebang bypasses the overlay.
 
-Evidence: OKF proposal from aweb-protocol-expert/aweb-protocol-expert-db-access, 2026-11-05; notes/stream-body-statements-leave-request-scope.md. The harvester checked the middleware, the commits and the stream-open read against aweb main at 07f1c8f0c; the Cloud gate counts are the source's report.
+Evidence: OKF proposal from aweb-protocol-expert/aweb-protocol-expert-db-access, 2026-11-05; notes/stream-body-statements-leave-request-scope.md. The harvester checked the middleware, the commits and the stream-open read against aweb main at 07f1c8f0c; the host's gate counts are the source's report.

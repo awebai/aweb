@@ -29,6 +29,10 @@ had left, and the session pubsub was not closed.
 - Prove a new SSE cleanup with a test that disconnects the client and checks
   the cleanup's effect, not only that the stream closed. The chat stream's
   shielded cleanup is on main (0318462f1, server-v1.27.47).
+- The AnyIO shield covers Starlette's disconnect only. Cleanup that must
+  finish under a native asyncio `task.cancel()` as well, such as returning a
+  Redis PubSub connection, needs the stronger rule in
+  [a PubSub release survives any cancellation](/aweb-protocol-expert/decisions/pubsub-release-survives-any-cancellation.md).
 
 # Provenance
 

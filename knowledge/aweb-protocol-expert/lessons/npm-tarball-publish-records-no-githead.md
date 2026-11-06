@@ -38,8 +38,4 @@ conclusion.
   and 1.36.55, whose tag commit equals its binary stamp). Use the tag only when
   every package lacks `gitHead`, and still check the binary stamp.
 
-aweb-cloud's lesson on reviewing pins against published artifacts says what to
-check in a published package; this concept explains why the field can be
-missing.
-
 Evidence: OKF proposal from aweb-protocol-expert/aweb-protocol-expert-db-access, 2026-11-05; notes/npm-tarball-publish-githead.md. The harvester checked the publisher, readback and tag-fallback code against aweb main at 07f1c8f0c (fix 86af2e122).
