@@ -50,7 +50,7 @@ async def test_editor_uses_default_and_custom_computed_fonts(
                 while not server.started:
                     await asyncio.sleep(0.01)
             async with async_playwright() as playwright:
-                browser = await playwright.chromium.launch(channel="chrome")
+                browser = await playwright.chromium.launch()
                 try:
                     page = await browser.new_page(color_scheme="dark")
                     await page.goto(origin + urlsplit(link["url"]).path + "#" + urlsplit(link["url"]).fragment)
@@ -96,7 +96,7 @@ async def test_editor_controls_reflow_and_honour_validated_theme(present_world, 
                 while not server.started:
                     await asyncio.sleep(0.01)
             async with async_playwright() as playwright:
-                browser = await playwright.chromium.launch(channel="chrome")
+                browser = await playwright.chromium.launch()
                 page = await browser.new_page(color_scheme="dark")
                 await page.goto(origin + urlsplit(link["url"]).path + "#" + urlsplit(link["url"]).fragment)
                 for width in (320, 768):
