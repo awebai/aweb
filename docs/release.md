@@ -254,7 +254,10 @@ requires the staged bytes, SHA-512 integrity and intended `next` or `latest` tag
 
 Both the aw distribution workflow and runnerless aw publisher pack each of
 the six platform packages and the wrapper once, publish or adopt those exact
-archives, and then verify all seven with one shared 25-minute readback deadline. The verifier lives at
+archives, and then verify all seven with one shared 25-minute readback deadline.
+npm records no `gitHead` for a published tarball, so both publishers write the
+source commit their binaries are stamped with into each package's `gitHead`,
+and the readback refuses any of the seven whose registry `gitHead` differs. The verifier lives at
 `cli/go/npm/readback.py`; the other npm lanes call it through
 `scripts/npm-exact-publish.sh verify-published-bounded`. The aw release workflow
 is maintained at `cli/go/.github/workflows/release.yml` and copied into

@@ -15,6 +15,8 @@ from redis.asyncio.client import PubSub
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import RedisError
 
+from aweb.redis_subscriptions import open_subscription, release_subscription
+
 logger = logging.getLogger(__name__)
 
 
@@ -454,20 +456,10 @@ async def stream_events_multi(
     next_reconnect_at: float | None = None
 
     async def _close_pubsub(ps: PubSub | None) -> None:
-        if ps is None:
-            return
-        try:
-            await ps.unsubscribe(*channels)
-        except Exception:
-            pass
-        try:
-            await ps.aclose()
-        except Exception:
-            pass
+        await release_subscription(ps, *channels)
 
     async def _connect_pubsub() -> PubSub:
-        ps: PubSub = redis.pubsub()
-        await ps.subscribe(*channels)
+        ps = await open_subscription(redis, *channels)
         logger.debug(f"Subscribed to {len(channels)} channels")
         return ps
 

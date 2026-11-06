@@ -36,6 +36,7 @@ from aweb.events import (
     team_events_channel_name,
 )
 from aweb.presence import get_workspace_ids_by_team_id, list_agent_presences_by_workspace_ids
+from aweb.redis_subscriptions import open_subscription, release_subscription
 from aweb.service_errors import ValidationError
 from aweb.team_auth import verify_dashboard_token
 
@@ -282,9 +283,8 @@ async def _build_dashboard_snapshot(db, redis, *, team_id: str) -> dict[str, Any
 
 async def _sse_dashboard_events(*, request: Request, db, redis, team_id: str):
     channel = team_events_channel_name(team_id)
-    async with redis.pubsub() as pubsub:
-        await pubsub.subscribe(channel)
-
+    pubsub = await open_subscription(redis, channel)
+    try:
         yield ": keepalive\n\n"
         yield _format_sse("connected", {"type": "connected", "team_id": team_id, "timestamp": _utc_now_iso()})
 
@@ -346,6 +346,8 @@ async def _sse_dashboard_events(*, request: Request, db, redis, team_id: str):
             if now - last_keepalive >= DASHBOARD_KEEPALIVE_SECONDS:
                 yield ": keepalive\n\n"
                 last_keepalive = now
+    finally:
+        await release_subscription(pubsub)
 
 
 # ---------------------------------------------------------------------------

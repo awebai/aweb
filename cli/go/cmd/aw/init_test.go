@@ -23,6 +23,7 @@ import (
 )
 
 func TestInitUsesGuidedOnboardingInTTY(t *testing.T) {
+	resetInitHostFlagsForTest(t)
 	// Cannot use t.Parallel() — needs cwd and globals.
 
 	oldWizard := guidedOnboardingWizard
@@ -101,6 +102,7 @@ func TestInitUsesGuidedOnboardingInTTY(t *testing.T) {
 }
 
 func TestInitExplicitHostedArgsInTTYSkipsOptionalPostCreatePrompts(t *testing.T) {
+	resetInitHostFlagsForTest(t)
 	// Cannot use t.Parallel() — needs cwd and globals.
 
 	oldWizard := guidedOnboardingWizard
@@ -174,6 +176,7 @@ func TestInitExplicitHostedArgsInTTYSkipsOptionalPostCreatePrompts(t *testing.T)
 }
 
 func TestInitNoTTYHostedRequiresExplicitNewAccountBeforeWizard(t *testing.T) {
+	resetInitHostFlagsForTest(t)
 	// Cannot use t.Parallel() — needs cwd and globals.
 	oldWizard := guidedOnboardingWizard
 	oldIsTTY := initIsTTY
@@ -254,6 +257,7 @@ func TestInitNoTTYLocalhostRequiresExplicitNewTeamBeforeLocalFlow(t *testing.T) 
 }
 
 func TestInitTTYMissingOutcomeUsesChooserConfirmation(t *testing.T) {
+	resetInitHostFlagsForTest(t)
 	// Cannot use t.Parallel() — needs cwd and globals/stdin.
 	oldWizard := guidedOnboardingWizard
 	oldIsTTY := initIsTTY
@@ -849,6 +853,7 @@ var (
 )
 
 func TestInitAdmissionTeamIDIssuesAcceptsAndConnects(t *testing.T) {
+	resetInitHostFlagsForTest(t)
 	resetAuthCommandGlobals(t)
 	oldAdmission, oldName, oldJSON, oldExpected := initAdmissionTeamID, initName, jsonFlag, initExpectedAccountID
 	t.Cleanup(func() {
@@ -1075,200 +1080,101 @@ func assertInitJoinTarget(t *testing.T, target, teamID, alias, wantDID string, s
 	}
 }
 
-func TestEnsureTeamAdmissionAuthForInitNonTTYRunsDeviceLogin(t *testing.T) {
-	resetAuthCommandGlobals(t)
-	oldIsTTY := initIsTTY
-	initIsTTY = func() bool { return false }
-	t.Cleanup(func() { initIsTTY = oldIsTTY })
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	var sawDevice, sawToken bool
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/oauth/device_authorization":
-			if err := r.ParseForm(); err != nil {
-				t.Fatal(err)
-			}
-			if r.Form.Get("scope") != cliAuthScopeTeamAdmission {
-				t.Fatalf("scope=%q", r.Form.Get("scope"))
-			}
-			sawDevice = true
-			_ = json.NewEncoder(w).Encode(map[string]any{"device_code": "device-secret", "user_code": "ABCD-EFGH", "verification_uri": serverFlag + "/oauth/device", "verification_uri_complete": serverFlag + "/oauth/device?user_code=ABCD-EFGH", "expires_in": 600, "interval": 1, "resource": serverFlag + "/cli", "scope": cliAuthScopeTeamAdmission})
-		case "/oauth/token":
-			if err := r.ParseForm(); err != nil {
-				t.Fatal(err)
-			}
-			if r.Form.Get("device_code") != "device-secret" {
-				t.Fatalf("device_code=%q", r.Form.Get("device_code"))
-			}
-			sawToken = true
-			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "team-access", "token_type": "bearer", "expires_in": 3600, "refresh_token": "team-refresh", "scope": cliAuthScopeTeamAdmission, "resource": serverFlag + "/cli"})
-		default:
-			t.Fatalf("unexpected path %s", r.URL.Path)
+// Admission init never starts a device login of its own: an accidental login
+// against the wrong host is worse than a refusal that names the right one.
+func TestEnsureTeamAdmissionAuthForInitRefusesWithoutLoginNamingTheHost(t *testing.T) {
+	for _, source := range []string{"aweb-url", "url", "AWEB_URL", "server-name"} {
+		for _, tty := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/tty=%t", source, tty), func(t *testing.T) {
+				resetAuthCommandGlobals(t)
+				resetInitHostFlagsForTest(t)
+				oldIsTTY := initIsTTY
+				initIsTTY = func() bool { return tty }
+				t.Cleanup(func() { initIsTTY = oldIsTTY })
+				t.Setenv("HOME", t.TempDir())
+				server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					t.Errorf("auth host called without a stored login: %s %s", r.Method, r.URL.Path)
+				}))
+				switch source {
+				case "aweb-url":
+					initAwebURL = server.URL
+				case "url":
+					initURL = server.URL + "/api"
+				case "AWEB_URL":
+					t.Setenv("AWEB_URL", server.URL+"/api")
+				case "server-name":
+					serverFlag = server.URL
+				}
+				var out bytes.Buffer
+				err := ensureTeamAdmissionAuthForInit(authTestCmd(&out))
+				want := "authorization-required: no cli.team_admission login for " + server.URL + "; run `aw auth login --scope cli.team_admission --server-name " + server.URL + "` first"
+				if err == nil || err.Error() != want {
+					t.Fatalf("err=%v\nwant %s", err, want)
+				}
+				if out.Len() != 0 {
+					t.Fatalf("refusal wrote %q", out.String())
+				}
+			})
 		}
-	}))
-	serverFlag = server.URL
+	}
+}
 
-	var out bytes.Buffer
-	cmd := authTestCmd(&out)
-	if err := ensureTeamAdmissionAuthForInit(cmd); err != nil {
+func TestEnsureTeamAdmissionAuthForInitRefusesALoginForAnotherHost(t *testing.T) {
+	resetAuthCommandGlobals(t)
+	resetInitHostFlagsForTest(t)
+	t.Setenv("HOME", t.TempDir())
+	refuseCalls := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected call %s %s", r.Method, r.URL.Path)
+	})
+	stored := newLocalHTTPServer(t, refuseCalls)
+	target := newLocalHTTPServer(t, refuseCalls)
+	saveTeamAdmissionLoginForTest(t, stored.URL)
+	initAwebURL = target.URL
+
+	err := ensureTeamAdmissionAuthForInit(authTestCmd(&bytes.Buffer{}))
+	want := "authorization-required: the stored cli.team_admission login is for " + stored.URL + ", not " + target.URL + "; run `aw auth login --scope cli.team_admission --server-name " + target.URL + "` first"
+	if err == nil || err.Error() != want {
+		t.Fatalf("err=%v\nwant %s", err, want)
+	}
+}
+
+func TestEnsureTeamAdmissionAuthForInitUsesAStoredLoginForTheNamedHost(t *testing.T) {
+	resetAuthCommandGlobals(t)
+	resetInitHostFlagsForTest(t)
+	t.Setenv("HOME", t.TempDir())
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected call %s %s", r.Method, r.URL.Path)
+	}))
+	saveTeamAdmissionLoginForTest(t, server.URL)
+	initAwebURL = server.URL + "/api"
+	if err := ensureTeamAdmissionAuthForInit(authTestCmd(&bytes.Buffer{})); err != nil {
 		t.Fatalf("ensure auth: %v", err)
 	}
-	if !sawDevice || !sawToken {
-		t.Fatalf("device=%t token=%t", sawDevice, sawToken)
-	}
-	if !strings.Contains(out.String(), "Open this URL to approve aw CLI login") || strings.Contains(out.String(), "team-access") || strings.Contains(out.String(), "device-secret") {
-		t.Fatalf("unexpected auth output: %q", out.String())
-	}
-	cfg, ok, err := loadCLIAuthConfigForScope(cliAuthScopeTeamAdmission)
-	if err != nil || !ok {
-		t.Fatalf("load team admission auth ok=%t err=%v", ok, err)
-	}
-	if cfg.AccessToken != "team-access" || cfg.Scope != cliAuthScopeTeamAdmission {
-		t.Fatalf("unexpected cfg=%+v", cfg)
-	}
 }
 
-func TestEnsureTeamAdmissionAuthForInitJSONWritesDeviceDocumentsToStderr(t *testing.T) {
+func TestEnsureTeamAdmissionAuthForInitUsesAnyStoredLoginWhenNoHostIsNamed(t *testing.T) {
 	resetAuthCommandGlobals(t)
-	oldIsTTY := initIsTTY
-	oldStderr := os.Stderr
-	initIsTTY = func() bool { return false }
-	jsonFlag = true
-	t.Cleanup(func() {
-		initIsTTY = oldIsTTY
-		os.Stderr = oldStderr
-	})
+	resetInitHostFlagsForTest(t)
 	t.Setenv("HOME", t.TempDir())
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/oauth/device_authorization":
-			_ = json.NewEncoder(w).Encode(map[string]any{"device_code": "device-secret", "user_code": "ABCD-EFGH", "verification_uri": serverFlag + "/oauth/device", "expires_in": 600, "interval": 1, "resource": serverFlag + "/cli", "scope": cliAuthScopeTeamAdmission})
-		case "/oauth/token":
-			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "team-access", "token_type": "bearer", "expires_in": 3600, "refresh_token": "team-refresh", "scope": cliAuthScopeTeamAdmission, "resource": serverFlag + "/cli"})
-		default:
-			t.Fatalf("unexpected path %s", r.URL.Path)
-		}
-	}))
-	serverFlag = server.URL
-	stderrR, stderrW, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer stderrR.Close()
-	os.Stderr = stderrW
-	var stdout bytes.Buffer
-	cmd := authTestCmd(&stdout)
-	if err := ensureTeamAdmissionAuthForInit(cmd); err != nil {
+	saveTeamAdmissionLoginForTest(t, "https://admission.example.test")
+	if err := ensureTeamAdmissionAuthForInit(authTestCmd(&bytes.Buffer{})); err != nil {
 		t.Fatalf("ensure auth: %v", err)
 	}
-	stderrW.Close()
-	stderrBytes, _ := io.ReadAll(stderrR)
-	if stdout.String() != "" {
-		t.Fatalf("json init auth helper wrote to stdout: %q", stdout.String())
-	}
-	if !strings.Contains(string(stderrBytes), `"status":"pending"`) || !strings.Contains(string(stderrBytes), `"status":"authorized"`) {
-		t.Fatalf("missing json auth documents on stderr: %s", stderrBytes)
-	}
 }
 
-func TestEnsureTeamAdmissionAuthForInitNonTTYReportsDeviceExpiry(t *testing.T) {
-	resetAuthCommandGlobals(t)
-	oldIsTTY := initIsTTY
-	initIsTTY = func() bool { return false }
-	t.Cleanup(func() { initIsTTY = oldIsTTY })
-	t.Setenv("HOME", t.TempDir())
-
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/oauth/device_authorization":
-			_ = json.NewEncoder(w).Encode(map[string]any{"device_code": "device-secret", "user_code": "ABCD-EFGH", "verification_uri": serverFlag + "/oauth/device", "expires_in": 600, "interval": 1, "resource": serverFlag + "/cli", "scope": cliAuthScopeTeamAdmission})
-		case "/oauth/token":
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(map[string]any{"error": "expired_token"})
-		default:
-			t.Fatalf("unexpected path %s", r.URL.Path)
-		}
-	}))
-	serverFlag = server.URL
-	cliAuthLoginTimeout = 2 * time.Second
-
-	var out bytes.Buffer
-	err := ensureTeamAdmissionAuthForInit(authTestCmd(&out))
-	if err == nil || !strings.Contains(err.Error(), "device code expired") {
-		t.Fatalf("expected expiry, got %v", err)
-	}
-	if !strings.Contains(out.String(), "Open this URL") {
-		t.Fatalf("missing device instructions: %q", out.String())
-	}
+func resetInitHostFlagsForTest(t *testing.T) {
+	t.Helper()
+	oldAwebURL, oldURL := initAwebURL, initURL
+	initAwebURL, initURL = "", ""
+	t.Setenv("AWEB_URL", "")
+	t.Cleanup(func() { initAwebURL, initURL = oldAwebURL, oldURL })
 }
 
-func TestEnsureTeamAdmissionAuthForInitNonTTYPendingTimesOut(t *testing.T) {
-	resetAuthCommandGlobals(t)
-	oldIsTTY := initIsTTY
-	initIsTTY = func() bool { return false }
-	t.Cleanup(func() { initIsTTY = oldIsTTY })
-	t.Setenv("HOME", t.TempDir())
-
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/oauth/device_authorization":
-			_ = json.NewEncoder(w).Encode(map[string]any{"device_code": "device-secret", "user_code": "ABCD-EFGH", "verification_uri": serverFlag + "/oauth/device", "expires_in": 600, "interval": 1, "resource": serverFlag + "/cli", "scope": cliAuthScopeTeamAdmission})
-		case "/oauth/token":
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(map[string]any{"error": "authorization_pending"})
-		default:
-			t.Fatalf("unexpected path %s", r.URL.Path)
-		}
-	}))
-	serverFlag = server.URL
-	cliAuthLoginTimeout = 50 * time.Millisecond
-
-	var out bytes.Buffer
-	err := ensureTeamAdmissionAuthForInit(authTestCmd(&out))
-	if err == nil || !strings.Contains(err.Error(), "timed out waiting for browser approval") {
-		t.Fatalf("expected pending timeout, got %v", err)
-	}
-	if !strings.Contains(out.String(), "Open this URL") {
-		t.Fatalf("missing device instructions: %q", out.String())
-	}
-}
-
-func TestEnsureTeamAdmissionAuthForInitTTYDeclineGivesLoginCommand(t *testing.T) {
-	resetAuthCommandGlobals(t)
-	oldIsTTY := initIsTTY
-	oldStdin, oldStderr := os.Stdin, os.Stderr
-	initIsTTY = func() bool { return true }
-	t.Cleanup(func() {
-		initIsTTY = oldIsTTY
-		os.Stdin, os.Stderr = oldStdin, oldStderr
-	})
-	t.Setenv("HOME", t.TempDir())
-	inR, inW, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	outR, outW, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer inR.Close()
-	defer outR.Close()
-	os.Stdin, os.Stderr = inR, outW
-	if _, err := inW.WriteString("n\n"); err != nil {
-		t.Fatal(err)
-	}
-	inW.Close()
-
-	err = ensureTeamAdmissionAuthForInit(authTestCmd(&bytes.Buffer{}))
-	outW.Close()
-	promptBytes, _ := io.ReadAll(outR)
-	if err == nil || !strings.Contains(err.Error(), "aw auth login --scope cli.team_admission") {
-		t.Fatalf("expected login command error, got %v", err)
-	}
-	if !strings.Contains(string(promptBytes), "Start bounded device login now") {
-		t.Fatalf("missing prompt: %s", promptBytes)
+func saveTeamAdmissionLoginForTest(t *testing.T, issuer string) {
+	t.Helper()
+	cfg := cliAuthConfig{Issuer: issuer, Resource: issuer + "/cli", Scope: cliAuthScopeTeamAdmission, ClientID: cliAuthClientID, AccessToken: "team-access", RefreshToken: "team-refresh", TokenType: cliAuthTokenType, ExpiresAt: time.Now().Add(time.Hour), UpdatedAt: time.Now()}
+	if err := saveCLIAuthConfigForScope(cliAuthScopeTeamAdmission, cfg); err != nil {
+		t.Fatalf("save auth: %v", err)
 	}
 }
 
@@ -2094,7 +2000,7 @@ func TestRunImplicitLocalInitRequiresName(t *testing.T) {
 	}
 }
 
-func TestInitAdmissionTeamIDRequiresExpectAccountBeforeDeviceLogin(t *testing.T) {
+func TestInitAdmissionTeamIDRequiresExpectAccountBeforeAnyHostCall(t *testing.T) {
 	resetAuthCommandGlobals(t)
 	oldAdmission, oldExpected, oldJSON := initAdmissionTeamID, initExpectedAccountID, jsonFlag
 	initAdmissionTeamID = "shared:aweb.ai"
@@ -2112,7 +2018,7 @@ func TestInitAdmissionTeamIDRequiresExpectAccountBeforeDeviceLogin(t *testing.T)
 	withTestWorkingDir(t, t.TempDir(), func() {
 		err := runInitAdmissionTeamID(authTestCmd(&bytes.Buffer{}))
 		if err == nil || !strings.Contains(err.Error(), "--expect-account") {
-			t.Fatalf("err=%v, want --expect-account before device login", err)
+			t.Fatalf("err=%v, want --expect-account before any host call", err)
 		}
 	})
 	if called {

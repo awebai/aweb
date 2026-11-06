@@ -146,6 +146,8 @@ pathlib.Path(sys.argv[sys.argv.index("-o")+1]).write_bytes(b"fixture compiler ou
                 else:
                     publisher.publish_aw_npm(root, "1.2.3", "a" * 40, staged_final=True)
             self.assertEqual([name for name, _, _ in registry.published], ["@awebai/" + p for p in PACKAGES])
+            self.assertEqual(registry.git_heads, {"@awebai/" + p: "a" * 40 for p in PACKAGES},
+                             "every package records the source commit its binaries are stamped with")
             self.assertTrue(all(tags == {"next": "1.2.3"} for _, _, tags in registry.published))
             self.assertEqual(registry.reads, {("@awebai/" + p, kind) for p in PACKAGES for kind in ("version", "tag")})
             self.assertEqual(len(readbacks), 1, "aw must share one readback deadline, not start one per package")

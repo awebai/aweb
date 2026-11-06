@@ -6465,6 +6465,9 @@ async def test_chat_stream_replay_includes_sender_stable_identity_for_current_ke
         async def close(self):
             return None
 
+        async def aclose(self):
+            return None
+
     class _FakeRedis:
         def pubsub(self):
             return _FakePubSub()

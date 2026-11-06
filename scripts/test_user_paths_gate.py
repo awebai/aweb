@@ -64,10 +64,7 @@ class UserPathsAdmission(unittest.TestCase):
         inventory = result_model.qualification({}, 10, [])['required_agent_cases']
         lanes = {lane: {'outcomes': [dict(case=case, status='PASSED') for case in inventory if case.startswith(lane + '/')]}
                  for lane in ['head', 'released']}
-        lanes['released']['version'] = '1.36.53'
-        for row in lanes['released']['outcomes']:
-            if row['case'] in [rule['case'] for rule in result_model.KNOWN_RELEASED_ISSUES]:
-                row.update(status='FAILED', failure=known_failure(row['case']))
+        lanes['released']['version'] = '1.36.55'
         full = result_model.qualification(lanes, 100, [])
         self.assertEqual(full['status'], 'PASSED')
         self.assertEqual(full['coverage_summary'], 'incomplete: human paths not covered')
@@ -75,13 +72,27 @@ class UserPathsAdmission(unittest.TestCase):
         self.assertTrue(all(row['case'] not in full['passed_agent_cases'] for row in full['required_humans']))
         self.assertEqual(len(full['required_humans']), 12)
         self.assertEqual(len(full['required_agent_cases']), 66)
-        self.assertEqual(len(full['passed_agent_cases']), 64)
-        self.assertEqual(len(full['known_issues']), 2)
+        self.assertEqual(len(full['passed_agent_cases']), 66)
+        self.assertEqual(full['known_issue_budget'], [])
+        self.assertEqual(full['known_issues'], [])
         self.assertEqual(result_model.qualification({'head': lanes['head']}, 100, [])['status'], 'FAILED')
         self.assertEqual(result_model.qualification(lanes, 600, [])['status'], 'FAILED')
         self.assertEqual(result_model.qualification(lanes, 100, ['owned resource remains'])['status'], 'FAILED')
         lanes['released']['outcomes'][0]['status'] = 'FAILED'
         self.assertEqual(result_model.qualification(lanes, 100, [])['status'], 'FAILED')
+
+    def test_fixed_released_local_chat_has_no_budget_exception(self):
+        self.assertEqual(result_model.KNOWN_RELEASED_ISSUES, [])
+        for case in ['released/t1->t2/chat/v2', 'released/t2->t1/chat/v2']:
+            with self.subTest(case=case):
+                passed = result_model.classify_outcome(dict(case=case, status='PASSED'), '1.36.55')
+                self.assertEqual(passed['status'], 'PASSED')
+                self.assertNotIn('known_issue', passed)
+                # A recurrence is an ordinary failure, including the old exact diagnostic.
+                failed = result_model.classify_outcome(
+                    dict(case=case, status='FAILED', failure=known_failure(case)), '1.36.55')
+                self.assertEqual(failed['status'], 'FAILED')
+                self.assertNotIn('known_issue', failed)
 
     def test_failure_is_a_failed_second_stage_and_stops_unit(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -257,7 +268,8 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                     self.assertEqual(len(ledger), 5, ledger)
                     self.assertEqual(len({row.split('\t')[0] for row in ledger}), 1)
                     receipt = json.loads((root / 'snapshot.json').read_text())
-                    expected = (json.dumps(metadata, sort_keys=True) + '\n').encode()
+                    # The frozen input names its source: a registry gitHead here.
+                    expected = (json.dumps(dict(metadata, source='gitHead'), sort_keys=True) + '\n').encode()
                     digest = hashlib.sha256(expected).hexdigest()
                     self.assertEqual(receipt['body'].encode(), expected)
                     self.assertEqual(receipt['digest'], digest)
@@ -430,6 +442,21 @@ class ExactMessageAssertions(unittest.TestCase):
 
 
 class ReleasedKnownIssueBudget(unittest.TestCase):
+    def setUp(self):
+        # Exercise the unchanged guard using test-only rules, independently of
+        # the now-empty production budget. These are not admission exceptions.
+        from unittest.mock import patch
+        rules = []
+        for case in ['released/t1->t2/chat/v2', 'released/t2->t1/chat/v2']:
+            failure = known_failure(case)
+            rules.append(dict(case=case, task='fixture-issue', minimum_version='1.36.53',
+                              maximum_version='1.36.54', actor=failure['actor'],
+                              target=failure['args'][2], exit=failure['exit'], code='error',
+                              message=failure['response']['error']['message']))
+        guard = patch.object(result_model, 'KNOWN_RELEASED_ISSUES', rules)
+        guard.start()
+        self.addCleanup(guard.stop)
+
     def test_successful_budgeted_flow_reports_only_failure_after_classification(self):
         import io
         import sys
@@ -487,7 +514,7 @@ class ReleasedKnownIssueBudget(unittest.TestCase):
                 self.assertEqual(lane.outcomes[0]['status'], expected)
                 self.assertEqual(len(lane.failures), 0 if name=='released' else 1)
                 if name=='released':
-                    self.assertTrue(stdout.getvalue().startswith('KNOWN ISSUE '+case+' aweb-actw observed failure:'))
+                    self.assertTrue(stdout.getvalue().startswith('KNOWN ISSUE '+case+' fixture-issue observed failure:'))
                     self.assertNotIn('FAIL ', stdout.getvalue())
                     self.assertEqual(lane.outcomes[0]['failure']['response'], failure['response'])
                     unexpected = io.StringIO()
@@ -507,7 +534,7 @@ class ReleasedKnownIssueBudget(unittest.TestCase):
                 row = dict(case=case, status='FAILED', failure=known_failure(case))
                 classified = result_model.classify_outcome(row, version)
                 self.assertEqual(classified['status'], 'KNOWN_ISSUE')
-                self.assertEqual(classified['known_issue']['task'], 'aweb-actw')
+                self.assertEqual(classified['known_issue']['task'], 'fixture-issue')
                 self.assertEqual(classified['observed_status'], 'FAILED')
                 # Reclassification at the parent boundary preserves the same verdict.
                 self.assertEqual(result_model.classify_outcome(classified, version), classified)

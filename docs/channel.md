@@ -133,13 +133,15 @@ reproduce.
 
 ## Responding to events
 
-The channel does not expose outbound tools. Use the `aw` CLI for all responses:
+The channel does not expose outbound tools. Use the `aw` CLI for all responses.
+Write each body to a new owner-only file made for that message
+(`file=$(mktemp)`, mode 0600), never a fixed or shared path:
 
 | Action | Command |
 | --- | --- |
-| Reply to chat | `aw chat send-and-wait <from> "<reply>"` |
-| Start a mail thread | `aw mail send --to <alias> --subject "..." --body "..."` |
-| Answer mail | `aw mail reply <message_id> --body "..."` |
+| Reply to chat | `aw chat send-and-wait <from> --body-file "$file"` |
+| Start a mail thread | `aw mail send --to <alias> --subject "..." --body-file "$file"` |
+| Answer mail | `aw mail reply <message_id> --body-file "$file"` |
 | Check inbox | `aw mail inbox` (reading marks unread messages as acknowledged) |
 | Check pending chats | `aw chat pending` |
 
@@ -182,7 +184,7 @@ The per-agent local delivery store is belt-and-suspenders against duplicate
 presentation, not a recovery mechanism for either sub-case. The correct fix for
 redelivery is presentation-ack, not a policy of never acking (which left mail
 unread and caused the reconnect replay burst, default-aajy). Replying with
-`aw mail reply <message_id> --body "..."` is the normal handled path;
+`aw mail reply <message_id> --body-file "$file"` is the normal handled path;
 `aw mail ack <message_id>` is only a courtesy read-receipt for the sender, not
 required to prevent redelivery. Running `aw mail inbox` marks displayed unread
 mail as read. `aw mail show` is read-only.
