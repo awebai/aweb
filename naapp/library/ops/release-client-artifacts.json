@@ -1,0 +1,42 @@
+{
+  "platform": "linux-x86_64",
+  "aw_git_head": "4d5eafdcc9118cfb8204740fa70a0d48acfd18e4",
+  "artifacts": {
+    "aw": {
+      "name": "@awebai/aw-linux-x64",
+      "version": "1.36.56",
+      "url": "https://registry.npmjs.org/@awebai/aw-linux-x64/-/aw-linux-x64-1.36.56.tgz",
+      "integrity": "sha512-30rI+DTit1afRl9e1vRGrxiv/itpWvpTPudeJl793pM0bE3OdNVCzsbAxhxXNhUpWokHvor7rJEfff2LpDjINg==",
+      "archive_sha256": "5f558a0ce210bcbdbc0302bc685dd80af0ca297f17565c13aa6819e346bc2df8",
+      "member": "package/bin/aw",
+      "sha256": "5530d448f06a6079d5f713e7743b1c7ccf5c70d8c5bbf6e154f58d8ae3931949"
+    },
+    "claude": {
+      "name": "@anthropic-ai/claude-code-linux-x64",
+      "version": "2.1.318",
+      "url": "https://registry.npmjs.org/@anthropic-ai/claude-code-linux-x64/-/claude-code-linux-x64-2.1.318.tgz",
+      "integrity": "sha512-GX+7CUng2R5f7SsA2w0LaXlH2f62fRCFD/Z2SUexoeH3B0KfulKQt5DtY9NeD2Yp3VEBz6/k/xWSbGPUi6NV2A==",
+      "archive_sha256": "2a4d5e3bd0f5bd2959bb1955bd99ea97f57af162681991dcae00fee82f9d554f",
+      "member": "package/claude",
+      "sha256": "708c77b204db30086ff6f1ed34577bda03e1be74ced80557cbf7b54249ebf0bd"
+    },
+    "pi": {
+      "name": "@earendil-works/pi-coding-agent",
+      "version": "1.5.0",
+      "url": "https://registry.npmjs.org/@earendil-works/pi-coding-agent/-/pi-coding-agent-1.5.0.tgz",
+      "integrity": "sha512-xNDZ5kqowO6Z03FS2gwAkPEGk1ssxVcYKQ6qZId84mFEvwACvvyc2l0vAMOS+c5zvxLRMLBE9r4y44IGYkMJaQ==",
+      "archive_sha256": "5bfb66848a4c4b81c637ce8d2136be01945b70aac8e8556b091cb02241b385df",
+      "member": "package/dist/bundle/cli.js",
+      "sha256": "e79626f2dd6f94aa45d30f3fa63cd84319a6eefcd150b353cfaf274366926774",
+      "tree_sha256": "7613203618be9cf738fd210214ca09a8fcd33a8df8d343d8b471532781a96c62",
+      "file_count": 1286
+    },
+    "node": {
+      "version": "v26.13.0",
+      "url": "https://nodejs.org/dist/v26.13.0/node-v26.13.0-linux-x64.tar.xz",
+      "archive_sha256": "d28a96af6c38596f6d9d97c0ee531c13d238d757742387d1928de822d959e997",
+      "member": "node-v26.13.0-linux-x64/bin/node",
+      "sha256": "0adde40d1b7dfa57c8bc83cbc319758c3ec6ebba21363bb2fa752ea6b267ad1b"
+    }
+  }
+}
