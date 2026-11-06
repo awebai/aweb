@@ -5,8 +5,10 @@ from contextlib import asynccontextmanager
 from html.parser import HTMLParser
 from urllib.parse import urlencode
 
+import aweb_naapp as naapp
 import httpx
 from aweb_naapp.console import CONSOLE_HEADERS, apply_console_migrations
+from aweb_naapp.css import font_bytes
 from aweb_naapp.roles import unassign
 from aweb_naapp.runtime.origins import split_origins
 from fastapi import FastAPI
@@ -120,3 +122,31 @@ async def test_shell_assets_stay_on_the_human_origin_and_refuse_team_auth(world:
             denied = await browser.get(path, headers={"X-AWEB-Signature": "invalid"})
             assert denied.status_code == 403
         assert (await browser.get("/login", params={"scope": "locator"})).status_code == 200
+
+
+async def test_console_loads_shared_toolkit_styles_and_only_the_toolkit_font(world: World):
+    async with pages(world) as (browser, agent):
+        page = await browser.get("/login?scope=locator")
+        styles = [
+            attrs["href"]
+            for tag, attrs in Elements(page.text).tags
+            if tag == "link" and attrs.get("rel") == "stylesheet"
+        ]
+        shared = f"/css/aweb.{naapp.CSS_SHA256[:12]}.css"
+        assert styles.index(shared) < styles.index("/console-ui/style.css")
+        for path, expected in (
+            (shared, naapp.aweb_css().encode()),
+            ("/fonts/Archivo-Latin-Variable.woff2", font_bytes("Archivo-Latin-Variable.woff2")),
+        ):
+            response = await browser.get(path)
+            assert response.status_code == 200 and response.content == expected
+            safe(response)
+            assert (await agent.get(path)).status_code == 404
+            assert (
+                await browser.get(path, headers={"X-AWEB-Signature": "invalid"})
+            ).status_code == 403
+        for weight in ("Light", "Regular", "SemiBold"):
+            assert (await browser.get(f"/fonts/BerkeleyMono-{weight}.woff2")).status_code == 404
+        for path in styles:
+            response = await browser.get(path)
+            assert "BerkeleyMono" not in response.text
