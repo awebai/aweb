@@ -20,32 +20,56 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal, Protocol
 
 from aweb_naapp.console import ConsoleRoute, ConsoleSession
 from aweb_naapp.hooks.producer import Registrations
 from aweb_naapp.hooks.strictjson import Refused as HookRefused
 from aweb_naapp.roles import hold_role
 from aweb_naapp.runtime.approvals import (
+    Approval,
     ApprovalRefused,
     Approvals,
     ApprovalState,
     Assurance,
     Decision,
 )
+from aweb_naapp.runtime.approvals.request import RequestNotCanonical, request_sha256
 from aweb_naapp.runtime.installation import AdmittedInstallation, InstallationRefused
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pgdbm import TransactionManager
 
 from aweb_secrets.change import ChangeRefused
-from aweb_secrets.change_sets import AUDITED_CREATE_KINDS, ChangeSets, Confirmation
+from aweb_secrets.change_sets import (
+    AUDITED_CREATE_KINDS,
+    ChangeSets,
+    Confirmation,
+    change_policy_ref,
+)
 from aweb_secrets.console import OwnerConsole, _body, _require_json, _text
 from aweb_secrets.console_results import confirmation_receipt, owner_confirmation_result
 from aweb_secrets.credential_audit import GovernanceUnavailable
 from aweb_secrets.custody import SealContext
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
 from aweb_secrets.revisions import config_revision
+from aweb_secrets.use_audit import UseAuditUnavailable
+
+AppApprovalKind = Literal["use", "run", "reconciliation_control"]
+
+
+class ApprovalKindLookup(Protocol):
+    async def __call__(self, tx: TransactionManager, approval: Approval) -> AppApprovalKind | None:
+        """Read the exact immutable app association, returning no protected terms."""
+        ...
+
+
+_APPROVAL_PATHS = {
+    "change_set": "/approvals",
+    "use": "/use-approvals",
+    "run": "/run-approvals",
+    "reconciliation_control": "/reconciliation-approvals",
+}
 
 AfterCommit = Callable[[str, str, tuple[str, ...]], Awaitable[None]]
 _LOG = logging.getLogger(__name__)
@@ -62,12 +86,14 @@ class ConsoleChanges:
         approvals: Approvals,
         registrations: Registrations,
         after_commit: AfterCommit,
+        approval_kind: ApprovalKindLookup,
     ) -> None:
         self.console = console
         self.changes = changes
         self.approvals = approvals
         self.registrations = registrations
         self.after_commit = after_commit
+        self.approval_kind = approval_kind
 
     async def _installation(self, installation_id: str) -> AdmittedInstallation:
         admitted = await self.console.installation(installation_id)
@@ -227,6 +253,52 @@ class ConsoleChanges:
             await self._owner(tx, current, admitted)
         return str(installation_id)
 
+    async def dispatch(self, token: str) -> dict[str, str]:
+        """Select a typed page from real associations; the locator grants no authority."""
+        linked = await self.approvals.open_link(token)
+        approval = linked.approval
+        async with self.console.db.transaction() as tx:
+            await tx.execute("SET TRANSACTION READ ONLY")
+            rows = await tx.fetch_all(
+                "SELECT change_id,installation_id,team_id,via,drafted_by,request "
+                "FROM {{tables.change_sets}} WHERE approval_id=$1",
+                approval.approval_id,
+            )
+            if len(rows) > 1:
+                raise HTTPException(409, "approval_refused")
+            change_set = bool(rows)
+            if change_set:
+                row = rows[0]
+                request = (
+                    json.loads(row["request"])
+                    if isinstance(row["request"], str)
+                    else row["request"]
+                )
+                policy = change_policy_ref(
+                    row["installation_id"],
+                    row["team_id"],
+                    row["drafted_by"] if row["via"] == "console" else None,
+                )
+                if (
+                    not isinstance(request, dict)
+                    or request.get("change_id") != row["change_id"]
+                    or request.get("installation_id") != row["installation_id"]
+                    or request.get("team_id") != row["team_id"]
+                    or approval.policy_ref != policy
+                    or approval.policy_version != 1
+                    or request_sha256({"policy": {"ref": policy, "version": 1}, "request": request})
+                    != approval.request_sha256
+                ):
+                    raise HTTPException(409, "approval_refused")
+            kind = await self.approval_kind(tx, approval)
+        if kind is not None and kind not in ("use", "run", "reconciliation_control"):
+            raise HTTPException(409, "approval_refused")
+        if int(change_set) + int(kind is not None) != 1:
+            raise HTTPException(409, "approval_refused")
+        selected = "change_set" if change_set else kind
+        assert selected is not None
+        return {"kind": selected, "path": _APPROVAL_PATHS[selected]}
+
     async def locate(self, current: ConsoleSession, token: str) -> dict[str, Any]:
         """Resolve the personal email locator without returning it or another candidate."""
         linked = await self.approvals.open_link(token)
@@ -385,6 +457,16 @@ def console_changes_router(services: ConsoleChanges, *, prefix: str = "") -> API
     """Mount alongside the shared console only on the human origin."""
     router = APIRouter(prefix=prefix, route_class=ConsoleRoute)
     root = "/installations/{installation_id}/change-sets"
+
+    @router.post("/approvals/dispatch", dependencies=[Depends(_require_json)])
+    async def dispatch(request: Request):
+        body = await _body(request, {"token"})
+        try:
+            return await services.dispatch(_text(body, "token"))
+        except (ApprovalRefused, json.JSONDecodeError, RequestNotCanonical):
+            raise HTTPException(409, "approval_refused") from None
+        except UseAuditUnavailable:
+            raise HTTPException(503, "release_context_unavailable") from None
 
     @router.post("/approvals/sign-in", dependencies=[Depends(_require_json)])
     async def signin_scope(request: Request):

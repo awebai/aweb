@@ -46,7 +46,9 @@ def _font_bytes(name: str) -> bytes:
     return b"wOF2" + name.encode("utf-8")
 
 
-def _client(tmp_path: Path, *, committed: bytes | None = None, **overrides: object) -> TestClient:
+def _client(
+    tmp_path: Path, *, committed: bytes | None = None, omit_fonts_dir: bool = False, **overrides: object
+) -> TestClient:
     tmp_path.mkdir(parents=True, exist_ok=True)
     manifest_path = tmp_path / "aweb-app.json"
     if committed is None:
@@ -80,6 +82,8 @@ def _client(tmp_path: Path, *, committed: bytes | None = None, **overrides: obje
         fonts_dir=fonts_dir,
     )
     options.update(overrides)
+    if omit_fonts_dir:
+        options.pop("fonts_dir")
     mount_naapp_routes(app, **options)  # type: ignore[arg-type]
 
     @app.get("/present/{token}")
@@ -152,6 +156,21 @@ def test_fonts_do_not_require_app_copies(tmp_path: Path) -> None:
     for name in FONT_NAMES:
         assert client.get(f"/fonts/{name}").content == font_bytes(name)
     assert client.get("/fonts/BerkeleyMono-Regular.woff2").status_code == 404
+
+
+@pytest.mark.parametrize("omit_fonts_dir", [True, False], ids=["omitted", "none"])
+def test_mount_without_app_fonts_serves_only_toolkit_fonts(tmp_path: Path, omit_fonts_dir: bool) -> None:
+    owned = tmp_path / "fonts"
+    owned.mkdir()
+    (owned / "AppMono.woff2").write_bytes(b"wOF2app-owned")
+    client = _client(tmp_path, omit_fonts_dir=omit_fonts_dir, fonts_dir=None)
+    for name in FONT_NAMES:
+        response = client.get(f"/fonts/{name}")
+        assert response.status_code == 200
+        assert response.content == font_bytes(name)
+        assert response.headers["content-type"] == "font/woff2"
+    for path in ("AppMono.woff2", "missing.woff2", "private.txt", "..%2Faweb-app.json"):
+        assert client.get(f"/fonts/{path}").status_code == 404
 
 
 def test_manifest_is_the_committed_bytes_at_both_paths(tmp_path: Path) -> None:

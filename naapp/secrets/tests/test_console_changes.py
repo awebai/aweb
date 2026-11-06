@@ -7,14 +7,17 @@ import asyncpg
 import httpx
 import pytest
 from aweb_naapp.console import COOKIE_NAME, apply_console_migrations
+from aweb_naapp.dispatch import apply_dispatch_migrations
 from aweb_naapp.runtime.approvals import ApprovalState
 from aweb_naapp.runtime.origins import split_origins
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
 from fastapi import FastAPI, Request
 
+from aweb_secrets.approval_kind import approval_kind
 from aweb_secrets.console import OwnerConsole, owner_console_router
 from aweb_secrets.console_changes import ConsoleChanges, console_changes_router
 from aweb_secrets.console_values import ConsoleValues, console_values_router
+from aweb_secrets.use_context import apply_use_context_migrations
 from tests.test_change_set_onepassword import view
 from tests.test_change_sets import ALICE, BOB, ORIGIN, TEAM, enrol_owner
 from tests.test_change_sets import world as _world
@@ -32,9 +35,18 @@ class Registrations:
 
 
 async def application(
-    w, *, registrations=None, cleanup=None, forms=False, human_origin=ORIGIN, agent_origin=API
+    w,
+    *,
+    registrations=None,
+    cleanup=None,
+    forms=False,
+    human_origin=ORIGIN,
+    agent_origin=API,
+    kind_lookup=approval_kind,
 ):
     await apply_console_migrations(w.db)
+    await apply_dispatch_migrations(w.db)
+    await apply_use_context_migrations(w.db)
 
     async def installation(installation_id, *, team_id: str | None = None):
         if installation_id != INSTALLATION_ID:
@@ -64,6 +76,7 @@ async def application(
         changes=w.change_sets,
         approvals=w.approvals,
         registrations=registrations or Registrations(),
+        approval_kind=kind_lookup,
         after_commit=cleanup or w.containment.evict,
     )
     human_app.include_router(console_changes_router(changes))
@@ -75,8 +88,10 @@ async def application(
 
 
 @asynccontextmanager
-async def clients(w, *, registrations=None, cleanup=None, forms=False):
-    app = await application(w, registrations=registrations, cleanup=cleanup, forms=forms)
+async def clients(w, *, registrations=None, cleanup=None, forms=False, kind_lookup=approval_kind):
+    app = await application(
+        w, registrations=registrations, cleanup=cleanup, forms=forms, kind_lookup=kind_lookup
+    )
     async with (
         httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=ORIGIN) as human,
         httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=API) as agent,

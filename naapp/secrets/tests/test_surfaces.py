@@ -141,6 +141,7 @@ async def test_public_routes_mount_only_on_api_and_keep_manifest_assets_and_heal
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=service), base_url=ORIGIN
     ) as client:
+        documents = []
         for path, content_type in (
             ("/", "text/html"),
             ("/reference", "text/html"),
@@ -151,6 +152,7 @@ async def test_public_routes_mount_only_on_api_and_keep_manifest_assets_and_heal
             assert response.status_code == 200, path
             assert response.headers["content-type"].startswith(content_type)
             assert "set-cookie" not in response.headers
+            documents.append(response.text)
             assert (await client.get("https://console.secrets.test" + path)).status_code == 404
         served = await client.get("/aweb-app.json")
         assert served.content == runtime.manifest_bytes
@@ -159,7 +161,10 @@ async def test_public_routes_mount_only_on_api_and_keep_manifest_assets_and_heal
         )
         css = await client.get(f"/css/aweb.{naapp.CSS_SHA256[:12]}.css")
         assert css.text == naapp.aweb_css()
-        assert (await client.get("/fonts/BerkeleyMono-Regular.woff2")).status_code == 200
+        documents.append(css.text)
+        for weight in ("Light", "Regular", "SemiBold"):
+            assert (await client.get(f"/fonts/BerkeleyMono-{weight}.woff2")).status_code == 404
+        assert all("BerkeleyMono" not in document for document in documents)
         card = await client.get("/og-card.png")
         assert card.content.startswith(b"\x89PNG\r\n\x1a\n")
         for name in SKILLS.names():

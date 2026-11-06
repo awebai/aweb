@@ -177,3 +177,44 @@ receipts and checkpoints it is given, and reports:
 `verify` reports the producer and hook sequence gaps inside binding intervals,
 and conflicting deliveries, from logs' records of bindings and faults. Those
 are not part of this pure chain check or of its vector.
+
+The stored-report API, `aweb_logs.ledger.verify_epoch`, adds `delivery` and
+`conflicts` to the pure chain report. Its caller authorizes the reader and
+supplies the expected receipt/checkpoint keys. It reads events and refused-byte
+faults consistently under the team head lock, then verifies outside that lock.
+`intact` describes the chain; a delivery finding does not imply a chain edit.
+Conflicts name the event, its stored chain position, the refused-byte digest
+and the recorded fault time, without returning refused content.
+
+`delivery.scope` is always `observed_internal_only`. Its `gaps` are inclusive
+missing sequence ranges between retained authenticated observations in the
+same team/catalog/hook, producer identity and admitted binding intervals.
+Admission retains both the addressed registration and, for an app producer,
+the active production identity and `active_from` that authorized that exact
+origin/app/installation/generation. Duplicate deliveries preserve additional
+admitted registration contexts without appending another event or changing its
+receipt. The first observed sequence is not a signed baseline of 1.
+
+For app events the observation identity includes origin, app ID, installation
+and generation; for core it includes the anchored server origin. Neither key
+ID nor public key starts a new interval: rotation cannot hide a hole. Changes
+of registration, production activation, installation/generation or server
+origin do not establish continuity across those boundaries. This scopes the
+receiver's evidence; it does **not** authorize resetting the durable shared
+producer counter, which remains allocated per producer/team/hook.
+
+Delivery arrival order does not establish sequence order. Later delivery of
+missing events fills observed holes. Distinct authenticated events reusing a
+sequence within the same producer identity appear in `sequence_conflicts`,
+without attributing a cause or inventing a restart. Client events have no
+required sequence and are excluded from this calculation.
+
+`unassessed` names chain positions with missing lifecycle evidence (including
+older stored events), invalid retained content or purged content. An uncertain
+observation suppresses hole inference for its producer identity, or its
+hook/origin when the producer identity is no longer available. No lifecycle
+history is fabricated from today's resolver view. An empty observed-hole list
+proves neither an unobserved prefix nor trailing delivery completeness. Missing
+integers alone do not prove that every integer was owed to this interval, or
+establish a loss cause. Terminal cancellation coverage still needs the paired
+terminal implementation; ordinary admission remains active-only.
