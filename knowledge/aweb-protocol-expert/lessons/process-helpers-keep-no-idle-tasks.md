@@ -2,15 +2,16 @@
 type: Lesson
 title: Process helpers keep no idle tasks
 description: A process-level helper in shared library code runs its background task only while it has work; an idle forever-waiting task outlives host runtimes that close later than their event loop's task checks, and only the host's leak check catches it.
-tags: [lesson, asyncio, background-tasks, cloud, mounting, testing]
+tags: [lesson, asyncio, background-tasks, mounting, testing]
 timestamp: 2026-11-04
 ---
 
 Found on 2026-11-04 in the agent wake publisher's retry task. The task
-originally waited forever for work. Cloud's channel worker closes its host
-runtime later than its event loop's pending-task checks run, so the idle task
-outlived the runtime. OSS tests passed; Cloud's test leak check, which drains
-pending tasks, caught it.
+originally waited forever for work. A host that embeds aweb closed its worker's
+runtime later than its event loop's pending-task checks ran, so the idle task
+outlived the runtime. OSS tests passed; the host's test leak check, which
+drains pending tasks, caught it. The fix is on main (6b7b28e72,
+server-v1.27.47).
 
 # How to apply
 

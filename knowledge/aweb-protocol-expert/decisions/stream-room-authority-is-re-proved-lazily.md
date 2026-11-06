@@ -1,14 +1,15 @@
 ---
 type: Decision
 title: Stream room authority is re-proved lazily
-description: A long-lived agent stream emits room content only on a successful authority check younger than 60 s, re-proved only when there is content to emit, and a failed check emits nothing; an eager 60 s timer was rejected. Accepted, not yet on main.
+description: A long-lived agent stream emits room content only on a successful authority check younger than 60 s, re-proved only when there is content to emit, and a failed check emits nothing; an eager 60 s timer was rejected. Accepted; on main and in server-v1.27.47.
 tags: [decision, event-stream, rooms, authorization, performance]
 timestamp: 2026-11-04
 ---
 
 Acknowledged by the security and identity reviewer on 2026-11-04 (design ACK e7aa29ec, thread c3299855).
 
-**Status:** accepted; implemented on the source's review branch, not on main.
+**Status (verified 2026-11-06):** accepted; on main (43528d6b9) and first
+released in server-v1.27.47.
 
 # Decision
 

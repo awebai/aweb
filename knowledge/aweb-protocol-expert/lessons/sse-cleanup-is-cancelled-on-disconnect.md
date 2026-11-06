@@ -27,8 +27,8 @@ had left, and the session pubsub was not closed.
 - Wrap every await in an SSE generator's `finally:` in
   `anyio.CancelScope(shield=True)`, or keep that cleanup synchronous.
 - Prove a new SSE cleanup with a test that disconnects the client and checks
-  the cleanup's effect, not only that the stream closed. The chat fix carries
-  such a test on the source's review branch.
+  the cleanup's effect, not only that the stream closed. The chat stream's
+  shielded cleanup is on main (0318462f1, server-v1.27.47).
 
 # Provenance
 

@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Stream wakes target the resolved identity
-description: A mail or chat wake on the agent event stream goes to the delivery identity the write path resolved, never to a stored address field, so a stream subscribes only to its own DIDs; subscribing streams to predecessor identities was rejected. Accepted, not yet on main.
+description: A mail or chat wake on the agent event stream goes to the delivery identity the write path resolved, never to a stored address field, so a stream subscribes only to its own DIDs; subscribing streams to predecessor identities was rejected. Accepted; on main and in server-v1.27.47.
 tags: [decision, event-stream, wake, identity, succession, mail, chat]
 timestamp: 2026-11-04
 ---
@@ -10,8 +10,9 @@ Ruled by the security and identity reviewer on 2026-11-04 in the push-driven str
 (c3299855, ruling 17a306af, also acknowledged by the OSS coordinator in
 d8e8baf0).
 
-**Status:** accepted; implemented on the source's review branch, not on main,
-and not yet run in production.
+**Status (verified 2026-11-06):** accepted; on main (3a53b6800, with the
+succession wake test b2cf880d1) and first released in server-v1.27.47. This
+record does not show it running in production.
 
 # Decision
 

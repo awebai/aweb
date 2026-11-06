@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: The agent event stream is push-driven
-description: Writers record wakes in a scope owned by the outermost transaction and publish after its commit on every exit, never through the replaceable on_mutation hook; lost wakes are recovered by a 15 s reconcile that is one Redis MGET of change counters with no database statements when idle, and bookmarks advance only for kinds actually read; a hard writer crash is an accepted residue with a 2 s shutdown flush; a per-tick snapshot, Postgres change-mark triggers, a durable outbox and a periodic Postgres probe were rejected. On aweb main since the 2026-11-04 hot-path merge.
+description: Writers record wakes in a scope owned by the outermost transaction and publish after its commit on every exit, never through the replaceable on_mutation hook; lost wakes are recovered by a 15 s reconcile that is one Redis MGET of change counters with no database statements when idle, and bookmarks advance only for kinds actually read; a hard writer crash is an accepted residue with a 2 s shutdown flush; a per-tick snapshot, Postgres change-mark triggers, a durable outbox and a periodic Postgres probe were rejected. Accepted; on main and in server-v1.27.47.
 tags: [decision, event-stream, wake, redis, performance, transactions]
 timestamp: 2026-11-04
 ---
@@ -11,9 +11,9 @@ Ruled by the security and identity reviewer on 2026-11-04 in the push-driven str
 ruling followed a gate budget for idle streams: at most one round trip per
 15 s and at most 0.1 ms CPU per stream-second.
 
-**Status:** accepted; on aweb main since the 2026-11-04 hot-path merge
-(server 1.27.47rc1, a release candidate). This record does not show it running
-in production. The figures below are a local bench.
+**Status (verified 2026-11-06):** accepted; on main since the 2026-11-04
+hot-path merge and first released in server-v1.27.47. This record does not show
+it running in production. The figures below are a local bench.
 
 # Decision
 
@@ -87,7 +87,7 @@ in production. The figures below are a local bench.
 
 # Evidence
 
-A bench against the Cloud app on TLS Postgres with statement cache 0: idle
+A bench against a host that mounts aweb, on TLS Postgres with statement cache 0: idle
 stream 25.0 → 0.0 statements per stream-second, CPU 1.97 → 0.05 ms per
 stream-second, mail write plus wake p50 7.7 ms.
 
@@ -96,8 +96,8 @@ hard-crash ruling came from review of the implementation. Each was a real bug
 or gap that green tests had not caught, and each now has a real-stack
 regression test.
 
-This applies the aweb-cloud lesson that event consumers cover every write
-surface, with a per-surface test for each write site, and refines it: counters
+This applies the rule that event consumers cover every write surface, with a
+per-surface test for each write site, and refines it: counters
 replace a database re-check as the backstop.
 
 Related:
