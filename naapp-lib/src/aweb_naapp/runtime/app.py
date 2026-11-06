@@ -48,7 +48,7 @@ from fastapi.routing import APIRoute
 from pgdbm import AsyncDatabaseManager
 from starlette.routing import BaseRoute, Host, Mount
 
-from aweb_naapp.css import aweb_css, font_bytes
+from aweb_naapp.asset_responses import font_response, stylesheet_response
 from aweb_naapp.hooks.producer import HookProducer
 from aweb_naapp.hooks.resolver import TeamServerRegistrations
 from aweb_naapp.identity_assets import mount_identity_routes
@@ -726,23 +726,13 @@ def mount_naapp_routes(
     async def landing_route() -> HTMLResponse:
         return HTMLResponse(await landing())
 
-    def _aweb_css_response(immutable: bool) -> Response:
-        # The fingerprinted URL is content-addressed, so it can be cached forever;
-        # the legacy /css/aweb.css keeps a short TTL.
-        cache = "public, max-age=31536000, immutable" if immutable else "public, max-age=3600"
-        return Response(
-            content=aweb_css(),
-            media_type="text/css",
-            headers={**_NOSNIFF, "Cache-Control": cache},
-        )
-
     @app.get("/css/aweb.css")
     async def aweb_css_route() -> Response:
-        return _aweb_css_response(immutable=False)
+        return stylesheet_response(immutable=False)
 
     @app.get("/css/aweb.{fingerprint}.css")
     async def aweb_css_fingerprinted_route(fingerprint: str) -> Response:
-        return _aweb_css_response(immutable=True)
+        return stylesheet_response(immutable=True)
 
     app_fonts: dict[str, bytes] = {}
     if fonts_dir is not None:
@@ -750,16 +740,7 @@ def mount_naapp_routes(
 
     @app.get("/fonts/{font_name}")
     async def font_route(font_name: str) -> Response:
-        font = font_bytes(font_name)
-        if font is None:
-            font = app_fonts.get(font_name)
-        if font is None:
-            raise HTTPException(status_code=404, detail="Font not found")
-        return Response(
-            content=font,
-            media_type="font/woff2",
-            headers={**_NOSNIFF, "Cache-Control": "public, max-age=31536000, immutable"},
-        )
+        return font_response(font_name, app_fonts=app_fonts)
 
     @app.get("/og-card.png")
     async def og_card_route() -> Response:
