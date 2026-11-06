@@ -16,6 +16,7 @@ from fastapi.responses import HTMLResponse
 
 from aweb_naapp.console import CONSOLE_HEADERS, COOKIE_NAME, ConsoleRoute
 from aweb_naapp.console.browser import ConsoleBrand, ConsoleShell, login_redirect
+from aweb_naapp.css import CSS_SHA256, aweb_css
 from tests.console.shell_support import BRAND, CEREMONIES, CSRF_KEY, SIGN_IN, STYLESHEET, shell_app
 from tests.runtime.credential_audit.support import (
     World,
@@ -116,8 +117,15 @@ async def test_every_page_carries_the_apps_stylesheet_csrf_key_and_copy(world: W
             assert body["data-copy-waiting"] == SIGN_IN.waiting, path
             assert body["data-copy-failed"] == SIGN_IN.failed, path
             assert body["data-copy-sign-out-failed"] == SIGN_IN.sign_out_failed, path
-            stylesheet = page.first("link", rel="stylesheet")["href"]
-            assert (await browser.get(stylesheet)).text == STYLESHEET, path
+            # The toolkit's stylesheet first, then the app's own on top of it.
+            toolkit, own = [
+                attrs["href"]
+                for tag, attrs in page.tags
+                if tag == "link" and attrs.get("rel") == "stylesheet"
+            ]
+            assert toolkit == f"/css/aweb.{CSS_SHA256[:12]}.css", path
+            assert (await browser.get(toolkit)).text == aweb_css(), path
+            assert (await browser.get(own)).text == STYLESHEET, path
             assert BRAND.product in "".join(page.text), path
 
 

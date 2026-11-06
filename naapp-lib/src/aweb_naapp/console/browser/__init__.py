@@ -5,7 +5,9 @@ sessions and B3's ceremonies keep all authority. Everything a person reads is
 the app's: its name, its copy and its stylesheet arrive as trusted inputs in
 a :class:`ConsoleBrand` and a :class:`CeremonyCopy`, and the shell escapes
 each value it inserts. Mount the routers on the human app only, beside
-``console_login_router`` and ``credential_router``.
+``console_login_router``, ``credential_router`` and ``console_assets_router``:
+every page links the toolkit stylesheet that router serves, then the app's
+own on top of it.
 
 The scripts read their configuration from the page's ``body``: the tab's
 CSRF storage key and the copy they show. ``console.js`` exports
@@ -23,6 +25,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from aweb_naapp.console import ConsoleRoute, ConsoleSession, ConsoleSessions
+from aweb_naapp.css import CSS_SHA256
 
 _ASSETS = files(__package__)
 
@@ -113,6 +116,7 @@ class ConsoleShell:
             '<!doctype html><html lang="en"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
             f"<title>{escape(title)} · {product}</title>"
+            f'<link rel="stylesheet" href="/css/aweb.{CSS_SHA256[:12]}.css">'
             f'<link rel="stylesheet" href="/{assets}/style.css">'
             f'<script src="/{assets}/{script}" defer></script></head>'
             f'<body{body}><header><a href="/">{product}</a></header><main>'
@@ -228,7 +232,7 @@ class ConsoleShell:
                 f"<h1>{escape(ceremony.title)}</h1><p>{escape(ceremony.explanation)}</p>"
                 f'<button id="complete" type="button" disabled>{escape(ceremony.action)}</button>'
                 '<p id="notice" role="status" aria-live="polite"></p>'
-                f"<p><a id=\"continue\" hidden>{escape(copy.continue_link)}</a></p>",
+                f'<p><a id="continue" hidden>{escape(copy.continue_link)}</a></p>',
                 assets="console-bootstrap",
                 script="bootstrap.js",
                 data={

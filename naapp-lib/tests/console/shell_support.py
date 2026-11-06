@@ -15,6 +15,7 @@ from aweb_naapp.console import (
     ConsoleSessions,
     LoginLimiter,
     apply_console_migrations,
+    console_assets_router,
     console_login_router,
     credential_router,
 )
@@ -109,5 +110,6 @@ async def shell_app(world: World, *, human_origin: str, agent_origin: str) -> Sh
         shell.router(sessions=sessions, home_title="Example console", home_html=HOME)
     )
     human.include_router(shell.bootstrap_router(CEREMONIES))
+    human.include_router(console_assets_router())
     app = split_origins(FastAPI(), human, agent_origin=agent_origin, human_origin=human_origin)
     return ShellApp(shell, sessions, human, app)

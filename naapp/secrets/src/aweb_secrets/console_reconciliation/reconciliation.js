@@ -1,6 +1,6 @@
 "use strict";
 (() => {
-  const api = window.awebSecretsConsole;
+  const api = window.awebConsole;
   const status = document.querySelector("#reconciliation-status");
   if (!status) return;
   const root = "/reconciliation-approvals";
@@ -59,7 +59,7 @@
         const hint = token ? await api.post(root + "/sign-in", {token}) : {scope: scoped.dataset.consoleScope};
         const options = await api.post("/login/options", {scope: hint.scope});
         const logged = await api.post("/login", {scope: hint.scope, assertion: await api.assertion(options)});
-        sessionStorage.setItem("aweb.secrets.console.csrf", logged.csrf_token);
+        sessionStorage.setItem(api.csrfKey, logged.csrf_token);
         if (token) history.replaceState(null, "", root + "#token=" + encodeURIComponent(token));
         location.reload();
       } catch { message("Sign-in could not be completed. Reopen your personal link if it has expired."); login.disabled = false; }
