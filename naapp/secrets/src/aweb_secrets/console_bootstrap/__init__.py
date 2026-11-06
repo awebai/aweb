@@ -10,12 +10,15 @@ from aweb_naapp.console import ConsoleRoute
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse, Response
 
+from aweb_secrets.console_assets import STYLESHEET
+
 
 def _page(*, ceremony: str, title: str, explanation: str, action: str) -> HTMLResponse:
     return HTMLResponse(
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         f"<title>{title} · Secrets</title>"
+        f'<link rel="stylesheet" href="{STYLESHEET}">'
         '<link rel="stylesheet" href="/console-bootstrap/style.css">'
         '<script src="/console-bootstrap/bootstrap.js" defer></script></head>'
         f'<body data-ceremony="{ceremony}"><header><a href="/">Secrets</a></header>'

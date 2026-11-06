@@ -339,7 +339,6 @@ def mount_public_surfaces(
             public_origin=origin, console_origin=console_origin, manifest=manifest
         ),
         llms_txt=llms_txt(public_origin=origin, console_origin=console_origin, manifest=manifest),
-        fonts_dir=_PACKAGE / "fonts",
         og_card_png=(_PACKAGE / "og-card.png").read_bytes(),
         health_checks=health_checks,
     )
