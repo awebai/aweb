@@ -31,6 +31,10 @@ The Cloud service must support this preview endpoint before hosted inspection is
 available. An older service may return the same generic 404 as an unknown token;
 the CLI cannot distinguish those cases. Source availability alone does not prove
 the endpoint is deployed or that an installed CLI supports this command.
+The refusal keeps both possibilities and advises upgrading the service to a
+release supporting `POST /api/v1/spawn/invite-preview`, or requesting a new
+invite if preview is already supported. This is a Cloud endpoint; an OSS aweb
+package version alone does not establish support.
 
 Successful JSON contains only:
 

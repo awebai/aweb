@@ -1,8 +1,8 @@
 """Two-layer CSS bundle for Native Agentic App surfaces.
 
 Layer 1 is ``assets/aweb.css``: the shared aweb design system, vendored
-byte-for-byte from the design system's source stylesheet and checked by its own
-hash.
+with its own content hash. The approved identity is mapped into these existing
+base styles.
 
 Layer 2 is ``assets/naapp-components.css``: selectors emitted only by the
 ``aweb-naapp`` chrome/reference renderers. Apps serve the concatenated bundle at
@@ -18,19 +18,20 @@ from pathlib import Path
 
 _ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 
-# The font files the stylesheet loads from /fonts/. The app supplies them.
-FONT_NAMES = frozenset(
-    {
-        "BerkeleyMono-Light.woff2",
-        "BerkeleyMono-Regular.woff2",
-        "BerkeleyMono-SemiBold.woff2",
-    }
-)
+# Only redistributable, licensed fonts bundled with the toolkit are served.
+FONT_NAMES = frozenset({"Archivo-Latin-Variable.woff2"})
 
-# Hash of layer 1 only: the vendored design-system stylesheet at
-# src/aweb_naapp/assets/aweb.css. This must stay byte-identical to the design
-# system's source stylesheet and is intentionally separate from CSS_SHA256.
-VENDORED_AWEB_CSS_SHA256 = "98d1f6af14a6ff47f25f1eae6e727c3aafa498c16736cef84dab782b1d5e5642"
+
+def font_bytes(name: str) -> bytes | None:
+    """Return a bundled font by its allowlisted name, never an arbitrary path."""
+    if name not in FONT_NAMES:
+        return None
+    return (_ASSETS_DIR / "fonts" / name).read_bytes()
+
+
+# Hash of layer 1 only: the shared design-system stylesheet at
+# src/aweb_naapp/assets/aweb.css. Its hash is intentionally separate from CSS_SHA256.
+VENDORED_AWEB_CSS_SHA256 = "f37adec4e7dd53472bafb4eae981ab4001964f8b5540e392e66c1a377c5d6fef"
 
 
 @lru_cache(maxsize=1)

@@ -5,7 +5,7 @@ This project uses `aw` for coordination.
 ## Start Here
 
 Follow the canonical start-of-session loop in the `aweb-coordination` skill
-before claiming new work. That skill is the sole source for the command order;
+at the start of each session. That skill is the sole source for the command order;
 do not restate it here.
 
 ## Shared Rules
@@ -16,7 +16,7 @@ do not restate it here.
 - Use chat when you need a synchronous answer: `aw chat pending`, `aw chat send-and-wait <agent> --body-file <body-path>`
 - Respond promptly to WAITING conversations
 - Check `aw workspace status` before doing coordination work
-- Prefer shared coordination state over local TODO notes: `aw work ready` and `aw work active`
+- If this team tracks work in aweb tasks (it has tasks, or these instructions say so), see the aweb-tasks skill. Otherwise use the team's own tracker.
 - Prefer the aweb channel or configured host wake broker for mail/chat delivery. The explicit Claude Code `aw notify` fallback notices chats only after tool calls, with no mail or idle wake-ups. Follow the delivery path named in your setup or team instructions and respond promptly when notified.
 
 ## Shell-safe message bodies

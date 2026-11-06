@@ -135,7 +135,7 @@ func selectRequester(opts idParentOptions) (*requester, error) {
 		if id == "" {
 			id = identity.DID
 		}
-		dir := filepath.Dir(identity.IdentityPath)
+		dir := filepath.Dir(identity.SigningKeyPath)
 		named := opts.Domain
 		if strings.TrimSpace(named) == "" {
 			// An agent carrying a chain belongs to its chain's namespace.
@@ -297,7 +297,7 @@ func executeIDParentResign(opts idParentOptions) (idParentRequestOutput, []byte,
 	if err != nil {
 		return idParentRequestOutput{}, nil, err
 	}
-	dir := filepath.Dir(identity.IdentityPath)
+	dir := filepath.Dir(identity.SigningKeyPath)
 	installed, err := awconfig.LoadInstalledIDChain(dir)
 	if err != nil {
 		return idParentRequestOutput{}, nil, err

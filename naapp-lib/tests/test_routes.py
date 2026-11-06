@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from pydantic_settings import SettingsConfigDict
 
 from aweb_naapp import CSS_SHA256, aweb_css
-from aweb_naapp.css import FONT_NAMES
+from aweb_naapp.css import FONT_NAMES, font_bytes
 from aweb_naapp.manifest import (
     ManifestError,
     canonical_bytes,
@@ -122,7 +122,7 @@ def test_og_card_is_the_app_card(tmp_path: Path) -> None:
     assert response.content == _OG_CARD
 
 
-def test_the_stylesheet_fonts_are_served_from_the_app_directory(tmp_path: Path) -> None:
+def test_the_stylesheet_fonts_are_packaged_with_the_toolkit(tmp_path: Path) -> None:
     client = _client(tmp_path)
     for name in FONT_NAMES:
         response = client.get(f"/fonts/{name}")
@@ -130,7 +130,8 @@ def test_the_stylesheet_fonts_are_served_from_the_app_directory(tmp_path: Path) 
         assert response.headers["content-type"] == "font/woff2"
         assert response.headers["x-content-type-options"] == "nosniff"
         assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
-        assert response.content == _font_bytes(name)
+        assert response.content == font_bytes(name)
+        assert response.content.startswith(b"wOF2")
 
 
 def test_only_the_stylesheet_fonts_are_served(tmp_path: Path) -> None:
@@ -145,15 +146,12 @@ def test_the_fonts_are_the_ones_the_stylesheet_loads() -> None:
     assert loaded == set(FONT_NAMES)
 
 
-def test_a_fonts_directory_missing_a_stylesheet_font_is_refused(tmp_path: Path) -> None:
-    missing = sorted(FONT_NAMES)[0]
-    fonts_dir = tmp_path / "partial-fonts"
-    fonts_dir.mkdir()
+def test_fonts_do_not_require_app_copies(tmp_path: Path) -> None:
+    client = _client(tmp_path, fonts_dir=tmp_path / "absent")
+    assert FONT_NAMES == {"Archivo-Latin-Variable.woff2"}
     for name in FONT_NAMES:
-        if name != missing:
-            (fonts_dir / name).write_bytes(_font_bytes(name))
-    with pytest.raises(FileNotFoundError, match=missing):
-        _client(tmp_path, fonts_dir=fonts_dir)
+        assert client.get(f"/fonts/{name}").content == font_bytes(name)
+    assert client.get("/fonts/BerkeleyMono-Regular.woff2").status_code == 404
 
 
 def test_manifest_is_the_committed_bytes_at_both_paths(tmp_path: Path) -> None:
@@ -360,3 +358,36 @@ def test_the_catalog_and_its_variant_are_fixed_at_startup(tmp_path: Path) -> Non
     assert client.get("/.well-known/aweb-app-versions.json").content == catalog
     assert select_variant(_HOSTED, (2,), _fetch(client)).data == variant.data
     assert client.get("/aweb-app.json").content == variant.data
+
+
+def test_packaged_identity_assets_have_real_image_bytes_and_dimensions(tmp_path: Path) -> None:
+    import struct
+
+    client = _client(tmp_path)
+    svg = client.get('/brand/field-v1/favicon.svg')
+    assert svg.status_code == 200
+    assert svg.headers['content-type'].startswith('image/svg+xml')
+    assert '<svg' in svg.text
+    for name, size in [('icon-32.png', (32, 32)), ('icon-180.png', (180, 180)),
+                       ('aweb-card.png', (1200, 630)), ('folio-card.png', (1200, 630)),
+                       ('library-card.png', (1200, 630))]:
+        response = client.get('/brand/field-v1/' + name)
+        assert response.status_code == 200
+        assert response.headers['content-type'] == 'image/png'
+        assert response.content[:8] == b'\x89PNG\r\n\x1a\n'
+        assert struct.unpack('>II', response.content[16:24]) == size
+        assert 'immutable' in response.headers['cache-control']
+    assert client.get('/brand/field-v1/missing.png').status_code == 404
+    assert client.get('/brand/field-v1/..%2Fcss.py').status_code == 404
+
+
+def test_app_owned_fonts_remain_available_without_bundling_them(tmp_path: Path) -> None:
+    owned = tmp_path / "owned-fonts"
+    owned.mkdir()
+    (owned / "AppMono.woff2").write_bytes(b"wOF2app-owned")
+    (owned / "private.txt").write_text("not a font")
+    client = _client(tmp_path, fonts_dir=owned)
+    assert client.get("/fonts/AppMono.woff2").content == b"wOF2app-owned"
+    assert client.get("/fonts/private.txt").status_code == 404
+    assert client.get("/fonts/..%2Fprivate.txt").status_code == 404
+    assert client.get("/fonts/Archivo-Latin-Variable.woff2").content == font_bytes("Archivo-Latin-Variable.woff2")

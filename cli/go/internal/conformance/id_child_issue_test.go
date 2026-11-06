@@ -867,3 +867,51 @@ func TestIDChildIssueApproveRefusals(t *testing.T) {
 		})
 	}
 }
+
+// A local attributed agent has no status identity row of its own. Its exact
+// installed chain and fresh namespace/ancestor evidence authorize agent children.
+func TestLocalAgentParentIssuesThroughTheChildExchange(t *testing.T) {
+	for _, scenario := range []string{"agent child", "human child", "revoked ancestor", "missing chain", "wrong chain", "wrong signer"} {
+		t.Run(scenario, func(t *testing.T) {
+			x := loadIDChildExchange(t)
+			parent := x.v.Keys["coordinator"].DIDKey
+			chain := []any{x.v.Certificates["alice"].Signed, x.v.Certificates["coordinator"].Signed}
+			kind, child, childID := "agent", "bob_agent", x.v.Keys["bob_agent"].DIDKey
+			if scenario == "human child" {
+				kind, child, childID = "human", "bob", x.v.Keys["bob"].DIDAW
+			}
+			r, request := x.issueUnder(t, map[string]any{"kind": "identity", "id": parent}, chain, "coordinator", child, childID, kind)
+			switch scenario {
+			case "revoked ancestor":
+				r.status = "alice-revoked-now"
+			case "missing chain":
+				r.parentChain = nil
+			case "wrong chain":
+				r.parentChain = chain[:1]
+			case "wrong signer":
+				r.signer = "alice"
+			}
+			if _, err := r.receive(request); err != nil {
+				t.Fatal(err)
+			}
+			response, err := r.approve(t, "20000000-0000-4000-8000-0000000000a1", awid.IDHumanApproval{Interactive: true, Confirmed: true})
+			if scenario != "agent child" {
+				if err == nil || response != nil || r.issuance.writes != 0 {
+					t.Fatalf("invalid issuance: err=%v writes=%d", err, r.issuance.writes)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			parsed, err := awid.ParseIDCertificateResponse(response)
+			if err != nil {
+				t.Fatal(err)
+			}
+			verdict := awid.VerifyIDChain(parsed["chain"].(map[string]any), awid.IDChainSubject{ID: childID, DIDKey: childID}, x.evidence("normal"), "example.com")
+			if verdict.Outcome != "nearest_human" || verdict.HumanID == nil || *verdict.HumanID != x.v.Keys["alice"].DIDAW || r.calls != 1 {
+				t.Fatalf("child chain: %+v, calls=%d", verdict, r.calls)
+			}
+		})
+	}
+}

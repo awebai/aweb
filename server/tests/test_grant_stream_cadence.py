@@ -133,7 +133,7 @@ async def test_notification_stream_has_no_grant_reads_after_open(harness, kind):
     body = await collect(response)
     assert harness.registry.calls == [0]
     assert harness.db.grant_reads == 1
-    assert harness.clock.seconds == 300
+    assert harness.clock.seconds == pytest.approx(300)
     assert "verification_unavailable" not in body
     if kind == "status":
         assert harness.redis.closed
@@ -165,7 +165,7 @@ async def test_grant_expiry_ends_stream_without_registry_read(harness, kind):
     body = await collect(response)
     assert "event: grant_expired" in body
     assert harness.registry.calls == [0]
-    assert harness.clock.seconds == 5
+    assert harness.clock.seconds == pytest.approx(5)
 
 
 @pytest.mark.asyncio

@@ -10,15 +10,21 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 import json
+import os
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 
 import httpx
 import pytest
 import pytest_asyncio
 from nacl.signing import SigningKey
+from redis.asyncio import Redis
 
 import awid.registry as registry_module
-from awid.id_certificates import decode_id_chain_header
+from awid.dns_verify import DomainAuthority
+from awid.id_certificates import decode_id_chain_header, verify_id_chain
 from awid.id_tree_requests import (
     REGISTER_OPERATION,
     REGISTER_PATH,
@@ -33,8 +39,9 @@ from awid.id_tree_requests import (
     rotate_path,
 )
 from awid.registry import CachedRegistryClient, RegistryClient, RegistryError
+from awid_service.deps import get_domain_verifier
 
-from id_tree_support import ORIGIN, VECTORS, Tree, at, certificate, certificate_id, did_aw, did_key, seed
+from id_tree_support import ORIGIN, VECTORS, Tree, at, certificate, certificate_id, did_aw, did_key, seed, sign
 from test_registry_client import FakeRedis
 
 DOMAIN = "example.com"
@@ -486,8 +493,9 @@ async def test_a_rotation_whose_answer_is_lost_leaves_no_cached_namespace():
     registry.on_rotate = commit_then_lose_the_answer
     try:
         assert (await client.get_namespace(DOMAIN)).controller_did == did_key("root")
-        with pytest.raises(httpx.ReadTimeout):
+        with pytest.raises(RegistryError) as lost:
             await _rotate(client)
+        assert lost.value.code == "unavailable"
         assert (await client.get_namespace(DOMAIN)).controller_did == did_key("root_rotated")
     finally:
         await client.aclose()
@@ -521,3 +529,213 @@ async def test_a_write_to_another_registry_is_addressed_to_it_without_the_servic
         signed = json.loads(base64.b64decode(header + "=" * (-len(header) % 4), altchars=b"-_", validate=True))
         assert f"{sent.url.scheme}://{sent.url.host}" == signed["aud"] == other
         assert "X-AWID-Service-Token" not in sent.headers
+
+
+# ---------------------------------------------------------------------------
+# Read-your-writes through the cached identity-tree evidence
+# ---------------------------------------------------------------------------
+
+OTHER_DOMAIN = "other.example"
+
+
+class WriteHook(httpx.ASGITransport):
+    """The real AWID app; ``on_write(request, forward)`` takes the next register or revoke."""
+
+    on_write = None
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if self.on_write is not None and request.url.path in (REGISTER_PATH, REVOKE_PATH):
+            hook, self.on_write = self.on_write, None
+            return await hook(request, super().handle_async_request)
+        return await super().handle_async_request(request)
+
+
+@pytest_asyncio.fixture
+async def cached(clocked_client, manual_clock):
+    """The real AWID routes behind a CachedRegistryClient on the real Redis.
+
+    ``tree.controller`` is the DNS key that both AWID and the client find for
+    each domain. The test's domains' evidence entries are removed before and
+    after.
+    """
+    tree = Tree(clocked_client, manual_clock)
+    tree.clock.now = at("2026-10-26T00:00:00Z")
+    await tree.root(domain=OTHER_DOMAIN)
+    await tree.root()
+    for key_name in ("alice", "bob"):
+        await tree.vector_did(key_name)
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+    tree.controller = {DOMAIN: "root", OTHER_DOMAIN: "root"}
+
+    async def verify(domain: str) -> DomainAuthority:
+        return DomainAuthority(
+            controller_did=did_key(tree.controller[domain]), registry_url=ORIGIN, dns_name=f"_awid.{domain}",
+        )
+
+    async def route(domain: str) -> str:
+        return ORIGIN
+
+    clocked_client.app.dependency_overrides[get_domain_verifier] = lambda: verify
+    redis = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+    tree.transport = WriteHook(app=clocked_client.app)
+    client = CachedRegistryClient(
+        ORIGIN, redis, transport=tree.transport, domain_registry_resolver=route, domain_verifier=verify,
+    )
+    tree.registry = client
+    tree.redis = redis
+
+    async def evidence_keys(domain: str) -> list[bytes]:
+        return [key async for key in redis.scan_iter(match=f"awid:registry_cache:v1:id_status:{domain}:*")]
+
+    async def clear() -> None:
+        for domain in (DOMAIN, OTHER_DOMAIN):
+            keys = await evidence_keys(domain)
+            if keys:
+                await redis.delete(*keys)
+
+    tree.evidence_keys = evidence_keys
+    await clear()
+    try:
+        yield tree
+    finally:
+        await clear()
+        await client.aclose()
+        await redis.aclose()
+
+
+async def _verified(tree, bundle: dict, name: str) -> dict:
+    subject = {"id": did_aw(name), "did_key": did_key(name)}
+    evidence = await tree.registry.id_chain_evidence(bundle, subject, domain=DOMAIN)
+    return verify_id_chain(bundle, subject=subject, evidence=evidence, domain=DOMAIN)
+
+
+async def _cache_other_domain(tree) -> list[bytes]:
+    subject = {"id": did_aw("bob"), "did_key": did_key("bob")}
+    await tree.registry.id_chain_evidence(None, subject, domain=OTHER_DOMAIN)
+    keys = await tree.evidence_keys(OTHER_DOMAIN)
+    assert len(keys) == 1
+    return keys
+
+
+@dataclass
+class Write:
+    """One write through the cached client, with the chain read before and after it."""
+
+    before: tuple[dict, str]
+    after: tuple[dict, str]
+    reasons: tuple[str, str]
+    send: Callable[[], Awaitable[dict]]
+
+
+async def _registration(tree) -> Write:
+    """alice's root was replaced; the new root re-issues her certificate."""
+    tree.clock.now = at("2026-10-26T00:05:00Z")
+    tree.controller[DOMAIN] = "root_rotated"
+    assert (await tree.replace_controller("root_rotated")).status_code == 200
+    fields = copy.deepcopy(certificate("alice")["certificate"])
+    fields.update(issuer_key=did_key("root_rotated"), issued_at="2026-10-26T00:06:00Z")
+    recovered = {"v": 1, "type": "aweb.id-chain", "certificates": [sign(fields, "root_rotated")]}
+
+    def send():
+        tree.clock.now = at("2026-10-26T00:06:00Z")
+        return tree.registry.register_id_certificate(
+            recovered, signer=signer_for("alice"), expected_head=certificate_id("alice"), invitation_id=None,
+        )
+
+    return Write((_bundle("alice"), "alice"), (recovered, "alice"), ("root_replaced", "verified"), send)
+
+
+async def _revocation(tree) -> Write:
+    """The root revokes bob, whom alice issued."""
+    await tree.enroll("alice", "bob", when=at("2026-10-26T00:02:00Z"))
+
+    def send():
+        tree.clock.now = at("2026-10-26T00:10:00Z")
+        return tree.registry.revoke_id_certificate(
+            DOMAIN, did_aw("bob"), signer=signer_for("root"), expected_head=certificate_id("bob"),
+        )
+
+    chain = (_bundle("alice", "bob"), "bob")
+    return Write(chain, chain, ("verified", "revoked"), send)
+
+
+WRITES = pytest.mark.parametrize("prepare", [_registration, _revocation], ids=["register", "revoke"])
+
+
+@WRITES
+@pytest.mark.asyncio
+async def test_a_write_is_read_back_at_once_through_the_cached_evidence(cached, prepare):
+    other = await _cache_other_domain(cached)
+    write = await prepare(cached)
+    assert (await _verified(cached, *write.before))["reason"] == write.reasons[0]
+
+    await write.send()
+
+    assert (await _verified(cached, *write.after))["reason"] == write.reasons[1]
+    assert await cached.evidence_keys(OTHER_DOMAIN) == other
+
+
+@WRITES
+@pytest.mark.asyncio
+async def test_evidence_read_while_a_write_is_in_flight_is_not_served_after_it(cached, prepare):
+    write = await prepare(cached)
+
+    async def read_before_commit(request, forward):
+        assert (await _verified(cached, *write.before))["reason"] == write.reasons[0]
+        return await forward(request)
+
+    cached.transport.on_write = read_before_commit
+    await write.send()
+
+    assert (await _verified(cached, *write.after))["reason"] == write.reasons[1]
+
+
+@WRITES
+@pytest.mark.asyncio
+async def test_a_write_whose_answer_is_lost_leaves_no_cached_evidence(cached, prepare):
+    write = await prepare(cached)
+    assert (await _verified(cached, *write.before))["reason"] == write.reasons[0]
+
+    async def commit_then_lose_the_answer(request, forward):
+        assert (await forward(request)).status_code == 200
+        raise httpx.ReadTimeout("answer lost after the registry committed")
+
+    cached.transport.on_write = commit_then_lose_the_answer
+    with pytest.raises(RegistryError) as lost:
+        await write.send()
+    assert lost.value.code == "unavailable"
+
+    assert (await _verified(cached, *write.after))["reason"] == write.reasons[1]
+
+
+class UnreachableRedis(FakeRedis):
+    async def delete(self, *keys: str) -> None:
+        raise OSError("Redis unavailable")
+
+    async def scan_iter(self, *, match: str):
+        raise OSError("Redis unavailable")
+        yield
+
+
+@pytest.mark.asyncio
+async def test_without_redis_a_write_still_succeeds(clocked_client, manual_clock):
+    tree = Tree(clocked_client, manual_clock)
+    tree.clock.now = at("2026-10-26T00:00:00Z")
+    await tree.root()
+    for key_name in ("alice", "bob"):
+        await tree.vector_did(key_name)
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+    client = CachedRegistryClient(ORIGIN, UnreachableRedis(), transport=httpx.ASGITransport(app=clocked_client.app))
+    try:
+        tree.clock.now = at("2026-10-26T00:03:00Z")
+        receipt = await client.register_id_certificate(
+            _bundle("alice", "bob"), signer=signer_for("bob"), expected_head=None, invitation_id=None,
+        )
+        assert receipt["certificate_id"] == certificate_id("bob")
+        tree.clock.now = at("2026-10-26T00:10:00Z")
+        revoked = await client.revoke_id_certificate(
+            DOMAIN, did_aw("bob"), signer=signer_for("root"), expected_head=certificate_id("bob"),
+        )
+        assert revoked["revoked_at"] == "2026-10-26T00:10:00.000000Z"
+    finally:
+        await client.aclose()

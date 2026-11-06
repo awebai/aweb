@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 from uuid import UUID
+
+from pgdbm import TransactionManager
 
 from aweb.service_errors import ForbiddenError, NotFoundError, ServiceError, ValidationError
 from aweb.identity_metadata import native_participant_reference
@@ -263,7 +266,10 @@ async def create_conversation(
     now = _now_utc()
     effective_expires_at = _expires_at(now, ttl, expires_at)
     aweb_db = db.get_manager("aweb")
-    async with aweb_db.transaction() as tx:
+    # Inside a caller's transaction the caller's commit makes this atomic;
+    # a savepoint would only add two round trips.
+    in_transaction = isinstance(aweb_db, TransactionManager)
+    async with (nullcontext(aweb_db) if in_transaction else aweb_db.transaction()) as tx:
         row = await tx.fetch_one(
             """
             INSERT INTO {{tables.conversations}} (
@@ -284,13 +290,17 @@ async def create_conversation(
         if not row:
             raise ServiceError("Failed to create conversation")
         conversation_id = row["conversation_id"]
-        for participant in participant_records:
-            await tx.execute(
-                """
+        # One statement for every participant, returned in the order
+        # list_conversation_participants reads them.
+        participant_rows = await tx.fetch_all(
+            """
+            WITH inserted AS (
                 INSERT INTO {{tables.conversation_participants}} (
                     conversation_id, did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                SELECT $1, did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role
+                FROM unnest($2::text[], $3::uuid[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[])
+                    AS p(did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role)
                 ON CONFLICT (conversation_id, did) DO UPDATE
                 SET agent_id = EXCLUDED.agent_id,
                     alias = EXCLUDED.alias,
@@ -299,23 +309,24 @@ async def create_conversation(
                     current_did_key = COALESCE(EXCLUDED.current_did_key, {{tables.conversation_participants}}.current_did_key),
                     transport_hint = EXCLUDED.transport_hint,
                     role = EXCLUDED.role
-                """,
-                conversation_id,
-                participant["did"],
-                participant["agent_id"],
-                participant["alias"],
-                participant["address"],
-                participant["delivery_origin"],
-                participant["current_did_key"],
-                participant["transport_hint"],
-                participant["role"],
+                RETURNING conversation_id, did, agent_id, alias, address, delivery_origin, current_did_key,
+                          transport_hint, role, joined_at
             )
+            SELECT * FROM inserted ORDER BY joined_at, alias
+            """,
+            conversation_id,
+            [participant["did"] for participant in participant_records],
+            [participant["agent_id"] for participant in participant_records],
+            [participant["alias"] for participant in participant_records],
+            [participant["address"] for participant in participant_records],
+            [participant["delivery_origin"] for participant in participant_records],
+            [participant["current_did_key"] for participant in participant_records],
+            [participant["transport_hint"] for participant in participant_records],
+            [participant["role"] for participant in participant_records],
+        )
 
     conversation = _conversation_dict(dict(row))
-    conversation["participants"] = await list_conversation_participants(
-        db,
-        conversation_id=conversation["conversation_id"],
-    )
+    conversation["participants"] = [_participant_dict(dict(participant)) for participant in participant_rows]
     return conversation
 
 

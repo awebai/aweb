@@ -118,6 +118,10 @@ type idChildOptions struct {
 	Confirm         awid.ConfirmPrompt
 	Show            io.Writer
 	Now             func() time.Time
+
+	// Team routing is a fallback only for an issuer in that same namespace.
+	TeamRegistryURL    string
+	TeamRegistryDomain string
 }
 
 func idChildOptionsFromFlags() idChildOptions {
@@ -215,7 +219,7 @@ func currentAgentIssuer(opts idChildOptions) (*selectedChildIssuer, error) {
 	if err != nil {
 		return nil, err
 	}
-	dir := filepath.Dir(identity.IdentityPath)
+	dir := filepath.Dir(identity.SigningKeyPath)
 	chain, err := awconfig.LoadInstalledIDChain(dir)
 	if err != nil {
 		return nil, err

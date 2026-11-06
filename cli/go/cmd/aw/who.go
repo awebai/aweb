@@ -131,7 +131,7 @@ func executeWho(ctx context.Context, opts whoOptions) (whoOutput, error) {
 		id = identity.DID
 	}
 	domain := identity.Domain
-	installed, err := awconfig.LoadInstalledIDChain(filepath.Dir(identity.IdentityPath))
+	installed, err := awconfig.LoadInstalledIDChain(filepath.Dir(identity.SigningKeyPath))
 	if err != nil {
 		return whoOutput{}, err
 	}

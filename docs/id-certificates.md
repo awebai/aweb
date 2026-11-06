@@ -625,12 +625,15 @@ over-depth or over-limit evidence means unavailable, never a partial success.
 details, secrets and a human directory are not exposed by this endpoint.
 
 Use the existing per-caller rate limiter under the operation
-`id_certificate_status`: every request charges its source-IP bucket, and an
+`id_certificate_status`: public requests charge their source-IP bucket, and an
 authenticated request additionally charges its verified caller-key bucket,
-with a default of 60 requests per minute per bucket. A submitted ID is not
+with a default of 60 requests per minute per bucket. The existing configured
+`X-AWID-Service-Token` exempts only the source-IP bucket; a signed caller's
+key bucket still applies. A submitted ID is not
 caller identity; limit before expensive history/proof work and return 429 without partial
 evidence. The normal deployment rate-limit configuration may size these buckets
-for its callers; no unlimited anonymous/trusted-service bypass is added.
+for its callers. The service credential changes no request validation or
+evidence and grants no identity or controller authority.
 There is no list, prefix, search or pagination operation for a domain's humans.
 Only exact requested IDs and proof-necessary ancestor/key history are returned,
 never team memberships, private certificate blobs, email/account mappings or
@@ -865,6 +868,22 @@ the parent is `{kind:namespace,id:<exact domain>}`, and the root controller
 holds the fixed self-custodial invitation in its existing local invitation
 record. The approving root operator supplies the human approval described
 below; root-key custody alone never enables unattended human CSR approval.
+When a same-machine constructor (`aw team admin create --agent` or certificate-only
+`aw workspace add-worktree`) selects a self-custodial agent parent, it runs the
+existing child request/receive/approve/import exchange before accepting the
+hosted invite. The retained preview pins the parent and domain; the child keeps
+its original key and request UUID. If issuance refuses, the pending child home
+and request remain available rather than being rolled back. Ordinary invite
+accept across machines still requires the explicit parent exchange.
+For a local-team invitation, the inviter's own saved registry remains its
+identity registry. When that pin is absent, the already-resolved team registry
+(including service discovery) is a routing fallback only for an inviter in that
+same namespace, and must not contradict that namespace's discovered registry.
+A differently homed inviter uses its own identity/namespace registry selection.
+The existing private invitation link retains the selected issuer registry for
+later rechecks and import; the current identity pin and namespace checks still
+apply. Routing metadata grants no parent-signing authority: the current key,
+enrollment and chain checks are unchanged.
 Agents can issue agent spawns, never human invites. An untyped new invite from
 an attributed agent is a spawn/inherits or refuses, not an unattributed escape.
 Do not guess a parent from pre-upgrade bearer tokens or local instance names.

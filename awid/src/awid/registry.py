@@ -436,26 +436,32 @@ class RegistryClient:
             == canonical_server_origin(self.registry_url)
         ):
             request_headers[AWID_SERVICE_TOKEN_HEADER] = self.service_token
-        async with asyncio.timeout(self.timeout_seconds):
-            async with self._http_client.stream(
-                method,
-                f"{self._resolved_base_url(registry_url=registry_url)}{path}",
-                headers=request_headers,
-                json=json,
-                content=content,
-            ) as response:
-                succeeded = 200 <= response.status_code < 300
-                max_bytes = MAX_REGISTRY_RESPONSE_BYTES if succeeded else MAX_REGISTRY_ERROR_BYTES
-                try:
-                    content = await _read_bounded_response(response, max_bytes)
-                except ValueError as exc:
-                    if succeeded:
-                        raise
-                    # An unreadable error page is still this refusal.
-                    raise RegistryError(
-                        f"unreadable HTTP {response.status_code} response",
-                        status_code=response.status_code,
-                    ) from exc
+        try:
+            async with asyncio.timeout(self.timeout_seconds):
+                async with self._http_client.stream(
+                    method,
+                    f"{self._resolved_base_url(registry_url=registry_url)}{path}",
+                    headers=request_headers,
+                    json=json,
+                    content=content,
+                ) as response:
+                    succeeded = 200 <= response.status_code < 300
+                    max_bytes = MAX_REGISTRY_RESPONSE_BYTES if succeeded else MAX_REGISTRY_ERROR_BYTES
+                    try:
+                        content = await _read_bounded_response(response, max_bytes)
+                    except ValueError as exc:
+                        if succeeded:
+                            raise
+                        # An unreadable error page is still this refusal.
+                        raise RegistryError(
+                            f"unreadable HTTP {response.status_code} response",
+                            status_code=response.status_code,
+                        ) from exc
+        except (httpx.TransportError, TimeoutError) as exc:
+            # No answer, or none in time: a write may or may not have been
+            # applied. The original error stays the cause.
+            unavailable = f"AWID registry unavailable ({type(exc).__name__})"
+            raise RegistryError(unavailable, status_code=503, code="unavailable") from exc
         if not 200 <= response.status_code < 300:
             detail = None
             code = None
@@ -2088,6 +2094,38 @@ class CachedRegistryClient(RegistryClient):
         await self._invalidate_keys(cache_key)
         return answer
 
+    async def register_id_certificate(
+        self,
+        bundle: dict[str, Any],
+        *,
+        signer: PayloadSigner,
+        expected_head: str | None,
+        invitation_id: str | None,
+    ) -> dict[str, Any]:
+        domain = bundle["certificates"][-1]["certificate"]["domain"]
+        await self._invalidate_id_status_cache(domain)
+        receipt = await super().register_id_certificate(
+            bundle, signer=signer, expected_head=expected_head, invitation_id=invitation_id,
+        )
+        await self._invalidate_id_status_cache(domain)
+        return receipt
+
+    async def revoke_id_certificate(
+        self,
+        domain: str,
+        id: str,
+        *,
+        signer: PayloadSigner,
+        expected_head: str | None,
+        effective_from: str | None = None,
+    ) -> dict[str, Any]:
+        await self._invalidate_id_status_cache(domain)
+        receipt = await super().revoke_id_certificate(
+            domain, id, signer=signer, expected_head=expected_head, effective_from=effective_from,
+        )
+        await self._invalidate_id_status_cache(domain)
+        return receipt
+
     async def rotate_key(
         self,
         did_aw: str,
@@ -2491,6 +2529,19 @@ class CachedRegistryClient(RegistryClient):
         keys.extend(await self._matching_cache_keys(f"{self._domain_addresses_cache_key_prefix(domain, registry_url=registry_url)}:*"))
         await self._invalidate_keys(*keys)
 
+    async def _invalidate_id_status_cache(self, domain: str) -> None:
+        """Drop every cached evidence entry for ``domain``.
+
+        An entry's key covers its whole ID list, so a write to one identity
+        may change any entry in its domain.
+        """
+        try:
+            keys = await self._matching_cache_keys(f"{self._id_status_cache_key_prefix(domain)}:*")
+        except (RedisError, OSError):
+            logger.debug("AWID cache invalidation skipped because Redis is unavailable", exc_info=True)
+            return
+        await self._invalidate_keys(*keys)
+
     async def _invalidate_keys(self, *keys: str) -> None:
         unique_keys = tuple(dict.fromkeys(key for key in keys if key))
         if not unique_keys:
@@ -2555,7 +2606,10 @@ class CachedRegistryClient(RegistryClient):
 
     def _id_status_cache_key(self, request: dict[str, Any]) -> str:
         digest = hashlib.sha256(canonical_json_bytes(request)).hexdigest()
-        return f"awid:registry_cache:v1:id_status:{request['domain']}:{digest}"
+        return f"{self._id_status_cache_key_prefix(request['domain'])}:{digest}"
+
+    def _id_status_cache_key_prefix(self, domain: str) -> str:
+        return f"awid:registry_cache:v1:id_status:{domain}"
 
     def _did_key_cache_key(self, did_aw: str) -> str:
         return f"awid:registry_cache:v1:did_key:{self.registry_url}:{did_aw}"

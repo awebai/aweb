@@ -15,7 +15,7 @@ from awid.controller_request import verify_controller_json_request
 from awid.dns_verify import DnsVerificationError, DomainVerifier, DomainAuthority
 from awid.id_certificates import IDCertificateError, decode_id_chain_header, strict_did_key, verify_id_certificate
 from awid.did import validate_stable_id
-from awid.ratelimit import enforce_rate_limit, ip_bucket_key, rate_limit_dep
+from awid.ratelimit import enforce_rate_limit, rate_limit_dep
 from awid_service.deps import get_db, get_domain_verifier
 from awid_service.id_chains import check_chain_structure
 from awid_service.id_registration import register_certificate
@@ -222,7 +222,10 @@ async def revoke_id_certificate(
         raise _refusal(refused.code, refused.status) from refused
 
 
-@router.post("/status")
+@router.post(
+    "/status",
+    dependencies=[Depends(rate_limit_dep("id_certificate_status", allow_trusted_service=True))],
+)
 async def id_certificate_status(
     request: Request,
     response: Response,
@@ -231,11 +234,10 @@ async def id_certificate_status(
 ) -> dict:
     """A coherent snapshot of the domain's epochs and of exact requested registered IDs.
 
-    Every request is charged to its source IP's bucket, and a verified
-    caller additionally to its key's: keys cost nothing to mint, so a key
-    bucket alone would be no limit at all.
+    Public requests are charged to their source IP's bucket; the configured
+    service token exempts only that budget. A verified caller is always
+    additionally charged to its key's bucket.
     """
-    await enforce_rate_limit(request, response, bucket="id_certificate_status", key=ip_bucket_key(request))
     try:
         domain, ids = _status_body(await request.body())
     except IDCertificateError as exc:

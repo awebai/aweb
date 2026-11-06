@@ -21,6 +21,7 @@ type TeamInviteIDChild struct {
 	Parent       string `json:"parent"`
 	Domain       string `json:"domain"`
 	IssuerHome   string `json:"issuer_home"`
+	RegistryURL  string `json:"registry_url,omitempty"`
 	ChildHome    string `json:"child_home,omitempty"`
 	ChildDIDKey  string `json:"child_did_key,omitempty"`
 }

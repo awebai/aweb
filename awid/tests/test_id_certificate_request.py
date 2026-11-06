@@ -1,6 +1,7 @@
 """The Python CSR reader consumes the wire emitted by ordinary aw requests."""
 from __future__ import annotations
 
+import asyncio
 import base64
 import copy
 import json
@@ -9,7 +10,12 @@ from pathlib import Path
 import pytest
 from nacl.signing import SigningKey
 
-from awid.id_certificate_request import parse_id_certificate_request
+from awid.id_certificate_request import (
+    build_id_certificate_request,
+    id_certificate_request_signing_bytes,
+    parse_id_certificate_request,
+    parse_id_certificate_response,
+)
 from awid.id_certificates import IDCertificateError
 
 VECTORS = json.loads(
@@ -169,3 +175,178 @@ def test_resign_shape(field, value):
     signed = copy.deepcopy(REQUESTS["requests"]["local-resign"]["signed"])
     signed["request"][field] = value
     assert_refused(canonical(signed), "invalid_shape")
+
+
+
+# ---------------------------------------------------------------------------
+# Building a request and reading its response, as aw id parent request/import do
+# ---------------------------------------------------------------------------
+
+ISSUES = {
+    name: case for name, case in REQUESTS["requests"].items()
+    if case["expected"]["accepted"] and case["signed"]["request"]["operation"] == "issue"
+}
+
+
+def key_name(did_key):
+    return next(name for name, value in VECTORS["keys"].items() if value["did_key"] == did_key)
+
+
+def vector_signer(did_key):
+    key = SigningKey(bytes.fromhex(VECTORS["keys"][key_name(did_key)]["seed_hex"]))
+
+    def signer(payload):
+        return did_key, key.sign(payload).signature
+
+    return signer
+
+
+def async_vector_signer(did_key):
+    sign = vector_signer(did_key)
+
+    async def signer(payload):
+        await asyncio.sleep(0)
+        return sign(payload)
+
+    return signer
+
+
+def build(request, signer=None):
+    return build_id_certificate_request(
+        request_id=request["request_id"], invitation_id=request["invitation_id"], id=request["id"],
+        domain=request["domain"], parent=request["parent"], kind=request["kind"],
+        subject_key=request["subject_key"], signer=signer or vector_signer(request["subject_key"]),
+    )
+
+
+@pytest.mark.parametrize("name", sorted(ISSUES))
+@pytest.mark.parametrize("make_signer", [vector_signer, async_vector_signer], ids=["sync", "async"])
+@pytest.mark.asyncio
+async def test_a_built_request_is_the_go_request_byte_for_byte(name, make_signer):
+    case = ISSUES[name]
+    request = case["signed"]["request"]
+    assert id_certificate_request_signing_bytes(request).hex() == case["signing_bytes_hex"]
+    raw = await build(request, make_signer(request["subject_key"]))
+    assert raw == case["canonical_utf8"].encode()
+
+
+def test_the_built_cases_cover_both_parents():
+    assert {case["signed"]["request"]["parent"]["kind"] for case in ISSUES.values()} == {"identity", "namespace"}
+
+
+def _wrong_key(did_key):
+    other = next(value["did_key"] for value in VECTORS["keys"].values() if value["did_key"] != did_key)
+    return vector_signer(other)
+
+
+def _other_bytes(did_key):
+    sign = vector_signer(did_key)
+    return lambda payload: sign(payload + b"x")
+
+
+def _refusing(did_key):
+    def signer(payload):
+        raise PermissionError("custody check refused")
+
+    return signer
+
+
+@pytest.mark.parametrize("make_signer", [_wrong_key, _other_bytes], ids=["wrong-key", "other-bytes"])
+@pytest.mark.asyncio
+async def test_a_signer_answer_is_checked_before_any_bytes_are_returned(make_signer):
+    request = ISSUES["human-issue"]["signed"]["request"]
+    with pytest.raises(IDCertificateError) as refused:
+        await build(request, make_signer(request["subject_key"]))
+    assert refused.value.code == "invalid_signature"
+
+
+@pytest.mark.asyncio
+async def test_a_refusing_signer_builds_nothing():
+    request = ISSUES["human-issue"]["signed"]["request"]
+    with pytest.raises(PermissionError):
+        await build(request, _refusing(request["subject_key"]))
+
+
+@pytest.mark.parametrize("field,value,reason", [
+    ("kind", "robot", "invalid_kind"),
+    ("domain", "Example.com", "invalid_domain"),
+    ("parent", {"kind": "namespace", "id": "other.example"}, "domain_mismatch"),
+    ("invitation_id", "not-a-uuid", "invalid_shape"),
+    ("request_id", "not-a-uuid", "invalid_shape"),
+])
+@pytest.mark.asyncio
+async def test_a_request_the_receiver_would_refuse_is_never_signed(field, value, reason):
+    request = dict(ISSUES["human-issue"]["signed"]["request"], **{field: value})
+    asked = []
+    with pytest.raises(IDCertificateError) as refused:
+        await build(request, lambda payload: asked.append(payload))
+    assert refused.value.code == reason
+    assert asked == []
+
+
+RESPONSES = REQUESTS["responses"]
+
+
+def request_bytes(name):
+    return REQUESTS["requests"][name]["canonical_utf8"].encode()
+
+
+@pytest.mark.parametrize("name", sorted(RESPONSES))
+def test_a_response_is_read_against_the_request_it_answers(name):
+    case = RESPONSES[name]
+    # As in Go's frozen-response test, a response correlates by its request_id.
+    [asked] = [
+        request for request in REQUESTS["requests"].values()
+        if request["expected"]["accepted"] and request["signed"]["request"]["request_id"] == case["response"]["request_id"]
+    ]
+    parsed = parse_id_certificate_response(case["canonical_utf8"].encode(), request=asked["canonical_utf8"].encode())
+    assert parsed == case["response"]
+
+
+@pytest.mark.parametrize("field,value", [
+    ("request_id", "20000000-0000-4000-8000-0000000000ff"),
+    ("id", VECTORS["keys"]["alice"]["did_aw"]),
+    ("domain", "other.example"),
+    ("parent", {"kind": "identity", "id": VECTORS["keys"]["bob"]["did_aw"]}),
+    ("kind", "agent"),
+])
+def test_a_response_bound_to_another_request_is_refused(field, value):
+    request = dict(REQUESTS["requests"]["human-issue"]["signed"]["request"], **{field: value})
+    with pytest.raises(IDCertificateError) as refused:
+        parse_id_certificate_response(RESPONSES["human-issued"]["canonical_utf8"].encode(), request=canonical(signed_request(request)))
+    assert refused.value.code == "request_binding_mismatch"
+
+
+def test_a_response_is_read_only_against_a_valid_request():
+    with pytest.raises(IDCertificateError) as refused:
+        parse_id_certificate_response(RESPONSES["human-issued"]["canonical_utf8"].encode(), request=request_bytes("bad-subject-signature"))
+    assert refused.value.code == "invalid_signature"
+
+
+def assert_response_refused(raw, reason):
+    with pytest.raises(IDCertificateError) as refused:
+        parse_id_certificate_response(raw, request=request_bytes("local-resign"))
+    assert refused.value.code == reason
+
+
+@pytest.mark.parametrize("case", [c for c in REQUESTS["file_refusals"] if c["kind"] == "response"], ids=lambda c: c["name"])
+def test_frozen_response_file_limits(case):
+    raw = (case["unit_utf8"] * case["repeat"]).encode()
+    assert len(raw) == case["file_bytes"]
+    assert_response_refused(raw, case["expected"]["reason"])
+
+
+def test_response_refusals_match_go():
+    base = RESPONSES["local-resigned"]
+    text = base["canonical_utf8"]
+    assert_response_refused(canonical({"v": 1, "request_id": "not-a-uuid", "chain": base["response"]["chain"]}), "invalid_shape")
+    oversized = {"v": 1, "type": "aweb.id-chain", "certificates": ["x" * 6200]}
+    raw = canonical({"v": 1, "request_id": base["response"]["request_id"], "chain": oversized})
+    assert len(raw) <= REQUESTS["max_file_bytes"]
+    assert_response_refused(raw, "bundle_too_large")
+    assert_response_refused(text.replace(",", ", ", 1).encode(), "noncanonical_json")
+    assert_response_refused(text.replace('{"chain":', '{"callback":"x","chain":', 1).encode(), "invalid_shape")
+    tampered = text.replace('"issued_at":"2026-10-26T00:11:00Z"', '"issued_at":"2026-10-26T00:12:00Z"', 1)
+    assert tampered != text
+    assert_response_refused(tampered.encode(), "invalid_signature")
+    assert_response_refused(canonical({"v": True, "request_id": base["response"]["request_id"], "chain": base["response"]["chain"]}), "invalid_shape")

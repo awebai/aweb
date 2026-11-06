@@ -67,16 +67,46 @@ func TestHostedInviteRequiresPinnedPreviewBeforeAccept(t *testing.T) {
 			if tc.status == 404 && errorEnvelope(err, err.Error()).Error.Code != "unknown_or_invalid" {
 				t.Fatal("accept lost the preview refusal code")
 			}
+			if tc.status == 404 {
+				for _, guidance := range []string{"If this service is too old", "upgrade it to a release supporting POST /api/v1/spawn/invite-preview", "request a new invite"} {
+					if !strings.Contains(err.Error(), guidance) {
+						t.Fatalf("hosted acceptance refusal lacks %q: %v", guidance, err)
+					}
+				}
+			}
 			if err == nil || previews != 1 || accepts != 0 {
 				t.Fatalf("err=%v previews=%d accepts=%d", err, previews, accepts)
 			}
 			if tc.mode == "self_custodial" {
+				pendingErr := err
 				key, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(dir)}, "signing.key")
 				if err != nil {
 					t.Fatal(err)
 				}
 				assertPathExists(t, key)
 				assertPathExists(t, filepath.Join(dir, ".aw", "hosted-invite-creation.json"))
+				pending, loadErr := loadHostedInviteCreation(filepath.Join(dir, ".aw", hostedInviteRecoveryFile))
+				if loadErr != nil {
+					t.Fatal(loadErr)
+				}
+				childCommand := "aw --identity-home " + shellQuote(filepath.Join(dir, ".aw"))
+				for _, step := range []string{
+					"On parent did:aw:issuer",
+					"aw --json id child invite --kind agent --recipient " + shellQuote(pending.DIDKey),
+					childCommand + " id parent request --domain example.com --parent did:aw:issuer",
+					`--invitation-id "$(jq -r .invitation_id id-invitation.json)" --out id-request.json`,
+					"aw --json id child receive id-request.json > id-received.json",
+					`aw id child approve "$(jq -r .request_id id-received.json)" --out id-response.json`,
+					childCommand + " id parent import id-response.json",
+					"retry your original invite command with the SAME token, name, scope and identity home",
+				} {
+					if !strings.Contains(pendingErr.Error(), step) {
+						t.Errorf("pending refusal omits next step %q: %v", step, pendingErr)
+					}
+				}
+				if strings.Contains(pendingErr.Error(), "aw_inv_preview_fixture") {
+					t.Fatal("pending refusal discloses invite token")
+				}
 			}
 		})
 	}

@@ -393,12 +393,38 @@ still durable and exactly fetchable, but is not replayed as unread wake state.
 Use mail for status, findings, review requests, and handoffs that should survive
 the current process or runtime session.
 
-A mail continuation whose recipient identity has been retired locally refuses
-with HTTP 410 and `detail.code: participant_retired`, before forwarding or
-storing anything. The message names the stored alias/team for a new mail.
-A new recipient-by-alias send resolves the current identity and starts a new
-thread; it never moves the old thread to the replacement. Deleting one membership
-projection does not retire a still-live participant DID in another membership.
+An operator holding custody of a retired human identity and its successor for
+one account may record their succession through
+`aweb.messaging.participant_succession.succeed_local_human_participant_on`.
+The caller proves same-account custody, records that decision and invokes the
+seam in its existing transaction after the live successor projection exists.
+The seam replaces participants only in existing local mail threads, preserving
+the conversation IDs. It is idempotent and rejects observable foreign routes;
+no alias, address or display-name match establishes succession. Mail is
+identity-scoped: when the successor has no membership in the thread's team,
+the participant uses its live projection from another team; this grants no
+membership in the thread's team.
+
+Plaintext mail then continues in both directions in the same thread. A signed
+continuation may still name that thread's recorded predecessor as its target;
+new outgoing messages authenticate as the successor, never as the retired key.
+Delivery authorization uses the successor participant; a queued signed target
+is retained as the message target so ordinary readers still verify its bytes.
+Historical message DIDs, signatures and envelopes stay unchanged. The recorded
+thread-local predecessor mapping preserves read attribution. Hosted custodial
+readers can display old encrypted messages using retained predecessor decryption
+keys; this is server-readable custody, not end-to-end encryption. Succession
+adds no exception to the refusal of new encrypted sends to a custodial human,
+including messages encrypted to the predecessor key.
+
+Chat participant rows and read receipts stay unchanged. A continuation to a
+retired local chat participant refuses with HTTP 410 and
+`detail.code: participant_retired`, directing the sender to mail. Chat to a live
+human still refuses with `recipient_human_mail_only`. A retired mail participant
+without a recorded successor likewise retains the 410, before forwarding or
+storage. A fresh alias-based send resolves normally and never moves a thread.
+Deleting one membership projection does not retire a still-live participant DID
+in another membership.
 
 `GET /v1/messages/unread-count` returns `{ "unread_count": N }`: the
 participant's distinct total incoming unread mail across threads, without
@@ -463,6 +489,12 @@ returns HTTP 409 without changing the thread. Reuse preserves the stored
 participants and routes: create-request targets cannot add or update members.
 Membership changes use the membership operations, not session creation.
 
+For a one-to-one chat, replacing an active session with a fresh requested ID
+uses the same sender-bound predicate in plaintext and encrypted-v2. The v2
+envelope signature, authenticated sender and protected conversation ID must
+verify before the old session is closed. An exact retry acknowledges its
+accepted message without replacing a newer session.
+
 ## Addressing and authority
 
 Inside one team, use the member name such as `reviewer`. For first contact
@@ -498,6 +530,16 @@ kind, or conversation/session fails with
 `legacy_unreplayable` receipts never authorize federation/cross-kind replay and
 block later UUID reuse after message deletion; existing local API idempotency
 may still return its row before attempting an insert.
+
+For local mail, an exact retry is a stored `message_id` resent by the same
+sender with the identical nonempty `signed_payload` (plaintext) or the identical
+encrypted envelope. It returns the original message ID, conversation ID and
+receipt time with no second effect: no new conversation, no second
+`message.sent`, no second count against the sender's allowance. A different
+sender or payload under that ID (including unsigned ID reuse) returns HTTP 409.
+Delivery admission and signature validation still apply before replay, so a
+retry whose request fields disagree with its signed payload is refused as any
+send would be.
 
 Cross-registry failures return `reason`, `retryable`, and `correlation_id` in
 addition to matching `detail`. Retry unchanged input only when `retryable` is

@@ -241,21 +241,29 @@ async def sign_id_certificate(
     # exactly the certificate whose immutable bytes went to the signer.
     snapshot = json.loads(_canonical(certificate))
     _shape({"certificate": snapshot, "signature": ""})
-    payload = id_certificate_signing_bytes(snapshot)
-    answer = signer(payload)
-    if inspect.isawaitable(answer):
-        answer = await answer
-    if (
-        type(answer) is not tuple or len(answer) != 2
-        or type(answer[0]) is not str or answer[0] != snapshot["issuer_key"]
-    ):
-        raise IDCertificateError("invalid_signature")
-    _, signature = answer
-    verify_ed25519(snapshot["issuer_key"], payload, signature)
+    signature = await _signature_by(signer, id_certificate_signing_bytes(snapshot), snapshot["issuer_key"])
     return {
         "certificate": snapshot,
         "signature": base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii"),
     }
+
+
+async def _signature_by(
+    signer: Callable[[bytes], tuple[str, bytes] | Awaitable[tuple[str, bytes]]], payload: bytes, key: str,
+) -> bytes:
+    """The callback's signature over ``payload``, invoked/resolved once.
+
+    Its answer must name ``key`` and pass the shared strict signature
+    verifier; a malformed answer raises IDCertificateError('invalid_signature').
+    """
+    answer = signer(payload)
+    if inspect.isawaitable(answer):
+        answer = await answer
+    if type(answer) is not tuple or len(answer) != 2 or type(answer[0]) is not str or answer[0] != key:
+        raise IDCertificateError("invalid_signature")
+    _, signature = answer
+    verify_ed25519(key, payload, signature)
+    return signature
 
 
 def _bundle_shape(bundle: Any) -> None:

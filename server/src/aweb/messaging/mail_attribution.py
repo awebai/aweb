@@ -17,6 +17,16 @@ def mail_identity_sql(field: str, dids_parameter: str) -> str:
               AND own.did = ANY({dids_parameter}::text[])
               AND NULLIF(own.current_did_key, '') = m.{field}
         )
+        OR EXISTS (
+            SELECT 1 FROM {{{{tables.conversation_participant_successions}}}} history
+            JOIN {{{{tables.local_human_successions}}}} succession USING (predecessor_did)
+            JOIN {{{{tables.conversation_participants}}}} own
+              ON own.conversation_id = history.conversation_id
+             AND own.did = succession.successor_did
+            WHERE history.conversation_id = m.conversation_id
+              AND own.did = ANY({dids_parameter}::text[])
+              AND m.{field} IN (succession.predecessor_did, succession.predecessor_did_key)
+        )
     )"""
 
 

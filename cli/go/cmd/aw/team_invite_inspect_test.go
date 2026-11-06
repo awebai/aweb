@@ -172,6 +172,14 @@ func TestTeamInviteInspectCommand(t *testing.T) {
 				if exit != 1 || !ok || failure["code"] != tc.code {
 					t.Fatalf("bad error: exit=%d result=%v", exit, result)
 				}
+				if tc.code == "unknown_or_invalid" {
+					message, _ := failure["message"].(string)
+					for _, guidance := range []string{"Invite is unknown or invalid", "If this service is too old", "upgrade it to a release supporting POST /api/v1/spawn/invite-preview", "request a new invite"} {
+						if !strings.Contains(message, guidance) {
+							t.Fatalf("preview refusal lacks %q: %s", guidance, message)
+						}
+					}
+				}
 				if tc.mode == "expired" || tc.mode == "exhausted" || tc.mode == "revoked" {
 					if inspected, ok := result["invite"].(map[string]any); !ok || inspected["status"] != tc.mode {
 						t.Fatal("inactive metadata missing")

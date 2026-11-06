@@ -625,6 +625,26 @@ caller-supplied ciphertext; a grant seat does not replace it with its own read.
 and recipient lookup does not decrypt unrelated pending-chat previews. HTTP and
 custody requests retain their individual timeouts; a history page does not share
 one cumulative API timeout. Explicit caller cancellation still stops the work.
+`aw mail show` follows the same rule: its page fetch retains the configured
+HTTP timeout, then each message is unwrapped independently. The custody RPC
+limit remains 10 seconds, with separate 5-second freshness and stored-message
+read limits. An explicit caller deadline still bounds the entire operation.
+
+The opt-in real regression is `scripts/e2e/custody_bulk.py`. With locally built
+service images and a Linux CLI binary matching Docker's CPU, run:
+
+```sh
+python3 scripts/e2e/custody_bulk.py --aw-bin /absolute/path/to/linux/aw \
+  --evidence /tmp/custody-bulk-result
+```
+
+It provisions disposable identities through the CLI and real owned TXT DNS,
+then checks 300 exact verified v2 messages, a delayed page plus unwraps, local
+key reads and individually stalled page/header/body/custody/authority steps.
+It uses only existing local images, an internal network and fresh private
+identity storage, and removes its owned services and volumes on exit. Image
+overrides are available with `--help`; older CLI comparisons may supply a
+separate current provisioning binary with `--provision-aw-bin`.
 
 Scopes are `mail.read`, `mail.send`, `chat.read`, `chat.send`,
 `events.read`, `coord.read`, `coord.write`, `presence.write`,

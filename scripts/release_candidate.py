@@ -92,9 +92,11 @@ def validate_tags(root: Path, tags: list[str]) -> tuple[str, dict[str, str]]:
     return source_sha, versions
 
 
-def create_candidate(root: Path, tags: list[str]) -> str:
+def create_candidate(root: Path, tags: list[str], *, stage_aw_final: bool = False) -> str:
     run(root, "git", "fetch", "--quiet", "origin", "main", "+refs/tags/*:refs/tags/*")
     source_sha, versions = validate_tags(root, tags)
+    if stage_aw_final and ("aw-v" not in versions or "-rc." in versions["aw-v"]):
+        raise CandidateRefusal("--stage-aw-final requires a final aw-vX.Y.Z tag")
     run(root, "git", "merge-base", "--is-ancestor", source_sha, "origin/main")
     environment = {**os.environ, "CANDIDATE_SOURCE_SHA": source_sha}
     # A caller's focused pre-landing selector cannot narrow a release gate.
@@ -110,6 +112,8 @@ def create_candidate(root: Path, tags: list[str]) -> str:
         raise CandidateRefusal("the Docker gate left the candidate checkout dirty")
     for tag in tags:
         message = f"aweb OSS {tag}\n\nDocker candidate gate passed for {source_sha}."
+        if stage_aw_final and tag.startswith("aw-v"):
+            message += "\n\nNpm-Publish-Channel: next"
         run(root, "git", "tag", "-a", tag, source_sha, "-m", message)
     print(f"candidate PASSED: {source_sha}")
     for tag in tags:
@@ -122,10 +126,11 @@ def create_candidate(root: Path, tags: list[str]) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--stage-aw-final", action="store_true", help="publish final aw on next until explicit post-deploy promotion")
     parser.add_argument("tags", nargs="+")
     arguments = parser.parse_args(argv)
     try:
-        create_candidate(Path.cwd().resolve(), arguments.tags)
+        create_candidate(Path.cwd().resolve(), arguments.tags, stage_aw_final=arguments.stage_aw_final)
     except (
         CandidateRefusal,
         OSError,

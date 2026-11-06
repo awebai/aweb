@@ -11,7 +11,8 @@ from fastapi import HTTPException
 from aweb.id_chain_auth import authenticate_id_chain
 from aweb.identity_binding import verify_identity_binding
 from aweb.identity_auth_deps import _enforce_current_membership
-from aweb.mcp.auth import get_auth
+from aweb.agent_wake import agent_wake_scope
+from aweb.mcp.auth import current_agent_wake_publisher, get_auth
 from aweb.mcp.signing import sign_hosted_message
 from aweb.messaging.room import (
     RoomPost,
@@ -141,7 +142,8 @@ async def room_post(
             signature=result.signature,
             signing_key_id=result.signing_key_id or result.from_did,
         )
-    output = await post_room_message(
-        db, actor, payload, id_chain=getattr(auth.request.state, "id_chain", None)
-    )
+    with agent_wake_scope(current_agent_wake_publisher()):
+        output = await post_room_message(
+            db, actor, payload, id_chain=getattr(auth.request.state, "id_chain", None)
+        )
     return json.dumps(await present_room(db, auth.request, output))

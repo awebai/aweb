@@ -158,7 +158,29 @@ custodial deployment's backfill is not throttled; the team-controller signature
 is still required. Signed team-server record publication (PUT
 `/v1/namespaces/{domain}/teams/{name}/server`) is also exempt from its
 `team_server_publish` bucket; the current team-key signature remains required.
-All other write buckets remain rate-limited even with a matching token.
+The same credential also exempts the IP limit on these operations:
+
+| Method | Route | Bucket |
+| --- | --- | --- |
+| PUT | `/v1/did/{did_aw}` | `did_update` |
+| POST | `/v1/namespaces/{domain}/reverify` | `namespace_reverify` |
+| PATCH | `/v1/namespaces/{domain}` | `namespace_update` |
+| PUT | `/v1/namespaces/{domain}` | `namespace_rotate` |
+| POST | `/v1/namespaces/{domain}/rotate` | `namespace_rotate` |
+| DELETE | `/v1/namespaces/{domain}` | `namespace_delete` |
+| POST | `/v1/namespaces/{domain}/addresses/claims` | `address_atomic_claim` |
+| PUT | `/v1/namespaces/{domain}/addresses/{name}` | `address_update` |
+| DELETE | `/v1/namespaces/{domain}/addresses/{name}` | `address_delete` |
+| POST | `/v1/namespaces/{domain}/addresses/{name}/reassign` | `address_reassign` |
+| POST | `/v1/a2a/delegations` | `a2a_delegation_publish` |
+| POST | `/v1/a2a/publications` | `a2a_publication_publish` |
+| POST | `/v1/namespaces/{domain}/teams/{name}/rotate` | `team_rotate` |
+| POST | `/v1/id-certificates/status` | `id_certificate_status` (IP only) |
+
+Their existing proofs, controller authorization, validation and responses are
+unchanged. A signed ID-status caller still spends its caller-key budget.
+Every registry route with an IP limiter accepts this rate-only exemption.
+Missing, wrong or unconfigured service credentials retain the public budgets.
 Public callers keep the existing 10/hour DID, namespace and team creation
 limits and 30/hour encryption-key, certificate and address registration limits.
 Visibility changes and team deletion allow 300/hour and certificate revocation
@@ -1180,11 +1202,11 @@ The body is exactly `{v: 1, domain, ids}` with 0–8 distinct canonical did:aw
 strings; any other field (a prefix, a search) is `invalid_shape`. An
 authenticated caller signs the covering-v2 request
 (`operation="read_id_certificate_status"`) with a strict-profile key. Supplied
-but invalid proof, or the legacy form, is 401, never anonymous. Every request
-is charged to its source IP's `id_certificate_status` bucket, and a verified
-caller also to its key's (keys cost nothing to mint, so a key bucket alone is
-no limit). Each allows 60 requests per minute, with no service exemption, and
-both are charged before the DNS lookup and any database read. The domain is
+but invalid proof, or the legacy form, is 401, never anonymous. Public requests
+are charged to their source IP's `id_certificate_status` bucket, and a verified
+caller also to its key's. Each allows 60 requests per minute. The configured
+service token skips only the IP budget; the verified caller-key budget remains.
+Limits are checked before the DNS lookup and any database read. The domain is
 canonicalized (lowercase, no trailing dot) and must be a valid name.
 
 The response is one coherent snapshot, read in a single read-only REPEATABLE
@@ -1243,6 +1265,13 @@ which raises.
   no outage grace, and nothing older than 60 seconds is presented. The next
   request makes its own attempt. Each domain's entries are independent of
   every other domain's.
+- The same client reads its own identity-tree writes. Its
+  `register_id_certificate` and `revoke_id_certificate` remove every entry for
+  the written domain before the write is sent and again after it succeeds, so
+  the next read in that domain fetches. One entry covers a whole list of IDs,
+  so a write to one ID may change any entry in its domain. Removing the entry
+  before the write also covers a write whose answer is lost after AWID
+  committed it. Other domains' entries are kept.
 
 ### Public identity-tree write client
 
@@ -1273,7 +1302,11 @@ strict profile (`awid.id_certificates.verify_ed25519`). A signer that raises,
 or answers with a malformed result, a key outside the profile, a signature
 that does not verify or the wrong role's key, sends nothing. A refusal raises
 `RegistryError` with `status_code`, `detail`, and `code` when the registry
-sent a coded refusal.
+sent a coded refusal. Any `RegistryClient` request that gets no answer (a
+connection, protocol or read failure, or no complete answer within
+`timeout_seconds`) raises `RegistryError` with `status_code` 503 and `code`
+`unavailable`, with the transport error as its `__cause__`. A write that fails
+this way may or may not have been applied.
 
 The request bytes come only from `awid.id_tree_requests`, a pure module with
 no I/O: `REGISTER_PATH`, `REVOKE_PATH` and `rotate_path(domain)`; the
@@ -1284,6 +1317,31 @@ it intends from these and compares the whole payload it is asked to sign, so a
 body digest is never checked alone. `RegistryClient.registry_audience(domain)`
 is the `aud` a write for that domain signs: the canonical origin of the
 registry it is routed to, resolved exactly as the write resolves it.
+
+### Child request exchange
+
+`awid.id_certificate_request` reads and writes the child request and response
+files of docs/id-certificates.md §6 exactly as `aw` does, byte for byte, as the
+shared vectors in `docs/vectors/id-certificates-v1.json` pin. It is pure: no
+registry calls.
+
+- `build_id_certificate_request(*, request_id, invitation_id, id, domain,
+  parent, kind, subject_key, signer)` is `aw id parent request` for a first
+  certificate. The invitation ID, domain and parent are what the parent's
+  invitation fixed; the parent is `{"kind": "identity", "id": ...}` or
+  `{"kind": "namespace", "id": domain}` for the namespace root. The caller
+  chooses `request_id` and resends the returned bytes on retry; it never
+  rebuilds them. The request is checked as the receiver checks it before the
+  signer, a `PayloadSigner` holding `subject_key`, is asked once to sign it.
+- `id_certificate_request_signing_bytes(request)` is the exact bytes that
+  signer signs.
+- `parse_id_certificate_request(raw)` reads a request and checks its key proof.
+- `parse_id_certificate_response(raw, *, request)` is `aw id parent import`'s
+  local check: the strict response shape with every certificate's signature,
+  then the request file it answers, the same `request_id`, and a leaf with the
+  requested `id`, `domain`, `parent` and `kind` (`request_binding_mismatch`).
+  The chain still needs `verify_id_chain` on current status, and a did:aw leaf
+  its own registration, before it carries authority.
 
 ---
 

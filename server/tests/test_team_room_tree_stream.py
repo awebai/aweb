@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 import json
+import socket
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -25,11 +26,21 @@ from test_id_chain_request_auth import (
 )
 
 
+@pytest.fixture(scope="module")
+def room_registry_listener():
+    # Fresh database fixtures reuse one real origin, just as ephemeral ports
+    # can in the full suite. Keep its socket owned across the parameter cases.
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        yield listener
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("grant_actor", [False, True], ids=["certificate", "grant"])
 @pytest.mark.parametrize("tree", ["valid", "revoked", "status_unavailable", "legacy"])
 async def test_room_stream_rechecks_global_tree_after_opening(
     privacy_app,
+    room_registry_listener,
     monkeypatch,
     grant_actor,
     tree,
@@ -61,7 +72,7 @@ async def test_room_stream_rechecks_global_tree_after_opening(
         async def aclose(self):
             await self.upstream.aclose()
 
-    async with registry_listener(env) as (writer, origin):
+    async with registry_listener(env, listener_socket=room_registry_listener.dup()) as (writer, origin):
         env.registry_app.state.awid_public_origins = (origin,)
 
         async def exact_dns(selected):
@@ -190,6 +201,10 @@ async def test_room_stream_rechecks_global_tree_after_opening(
         monkeypatch.setattr(events_routes, "datetime", StreamClock)
         monkeypatch.setattr(
             events_routes, "asyncio", SimpleNamespace(sleep=advance_poll)
+        )
+        # The stream schedules its reconcile on the monotonic clock.
+        monkeypatch.setattr(
+            events_routes, "monotonic", lambda: (clock.now - start).total_seconds()
         )
         monkeypatch.setattr(identity_binding, "monotonic", lambda: clock.evidence)
         try:

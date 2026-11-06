@@ -225,9 +225,22 @@ func idIssuingKey(parent map[string]any, domain, childKind string, parentChain [
 	switch parent["kind"] {
 	case "identity":
 		parentID, _ := parent["id"].(string)
-		_, current, kind, err := idSigningParent(parentID, evidence, domain)
-		if err != nil {
-			return "", err
+		var current, kind string
+		if strings.HasPrefix(parentID, "did:key:") {
+			// A local parent has no registry identity row. Its own verified
+			// chain establishes kind and issuance authority for this exact key.
+			bundle := map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": parentChain}
+			verdict := VerifyIDChain(bundle, IDChainSubject{ID: parentID, DIDKey: parentID}, evidence, domain)
+			if verdict.IdentityValid == nil || !*verdict.IdentityValid || verdict.Kind == nil {
+				return "", idCertificateRefusal(verdict.Reason)
+			}
+			current, kind = parentID, *verdict.Kind
+		} else {
+			_, key, parentKind, err := idSigningParent(parentID, evidence, domain)
+			if err != nil {
+				return "", err
+			}
+			current, kind = key, parentKind
 		}
 		if kind != "human" && childKind == "human" {
 			return "", idCertificateRefusal("human_issuer_is_agent")

@@ -10,13 +10,15 @@ import subprocess
 import sys
 import tempfile
 
+from test_candidate_ports import held_library_default
+
 ROOT = Path(__file__).resolve().parents[1]
-STAGES = "checks unit artifacts integration"
-# The targets the fixture gives real recipes: the four stage assertions below
+STAGES = "checks user-paths unit artifacts integration"
+# The targets the fixture gives real recipes: the stage assertions below
 # use real tools and services, never a replacement runner.
 REAL_RECIPES = frozenset({
     "test-shipping", "_candidate-node-deps", "build", "_candidate-unit-suites",
-    "_candidate-artifact-server", "freshness", "e2e-naapp",
+    "_candidate-artifact-server", "freshness", "e2e-naapp", "cli-e2e",
 })
 
 
@@ -33,7 +35,12 @@ SOURCE_CHECKS = source_checks()
 
 
 def run(root: Path, *args: str, env: dict[str, str] | None = None):
-    return subprocess.run(args, cwd=root, env=env, text=True, capture_output=True, timeout=900)
+    # This fixture pins its own versions. A caller's make command-line values
+    # otherwise override them in the nested make, but not in the direct gate.
+    environment = dict(os.environ if env is None else env)
+    for name in ("MAKEFLAGS", "MAKELEVEL", "MAKEOVERRIDES", "MFLAGS"):
+        environment.pop(name, None)
+    return subprocess.run(args, cwd=root, env=environment, text=True, capture_output=True, timeout=900)
 
 
 def checked(root: Path, *args: str):
@@ -43,12 +50,16 @@ def checked(root: Path, *args: str):
 
 
 def main() -> None:
+    # Direct invocation needs the same immediate refusal as the make target.
+    preflight = run(ROOT, "bash", "scripts/candidate-docker-gate.sh", "--check-disk")
+    if preflight.returncode:
+        raise SystemExit(preflight.stdout + preflight.stderr)
     evidence = Path(tempfile.mkdtemp(prefix="aweb-ledger-evidence.")).resolve()
     print(f"Ledger integration evidence: {evidence}", flush=True)
     with tempfile.TemporaryDirectory(prefix="aweb-ledger-proof.") as temporary:
         repo = Path(temporary)
         for name in ("candidate-docker-gate.sh", "candidate-suite.sh", "candidate-cleanup.sh",
-                     "candidate-host-pressure.py", "next_tag_version.py", "release_candidate.py", "release_versions.py"):
+                     "candidate-host-pressure.py", "candidate-ports.py", "fetch_released_aw.py", "next_tag_version.py", "release_candidate.py", "release_versions.py"):
             destination = repo / "scripts" / name
             destination.parent.mkdir(exist_ok=True)
             shutil.copy2(ROOT / "scripts" / name, destination)
@@ -64,6 +75,8 @@ def main() -> None:
         )
         (repo / "naapp/library/test-vectors/blueprints/team").mkdir(parents=True)
         (repo / "naapp/library/test-vectors/blueprints/team/proof").write_text("fixture\n")
+        shutil.copy2(ROOT / "docker-compose.e2e.yml", repo / "docker-compose.e2e.yml")
+        shutil.copytree(ROOT / "scripts/e2e/initdb", repo / "scripts/e2e/initdb")
         (repo / "server").mkdir()
         (repo / "server/pyproject.toml").write_text('[project]\nname="ledger-proof"\nversion="1.2.3"\n')
         recipes = f".PHONY: candidate-gate {' '.join(SOURCE_CHECKS)}\n{' '.join(SOURCE_CHECKS)}:\n\t@git diff --exit-code\n"
@@ -79,6 +92,10 @@ _candidate-artifact-server:
 \t@docker build -f candidate-gate/proof.Dockerfile -t "$$AWEB_CANDIDATE_RESOURCE_LABEL-proof" candidate-gate
 \t@docker run --rm "$$AWEB_CANDIDATE_RESOURCE_LABEL-proof" sh -c 'test "$$(echo 42)" = 42'
 \t@test "$$(wc -l < "$$CANDIDATE_LOG_DIR/setup.log")" = 2
+cli-e2e:
+\t@set -eu; trap 'docker compose -p "$$LIBRARY_E2E_PROJECT" -f docker-compose.e2e.yml down -v --remove-orphans' EXIT; \
+\t  docker compose -p "$$LIBRARY_E2E_PROJECT" -f docker-compose.e2e.yml up -d --wait postgres; \
+\t  docker compose -p "$$LIBRARY_E2E_PROJECT" -f docker-compose.e2e.yml exec -T postgres pg_isready -U aweb
 freshness:
 \t@test "$$(redis-cli -u "$$REDIS_URL" PING)" = PONG
 naapp-e2e-packages:
@@ -96,7 +113,7 @@ candidate-gate:
         checked(repo, "git", "commit", "-qm", "small real gate stages")
         checked(repo, "git", "remote", "add", "origin", str(repo))
         env = {key: value for key, value in os.environ.items()
-               if key == "AWEB_GATE_MIN_FREE_GB"
+               if key in {"AWEB_GATE_MIN_FREE_GB", "AWEB_GATE_RESERVE_GB"}
                or not key.startswith(("AWEB_CANDIDATE_", "AWEB_GATE_", "CANDIDATE_", "GATE_", "LIBRARY_E2E_"))}
         env.update(AWEB_GATE_LEDGER=str(evidence / "ledger.tsv"),
                    AWEB_GATE_LOG_DIR=str(evidence / "logs"),
@@ -123,9 +140,12 @@ candidate-gate:
         invoke("first-checks", *gate, stages="checks")
         rows = ledger.read_text().splitlines()
         assert len(rows) == 1 and rows[0].split("\t")[1:3] == ["checks", "passed"]
-        invoke("missing-only", "make", "candidate-gate")
+        # Exercise the real gate allocation/runner environment and Library's
+        # actual Compose Postgres service while its old host port is occupied.
+        with held_library_default():
+            invoke("missing-only", "make", "candidate-gate")
         rows = ledger.read_text().splitlines()
-        assert len(rows) == 4 and {row.split("\t")[1] for row in rows} == set(STAGES.split())
+        assert len(rows) == len(STAGES.split()) and {row.split("\t")[1] for row in rows} == set(STAGES.split())
         assert all(row.split("\t")[2] == "passed" for row in rows)
         assert "no stages run" in invoke("same-tree-direct", *gate)
         # New commit metadata with the identical tree does not invalidate proof.
@@ -139,19 +159,19 @@ candidate-gate:
         checked(repo, "git", "tag", "aw-v1.2.3-rc.1")
         # The real RC must require all stages despite an inherited focused selector.
         output = invoke("rc-reuse", sys.executable, "scripts/release_candidate.py", "aw-v1.2.3", stages="checks")
-        assert "no stages run" in output and "checks unit artifacts integration" in output
+        assert "no stages run" in output and "checks user-paths unit artifacts integration" in output
         assert checked(repo, "git", "rev-parse", "aw-v1.2.3^{commit}") == checked(repo, "git", "rev-parse", "HEAD")
         assert ledger.read_text().splitlines() == rows
         # An effective version is an external input, even with an unchanged tree.
         env["CLI_VERSION"] = "1.2.4"
         invoke("version-input", *gate, stages="checks")
         version_rows = ledger.read_text().splitlines()
-        assert len(version_rows) == 5 and version_rows[-1].split("\t")[0] != rows[0].split("\t")[0]
+        assert len(version_rows) == len(rows) + 1 and version_rows[-1].split("\t")[0] != rows[0].split("\t")[0]
         env["CLI_VERSION"] = "1.2.3"
         (repo / "Makefile").write_text(recipes.replace("6 * 7 == 42", "7 * 6 == 42"))
         checked(repo, "git", "commit", "-qam", "changed tree")
         invoke("changed-tree", *gate, stages="checks")
-        assert len(ledger.read_text().splitlines()) == 6
+        assert len(ledger.read_text().splitlines()) == len(version_rows) + 1
         (repo / "Makefile").write_text(recipes.replace("6 * 7 == 42", "6 * 7 == 43"))
         checked(repo, "git", "commit", "-qam", "real failing stage")
         invoke("failed-tree", *gate, stages="checks", success=False)

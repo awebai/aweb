@@ -11,8 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -26,17 +26,21 @@ const humanInitDomain = "humans.example.invalid"
 
 // runHumanInitBinary runs the real aw binary with a fresh HOME. With
 // terminal it runs under a pty that becomes its controlling terminal;
-// without, it runs in a new session with no controlling terminal at all.
+// without, it runs with no controlling terminal (or Windows console) at all.
 func runHumanInitBinary(t *testing.T, terminal bool, env []string, args ...string) (string, error, string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	bin := filepath.Join(t.TempDir(), "aw")
+	name := "aw"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	bin := filepath.Join(t.TempDir(), name)
 	buildAwBinary(t, ctx, bin)
 	home := t.TempDir()
 	cmd := exec.CommandContext(ctx, bin, append([]string{"id", "human", "init"}, args...)...)
 	cmd.Dir = t.TempDir()
-	cmd.Env = append(os.Environ(), append([]string{"HOME=" + home, "AW_NO_UPDATE_CHECK=1", "OATS_INSTANCE_HOME=", "OATS_INSTANCE="}, env...)...)
+	cmd.Env = append(os.Environ(), append([]string{"HOME=" + home, "USERPROFILE=" + home, "AW_NO_UPDATE_CHECK=1", "OATS_INSTANCE_HOME=", "OATS_INSTANCE="}, env...)...)
 	var output bytes.Buffer
 	var err error
 	if terminal {
@@ -54,7 +58,7 @@ func runHumanInitBinary(t *testing.T, terminal bool, env []string, args ...strin
 		cmd.Stdin = nil
 		cmd.Stdout = &output
 		cmd.Stderr = &output
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		configureHumanInitWithoutTerminal(cmd)
 		err = cmd.Run()
 	}
 	return output.String(), err, home

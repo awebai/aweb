@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/awebai/aw/awconfig"
@@ -26,6 +27,12 @@ func resolveIDExchangeIdentity(wd, home string) (*awconfig.ResolvedIdentity, err
 		return resolveIdentityForDir(wd)
 	}
 	identity, err := awconfig.ResolveIdentityFromHome(wd, home)
+	if errors.Is(err, os.ErrNotExist) {
+		identity, err = resolveCertificateIdentityAtHome(wd, home)
+		if err == nil && identity.IdentityScope != awid.IdentityModeLocal {
+			return nil, errors.New("global exchange identity is missing identity.yaml")
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -48,6 +55,37 @@ func identityKeyRoute(ctx context.Context, identity *awconfig.ResolvedIdentity, 
 	return registry.ResolveKeyAt(ctx, registryURL, identity.StableID)
 }
 
+// Membership routing never replaces an issuer's own home registry. With no
+// saved pin, the operation route can fill the same namespace's missing routing
+// information, subject to its independently discovered registry constraint.
+func teamInviteIssuerRegistry(ctx context.Context, opts idChildOptions, identity *awconfig.ResolvedIdentity, domain string) (string, error) {
+	if own := strings.TrimSpace(identity.RegistryURL); own != "" {
+		return own, nil
+	}
+	if selected := strings.TrimSpace(opts.RegistryURL); selected != "" {
+		return selected, nil
+	}
+	if fallback := strings.TrimSpace(opts.TeamRegistryURL); fallback != "" && domain != "" && domain == opts.TeamRegistryDomain {
+		authority, err := awid.DiscoverAuthoritativeRegistry(ctx, opts.TXTResolver, domain)
+		if err != nil {
+			return "", err
+		}
+		return domainRegistryURL(authority, fallback)
+	}
+	registry, err := resolveIdentityRegistryClient(identity)
+	if err != nil {
+		return "", err
+	}
+	if opts.TXTResolver != nil {
+		registry.Resolver.DNSResolver = opts.TXTResolver
+	}
+	// An installed chain fixes the issuer namespace independently of any
+	// address or team membership. The selector does not mutate identity state.
+	own := *identity
+	own.Domain = domain
+	return currentIdentityRegistryURL(ctx, &own, registry)
+}
+
 // No chain is the legacy path only when current evidence establishes absence.
 // A team key is never an ID-parent credential.
 func prepareTeamInviteIDChild(ctx context.Context, opts idChildOptions) (*awconfig.TeamInviteIDChild, error) {
@@ -58,15 +96,24 @@ func prepareTeamInviteIDChild(ctx context.Context, opts idChildOptions) (*awconf
 	if err != nil {
 		return nil, err
 	}
-	home := filepath.Dir(identity.IdentityPath)
+	home := filepath.Dir(identity.SigningKeyPath)
 	chain, err := awconfig.LoadInstalledIDChain(home)
 	if err != nil {
 		return nil, err
 	}
+	if chain == nil && identity.StableID == "" {
+		return nil, nil
+	}
+	domain := identity.Domain
+	if chain != nil {
+		certificates := chain.Bundle["certificates"].([]any)
+		domain = certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)["domain"].(string)
+	}
+	opts.RegistryURL, err = teamInviteIssuerRegistry(ctx, opts, identity, domain)
+	if err != nil {
+		return nil, fmt.Errorf("inviter cannot select its identity registry: %w", err)
+	}
 	if chain == nil {
-		if identity.StableID == "" {
-			return nil, nil
-		}
 		resolution, err := identityKeyRoute(ctx, identity, opts.RegistryURL)
 		if err != nil {
 			return nil, fmt.Errorf("inviter cannot issue: evidence_unavailable; check the inviter's identity registry connection and retry: %w", err)
@@ -104,11 +151,11 @@ func prepareTeamInviteIDChild(ctx context.Context, opts idChildOptions) (*awconf
 	if err := issuer.invitations.PutInvitation(inv); err != nil {
 		return nil, err
 	}
-	return &awconfig.TeamInviteIDChild{InvitationID: out.InvitationID, Parent: out.Parent["id"].(string), Domain: out.Domain, IssuerHome: home}, nil
+	return &awconfig.TeamInviteIDChild{InvitationID: out.InvitationID, Parent: out.Parent["id"].(string), Domain: out.Domain, IssuerHome: home, RegistryURL: issuer.registryURL}, nil
 }
 
 func checkSelectedTeamInviteIssuer(ctx context.Context, issuer *selectedChildIssuer) error {
-	identity, err := awconfig.ResolveIdentityFromHome("", filepath.Dir(issuer.invitations.Dir))
+	identity, err := resolveIDExchangeIdentity("", filepath.Dir(issuer.invitations.Dir))
 	if err != nil {
 		return err
 	}
@@ -128,7 +175,15 @@ func checkSelectedTeamInviteIssuer(ctx context.Context, issuer *selectedChildIss
 }
 
 func linkedTeamInviteIssuer(ctx context.Context, link *awconfig.TeamInviteIDChild) (idChildOptions, *selectedChildIssuer, error) {
-	opts := idChildOptions{IdentityHome: link.IssuerHome, Now: time.Now}
+	opts := idChildOptions{IdentityHome: link.IssuerHome, TeamRegistryURL: link.RegistryURL, TeamRegistryDomain: link.Domain, Now: time.Now}
+	identity, err := resolveIDExchangeIdentity("", link.IssuerHome)
+	if err != nil {
+		return opts, nil, err
+	}
+	opts.RegistryURL, err = teamInviteIssuerRegistry(ctx, opts, identity, link.Domain)
+	if err != nil {
+		return opts, nil, err
+	}
 	issuer, err := selectChildIssuer(ctx, opts)
 	if err != nil {
 		return opts, nil, err
@@ -164,7 +219,7 @@ func completeTeamInviteIDChild(ctx context.Context, invite *awconfig.TeamInvite,
 	} else {
 		raw = []byte(outgoing.Request)
 	}
-	issuerOpts, _, err := linkedTeamInviteIssuer(ctx, link)
+	issuerOpts, issuer, err := linkedTeamInviteIssuer(ctx, link)
 	if err != nil {
 		return err
 	}
@@ -176,8 +231,56 @@ func completeTeamInviteIDChild(ctx context.Context, invite *awconfig.TeamInvite,
 	if err != nil {
 		return err
 	}
+	childOpts.RegistryURL = issuer.registryURL
 	_, err = executeIDParentImport(ctx, childOpts, response)
 	return err
+}
+
+// Hosted roster provisioning has both identity homes, unlike an ordinary
+// cross-machine accept. Use only the locally selected parent named by the
+// retained hosted preview, then run the same request/approve/import exchange.
+func completeHostedProvisioningIDChild(ctx context.Context, anchorDir, issuerHome, childDir, childHome string) error {
+	state, err := loadHostedInviteCreation(filepath.Join(childHome, hostedInviteRecoveryFile))
+	if err != nil {
+		return err
+	}
+	if state == nil || state.Tree.Mode != "self_custodial" || state.Tree.Parent["kind"] != "identity" {
+		return errors.New("hosted child has no pinned native issuer")
+	}
+	identity, err := resolveIDExchangeIdentity(anchorDir, issuerHome)
+	if err != nil {
+		return err
+	}
+	if identityID(identity) != state.Tree.Parent["id"] {
+		return errors.New("hosted child issuer differs from the selected roster parent")
+	}
+	link, err := prepareTeamInviteIDChild(ctx, idChildOptions{WorkingDir: anchorDir, IdentityHome: issuerHome, Now: time.Now})
+	if err != nil {
+		return err
+	}
+	if link == nil || link.Parent != state.Tree.Parent["id"] || link.Domain != state.Tree.Domain {
+		return errors.New("hosted child issuer binding differs from the selected roster parent chain")
+	}
+	return completeTeamInviteIDChild(ctx, &awconfig.TeamInvite{IDChild: link}, childDir, childHome)
+}
+
+// The caller owns both homes and explicitly provisions a new agent. Ordinary
+// invite accept never guesses where another participant's signer might live.
+func acceptProvisionedTeamInvite(anchorDir, issuerHome, childDir, token string, opts teamAcceptInviteOptions) (*acceptedTeamInvite, error) {
+	accepted, err := acceptTeamInviteWithDetails(childDir, token, opts)
+	var pending *hostedInviteSignaturePendingError
+	if !errors.As(err, &pending) {
+		return accepted, err
+	}
+	ctx, cancel := commandAPIContext(nil)
+	exchangeErr := completeHostedProvisioningIDChild(ctx, anchorDir, issuerHome, childDir, opts.IdentityHome)
+	cancel()
+	if exchangeErr != nil {
+		return nil, &hostedInviteSignaturePendingError{err: fmt.Errorf("native agent signature pending in %s; child key and request retained: %w", childDir, exchangeErr)}
+	}
+	// Resume with the original child key, request UUID and successful preview.
+	// No Cloud acceptance was sent while the native signature was pending.
+	return acceptTeamInviteWithDetails(childDir, token, opts)
 }
 
 // Reserve a fresh recipient before minting its key. A prepared identity joins

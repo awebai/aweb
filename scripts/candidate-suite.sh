@@ -19,7 +19,7 @@ if [[ "${1:-}" == "--isolated-suites" ]]; then
 fi
 
 log_dir="${CANDIDATE_LOG_DIR:?CANDIDATE_LOG_DIR is required}"
-stages="${1:-checks unit artifacts integration}"
+stages="${1:-checks user-paths unit artifacts integration}"
 checks() {
   run check-private-boundary
   run _candidate-gate-docker-boundaries
@@ -43,6 +43,9 @@ checks() {
   run test-go-vulnerability-audit
   run check-go-vulnerability-audit
   run test-release-cli-version
+}
+user-paths() {
+  run e2e-user-paths
 }
 unit() {
   run _candidate-unit-suites
@@ -72,6 +75,7 @@ integration() {
   run test-federation-e2e
   run cli-e2e
   run e2e-naapp
+  run e2e-folio-wakes
   run test-npm-exact-publish
   run test-pypi-exact-publish
   run test-oci-exact-publish
@@ -83,7 +87,7 @@ node_ready=0
 cli_ready=0
 : > "$log_dir/summary.tsv"
 for stage in $stages; do
-  case "$stage" in checks|unit|artifacts|integration) ;; *) echo "unknown candidate stage: $stage" >&2; exit 2;; esac
+  case "$stage" in checks|user-paths|unit|artifacts|integration) ;; *) echo "unknown candidate stage: $stage" >&2; exit 2;; esac
   case "$stage" in
     unit|artifacts|integration)
       if [[ "$node_ready" == 0 ]]; then run _candidate-node-deps; node_ready=1; fi ;;
@@ -99,7 +103,12 @@ for stage in $stages; do
   set -e
   result=PASSED
   [[ "$status" == 0 ]] || result=FAILED
-  printf '%s\t%s\t%s.log\t%ss\n' "$stage" "$result" "$stage" "$((SECONDS-started))" >> "$log_dir/summary.tsv"
+  coverage=""
+  if [[ "$stage" == user-paths && -f "$log_dir/user-paths/coverage-summary.txt" ]]; then
+    coverage="$(cat "$log_dir/user-paths/coverage-summary.txt")"
+    printf 'user-paths coverage: %s\n' "$coverage"
+  fi
+  printf '%s\t%s\t%s.log\t%ss\t%s\n' "$stage" "$result" "$stage" "$((SECONDS-started))" "$coverage" >> "$log_dir/summary.tsv"
   [[ "$status" == 0 ]] || exit "$status"
 done
 printf '\ncandidate suite PASSED\n'

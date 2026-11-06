@@ -414,7 +414,7 @@ async def register_namespace(
 @router.post(
     "/{domain}/reverify",
     response_model=NamespaceReverifyResponse,
-    dependencies=[Depends(rate_limit_dep("namespace_reverify"))],
+    dependencies=[Depends(rate_limit_dep("namespace_reverify", allow_trusted_service=True))],
 )
 async def reverify_namespace(
     domain: str,
@@ -473,7 +473,7 @@ async def get_namespace(domain: str, db_infra=Depends(get_db)) -> NamespaceRespo
 @router.patch(
     "/{domain}",
     response_model=NamespaceResponse,
-    dependencies=[Depends(rate_limit_dep("namespace_update"))],
+    dependencies=[Depends(rate_limit_dep("namespace_update", allow_trusted_service=True))],
 )
 async def update_namespace(
     request: Request,
@@ -529,7 +529,7 @@ async def update_namespace(
 @router.put(
     "/{domain}",
     response_model=NamespaceResponse,
-    dependencies=[Depends(rate_limit_dep("namespace_rotate"))],
+    dependencies=[Depends(rate_limit_dep("namespace_rotate", allow_trusted_service=True))],
 )
 async def rotate_namespace_controller(
     request: Request,
@@ -648,7 +648,7 @@ async def rotate_namespace_controller(
 @router.post(
     "/{domain}/rotate",
     response_model=NamespaceResponse,
-    dependencies=[Depends(rate_limit_dep("namespace_rotate"))],
+    dependencies=[Depends(rate_limit_dep("namespace_rotate", allow_trusted_service=True))],
 )
 async def rotate_namespace_with_previous_key(
     request: Request,
@@ -791,7 +791,7 @@ async def list_namespaces(
     )
 
 
-@router.delete("/{domain}", dependencies=[Depends(rate_limit_dep("namespace_delete"))])
+@router.delete("/{domain}", dependencies=[Depends(rate_limit_dep("namespace_delete", allow_trusted_service=True))])
 async def delete_namespace(
     request: Request,
     domain: str,

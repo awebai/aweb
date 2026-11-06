@@ -2850,27 +2850,58 @@ func TestTeamInviteWithLocalTeamKeySupportsGlobalWithoutServiceContext(t *testin
 	}
 	writeTeamKeyForTest(t, tmp, "alpha.test.local", "alpha", teamKey)
 
-	runInvite := exec.CommandContext(ctx, bin, "id", "team", "invite",
-		"--team", "alpha",
-		"--namespace", "alpha.test.local",
-		"--global",
-		"--json")
-	runInvite.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL=http://localhost:8310")
-	runInvite.Dir = tmp
-	out, err := runInvite.CombinedOutput()
-	if err != nil {
-		t.Fatalf("team invite failed: %v\n%s", err, string(out))
-	}
-	var got map[string]any
-	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
-		t.Fatalf("invalid json: %v\n%s", err, string(out))
-	}
-	if got["status"] != "created" {
-		t.Fatalf("status=%v want created", got["status"])
-	}
-	token, _ := got["token"].(string)
-	if token == "" {
-		t.Fatalf("token missing in output: %v", got)
+	for _, tc := range []struct {
+		name, scope string
+		leadingJSON bool
+		missingKey  bool
+	}{
+		{"folio-leading-json", "--global", true, false},
+		{"trailing-json", "--global", false, false},
+		{"current-scope-flag", "--member-global", true, false},
+		{"error-after-warning", "--global", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			team := "alpha"
+			if tc.missingKey {
+				team = "missing"
+			}
+			args := []string{"id", "team", "invite", "--team", team, "--namespace", "alpha.test.local", tc.scope}
+			if tc.leadingJSON {
+				args = append([]string{"--json"}, args...)
+			} else {
+				args = append(args, "--json")
+			}
+			runInvite := exec.CommandContext(ctx, bin, args...)
+			runInvite.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL=http://localhost:8310")
+			runInvite.Dir = tmp
+			var stdout, stderr bytes.Buffer
+			runInvite.Stdout, runInvite.Stderr = &stdout, &stderr
+			err := runInvite.Run()
+			if tc.missingKey {
+				var exit *exec.ExitError
+				if !errors.As(err, &exit) || exit.ExitCode() != 2 {
+					t.Fatalf("expected usage refusal, got %v\nstdout=%s\nstderr=%s", err, stdout.String(), stderr.String())
+				}
+			} else if err != nil {
+				t.Fatalf("team invite failed: %v\nstdout=%s\nstderr=%s", err, stdout.String(), stderr.String())
+			}
+			assertOneJSONDocument(t, stdout.Bytes())
+			var got map[string]any
+			if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+				t.Fatalf("invalid stdout JSON: %v\n%s", err, stdout.String())
+			}
+			if tc.missingKey {
+				failure, ok := got["error"].(map[string]any)
+				if !ok || !strings.Contains(fmt.Sprint(failure["message"]), "no team key") {
+					t.Fatalf("missing JSON failure after warning: %v", got)
+				}
+			} else if got["status"] != "created" || got["token"] == nil || got["token"] == "" {
+				t.Fatalf("invite missing from output: %v", got)
+			}
+			if tc.scope == "--global" && !strings.Contains(stderr.String(), "Flag --global has been deprecated, use --member-global") {
+				t.Fatalf("missing deprecation warning on stderr: %q", stderr.String())
+			}
+		})
 	}
 }
 

@@ -28,8 +28,12 @@ a Library/profile service is required for messaging. The standard order is:
 aw workspace status
 aw mail inbox
 aw chat pending
-aw work ready
 ```
+
+If your team uses aweb tasks (it has tasks, or its instructions say so), run
+`aw work ready` after checking messages and follow the `aweb-tasks` skill when
+installed. Otherwise use the team's own tracker. Creating the first aweb task
+is the opt-in.
 
 Mail and waiting chat come before new work because another agent may already be
 blocked on you. `aw mail inbox` shows unread mail by default and acknowledges

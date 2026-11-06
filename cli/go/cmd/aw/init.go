@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -408,47 +407,45 @@ func runInitAdmissionTeamID(cmd *cobra.Command) error {
 	previousExpected := teamAdmissionInviteExpectedAccountID
 	teamAdmissionInviteExpectedAccountID = strings.TrimSpace(initExpectedAccountID)
 	defer func() { teamAdmissionInviteExpectedAccountID = previousExpected }()
-	resp, err := issueTeamAdmissionInvite(cmd.Context(), strings.TrimSpace(initAdmissionTeamID), newRegistryReadRequestID(), resolveAliasValue(resolveInitLocalName()))
+	// Cloud's admission-invite route takes a UUID request_id for retry-safe issuance.
+	requestID, err := newInvitationID()
+	if err != nil {
+		return err
+	}
+	resp, err := issueTeamAdmissionInvite(cmd.Context(), strings.TrimSpace(initAdmissionTeamID), requestID, resolveAliasValue(resolveInitLocalName()))
 	if err != nil {
 		return err
 	}
 	return acceptInitInviteAndConnect(cmd, wd, resp.Token, resp.ServerURL)
 }
 
+// Admission init uses an existing cli.team_admission login and never starts
+// one: a device login it chose a host for could authorize the wrong host.
 func ensureTeamAdmissionAuthForInit(cmd *cobra.Command) error {
-	_, ok, err := loadCLIAuthConfigForScope(cliAuthScopeTeamAdmission)
+	cfg, ok, err := loadCLIAuthConfigForScope(cliAuthScopeTeamAdmission)
 	if err != nil {
 		return err
 	}
-	if ok {
+	named := firstNonEmptyString(resolveInitAwebURLOverride(), strings.TrimSpace(serverFlag))
+	if ok && named == "" {
 		return nil
 	}
-	if initIsTTY() && !jsonFlag {
-		allow, err := promptYesNoWithIO("No cli.team_admission login was found. Start bounded device login now?", true, os.Stdin, os.Stderr)
-		if err != nil {
-			return err
-		}
-		if !allow {
-			return usageError("authorization-required: run `aw auth login --scope %s` before this command", cliAuthScopeTeamAdmission)
-		}
+	issuer, err := normalizeCLIAuthIssuer(awebURLOrDefault(named))
+	if err != nil {
+		return err
 	}
-	previousScope := cliAuthScopeFlag
-	cliAuthScopeFlag = cliAuthScopeTeamAdmission
-	defer func() { cliAuthScopeFlag = previousScope }()
-	parent := cmd.Context()
-	if parent == nil {
-		parent = context.Background()
+	login := fmt.Sprintf("run `aw auth login --scope %s --server-name %s` first", cliAuthScopeTeamAdmission, issuer)
+	if !ok {
+		return usageError("authorization-required: no %s login for %s; %s", cliAuthScopeTeamAdmission, issuer, login)
 	}
-	// Interactive browser authentication retains its login-specific wait budget.
-	ctx, cancel := context.WithTimeout(parent, cliAuthLoginTimeout)
-	defer cancel()
-	loginCmd := cmd
-	if jsonFlag {
-		loginCmd = &cobra.Command{Use: cmd.Use}
-		loginCmd.SetOut(os.Stderr)
-		loginCmd.SetErr(cmd.ErrOrStderr())
+	stored, err := normalizeCLIAuthIssuer(cfg.Issuer)
+	if err != nil {
+		return err
 	}
-	return runAuthLogin(ctx, loginCmd)
+	if stored != issuer {
+		return usageError("authorization-required: the stored %s login is for %s, not %s; %s", cliAuthScopeTeamAdmission, stored, issuer, login)
+	}
+	return nil
 }
 
 func initInviteIdentityScope() string {

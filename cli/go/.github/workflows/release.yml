@@ -1,0 +1,60 @@
+# Maintained in aweb cli/go; copied to awebai/aw by aw-release.yml.
+name: release
+
+# Tag-triggered publisher: one goreleaser run creates the GitHub Release with
+# both binaries for all six platforms plus checksums, then npm/publish.sh
+# publishes the six platform packages and the @awebai/aw wrapper - the exact
+# seven-package set. Publication happens only from a pushed v* tag; the aweb
+# release train pushes that tag from its release branch sync.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # A final can name the same commit as its release candidate; build
+          # the pushed tag, not whichever tag git describe picks.
+          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
+
+      - name: Arrange goreleaser archives for the npm publisher
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p artifacts
+          for archive in dist/aw_"${VERSION}"_*.tar.gz dist/aw_"${VERSION}"_*.zip; do
+            name="$(basename "$archive")"
+            platform="${name#aw_${VERSION}_}"
+            cp "$archive" "artifacts/${platform}"
+          done
+          ls -l artifacts/
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+
+      - name: Publish and verify all seven npm packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: ./npm/publish.sh

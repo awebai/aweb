@@ -294,7 +294,10 @@ func Execute() {
 		}
 		os.Exit(code)
 	}
-	rootCmd.SetOut(commandStdout)
+	// Cobra prints flag deprecation warnings through its Out writer while
+	// parsing. Keep those on its default stderr, then track command output
+	// after parsing so warnings cannot corrupt JSON or suppress an error body.
+	cobra.OnInitialize(func() { rootCmd.SetOut(commandStdout) })
 	err = rootCmd.Execute()
 	checkVersionFromHeader()
 	finishHTTPDiagnostics(err)

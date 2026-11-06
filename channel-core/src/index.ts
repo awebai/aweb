@@ -1,4 +1,5 @@
 export { APIClient, APIError, signIdentityGrantHeaders, type APIClientAuth } from "./api/client.js";
+export { startPresenceHeartbeat, PRESENCE_HEARTBEAT_INTERVAL_MS } from "./presence.js";
 export { ReceiveStreamReceipt, type ReceiveReceiptOptions } from "./receive.js";
 export { streamAgentEvents, parseAgentEvent, formatEventStreamState, streamErrorCause, type AgentEvent, type AgentEventType, type EventStreamState } from "./api/events.js";
 export { ackMessage, fetchInbox, type InboxMessage } from "./api/mail.js";

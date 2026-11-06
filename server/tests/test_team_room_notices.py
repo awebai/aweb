@@ -327,6 +327,10 @@ async def test_live_room_stream_refreshes_authority_without_replaying_opening_ti
     monkeypatch.setattr(events_routes, "datetime", StreamClock)
     monkeypatch.setattr(grant_streams, "datetime", StreamClock)
     monkeypatch.setattr(events_routes, "asyncio", SimpleNamespace(sleep=advance_poll))
+    # The stream schedules its reconcile on the monotonic clock.
+    monkeypatch.setattr(
+        events_routes, "monotonic", lambda: (clock.now - start).total_seconds()
+    )
     try:
         response = await env.client.send(request)
         assert response.status_code == 200, response.text

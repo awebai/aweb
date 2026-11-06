@@ -162,13 +162,14 @@ def _signed_app_headers(
     team_id: str = TEAM_ID,
     app_id: str = "folio",
     kid: str = "emit-1",
+    aud: str = "http://test",
 ):
     timestamp = datetime.now(timezone.utc).isoformat()
     canonical = canonical_json_bytes(
         {
             "v": 1,
             "auth": "app-event",
-            "aud": "http://test",
+            "aud": aud,
             "method": "POST",
             "path": path,
             "team_id": team_id,

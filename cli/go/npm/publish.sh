@@ -1,18 +1,41 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Keep every pack/publish subprocess free of npm's self-update registry reads.
+export NPM_CONFIG_UPDATE_NOTIFIER=false npm_config_update_notifier=false
+
 # Get version from git tag (v0.10.0 -> 0.10.0)
 VERSION="${GITHUB_REF_NAME#v}"
 if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.[1-9][0-9]*)?$ ]]; then
   echo "Error: expected vX.Y.Z or vX.Y.Z-rc.N (N >= 1)" >&2
   exit 1
 fi
-DIST_TAG=latest
-[[ "$VERSION" != *-rc.* ]] || DIST_TAG=next
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ARTIFACTS_DIR="$REPO_ROOT/artifacts"
+channel_args=(--version "$VERSION")
+if [[ "${1:-}" == --staged-final && $# == 1 ]]; then
+  channel_args+=(--staged-final)
+elif [[ $# == 0 ]]; then
+  if [[ "${GITHUB_ACTIONS:-}" == true ]]; then
+    # checkout@v4 can replace an annotated tag with the event's peeled commit,
+    # even with fetch-depth: 0. Recover the remote tag before reading its channel.
+    git -C "$REPO_ROOT" fetch --force --no-tags origin \
+      "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+  fi
+  channel_args+=(--tag "$GITHUB_REF_NAME" --repository "$REPO_ROOT")
+else
+  echo 'Usage: npm/publish.sh [--staged-final]' >&2
+  exit 2
+fi
+DIST_TAG="$(python3 "$SCRIPT_DIR/publication.py" channel "${channel_args[@]}")"
+# goreleaser stamps the binaries with this checkout's commit. npm records no
+# gitHead for a published tarball, so each manifest carries it explicitly.
+SOURCE_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+if [[ ! "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "Error: cannot read the source commit of $REPO_ROOT" >&2
+  exit 1
+fi
 
 echo "Publishing aw v${VERSION} to npm..."
 
@@ -60,18 +83,33 @@ done
 main_pkg="$SCRIPT_DIR/aw/package.json"
 sed -i "s/\"@awebai\/aw-\([^\"]*\)\": \"[^\"]*\"/\"@awebai\/aw-\1\": \"$VERSION\"/" "$main_pkg"
 
-# Step 3: Publish platform packages first (so they exist when main package is installed)
-for pkg_dir in aw-linux-x64 aw-linux-arm64 aw-darwin-x64 aw-darwin-arm64 aw-windows-x64 aw-windows-arm64; do
-  echo "  Publishing @awebai/$pkg_dir@$VERSION..."
-  cd "$SCRIPT_DIR/$pkg_dir"
-  npm publish --access public --tag "$DIST_TAG"
-  cd "$REPO_ROOT"
+echo "  Recording source commit $SOURCE_COMMIT in all packages..."
+for pkg_dir in aw aw-linux-x64 aw-linux-arm64 aw-darwin-x64 aw-darwin-arm64 aw-windows-x64 aw-windows-arm64; do
+  python3 - "$SCRIPT_DIR/$pkg_dir/package.json" "$SOURCE_COMMIT" <<'PY'
+import json, sys
+path, commit = sys.argv[1], sys.argv[2]
+with open(path) as handle:
+    manifest = json.load(handle)
+manifest["gitHead"] = commit
+with open(path, "w") as handle:
+    handle.write(json.dumps(manifest, indent=2) + "\n")
+PY
 done
 
-# Step 4: Publish the main wrapper package last
-echo "  Publishing @awebai/aw@$VERSION..."
-cd "$SCRIPT_DIR/aw"
-npm publish --access public --tag "$DIST_TAG"
-cd "$REPO_ROOT"
-
-echo "Done! All packages published at version $VERSION."
+# Pack once, then publish and verify those exact bytes. The platform packages
+# precede the wrapper, while one shared deadline covers readback of all seven.
+staging="$(mktemp -d)"
+trap 'rm -rf "$staging"' EXIT
+readback=()
+for pkg_dir in aw-linux-x64 aw-linux-arm64 aw-darwin-x64 aw-darwin-arm64 aw-windows-x64 aw-windows-arm64 aw; do
+  echo "  Publishing @awebai/$pkg_dir@$VERSION..."
+  mkdir -p "$staging/$pkg_dir"
+  packed="$(cd "$SCRIPT_DIR/$pkg_dir" && npm pack --ignore-scripts --json --pack-destination "$staging/$pkg_dir")"
+  filename="$(python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["filename"])' <<<"$packed")"
+  archive="$staging/$pkg_dir/$filename"
+  npm publish "$archive" --access public --tag "$DIST_TAG"
+  readback+=(--artifact "@awebai/$pkg_dir=$archive")
+done
+python3 "$SCRIPT_DIR/readback.py" "${readback[@]}" --version "$VERSION" \
+  --dist-tag "$DIST_TAG" --git-head "$SOURCE_COMMIT" --registry "${NPM_CONFIG_REGISTRY:-https://registry.npmjs.org}"
+echo "Done! All seven packages verified at version $VERSION on $DIST_TAG."

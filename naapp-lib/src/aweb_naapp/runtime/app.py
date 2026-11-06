@@ -20,9 +20,8 @@ covered by the team's installed grant, and allowed by the app's policy. ``Depend
 authenticates: it says who signed the request, never that they may act, so it
 is for routes that need nothing more than the signer's identity.
 
-The font files under ``/fonts/`` are the app's: this package names the fonts
-its stylesheet loads and serves them from the app's directory, but does not
-ship them.
+The licensed shared fonts under ``/fonts/`` ship with this toolkit. An app
+may also supply its own font directory; its licensing remains with that app.
 """
 
 from __future__ import annotations
@@ -49,9 +48,10 @@ from fastapi.routing import APIRoute
 from pgdbm import AsyncDatabaseManager
 from starlette.routing import BaseRoute, Host, Mount
 
-from aweb_naapp.css import FONT_NAMES, aweb_css
+from aweb_naapp.css import aweb_css, font_bytes
 from aweb_naapp.hooks.producer import HookProducer
 from aweb_naapp.hooks.resolver import TeamServerRegistrations
+from aweb_naapp.identity_assets import mount_identity_routes
 from aweb_naapp.manifest import (
     CATALOG_PATH,
     LEGACY_MANIFEST_PATH,
@@ -694,9 +694,9 @@ def mount_naapp_routes(
 ) -> None:
     """Serve the standard naapp public surface.
 
-    ``fonts_dir`` holds the app's copies of the fonts the stylesheet loads
-    (``FONT_NAMES``); only those names are served, and a directory missing one
-    is refused here.
+    Shared fonts are served from the toolkit's licensed, bundled assets.
+    ``fonts_dir`` may additionally supply app-owned WOFF2 files. Only the
+    filenames loaded from that directory at mount time can be requested.
 
     The landing page, robots rules and noindex paths are the app's: ``landing``
     renders the front door on each request, ``robots_disallow`` lists the paths
@@ -706,6 +706,7 @@ def mount_naapp_routes(
     health routes check the runtime's dependencies plus the app's own
     ``health_checks``.
     """
+    mount_identity_routes(app)
     settings = runtime.settings
     noindex_prefixes = tuple(noindex_paths)
 
@@ -742,11 +743,13 @@ def mount_naapp_routes(
     async def aweb_css_fingerprinted_route(fingerprint: str) -> Response:
         return _aweb_css_response(immutable=True)
 
-    fonts = {name: (fonts_dir / name).read_bytes() for name in sorted(FONT_NAMES)}
+    app_fonts = {path.name: path.read_bytes() for path in fonts_dir.glob("*.woff2") if path.is_file()}
 
     @app.get("/fonts/{font_name}")
     async def font_route(font_name: str) -> Response:
-        font = fonts.get(font_name)
+        font = font_bytes(font_name)
+        if font is None:
+            font = app_fonts.get(font_name)
         if font is None:
             raise HTTPException(status_code=404, detail="Font not found")
         return Response(

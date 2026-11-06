@@ -111,6 +111,7 @@ type InstanceStatus struct {
 	RuntimeDelivery     string                  `json:"runtime_delivery,omitempty"`
 	PrimaryIdentityHome string                  `json:"primary_identity_home,omitempty"`
 	ReceiveIdentities   []ReceiveIdentityStatus `json:"receive_identities,omitempty"`
+	PresenceIdentities  []PresenceIdentity      `json:"presence_identities,omitempty"`
 	Backend             string                  `json:"backend,omitempty"`
 	Delivery            string                  `json:"delivery"`
 	RegisteredAt        time.Time               `json:"registered_at"`

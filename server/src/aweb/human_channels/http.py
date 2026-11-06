@@ -8,6 +8,7 @@ from uuid import UUID
 from awid.signing import canonical_json_bytes
 from fastapi import HTTPException
 
+from aweb.agent_wake import agent_wake_publisher, agent_wake_scope
 from aweb.identity_auth_deps import participant_dids
 
 from .contract import ContractError
@@ -169,23 +170,25 @@ async def accept_native_http(request, payload, *, auth, db, kind, session_id=Non
                 ),
             ),
         )
-        async with service.unit_of_work(auth) as uow:
-            previous = await uow.claim_ingress(key)
-            if previous is not None:
-                _exact(previous, mid, cid, kind, digest)
-                return previous.value["accepted"]
-            accepted = await uow.accept(prepared)
-            await uow.finish_ingress(
-                _dto(
-                    "IngressResult",
-                    {
-                        "version": "aweb-ingress-result-v1",
-                        "key": key.value,
-                        "accepted": accepted.value,
-                        "result": {},
-                    },
+        # Wakes are published after the unit of work commits.
+        with agent_wake_scope(agent_wake_publisher(request.app.state)):
+            async with service.unit_of_work(auth) as uow:
+                previous = await uow.claim_ingress(key)
+                if previous is not None:
+                    _exact(previous, mid, cid, kind, digest)
+                    return previous.value["accepted"]
+                accepted = await uow.accept(prepared)
+                await uow.finish_ingress(
+                    _dto(
+                        "IngressResult",
+                        {
+                            "version": "aweb-ingress-result-v1",
+                            "key": key.value,
+                            "accepted": accepted.value,
+                            "result": {},
+                        },
+                    )
                 )
-            )
         return accepted.value
     except ContractError as error:
         raise _refusal(error, "accept") from error

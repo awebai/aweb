@@ -186,7 +186,7 @@ def create_mutation_handler(redis: Redis, db_infra: DatabaseInfra):
                     logger.warning("Skipping %s event: no workspace_id in context", event_type)
                 else:
                     try:
-                        await _enrich(event, redis, db_infra)
+                        await _enrich(event, redis, db_infra, context)
                     except Exception:
                         logger.warning(
                             "Enrichment failed for %s, publishing with defaults", event_type, exc_info=True
@@ -428,7 +428,7 @@ async def _alias_for(redis: Redis, workspace_id: str) -> str:
     return presence.get("alias", "")
 
 
-async def _enrich(event: Event, redis: Redis, db_infra: DatabaseInfra) -> None:
+async def _enrich(event: Event, redis: Redis, db_infra: DatabaseInfra, context: dict) -> None:
     """Add aliases, subjects, and previews via Redis/DB lookups."""
 
     if isinstance(event, MessageDeliveredEvent):
@@ -451,7 +451,10 @@ async def _enrich(event: Event, redis: Redis, db_infra: DatabaseInfra) -> None:
     elif isinstance(event, ChatMessageEvent):
         event.from_alias = await _alias_for(redis, event.workspace_id)
         aweb_db = db_infra.get_manager("aweb")
-        if event.session_id and event.workspace_id:
+        # A sender that already holds the recipients' aliases and the preview
+        # supplies them; only an event without them (a recovered outbox row)
+        # reads them back.
+        if event.session_id and event.workspace_id and "to_aliases" not in context:
             participants = await aweb_db.fetch_all(
                 "SELECT alias FROM {{tables.chat_participants}} "
                 "WHERE session_id = $1 AND agent_id != $2",
@@ -459,7 +462,7 @@ async def _enrich(event: Event, redis: Redis, db_infra: DatabaseInfra) -> None:
                 UUID(event.workspace_id),
             )
             event.to_aliases = [r["alias"] for r in participants]
-        if event.message_id:
+        if event.message_id and "preview" not in context:
             msg = await aweb_db.fetch_one(
                 "SELECT body FROM {{tables.chat_messages}} WHERE message_id = $1",
                 UUID(event.message_id),
@@ -515,6 +518,8 @@ def _translate(event_type: str, ctx: dict):
             workspace_id=ctx.get("from_agent_id", ""),
             session_id=ctx.get("session_id", ""),
             message_id=ctx.get("message_id", ""),
+            to_aliases=list(ctx.get("to_aliases") or []),
+            preview=str(ctx.get("preview") or ""),
         )
 
     if event_type == "task.created":

@@ -123,8 +123,7 @@ With `AWEB_DELIVERY=session`:
 
 - the Pi extension and the Claude Code channel plugin open no SSE stream and
   deliver no notifications or awakenings;
-- everything else they provide is unchanged — identity resolution, the installed
-  aweb skills, the welcome and status text, and the `aw` CLI path. Each prints
+- everything else they provide is unchanged — identity resolution, the welcome and status text, and the `aw` CLI path. Each prints
   one line at startup saying delivery is external, and the Pi status line reads
   `aweb delivery external`;
 - acknowledgement moves with delivery. For `aw wake`, channel-core marks mail
@@ -202,26 +201,53 @@ A normal connection does this:
 
 1. emits `connected`;
 2. computes a snapshot of current actionable unread mail, pending chat, control
-   signals, and subscribed app events;
+   signals, subscribed app events and room notices;
 3. emits new or changed actionable state while connected;
 4. emits idle keepalive comments;
 5. ends no later than the server's five-minute response cap.
 
-After the initial snapshot, a failed periodic poll is logged and retried on the
-same stream after 1, 2, 4, then at most 5 seconds between attempts. A complete
-successful poll resets both the backoff and failure window. Only a subsequent
-failure more than 30 seconds after the first consecutive failed poll ends the
-stream with the existing `error` event (`detail: "poll failure"`). This window
-starts when the first failure is observed; it is not a timeout on an in-flight
-query. The initial snapshot keeps its existing failure behavior.
+Postgres stays the only source of truth; the stream does not poll it. Each
+write that changes actionable state publishes a wake through Redis after it
+commits, and the stream then recomputes only the kinds of state the wake names.
+A wake carries no content, so a lost, duplicate or early wake costs at most one
+recomputation or some latency, never content. Wakes are keyed by what the
+snapshot reads: the recipient identity's DIDs for mail and chat, the agent for
+control signals and app events, and the team for room notices. A mail or chat
+wake goes to the identity the delivery resolved, never to a stored address
+field. Opening or leaving a chat stream also wakes the session's other
+participants, because it changes `sender_waiting`.
 
-During backoff, the server continues its one-second disconnect, deadline and
-grant-expiry checks and its 30-second idle `: keepalive` comments. Task
-cancellation still propagates immediately at an await. Queries already in
-flight retain their existing database timeout/cancellation behavior. Failed
-polls do not replace the last successful actionable-state snapshot; recovery
-can therefore emit newly available mail or chat. This does not add durable
-replay or acknowledgement semantics to control signals or other event types.
+Every 15 seconds the stream reconciles: it compares per-key change counters in
+Redis with the values it last saw, and recomputes only kinds whose counter
+moved, so an idle stream reads no Postgres between reconciles. Waiting presence
+that only expires in Redis is rechecked there. When the server's Redis
+subscriber reconnects, every stream recomputes all of its state at once. While
+Redis is unavailable, the stream recomputes everything from Postgres every 15
+seconds; it does not fall back to faster polling. A wake lost to a Redis or
+subscriber fault therefore surfaces within 15 seconds, or when a wake that
+failed to publish is retried once Redis returns; a server shutting down first
+publishes the wakes it still holds. A writing process killed outright
+(SIGKILL, out of memory) between committing a write and publishing its wake
+can delay that notification until the recipient's stream reopens or the
+recipient next reads. The write itself is durable and visible to any read.
+
+A failed recomputation after the initial snapshot is logged and retried on the
+same stream after 1, 2, 4, then at most 5 seconds between attempts. A complete
+successful recomputation resets both the backoff and failure window. Only a
+subsequent failure more than 30 seconds after the first consecutive failure
+ends the stream with the existing `error` event (`detail: "poll failure"`).
+This window starts when the first failure is observed; it is not a timeout on
+an in-flight query. The initial snapshot keeps its existing failure behavior.
+
+During backoff, the server keeps its deadline and grant-expiry checks and its
+30-second idle `: keepalive` comments. A disconnected client is detected when
+the server writes to it, or when the server is told the connection closed; the
+stream does not probe for it. Task cancellation still propagates immediately at
+an await. Queries already in flight retain their existing database
+timeout/cancellation behavior. Failed recomputations do not replace the last
+successful actionable-state snapshot; recovery can therefore emit newly
+available mail or chat. This does not add durable replay or acknowledgement
+semantics to control signals or other event types.
 
 `aw events stream` reconnects when a response ends or is cut, with backoff
 from 250 ms up to 30 s that resets after a stream that was served, and runs
@@ -238,12 +264,12 @@ suppresses a repeated event whose type and `message_id` are among the newest
 
 ### Server query maintenance
 
-Pending-chat polling first selects the viewer's participant rows by DID or
+The pending-chat query first selects the viewer's participant rows by DID or
 stable agent ID, preferring an exact DID match within each session. It then
 aggregates participants and reads messages only for those sessions. Existing
 semantics include departed participants; this optimization does not add a
 `left_at` filter, change unread receipts, or change encrypted-message redaction.
-The mail poll query is unchanged.
+The mail query is unchanged.
 
 Migration `019_chat_participant_lookup.sql` adds DID and non-null agent-ID
 indexes supporting that lookup. It does not rewrite existing migrations or
@@ -378,6 +404,15 @@ workspace:
 pi install npm:@awebai/pi@latest
 pi --approve
 ```
+
+The extension includes the CLI, with skills installed separately. For a standalone
+Pi agent, run `pi install -l npm:@awebai/claude-skills@latest` in that agent's
+folder to add the guidance to project settings, then `/reload` or restart Pi.
+OATS agents use their per-home skills when supplied by their composition. Do not
+install this package user-wide on a host running OATS Pi homes: user-wide skills
+load in every Pi folder on that host. Messaging works without skills using `aw workspace status`, `aw mail inbox`,
+`aw chat pending`, and the team's `aw instructions show`. Task tracking remains
+the team's choice; installing either package does not opt into aweb tasks.
 
 Mail and chat wake the session, with the sender's verification shown.
 

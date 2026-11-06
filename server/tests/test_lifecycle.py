@@ -990,3 +990,43 @@ async def test_lifecycle_archive_global_agent_rejects_non_global_target(
     assert agent["deleted_at"] is None
     assert workspace_deleted_at is None
     assert claim_count == 1
+
+
+@pytest.mark.asyncio
+async def test_chat_waiting_cleanup_wakes_the_remaining_participants(aweb_cloud_db):
+    import asyncio
+    import os
+
+    from redis.asyncio import Redis
+
+    from aweb.agent_wake import AgentWakeHub, did_wake_key
+    from aweb.messaging.waiting import register_waiting
+
+    db = aweb_cloud_db.aweb_db
+    team_id, agent_id, workspace_id = await _seed_workspace_with_claim(db)
+    session_id, did = await _seed_waiting_chat(db, team_id=team_id, agent_id=agent_id)
+    bob_did = f"did:key:z6Mkbob{uuid4().hex}"
+    await db.execute(
+        "INSERT INTO {{tables.chat_participants}} (session_id, did, alias) VALUES ($1, $2, 'bob')",
+        session_id,
+        bob_did,
+    )
+    async with Redis.from_url(
+        os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True
+    ) as redis:
+        await register_waiting(redis, str(session_id), did)
+        hub = AgentWakeHub(redis)
+        await hub.start()
+        try:
+            async with hub.subscribe([did_wake_key(bob_did)]) as wakes:
+                result = await apply_lifecycle_cascade(
+                    db,
+                    redis,
+                    _request(team_id=team_id, agent_id=agent_id, workspace_id=workspace_id),
+                )
+                assert result.chat_waiting_cleanup_status == "cleared"
+                await asyncio.wait_for(wakes.wait(), 1.0)
+                assert wakes.take().kinds == {"chat"}
+        finally:
+            await hub.close()
+        assert await redis.zscore(f"chat:waiting:{session_id}", did) is None
