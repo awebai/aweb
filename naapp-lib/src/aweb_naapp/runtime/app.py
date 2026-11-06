@@ -687,7 +687,7 @@ def mount_naapp_routes(
     reference_html: str,
     llms_txt: str,
     og_card_png: bytes,
-    fonts_dir: Path,
+    fonts_dir: Path | None = None,
     robots_disallow: Sequence[str] = (),
     noindex_paths: Sequence[str] = (),
     health_checks: Mapping[str, HealthCheck] | None = None,
@@ -697,6 +697,7 @@ def mount_naapp_routes(
     Shared fonts are served from the toolkit's licensed, bundled assets.
     ``fonts_dir`` may additionally supply app-owned WOFF2 files. Only the
     filenames loaded from that directory at mount time can be requested.
+    Omit it to serve only toolkit fonts.
 
     The landing page, robots rules and noindex paths are the app's: ``landing``
     renders the front door on each request, ``robots_disallow`` lists the paths
@@ -743,7 +744,9 @@ def mount_naapp_routes(
     async def aweb_css_fingerprinted_route(fingerprint: str) -> Response:
         return _aweb_css_response(immutable=True)
 
-    app_fonts = {path.name: path.read_bytes() for path in fonts_dir.glob("*.woff2") if path.is_file()}
+    app_fonts: dict[str, bytes] = {}
+    if fonts_dir is not None:
+        app_fonts = {path.name: path.read_bytes() for path in fonts_dir.glob("*.woff2") if path.is_file()}
 
     @app.get("/fonts/{font_name}")
     async def font_route(font_name: str) -> Response:
