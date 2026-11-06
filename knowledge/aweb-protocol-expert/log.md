@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-06
+* **Harvest**: OKF proposal from seat aweb-protocol-expert-db-access with three backing notes; each claim checked against aweb main at 07f1c8f0c. Reviewer names and message identifiers are omitted.
+* **Creation**: decision [a PubSub release survives any cancellation](/aweb-protocol-expert/decisions/pubsub-release-survives-any-cancellation.md), scoped to stream subscribers as landed, with the agent wake subscriber left as an open point; lessons [an npm tarball publish records no gitHead](/aweb-protocol-expert/lessons/npm-tarball-publish-records-no-githead.md), which points to docs/release.md for the publisher decision, and [stream bodies leave the request connection scope](/aweb-protocol-expert/lessons/stream-bodies-leave-the-request-connection-scope.md).
+
 ## 2026-10-29
 * **Harvest**: manual harvest of seat aweb-protocol-expert-acmj-binding from its proposal and three backing notes, task aweb-acmj.19. Public contract decisions and rejected alternatives are retained; application implementation details and mail receipts are omitted.
 * **Creation**: decision [owner binding needs independent authorities](/aweb-protocol-expert/decisions/owner-binding-needs-independent-authorities.md); lessons [local stop is not new binding authority](/aweb-protocol-expert/lessons/local-stop-is-not-new-binding-authority.md) and [frozen vectors need a real consumer](/aweb-protocol-expert/lessons/frozen-vectors-need-a-real-consumer.md).
