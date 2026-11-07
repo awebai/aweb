@@ -47,7 +47,7 @@ from aweb_logs.reader_service import ReaderService, reader_service
 
 from .deployment import TEST_APP_ID, served_manifest, template, write_key_file
 from .reader_world import act_body
-from .test_reader_routes import READER_SLOT_TOOL, blocked_dns
+from .test_reader_routes import READER_SLOT_TOOL, REMOVE_READER_TOOL, blocked_dns
 
 # The deployment answers at the audience the owner's acts name.
 ORIGIN = AUDIENCE
@@ -112,7 +112,7 @@ def manifest_template() -> dict[str, Any]:
         {"kid": "logs-grants", "purposes": ["app-grant-read"]},
         {"kid": "logs-governance", "purposes": ["hook-event"]},
     ]
-    manifest["tools"].append(READER_SLOT_TOOL)
+    manifest["tools"] += [READER_SLOT_TOOL, REMOVE_READER_TOOL]
     manifest["hooks"]["productions"] = [
         {"catalog": {"id": "aweb.hooks", "version": 1}, "hook": "post-governance-hook", "reads": []}
     ]
@@ -249,18 +249,40 @@ async def deployment(coordination, test_db_factory, tmp_path) -> AsyncIterator[D
                 )
 
 
-async def reader_slot(deployment: Deployment) -> str:
-    body = json.dumps({"contact_sha256": contact_sha256(CONTACT)}).encode()
-    headers = deployment.member.headers(
-        aud=ORIGIN, method="POST", path=READER_SLOT_TOOL["path"], body=body
+async def member_post(deployment: Deployment, path: str, value: dict) -> httpx.Response:
+    body = json.dumps(value).encode()
+    headers = deployment.member.headers(aud=ORIGIN, method="POST", path=path, body=body)
+    return await deployment.agent.post(
+        path, content=body, headers={**headers, "Content-Type": "application/json"}
     )
-    response = await deployment.agent.post(
-        READER_SLOT_TOOL["path"],
-        content=body,
-        headers={**headers, "Content-Type": "application/json"},
+
+
+async def reader_slot(deployment: Deployment, contact: str = CONTACT) -> str:
+    response = await member_post(
+        deployment, READER_SLOT_TOOL["path"], {"contact_sha256": contact_sha256(contact)}
     )
     assert response.status_code == 200, response.text
     return response.json()["scope"]
+
+
+async def designated_reader(deployment: Deployment, contact: str) -> str:
+    """A reader the owner designated at ``contact``, by the deployment's routes."""
+    scope = await reader_slot(deployment, contact)
+    signing, signature = deployment.owner.sign(
+        "app-role.designate",
+        {
+            "app_id": TEST_APP_ID,
+            "installation_id": deployment.installation_id,
+            "role": scope,
+            "contact_sha256": contact_sha256(contact),
+        },
+    )
+    designated = await deployment.console.post(
+        "/readers/designations",
+        json=act_body(signing, signature, scope=scope, contact=contact),
+    )
+    assert designated.status_code == 200, designated.text
+    return scope
 
 
 def enrolment_token(deployment: Deployment) -> str:
@@ -357,3 +379,37 @@ async def test_the_console_origin_serves_logs_pages_and_the_shell_assets_only_th
     ):
         assert (await deployment.console.get(path)).status_code == 200, path
         assert (await deployment.agent.get(path)).status_code == 404, path
+
+
+async def test_a_member_removes_a_reader_but_never_the_last(deployment: Deployment):
+    kept = await designated_reader(deployment, CONTACT)
+    removed = await designated_reader(deployment, "second-reader@example.com")
+    path = REMOVE_READER_TOOL["path"]
+
+    response = await member_post(deployment, path, {"scope": removed})
+    assert response.status_code == 200, response.text
+    assert response.json() == {"scope": removed}
+    current = await deployment.service.directory.current_readers(
+        installation_id=deployment.installation_id, team_id=deployment.member.team_id
+    )
+    assert [reader.scope for reader in current] == [kept]
+
+    last = await member_post(deployment, path, {"scope": kept})
+    assert (last.status_code, last.json()["detail"]) == (409, "last_reader_protected")
+    gone = await member_post(deployment, path, {"scope": removed})
+    assert (gone.status_code, gone.json()["detail"]) == (404, "reader_unknown")
+    assert deployment.looked_up == []
+
+
+@pytest.mark.parametrize(
+    "body", [{}, {"scope": 7}, {"scope": "x", "extra": 1}], ids=["empty", "number", "extra"]
+)
+async def test_a_malformed_removal_is_refused_without_echo(deployment: Deployment, body):
+    response = await member_post(deployment, REMOVE_READER_TOOL["path"], body)
+    assert response.status_code in (400, 422)
+    assert "extra" not in response.text
+
+
+async def test_the_console_origin_serves_no_reader_removal(deployment: Deployment):
+    response = await deployment.console.post(REMOVE_READER_TOOL["path"], json={"scope": "x"})
+    assert response.status_code == 404

@@ -57,6 +57,23 @@ READER_SLOT_TOOL = {
     "body": {"mode": "json"},
     "invocation_contexts": ["agent"],
 }
+REMOVE_READER_TOOL = {
+    "name": "remove-reader",
+    "description": "Remove a reader of the team's log; never the last one.",
+    "method": "POST",
+    "path": "/v1/reader-removals",
+    "input_schema": {
+        "type": "object",
+        "properties": {"scope": {"type": "string"}},
+        "required": ["scope"],
+        "additionalProperties": False,
+    },
+    "params": [{"name": "scope", "in": "body"}],
+    "scopes": ["logs.readers"],
+    "mutation": True,
+    "body": {"mode": "json"},
+    "invocation_contexts": ["agent"],
+}
 
 
 class Installations:
