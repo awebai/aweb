@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from fastapi import FastAPI
+from fastapi.responses import PlainTextResponse
 
 from aweb_naapp.console import (
     ClientIdentity,
@@ -111,5 +112,11 @@ async def shell_app(world: World, *, human_origin: str, agent_origin: str) -> Sh
     )
     human.include_router(shell.bootstrap_router(CEREMONIES))
     human.include_router(console_assets_router())
+
+    @human.post("/unavailable")
+    async def unavailable() -> PlainTextResponse:
+        # A refusal whose body is not JSON, as a proxy in front of the app sends.
+        return PlainTextResponse("unavailable", status_code=502)
+
     app = split_origins(FastAPI(), human, agent_origin=agent_origin, human_origin=human_origin)
     return ShellApp(shell, sessions, human, app)

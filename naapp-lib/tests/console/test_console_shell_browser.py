@@ -167,3 +167,41 @@ async def test_a_spent_link_shows_the_apps_failure_and_can_be_retried(
         await page.get_by_role("button", name=CEREMONIES.enrolment.action).click()
         await expect(page.locator("#notice")).to_have_text(CEREMONIES.failed)
         await expect(page.get_by_role("button", name=CEREMONIES.enrolment.action)).to_be_enabled()
+
+
+REFUSAL = """async ([path, body]) => {
+  try {
+    await window.awebConsole.post(path, body);
+    return null;
+  } catch (refused) {
+    return {name: refused.name, status: refused.status ?? null, detail: refused.detail ?? null};
+  }
+}"""
+
+
+async def test_a_refused_request_tells_the_page_its_status_and_detail(
+    world: World, browser: Browser, service: str
+):
+    async with await browser.new_context() as context:
+        page = await holder(context)
+        await page.goto(service + "/login")
+        await page.wait_for_function("() => !!window.awebConsole")
+
+        invalid = await page.evaluate(REFUSAL, ["/enrolment/options", {}])
+        assert invalid == {"name": "Error", "status": 400, "detail": "request_invalid"}
+
+        refused = await page.evaluate(
+            REFUSAL, ["/enrolment/options", {"link_token": "not-a-delivered-token"}]
+        )
+        assert refused == {"name": "Error", "status": 403, "detail": "enrolment_refused"}
+
+        unparsed = await page.evaluate(REFUSAL, ["/unavailable", None])
+        assert unparsed == {"name": "Error", "status": 502, "detail": None}
+
+        # A request without a session asks this tab to sign in again, and
+        # drops the tab's CSRF token, instead of reporting a refusal.
+        await page.evaluate("key => sessionStorage.setItem(key, 'stale')", CSRF_KEY)
+        unsigned = await page.evaluate(REFUSAL, ["/logout", None])
+        assert unsigned is not None and unsigned["status"] is None
+        assert await page.evaluate("key => sessionStorage.getItem(key)", CSRF_KEY) is None
+        assert urlsplit(page.url).path == "/login"
