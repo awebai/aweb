@@ -19,7 +19,7 @@ to refresh it.
 | Identity | `auth`, `custody`, `id`, `mcp-config`, `org`, `team`, `whoami` |
 | Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `room`, `wake` |
 | Coordination & Runtime | `activity`, `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `status`, `status-host`, `task`, `work` |
-| Utility | `completion`, `doctor`, `help`, `plugin`, `upgrade`, `version` |
+| Utility | `completion`, `doctor`, `help`, `hooks`, `plugin`, `upgrade`, `version` |
 | Additional Commands | `blueprint`, `session`, `who` |
 
 ## Global Flags
@@ -4204,6 +4204,55 @@ Simply type aw help [path to command] for full details.
 
 Flags:
 - `-h, --help help for help`
+
+## `hooks`
+
+### `hooks`
+
+Read the team's app hook bindings and activate or revoke them as the team owner.
+Activation and revocation are aweb.owner-act/1 acts signed with the team's controller key,
+which only the team owner holds.
+
+Subcommands:
+- `activate` Activate a pending hook binding as the team owner
+- `bindings` List an installed app's hook bindings in the selected team
+- `revoke` Revoke a pending or active hook binding as the team owner
+
+Flags:
+- `-h, --help help for hooks`
+
+## `hooks activate`
+
+### `hooks activate`
+
+Activate a pending hook binding as the team owner.
+The binding is checked against the app manifest fetched from its origin at its pinned digest,
+and what will be signed is shown before the team's controller key signs it.
+
+Flags:
+- `-h, --help help for activate`
+- `--yes Sign without asking for confirmation (what is signed is still shown)`
+
+## `hooks bindings`
+
+### `hooks bindings`
+
+List an installed app's hook bindings in the selected team
+
+Flags:
+- `-h, --help help for bindings`
+
+## `hooks revoke`
+
+### `hooks revoke`
+
+Revoke a pending or active hook binding as the team owner.
+The binding is checked against the app manifest fetched from its origin at its pinned digest,
+and what will be signed is shown before the team's controller key signs it.
+
+Flags:
+- `-h, --help help for revoke`
+- `--yes Sign without asking for confirmation (what is signed is still shown)`
 
 ## `plugin`
 

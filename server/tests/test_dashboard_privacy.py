@@ -53,15 +53,6 @@ TEAM = f"{TEAM_NAME}:example.test"
 _TEAM_SIGNING_KEY, _, _TEAM_DID_KEY = _make_keypair()
 
 
-@pytest.fixture
-def privacy_server_tls():
-    """Certificates the server listens with, or None for plain HTTP.
-
-    A module overrides this to serve over TLS, so the server's public origin
-    is https, as owner acts require: (host, Certificates covering host)."""
-    return None
-
-
 @pytest_asyncio.fixture
 async def privacy_app(shared_test_pool, monkeypatch, privacy_server_tls):
     monkeypatch.setenv("AWID_DATABASE_URL", "postgresql://unused/test")
