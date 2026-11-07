@@ -264,3 +264,54 @@ async def test_a_session_that_ended_while_the_owner_read_waited_is_refused_as_en
                 await asyncio.gather(reading, return_exceptions=True)
     assert response.status_code == 401, response.status_code
     assert response.json()["detail"] == "console_session_required"
+
+
+# The read transaction checks the fence once for the owner hold and once in each
+# of its two end checks, two fence-row reads per check: the sixth is its last.
+FINAL_FENCE_READ = 6
+
+
+async def test_a_session_that_ends_during_the_final_fence_check_is_refused(uses):
+    db = uses.world.db
+    async with clients(uses) as (human, _, _, original, current):
+        await sign_in(uses.world, human, current.scope)
+        path = "/reconciliations/" + original.original.reconcile_ref + "/record"
+        assert (await human.get(path)).status_code == 200
+        deadline = await db.fetch_value(
+            "UPDATE {{tables.console_sessions}} SET expires_at = clock_timestamp()"
+            " + interval '2 seconds' WHERE closed_at IS NULL RETURNING expires_at"
+        )
+        # Each fence-row read in a transaction counts itself; the final one waits
+        # past the session's end. The last count survives the request's rollback.
+        await db.execute("CREATE SEQUENCE {{tables.fence_reads}}")
+        await db.execute(
+            "CREATE FUNCTION {{tables.slow_final_fence_read}}() RETURNS boolean"
+            " LANGUAGE plpgsql AS $$ DECLARE n int := coalesce(nullif("
+            "current_setting('test.fence_reads', true), ''), '0')::int + 1; BEGIN"
+            " PERFORM set_config('test.fence_reads', n::text, true);"
+            " PERFORM setval('{{tables.fence_reads}}', n);"
+            f" IF n = {FINAL_FENCE_READ} THEN"
+            " PERFORM pg_sleep_until("
+            "(SELECT max(expires_at) FROM {{tables.console_sessions}} WHERE closed_at IS NULL)"
+            " + interval '100 milliseconds'); END IF; RETURN true; END $$"
+        )
+        # A simple view in the table's place keeps FOR SHARE and runs the count.
+        await db.execute(
+            "ALTER TABLE {{tables.installation_fences}} RENAME TO installation_fence_rows"
+        )
+        await db.execute(
+            "CREATE VIEW {{tables.installation_fences}} AS SELECT * FROM"
+            " {{tables.installation_fence_rows}} WHERE {{tables.slow_final_fence_read}}()"
+        )
+        try:
+            response = await asyncio.wait_for(human.get(path), 10)
+            reads = await db.fetch_value("SELECT last_value FROM {{tables.fence_reads}}")
+        finally:
+            await db.execute("DROP VIEW {{tables.installation_fences}}")
+            await db.execute(
+                "ALTER TABLE {{tables.installation_fence_rows}} RENAME TO installation_fences"
+            )
+    assert reads == FINAL_FENCE_READ, reads
+    assert datetime.now(UTC) > deadline
+    assert response.status_code == 401, response.status_code
+    assert response.json()["detail"] == "console_session_required"

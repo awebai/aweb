@@ -2,6 +2,7 @@
 
 from contextlib import asynccontextmanager
 from dataclasses import asdict
+from datetime import UTC, datetime
 from html import escape
 from pathlib import Path
 from urllib.parse import quote
@@ -89,6 +90,9 @@ class ConsoleReconciliation:
         if not await session_is_current(tx, current, hold=False):
             raise HTTPException(401, "console_session_required")
         await self.console.fence.check(tx, admitted)
+        # No awaited work follows this final sample of the session deadline.
+        if current.expires_at <= datetime.now(UTC):
+            raise HTTPException(401, "console_session_required")
 
     async def _owner(self, tx, current, admitted):
         await self.console.fence.check(tx, admitted)
