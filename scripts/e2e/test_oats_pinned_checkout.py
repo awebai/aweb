@@ -3,12 +3,16 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+from fixture_repo import fixture_env, init_fixture_repo, run_fixture
+
 MAKEFILE = REPO_ROOT / "Makefile"
 PIN_FILE = REPO_ROOT / "oats" / "upstream-test-pin.json"
 PREPARE_SCRIPT = REPO_ROOT / "scripts" / "prepare-pinned-oats.mjs"
@@ -42,21 +46,21 @@ class OATSPinnedCheckoutContractTests(unittest.TestCase):
             upstream = root / "upstream"
             target = root / "cache"
             pin_file = root / "pin.json"
-            subprocess.run(["git", "init", "-q", str(upstream)], check=True)
-            subprocess.run(
+            init_fixture_repo(upstream)
+            run_fixture(
                 ["git", "-C", str(upstream), "config", "user.email", "test@example.invalid"],
                 check=True,
             )
-            subprocess.run(
+            run_fixture(
                 ["git", "-C", str(upstream), "config", "user.name", "Test"],
                 check=True,
             )
             tracked = upstream / "tracked.txt"
             tracked.write_text("reviewed\n", encoding="utf-8")
-            subprocess.run(["git", "-C", str(upstream), "add", "tracked.txt"], check=True)
-            subprocess.run(["git", "-C", str(upstream), "commit", "-qm", "pin"], check=True)
+            run_fixture(["git", "-C", str(upstream), "add", "tracked.txt", ".gitignore"], check=True)
+            run_fixture(["git", "-C", str(upstream), "commit", "-qm", "pin"], check=True)
             commit = subprocess.check_output(
-                ["git", "-C", str(upstream), "rev-parse", "HEAD"], text=True
+                ["git", "-C", str(upstream), "rev-parse", "HEAD"], text=True, env=fixture_env()
             ).strip()
             pin_file.write_text(
                 json.dumps({"repository": str(upstream), "commit": commit}) + "\n",
@@ -71,14 +75,14 @@ class OATSPinnedCheckoutContractTests(unittest.TestCase):
                 "--target",
                 str(target),
             ]
-            first = subprocess.run(
+            first = run_fixture(
                 command, cwd=REPO_ROOT, capture_output=True, text=True
             )
             self.assertEqual(first.returncode, 0, first.stderr)
             (target / "tracked.txt").write_text("uncommitted\n", encoding="utf-8")
             (target / "untracked.txt").write_text("uncommitted\n", encoding="utf-8")
 
-            second = subprocess.run(
+            second = run_fixture(
                 command, cwd=REPO_ROOT, capture_output=True, text=True
             )
             self.assertEqual(second.returncode, 0, second.stderr)
@@ -86,13 +90,13 @@ class OATSPinnedCheckoutContractTests(unittest.TestCase):
             self.assertFalse((target / "untracked.txt").exists())
             self.assertEqual(
                 subprocess.check_output(
-                    ["git", "-C", str(target), "rev-parse", "HEAD"], text=True
+                    ["git", "-C", str(target), "rev-parse", "HEAD"], text=True, env=fixture_env()
                 ).strip(),
                 commit,
             )
             self.assertEqual(
                 subprocess.check_output(
-                    ["git", "-C", str(target), "status", "--porcelain"], text=True
+                    ["git", "-C", str(target), "status", "--porcelain"], text=True, env=fixture_env()
                 ),
                 "",
             )
@@ -117,7 +121,7 @@ class OATSPinnedCheckoutContractTests(unittest.TestCase):
                     sentinel = referent / "uncommitted-work"
                     target.symlink_to(referent, target_is_directory=True)
                 else:
-                    subprocess.run(["git", "init", "-q", str(target)], check=True)
+                    init_fixture_repo(target)
                     sentinel = target / "uncommitted-work"
                     if case != "missing-marker":
                         marker_repository = (
@@ -130,7 +134,7 @@ class OATSPinnedCheckoutContractTests(unittest.TestCase):
                             encoding="utf-8",
                         )
                     if case == "wrong-origin":
-                        subprocess.run(
+                        run_fixture(
                             [
                                 "git", "-C", str(target), "remote", "add", "origin",
                                 str(root / "wrong-upstream"),
@@ -146,7 +150,7 @@ class OATSPinnedCheckoutContractTests(unittest.TestCase):
                     }) + "\n",
                     encoding="utf-8",
                 )
-                result = subprocess.run(
+                result = run_fixture(
                     [
                         "node", str(PREPARE_SCRIPT), "--pin-file", str(pin_file),
                         "--target", str(target),
@@ -166,7 +170,7 @@ class OATSPinnedCheckoutContractTests(unittest.TestCase):
             override.mkdir()
             sentinel = override / "uncommitted-work"
             sentinel.write_text("keep me\n", encoding="utf-8")
-            result = subprocess.run(
+            result = run_fixture(
                 [
                     "make",
                     "--no-print-directory",
