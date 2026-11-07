@@ -12,6 +12,7 @@ import httpx
 import pytest
 from aweb_naapp.egress import DnsResolver, InternalDestinations
 from aweb_naapp.hooks.envelope import KID_PATTERN, verify
+from aweb_naapp.roles import PrincipalKey, unassign
 from aweb_naapp.runtime.passkeys import contact_sha256
 from aweb_naapp_testing import Member
 from aweb_naapp_testing.network import DnsServer
@@ -29,7 +30,7 @@ from aweb_secrets.custody import Custody, LocalKeyFileProvider, encode_value
 from aweb_secrets.destination import DestinationRecord
 from aweb_secrets.grant import GrantRecord
 from aweb_secrets.manifest import MANIFEST_PATH
-from aweb_secrets.owners import owner_scope
+from aweb_secrets.owners import OWNER_ROLE, owner_scope
 from aweb_secrets.policy import Policy
 from aweb_secrets.secret import SecretRecord
 from tests.production_authority import authority, install, install_audit_receiver, no_dns_override
@@ -127,7 +128,8 @@ def owner_body(configured, member, installation_id):
     }
 
 
-async def test_first_owner_enrols_from_actual_smtp_and_logs_into_production_console(root):
+async def signed_in_owner(root):
+    """The first owner, enrolled from the delivered email, signed in to the console."""
     service, client, configured, member, installed, smtp, transport, dns = root
     installation_id = installed["installation_id"]
     scope, body = owner_body(configured, member, installation_id)
@@ -151,6 +153,13 @@ async def test_first_owner_enrols_from_actual_smtp_and_logs_into_production_cons
         human + "/login", json={"scope": scope, "assertion": device.get(options.json())}
     )
     assert logged.status_code == 200, logged.text
+    return scope, body, token
+
+
+async def test_first_owner_enrols_from_actual_smtp_and_logs_into_production_console(root):
+    service, client, configured, member, installed, smtp, transport, dns = root
+    human = configured.console_origin
+    scope, body, token = await signed_in_owner(root)
     home = await client.get(human + "/")
     assert home.status_code == 200 and "Secrets console" in home.text
     assert (await client.get(AUDIENCE + "/enrolment")).status_code == 404
@@ -179,6 +188,26 @@ async def test_first_owner_enrols_from_actual_smtp_and_logs_into_production_cons
         while dns.queries[("logs.example", "A")] == 0:
             await asyncio.sleep(0.01)
     assert dns.queries[("logs.example", "AAAA")] > 0
+
+
+async def test_the_production_console_serves_the_access_view_only_to_its_current_owner(root):
+    service, client, configured, member, installed, smtp, transport, dns = root
+    human = configured.console_origin
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(service)) as stranger:
+        signed_out = await stranger.get(human + "/access")
+        assert signed_out.status_code == 303 and signed_out.headers["location"] == "/login"
+    assert (await client.get(AUDIENCE + "/access")).status_code == 404
+    scope, body, _ = await signed_in_owner(root)
+    shown = await client.get(human + "/access")
+    assert shown.status_code == 200 and 'id="access-empty"' in shown.text
+    assert (await client.get(human + "/console-access/access.js")).status_code == 200
+    async with service.runtime.db().transaction() as tx:
+        await unassign(
+            tx, PrincipalKey(team_id=member.team_id, principal_did=body["principal"]), OWNER_ROLE
+        )
+    withdrawn = await client.get(human + "/access")
+    assert withdrawn.status_code in (303, 401, 403)
+    assert 'id="access-empty"' not in withdrawn.text
 
 
 @pytest.mark.parametrize("fault", ["wrong_team", "wrong_installation", "unavailable"])
