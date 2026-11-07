@@ -4226,8 +4226,8 @@ Flags:
 ### `hooks activate`
 
 Activate a pending hook binding as the team owner.
-The binding is checked against the app manifest fetched from its origin at its pinned digest,
-and what will be signed is shown before the team's controller key signs it.
+The binding is checked against the app manifest fetched from its origin at its pinned digest.
+What will be signed is shown before the team's controller key signs it.
 
 Flags:
 - `-h, --help help for activate`
@@ -4247,8 +4247,8 @@ Flags:
 ### `hooks revoke`
 
 Revoke a pending or active hook binding as the team owner.
-The binding is checked against the app manifest fetched from its origin at its pinned digest,
-and what will be signed is shown before the team's controller key signs it.
+The act names the binding as the server stores it; the app's origin is not contacted.
+What will be signed is shown before the team's controller key signs it.
 
 Flags:
 - `-h, --help help for revoke`

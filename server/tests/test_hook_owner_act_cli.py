@@ -173,20 +173,34 @@ async def test_owner_activates_and_revokes_bindings_with_the_team_key(
         registration["binding_id"],
     )
 
+    # Activation grants only what the origin still declares at the pinned
+    # digest: once it serves other bytes, the owner signs nothing.
+    origin.publish(hooked_manifest(origin, version="9.9.9"))
+    code, out, error = await owner("hooks", "activate", "fixture", production["binding_id"], "--yes")
+    assert code != 0 and json.loads(out)["error"]["code"] == "binding_manifest_mismatch", out + error
+    assert await state(production["binding_id"]) == "pending"
+
+    origin.publish(manifest)
     code, out, error = await owner("hooks", "activate", "fixture", production["binding_id"], "--yes")
     assert code == 0, out + error
     for shown in ("post-manifest-command-hook", "workspace-list", "workspace-read"):
         assert shown in error, (shown, error)
     assert json.loads(out)["state"] == "active"
 
+    # Revocation names the stored binding and never needs the origin: it
+    # succeeds while the origin serves other bytes, and while it is down.
+    origin.publish(hooked_manifest(origin, version="9.9.9"))
+    seen = len(origin.tls.seen)
     code, out, error = await owner("hooks", "revoke", "fixture", registration["binding_id"], "--yes")
     assert code == 0, out + error
+    assert len(origin.tls.seen) == seen
+    for shown in (registration["digest"], "audit-ingest", "/v1/audit-ingest", "fixture:append", "fixture:write"):
+        assert shown in error, (shown, error)
     revoked = json.loads(out)
     assert (revoked["state"], revoked["ended_by"]) == ("revoked", "owner_act")
     assert await state(production["binding_id"]) == "active"
 
-    # When the origin no longer serves the pinned bytes, the owner signs nothing.
-    origin.publish(hooked_manifest(origin, version="9.9.9"))
+    await origin.tls.close()
     code, out, error = await owner("hooks", "revoke", "fixture", production["binding_id"], "--yes")
-    assert code != 0 and json.loads(out)["error"]["code"] == "binding_manifest_mismatch", out + error
-    assert await state(production["binding_id"]) == "active"
+    assert code == 0, out + error
+    assert (json.loads(out)["state"], json.loads(out)["ended_by"]) == ("revoked", "owner_act")

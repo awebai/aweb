@@ -113,8 +113,10 @@ refused otherwise.
 
 - **`hook-binding.*`**:
   - always: `binding_id`, `installation_id`, `generation`, `app_id`, `origin`,
-    `digest` (the `sha256:` manifest digest the owner's client fetched and
-    hashed), `kind`, `catalog_id`, `catalog_version`, `hook`;
+    `digest` (the binding's pinned `sha256:` manifest digest: for activation,
+    the one the owner's client fetched and hashed; a revocation names the
+    stored binding's pinned digest and needs nothing from the app's origin),
+    `kind`, `catalog_id`, `catalog_version`, `hook`;
   - when `kind` is `registration`: the resolved `tool`, `method`, raw `path`
     and the app `scopes`;
   - when `kind` is `production`: `reads`, the tools whose reads fire

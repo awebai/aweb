@@ -183,6 +183,44 @@ func TestHookSubjectRefusesARowThatDisagreesWithItsPinnedManifest(t *testing.T) 
 	})
 }
 
+func TestHookRevocationSubjectComesFromTheServerRowAlone(t *testing.T) {
+	registration := hookTestRegistration()
+	registration.Scopes = []string{"fixture:write", "fixture:append", "fixture:write"}
+	subject, err := hookBindingRowSubject(registration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := subject["scopes"]; !reflect.DeepEqual(got, []any{"fixture:append", "fixture:write"}) {
+		t.Fatalf("scopes = %#v", got)
+	}
+	if subject["digest"] != registration.Digest || subject["path"] != registration.Path {
+		t.Fatalf("subject does not name the row's pinned digest and target: %#v", subject)
+	}
+	act, key := signableAct(t, "hook-binding.revoke", subject)
+	if _, _, err := awid.SignOwnerAct(key, act); err != nil {
+		t.Fatalf("the owner-act authority refuses the row subject: %v", err)
+	}
+
+	// The same binding activated from its manifest names the same subject.
+	fromManifest, err := hookBindingSubject(hookTestRegistration(), hookTestManifest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(subject, fromManifest) {
+		t.Fatalf("row subject %#v differs from manifest subject %#v", subject, fromManifest)
+	}
+
+	production := hookTestProduction()
+	production.Reads = []string{"workspace-read", "workspace-list"}
+	subject, err = hookBindingRowSubject(production)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := subject["reads"]; !reflect.DeepEqual(got, []any{"workspace-list", "workspace-read"}) {
+		t.Fatalf("reads = %#v", got)
+	}
+}
+
 func TestHookSubjectNeedsTheInstallationIdentity(t *testing.T) {
 	b := hookTestRegistration()
 	b.InstallationID, b.Generation = "", 0
@@ -196,6 +234,7 @@ func TestOwnerActAudienceIsTheConfiguredServersHTTPSOrigin(t *testing.T) {
 		"https://app.aweb.ai":            "https://app.aweb.ai",
 		"https://app.aweb.ai/api/":       "https://app.aweb.ai",
 		"https://Aweb.Example.test:8443": "https://aweb.example.test:8443",
+		"https://app.aweb.ai:443/api":    "https://app.aweb.ai",
 		"https://127.0.0.1:9443/":        "https://127.0.0.1:9443",
 	} {
 		got, err := ownerActAudience(raw)

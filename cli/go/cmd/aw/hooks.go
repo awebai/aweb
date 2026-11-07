@@ -61,19 +61,20 @@ func init() {
 	}
 	hooksCmd.GroupID = groupUtility
 	hooksCmd.AddCommand(bindingsCmd,
-		hookOwnerActCmd("activate", "hook-binding.activate", "Activate a pending hook binding as the team owner"),
-		hookOwnerActCmd("revoke", "hook-binding.revoke", "Revoke a pending or active hook binding as the team owner"))
+		hookOwnerActCmd("activate", "hook-binding.activate", "Activate a pending hook binding as the team owner",
+			"The binding is checked against the app manifest fetched from its origin at its pinned digest."),
+		hookOwnerActCmd("revoke", "hook-binding.revoke", "Revoke a pending or active hook binding as the team owner",
+			"The act names the binding as the server stores it; the app's origin is not contacted."))
 	rootCmd.AddCommand(hooksCmd)
 }
 
-func hookOwnerActCmd(verb, act, short string) *cobra.Command {
+func hookOwnerActCmd(verb, act, short, subject string) *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
 		Use:   verb + " <app-id> <binding-id>",
 		Short: short,
-		Long: short + ".\n" +
-			"The binding is checked against the app manifest fetched from its origin at its pinned digest,\n" +
-			"and what will be signed is shown before the team's controller key signs it.",
+		Long: short + ".\n" + subject + "\n" +
+			"What will be signed is shown before the team's controller key signs it.",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			appID, err := installedAppID(args[0])
@@ -133,18 +134,15 @@ func runHookOwnerAct(cmd *cobra.Command, act, appID, bindingID string, yes bool)
 	if !live {
 		return withErrorCode("binding_not_live", fmt.Errorf("binding %s is %s", binding.BindingID, binding.State))
 	}
-	variant, err := discoverManifest(binding.Origin)
-	if err != nil {
-		return manifestError(err)
+	var subject map[string]any
+	if act == "hook-binding.activate" {
+		subject, err = declaredBindingSubject(*binding)
+	} else {
+		// Revoking only takes authority away, and an owner needs it most when
+		// the app's origin is down or serves something else, so it names the
+		// stored binding and never depends on the origin.
+		subject, err = hookBindingRowSubject(*binding)
 	}
-	if variant.Digest != binding.Digest {
-		return withErrorCode("binding_manifest_mismatch", fmt.Errorf("%s serves manifest %s, not the %s this binding pins; update the app installation", binding.Origin, variant.Digest, binding.Digest))
-	}
-	resolved, err := appmanifest.Load(variant.Bytes, nil)
-	if err != nil {
-		return manifestError(err)
-	}
-	subject, err := hookBindingSubject(*binding, resolved)
 	if err != nil {
 		return err
 	}
@@ -176,6 +174,24 @@ func runHookOwnerAct(cmd *cobra.Command, act, appID, bindingID string, yes bool)
 		return fmt.Sprintf("Binding %s is %s.\n", b.BindingID, b.State)
 	})
 	return nil
+}
+
+// declaredBindingSubject fetches the app manifest from binding's origin at its
+// pinned digest and returns the subject that activates binding, as the
+// manifest declares it.
+func declaredBindingSubject(binding hookBinding) (map[string]any, error) {
+	variant, err := discoverManifest(binding.Origin)
+	if err != nil {
+		return nil, manifestError(err)
+	}
+	if variant.Digest != binding.Digest {
+		return nil, withErrorCode("binding_manifest_mismatch", fmt.Errorf("%s serves manifest %s, not the %s this binding pins; update the app installation", binding.Origin, variant.Digest, binding.Digest))
+	}
+	resolved, err := appmanifest.Load(variant.Bytes, nil)
+	if err != nil {
+		return nil, manifestError(err)
+	}
+	return hookBindingSubject(binding, resolved)
 }
 
 // loadOwnerTeamKey is the team's controller key from this machine's AWID
@@ -241,7 +257,11 @@ func formatHookOwnerAct(fields map[string]any, binding hookBinding) string {
 	fmt.Fprintf(&b, "  verifier:  %s\n", fields["aud"])
 	fmt.Fprintf(&b, "  signer:    %s\n", fields["team_key_did"])
 	fmt.Fprintf(&b, "  app:       %s at %s\n", subject["app_id"], subject["origin"])
-	fmt.Fprintf(&b, "  manifest:  %s (fetched from the origin and checked)\n", subject["digest"])
+	if fields["act"] == "hook-binding.activate" {
+		fmt.Fprintf(&b, "  manifest:  %s (fetched from the origin and checked)\n", subject["digest"])
+	} else {
+		fmt.Fprintf(&b, "  manifest:  %s (as the server's binding pins it)\n", subject["digest"])
+	}
 	fmt.Fprintf(&b, "  binding:   %s, %s of installation %s generation %d\n", subject["binding_id"], subject["kind"], subject["installation_id"], subject["generation"])
 	fmt.Fprintf(&b, "  hook:      %s/%d %s\n", subject["catalog_id"], subject["catalog_version"], subject["hook"])
 	if binding.Kind == "registration" {
@@ -310,12 +330,31 @@ type hookBinding struct {
 	RevokedAt      string   `json:"revoked_at,omitempty"`
 }
 
-// hookBindingSubject is the aweb.owner-act/1 subject for binding, built from
-// the app's digest-pinned manifest. The server's row supplies only what the
-// manifest cannot: the binding and installation identity. Every declared fact
-// is taken from the manifest and must equal the row, so the owner signs what
-// the app declared and never a row that disagrees with it. Scopes and reads
-// are sorted by code point and distinct, as the contract requires.
+// hookBindingRowSubject is the aweb.owner-act/1 subject naming binding exactly
+// as the server stores it, at its pinned digest. Scopes and reads are sorted
+// by code point and distinct, as the contract requires.
+func hookBindingRowSubject(binding hookBinding) (map[string]any, error) {
+	if binding.InstallationID == "" || binding.Generation <= 0 {
+		return nil, withErrorCode("installation_identity_required", fmt.Errorf("binding %s has no installation identity yet", binding.BindingID))
+	}
+	subject := map[string]any{
+		"binding_id": binding.BindingID, "installation_id": binding.InstallationID, "generation": binding.Generation,
+		"app_id": binding.AppID, "origin": binding.Origin, "digest": binding.Digest, "kind": binding.Kind,
+		"catalog_id": binding.CatalogID, "catalog_version": binding.CatalogVersion, "hook": binding.Hook,
+	}
+	if binding.Kind == "registration" {
+		subject["tool"], subject["method"], subject["path"] = binding.Tool, binding.Method, binding.Path
+		subject["scopes"] = ownerActList(ownerActNames(binding.Scopes))
+	} else {
+		subject["reads"] = ownerActList(ownerActNames(binding.Reads))
+	}
+	return subject, nil
+}
+
+// hookBindingSubject is the subject that activates binding: the server's row,
+// once the app's digest-pinned manifest is shown to declare exactly that
+// binding. The owner grants only what the app declared, never a row that
+// disagrees with it.
 func hookBindingSubject(binding hookBinding, resolved *appmanifest.Resolved) (map[string]any, error) {
 	if binding.InstallationID == "" || binding.Generation <= 0 {
 		return nil, withErrorCode("installation_identity_required", fmt.Errorf("binding %s has no installation identity yet", binding.BindingID))
@@ -325,11 +364,6 @@ func hookBindingSubject(binding hookBinding, resolved *appmanifest.Resolved) (ma
 	}
 	if resolved.AppID != binding.AppID || resolved.Manifest.App.Origin != binding.Origin {
 		return nil, mismatch("the manifest is for %s at %s", resolved.AppID, resolved.Manifest.App.Origin)
-	}
-	subject := map[string]any{
-		"binding_id": binding.BindingID, "installation_id": binding.InstallationID, "generation": binding.Generation,
-		"app_id": binding.AppID, "origin": binding.Origin, "digest": binding.Digest, "kind": binding.Kind,
-		"catalog_id": binding.CatalogID, "catalog_version": binding.CatalogVersion, "hook": binding.Hook,
 	}
 	declares := func(id string, version int, hook string) bool {
 		return id == binding.CatalogID && int64(version) == binding.CatalogVersion && hook == binding.Hook
@@ -348,25 +382,20 @@ func hookBindingSubject(binding hookBinding, resolved *appmanifest.Resolved) (ma
 			if !ok {
 				return nil, mismatch("the manifest declares no tool %s", reg.Tool)
 			}
-			scopes := ownerActNames(reg.Scopes)
-			if tool.Method != binding.Method || tool.Path != binding.Path || !reflect.DeepEqual(scopes, ownerActNames(binding.Scopes)) {
+			if tool.Method != binding.Method || tool.Path != binding.Path || !reflect.DeepEqual(ownerActNames(reg.Scopes), ownerActNames(binding.Scopes)) {
 				return nil, mismatch("the server's target or scopes differ from the manifest")
 			}
-			subject["tool"], subject["method"], subject["path"] = reg.Tool, tool.Method, tool.Path
-			subject["scopes"] = ownerActList(scopes)
-			return subject, nil
+			return hookBindingRowSubject(binding)
 		}
 	case "production":
 		for _, prod := range hooks.Productions {
 			if !declares(prod.CatalogID, prod.CatalogVersion, prod.Hook) {
 				continue
 			}
-			reads := ownerActNames(prod.Reads)
-			if !reflect.DeepEqual(reads, ownerActNames(binding.Reads)) {
+			if !reflect.DeepEqual(ownerActNames(prod.Reads), ownerActNames(binding.Reads)) {
 				return nil, mismatch("the server's reads differ from the manifest")
 			}
-			subject["reads"] = ownerActList(reads)
-			return subject, nil
+			return hookBindingRowSubject(binding)
 		}
 	}
 	return nil, mismatch("the manifest declares no %s for %s/%d %s", binding.Kind, binding.CatalogID, binding.CatalogVersion, binding.Hook)
@@ -404,5 +433,9 @@ func ownerActAudience(serverURL string) (string, error) {
 	if u.Scheme != "https" {
 		return "", withErrorCode("owner_act_requires_https", fmt.Errorf("owner acts are verified only by an https aweb server; %s is %s", u.Host, u.Scheme))
 	}
-	return "https://" + strings.ToLower(u.Host), nil
+	audience := "https://" + strings.ToLower(u.Hostname())
+	if port := u.Port(); port != "" && port != "443" {
+		audience += ":" + port
+	}
+	return audience, nil
 }
