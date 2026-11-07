@@ -4,6 +4,7 @@ pages and tail, on real PostgreSQL with real signed envelopes."""
 from __future__ import annotations
 
 import copy
+import json
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
@@ -14,8 +15,8 @@ from aweb_naapp.hooks import envelope as hook_envelope
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
-from aweb_logs import MIGRATIONS_MODULE, MIGRATIONS_PATH
-from aweb_logs.ledger import LogsSigner, append
+from aweb_logs import MIGRATIONS_MODULE, MIGRATIONS_PATH, read_store
+from aweb_logs.ledger import LogsSigner, append, open_next_epoch
 from aweb_logs.read_store import Cursor, EventFilter, InvalidRead, query, tail
 
 from .fixtures import (
@@ -150,6 +151,29 @@ async def _append(
         received_at=START + timedelta(minutes=minute),
     )
     return event.event_id
+
+
+async def _chain_rows_read_by_catch_up(db: AsyncDatabaseManager) -> int:
+    """The chain_events rows the read path's catch-up statement reads, from its
+    executed plan. Index scans are forced so the count does not depend on the
+    planner preferring a sequential scan of a small test table."""
+    async with db.transaction() as tx:
+        await tx.execute("SET LOCAL enable_seqscan = off")
+        plan = await tx.fetch_value(
+            "EXPLAIN (ANALYZE, FORMAT JSON) " + read_store._UNPROJECTED,
+            TEAM_ID,
+            read_store._PROJECTION_BATCH,
+        )
+
+    def read(node: dict[str, Any]) -> int:
+        rows = 0
+        if node.get("Relation Name", "").endswith("chain_events"):
+            loops = node["Actual Loops"]
+            rows += (node["Actual Rows"] + node.get("Rows Removed by Filter", 0)) * loops
+        return rows + sum(read(child) for child in node.get("Plans", []))
+
+    document = json.loads(plan) if isinstance(plan, str) else plan
+    return read(document[0]["Plan"])
 
 
 def _filter(**values: str) -> EventFilter:
@@ -391,3 +415,33 @@ async def test_limit_is_bounded(db: AsyncDatabaseManager) -> None:
     for limit in (0, 201):
         with pytest.raises(InvalidRead):
             await query(db, TEAM_ID, _filter(), limit=limit)
+
+
+async def test_catching_up_reads_only_the_events_not_yet_projected(
+    db: AsyncDatabaseManager,
+) -> None:
+    for seq in range(1, 41):
+        await _append(db, secret_use(seq=seq))
+    await query(db, TEAM_ID, _filter())
+    assert await _chain_rows_read_by_catch_up(db) == 0
+
+    await _append(db, secret_use(seq=41))
+    await _append(db, secret_use(seq=42))
+    assert await _chain_rows_read_by_catch_up(db) == 2
+    assert len((await query(db, TEAM_ID, _filter(), limit=50)).events) == 42
+    assert await _chain_rows_read_by_catch_up(db) == 0
+
+
+async def test_events_of_a_later_epoch_are_read_after_the_earlier_one(
+    db: AsyncDatabaseManager,
+) -> None:
+    first = await _append(db, secret_use(seq=1))
+    start = await tail(db, TEAM_ID, _filter())
+    await query(db, TEAM_ID, _filter())
+    await open_next_epoch(db, SIGNER, TEAM_ID, at=START + timedelta(minutes=1))
+    second = await _append(db, secret_use(seq=2), minute=2)
+
+    page = await tail(db, TEAM_ID, _filter(), after=start.next_cursor)
+    assert [(e["event_id"], e["chain_epoch"]) for e in page.events] == [(second, 2)]
+    newest = await query(db, TEAM_ID, _filter())
+    assert [e["event_id"] for e in newest.events] == [second, first]

@@ -225,19 +225,28 @@ async def tail(
     return Page([_event(row) for row in rows], position.encode())
 
 
+# The team's chain events after its highest projected position. That position
+# comes from backward probes of read_events' primary key, evaluated once as plan
+# parameters, so the index range on chain_events starts there and the statement
+# reads only the events not yet projected. Projection leaves no gaps below that
+# position: appends serialize on the team's locked chain head, so positions
+# commit in order, and each batch of projections inserts atomically.
+_UNPROJECTED = (
+    "SELECT e.chain_epoch, e.team_seq, e.hook, e.signing_bytes"
+    " FROM {{tables.chain_events}} e"
+    " WHERE e.team_id = $1 AND (e.chain_epoch, e.team_seq) > ("
+    "   COALESCE((SELECT r.chain_epoch FROM {{tables.read_events}} r WHERE r.team_id = $1"
+    "     ORDER BY r.chain_epoch DESC, r.team_seq DESC LIMIT 1), 0),"
+    "   COALESCE((SELECT r.team_seq FROM {{tables.read_events}} r WHERE r.team_id = $1"
+    "     ORDER BY r.chain_epoch DESC, r.team_seq DESC LIMIT 1), 0))"
+    " ORDER BY e.chain_epoch, e.team_seq LIMIT $2"
+)
+
+
 async def project(db: AsyncDatabaseManager, team_id: str) -> None:
     """Project the team's chain events that have no projection yet."""
     while True:
-        rows = await db.fetch_all(
-            "SELECT e.chain_epoch, e.team_seq, e.hook, e.signing_bytes"
-            " FROM {{tables.chain_events}} e"
-            " WHERE e.team_id = $1 AND NOT EXISTS ("
-            "   SELECT 1 FROM {{tables.read_events}} r WHERE r.team_id = e.team_id"
-            "   AND r.chain_epoch = e.chain_epoch AND r.team_seq = e.team_seq)"
-            " ORDER BY e.chain_epoch, e.team_seq LIMIT $2",
-            team_id,
-            _PROJECTION_BATCH,
-        )
+        rows = await db.fetch_all(_UNPROJECTED, team_id, _PROJECTION_BATCH)
         if not rows:
             return
         await db.executemany(
