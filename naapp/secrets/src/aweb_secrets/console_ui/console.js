@@ -69,14 +69,15 @@
     });
     if (!response.ok) {
       let detail;
-      if (response.status === 403) {
-        try { detail = (await response.json()).detail; } catch {}
-      }
+      try { detail = (await response.json()).detail; } catch {}
       if (response.status === 401 || (response.status === 403 && detail === "csrf_token_required")) {
         requireSignIn();
         throw new SessionRequired("Sign in again");
       }
-      throw new Error("Request refused");
+      const refused = new Error("Request refused");
+      refused.status = response.status;
+      refused.detail = detail;
+      throw refused;
     }
     return response.json();
   }

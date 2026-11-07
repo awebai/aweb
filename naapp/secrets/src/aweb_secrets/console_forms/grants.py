@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from aweb_naapp.console import ConsoleRoute
-from aweb_naapp.egress import EgressRefused, canonical_url
+from aweb_naapp.egress import EgressRefused, InternalDestinations, canonical_url
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 
@@ -13,10 +13,10 @@ from aweb_secrets import records
 from aweb_secrets.console import _body, _require_json, _text
 from aweb_secrets.console_changes import ConsoleChanges, _errors
 from aweb_secrets.console_ui import _login_redirect, console_page
-from aweb_secrets.destination import mint_destination_id
-from aweb_secrets.grant import GrantRecord, mint_grant_id
-from aweb_secrets.operation import OperationTemplate
-from aweb_secrets.policy import Policy
+from aweb_secrets.destination import DestinationInvalid, DestinationRecord, mint_destination_id
+from aweb_secrets.grant import GrantRecord, is_secrets_role, mint_grant_id
+from aweb_secrets.operation import MAX_RESPONSE_BYTES, METHODS, SIDE_EFFECTS, OperationTemplate
+from aweb_secrets.policy import APPROVALS, IDENTIFIER, Policy
 
 _FIELDS = {
     "secret_ref",
@@ -34,6 +34,13 @@ _FIELDS = {
 }
 
 
+def _invalid(field: str, status: int = 400) -> HTTPException:
+    # Only emitted before the sole writer is called, never after a commit or delivery.
+    return HTTPException(
+        status, {"code": "grant_form_invalid", "field": field, "draft_created": False}
+    )
+
+
 def _configuration(body: dict[str, Any], *, secret_id: str, owner: str) -> list[dict[str, Any]]:
     """Translate the form into existing, validated creation projections.
 
@@ -42,11 +49,34 @@ def _configuration(body: dict[str, Any], *, secret_id: str, owner: str) -> list[
     """
     try:
         url = canonical_url(_text(body, "url"))
-        if url.query or "*" in url.path or not isinstance(body["projection"], list):
-            raise ValueError
-        role = _text(body, "role")
-        if not role.startswith("secrets.role."):
-            raise ValueError
+    except (ValueError, TypeError, EgressRefused):
+        raise _invalid("url") from None
+    if url.query or "*" in url.path:
+        raise _invalid("url")
+    role = body["role"]
+    if (
+        not isinstance(role, str)
+        or not role.startswith("secrets.role.")
+        or not is_secrets_role(role)
+    ):
+        raise _invalid("role")
+    if not isinstance(body["operation_id"], str) or not IDENTIFIER.fullmatch(body["operation_id"]):
+        raise _invalid("operation_id")
+    for field, choices in (
+        ("method", METHODS),
+        ("side_effect", SIDE_EFFECTS),
+        ("approval", APPROVALS),
+    ):
+        if body[field] not in choices:
+            raise _invalid(field)
+    for field in ("max_bytes", "capacity", "window_s"):
+        if type(body[field]) is not int or body[field] < 1:
+            raise _invalid(field)
+    if body["max_bytes"] > MAX_RESPONSE_BYTES:
+        raise _invalid("max_bytes")
+    if not isinstance(body["projection"], list):
+        raise _invalid("projection")
+    try:
         operation = OperationTemplate.from_after(
             {
                 "v": 1,
@@ -108,8 +138,8 @@ def _configuration(body: dict[str, Any], *, secret_id: str, owner: str) -> list[
                 "policy_digest": policy.digest,
             }
         )
-    except (ValueError, TypeError, EgressRefused):
-        raise HTTPException(400, "request_invalid") from None
+    except (ValueError, TypeError):
+        raise _invalid("projection") from None
     destination = {
         "v": 1,
         "destination_id": mint_destination_id(),
@@ -124,6 +154,12 @@ def _configuration(body: dict[str, Any], *, secret_id: str, owner: str) -> list[
         "network": "public",
         "cidr": None,
     }
+    try:
+        DestinationRecord.from_after(
+            destination, internal_destinations=InternalDestinations.ALLOWED
+        )
+    except DestinationInvalid:
+        raise _invalid("url") from None
     return [
         {
             "kind": "destination",
@@ -173,10 +209,7 @@ def _form(installation_id: str) -> str:
             extra='pattern="[a-z0-9][a-z0-9_-]{0,63}" maxlength="64" autocomplete="off"',
         )
         + '<p><label for="grant-method">Method</label><br><select id="grant-method" name="method">'
-        + "".join(
-            f"<option>{method}</option>"
-            for method in ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD")
-        )
+        + "".join(f"<option>{method}</option>" for method in METHODS)
         + "</select></p>"
         + _input(
             "url",
@@ -252,7 +285,7 @@ def grant_forms_router(*, changes: ConsoleChanges) -> APIRouter:
                     tx, installation_id, admitted.team_id, _text(body, "secret_ref"), lock=False
                 )
                 if stored is None or stored.state != "active":
-                    raise HTTPException(404, "secret_unknown")
+                    raise _invalid("secret_ref", 404)
                 owner = await changes.console.directory.owner_of(tx, current.scope)
                 if owner is None:
                     raise HTTPException(403, "owner_required")

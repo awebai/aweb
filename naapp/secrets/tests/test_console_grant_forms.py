@@ -171,6 +171,20 @@ async def test_owner_creates_and_confirms_role_access_in_browser(
         assert await page.locator("#grant-secret_ref").evaluate(
             "e => getComputedStyle(e).fontFamily === getComputedStyle(document.body).fontFamily"
         )
+        ratios = await page.locator("#role-grant").evaluate("""form => {
+          function luminance(rgb) {
+            const values = rgb.match(/[\\d.]+/g).slice(0, 3).map(Number).map(v => {
+              v /= 255; return v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4;
+            });
+            return values[0] * .2126 + values[1] * .7152 + values[2] * .0722;
+          }
+          return [...form.querySelectorAll('input,select,textarea')].map(control => {
+            const style = getComputedStyle(control);
+            const a = luminance(style.borderTopColor), b = luminance(style.backgroundColor);
+            return (Math.max(a,b) + .05) / (Math.min(a,b) + .05);
+          });
+        }""")
+        assert all(ratio >= 3 for ratio in ratios), ratios
         await page.screenshot(path=tmp_path / f"form-{width}-{scheme}.png", full_page=True)
         async with page.expect_response(service + DRAFT) as submitted:
             await page.get_by_role("button", name="Save a draft for review", exact=True).click()
@@ -187,3 +201,78 @@ async def test_owner_creates_and_confirms_role_access_in_browser(
         await expect(page.locator("#form-status")).to_have_attribute("data-state", "applied")
         assert await world.db.fetch_value("SELECT count(*) FROM {{tables.grants}}") == 1
         await page.screenshot(path=tmp_path / f"applied-{width}-{scheme}.png", full_page=True)
+
+
+async def fill_grant(page, secret, *, invalid=None):
+    values = {
+        "secret_ref": secret.ref,
+        "role": "secrets.role.deployers",
+        "operation_id": "read-status",
+        "url": "https://api.payments.example/v1/status",
+        "projection": "/status",
+        **(invalid or {}),
+    }
+    for name, value in values.items():
+        await page.locator("#grant-" + name).fill(value)
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+@pytest.mark.parametrize(
+    "field,value,status",
+    [
+        ("url", "https://api.payments.example/v1/status?unsupported=1", 400),
+        ("secret_ref", "unknown", 404),
+    ],
+)
+async def test_refused_grant_can_be_corrected_into_exactly_one_inert_draft(
+    world, secret, service, browser, scheme, field, value, status
+):
+    async with await browser.new_context(color_scheme=scheme) as context:
+        page, _, _ = await enrolled_page(world, context, service)
+        await page.goto(service + PAGE)
+        await fill_grant(page, secret, invalid={field: value})
+        assert await page.locator("#role-grant").evaluate("f => f.checkValidity()")
+        button = page.get_by_role("button", name="Save a draft for review", exact=True)
+        async with page.expect_response(service + DRAFT) as refused:
+            await button.click()
+        assert (await refused.value).status == status
+        assert await world.db.fetch_value("SELECT count(*) FROM {{tables.change_sets}}") == 0
+        control = page.locator("#grant-" + field)
+        await expect(control).to_have_attribute("aria-invalid", "true")
+        await expect(control).to_be_focused()
+        await expect(button).to_be_enabled()
+        await expect(page.locator("#grant-role")).to_have_value("secrets.role.deployers")
+        await control.fill(configuration(secret)[field])
+        async with page.expect_response(service + DRAFT) as corrected:
+            await button.click()
+        assert (await corrected.value).status == 201
+        await expect(button).to_be_disabled()
+        assert await world.db.fetch_value("SELECT count(*) FROM {{tables.change_sets}}") == 1
+        assert await world.db.fetch_value("SELECT count(*) FROM {{tables.grants}}") == 0
+
+
+async def test_lost_committed_response_keeps_grant_resubmission_guarded(
+    world, secret, service, browser
+):
+    async with await browser.new_context() as context:
+        page, _, _ = await enrolled_page(world, context, service)
+        await page.goto(service + PAGE)
+        await fill_grant(page, secret)
+        reached_server = []
+
+        async def lose_response(route):
+            response = await route.fetch()
+            reached_server.append(response.status)
+            await route.abort("failed")
+
+        await page.route(service + DRAFT, lose_response)
+        button = page.get_by_role("button", name="Save a draft for review", exact=True)
+        await button.click()
+        await expect(page.locator("#form-status")).to_have_attribute("data-state", "uncertain")
+        await expect(button).to_be_disabled()
+        await page.locator("#grant-url").fill("https://api.payments.example/v1/other")
+        await page.locator("#role-grant").evaluate("f => f.requestSubmit()")
+        await expect(button).to_be_disabled()
+        assert reached_server == [201]
+        assert await world.db.fetch_value("SELECT count(*) FROM {{tables.change_sets}}") == 1
+        assert await world.db.fetch_value("SELECT count(*) FROM {{tables.grants}}") == 0

@@ -32,7 +32,7 @@
 .form legend { padding-inline: var(--s1); }
 .form :is(input, select, textarea) {
   box-sizing: border-box; width: 100%; min-width: 0; font: inherit;
-  padding: var(--s2); border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+  padding: var(--s2); border: 1px solid var(--muted); border-radius: var(--radius-sm);
   background: var(--surface); color: var(--ink);
 }
 .form textarea { resize: vertical; }
