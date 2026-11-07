@@ -60,8 +60,9 @@ func (e *StrictFederationExternalEvidence) CompareClaim(didAW, currentDIDKey, de
 }
 
 type strictNamespaceResponse struct {
-	Domain        string `json:"domain"`
-	ControllerDID string `json:"controller_did"`
+	Domain        string          `json:"domain"`
+	ControllerDID string          `json:"controller_did"`
+	Delegation    json.RawMessage `json:"delegation"`
 }
 
 type strictAddressResponse struct {
@@ -160,9 +161,18 @@ func (r *StrictFederationExternalResolver) fetchEvidence(ctx context.Context, ad
 		return nil, err
 	}
 	namespaceDomain, domainErr := canonicalFederationDomain(namespace.Domain)
-	if domainErr != nil || namespaceDomain != domain || namespace.ControllerDID == "" ||
-		(authority.Selection == "dns" && namespace.ControllerDID != authority.ControllerDID) {
+	if domainErr != nil || namespaceDomain != domain || namespace.ControllerDID == "" {
 		return nil, federationReason("sender_address_did_mismatch")
+	}
+	if authority.Selection == "dns" && namespace.ControllerDID != authority.ControllerDID {
+		// Decode a witness only for unequal inherited keys: legacy same-key children need none.
+		var delegation map[string]any
+		dnsAuthority := DomainAuthority{ControllerDID: authority.ControllerDID,
+			DNSName: authority.AuthorityName, Inherited: authority.Inherited}
+		if !authority.Inherited || json.Unmarshal(namespace.Delegation, &delegation) != nil ||
+			verifyIDNamespaceAuthority(domain, dnsAuthority, namespace.ControllerDID, delegation) != nil {
+			return nil, federationReason("sender_address_did_mismatch")
+		}
 	}
 	if _, err := ExtractPublicKey(namespace.ControllerDID); err != nil {
 		return nil, federationReason("sender_registry_protocol_invalid")

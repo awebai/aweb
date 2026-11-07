@@ -10,11 +10,11 @@ the release journey. It consumes these four explicit inputs:
 
 Paths must be absolute. Missing configuration fails; it does not skip a release
 journey. The default `UnavailableLauncher` refuses with
-`runner_launch_unavailable` and creates no process. A privileged launcher is
-not implemented here. The operator must supply its supported invocation,
-ownership, worker PID/UID observation and signal contract before that adapter
-can be implemented and reviewed. No sudo, root, setuid, container or user-creation
-permission is inferred from an input.
+`runner_launch_unavailable` and creates no process. The separately selected
+`supervised_launcher.SupervisedLauncher` implements the HO6 operator boundary
+described in [SUPERVISOR.md](SUPERVISOR.md). Its installation, sudo policy and
+separate-user acceptance remain operator actions. No sudo, root, setuid,
+container or user-creation permission is inferred from an input.
 
 The one injected `RunnerLauncher` boundary resolves the provisioned user's UID,
 starts the exact invocation, and returns `ProcessControl` for the **actual
@@ -43,7 +43,9 @@ fixture. `start()` runs doctor first, then returns `RunningRunner` with `pid`,
 `uid`, `returncode`, `wait()` and `stop(SIGTERM|SIGINT)`. `restart()` stops the
 old process and uses the same configuration/state, without registration or
 deleting, rewriting or copying its journal. There is no automatic restart.
-Timeouts do not escalate to SIGKILL; a failed stop is visible to the caller.
+The harness reports a failed stop. The HO6 supervisor gives its own child three
+seconds to stop after TERM/INT or EOF, then kills and reaps that exact child.
+Its signal/exit status remains observable; it is never a successful job result.
 
 ```python
 from runner_harness import RunnerHarness

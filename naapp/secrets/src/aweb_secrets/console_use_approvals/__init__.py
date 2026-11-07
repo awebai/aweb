@@ -135,10 +135,6 @@ class ConsoleUseApprovals:
         self, current: ConsoleSession, token: str, proof: dict, *, kind: Kind, decision: Decision
     ):
         approval_id, admitted, _ = await self._candidate(current, token, kind)
-        # Original run/slot audit association is not composed yet. Never let
-        # a reserved run decision fall through to the governance sink.
-        if kind == "run":
-            raise HTTPException(503, "release_context_unavailable")
         try:
             # Network lookup precedes the effect transaction. Only APPROVE
             # requires fresh targets; rejection uses the lifecycle path.

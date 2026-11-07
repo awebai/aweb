@@ -140,6 +140,7 @@ build: sync-doc-copies
 test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-identity-primitives test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-release-cli-version test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
 
 test-shipping:
+	python3 scripts/test_fixture_repo.py
 	python3 scripts/test_shipping.py
 	python3 scripts/test_aw_npm_publication.py
 	python3 scripts/test_candidate_cleanup.py
