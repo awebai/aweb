@@ -37,6 +37,7 @@ SHELL = ConsoleShell(
 
 _page = SHELL.page
 console_page = SHELL.console_page
+recovery_page = SHELL.recovery_page
 _login_redirect = login_redirect
 
 HOME = (
