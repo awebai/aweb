@@ -1,5 +1,6 @@
 """Artifact boundary controls; no npm writes and no install scripts."""
 import base64
+import gzip
 import hashlib
 import importlib.util
 import io
@@ -10,6 +11,7 @@ import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("fetch_aw", Path(__file__).with_name("fetch_released_aw.py"))
 fetch = importlib.util.module_from_spec(spec)
@@ -18,10 +20,12 @@ spec.loader.exec_module(fetch)
 
 def archive(entries):
     out = io.BytesIO()
-    with tarfile.open(fileobj=out, mode="w:gz") as tar:
+    with gzip.GzipFile(fileobj=out, mode="wb", mtime=0) as compressed, \
+            tarfile.open(fileobj=compressed, mode="w") as tar:
         for name, body in entries.items():
             entry = tarfile.TarInfo(name)
             entry.size = len(body)
+            entry.mtime = 0
             tar.addfile(entry, io.BytesIO(body))
     return out.getvalue()
 
@@ -30,7 +34,7 @@ class ReleasedArtifactTests(unittest.TestCase):
     def test_real_http_fetch_and_failures_never_fall_back(self):
         selected = fetch.platform_package()
         hits = []
-        scenario = {'failure': ''}
+        scenario = {'failure': '', 'archive_time': 1_700_000_000}
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *_):
@@ -52,7 +56,8 @@ class ReleasedArtifactTests(unittest.TestCase):
                 if name == 'aw':
                     package['optionalDependencies'] = {'@awebai/' + selected: '1.2.3' if failure != 'pin' else '9.9.9'}
                 archive_name = 'aw.exe' if 'windows' in selected else 'bin/aw'
-                body = archive({'package/package.json': json.dumps(package).encode(), 'package/' + archive_name: binary})
+                with patch('time.time', return_value=scenario['archive_time']):
+                    body = archive({'package/package.json': json.dumps(package).encode(), 'package/' + archive_name: binary})
                 metadata = dict(package, gitHead='a' * 40, dist={
                     'tarball': origin + '/' + name + '.tgz',
                     'integrity': 'sha512-' + base64.b64encode(hashlib.sha512(body).digest()).decode()})
@@ -101,6 +106,9 @@ class ReleasedArtifactTests(unittest.TestCase):
                 self.assertEqual(first.read_bytes(), original)
                 self.assertEqual(json.loads(second.read_text())['gitHead'], 'b' * 40)
                 scenario['failure'] = ''
+                # Identical package content must retain its integrity and snapshot
+                # name even when requests cross gzip's one-second clock boundary.
+                scenario['archive_time'] += 1
                 self.assertEqual(fetch.freeze_latest(root / 'snapshots', origin), first)
                 self.assertEqual(first.read_bytes(), original)
                 for failure in ['integrity', 'identity', 'pin', 'missing', 'output', 'version', 'platform', 'source', 'stamp']:
