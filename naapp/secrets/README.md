@@ -67,7 +67,9 @@ ranges, and retains its resolver, CA, bounds and internal-destination setting.
 An operator enabling hook internal delivery must supply all three production
 constructor inputs: an internal-enabled `hook_egress`, `hook_internal_cidr`,
 and `hook_internal_origins=frozenset({"https://logs.example.com:8443"})`.
-The set contains exact receiver origins, including their port when present;
+List each origin exactly as its installation shows it: normalization omits
+`https`'s default `:443`, while non-default ports must match. The set contains
+exact receiver origins;
 it is independent of owner registrations and accepts no wildcard or prefix
 matches. Its default empty set permits no internal retry. Public delivery
 remains available to other registered origins. An allowed origin still must

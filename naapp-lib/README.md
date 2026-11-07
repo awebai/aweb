@@ -109,7 +109,10 @@ the local effect. The runtime starts and joins a separate hooks-channel drain
 in its lifespan, using `HookTransport` with that same registration source/key.
 App-event delivery stays on its own channel. The default egress rejects
 private destinations; a self-hosted operator may explicitly supply
-`hook_egress` and `hook_internal_cidr` under the shared guard's existing rules.
+`hook_egress`, `hook_internal_cidr`, and `hook_internal_origins` under the shared
+guard's existing rules. The origin set defaults to empty, so a CIDR alone never
+permits an internal retry. List each origin exactly as its installation shows
+it, including any non-default port; default `:443` is omitted by normalization.
 `hook_events_stalled_after_seconds` and `hook_delivery_timeout_seconds` bound
 retry reporting and each drain call.
 
