@@ -21,10 +21,20 @@ from tests.test_composition import settings
 from tests.test_production_bootstrap import owner_body
 
 
-@pytest.mark.parametrize("internal", [False, True])
+@pytest.mark.parametrize(
+    "internal,listed,denied,guard_denied",
+    [
+        (False, True, False, False),
+        (True, True, False, False),
+        (True, False, False, False),
+        (True, True, True, False),
+        (True, True, False, True),
+    ],
+)
 async def test_production_hook_delivery_uses_explicit_dns_ca_and_internal_network(
-    test_db_factory, registry, tmp_path, internal
+    test_db_factory, registry, tmp_path, internal, listed, denied, guard_denied
 ):
+    deliverable = internal and listed and not denied and not guard_denied
     member = Member(team_id="root:example.com")
     host, name = local_address(), "logs.root-hooks.test"
     certificates = make_certificates(tmp_path, [name], [host])
@@ -67,6 +77,9 @@ async def test_production_hook_delivery_uses_explicit_dns_ca_and_internal_networ
                     update={
                         "public_origin": AUDIENCE,
                         "awid_service_token": SERVICE_TOKEN,
+                        "egress_denied_networks": (
+                            ip_network(f"{host}/32" if denied else "192.0.2.0/24"),
+                        ),
                     }
                 )
                 service = create_service(
@@ -74,12 +87,18 @@ async def test_production_hook_delivery_uses_explicit_dns_ca_and_internal_networ
                     awid_transport=registry.transport,
                     team_server_transport=transport,
                     hook_egress=Egress(
-                        addresses=AddressPolicy(internal_destinations=InternalDestinations.ALLOWED),
+                        addresses=AddressPolicy(
+                            internal_destinations=InternalDestinations.ALLOWED,
+                            denied=(
+                                ip_network(f"{host}/32" if guard_denied else "198.51.100.0/24"),
+                            ),
+                        ),
                         resolver=DnsResolver(nameservers=["127.0.0.1"], port=dns.port),
                         user_agent="secrets-root/hooks-test",
                         ca_file=certificates.ca_file,
                     ),
                     hook_internal_cidr=ip_network(f"{host}/32") if internal else None,
+                    hook_internal_origins=frozenset({origin}) if listed else frozenset(),
                 )
                 service.runtime.team_server_directory()._registry_override = no_dns_override
                 async with service.api_app.router.lifespan_context(service.api_app):
@@ -111,14 +130,14 @@ async def test_production_hook_delivery_uses_explicit_dns_ca_and_internal_networ
                                 )
                                 if rows and all(
                                     row["state"] == "delivered"
-                                    if internal
+                                    if deliverable
                                     else row["last_error_class"] is not None
                                     for row in rows
                                 ):
                                     break
                                 await asyncio.sleep(0.02)
                         assert dns.queries[(name, "A")] > 0
-                        if internal:
+                        if deliverable:
                             assert [row["state"] for row in rows] == ["delivered"]
                             assert len(verified) == 1
                             event = verified[0].fields

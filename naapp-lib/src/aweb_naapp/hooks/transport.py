@@ -14,7 +14,8 @@ Every binding is first sent as a public destination. Whether its address is
 internal is a fact about the operator's network, not about the binding, so
 when the guard refuses that attempt because the name resolves to a denied
 address, and only then, a self-hosted operator who both allows internal
-destinations on its egress and names the network here gets exactly one more
+destinations on its egress, names the network here, and independently lists
+the exact binding origin gets exactly one more
 attempt: the same request as an internal destination, which the guard resolves
 afresh and accepts only if every address is inside that network. The guard
 refuses before connecting, so the first attempt sent nothing. A hosted
@@ -81,7 +82,8 @@ class HookTransport:
     ``seed`` is the producer's key, the one that signs its events.
     ``internal_cidr`` names the deployment network a self-hosted operator lets
     hooks reach, as well as the public internet; it requires an egress that
-    allows internal destinations.
+    allows internal destinations. ``internal_origins`` is the operator's
+    independent exact-origin allowlist; its empty default permits no retry.
     """
 
     def __init__(
@@ -91,6 +93,7 @@ class HookTransport:
         egress: Egress,
         registrations: Registrations,
         internal_cidr: IPv4Network | IPv6Network | None = None,
+        internal_origins: frozenset[str] = frozenset(),
         clock: Callable[[], datetime] = _now,
     ) -> None:
         if (
@@ -102,6 +105,7 @@ class HookTransport:
         self._egress = egress
         self._registrations = registrations
         self._internal_cidr = internal_cidr
+        self._internal_origins = frozenset(internal_origins)
         self._clock = clock
 
     async def deliver(self, event: StoredEvent, target: Target) -> Outcome:
@@ -140,7 +144,11 @@ class HookTransport:
         try:
             response = await self._send(delivery, url, public)
         except EgressRefused as refused:
-            if refused.code != "destination_address_denied" or self._internal_cidr is None:
+            if (
+                refused.code != "destination_address_denied"
+                or self._internal_cidr is None
+                or origin not in self._internal_origins
+            ):
                 return Permanent(f"egress_refused:{refused.code}")
             # The one retry: the same request, inside the operator's network.
             try:
