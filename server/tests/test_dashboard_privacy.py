@@ -52,8 +52,17 @@ TEAM = f"{TEAM_NAME}:example.test"
 _TEAM_SIGNING_KEY, _, _TEAM_DID_KEY = _make_keypair()
 
 
+@pytest.fixture
+def privacy_server_tls():
+    """Certificates the server listens with, or None for plain HTTP.
+
+    A module overrides this to serve over TLS, so the server's public origin
+    is https, as owner acts require: (host, Certificates covering host)."""
+    return None
+
+
 @pytest_asyncio.fixture
-async def privacy_app(shared_test_pool, monkeypatch):
+async def privacy_app(shared_test_pool, monkeypatch, privacy_server_tls):
     monkeypatch.setenv("AWID_DATABASE_URL", "postgresql://unused/test")
     service_token = "privacy-tests-disposable-service-token"
     monkeypatch.setenv("AWID_SERVICE_TOKEN", service_token)
@@ -125,10 +134,14 @@ async def privacy_app(shared_test_pool, monkeypatch):
                 actors[alias] = SimpleNamespace(
                     sk=sk, did=did, id=agent_id, workspace=workspace_id, certificate=certificate,
                 )
+            host, certificates = privacy_server_tls or ("127.0.0.1", None)
+            scheme = "https" if certificates else "http"
             sock = socket.socket()
-            sock.bind(("127.0.0.1", 0))
-            app.state.public_origin = f"http://127.0.0.1:{sock.getsockname()[1]}"
-            server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="error", ws="none"))
+            sock.bind((host, 0))
+            base_url = f"{scheme}://{host}:{sock.getsockname()[1]}"
+            app.state.public_origin = base_url
+            tls = {"ssl_certfile": str(certificates.cert_file), "ssl_keyfile": str(certificates.key_file)} if certificates else {}
+            server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="error", ws="none", **tls))
             serving = asyncio.create_task(server.serve(sockets=[sock]))
             try:
                 for _ in range(100):
@@ -137,7 +150,8 @@ async def privacy_app(shared_test_pool, monkeypatch):
                     await asyncio.sleep(0.02)
                 assert server.started
                 async with httpx.AsyncClient(
-                    base_url=f"http://127.0.0.1:{sock.getsockname()[1]}", timeout=5,
+                    base_url=base_url, timeout=5,
+                    verify=str(certificates.ca_file) if certificates else True,
                 ) as client:
                     yield SimpleNamespace(
                         client=client, db=manager, redis=redis, actors=actors,
