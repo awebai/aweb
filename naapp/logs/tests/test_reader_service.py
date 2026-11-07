@@ -24,6 +24,7 @@ import httpx
 import pytest
 from aweb.app_manifests import FetchedManifest
 from aweb.installations import install_verified_manifest_on
+from aweb_naapp.css import CSS_SHA256
 from aweb_naapp.egress import AddressPolicy, Egress
 from aweb_naapp.egress.send import EgressNotSent
 from aweb_naapp.email import EmailSettings, Mailer
@@ -74,6 +75,23 @@ class Links(HTMLParser):
     def handle_starttag(self, tag, attrs):
         if tag == "a":
             self.urls.extend(value for key, value in attrs if key == "href")
+
+
+class Elements(HTMLParser):
+    def __init__(self, html: str) -> None:
+        super().__init__()
+        self.tags: list[tuple[str, dict[str, str | None]]] = []
+        self.feed(html)
+
+    def handle_starttag(self, tag, attrs):
+        self.tags.append((tag, dict(attrs)))
+
+    def first(self, tag: str, **attrs: str) -> dict[str, str | None]:
+        return next(
+            found
+            for name, found in self.tags
+            if name == tag and all(found.get(k) == v for k, v in attrs.items())
+        )
 
 
 @dataclass
@@ -291,6 +309,11 @@ async def test_a_designated_reader_enrols_from_its_mail_logs_in_and_reads(
     )
     assert session.status_code == 200, session.text
 
+    home = await deployment.console.get("/")
+    assert home.status_code == 200, home.text
+    scoped = [attrs for tag, attrs in Elements(home.text).tags if "data-console-scope" in attrs]
+    assert [attrs["data-console-scope"] for attrs in scoped] == [scope]
+
     events = await deployment.console.get("/v1/events")
     verified = await deployment.console.get("/v1/verify")
     assert events.status_code == 200, events.text
@@ -313,3 +336,24 @@ async def test_the_agent_origin_serves_no_console_route_and_the_console_no_reade
         READER_SLOT_TOOL["path"], json={"contact_sha256": contact_sha256(CONTACT)}
     )
     assert response.status_code == 404
+
+
+async def test_the_console_origin_serves_logs_pages_and_the_shell_assets_only_there(
+    deployment: Deployment,
+):
+    for path in ("/login", "/enrolment", "/contact-proof"):
+        response = await deployment.console.get(path)
+        assert response.status_code == 200, path
+        body = Elements(response.text).first("body")
+        assert body["data-console-csrf-key"] == "aweb.logs.console.csrf", path
+    anonymous = await deployment.console.get("/")
+    assert (anonymous.status_code, anonymous.headers["location"]) == (303, "/login")
+    for path in (
+        "/console-ui/console.js",
+        "/console-ui/style.css",
+        "/console-bootstrap/bootstrap.js",
+        "/console-bootstrap/style.css",
+        f"/css/aweb.{CSS_SHA256[:12]}.css",
+    ):
+        assert (await deployment.console.get(path)).status_code == 200, path
+        assert (await deployment.agent.get(path)).status_code == 404, path

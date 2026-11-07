@@ -1,0 +1,16 @@
+body { margin: 0; }
+header, main { max-width: 56rem; margin: auto; padding: var(--s3); }
+header { border-bottom: 1px solid var(--line); }
+header a { color: var(--ink); font-size: var(--step-1); font-weight: 700; text-decoration: none; }
+main { padding-top: var(--s5); }
+h1 { font-size: var(--step-3); margin-bottom: var(--s3); }
+p { max-width: 42rem; margin: var(--s2) 0; }
+.heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s2); }
+a { color: var(--accent); }
+button { max-width: 100%; font: inherit; font-weight: 600; padding: var(--s2); border: 1px solid transparent; border-radius: var(--radius); background: var(--accent); color: var(--accent-ink); cursor: pointer; }
+button:hover { background: var(--accent-hover); }
+button.secondary { color: var(--ink); background: transparent; border-color: var(--line-strong); }
+button:disabled { opacity: .6; cursor: wait; }
+a:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+#notice { min-height: 1.5em; }
+[hidden] { display: none !important; }

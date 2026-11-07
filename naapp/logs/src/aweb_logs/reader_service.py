@@ -33,6 +33,7 @@ from aweb_naapp.runtime.passkeys import PasskeyDelivery, Passkeys, RelyingParty
 from fastapi import APIRouter
 from pgdbm import AsyncDatabaseManager
 
+from aweb_logs.console_ui import console_pages_router
 from aweb_logs.ledger import LogsSigner
 from aweb_logs.read_routes import (
     ReaderReads,
@@ -68,6 +69,7 @@ class ReaderService:
         router.include_router(console_login_router(sessions=sessions, limiter=limiter))
         router.include_router(credential_router(passkeys=passkeys, recorder=recorder))
         router.include_router(reader_governance_router(designations))
+        router.include_router(console_pages_router(sessions=sessions))
         router.include_router(
             reader_read_router(
                 ReaderReads(db, sessions=sessions, directory=directory, chain_keys=chain_keys)
