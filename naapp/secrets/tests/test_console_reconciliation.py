@@ -1,6 +1,8 @@
 """Owner pages use real control approvals and the canonical settlement service."""
 
+import asyncio
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -14,6 +16,7 @@ from aweb_secrets.console import owner_console_router
 from aweb_secrets.console_activity import ConsoleActivity, console_activity_router
 from aweb_secrets.console_reconciliation import ConsoleReconciliation, console_reconciliation_router
 from aweb_secrets.console_ui import console_ui_router
+from aweb_secrets.owners import OWNER_ROLE
 from tests.console_home import no_banner
 from tests.reconciliation_world import service_world
 from tests.test_broker_audit import prepared
@@ -215,3 +218,49 @@ async def test_personal_locator_returns_only_hint_and_another_owner_cannot_decid
         )
         assert denied.status_code == 403
         assert await snapshot(uses.world.db) == before
+
+
+async def test_a_session_that_ended_while_the_owner_read_waited_is_refused_as_ended(uses):
+    """The session and the installation's freshness end together during the
+    owner hold: the request is refused because the session ended, not
+    because the installation authority went stale."""
+    db = uses.world.db
+    async with clients(uses) as (human, _, _, original, current):
+        await sign_in(uses.world, human, current.scope)
+        path = "/reconciliations/" + original.original.reconcile_ref + "/record"
+        assert (await human.get(path)).status_code == 200
+        deadline = await db.fetch_value(
+            "UPDATE {{tables.console_sessions}} SET expires_at = clock_timestamp() + interval '2 seconds'"
+            " WHERE closed_at IS NULL RETURNING expires_at"
+        )
+        await db.execute("UPDATE {{tables.installation_fences}} SET fresh_until = $1", deadline)
+        reading = None
+        try:
+            async with db.transaction() as gate:
+                pid = await gate.fetch_value("SELECT pg_backend_pid()")
+                await gate.execute(
+                    "SELECT 1 FROM {{tables.role_assignments}} WHERE role=$1 FOR UPDATE", OWNER_ROLE
+                )
+                reading = asyncio.create_task(human.get(path))
+                async with asyncio.timeout(5):
+                    while not await db.fetch_value(
+                        "SELECT EXISTS(SELECT 1 FROM pg_stat_activity"
+                        " WHERE $1=ANY(pg_blocking_pids(pid)))",
+                        pid,
+                    ):
+                        if reading.done():
+                            await reading
+                            pytest.fail("the read did not reach the owner role hold")
+                        await asyncio.sleep(0.01)
+                    assert datetime.now(UTC) < deadline, (
+                        "the read reached the hold after the deadline"
+                    )
+                    while datetime.now(UTC) <= deadline:
+                        await asyncio.sleep(0.05)
+            response = await asyncio.wait_for(reading, 5)
+        finally:
+            if reading is not None and not reading.done():
+                reading.cancel()
+                await asyncio.gather(reading, return_exceptions=True)
+    assert response.status_code == 401, response.status_code
+    assert response.json()["detail"] == "console_session_required"

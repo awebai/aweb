@@ -19,7 +19,7 @@ from typing import Any
 from urllib.parse import quote
 
 import asyncpg
-from aweb_naapp.console import ConsoleRoute, ConsoleSession
+from aweb_naapp.console import ConsoleRoute, ConsoleSession, session_is_current
 from aweb_naapp.roles import PrincipalKey, hold_role, members_of, roles_of
 from aweb_naapp.runtime.installation import AdmittedInstallation
 from fastapi import APIRouter, HTTPException, Request
@@ -227,17 +227,7 @@ async def hold_owner(
         current.scope, current.subject, current.evidence_ref, tx=tx
     ):
         raise HTTPException(401, "console_session_required")
-    row = await tx.fetch_one(
-        "SELECT scope,subject,evidence_ref,expires_at,closed_at"
-        " FROM {{tables.console_sessions}} WHERE token_sha256=$1 FOR SHARE",
-        current.token_sha256,
-    )
-    if (
-        row is None
-        or row["closed_at"] is not None
-        or (row["scope"], row["subject"], row["evidence_ref"], row["expires_at"])
-        != (current.scope, current.subject, current.evidence_ref, current.expires_at)
-    ):
+    if not await session_is_current(tx, current, hold=True):
         raise HTTPException(401, "console_session_required")
 
 

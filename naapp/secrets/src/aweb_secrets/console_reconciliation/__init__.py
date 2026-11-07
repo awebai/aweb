@@ -2,13 +2,12 @@
 
 from contextlib import asynccontextmanager
 from dataclasses import asdict
-from datetime import UTC, datetime
 from html import escape
 from pathlib import Path
 from urllib.parse import quote
 
 import asyncpg
-from aweb_naapp.console import ConsoleRoute, ConsoleSession
+from aweb_naapp.console import ConsoleRoute, ConsoleSession, session_is_current
 from aweb_naapp.dispatch import State
 from aweb_naapp.roles import hold_role
 from aweb_naapp.runtime.approvals import (
@@ -87,21 +86,9 @@ class ConsoleReconciliation:
 
     async def _end(self, tx, current, admitted):
         # Read the exact persisted session again without acquiring B3 locks.
-        row = await tx.fetch_one(
-            "SELECT scope,subject,evidence_ref,expires_at,closed_at"
-            " FROM {{tables.console_sessions}} WHERE token_sha256=$1",
-            current.token_sha256,
-        )
-        if (
-            row is None
-            or row["closed_at"] is not None
-            or (row["scope"], row["subject"], row["evidence_ref"], row["expires_at"])
-            != (current.scope, current.subject, current.evidence_ref, current.expires_at)
-        ):
+        if not await session_is_current(tx, current, hold=False):
             raise HTTPException(401, "console_session_required")
         await self.console.fence.check(tx, admitted)
-        if current.expires_at <= datetime.now(UTC):
-            raise HTTPException(401, "console_session_required")
 
     async def _owner(self, tx, current, admitted):
         await self.console.fence.check(tx, admitted)
