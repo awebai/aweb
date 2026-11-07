@@ -62,7 +62,7 @@
       }
       // A lost response may follow a committed draft. Never replay automatically.
       status.dataset.state = "uncertain";
-      status.textContent = "The draft could not be saved. Check your sign-in and approval email before trying again.";
+      status.textContent = "We couldn't confirm whether the draft was saved. Check your approval email.";
     }
   });
 })();

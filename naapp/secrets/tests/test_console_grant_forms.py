@@ -269,6 +269,8 @@ async def test_lost_committed_response_keeps_grant_resubmission_guarded(
         button = page.get_by_role("button", name="Save a draft for review", exact=True)
         await button.click()
         await expect(page.locator("#form-status")).to_have_attribute("data-state", "uncertain")
+        await expect(page.locator("#form-status")).to_be_visible()
+        await expect(page.locator("#role-grant [aria-invalid=true]")).to_have_count(0)
         await expect(button).to_be_disabled()
         await page.locator("#grant-url").fill("https://api.payments.example/v1/other")
         await page.locator("#role-grant").evaluate("f => f.requestSubmit()")
