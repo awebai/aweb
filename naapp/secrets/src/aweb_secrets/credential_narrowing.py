@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 from aweb_naapp.console import ConsoleSession
 from aweb_naapp.roles import principal_key
@@ -102,6 +103,70 @@ async def prepare_containment(
         retained,
         signed_trace_id,
     )
+
+
+async def record_role_revoked(
+    owner: CredentialAudit,
+    tx: TransactionManager,
+    *,
+    context: PreparedContainment,
+    role: str,
+    subject_ref: str,
+    occurred_at: datetime,
+) -> UUID:
+    """Record an actual user-role removal under the caller's retained authority.
+
+    The caller owns authorization and the membership row lock. No B3 person
+    designation is implied by the removed member's subject_ref.
+    """
+    if (
+        not isinstance(context, PreparedContainment)
+        or context.owner is not owner
+        or context.transaction_id != await tx.fetch_value("SELECT txid_current()")
+        or context.admitted.app_id != owner._app_id
+        or not isinstance(context.authorized_by, str)
+        or not context.authorized_by
+        or not isinstance(role, str)
+        or not role
+        or not isinstance(subject_ref, str)
+        or not subject_ref
+    ):
+        raise GovernanceUnavailable()
+    payload = dict(
+        act="role.revoked",
+        direction="narrowing",
+        role=role,
+        subject_ref=subject_ref,
+        authority=context.authority,
+    )
+    if context.commitment is not None:
+        payload["approval_evidence_sha256"] = context.commitment
+    event_id = await owner._enqueue(
+        tx,
+        context.admitted,
+        payload,
+        json.loads(context.actor_json),
+        occurred_at,
+        None,
+        signed_trace_id=context.signed_trace_id,
+    )
+    await tx.execute(
+        "INSERT INTO {{tables.credential_narrowing_authority}} "
+        "(event_id,subject,app_id,team_id,installation_id,generation,authority,actor,"
+        "commitment,retained_proof,occurred_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10::jsonb,$11)",
+        event_id,
+        subject_ref,
+        context.admitted.app_id,
+        context.admitted.team_id,
+        context.admitted.installation_id,
+        context.admitted.generation,
+        context.authority,
+        context.actor_json,
+        context.commitment,
+        context.retained_json,
+        occurred_at,
+    )
+    return event_id
 
 
 async def record_narrowing(

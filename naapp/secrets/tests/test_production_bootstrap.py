@@ -3,7 +3,7 @@
 import asyncio
 import base64
 import json
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
@@ -213,6 +213,20 @@ async def test_bootstrap_authority_controls_leave_no_owner_nonce_or_audit(root, 
     assert smtp.received == []
 
 
+@dataclass(repr=False)
+class ProductionRequest:
+    token: str
+    device: SoftAuthenticator
+    path: str
+    raw: bytes
+    reply: dict
+    job_id: str
+    runner_id: str
+    runner_signing_key: SigningKey
+    runner_encryption_key: X25519PrivateKey
+    credential: str
+
+
 async def approval_request(root, kind):
     """Seed confirmed metadata, then mint through the actual signed root tool.
 
@@ -230,9 +244,10 @@ async def approval_request(root, kind):
     url = delivered_url(smtp.received, contact=body["contact"], path="/enrolment")
     [token] = parse_qs(urlsplit(url).fragment)["token"]
     options = await client.post(human + "/enrolment/options", json={"link_token": token})
+    device = SoftAuthenticator(human)
     enrolled = await client.post(
         human + "/enrolment",
-        json={"link_token": token, "credential": SoftAuthenticator(human).create(options.json())},
+        json={"link_token": token, "credential": device.create(options.json())},
     )
     assert enrolled.status_code == 200
     policy = Policy.from_body({**POLICY_BODY, "approvers": ["owner:" + member.did_key]})
@@ -243,6 +258,9 @@ async def approval_request(root, kind):
     job_body["env"] = {"DB_ADMIN": {"$credential": SECRET["ref"], "field": "value"}}
     job = jobs.JobDefinition.from_after(job_body)
     runner_id = job.after["runner_ids"][0]
+    runner_signing_key = SigningKey.generate()
+    runner_encryption_key = X25519PrivateKey.generate()
+    credential = uuid4().hex
     async with db.transaction() as tx:
         await records.create_policy(tx, installation_id, policy)
         await records.create_secret(
@@ -253,7 +271,7 @@ async def approval_request(root, kind):
             installation_id=installation_id,
             team_id=member.team_id,
             secret_id=SECRET["secret_id"],
-            value=encode_value("bearer", {"value": uuid4().hex}),
+            value=encode_value("bearer", {"value": credential}),
         )
         await records.set_active_version(
             tx, installation_id, member.team_id, SECRET["secret_id"], version
@@ -317,9 +335,9 @@ async def approval_request(root, kind):
             await runners.register_runner(
                 tx,
                 code=code,
-                signing_key=did_from_public_key(bytes(SigningKey.generate().verify_key)),
+                signing_key=did_from_public_key(bytes(runner_signing_key.verify_key)),
                 encryption_key=encode_base64url(
-                    X25519PrivateKey.generate().public_key().public_bytes_raw()
+                    runner_encryption_key.public_key().public_bytes_raw()
                 ),
             )
     path = (
@@ -344,13 +362,25 @@ async def approval_request(root, kind):
     url = delivered_url(smtp.received, contact=body["contact"], path="/approvals")
     assert urlsplit(url).path == "/approvals"
     [token] = parse_qs(urlsplit(url).fragment)["token"]
-    return token
+    return ProductionRequest(
+        token,
+        device,
+        path,
+        raw,
+        reply.json(),
+        job.job_id,
+        runner_id,
+        runner_signing_key,
+        runner_encryption_key,
+        credential,
+    )
 
 
 @pytest.mark.parametrize("kind,path", [("use", "/use-approvals"), ("run", "/run-approvals")])
 async def test_production_email_dispatch_uses_migrated_and_mounted_providers(root, kind, path):
     service, client, configured, *_ = root
-    token = await approval_request(root, kind)
+    pending = await approval_request(root, kind)
+    token = pending.token
     db = service.runtime.db()
     # Reconciliation is deliberately uncomposed: routing must not query its tables.
     assert await db.fetch_value("SELECT to_regclass('reconciliation_controls')") is None
