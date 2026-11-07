@@ -22,7 +22,7 @@
       if (!window.confirm(button.textContent + "?")) return;
       button.disabled = true;
       try {
-        await window.awebSecretsConsole.post(
+        await window.awebConsole.post(
           `/installations/${encodeURIComponent(button.dataset.installationId)}/containment`,
           {request_id: crypto.randomUUID(), action: "revoke-grant", target: button.dataset.grantId},
         );
@@ -38,7 +38,7 @@
       if (!window.confirm(button.textContent + "?")) return;
       button.disabled = true;
       try {
-        await window.awebSecretsConsole.post(
+        await window.awebConsole.post(
           `/installations/${encodeURIComponent(button.dataset.installationId)}/containment`,
           {
             request_id: crypto.randomUUID(), action: "remove-role-member",

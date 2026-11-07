@@ -1,7 +1,7 @@
 "use strict";
 
 (async () => {
-  const api = window.awebSecretsConsole;
+  const api = window.awebConsole;
   const status = document.querySelector("#form-status");
   let token = new URLSearchParams(window.location.hash.slice(1)).get("token") || "";
   // Strip the personal locator immediately; keep it only in this transient closure.
@@ -70,7 +70,7 @@
           const assertion = await api.assertion(options);
           const signedIn = await api.post("/login", {scope, assertion});
           if (typeof signedIn.csrf_token !== "string" || !signedIn.csrf_token) throw new Error("Sign-in incomplete");
-          sessionStorage.setItem("aweb.secrets.console.csrf", signedIn.csrf_token);
+          sessionStorage.setItem(api.csrfKey, signedIn.csrf_token);
           // A hash-only navigation keeps the old document. Fetch it anew with S4.
           history.replaceState(null, "", "/approvals#token=" + encodeURIComponent(token));
           window.location.reload();
