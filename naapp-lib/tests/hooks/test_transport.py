@@ -364,6 +364,24 @@ async def test_a_hosted_deployment_never_reaches_a_private_address(db, target) -
     assert target.tls.seen == []
 
 
+async def test_an_operator_cidr_alone_does_not_authorize_a_registered_origin(db, target) -> None:
+    views = Views(target.view())
+    await enqueue_secret_use(db, views)
+    # A valid, fresh owner registration is not operator authority to reach
+    # private addresses, even when the target lies within the operator CIDR.
+    guard = HookTransport(
+        seed=SEED,
+        egress=target.egress(),
+        registrations=views,
+        internal_cidr=ip_network(f"{target.host}/32"),
+    )
+    outcome = await guard.deliver(await stored_event(db), target_of(target))
+    assert outcome == Permanent("egress_refused:destination_address_denied")
+    assert target.dns.queries[(NAME, "A")] == 1
+    assert target.tls.seen == []
+    assert target.verified == []
+
+
 async def test_a_private_target_is_tried_as_public_then_reached_inside_the_operators_network(
     db, target
 ) -> None:
