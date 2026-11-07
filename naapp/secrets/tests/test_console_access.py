@@ -749,8 +749,11 @@ async def test_a_session_ending_during_the_read_goes_to_sign_in_with_its_cookie_
         await sign_in(access.world, human, owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did))
         old = human.cookies.get(COOKIE_NAME)
         assert old
+        # The session ends well inside the connections' lock timeout, so the
+        # view's wait on the held role ends with the session, not the timeout.
+        assert await db.fetch_value("SHOW lock_timeout") == "5s"
         deadline = await db.fetch_value(
-            "UPDATE {{tables.console_sessions}} SET expires_at = NOW() + interval '5 seconds'"
+            "UPDATE {{tables.console_sessions}} SET expires_at = NOW() + interval '2 seconds'"
             " WHERE closed_at IS NULL RETURNING expires_at"
         )
         # Lock the owner's role row without changing it: the view waits, then reads it intact.
@@ -767,6 +770,7 @@ async def test_a_session_ending_during_the_read_goes_to_sign_in_with_its_cookie_
         view = asyncio.create_task(human.get("/access"))
         try:
             assert await view_waits_on_owner_role(db), "the view did not reach the owner role hold"
+            assert datetime.now(UTC) < deadline, "the view reached the hold after the session ended"
             for _ in range(400):
                 if datetime.now(UTC) > deadline:
                     break

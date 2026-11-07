@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import secrets
+import shutil
 import signal
 import sys
 from dataclasses import replace
@@ -48,6 +49,15 @@ def world(tmp_path):
     # outside this existing-UID protocol test's boundary.
     prefix = tmp_path / "prefix"
     (prefix / "bin").mkdir(parents=True)
+    # Candidate Python may be root-owned while the test prefix is user-owned.
+    # Install the real executable under that prefix with its protected UID.
+    python = Path(PYTHON)
+    if python.stat().st_uid != os.geteuid():
+        installed = prefix / "runtime" / "bin" / python.name
+        installed.parent.mkdir(parents=True)
+        shutil.copyfile(python, installed)
+        installed.chmod(0o755)
+        python = installed
     state = prefix / "runner-state"
     state.mkdir(mode=0o700)
     config = prefix / "runner-config.json"
@@ -57,15 +67,15 @@ def world(tmp_path):
         json.dumps({"origin": "https://service.example"})
     )
     binary = prefix / "bin" / "aweb-secrets-runner"
-    binary.write_text(f"#!{PYTHON} -I\n" + WORKER)
+    binary.write_text(f"#!{python} -I\n" + WORKER)
     binary.chmod(0o755)
-    (prefix / "bin" / "aweb-secrets-supervisor").write_text(f"#!{PYTHON} -I\n")
+    (prefix / "bin" / "aweb-secrets-supervisor").write_text(f"#!{python} -I\n")
     policy = Policy(
         prefix,
         os.geteuid(),
         os.geteuid(),
         ancestor_root=prefix,
-        interpreter=Path(PYTHON),
+        interpreter=python,
         python_paths=(str(prefix),),
     )
     module_dir = Path(__file__).resolve().parents[1] / "e2e"
@@ -73,7 +83,7 @@ def world(tmp_path):
         f"import sys; sys.path.insert(0, {str(module_dir)!r}); "
         "from runner_supervisor import Policy, supervise; "
         f"raise SystemExit(supervise(Policy({str(prefix)!r}, {os.geteuid()}, "
-        f"{os.geteuid()}, ancestor_root={str(prefix)!r}, interpreter={PYTHON!r}, "
+        f"{os.geteuid()}, ancestor_root={str(prefix)!r}, interpreter={str(python)!r}, "
         f"python_paths=({str(prefix)!r},))))"
     )
     command = (sys.executable, "-I", "-c", bootstrap)

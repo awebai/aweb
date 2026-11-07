@@ -111,12 +111,12 @@ async def install(db, member, data, scopes):
     return row
 
 
-async def install_audit_receiver(db, member):
+async def install_audit_receiver(db, member, *, origin="https://logs.example"):
     hooks = ("post-governance-hook", "post-secret-use-hook")
     data = canonical_bytes(
         {
             "manifest_version": 2,
-            "app": {"id": "logs", "origin": "https://logs.example", "version": "0.1.0"},
+            "app": {"id": "logs", "origin": origin, "version": "0.1.0"},
             "app_keys": [],
             "tools": [
                 {
