@@ -40,6 +40,7 @@ from aweb_naapp.runtime.approvals import (
 )
 from aweb_naapp.runtime.authorization import Grant
 from aweb_naapp.runtime.clock import seconds_to_ns
+from aweb_naapp.runtime.credential_audit import CredentialAudit
 from aweb_naapp.runtime.installation import (
     AdmittedInstallation,
     InstallationFence,
@@ -67,7 +68,6 @@ from aweb_secrets.change_sets import (
     apply_change_set_migrations,
 )
 from aweb_secrets.containment import Containment
-from aweb_secrets.credential_audit import CredentialAudit
 from aweb_secrets.custody import (
     Custody,
     CustodyUnavailable,

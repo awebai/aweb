@@ -31,6 +31,7 @@ from aweb_naapp.runtime.approvals import (
     Approver,
     PgApprovalStore,
 )
+from aweb_naapp.runtime.credential_audit import CredentialAudit, GovernanceUnavailable
 from aweb_naapp.runtime.health import CheckResult
 from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty
 from aweb_naapp.signing_key import read_signing_key_file
@@ -69,7 +70,11 @@ from aweb_secrets.console_use_approvals import (
 from aweb_secrets.console_values import ConsoleValues, console_values_router
 from aweb_secrets.containment import Containment
 from aweb_secrets.containment_routes import containment_api_router, containment_console_router
-from aweb_secrets.credential_audit import CredentialAudit, GovernanceUnavailable
+from aweb_secrets.credential_governance import (
+    CREDENTIAL_AUDIT_MIGRATIONS,
+    ChangeApprovals,
+    credential_role,
+)
 from aweb_secrets.custody import (
     AwsKmsProvider,
     BackendCredentialOpener,
@@ -193,9 +198,11 @@ async def _compose(
         owner_act_scope=settings.app_id,
         producer=runtime.hook_producer,
         passkeys=shared_passkeys,
-        approval=approval,
+        role_of=credential_role,
+        approvals=ChangeApprovals(approval),
         registration_view=governance_view,
         max_backlog_age=timedelta(seconds=settings.hook_events_stalled_after_seconds),
+        migration_module=CREDENTIAL_AUDIT_MIGRATIONS,
     )
     # Run stores are ready before opting this same branch into run recording.
     use_audit = UseApprovalAudit(

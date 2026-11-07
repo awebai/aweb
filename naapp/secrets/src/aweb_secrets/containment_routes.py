@@ -8,12 +8,12 @@ from typing import Annotated, Any
 import asyncpg
 from aweb_naapp.console import ConsoleRoute, ConsoleSession
 from aweb_naapp.runtime.authorization import Authorization
+from aweb_naapp.runtime.credential_audit import GovernanceUnavailable
 from aweb_naapp.runtime.installation import InstallationRefused
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from aweb_secrets.console import OwnerConsole
 from aweb_secrets.containment import Containment, ContainmentRefused
-from aweb_secrets.credential_audit import GovernanceUnavailable
 
 
 async def _request(request: Request) -> dict[str, Any]:
