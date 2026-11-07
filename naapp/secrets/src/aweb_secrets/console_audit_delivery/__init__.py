@@ -64,6 +64,7 @@ class HookHealth:
 class AuditDeliveryView:
     hooks: tuple[HookHealth, ...]
     undelivered: tuple[UndeliveredEvent, ...]
+    undelivered_total: int
     target_labels: dict[str, str]
 
 
@@ -74,12 +75,16 @@ class ConsoleAuditDelivery:
         console: OwnerConsole,
         registrations: Registrations,
         max_backlog_age: timedelta,
+        newest: int = 100,
     ) -> None:
         if max_backlog_age <= timedelta(0):
             raise ValueError("max_backlog_age must be positive")
+        if newest <= 0:
+            raise ValueError("newest must be positive")
         self.console = console
         self.registrations = registrations
         self.max_backlog_age = max_backlog_age
+        self.newest = newest
 
     async def view(self, current: ConsoleSession) -> AuditDeliveryView:
         installation_id, admitted = await owner_installation(self.console, current)
@@ -93,7 +98,7 @@ class ConsoleAuditDelivery:
                     [await self._health(tx, admitted.team_id, hook, views[hook]) for hook in HOOKS]
                 )
                 undelivered = await undelivered_critical_events(
-                    tx, channel=HOOKS_CHANNEL, team_id=admitted.team_id
+                    tx, channel=HOOKS_CHANNEL, team_id=admitted.team_id, newest=self.newest
                 )
                 await self.console.fence.check(tx, admitted)
                 # No awaited work follows the final live F6 and S4 deadline samples.
@@ -109,7 +114,9 @@ class ConsoleAuditDelivery:
             if view is not None
             for r in view.registrations
         }
-        return AuditDeliveryView(hooks, tuple(reversed(undelivered)), labels)
+        return AuditDeliveryView(
+            hooks, tuple(reversed(undelivered.events)), undelivered.total, labels
+        )
 
     async def _health(
         self, tx, team_id: str, hook: str, view: RegistrationView | None
@@ -198,8 +205,8 @@ def _render(view: AuditDeliveryView) -> str:
     parts = [
         "<h1>Audit delivery</h1>",
         "<p>Whether your team’s audit targets are receiving secrets’ records.</p>",
-        '<p class="audit-note">A record a target has not acknowledged keeps waiting for it.'
-        " When every target of a kind of record has waited too long, secrets refuses"
+        '<p class="audit-note">Records still being sent wait for the target to acknowledge'
+        " them. When every target of a kind of record has waited too long, secrets refuses"
         " what it records until one catches up.</p>",
     ]
     for hook in view.hooks:
@@ -212,13 +219,18 @@ def _render(view: AuditDeliveryView) -> str:
         if hook.targets:
             parts.append("<ul>" + "".join(_target(view, t) for t in hook.targets) + "</ul>")
         parts.append("</section>")
-    parts.append('<section class="audit-faults"><h2>Records never delivered</h2>')
+    parts.append(
+        f'<section class="audit-faults" data-shown="{len(view.undelivered)}"'
+        f' data-total="{view.undelivered_total}"><h2>Records never delivered</h2>'
+    )
+    if view.undelivered_total > len(view.undelivered):
+        parts.append(
+            f"<p>The newest {len(view.undelivered)} of {view.undelivered_total} records.</p>"
+        )
     if view.undelivered:
         parts.append("<ul>" + "".join(_undelivered(view, e) for e in view.undelivered) + "</ul>")
     else:
-        parts.append(
-            '<p class="audit-undelivered-none">Every record has been delivered or is still being sent.</p>'
-        )
+        parts.append('<p class="audit-undelivered-none">No audit delivery faults found.</p>')
     parts.append("</section>")
     parts.append('<link rel="stylesheet" href="/console-audit-delivery/audit.css">')
     return "".join(parts)

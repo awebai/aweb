@@ -205,6 +205,14 @@ class UndeliveredEvent:
     deliveries: tuple[EndedDelivery, ...]
 
 
+@dataclass(frozen=True)
+class UndeliveredFaults:
+    """Faulted events in enqueue order, and how many there are in all."""
+
+    events: tuple[UndeliveredEvent, ...]
+    total: int
+
+
 async def apply_outbox_migrations(db: AsyncDatabaseManager) -> None:
     await AsyncMigrationManager(
         db, migrations_path=str(MIGRATIONS_PATH), module_name=MIGRATIONS_MODULE
@@ -656,14 +664,18 @@ async def undelivered_critical_events(
     *,
     channel: str | None,
     team_id: str | None = None,
-) -> list[UndeliveredEvent]:
+    newest: int | None = None,
+) -> UndeliveredFaults:
     """The faults: materialized critical events none of whose deliveries is
     pending, stalled or acknowledged by its target, in enqueue order, each with
     how every delivery ended. An event materialized with no target is one too.
-    ``channel`` and ``team_id`` limit them; None covers all."""
+    ``channel`` and ``team_id`` limit them; None covers all. ``newest`` keeps
+    only that many of the most recent, while ``total`` still counts them all."""
+    if newest is not None and newest <= 0:
+        raise ValueError("newest must be positive")
     rows = await db.fetch_all(
         """
-        SELECT e.event_id, e.team_id, e.kind, e.occurred_at,
+        SELECT e.event_id, e.team_id, e.kind, e.occurred_at, count(*) OVER () AS total,
                coalesce(
                    jsonb_agg(
                        jsonb_build_object(
@@ -685,12 +697,14 @@ async def undelivered_critical_events(
               AND live.state IN ('pending', 'stalled', 'delivered', 'duplicate')
           )
         GROUP BY e.event_id
-        ORDER BY e.position
+        ORDER BY e.position DESC
+        LIMIT $3
         """,
         channel,
         team_id,
+        newest,
     )
-    return [
+    events = [
         UndeliveredEvent(
             event_id=row["event_id"],
             team_id=row["team_id"],
@@ -709,8 +723,9 @@ async def undelivered_critical_events(
                 )
             ),
         )
-        for row in rows
+        for row in reversed(rows)
     ]
+    return UndeliveredFaults(tuple(events), rows[0]["total"] if rows else 0)
 
 
 async def outbox_status(db: AsyncDatabaseManager, channel: str | None = None) -> OutboxStatus:
@@ -767,5 +782,5 @@ async def outbox_status(db: AsyncDatabaseManager, channel: str | None = None) ->
             )
             for row in unmaterialized_rows
         },
-        faults=[fault.event_id for fault in faults],
+        faults=[fault.event_id for fault in faults.events],
     )
