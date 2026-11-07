@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from aweb_naapp.dispatch import State, Transition
@@ -155,11 +155,13 @@ class RunAudit:
         view: RegistrationView | None,
         refusal_code: str | None = None,
         completed: Mapping[str, Any] | None = None,
+        cancellation_reason: Literal["runner_deregistered"] | None = None,
     ) -> None:
         if completed is not None and completed.keys() - _COMPLETED:
             raise ValueError("completed metadata cannot change frozen run authority")
         self._producer, self._view, self._refusal_code = producer, view, refusal_code
         self._completed = None if completed is None else dict(completed)
+        self._cancellation_reason = cancellation_reason
 
     async def __call__(self, tx: TransactionManager, event: Transition) -> None:
         original = await original_run(tx, event.dispatch_id)
@@ -167,7 +169,10 @@ class RunAudit:
             raise UseAuditUnavailable()
         if event.to_state is State.RECEIVED:
             return
-        if event.to_state in {
+        runner_cancelled = (
+            event.to_state is State.CANCELLED and self._cancellation_reason == "runner_deregistered"
+        )
+        if not runner_cancelled and event.to_state in {
             State.AWAITING_APPROVAL,
             State.APPROVAL_DENIED,
             State.APPROVAL_EXPIRED,
@@ -193,7 +198,7 @@ class RunAudit:
             if not count or decision is None and count != required:
                 raise UseAuditUnavailable()
             return
-        if event.to_state not in _ACTIONS:
+        if event.to_state not in _ACTIONS and not runner_cancelled:
             raise UseAuditUnavailable()
         required = sum(slot.approval_required for slot in original.plan.slots)
         proofs = await tx.fetch_all(
@@ -202,7 +207,12 @@ class RunAudit:
             " WHERE a.dispatch_id=$1 AND p.purpose='approve' ORDER BY a.ordinal",
             event.dispatch_id,
         )
-        if required and event.to_state not in {State.REFUSED} and len(proofs) != required:
+        if (
+            required
+            and event.to_state is not State.REFUSED
+            and not runner_cancelled
+            and len(proofs) != required
+        ):
             raise UseAuditUnavailable()
         row = await tx.fetch_one(
             "SELECT actor,payload,correlation,signed_trace_id FROM {{tables.run_contexts}} WHERE dispatch_id=$1",
@@ -212,7 +222,7 @@ class RunAudit:
             raise UseAuditUnavailable()
         payload, correlation = json.loads(row["payload"]), json.loads(row["correlation"])
         payload.update(
-            action=_ACTIONS[event.to_state],
+            action="refused" if runner_cancelled else _ACTIONS[event.to_state],
             dispatch_id=original.dispatch_ref,
             dispatch_state=event.to_state.value,
         )
@@ -223,7 +233,9 @@ class RunAudit:
                 approval_evidence_sha256=proofs[0]["commitment"],
             )
         status = "success"
-        if event.to_state is State.REFUSED:
+        if runner_cancelled:
+            payload["refusal_code"], status = "runner_unavailable", "denied"
+        elif event.to_state is State.REFUSED:
             if self._refusal_code is None:
                 raise UseAuditUnavailable()
             payload["refusal_code"], status = self._refusal_code, "denied"
@@ -250,7 +262,7 @@ class RunAudit:
             occurred_at=event.occurred_at,
             signed_trace_id=row["signed_trace_id"],
         )
-        if event.to_state is State.REFUSED:
+        if event.to_state is State.REFUSED or runner_cancelled:
             event_id = await producer.enqueue_refusal(tx, **options)
         else:
             event_id = await producer.enqueue(

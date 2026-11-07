@@ -90,7 +90,7 @@ from aweb_secrets.response_audit import ResponseKey
 from aweb_secrets.run_context import apply_run_dispatch_migrations
 from aweb_secrets.run_service import RunDispatch
 from aweb_secrets.runner_routes import runner_dispatch_router, runner_registration_router
-from aweb_secrets.runners import apply_runner_migrations, deregister_runner
+from aweb_secrets.runners import apply_runner_migrations
 from aweb_secrets.status_service import UseStatus
 from aweb_secrets.tokens import ProcessTokenCache
 from aweb_secrets.use_approvals import UseApprovers, UsePolicies, apply_use_approval_migrations
@@ -282,7 +282,6 @@ async def _compose(
         tokens=tokens,
         governance=governance,
         credential_audit=credentials,
-        deregister_runner=deregister_runner,
     )
     writer = ChangeSets(
         db,
@@ -347,6 +346,7 @@ async def _compose(
         assignment_ttl=timedelta(seconds=settings.runner_assignment_ttl_seconds),
         claim_wait=timedelta(seconds=settings.runner_claim_wait_seconds),
     )
+    containment.deregister_runner = runs.deregister_runner
     return _Services(
         console,
         changes,
