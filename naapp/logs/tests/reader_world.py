@@ -257,13 +257,19 @@ async def nothing_took_effect(world: World, scope: str) -> None:
     assert await chained(world) == []
 
 
-async def enrolled_reader(world: World, contact: str = CONTACT) -> tuple[str, str]:
-    """A designated reader that has enrolled its passkey: its scope and holder."""
+async def designated_reader(world: World, contact: str = CONTACT) -> tuple[str, str]:
+    """A reader the owner designated that has not enrolled yet: its scope and holder."""
     scope = await slot(world, contact)
     signing, signature = world.owner.sign("app-role.designate", designation(scope, contact))
     await world.designations.designate(
         signing=signing, signature=signature, scope=scope, contact=contact
     )
+    return scope, await holder(world, scope)
+
+
+async def enrolled_reader(world: World, contact: str = CONTACT) -> tuple[str, str]:
+    """A designated reader that has enrolled its passkey: its scope and holder."""
+    scope, _ = await designated_reader(world, contact)
     token = world.inbox.enrolments[contact][-1]
     device = SoftAuthenticator(CONSOLE)
     enrolment = await world.recorder.prepare_enrolment(token)

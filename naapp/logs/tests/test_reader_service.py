@@ -285,9 +285,8 @@ async def designated_reader(deployment: Deployment, contact: str) -> str:
     return scope
 
 
-def enrolment_token(deployment: Deployment) -> str:
-    [received] = deployment.smtp.received
-    assert received.rcpt_tos == [CONTACT]
+def enrolment_token(deployment: Deployment, contact: str = CONTACT) -> str:
+    [received] = [mail for mail in deployment.smtp.received if mail.rcpt_tos == [contact]]
     message = email.message_from_bytes(received.content, policy=email.policy.default)
     [url] = Links(message.get_body(("html",)).get_content()).urls
     parts = urlsplit(url)
@@ -381,9 +380,22 @@ async def test_the_console_origin_serves_logs_pages_and_the_shell_assets_only_th
         assert (await deployment.agent.get(path)).status_code == 404, path
 
 
+async def enrolled_reader(deployment: Deployment, contact: str) -> str:
+    """A designated reader that enrolled its passkey from the link it was mailed."""
+    scope = await designated_reader(deployment, contact)
+    token = enrolment_token(deployment, contact)
+    device = SoftAuthenticator(CONSOLE)
+    options = await deployment.console.post("/enrolment/options", json={"link_token": token})
+    enrolled = await deployment.console.post(
+        "/enrolment", json={"link_token": token, "credential": device.create(options.json())}
+    )
+    assert enrolled.json() == {"scope": scope}
+    return scope
+
+
 async def test_a_member_removes_a_reader_but_never_the_last(deployment: Deployment):
-    kept = await designated_reader(deployment, CONTACT)
-    removed = await designated_reader(deployment, "second-reader@example.com")
+    kept = await enrolled_reader(deployment, CONTACT)
+    removed = await enrolled_reader(deployment, "second-reader@example.com")
     path = REMOVE_READER_TOOL["path"]
 
     response = await member_post(deployment, path, {"scope": removed})
@@ -406,8 +418,7 @@ async def test_a_member_removes_a_reader_but_never_the_last(deployment: Deployme
 )
 async def test_a_malformed_removal_is_refused_without_echo(deployment: Deployment, body):
     response = await member_post(deployment, REMOVE_READER_TOOL["path"], body)
-    assert response.status_code in (400, 422)
-    assert "extra" not in response.text
+    assert (response.status_code, response.json()) == (400, {"detail": "request_invalid"})
 
 
 async def test_the_console_origin_serves_no_reader_removal(deployment: Deployment):

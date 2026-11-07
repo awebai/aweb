@@ -22,7 +22,7 @@ On the agent origin, ``POST /v1/reader-slots`` issues a pending reader slot
 ``logs.readers``, for the contact the owner will designate. A slot grants
 nothing: only the owner act that names it designates a reader. Slots are
 rate-limited per member. ``POST /v1/reader-removals`` removes a reader by the
-member's team authority alone, never the installation's last current reader.
+member's team authority alone, never the installation's last reader able to sign in.
 
 On logs' console origin, the owner's signed acts designate and revoke readers.
 """
@@ -304,6 +304,10 @@ def reader_slot_router(
             await ratelimit.sweep(directory.db, now=now, limit=16)
         except Exception as error:
             logger.warning("reader slot bucket sweep failed: %s", type(error).__name__)
+        try:
+            await directory.sweep_expired(limit=16)
+        except Exception as error:
+            logger.warning("expired reader slot sweep failed: %s", type(error).__name__)
         return {"scope": slot.scope, "expires_at": slot.expires_at.isoformat()}
 
     return router
@@ -317,7 +321,7 @@ def reader_removal_router(
 
     The body names a current reader's scope. A scope that holds no current
     reader of the member's installation is refused with 404 ``reader_unknown``,
-    the installation's last current reader with 409 ``last_reader_protected``.
+    the installation's last reader able to sign in with 409 ``last_reader_protected``.
     """
     router = APIRouter()
 

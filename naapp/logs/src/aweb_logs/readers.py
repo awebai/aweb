@@ -121,6 +121,20 @@ class ReaderDirectory:
         )
         return Slot(scope=scope, expires_at=expires_at)
 
+    async def sweep_expired(self, *, limit: int) -> int:
+        """Delete up to ``limit`` expired pending slots; the number deleted.
+        A claim needs an unexpired slot, so a sweep never races one."""
+        deleted: int = await self.db.fetch_value(
+            "WITH expired AS (SELECT scope FROM {{tables.readers}}"
+            " WHERE claimed_at IS NULL AND expires_at <= NOW()"
+            " ORDER BY expires_at LIMIT $1 FOR UPDATE SKIP LOCKED),"
+            " deleted AS (DELETE FROM {{tables.readers}} r USING expired e"
+            " WHERE r.scope = e.scope AND r.claimed_at IS NULL RETURNING 1)"
+            " SELECT count(*) FROM deleted",
+            limit,
+        )
+        return deleted
+
     async def claim(
         self,
         tx: TransactionManager,
@@ -412,7 +426,8 @@ class ReaderRemovals:
     transaction admits the installation, ends the holder's designation and
     records ``role.revoked`` with the member's team certificate as authority,
     which logs appends to its own chain. Team authority never removes the
-    installation's last current reader; only the owner's act can.
+    installation's last reader able to sign in, a current holder with an
+    unrevoked passkey; only the owner's act can.
     """
 
     def __init__(
@@ -451,12 +466,16 @@ class ReaderRemovals:
                 # Admission holds the installation's fence row for update until
                 # commit, and every reader change holds it at least for share,
                 # so this count sees every earlier removal or revocation committed.
+                # Only a reader who can sign in protects: a designation whose
+                # holder has no unrevoked passkey reads nothing yet.
                 others = await guard.fetch_value(
                     "SELECT count(*) FROM {{tables.readers}} r"
                     " JOIN {{tables.passkey_approvers}} a"
                     " ON a.scope = r.scope AND a.superseded_at IS NULL"
                     " WHERE r.installation_id = $1 AND r.team_id = $2"
-                    " AND r.claimed_at IS NOT NULL AND r.scope <> $3",
+                    " AND r.claimed_at IS NOT NULL AND r.scope <> $3"
+                    " AND EXISTS (SELECT 1 FROM {{tables.passkey_credentials}} k"
+                    " WHERE k.subject = a.subject AND k.revoked_at IS NULL)",
                     admitted.installation_id,
                     admitted.team_id,
                     scope,

@@ -27,6 +27,7 @@ from .reader_world import (
     OTHER_CONTACT,
     World,
     chained,
+    designated_reader,
     enrolled_reader,
     holder,
     revocation,
@@ -84,6 +85,20 @@ async def test_a_member_cannot_remove_the_last_reader(world: World):
     assert refused.value.code == "last_reader_protected"
     assert await holder(world, scope) == reader
     assert await chained(world) == before
+
+
+async def test_a_reader_that_has_not_enrolled_does_not_protect_the_last_one_who_has(
+    world: World,
+):
+    designated, _ = await designated_reader(world, OTHER_CONTACT)
+    scope, reader = await enrolled_reader(world)
+    with pytest.raises(RemovalRefused) as refused:
+        await world.removals.remove(principal=member(), grant=world.grant, scope=scope)
+    assert refused.value.code == "last_reader_protected"
+    assert await holder(world, scope) == reader
+    # The designation that cannot read yet is removable while one who can remains.
+    await world.removals.remove(principal=member(), grant=world.grant, scope=designated)
+    assert await holder(world, designated) is None
 
 
 async def test_a_reader_the_owner_revoked_no_longer_counts(world: World):

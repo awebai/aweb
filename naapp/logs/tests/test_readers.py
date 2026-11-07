@@ -175,3 +175,38 @@ async def test_a_contact_digest_must_be_a_sha256(db: AsyncDatabaseManager) -> No
             await ReaderDirectory(db).create_slot(
                 tx, installation_id=INSTALLATION, team_id=TEAM, contact_sha256="m@example.com"
             )
+
+
+async def _expire(db: AsyncDatabaseManager, scope: str) -> None:
+    await db.execute(
+        "UPDATE {{tables.readers}} SET expires_at = NOW() - INTERVAL '1 second' WHERE scope = $1",
+        scope,
+    )
+
+
+async def _scopes(db: AsyncDatabaseManager) -> set[str]:
+    return {row["scope"] for row in await db.fetch_all("SELECT scope FROM {{tables.readers}}")}
+
+
+async def test_sweeping_deletes_expired_pending_slots_and_nothing_else(
+    db: AsyncDatabaseManager,
+) -> None:
+    directory = ReaderDirectory(db)
+    expired = await _slot(directory)
+    pending = await _slot(directory)
+    claimed = await _slot(directory)
+    await _claim(db, directory, claimed)
+    await _expire(db, expired)
+    await _expire(db, claimed)
+    assert await directory.sweep_expired(limit=10) == 1
+    assert await _scopes(db) == {pending, claimed}
+    assert await directory.reader(claimed) is not None
+
+
+async def test_a_sweep_deletes_at_most_its_limit(db: AsyncDatabaseManager) -> None:
+    directory = ReaderDirectory(db)
+    for _ in range(3):
+        await _expire(db, await _slot(directory))
+    assert await directory.sweep_expired(limit=2) == 2
+    assert await directory.sweep_expired(limit=2) == 1
+    assert await _scopes(db) == set()
