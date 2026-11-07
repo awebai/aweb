@@ -170,7 +170,8 @@ Rules:
   **Open (aweb-acgh.16.35):** the activation refusal; ingest rejects them on
   main. If a
   producer can no longer emit a bound version, the binding shows
-  `incompatible` to the owner. It never silently stops.
+  `incompatible` to the owner. It never silently stops. **Open
+  (aweb-acgh.16.37):** the `incompatible` state.
 - **Blocking `pre-*` hooks are deferred.** A blocking hook
   makes the guard's availability part of every action's availability and is a
   new authorization path. The approval primitive already covers human gating
@@ -1031,15 +1032,17 @@ an MCP agent: both are custodial members signed through the host (§1). So
   By Juan's ruling on verify delegation, an owner delegates a member, such as
   an MCP identity, through the owner act `logs.verify.delegate`, so the
   delegation is a governance event. **Open (aweb-acgh.16.34):** the act.
-- **Self-administration is logged.** Reader changes, retention changes,
-  erasures and purges are `post-governance-hook` events that logs produces
-  like any other producer, by the coordinator's ruling on reader
-  self-administration: logs' manifest declares the production, the owner
-  activates it, and logs signs with a separate `hook-event` key. Each change
-  is one event with one `event_id`, enqueued through the shared producer in
-  the change's transaction, and logs appends it to its own chain through
-  `ledger.append_on`, which joins the caller's transaction. There is no
-  local-only path. The manifest on main declares no production.
+- **Self-administration is logged.** Reader changes are `post-governance-hook`
+  events that logs produces like any other producer, by the coordinator's
+  ruling on reader self-administration: logs' manifest declares the
+  production, the owner activates it, and logs signs with a separate
+  `hook-event` key. Each reader change is one event with one `event_id`,
+  enqueued through the shared producer in the change's transaction, and logs
+  appends it to its own chain through `ledger.append_on`, which joins the
+  caller's transaction. There is no local-only path. The manifest on main
+  declares no production. Retention changes, erasures and purges are appended
+  by logs to the same chain as `logs.*` governance entries signed by logs' key
+  (§B6, decision 16).
 
 ### B6. Append-only, retention and erasure
 

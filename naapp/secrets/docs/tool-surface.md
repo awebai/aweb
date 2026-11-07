@@ -25,9 +25,10 @@ Each `list`, `describe`, `request`, `run` and `status` response has `state`
 and `request_id`. List/describe use explicit `request_id: null`; `request` and
 `run` echo the caller's nonempty ID once the body is parsed. A refusal before
 that (for example `grant_missing`) and a `404 not_found` status lookup carry
-`request_id: null`. `contain` returns its containment receipt
-(`receipt_id`, `action`, `target`, `affected_secret_ids`) and refuses with an
-HTTP error whose detail is the refusal code. B1 authentication/authorization
+`request_id: null`. Containment is an owner action, not a dispatch, so
+`contain` has no `state`/`request_id` envelope: it returns its containment
+receipt (`receipt_id`, `action`, `target`, `affected_secret_ids`) and refuses
+with an HTTP error whose detail is the refusal code. B1 authentication/authorization
 failures retain the shared HTTP error contract.
 
 | State | Fields besides `state`, `request_id` |
@@ -87,7 +88,7 @@ progress, unknown outcomes and withheld results are not completed work. There
 is no automatic request ID, polling or resubmission. MCP clients read the
 structured state. Distinct outcome exits come from a generic manifest
 outcome-to-exit mapping in `aw`, with no secrets-specific CLI code
-(decision 86). **Open (aweb-acgh.18.18):** that mapping is not on main.
+(decision 86). **After the first release (aweb-acgh.18.53):** that mapping.
 
 ## Composition
 

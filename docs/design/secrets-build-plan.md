@@ -91,8 +91,10 @@ After the first release: derived and short-lived issuance (aweb-acgh.41),
 - **First-release acceptance** is Juan's six-step journey in
   `naapp/secrets/e2e/RELEASE.md`: configure, use from two agents, approve a
   use, run a job, revoke, and inspect access and activity. It is M9, the
-  release subset of S20 (aweb-acgh.18.22), run on S19's real path. Full S20
-  stays required; its rows for parked features follow those features.
+  release subset of S20 (aweb-acgh.18.22), run on S19's real path. With the
+  S21 checklist it is the first release's launch gate. The full S20 suite comes
+  after the first release; its rows for parked features follow those features
+  (decision 85).
 - **After the first release:** derived and short-lived issuance (STS, OAuth
   token minting, `store_as_secret`, runner `short_lived` delivery) on
   aweb-acgh.41 (decision 95), with ordinary-child selection and `short_lived`
@@ -295,6 +297,8 @@ Paths below abbreviate `naapp-lib/src/aweb_naapp/` as `aweb_naapp/` and
     and the notice that host scope does not stop destructive calls, asking owners
     for narrow upstream permissions (§7.5, §8.2);
   - the console's accessibility gaps.
+- **Open (aweb-acgh.18.11.6):** surfacing stalled-delivery and
+  all-deliveries-cancelled audit faults to owners on the console (§11.5).
 - **In flight (aweb-acgh.18.11.2):** the per-agent access view of release step 6.
   Its reader (`aweb_secrets/access_reads.py`) is on main; no console page uses it.
 
@@ -439,7 +443,8 @@ Paths below abbreviate `naapp-lib/src/aweb_naapp/` as `aweb_naapp/` and
   the first release reads MCP structured state. Distinct exit codes for
   `awaiting_approval`, `refused`, `outcome_unknown` and `result_withheld` come
   from a generic manifest outcome-to-exit mapping in `aw` and a CLI release,
-  with no secrets-specific CLI code (decision 86).
+  with no secrets-specific CLI code (decision 86). **After the first release
+  (aweb-acgh.18.53):** that mapping.
 - **Where:** `aweb_secrets/manifest.py`, `aweb_secrets/aweb-app.json`,
   `naapp/secrets/docs/tool-surface.md`; the generic interpreter
   `cli/go/internal/appmanifest/interpret.go`.
@@ -520,8 +525,9 @@ Paths below abbreviate `naapp-lib/src/aweb_naapp/` as `aweb_naapp/` and
 - **Review:** R+A.
 - **Repo/path:** `naapp/secrets/e2e/`.
 - **Depends on:** S8–S19; HO2–HO4 for the hosted paths.
-- **M9, first:** Juan's six-step journey in `RELEASE.md`, on the real path with
+- **M9:** Juan's six-step journey in `RELEASE.md`, on the real path with
   logs ingest (decisions 85 and 87). It is the first-release acceptance.
+- **After the first release (aweb-acgh.18.22):** the full suite (decision 85).
 - **Scope:** every row of §16 in both directions, through real `aw`, a real L2
   signing path, real KMS, the real 1Password test vault, a real passkey
   ceremony and a real runner. **After the first release (aweb-acgh.41):** the
@@ -535,8 +541,10 @@ Paths below abbreviate `naapp-lib/src/aweb_naapp/` as `aweb_naapp/` and
 
 - **Status: Open (aweb-acgh.18.23).**
 - **Owner:** the coordinator.
-- **Depends on:** S20; X14 (logs ingests secrets' real events end to end);
-  S6 and HO2 (decision 2); Athena's final review across S0–S20.
+- **Depends on:** M9, the first-release journey of S20 (the full S20 suite
+  comes after the first release, decision 85); X14 (logs ingests secrets' real
+  events end to end); S6 and HO2 (decision 2); Athena's final review across
+  S0–S19 and M9.
 - **Done-signal:** Juan's go, recorded. Then S18's first production deploy.
 
 ### Follow-up tasks under aweb-acgh.18
@@ -570,6 +578,10 @@ Paths below abbreviate `naapp-lib/src/aweb_naapp/` as `aweb_naapp/` and
 | aweb-acgh.18.48 | Containment: remove one member from a role | Open |
 | aweb-acgh.18.49 | Shared chrome without Berkeley Mono; toolkit tokens | Built |
 | aweb-acgh.18.50 | Runner accepts a root-owned 0640 config, so a job cannot widen its own pins | Built |
+| aweb-acgh.18.51 | Egress denies the deployment's own addresses: a setting wired into composition (§7.3) | Open |
+| aweb-acgh.18.52 | Run status presents a stored `cancelled` or `refused` like a broker receipt (HTTP 200) | Open |
+| aweb-acgh.18.53 | Distinct `aw` exit codes from a generic manifest outcome-to-exit mapping (decision 86) | After the first release |
+| aweb-acgh.18.54 | Root composes the 1Password `BackendReconciler` into production `BrokerRequests` (decision 92; S13 owns the broker consumer acceptance) | Open |
 
 ### Related tasks under aweb-acgh
 

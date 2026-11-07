@@ -503,11 +503,11 @@ with a pre-send failure recorded as `not_sent`. See
   launch it does not cache values across dispatches. There is no read cache
   at launch (Q4, decided). 1Password's own activity
   log is a second, independent record of every read.
-- **Ingress and replacement (decision 92).** **In flight (aweb-acgh.18.14):**
-  the observation reconciler (`aweb_secrets.onepassword_reconciliation`) and
-  its event are on main; the production composition does not wire it, so a
-  changed item version refuses the use and activates nothing. Both happen in
-  the vault. An
+- **Ingress and replacement (decision 92).** Both happen in the vault.
+  **Open (aweb-acgh.18.54):** the observation reconciler
+  (`aweb_secrets.onepassword_reconciliation`) and its event are on main, but
+  production does not compose it into the broker, so on main a changed item
+  version refuses the use and activates nothing. An
   observation and immutable-kind/placement validation run outside all database
   transactions and authority locks. A separate reconciliation transaction before
   the S3 fence takes the complete installation/forest/grant/B2 prelocks and
@@ -2006,13 +2006,14 @@ SOT §2), reached through the hook.
   registration is current, meaning its oldest undelivered event is older than
   a threshold (recommended 1 h, Q11). A stalled secondary target, such as a
   self-hosted copy during a migration, does not block use while another active
-  registration is current. It is surfaced to owners on the console. This keeps
+  registration is current. It is surfaced to owners on the console (**Open
+  (aweb-acgh.18.11.6)**). This keeps
   "every use is recorded" true in practice, not only eventually.
 - **Cancelled or rejected deliveries are a fault.** An audit-critical event can
   end with every delivery cancelled (for example, its target was revoked between
   commit and drain) or rejected. secrets records that as a fault in its
-  operational record and surfaces it to owners. It is never treated as
-  delivered.
+  operational record and surfaces it to owners (**Open
+  (aweb-acgh.18.11.6)**). It is never treated as delivered.
 
 The drainer delivers at least once. As the hooks design specifies, `event_id` is
 minted once inside the effecting transaction and stored with the outbox row, and
@@ -2366,7 +2367,7 @@ Authority always comes from secrets' role, grant and passkey checks. That is why
   There is no automatic request ID, polling or resubmission (decision 86). The
   CLI prints the response and exits 0 for HTTP status below 400 and 1
   otherwise; the caller reads the structured `state`, because approval waiting,
-  unknown outcomes and withheld results are not completed work. **Open (decision 86):**
+  unknown outcomes and withheld results are not completed work. **After the first release (aweb-acgh.18.53):**
   distinct exit codes come from a generic manifest outcome-to-exit mapping in
   `aw`, with no secrets-specific CLI code (decision 86). Open requests need no
   manifest change. `method` (a string enum), `url`, `headers` (an array) and
@@ -2526,10 +2527,11 @@ Requirements specific to secrets:
 ## 16. Tests
 
 **In flight (aweb-acgh.18.21, aweb-acgh.18.22):** the release E2E harness is
-in `naapp/secrets/e2e`; the full scope below is not covered. The demo
-journey comes first, and the full scope stays required (decision 85). The STS,
-`store_as_secret` and derived-secret rows come after the first release
-(aweb-acgh.41).
+in `naapp/secrets/e2e`. The first release is accepted on Juan's six-step
+journey (`naapp/secrets/e2e/RELEASE.md`, M9) and the launch checklist (S21 in
+the build plan). **After the first release (aweb-acgh.18.22):** the full scope below
+(decision 85); its STS, `store_as_secret` and derived-secret rows follow
+those features (aweb-acgh.41).
 
 **E2E exercises real user paths with no mocks.** That means:
 
@@ -2776,10 +2778,13 @@ each where one exists.
   fixed; the path to change them is a new secret. Changing sensitivity or
   `approve_only` is allowed, and downgrading either is a widening (§6.3). The
   value-placing kind parameters are fixed too (decision 65b).
-- **Decision 92.** An observed 1Password item version activates for later fresh
-  admissions with no new passkey, if it validates against the fixed shape.
-  Version-bound approvals and caches are voided atomically, and the audit event
-  is narrowing. A deleted or unresolved reference refuses.
+- **Decision 92.** A changed value at the same immutable 1Password reference
+  becomes the new current version for later fresh admissions, with no new
+  owner passkey, if it validates against the fixed shape. The observing
+  attempt refuses `secret_version_changed`. Version-bound approvals and caches
+  are voided atomically, and the audit event is narrowing. A deleted or
+  unresolved reference refuses. A changed reference or backend-token epoch is
+  never silently adopted.
 
 **Admission, dispatch and approvals**
 
@@ -2825,7 +2830,8 @@ each where one exists.
   `job_unavailable`; the job registry belongs to the runner protocol.
 - **Decision 81.** HPKE and the scoped nonce store are shared in `aweb_naapp`.
 - **Decision 86.** `aw` keeps the generic exit codes 0 and 1. Distinct exit
-  codes come from a generic manifest outcome-to-exit mapping in `aw`, with no
+  codes come after the first release (aweb-acgh.18.53), from a generic
+  manifest outcome-to-exit mapping in `aw`, with no
   secrets-specific CLI code (§13.2).
 - **Egress trust anchors (coordinator).** `SECRETS_EGRESS_CA_FILE` is a trust
   anchor for tests and self-hosting; production leaves it unset.
