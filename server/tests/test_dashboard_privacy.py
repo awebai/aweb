@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import os
 import socket
+import ssl
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -151,7 +152,7 @@ async def privacy_app(shared_test_pool, monkeypatch, privacy_server_tls):
                 assert server.started
                 async with httpx.AsyncClient(
                     base_url=base_url, timeout=5,
-                    verify=str(certificates.ca_file) if certificates else True,
+                    verify=ssl.create_default_context(cafile=str(certificates.ca_file)) if certificates else True,
                 ) as client:
                     yield SimpleNamespace(
                         client=client, db=manager, redis=redis, actors=actors,
