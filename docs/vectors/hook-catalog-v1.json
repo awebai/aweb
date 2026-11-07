@@ -1,6 +1,6 @@
 {
   "name": "hook-catalog-v1",
-  "status": "proposed (aweb-acgh.16.1); frozen once reviewed, after which any payload change is a new catalog version",
+  "status": "frozen (aweb-acgh.16.1); from the first deployment any payload change is a new catalog version (decision 93)",
   "catalog": {
     "id": "aweb.hooks",
     "version": 1

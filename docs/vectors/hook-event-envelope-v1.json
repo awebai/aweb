@@ -528,5 +528,5 @@
     "signing_bytes": "the ASCII prefix 'aweb.hook-event/1' and a newline, then the envelope's canonical JSON",
     "times": "occurred_at and fired_at are UTC with exactly three fractional digits, in their one canonical spelling"
   },
-  "status": "proposed (aweb-acgh.16.2); frozen once reviewed"
+  "status": "frozen (aweb-acgh.16.2)"
 }

@@ -321,7 +321,7 @@ func buildOwnerActVector(t *testing.T) map[string]any {
 
 	return map[string]any{
 		"name":   "owner-act-v1",
-		"status": "proposed (aweb-acgh.16.3); frozen once reviewed",
+		"status": "frozen (aweb-acgh.16.3)",
 		"scheme": map[string]any{
 			"authority":     "docs/owner-act.md",
 			"signing_bytes": "the ASCII prefix 'aweb.owner-act/1' and a newline, then the act's strict canonical JSON (the hook event rules: sorted keys, printable ASCII, no floats, no null)",
