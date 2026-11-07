@@ -22,7 +22,7 @@ contract adds what that one leaves to the transport:
 | Choice | Taken | Rejected, and why |
 | --- | --- | --- |
 | Where the human origin and the owner-designated roles are declared | `owner_acts` in [manifest version 3](app-manifest.md#manifest-version-3), served as a catalog variant beside version 2 | A field in version 2 breaks every released `aw` from 1.36.46 to 1.36.56, which refuse unknown fields. A separate, unpinned well-known document lets the console origin, where contacts go, change after install without review. |
-| How the client gets the role token the act names | The app issues it: a prepare call records a pending row and returns the exact subject to sign | A client-side derivation rule cannot be generic: logs' reader token is random by design, because it is public in governance events and must not be derived from the contact. |
+| How the client gets the role token the act names | The app issues it: a prepare call records a pending row and returns the exact subject to sign | A client-side derivation rule cannot be generic: logs' reader token is random by design, because it must not be derived from the contact. |
 | Who may ask for a pending subject | A team-auth member call to a declared agent tool, with a grant scope declared per role | An anonymous call on the console origin would loosen logs' existing rule that only a granted member opens a reader slot. |
 
 The pinned manifest is then the only reviewed source of what an owner signs
@@ -66,13 +66,17 @@ fixes its validation codes. An app with no owner-designated role omits it.
 }
 ```
 
-- `origin` is an `https` or `http` origin with no userinfo, path, query or
-  fragment, and its hostname differs from `app.origin`'s. It is the `aud` of
-  every act for this app, compared byte for byte.
+- `origin` is in owner-act/1's audience grammar: `https://`, a lowercase
+  host, an optional port, and no path, trailing slash, query, fragment or
+  userinfo. Its hostname differs from `app.origin`'s. It is the `aud` of every
+  act for this app, compared byte for byte, so a declaration that no signer
+  could put in `aud` is refused.
 - `roles` has 1 to 16 entries, unique by `name`.
   - `name` follows the designatable role grammar (dot-separated lowercase
-    segments, at least two, `[a-z0-9][a-z0-9_-]*` each) and is at most 31
-    bytes, so that every token fits the owner-act token grammar.
+    segments, at least two, `[a-z0-9][a-z0-9_-]*` each), begins with a letter,
+    and is at most 23 bytes. Every token then fits owner-act/1's token
+    grammar, which requires a leading letter and at most 64 bytes: 23 bytes,
+    a dot and 40 hex characters make 64.
   - `label` and `description` follow the rules of the version 2 `roles`
     field: 1 to 128 and 1 to 512 characters, with no C0, C1 or bidi control.
     Every surface that shows the role shows the pair of app and name.
@@ -93,14 +97,21 @@ fixes its validation codes. An app with no owner-designated role omits it.
 
 A role token is the role's `name`, a dot, and 32 to 40 lowercase hex
 characters: `logs.reader.` followed by 32 hex, `secrets.owner.` followed by 40.
-It is the owner-act subject's `role` and the B3 scope the holder enrols under,
-and it is the value the `post-governance-hook` `role` field carries.
+It is the owner-act subject's `role` and the B3 scope the holder enrols under.
+
+Two values are distinct. The token names one holder. The role, the token's
+`name` prefix, names what that holder is. The `post-governance-hook` `role`
+field carries the role (`logs.reader`, `secrets.owner`), never the token.
 
 - The app chooses the suffix, and the token never changes for that holder.
-- The suffix is never derived from the contact: the token is public in
-  governance events, and the contact is not. A suffix derived from the
-  installation, the team and the member's principal, as secrets derives its
-  owner scopes, is allowed.
+- The suffix is never derived from the contact. The token is seen by more
+  people than the contact is:
+  - the members who prepare;
+  - the owner's client;
+  - the console that serves the holder's session.
+  A suffix derived from the contact would let any of them confirm a guessed
+  contact. A suffix derived from the installation, the team and the member's
+  principal, as secrets derives its owner scopes, is allowed.
 
 ## Prepare
 
@@ -205,24 +216,33 @@ Body, a JSON object with exactly these fields:
   refused for revoke. The app sends the enrolment link there, after the
   transaction commits.
 
+The route authenticates the act before any check that depends on the app's
+state, so no refusal before authentication can tell an anonymous caller
+whether a row, holder or installation exists. It checks in three stages:
+
+1. **Stateless:** the body, then the act's parse, fields and subject shape,
+   its audience against `owner_acts.origin`, the app vocabulary and its
+   lifetime and expiry. These need no read.
+2. **Authentication:** the current controller key of the act's `team_id`,
+   read from the registry (cached at most 60 seconds), and the signature under
+   it. A registry that cannot be read refuses with `503`
+   `team_key_unavailable`. That outcome depends only on the `team_id` the
+   caller chose, never on the app's rows.
+3. **State, for an authenticated act only:**
+   - the installation that `installation_id` names, admitted, whose team is
+     the act's `team_id`;
+   - the nonce, consumed in the transaction that applies the effect;
+   - the pending row or current holder, as the expected subject;
+   - for designate and recover, the SHA-256 of `contact` against the row's
+     contact hash.
+
 The app reads `act`, `installation_id` and `role` from the signing bytes only
-as lookup keys. It finds its own pending row or current holder, admits the
-installation, and verifies the act with that row as the expected subject,
-consuming the nonce in the transaction that applies the effect
-([Verification](owner-act.md#verification)). For designate and recover it also
-requires the SHA-256 of `contact` to equal the row's contact hash.
-
-The anonymous route makes its local checks before it reads the registry:
-
-- the body;
-- the act's parse, fields and subject;
-- the team, audience, vocabulary and lifetime;
-- the nonce;
-- the pending row or holder, and the contact hash.
-
-Only an act that passes them costs a read of the team's current controller key
-and a signature check. Every fault is the same `owner_required`, so this
-order changes no response.
+as lookup keys for stage 3. An act with a valid shape costs one registry read
+for its team, which the cache and the delivery limit bound. Each check is one
+of owner-act/1's ([Verification](owner-act.md#verification)). Only the stage
+at which it runs changes, and every fault of stages 1 and 2 is
+`owner_required` or the `503` above, so the order is the only thing a caller
+observes.
 
 Response `200`:
 
@@ -237,14 +257,16 @@ names its end.
 | --- | --- | --- |
 | 415 | `json_required` | The content type is not `application/json`. |
 | 400 | `request_invalid` | The body is not exactly the fields above, `signing` is not base64, or the bytes yield no act, installation id and role to look up. |
-| 403 | `owner_required` | Every other fault of the act or its row: any owner-act verification code, no pending row or holder, a row of another installation, a contact that does not match, a reused nonce. |
-| as given | the installation's code | The installation is not admitted. |
-| 503 | `release_context_unavailable`, or the verifier's code | The governance event cannot be recorded, or the team's registry cannot be read. Nothing took effect. |
+| 403 | `owner_required` | Every other fault of the act or its row: any owner-act verification code, no pending row or holder, a row of another installation or team, a contact that does not match, a reused nonce. |
+| 503 | `team_key_unavailable` | Stage 2 cannot read the team's current key. Nothing took effect. |
+| as given | the installation's code | An authenticated act names an installation that is not admitted. |
+| 503 | `release_context_unavailable` | The governance event cannot be recorded. Nothing took effect. |
 | 429 | `owner_act_rate_limited` | The client's delivery budget is spent; the response carries `Retry-After`. The budget is keyed on the client address that `aweb_naapp.console.ClientIdentity` resolves: the peer, or the entry the deployment's trusted proxy header names. |
 
 The route is anonymous, so every act and row fault is one refusal, and no
-response echoes the request. An anonymous caller learns nothing about which
-rows or holders exist. A failed effect rolls back the nonce, so the owner may
+response echoes the request. Only the controller key's holder reaches a
+state-dependent outcome, so an anonymous caller learns nothing about which
+rows, holders or installations exist. A failed effect rolls back the nonce, so the owner may
 deliver the same act again until it expires.
 
 ## Why a member gains nothing from prepare
@@ -299,9 +321,8 @@ Filed after Juan rules on the design. Each item is one reviewed change.
 - **Go manifest interpreter** (`cli/go/internal/appmanifest`): version 3 and
   `owner_acts`, against the version 3 vectors.
 - **`aweb_naapp`**: version 3 in `aweb_naapp.manifest`; a generic owner-act
-  delivery router mounted on the human origin, which makes its local checks
-  before the registry read and keys its delivery limit on the
-  `ClientIdentity` client address; a generic prepare router with pending
+  delivery router mounted on the human origin, which runs the three stages in
+  order and keys its delivery limit on the `ClientIdentity` client address; a generic prepare router with pending
   rows and the per-member rate limit.
   `split_origins` accepts two origins on one hostname with different ports, so
   the runtime refuses an `owner_acts.origin` that shares `app.origin`'s

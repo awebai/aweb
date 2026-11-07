@@ -14,14 +14,18 @@ from typing import Any
 
 import pytest
 
-from aweb_naapp.hooks.owner_act import Refused
+from aweb_naapp.hooks.owner_act import PREFIX, Refused, owner_act_signing_bytes
 from aweb_naapp.hooks.owner_act import _verify_owner_act as verify_owner_act
 from tests.hooks.owner_act_delivery_vector import build_vector, render
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]
 VECTOR_PATH = AWEB_ROOT / "docs" / "vectors" / "owner-act-delivery-v1.json"
 VECTOR = json.loads(VECTOR_PATH.read_bytes())
-SIGNED = [c for c in VECTOR["delivery_cases"] if c["result"]["status"] != 400]
+SIGNED = [
+    c
+    for c in VECTOR["delivery_cases"]
+    if c["result"]["status"] != 400 and c["verifier"]["registry"] == "available"
+]
 
 
 @pytest.mark.skipif(
@@ -65,8 +69,39 @@ def test_an_act_the_contract_does_not_refuse_verifies_against_its_row(case) -> N
 def test_a_verifier_refusal_behind_owner_required_is_the_one_named(case) -> None:
     assert case["result"] == {"status": 403, "detail": "owner_required", "response": None}
     with pytest.raises(Refused) as refused:
-        _verify(case, case["row"])
+        _verify(case, case["row"] or {})
     assert refused.value.code == case["verifier_code"]
+
+
+@pytest.mark.parametrize("registry", ["available", "unavailable"])
+def test_a_forged_act_gets_one_answer_whether_or_not_the_row_exists(registry) -> None:
+    pair = [
+        c
+        for c in VECTOR["delivery_cases"]
+        if c["name"].startswith("forged_signature_") and c["verifier"]["registry"] == registry
+    ]
+    assert sorted(c["row"] is None for c in pair) == [False, True]
+    assert pair[0]["result"] == pair[1]["result"]
+    assert pair[0]["result"]["status"] != 200
+
+
+def _designation(token: str) -> dict[str, Any]:
+    act = json.loads(
+        base64.b64decode(VECTOR["delivery_cases"][0]["body"]["signing"])[len(PREFIX) :]
+    )
+    act["subject"]["role"] = token
+    return act
+
+
+@pytest.mark.parametrize("case", VECTOR["token_cases"], ids=lambda c: c["name"])
+def test_the_token_bound_matches_the_owner_act_signer(case) -> None:
+    act = _designation(case["token"])
+    if case["valid"]:
+        owner_act_signing_bytes(act)
+    else:
+        with pytest.raises(Refused) as refused:
+            owner_act_signing_bytes(act)
+        assert refused.value.code == "invalid_value"
 
 
 def test_a_contact_that_does_not_match_the_row_is_refused_though_the_act_verifies() -> None:

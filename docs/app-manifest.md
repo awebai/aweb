@@ -560,11 +560,12 @@ calls, and the role tokens are in [owner-act delivery](owner-act-delivery.md).
 }
 ```
 
-- `origin` is an `http` or `https` origin with no userinfo, path, query or
-  fragment, and its hostname differs from `app.origin`'s; a port does not
-  separate them, because cookies ignore ports.
+- `origin` is in owner-act/1's audience grammar (`https://`, a lowercase
+  host, an optional port, nothing after it), and its hostname differs from
+  `app.origin`'s; a port does not separate them, because cookies ignore ports.
 - `roles` has 1 to 16 entries, unique by `name`. `name` follows the
-  designatable role grammar and is at most 31 bytes; `label` and the optional
+  designatable role grammar, begins with a letter and is at most 23 bytes, so
+  that its token fits owner-act/1's; `label` and the optional
   `description` follow the `roles` rules above. `acts` is a nonempty set of
   `app-role.designate`, `app-role.revoke` and `app-credential.recover`,
   ascending by code point with no repeat. `principal` is `required` or

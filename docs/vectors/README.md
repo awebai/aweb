@@ -664,13 +664,16 @@ and a binding with more than one scope in order. The Go authority in
 
 How a client prepares and delivers an app owner act, and how the app answers
 (aweb-acgh.16.38; contract in [`owner-act-delivery.md`](../owner-act-delivery.md)).
-Specified, not shipped. It has four case families:
+Specified, not shipped. It has five case families:
 
 - manifest version 3 `owner_acts` declarations, valid and refused;
 - prepare bodies against a declared role;
 - the client's checks of a prepare response before the owner sees anything;
 - signed delivery bodies against the app's own row, with the HTTP result and,
-  behind each `owner_required`, the owner-act/1 refusal that caused it.
+  behind each `owner_required`, the owner-act/1 refusal that caused it. A
+  forged act gets the same answer with and without the row, whether or not
+  the registry can be read;
+- role tokens at the bound, each checked against the owner-act/1 signer.
 
 The generator in `naapp-lib/tests/hooks/owner_act_delivery_vector.py` builds
 every signed case with `owner_act_signing_bytes` and a synthetic team key, and

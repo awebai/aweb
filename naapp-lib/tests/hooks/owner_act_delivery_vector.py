@@ -42,6 +42,7 @@ EXPIRES = "2026-11-07T12:05:00Z"
 NOW = "2026-11-07T12:01:00Z"
 APP_ACTS = ["app-credential.recover", "app-role.designate", "app-role.revoke"]
 PREPARE_PARAMS = ["act", "role", "contact_sha256", "principal", "holder"]
+LONGEST_NAME = "logs.readers-of-records"  # 23 bytes: with a dot and 40 hex, 64
 
 
 def sha256_hex(text: str) -> str:
@@ -131,6 +132,21 @@ def manifest_cases() -> list[dict[str, Any]]:
             owner_acts={"origin": CONSOLE_ORIGIN + "/console", "roles": [reader_role()]},
             error="owner_acts_invalid",
         ),
+        manifest_case(
+            "origin_with_a_trailing_slash",
+            owner_acts={"origin": CONSOLE_ORIGIN + "/", "roles": [reader_role()]},
+            error="owner_acts_invalid",
+        ),
+        manifest_case(
+            "origin_over_http",
+            owner_acts={"origin": "http://console.logs.example.com", "roles": [reader_role()]},
+            error="owner_acts_invalid",
+        ),
+        manifest_case(
+            "origin_with_an_upper_case_host",
+            owner_acts={"origin": "https://Console.logs.example.com", "roles": [reader_role()]},
+            error="owner_acts_invalid",
+        ),
         manifest_case("no_roles", owner_acts=with_roles(), error="owner_acts_invalid"),
         manifest_case(
             "duplicate_role",
@@ -138,8 +154,17 @@ def manifest_cases() -> list[dict[str, Any]]:
             error="owner_acts_invalid",
         ),
         manifest_case(
-            "role_name_of_32_bytes",
-            owner_acts=with_roles(reader_role(name="logs.reader-of-the-teams-records")),
+            "role_name_of_23_bytes",
+            owner_acts=with_roles(reader_role(name=LONGEST_NAME)),
+        ),
+        manifest_case(
+            "role_name_of_24_bytes",
+            owner_acts=with_roles(reader_role(name=LONGEST_NAME + "s")),
+            error="owner_acts_invalid",
+        ),
+        manifest_case(
+            "role_name_with_a_leading_digit",
+            owner_acts=with_roles(reader_role(name="1logs.reader")),
             error="owner_acts_invalid",
         ),
         manifest_case(
@@ -417,6 +442,7 @@ def delivery_case(
     verifier_code: str | None = None,
     seed: bytes = TEAM_SEED,
     nonce_used: bool = False,
+    registry: str = "available",
     body: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     signing, signature = signed(act, seed)
@@ -433,6 +459,7 @@ def delivery_case(
             "acts": APP_ACTS,
             "now": NOW,
             "nonce_used": nonce_used,
+            "registry": registry,
         },
         "row": row,
         "act": act,
@@ -597,6 +624,44 @@ def delivery_cases() -> list[dict[str, Any]]:
             status=400,
             detail="request_invalid",
         ),
+        *forged_signature_pairs(designate, reader),
+    ]
+
+
+def forged_signature_pairs(act: dict[str, Any], row: dict[str, Any]) -> list[dict[str, Any]]:
+    """An act claiming the team key but signed by another key, with and
+    without the app's row, with the registry readable and not: the row never
+    changes the answer."""
+    cases = []
+    for registry, status, detail, code in (
+        ("available", 403, "owner_required", "bad_signature"),
+        ("unavailable", 503, "team_key_unavailable", None),
+    ):
+        for label, present in (("with_a_row", row), ("without_a_row", None)):
+            cases.append(
+                delivery_case(
+                    f"forged_signature_{label}_registry_{registry}",
+                    act=act,
+                    seed=ADMIN_SEED,
+                    row=present,
+                    contact=CONTACT,
+                    registry=registry,
+                    status=status,
+                    detail=detail,
+                    verifier_code=code,
+                )
+            )
+    return cases
+
+
+def token_cases() -> list[dict[str, Any]]:
+    hex40 = "0123456789abcdef0123456789abcdef01234567"
+    return [
+        {"name": "reader_token", "token": READER_TOKEN, "valid": True},
+        {"name": "owner_token", "token": OWNER_TOKEN, "valid": True},
+        {"name": "longest_name_and_suffix", "token": f"{LONGEST_NAME}.{hex40}", "valid": True},
+        {"name": "name_one_byte_too_long", "token": f"{LONGEST_NAME}s.{hex40}", "valid": False},
+        {"name": "leading_digit", "token": f"1logs.reader.{hex40}", "valid": False},
     ]
 
 
@@ -612,12 +677,14 @@ def build_vector() -> dict[str, Any]:
             "client": "client_cases: the client's checks of a prepare response before it shows the owner anything; error is the local refusal code, or null when it may sign",
             "delivery": "delivery_cases: a delivery body against the app's own row (null when it has none); verifier_code is the owner-act/1 refusal behind a 403, or null when the act verifies; result is the HTTP status, detail and response",
             "signing": "standard base64 with padding of the owner-act/1 signing bytes",
-            "role_token": "the declared role name, a dot, and 32 to 40 lowercase hex characters",
+            "role_token": "the declared role name (a leading letter, at most 23 bytes), a dot, and 32 to 40 lowercase hex characters; token_cases pin the bound against the owner-act/1 signer",
+            "registry": "delivery_cases' verifier.registry says whether stage 2 can read the team key; the forged_signature cases pair a present and an absent row under each, and the pair's results are equal",
         },
         "manifest_cases": manifest_cases(),
         "prepare_cases": prepare_cases(),
         "client_cases": client_cases(),
         "delivery_cases": delivery_cases(),
+        "token_cases": token_cases(),
     }
 
 

@@ -470,6 +470,7 @@
         "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
         "nonce_used": false,
         "now": "2026-11-07T12:01:00Z",
+        "registry": "available",
         "team_id": "demo:example.com"
       },
       "verifier_code": null
@@ -522,6 +523,7 @@
         "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
         "nonce_used": false,
         "now": "2026-11-07T12:01:00Z",
+        "registry": "available",
         "team_id": "demo:example.com"
       },
       "verifier_code": null
@@ -575,6 +577,7 @@
         "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
         "nonce_used": false,
         "now": "2026-11-07T12:01:00Z",
+        "registry": "available",
         "team_id": "demo:example.com"
       },
       "verifier_code": null
@@ -624,6 +627,7 @@
         "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
         "nonce_used": false,
         "now": "2026-11-07T12:01:00Z",
+        "registry": "available",
         "team_id": "demo:example.com"
       },
       "verifier_code": "audience_mismatch"
@@ -673,6 +677,7 @@
         "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
         "nonce_used": false,
         "now": "2026-11-07T12:01:00Z",
+        "registry": "available",
         "team_id": "demo:example.com"
       },
       "verifier_code": "owner_required"
@@ -722,6 +727,7 @@
         "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
         "nonce_used": true,
         "now": "2026-11-07T12:01:00Z",
+        "registry": "available",
         "team_id": "demo:example.com"
       },
       "verifier_code": "nonce_reused"
@@ -771,6 +777,7 @@
         "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
         "nonce_used": false,
         "now": "2026-11-07T12:01:00Z",
+        "registry": "available",
         "team_id": "demo:example.com"
       },
       "verifier_code": "subject_mismatch"
@@ -820,6 +827,7 @@
         "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
         "nonce_used": false,
         "now": "2026-11-07T12:01:00Z",
+        "registry": "available",
         "team_id": "demo:example.com"
       },
       "verifier_code": null
@@ -864,6 +872,7 @@
         "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
         "nonce_used": false,
         "now": "2026-11-07T12:01:00Z",
+        "registry": "available",
         "team_id": "demo:example.com"
       },
       "verifier_code": null
@@ -913,6 +922,7 @@
         "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
         "nonce_used": false,
         "now": "2026-11-07T12:01:00Z",
+        "registry": "available",
         "team_id": "demo:example.com"
       },
       "verifier_code": null
@@ -961,6 +971,7 @@
         "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
         "nonce_used": false,
         "now": "2026-11-07T12:01:00Z",
+        "registry": "available",
         "team_id": "demo:example.com"
       },
       "verifier_code": null
@@ -1011,6 +1022,7 @@
         "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
         "nonce_used": false,
         "now": "2026-11-07T12:01:00Z",
+        "registry": "available",
         "team_id": "demo:example.com"
       },
       "verifier_code": null
@@ -1060,6 +1072,197 @@
         "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
         "nonce_used": false,
         "now": "2026-11-07T12:01:00Z",
+        "registry": "available",
+        "team_id": "demo:example.com"
+      },
+      "verifier_code": null
+    },
+    {
+      "act": {
+        "act": "app-role.designate",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T12:05:00Z",
+        "issued_at": "2026-11-07T12:00:00Z",
+        "nonce": "02020202020202020202020202020202",
+        "subject": {
+          "app_id": "logs",
+          "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "role": "logs.reader.00112233445566778899aabbccddeeff"
+        },
+        "team_id": "demo:example.com",
+        "team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "type": "aweb.owner-act",
+        "v": 1
+      },
+      "body": {
+        "contact": "reader@example.com",
+        "signature": "0pWPghfoSEWj5Mg0TXcwc3Ob4iWvMJImKiZibx2YVZMXKjI1LVxplnUpQJyY8mPKVflAecmn00vY+7a+VDHCDA",
+        "signing": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6ImFwcC1yb2xlLmRlc2lnbmF0ZSIsImF1ZCI6Imh0dHBzOi8vY29uc29sZS5sb2dzLmV4YW1wbGUuY29tIiwiZXhwaXJlc19hdCI6IjIwMjYtMTEtMDdUMTI6MDU6MDBaIiwiaXNzdWVkX2F0IjoiMjAyNi0xMS0wN1QxMjowMDowMFoiLCJub25jZSI6IjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyIiwic3ViamVjdCI6eyJhcHBfaWQiOiJsb2dzIiwiY29udGFjdF9zaGEyNTYiOiJkMTA4YjI3OTQzNGZlMWQ1NGFjMGYxZGE2MzM1NjQ2MDRiMjZjMmUwZTIyMWQxMDhiMGZiYWRiODdhYmEwMmMwIiwiaW5zdGFsbGF0aW9uX2lkIjoiMWI0ZTI4YmEtMmZhMS00ZDNiLWEzZjUtZWYxOWI1YTc2MzNiIiwicm9sZSI6ImxvZ3MucmVhZGVyLjAwMTEyMjMzNDQ1NTY2Nzc4ODk5YWFiYmNjZGRlZWZmIn0sInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9rZXlfZGlkIjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0eXBlIjoiYXdlYi5vd25lci1hY3QiLCJ2IjoxfQ=="
+      },
+      "name": "forged_signature_with_a_row_registry_available",
+      "result": {
+        "detail": "owner_required",
+        "response": null,
+        "status": 403
+      },
+      "row": {
+        "app_id": "logs",
+        "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "role": "logs.reader.00112233445566778899aabbccddeeff"
+      },
+      "verifier": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "audience": "https://console.logs.example.com",
+        "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "nonce_used": false,
+        "now": "2026-11-07T12:01:00Z",
+        "registry": "available",
+        "team_id": "demo:example.com"
+      },
+      "verifier_code": "bad_signature"
+    },
+    {
+      "act": {
+        "act": "app-role.designate",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T12:05:00Z",
+        "issued_at": "2026-11-07T12:00:00Z",
+        "nonce": "02020202020202020202020202020202",
+        "subject": {
+          "app_id": "logs",
+          "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "role": "logs.reader.00112233445566778899aabbccddeeff"
+        },
+        "team_id": "demo:example.com",
+        "team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "type": "aweb.owner-act",
+        "v": 1
+      },
+      "body": {
+        "contact": "reader@example.com",
+        "signature": "0pWPghfoSEWj5Mg0TXcwc3Ob4iWvMJImKiZibx2YVZMXKjI1LVxplnUpQJyY8mPKVflAecmn00vY+7a+VDHCDA",
+        "signing": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6ImFwcC1yb2xlLmRlc2lnbmF0ZSIsImF1ZCI6Imh0dHBzOi8vY29uc29sZS5sb2dzLmV4YW1wbGUuY29tIiwiZXhwaXJlc19hdCI6IjIwMjYtMTEtMDdUMTI6MDU6MDBaIiwiaXNzdWVkX2F0IjoiMjAyNi0xMS0wN1QxMjowMDowMFoiLCJub25jZSI6IjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyIiwic3ViamVjdCI6eyJhcHBfaWQiOiJsb2dzIiwiY29udGFjdF9zaGEyNTYiOiJkMTA4YjI3OTQzNGZlMWQ1NGFjMGYxZGE2MzM1NjQ2MDRiMjZjMmUwZTIyMWQxMDhiMGZiYWRiODdhYmEwMmMwIiwiaW5zdGFsbGF0aW9uX2lkIjoiMWI0ZTI4YmEtMmZhMS00ZDNiLWEzZjUtZWYxOWI1YTc2MzNiIiwicm9sZSI6ImxvZ3MucmVhZGVyLjAwMTEyMjMzNDQ1NTY2Nzc4ODk5YWFiYmNjZGRlZWZmIn0sInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9rZXlfZGlkIjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0eXBlIjoiYXdlYi5vd25lci1hY3QiLCJ2IjoxfQ=="
+      },
+      "name": "forged_signature_without_a_row_registry_available",
+      "result": {
+        "detail": "owner_required",
+        "response": null,
+        "status": 403
+      },
+      "row": null,
+      "verifier": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "audience": "https://console.logs.example.com",
+        "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "nonce_used": false,
+        "now": "2026-11-07T12:01:00Z",
+        "registry": "available",
+        "team_id": "demo:example.com"
+      },
+      "verifier_code": "bad_signature"
+    },
+    {
+      "act": {
+        "act": "app-role.designate",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T12:05:00Z",
+        "issued_at": "2026-11-07T12:00:00Z",
+        "nonce": "02020202020202020202020202020202",
+        "subject": {
+          "app_id": "logs",
+          "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "role": "logs.reader.00112233445566778899aabbccddeeff"
+        },
+        "team_id": "demo:example.com",
+        "team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "type": "aweb.owner-act",
+        "v": 1
+      },
+      "body": {
+        "contact": "reader@example.com",
+        "signature": "0pWPghfoSEWj5Mg0TXcwc3Ob4iWvMJImKiZibx2YVZMXKjI1LVxplnUpQJyY8mPKVflAecmn00vY+7a+VDHCDA",
+        "signing": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6ImFwcC1yb2xlLmRlc2lnbmF0ZSIsImF1ZCI6Imh0dHBzOi8vY29uc29sZS5sb2dzLmV4YW1wbGUuY29tIiwiZXhwaXJlc19hdCI6IjIwMjYtMTEtMDdUMTI6MDU6MDBaIiwiaXNzdWVkX2F0IjoiMjAyNi0xMS0wN1QxMjowMDowMFoiLCJub25jZSI6IjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyIiwic3ViamVjdCI6eyJhcHBfaWQiOiJsb2dzIiwiY29udGFjdF9zaGEyNTYiOiJkMTA4YjI3OTQzNGZlMWQ1NGFjMGYxZGE2MzM1NjQ2MDRiMjZjMmUwZTIyMWQxMDhiMGZiYWRiODdhYmEwMmMwIiwiaW5zdGFsbGF0aW9uX2lkIjoiMWI0ZTI4YmEtMmZhMS00ZDNiLWEzZjUtZWYxOWI1YTc2MzNiIiwicm9sZSI6ImxvZ3MucmVhZGVyLjAwMTEyMjMzNDQ1NTY2Nzc4ODk5YWFiYmNjZGRlZWZmIn0sInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9rZXlfZGlkIjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0eXBlIjoiYXdlYi5vd25lci1hY3QiLCJ2IjoxfQ=="
+      },
+      "name": "forged_signature_with_a_row_registry_unavailable",
+      "result": {
+        "detail": "team_key_unavailable",
+        "response": null,
+        "status": 503
+      },
+      "row": {
+        "app_id": "logs",
+        "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "role": "logs.reader.00112233445566778899aabbccddeeff"
+      },
+      "verifier": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "audience": "https://console.logs.example.com",
+        "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "nonce_used": false,
+        "now": "2026-11-07T12:01:00Z",
+        "registry": "unavailable",
+        "team_id": "demo:example.com"
+      },
+      "verifier_code": null
+    },
+    {
+      "act": {
+        "act": "app-role.designate",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T12:05:00Z",
+        "issued_at": "2026-11-07T12:00:00Z",
+        "nonce": "02020202020202020202020202020202",
+        "subject": {
+          "app_id": "logs",
+          "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "role": "logs.reader.00112233445566778899aabbccddeeff"
+        },
+        "team_id": "demo:example.com",
+        "team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "type": "aweb.owner-act",
+        "v": 1
+      },
+      "body": {
+        "contact": "reader@example.com",
+        "signature": "0pWPghfoSEWj5Mg0TXcwc3Ob4iWvMJImKiZibx2YVZMXKjI1LVxplnUpQJyY8mPKVflAecmn00vY+7a+VDHCDA",
+        "signing": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6ImFwcC1yb2xlLmRlc2lnbmF0ZSIsImF1ZCI6Imh0dHBzOi8vY29uc29sZS5sb2dzLmV4YW1wbGUuY29tIiwiZXhwaXJlc19hdCI6IjIwMjYtMTEtMDdUMTI6MDU6MDBaIiwiaXNzdWVkX2F0IjoiMjAyNi0xMS0wN1QxMjowMDowMFoiLCJub25jZSI6IjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyIiwic3ViamVjdCI6eyJhcHBfaWQiOiJsb2dzIiwiY29udGFjdF9zaGEyNTYiOiJkMTA4YjI3OTQzNGZlMWQ1NGFjMGYxZGE2MzM1NjQ2MDRiMjZjMmUwZTIyMWQxMDhiMGZiYWRiODdhYmEwMmMwIiwiaW5zdGFsbGF0aW9uX2lkIjoiMWI0ZTI4YmEtMmZhMS00ZDNiLWEzZjUtZWYxOWI1YTc2MzNiIiwicm9sZSI6ImxvZ3MucmVhZGVyLjAwMTEyMjMzNDQ1NTY2Nzc4ODk5YWFiYmNjZGRlZWZmIn0sInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9rZXlfZGlkIjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0eXBlIjoiYXdlYi5vd25lci1hY3QiLCJ2IjoxfQ=="
+      },
+      "name": "forged_signature_without_a_row_registry_unavailable",
+      "result": {
+        "detail": "team_key_unavailable",
+        "response": null,
+        "status": 503
+      },
+      "row": null,
+      "verifier": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "audience": "https://console.logs.example.com",
+        "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "nonce_used": false,
+        "now": "2026-11-07T12:01:00Z",
+        "registry": "unavailable",
         "team_id": "demo:example.com"
       },
       "verifier_code": null
@@ -1308,6 +1511,186 @@
     {
       "app_origin": "https://logs.example.com",
       "error": "owner_acts_invalid",
+      "name": "origin_with_a_trailing_slash",
+      "owner_acts": {
+        "origin": "https://console.logs.example.com/",
+        "roles": [
+          {
+            "acts": [
+              "app-credential.recover",
+              "app-role.designate",
+              "app-role.revoke"
+            ],
+            "description": "Reads the team's audit log in a passkey session on the console.",
+            "label": "Log reader",
+            "name": "logs.reader",
+            "prepare_tool": "owner-act-prepare",
+            "principal": "refused"
+          }
+        ]
+      },
+      "tools": [
+        {
+          "body": {
+            "mode": "json"
+          },
+          "invocation_contexts": [
+            "agent"
+          ],
+          "method": "POST",
+          "name": "owner-act-prepare",
+          "params": [
+            {
+              "in": "body",
+              "name": "act"
+            },
+            {
+              "in": "body",
+              "name": "role"
+            },
+            {
+              "in": "body",
+              "name": "contact_sha256"
+            },
+            {
+              "in": "body",
+              "name": "principal"
+            },
+            {
+              "in": "body",
+              "name": "holder"
+            }
+          ],
+          "path": "/v1/owner-act-subjects",
+          "scopes": [
+            "logs.readers"
+          ]
+        }
+      ]
+    },
+    {
+      "app_origin": "https://logs.example.com",
+      "error": "owner_acts_invalid",
+      "name": "origin_over_http",
+      "owner_acts": {
+        "origin": "http://console.logs.example.com",
+        "roles": [
+          {
+            "acts": [
+              "app-credential.recover",
+              "app-role.designate",
+              "app-role.revoke"
+            ],
+            "description": "Reads the team's audit log in a passkey session on the console.",
+            "label": "Log reader",
+            "name": "logs.reader",
+            "prepare_tool": "owner-act-prepare",
+            "principal": "refused"
+          }
+        ]
+      },
+      "tools": [
+        {
+          "body": {
+            "mode": "json"
+          },
+          "invocation_contexts": [
+            "agent"
+          ],
+          "method": "POST",
+          "name": "owner-act-prepare",
+          "params": [
+            {
+              "in": "body",
+              "name": "act"
+            },
+            {
+              "in": "body",
+              "name": "role"
+            },
+            {
+              "in": "body",
+              "name": "contact_sha256"
+            },
+            {
+              "in": "body",
+              "name": "principal"
+            },
+            {
+              "in": "body",
+              "name": "holder"
+            }
+          ],
+          "path": "/v1/owner-act-subjects",
+          "scopes": [
+            "logs.readers"
+          ]
+        }
+      ]
+    },
+    {
+      "app_origin": "https://logs.example.com",
+      "error": "owner_acts_invalid",
+      "name": "origin_with_an_upper_case_host",
+      "owner_acts": {
+        "origin": "https://Console.logs.example.com",
+        "roles": [
+          {
+            "acts": [
+              "app-credential.recover",
+              "app-role.designate",
+              "app-role.revoke"
+            ],
+            "description": "Reads the team's audit log in a passkey session on the console.",
+            "label": "Log reader",
+            "name": "logs.reader",
+            "prepare_tool": "owner-act-prepare",
+            "principal": "refused"
+          }
+        ]
+      },
+      "tools": [
+        {
+          "body": {
+            "mode": "json"
+          },
+          "invocation_contexts": [
+            "agent"
+          ],
+          "method": "POST",
+          "name": "owner-act-prepare",
+          "params": [
+            {
+              "in": "body",
+              "name": "act"
+            },
+            {
+              "in": "body",
+              "name": "role"
+            },
+            {
+              "in": "body",
+              "name": "contact_sha256"
+            },
+            {
+              "in": "body",
+              "name": "principal"
+            },
+            {
+              "in": "body",
+              "name": "holder"
+            }
+          ],
+          "path": "/v1/owner-act-subjects",
+          "scopes": [
+            "logs.readers"
+          ]
+        }
+      ]
+    },
+    {
+      "app_origin": "https://logs.example.com",
+      "error": "owner_acts_invalid",
       "name": "no_roles",
       "owner_acts": {
         "origin": "https://console.logs.example.com",
@@ -1426,8 +1809,8 @@
     },
     {
       "app_origin": "https://logs.example.com",
-      "error": "owner_acts_invalid",
-      "name": "role_name_of_32_bytes",
+      "error": null,
+      "name": "role_name_of_23_bytes",
       "owner_acts": {
         "origin": "https://console.logs.example.com",
         "roles": [
@@ -1439,7 +1822,127 @@
             ],
             "description": "Reads the team's audit log in a passkey session on the console.",
             "label": "Log reader",
-            "name": "logs.reader-of-the-teams-records",
+            "name": "logs.readers-of-records",
+            "prepare_tool": "owner-act-prepare",
+            "principal": "refused"
+          }
+        ]
+      },
+      "tools": [
+        {
+          "body": {
+            "mode": "json"
+          },
+          "invocation_contexts": [
+            "agent"
+          ],
+          "method": "POST",
+          "name": "owner-act-prepare",
+          "params": [
+            {
+              "in": "body",
+              "name": "act"
+            },
+            {
+              "in": "body",
+              "name": "role"
+            },
+            {
+              "in": "body",
+              "name": "contact_sha256"
+            },
+            {
+              "in": "body",
+              "name": "principal"
+            },
+            {
+              "in": "body",
+              "name": "holder"
+            }
+          ],
+          "path": "/v1/owner-act-subjects",
+          "scopes": [
+            "logs.readers"
+          ]
+        }
+      ]
+    },
+    {
+      "app_origin": "https://logs.example.com",
+      "error": "owner_acts_invalid",
+      "name": "role_name_of_24_bytes",
+      "owner_acts": {
+        "origin": "https://console.logs.example.com",
+        "roles": [
+          {
+            "acts": [
+              "app-credential.recover",
+              "app-role.designate",
+              "app-role.revoke"
+            ],
+            "description": "Reads the team's audit log in a passkey session on the console.",
+            "label": "Log reader",
+            "name": "logs.readers-of-recordss",
+            "prepare_tool": "owner-act-prepare",
+            "principal": "refused"
+          }
+        ]
+      },
+      "tools": [
+        {
+          "body": {
+            "mode": "json"
+          },
+          "invocation_contexts": [
+            "agent"
+          ],
+          "method": "POST",
+          "name": "owner-act-prepare",
+          "params": [
+            {
+              "in": "body",
+              "name": "act"
+            },
+            {
+              "in": "body",
+              "name": "role"
+            },
+            {
+              "in": "body",
+              "name": "contact_sha256"
+            },
+            {
+              "in": "body",
+              "name": "principal"
+            },
+            {
+              "in": "body",
+              "name": "holder"
+            }
+          ],
+          "path": "/v1/owner-act-subjects",
+          "scopes": [
+            "logs.readers"
+          ]
+        }
+      ]
+    },
+    {
+      "app_origin": "https://logs.example.com",
+      "error": "owner_acts_invalid",
+      "name": "role_name_with_a_leading_digit",
+      "owner_acts": {
+        "origin": "https://console.logs.example.com",
+        "roles": [
+          {
+            "acts": [
+              "app-credential.recover",
+              "app-role.designate",
+              "app-role.revoke"
+            ],
+            "description": "Reads the team's audit log in a passkey session on the console.",
+            "label": "Log reader",
+            "name": "1logs.reader",
             "prepare_tool": "owner-act-prepare",
             "principal": "refused"
           }
@@ -2323,9 +2826,37 @@
     "delivery": "delivery_cases: a delivery body against the app's own row (null when it has none); verifier_code is the owner-act/1 refusal behind a 403, or null when the act verifies; result is the HTTP status, detail and response",
     "manifest": "manifest_cases: a version 3 manifest's owner_acts with the tools it names; error is the manifest refusal code, or null when it is valid",
     "prepare": "prepare_cases: the app's reading of a prepare body against the declared role; error is the 400 detail, or null when it records or reads a row",
-    "role_token": "the declared role name, a dot, and 32 to 40 lowercase hex characters",
+    "registry": "delivery_cases' verifier.registry says whether stage 2 can read the team key; the forged_signature cases pair a present and an absent row under each, and the pair's results are equal",
+    "role_token": "the declared role name (a leading letter, at most 23 bytes), a dot, and 32 to 40 lowercase hex characters; token_cases pin the bound against the owner-act/1 signer",
     "signing": "standard base64 with padding of the owner-act/1 signing bytes"
   },
   "status": "specified (aweb-acgh.16.38); not shipped",
+  "token_cases": [
+    {
+      "name": "reader_token",
+      "token": "logs.reader.00112233445566778899aabbccddeeff",
+      "valid": true
+    },
+    {
+      "name": "owner_token",
+      "token": "secrets.owner.0123456789abcdef0123456789abcdef01234567",
+      "valid": true
+    },
+    {
+      "name": "longest_name_and_suffix",
+      "token": "logs.readers-of-records.0123456789abcdef0123456789abcdef01234567",
+      "valid": true
+    },
+    {
+      "name": "name_one_byte_too_long",
+      "token": "logs.readers-of-recordss.0123456789abcdef0123456789abcdef01234567",
+      "valid": false
+    },
+    {
+      "name": "leading_digit",
+      "token": "1logs.reader.0123456789abcdef0123456789abcdef01234567",
+      "valid": false
+    }
+  ],
   "version": 1
 }
