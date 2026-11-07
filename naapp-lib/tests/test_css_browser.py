@@ -1,6 +1,7 @@
 """Contrast of the shared status component after Chromium resolves the CSS."""
 
 import re
+from importlib.resources import files
 
 import pytest
 from playwright.async_api import async_playwright
@@ -51,3 +52,36 @@ async def test_wait_pill_small_text_contrast(theme: str, surface: str) -> None:
     light, dark = sorted((_luminance(foreground), _luminance(background)), reverse=True)
     contrast = (light + 0.05) / (dark + 0.05)
     assert contrast >= 4.5, f"{theme}/{surface}: wait pill contrast {contrast:.3f}:1 < 4.5:1"
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+async def test_renderer_warning_uses_shared_wait_palette(theme: str) -> None:
+    renderer_css = files("aweb_naapp.pages").joinpath("assets", "page-renderer.css").read_text()
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch()
+        try:
+            page = await browser.new_page(color_scheme=theme)
+            await page.set_content(
+                f'<html data-theme="{theme}"><body>'
+                '<span class="pill wait">Pending</span></body></html>'
+            )
+            await page.add_style_tag(content=aweb_css())
+            shared = await page.locator(".pill.wait").evaluate("""pill => {
+                const style = getComputedStyle(pill);
+                return {wait: style.color, background: style.backgroundColor};
+            }""")
+            # The renderer emits a warning badge with ink text and a wait-colour
+            # border. Its packaged stylesheet must consume the same palette.
+            await page.set_content(
+                f'<html data-theme="{theme}"><body>'
+                '<article class="widget widget-status_badge">'
+                '<bdi class="badge tone-warning">Pending</bdi></article></body></html>'
+            )
+            await page.add_style_tag(content=renderer_css)
+            rendered = await page.locator(".badge.tone-warning").evaluate("""badge => {
+                const style = getComputedStyle(badge);
+                return {wait: style.borderTopColor, background: style.backgroundColor};
+            }""")
+        finally:
+            await browser.close()
+    assert rendered == shared
