@@ -10,7 +10,14 @@ from uuid import uuid4
 import pytest
 
 from aweb_naapp.hooks.envelope import verify
-from aweb_naapp.hooks.producer import HOOKS_CHANNEL, ServerProducer, hook_targets
+from aweb_naapp.hooks.producer import (
+    HOOKS_CHANNEL,
+    Backlog,
+    ServerProducer,
+    hook_backlog,
+    hook_targets,
+    owed_registrations,
+)
 from aweb_naapp.hooks.strictjson import Refused
 from aweb_naapp.outbox import Acked, OutboxEvent, Retryable, RetryPolicy, drain
 from aweb_naapp.outbox import enqueue as enqueue_event
@@ -267,6 +274,39 @@ async def test_backlog_does_not_bypass_freshness_scope_or_activation(db, bad_vie
     with pytest.raises(Refused) as refused:
         await require(db, view=bad_view)
     assert refused.value.code == "audit_target_unavailable"
+
+
+async def test_the_backlog_reader_names_each_owed_target_and_its_oldest_owed_event(db):
+    await backlog(db, states={BINDING: "delivered", SECONDARY.binding_id: "stalled"})
+    await backlog(db, age=timedelta(minutes=30), states={BINDING: "pending"})
+    await backlog(db, team_id="other:example.com", age=timedelta(hours=3))
+    async with db.transaction() as tx:
+        found = await hook_backlog(tx, team_id=TEAM, hook=HOOK, registrations=(PRIMARY, SECONDARY))
+    assert found == (
+        Backlog(registration=PRIMARY, oldest_owed_at=NOW - timedelta(minutes=30)),
+        Backlog(registration=SECONDARY, oldest_owed_at=NOW - timedelta(hours=2)),
+    )
+    # The same decision the gate takes: one current target admits.
+    assert [b.is_current(NOW, BOUND) for b in found] == [True, False]
+    await require(db, registrations=(PRIMARY, SECONDARY))
+
+
+def test_a_target_owed_nothing_or_exactly_at_the_bound_is_current():
+    assert Backlog(registration=PRIMARY, oldest_owed_at=None).is_current(NOW, BOUND)
+    assert Backlog(registration=PRIMARY, oldest_owed_at=NOW - BOUND).is_current(NOW, BOUND)
+    assert not Backlog(
+        registration=PRIMARY, oldest_owed_at=NOW - BOUND - timedelta(microseconds=1)
+    ).is_current(NOW, BOUND)
+
+
+@pytest.mark.parametrize(
+    "bad_view", [None, view(as_of=NOW - timedelta(seconds=61), registrations=(PRIMARY,))]
+)
+def test_the_owed_targets_are_unavailable_without_a_fresh_view(bad_view):
+    with pytest.raises(Refused) as refused:
+        owed_registrations(HOOK, TEAM, NOW, NOW, bad_view)
+    assert refused.value.code == "audit_target_unavailable"
+    assert owed_registrations(HOOK, TEAM, NOW, NOW, view(registrations=(PRIMARY,))) == (PRIMARY,)
 
 
 @pytest.mark.parametrize("bound", [timedelta(0), timedelta(seconds=-1)])
