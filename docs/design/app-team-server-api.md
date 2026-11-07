@@ -430,7 +430,7 @@ parameter, so an app can read only its own grant
   an immediate post-install retry does not retain a minute-long denial.
 - Concurrent misses for one `(team, app)` share one refresh.
 
-### Revocation bound, stated honestly
+### Revocation bound
 
 A change on the server reaches every naapp within `max_age_seconds` plus the
 time for one refresh (decision 37):
