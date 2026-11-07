@@ -16,6 +16,7 @@ CSRF storage key and the copy they show. ``console.js`` exports
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from html import escape
 from importlib.resources import files
@@ -168,8 +169,18 @@ class ConsoleShell:
         response.headers.update(error.headers or {})
         return response
 
-    def router(self, *, sessions: ConsoleSessions, home_title: str, home_html: str) -> APIRouter:
+    def router(
+        self,
+        *,
+        sessions: ConsoleSessions,
+        home_title: str,
+        home: Callable[[ConsoleSession], Awaitable[str]],
+    ) -> APIRouter:
         """``GET /`` (the session's home), ``GET /login`` and the shell's assets.
+
+        ``home`` returns the trusted, developer-authored HTML of the session's
+        home; it does its own reads for that session, and a 401 it raises is a
+        redirect to sign-in like S4's own.
 
         Login uses the existing ``/login/options`` and ``/login`` ceremonies.
         The CSRF token lives only in the tab's sessionStorage under the
@@ -179,12 +190,13 @@ class ConsoleShell:
         copy = self.brand.sign_in
 
         @router.get("/", response_class=HTMLResponse)
-        async def home(request: Request) -> Response:
+        async def session_home(request: Request) -> Response:
             try:
                 session = await sessions.current(request)
+                body_html = await home(session)
             except HTTPException as error:
                 return login_redirect(error)
-            return self.console_page(title=home_title, body_html=home_html, session=session)
+            return self.console_page(title=home_title, body_html=body_html, session=session)
 
         @router.get("/login", response_class=HTMLResponse)
         async def login(request: Request, scope: str = "") -> Response:

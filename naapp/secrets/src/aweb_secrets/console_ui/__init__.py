@@ -10,7 +10,7 @@ its name, copy, stylesheet and tab CSRF storage key aweb.secrets.console.csrf.
 
 from pathlib import Path
 
-from aweb_naapp.console import ConsoleSessions
+from aweb_naapp.console import ConsoleSession, ConsoleSessions
 from aweb_naapp.console.browser import ConsoleBrand, ConsoleShell, SignInCopy, login_redirect
 from fastapi import APIRouter
 
@@ -53,6 +53,11 @@ HOME = (
 )
 
 
+async def home(session: ConsoleSession) -> str:
+    """The console's home for ``session``: its navigation."""
+    return HOME
+
+
 def console_ui_router(*, sessions: ConsoleSessions) -> APIRouter:
     """GET shell/login and static assets; mount only on the human origin."""
-    return SHELL.router(sessions=sessions, home_title="Console", home_html=HOME)
+    return SHELL.router(sessions=sessions, home_title="Console", home=home)
