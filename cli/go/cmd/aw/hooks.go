@@ -152,9 +152,13 @@ func runHookOwnerAct(cmd *cobra.Command, act, appID, bindingID string, yes bool)
 	if err != nil {
 		return err
 	}
+	// Refuse an act a verifier would refuse before asking the owner to sign it.
+	if _, err := awid.OwnerActSigningBytes(fields); err != nil {
+		return err
+	}
 	stderr := cmd.ErrOrStderr()
 	fmt.Fprint(stderr, formatHookOwnerAct(fields, *binding))
-	if err := confirmOwnerAct(yes, os.Stdin, stderr); err != nil {
+	if err := confirmOwnerAct(yes, cmd.InOrStdin(), stderr); err != nil {
 		return err
 	}
 	signing, signature, err := awid.SignOwnerAct(teamKey, fields)
@@ -192,8 +196,8 @@ func loadOwnerTeamKey(teamID string) (ed25519.PrivateKey, error) {
 	return key, nil
 }
 
-// newOwnerAct is the unsigned aweb.owner-act/1 for subject, signed for the
-// team's controller key with a fresh nonce.
+// newOwnerAct is the unsigned aweb.owner-act/1 for subject, naming the
+// team's controller key as its signer, with a fresh nonce.
 func newOwnerAct(act, teamID, audience string, teamKey ed25519.PrivateKey, subject map[string]any, now time.Time) (map[string]any, error) {
 	nonce := make([]byte, 16)
 	if _, err := rand.Read(nonce); err != nil {
