@@ -200,6 +200,7 @@ def transport(target: Target_, views: Views, **options) -> HookTransport:
         egress=options.pop("egress", None) or target.egress(),
         registrations=views,
         internal_cidr=options.pop("internal_cidr", ip_network(f"{target.host}/32")),
+        internal_origins=options.pop("internal_origins", frozenset({target.origin})),
     )
 
 
@@ -380,6 +381,24 @@ async def test_an_operator_cidr_alone_does_not_authorize_a_registered_origin(db,
     assert target.dns.queries[(NAME, "A")] == 1
     assert target.tls.seen == []
     assert target.verified == []
+
+
+@pytest.mark.parametrize("origin_scope", ["empty", "other_port", "prefix", "wildcard"])
+async def test_only_an_exact_operator_origin_can_retry_inside_the_cidr(db, target, origin_scope):
+    views = Views(target.view())
+    await enqueue_secret_use(db, views)
+    origins = {
+        "empty": frozenset(),
+        "other_port": frozenset({f"https://{NAME}:{target.tls.port + 1}"}),
+        "prefix": frozenset({target.origin + "/"}),
+        "wildcard": frozenset({"https://*.hooks.test"}),
+    }
+    outcome = await transport(target, views, internal_origins=origins[origin_scope]).deliver(
+        await stored_event(db), target_of(target)
+    )
+    assert outcome == Permanent("egress_refused:destination_address_denied")
+    assert target.dns.queries[(NAME, "A")] == 1
+    assert target.tls.seen == []
 
 
 async def test_a_private_target_is_tried_as_public_then_reached_inside_the_operators_network(

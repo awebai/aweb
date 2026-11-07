@@ -110,6 +110,7 @@ def create_app(
     team_server_transport: httpx.AsyncBaseTransport | None = None,
     hook_egress: Egress | None = None,
     hook_internal_cidr: IPv4Network | IPv6Network | None = None,
+    hook_internal_origins: frozenset[str] = frozenset(),
     tool_routers: Sequence[ToolRouter] = (),
     prepare: Prepare | None = None,
     console_routers: Sequence[ConsoleRouter] = (),
@@ -135,6 +136,7 @@ def create_app(
         team_server_transport=team_server_transport,
         hook_egress=hook_egress,
         hook_internal_cidr=hook_internal_cidr,
+        hook_internal_origins=hook_internal_origins,
         stores=STORES,
     )
     checks = {**runtime.health_checks(), "kms": kms}
