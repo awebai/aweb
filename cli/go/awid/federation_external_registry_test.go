@@ -207,3 +207,115 @@ func TestStrictGoClaimComparisonIsIndependent(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestStrictNamespaceDelegationAuthority(t *testing.T) {
+	var vector struct {
+		Mapping struct {
+			DIDAW         string `json:"did_aw"`
+			InitialDIDKey string `json:"initial_did_key"`
+			RotatedDIDKey string `json:"rotated_did_key"`
+		} `json:"mapping"`
+		Entries []struct {
+			EntryPayload map[string]interface{} `json:"entry_payload"`
+			EntryHash    string                 `json:"entry_hash"`
+			Signature    string                 `json:"signature_b64"`
+		} `json:"entries"`
+	}
+	loadFederationVector(t, "identity-log-v1.json", &vector)
+	entries := make([]map[string]interface{}, 0, len(vector.Entries))
+	for _, item := range vector.Entries {
+		entry := item.EntryPayload
+		entry["entry_hash"], entry["signature"] = item.EntryHash, item.Signature
+		entries = append(entries, entry)
+	}
+	parent, child := vector.Mapping.InitialDIDKey, vector.Mapping.RotatedDIDKey
+	for _, scenario := range []struct {
+		name     string
+		accepted bool
+	}{
+		{"delegated", true}, {"exact", true}, {"inherited_same_key", true},
+		{"missing", false}, {"wrong_parent_key", false}, {"wrong_child_key", false},
+		{"wrong_ancestor", false}, {"non_ancestor", false}, {"exact_mismatch", false},
+	} {
+		for _, contact := range []bool{false, true} {
+			kind := "sender"
+			if contact {
+				kind = "contact"
+			}
+			t.Run(scenario.name+"/"+kind, func(t *testing.T) {
+				delegation := map[string]interface{}{"parent_domain": "example.com", "parent_controller_key": parent, "controller_key": child}
+				namespace := map[string]interface{}{"domain": "alpha.example.com", "controller_did": child, "delegation": delegation}
+				exact := scenario.name == "exact" || scenario.name == "exact_mismatch"
+				switch scenario.name {
+				case "inherited_same_key":
+					namespace["controller_did"] = parent
+					delete(namespace, "delegation")
+				case "missing":
+					delete(namespace, "delegation")
+				case "wrong_parent_key":
+					delegation["parent_controller_key"] = child
+				case "wrong_child_key":
+					delegation["controller_key"] = parent
+				case "wrong_ancestor":
+					delegation["parent_domain"] = "com"
+				case "non_ancestor":
+					delegation["parent_domain"] = "other.com"
+				}
+				anchor, key := "_awid.example.com", parent
+				if exact {
+					anchor = "_awid.alpha.example.com"
+				}
+				if scenario.name == "exact" {
+					key = child
+				}
+				dns := vectorFederationDNS{anchor: {Outcome: "record", Records: []string{"awid=v1; controller=" + key + "; registry=https://registry-a.example;"}}}
+				if !exact {
+					dns["_awid.alpha.example.com"] = FederationTXTLookup{Outcome: "nodata"}
+				}
+				requests := []string{}
+				client := &http.Client{Transport: strictRoundTrip(func(request *http.Request) (*http.Response, error) {
+					requests = append(requests, request.URL.Path)
+					var body interface{}
+					switch {
+					case request.URL.Path == "/v1/namespaces/alpha.example.com":
+						body = namespace
+					case request.URL.Path == "/v1/namespaces/alpha.example.com/addresses/Alice":
+						body = map[string]interface{}{"domain": "alpha.example.com", "name": "Alice", "did_aw": vector.Mapping.DIDAW, "current_did_key": child, "delivery": map[string]interface{}{"origin": "https://aweb-alpha.example"}}
+					case strings.HasSuffix(request.URL.Path, "/key"):
+						body = map[string]interface{}{"did_aw": vector.Mapping.DIDAW, "current_did_key": child, "log_head": entries[len(entries)-1], "status": "OK_DEGRADED"}
+					case strings.HasSuffix(request.URL.Path, "/log"):
+						body = entries
+					default:
+						t.Fatalf("unexpected request %s", request.URL.Path)
+					}
+					encoded, err := json.Marshal(body)
+					if err != nil {
+						t.Fatal(err)
+					}
+					return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(bytes.NewReader(encoded)), Request: request}, nil
+				})}
+				resolver := &StrictFederationExternalResolver{TXTResolver: dns, HostResolver: &strictTestHosts{}, HTTPFactory: func(_ string, _ []string, _ int64) (*http.Client, error) { return client, nil }}
+				fetch := resolver.FetchEvidence
+				if contact {
+					fetch = resolver.FetchContactEvidence
+				}
+				evidence, err := fetch(context.Background(), "alpha.example.com/Alice", 1, nil)
+				if !scenario.accepted {
+					if !IsFederationReason(err, "sender_address_did_mismatch") || evidence != nil {
+						t.Fatalf("evidence=%#v err=%v", evidence, err)
+					}
+					if len(requests) != 1 {
+						t.Fatalf("refused namespace reached address: %v", requests)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if evidence.ControllerDID != namespace["controller_did"] || evidence.Inherited != !exact || evidence.DIDAW != vector.Mapping.DIDAW {
+					t.Fatalf("unexpected evidence: %#v", evidence)
+				}
+			})
+		}
+	}
+}

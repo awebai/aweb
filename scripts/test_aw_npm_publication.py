@@ -11,7 +11,6 @@ import json
 import os
 from pathlib import Path
 import shutil
-import subprocess
 import sys
 import tarfile
 import tempfile
@@ -19,6 +18,8 @@ import threading
 import time
 import unittest
 from unittest import mock
+
+from fixture_repo import fixture_env, init_fixture_repo, run_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPER = ROOT / "cli/go/npm/publication.py"
@@ -28,30 +29,31 @@ PACKAGES = ["aw-linux-x64", "aw-linux-arm64", "aw-darwin-x64", "aw-darwin-arm64"
 
 class PublicationTest(unittest.TestCase):
     def invoke(self, *args, **kwargs):
-        return subprocess.run([sys.executable, str(HELPER), *args], text=True,
+        return run_fixture([sys.executable, str(HELPER), *args], text=True,
                               capture_output=True, **kwargs)
 
     def test_channel_defaults_and_explicit_staged_final_tag(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for args in [("init", "-q"), ("config", "user.name", "fixture"),
+            init_fixture_repo(root)
+            for args in [("config", "user.name", "fixture"),
                          ("config", "user.email", "fixture@example.test"),
                          ("commit", "--allow-empty", "-qm", "fixture")]:
-                subprocess.run(["git", "-C", str(root), *args], check=True)
+                run_fixture(["git", "-C", str(root), *args], check=True)
             for version, marker, expected in [
                 ("1.2.3", "", "latest"), ("1.2.3-rc.1", "", "next"),
                 ("1.2.4", "Npm-Publish-Channel: next", "next"),
             ]:
                 tag = "v" + version
-                subprocess.run(["git", "-C", str(root), "tag", "-a", tag, "-m",
+                run_fixture(["git", "-C", str(root), "tag", "-a", tag, "-m",
                                 "release\n\n" + marker], check=True)
                 result = self.invoke("channel", "--version", version, "--tag", tag,
                                      "--repository", str(root))
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout.strip(), expected)
-            subprocess.run(["git", "-C", str(root), "commit", "--allow-empty", "-qm",
+            run_fixture(["git", "-C", str(root), "commit", "--allow-empty", "-qm",
                             "commit text\n\nNpm-Publish-Channel: next"], check=True)
-            subprocess.run(["git", "-C", str(root), "tag", "v1.2.5"], check=True)
+            run_fixture(["git", "-C", str(root), "tag", "v1.2.5"], check=True)
             result = self.invoke("channel", "--version", "1.2.5", "--tag", "v1.2.5",
                                  "--repository", str(root))
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -76,10 +78,10 @@ class PublicationTest(unittest.TestCase):
             root = Path(directory)
             config = root / "npmrc"
             config.write_text(f"registry={registry.url}\nupdate-notifier=true\n")
-            env = dict(os.environ, NPM_CONFIG_REGISTRY=registry.url,
+            env = dict(fixture_env(), NPM_CONFIG_REGISTRY=registry.url,
                        NPM_CONFIG_USERCONFIG=str(config), NPM_CONFIG_CACHE=str(root / "cache"),
                        NPM_CONFIG_UPDATE_NOTIFIER="true", npm_config_update_notifier="true", CI="false")
-            with mock.patch.dict(os.environ, env):
+            with mock.patch.dict(os.environ, env, clear=True):
                 for custom in (None, env):
                     with self.subTest(custom_env=custom is not None):
                         self.assertEqual(publisher.run(root, "npm", "config", "get", "update-notifier", env=custom), "false")
@@ -107,7 +109,7 @@ pathlib.Path(sys.argv[sys.argv.index("-o")+1]).write_bytes(b"fixture compiler ou
                 path.chmod(0o755)
             config = root / "npmrc"
             config.write_text(f"registry={registry.url}\n//{registry.url.split('//')[1]}/:_authToken=disposable-fixture\n")
-            env = {"PATH": str(binaries) + os.pathsep + os.environ["PATH"],
+            env = {**fixture_env(), "PATH": str(binaries) + os.pathsep + os.environ["PATH"],
                    "NPM_CONFIG_REGISTRY": registry.url, "NPM_CONFIG_USERCONFIG": str(config),
                    # Force the notifier path even on CI or a warm developer host.
                    # Its last-check marker lives in the cache's parent directory.
@@ -139,7 +141,7 @@ pathlib.Path(sys.argv[sys.argv.index("-o")+1]).write_bytes(b"fixture compiler ou
 
             # The pre-publish existence decision is isolated; npm PUTs and
             # every version, tag and tarball read use the actual local server.
-            with mock.patch.dict(os.environ, env), mock.patch.object(publisher, "request_json", return_value=(404, {})), mock.patch.object(publisher, "run", side_effect=observe_run):
+            with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(publisher, "request_json", return_value=(404, {})), mock.patch.object(publisher, "run", side_effect=observe_run):
                 if lag:
                     with self.assertRaisesRegex(publisher.PublishRefusal, "uncertain at deadline"):
                         publisher.publish_aw_npm(root, "1.2.3", "a" * 40, staged_final=True)
