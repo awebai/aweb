@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from html import escape
 from html.parser import HTMLParser
 from http.cookies import SimpleCookie
 from urllib.parse import urlencode
@@ -14,7 +15,7 @@ import httpx
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse
 
-from aweb_naapp.console import CONSOLE_HEADERS, COOKIE_NAME, ConsoleRoute
+from aweb_naapp.console import CONSOLE_HEADERS, COOKIE_NAME, ConsoleRoute, ConsoleSession
 from aweb_naapp.console.browser import ConsoleBrand, ConsoleShell, login_redirect
 from aweb_naapp.css import CSS_SHA256, aweb_css
 from tests.console.shell_support import BRAND, CEREMONIES, CSRF_KEY, SIGN_IN, STYLESHEET, shell_app
@@ -207,6 +208,52 @@ async def test_a_refusal_page_keeps_its_status_and_headers_outside_the_tab_guard
     assert page.first("section", id="console-recovery") is not None
     assert page.first("a", id="console-recovery-action")["href"] == "/"
     assert not [tag for tag, attrs in page.tags if "data-console-scope" in attrs]
+
+
+async def test_the_apps_home_is_rendered_for_the_session_that_opens_it(world: World):
+    async def home(session: ConsoleSession) -> str:
+        return f'<h1 id="home" data-scope="{escape(session.scope, quote=True)}">Yours</h1>'
+
+    composed = await shell_app(world, human_origin=HUMAN, agent_origin=AGENT)
+    composed.human.include_router(
+        composed.shell.router(sessions=composed.sessions, home_title="Yours", home=home),
+        prefix="/per-session",
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(composed.app), base_url=HUMAN
+    ) as browser:
+        scope = await signed_in(world, browser)
+        response = await browser.get("/per-session/")
+    assert response.status_code == 200
+    page = Elements(response.text)
+    assert page.first("h1", id="home")["data-scope"] == scope
+    assert "hidden" in page.first("section", **{"data-console-scope": scope})
+
+
+async def test_a_session_the_home_finds_closed_is_sent_to_login_with_its_refusal_headers(
+    world: World,
+):
+    async def closed(session: ConsoleSession) -> str:
+        raise HTTPException(status_code=401, headers={"Set-Cookie": f"{COOKIE_NAME}=; Max-Age=0"})
+
+    async def forbidden(session: ConsoleSession) -> str:
+        raise HTTPException(status_code=403, detail="not_yours")
+
+    composed = await shell_app(world, human_origin=HUMAN, agent_origin=AGENT)
+    for prefix, home in (("/closed", closed), ("/forbidden", forbidden)):
+        composed.human.include_router(
+            composed.shell.router(sessions=composed.sessions, home_title="Home", home=home),
+            prefix=prefix,
+        )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(composed.app), base_url=HUMAN
+    ) as browser:
+        await signed_in(world, browser)
+        redirected = await browser.get("/closed/")
+        refused = await browser.get("/forbidden/")
+    assert (redirected.status_code, redirected.headers["location"]) == (303, "/login")
+    assert SimpleCookie(redirected.headers["set-cookie"])[COOKIE_NAME].value == ""
+    assert (refused.status_code, refused.json()["detail"]) == (403, "not_yours")
 
 
 def test_login_redirect_keeps_the_clearing_cookie_and_reraises_other_refusals():

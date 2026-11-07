@@ -7,7 +7,7 @@ tab CSRF storage key ``aweb.logs.console.csrf`` are logs' own.
 
 from pathlib import Path
 
-from aweb_naapp.console import ConsoleSessions, console_assets_router
+from aweb_naapp.console import ConsoleSession, ConsoleSessions, console_assets_router
 from aweb_naapp.console.browser import (
     Ceremony,
     CeremonyCopy,
@@ -66,11 +66,16 @@ HOME = (
 )
 
 
+async def home(session: ConsoleSession) -> str:
+    """A reader's home: the same for every reader."""
+    return HOME
+
+
 def console_pages_router(*, sessions: ConsoleSessions) -> APIRouter:
     """The console origin's pages and assets: home, sign-in, the link
     ceremonies, the shell's scripts and the toolkit stylesheet."""
     router = APIRouter()
-    router.include_router(SHELL.router(sessions=sessions, home_title="Logs", home_html=HOME))
+    router.include_router(SHELL.router(sessions=sessions, home_title="Logs", home=home))
     router.include_router(SHELL.bootstrap_router(CEREMONIES))
     router.include_router(console_assets_router())
     return router
