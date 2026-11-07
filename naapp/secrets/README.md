@@ -52,6 +52,16 @@ loopback development origin. Choose that ID before installing: changing it later
 creates a different app identity and orphans existing installations; it does not
 rename or migrate them.
 
+For broker egress, set `SECRETS_EGRESS_DENIED_NETWORKS` to a JSON array of the
+deployment's own egress and metadata IP addresses or CIDRs, for example
+`["203.0.113.4", "2001:db8::/64"]`. IPv4 and IPv6 addresses become `/32` and
+`/128` networks; CIDRs must be exact network addresses with no host bits set.
+The service validates the setting at startup. The default `[]` adds no
+deployment ranges. These denials apply even to owner-confirmed internal
+destinations when `SECRETS_INTERNAL_DESTINATIONS=allowed`; the shared mandatory
+loopback/link-local/metadata floor always remains in force. This setting covers
+the service's broker egress; runner job networking is separate.
+
 ### Public surfaces
 
 `aweb_secrets.surfaces` supplies the landing, `/reference`, `/llms.txt` and
@@ -237,7 +247,7 @@ services whose migrations and routers it actually mounts; defaults query neither
 optional table. No routing policy belongs in the root.
 
 Authenticated POSTs require JSON, the S4 cookie and this tab's `X-CSRF-Token`. Browser
-forms call `window.awebSecretsConsole.post(path, body)`. Under
+forms call `window.awebConsole.post(path, body)`. Under
 `/installations/{installation_id}/change-sets`:
 
 - `POST` takes exactly `{changes, sealed, reason}`. `changes` uses existing

@@ -499,6 +499,12 @@ async def hook_backlog(
     return tuple(Backlog(r, oldest[r.binding_id]) for r in registrations)
 
 
+class HookProducerFactory(Protocol):
+    """The app's producer for one installation generation of itself."""
+
+    def __call__(self, *, installation_id: str, generation: int) -> HookProducer: ...
+
+
 def hook_targets(
     registrations: Registrations, *, clock: Clock = _now
 ) -> Callable[[StoredEvent], Awaitable[Sequence[Target] | None]]:

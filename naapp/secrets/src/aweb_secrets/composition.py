@@ -31,6 +31,7 @@ from aweb_naapp.runtime.approvals import (
     Approver,
     PgApprovalStore,
 )
+from aweb_naapp.runtime.credential_audit import CredentialAudit, GovernanceUnavailable
 from aweb_naapp.runtime.health import CheckResult
 from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty
 from aweb_naapp.signing_key import read_signing_key_file
@@ -54,6 +55,7 @@ from aweb_secrets.change_sets import (
 )
 from aweb_secrets.config import ServiceSettings
 from aweb_secrets.console import OwnerConsole, owner_console_router
+from aweb_secrets.console_access import ConsoleAccess, console_access_router
 from aweb_secrets.console_activity import ConsoleActivity, console_activity_router
 from aweb_secrets.console_bootstrap import console_bootstrap_router
 from aweb_secrets.console_changes import ConsoleChanges, console_changes_router
@@ -68,7 +70,11 @@ from aweb_secrets.console_use_approvals import (
 from aweb_secrets.console_values import ConsoleValues, console_values_router
 from aweb_secrets.containment import Containment
 from aweb_secrets.containment_routes import containment_api_router, containment_console_router
-from aweb_secrets.credential_audit import CredentialAudit, GovernanceUnavailable
+from aweb_secrets.credential_governance import (
+    CREDENTIAL_AUDIT_MIGRATIONS,
+    ChangeApprovals,
+    credential_role,
+)
 from aweb_secrets.custody import (
     AwsKmsProvider,
     BackendCredentialOpener,
@@ -192,9 +198,11 @@ async def _compose(
         owner_act_scope=settings.app_id,
         producer=runtime.hook_producer,
         passkeys=shared_passkeys,
-        approval=approval,
+        role_of=credential_role,
+        approvals=ChangeApprovals(approval),
         registration_view=governance_view,
         max_backlog_age=timedelta(seconds=settings.hook_events_stalled_after_seconds),
+        migration_module=CREDENTIAL_AUDIT_MIGRATIONS,
     )
     # Run stores are ready before opting this same branch into run recording.
     use_audit = UseApprovalAudit(
@@ -328,7 +336,10 @@ async def _compose(
         db,
         **common,
         egress=Egress(
-            addresses=AddressPolicy(internal_destinations=settings.internal_destinations),
+            addresses=AddressPolicy(
+                internal_destinations=settings.internal_destinations,
+                denied=settings.egress_denied_networks,
+            ),
             resolver=DnsResolver(),
             user_agent="aweb-secrets",
             ca_file=settings.egress_ca_file,
@@ -510,6 +521,7 @@ def create_service(
             human(lambda s: console_use_approvals_router(services=s.use_pages)),
             human(lambda s: console_run_approvals_router(services=s.use_pages)),
             human(lambda s: console_activity_router(services=s.activity)),
+            human(lambda s: console_access_router(services=ConsoleAccess(console=s.console))),
             human(lambda s: containment_console_router(s.containment, console=s.console)),
         ),
         runner_routers=(
