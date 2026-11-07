@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 from functools import partial
+from ipaddress import IPv4Network, IPv6Network
 from typing import Any
 
 import httpx
@@ -383,6 +384,8 @@ def create_service(
     *,
     awid_transport: httpx.AsyncBaseTransport | None = None,
     team_server_transport: httpx.AsyncBaseTransport | None = None,
+    hook_egress: Egress | None = None,
+    hook_internal_cidr: IPv4Network | IPv6Network | None = None,
 ) -> SecretsService:
     """The production entry point; construction and startup require every dependency."""
     key_files = {
@@ -493,6 +496,8 @@ def create_service(
         kms=kms,
         awid_transport=awid_transport,
         team_server_transport=team_server_transport,
+        hook_egress=hook_egress,
+        hook_internal_cidr=hook_internal_cidr,
         prepare=prepare,
         tool_routers=(metadata, uses, contain),
         console_routers=(
