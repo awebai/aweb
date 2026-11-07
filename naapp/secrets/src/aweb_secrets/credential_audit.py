@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from aweb_naapp.hooks.producer import RegistrationView
 from aweb_naapp.runtime.approvals import Approval, ApprovalState, Assurance
@@ -309,6 +309,26 @@ class CredentialAudit:
             principal=principal,
             session=session,
             signed_trace_id=signed_trace_id,
+        )
+
+    async def record_role_revoked(
+        self,
+        tx: TransactionManager,
+        *,
+        context: PreparedContainment,
+        role: str,
+        subject_ref: str,
+        occurred_at: datetime,
+    ) -> UUID:
+        from aweb_secrets.credential_narrowing import record_role_revoked
+
+        return await record_role_revoked(
+            self,
+            tx,
+            context=context,
+            role=role,
+            subject_ref=subject_ref,
+            occurred_at=occurred_at,
         )
 
     async def prepare_owner_act(

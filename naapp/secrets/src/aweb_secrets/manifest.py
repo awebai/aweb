@@ -186,13 +186,13 @@ MANIFEST: dict[str, Any] = {
         },
         {
             "name": "contain",
-            "description": "Narrow authority at once: revoke a grant, approvals or an approver's passkey or contact, disable a secret or the installation, or deregister a runner. Owners; assigned approvers may revoke their own approvals.",
+            "description": "Narrow authority at once: revoke a grant, approvals or an approver's passkey or contact, disable a secret or the installation, deregister a runner, or remove one member from a user-defined role. Owners; assigned approvers may revoke their own approvals.",
             "method": "POST",
             "path": "/v1/containment",
             "scopes": ["secrets:admin"],
             "mutation": True,
             "body": {"mode": "json"},
-            "params": _params("request_id", "action", "target", "credential_id"),
+            "params": _params("request_id", "action", "target", "credential_id", "principal"),
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -206,15 +206,20 @@ MANIFEST: dict[str, Any] = {
                             "disable-installation",
                             "deregister-runner",
                             "revoke-approver",
+                            "remove-role-member",
                         ],
                     },
                     "target": {
                         "type": "string",
-                        "description": "The grant, approval, secret, runner or approver id.",
+                        "description": "The grant, approval, secret, runner or approver id. For remove-role-member, the canonical user-defined role secrets.role.<slug>.",
                     },
                     "credential_id": {
                         "type": "string",
                         "description": "For revoke-approver, the lost passkey credential ID as unpadded base64url. Omit to revoke the contact and full designation.",
+                    },
+                    "principal": {
+                        "type": "string",
+                        "description": "Required only for remove-role-member: the exact canonical member DID to remove from the target role. Omit for every other action.",
                     },
                 },
                 "required": ["request_id", "action"],
