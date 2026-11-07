@@ -207,8 +207,10 @@ async def application(
 
 
 @asynccontextmanager
-async def clients(context: Uses):
-    composed = await application(context)
+async def clients(
+    context: Uses, *, pages: Callable[[OwnerConsole], Sequence[APIRouter]] = lambda console: ()
+):
+    composed = await application(context, pages=pages)
     async with (
         httpx.AsyncClient(transport=httpx.ASGITransport(app=composed), base_url=ORIGIN) as human,
         httpx.AsyncClient(transport=httpx.ASGITransport(app=composed), base_url=API) as agent,

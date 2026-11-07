@@ -8,18 +8,9 @@ kit yet, so no fault here is built from one.
 """
 
 import asyncio
-import os
-from datetime import UTC, datetime, timedelta
 
 import pytest
-from aweb_naapp.hooks.producer import (
-    HOOKS_CHANNEL,
-    HookProducer,
-    Registration,
-    RegistrationView,
-    ServerProducer,
-    hook_targets,
-)
+from aweb_naapp.hooks.producer import HOOKS_CHANNEL, hook_targets
 from aweb_naapp.outbox import (
     Acked,
     Cancelled,
@@ -29,109 +20,31 @@ from aweb_naapp.outbox import (
     acknowledge_dead_letters,
     drain,
 )
-from aweb_naapp_testing.owner_acts import INSTALLATION_ID
 from playwright.async_api import expect
 
-from aweb_secrets.broker_audit import _actor
-from aweb_secrets.console_audit_delivery import ConsoleAuditDelivery, console_audit_delivery_router
-from tests.test_change_sets import TEAM
-from tests.test_console_access import DB_AGENT, DB_WRITE
+from tests.test_console_access import DB_WRITE
 from tests.test_console_access_browser import browser as _browser
 from tests.test_console_access_browser import serving
 from tests.test_console_access_browser import world as _world
 from tests.test_console_access_states_browser import text_contrast
+from tests.test_console_audit_delivery import (
+    BOUND,
+    GOVERNANCE,
+    LOGS,
+    PRIMARY,
+    SECONDARY,
+    USE,
+    Receivers,
+    Registrations,
+    age,
+    audit_pages,
+    producer,
+    refusal,
+)
 from tests.test_console_forms import enrolled_page
 
 world = _world
 browser = _browser
-
-USE = "post-secret-use-hook"
-GOVERNANCE = "post-governance-hook"
-LOGS = "0b6f1e2a-4c3d-4e5f-8a9b-0c1d2e3f4a5b"
-PRIMARY = "1c7a2f3b-5d4e-4f60-9b0c-1d2e3f4a5b6c"
-SECONDARY = "2d8b3a4c-6e5f-4071-8c1d-2e3f4a5b6c7d"
-BOUND = timedelta(hours=1)
-
-
-class Registrations:
-    """Core's registration answer for each hook: these bindings, or no view at all."""
-
-    def __init__(self, bindings: dict[str, tuple[str, ...] | None]) -> None:
-        self.bindings = bindings
-
-    async def view(self, team_id: str, hook: str) -> RegistrationView | None:
-        bindings = self.bindings.get(hook)
-        if bindings is None:
-            return None
-        now = datetime.now(UTC)
-        return RegistrationView(
-            team_id=team_id,
-            hook=hook,
-            as_of=now,
-            max_age=timedelta(seconds=60),
-            registrations=tuple(
-                Registration(
-                    binding_id=binding,
-                    origin="https://logs.example.com",
-                    method="POST",
-                    path="/hooks/ingest",
-                    active_from=now - timedelta(days=1),
-                )
-                for binding in bindings
-            ),
-        )
-
-
-class Receivers:
-    """Each target's answer to each event it is sent; any other event is acknowledged."""
-
-    def __init__(self) -> None:
-        self.answers: dict[tuple[object, str], object] = {}
-
-    async def deliver(self, event, target):
-        return self.answers.get((event.event_id, target.id), Acked("delivered"))
-
-
-def audit_pages(registrations):
-    return lambda console: (
-        console_audit_delivery_router(
-            services=ConsoleAuditDelivery(
-                console=console, registrations=registrations, max_backlog_age=BOUND
-            )
-        ),
-    )
-
-
-def producer() -> HookProducer:
-    return HookProducer(
-        ServerProducer.app(
-            origin="https://secrets.example.com",
-            app_id="secrets",
-            installation_id=INSTALLATION_ID,
-            generation=1,
-            kid="audit-delivery-test",
-            seed=os.urandom(32),
-        )
-    )
-
-
-async def refusal(db, use_producer, code: str):
-    async with db.transaction() as tx:
-        return await use_producer.enqueue_refusal(
-            tx,
-            team_id=TEAM,
-            payload={"action": "refused", "op_kind": "broker", "refusal_code": code},
-            actor=_actor(DB_AGENT),
-            occurred_at=datetime.now(UTC),
-        )
-
-
-async def age(db, event_id, by: timedelta) -> None:
-    await db.execute(
-        "UPDATE {{tables.outbox_events}} SET created_at=created_at-$2 WHERE event_id=$1",
-        event_id,
-        by,
-    )
 
 
 async def revoke_db_write(page, origin):
