@@ -9,9 +9,11 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from fastapi import FastAPI
+from fastapi.responses import PlainTextResponse
 
 from aweb_naapp.console import (
     ClientIdentity,
+    ConsoleSession,
     ConsoleSessions,
     LoginLimiter,
     apply_console_migrations,
@@ -75,6 +77,10 @@ HOME = (
 )
 
 
+async def home(session: ConsoleSession) -> str:
+    return HOME
+
+
 async def admits(world: World, scope: str) -> bool:
     return bool(
         await world.db.fetch_value(
@@ -106,10 +112,14 @@ async def shell_app(world: World, *, human_origin: str, agent_origin: str) -> Sh
     human = FastAPI()
     human.include_router(console_login_router(sessions=sessions, limiter=limiter))
     human.include_router(credential_router(passkeys=world.passkeys, recorder=world.recorder))
-    human.include_router(
-        shell.router(sessions=sessions, home_title="Example console", home_html=HOME)
-    )
+    human.include_router(shell.router(sessions=sessions, home_title="Example console", home=home))
     human.include_router(shell.bootstrap_router(CEREMONIES))
     human.include_router(console_assets_router())
+
+    @human.post("/unavailable")
+    async def unavailable() -> PlainTextResponse:
+        # A refusal whose body is not JSON, as a proxy in front of the app sends.
+        return PlainTextResponse("unavailable", status_code=502)
+
     app = split_origins(FastAPI(), human, agent_origin=agent_origin, human_origin=human_origin)
     return ShellApp(shell, sessions, human, app)

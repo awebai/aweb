@@ -1,9 +1,11 @@
 """The production constructor starts both origins on a fresh real database."""
 
 import secrets
+from ipaddress import ip_address, ip_network
 
 import httpx
 import pytest
+from aweb_naapp.egress import DnsResolver, EgressRefused, InternalDestinations
 from aweb_naapp.key_file import KeyFileError
 from aweb_naapp_testing.smtp import SmtpServer
 
@@ -103,3 +105,30 @@ async def test_request_response_and_runner_keys_require_independent_material(
         configured.response_key_file.write_bytes(configured.secret_request_key_file.read_bytes())
         with pytest.raises(ValueError, match="independent"):
             create_service(configured, awid_transport=registry.transport)
+
+
+async def test_default_hook_guard_adds_deployment_denials_without_broker_network_options(
+    test_db_factory, registry, tmp_path
+):
+    database = await test_db_factory.create_db(suffix="secrets_default_hook_guard")
+    with SmtpServer(tmp_path / "smtp") as smtp:
+        configured = settings(database, tmp_path, smtp).model_copy(
+            update={
+                "egress_denied_networks": (ip_network("8.8.8.8/32"),),
+                "internal_destinations": InternalDestinations.ALLOWED,
+                "egress_ca_file": smtp.ca_file,
+            }
+        )
+        service = create_service(configured, awid_transport=registry.transport)
+        transport = service.runtime._hooks.transport
+        assert transport is not None
+        guard = transport._egress
+        assert guard.addresses.internal_destinations is InternalDestinations.DISABLED
+        assert isinstance(guard.resolver, DnsResolver)
+        assert guard.ca_file is None
+        assert guard.user_agent == "aweb-naapp/hooks"
+        guard.addresses.check([ip_address("8.8.4.4")])
+        for address in ("8.8.8.8", "127.0.0.1", "169.254.169.254", "::ffff:169.254.169.254"):
+            with pytest.raises(EgressRefused) as refused:
+                guard.addresses.check([ip_address(address)])
+            assert refused.value.code == "destination_address_denied"

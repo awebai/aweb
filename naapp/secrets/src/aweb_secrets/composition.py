@@ -6,7 +6,7 @@ import asyncio
 import logging
 from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from functools import partial
 from ipaddress import IPv4Network, IPv6Network
@@ -396,6 +396,7 @@ def create_service(
     team_server_transport: httpx.AsyncBaseTransport | None = None,
     hook_egress: Egress | None = None,
     hook_internal_cidr: IPv4Network | IPv6Network | None = None,
+    hook_internal_origins: frozenset[str] = frozenset(),
 ) -> SecretsService:
     """The production entry point; construction and startup require every dependency."""
     key_files = {
@@ -500,6 +501,23 @@ def create_service(
 
         return build
 
+    if hook_egress is None:
+        hook_egress = Egress(
+            addresses=AddressPolicy(denied=settings.egress_denied_networks),
+            resolver=DnsResolver(),
+            user_agent="aweb-naapp/hooks",
+        )
+    else:
+        hook_egress = replace(
+            hook_egress,
+            addresses=replace(
+                hook_egress.addresses,
+                denied=tuple(
+                    dict.fromkeys((*hook_egress.addresses.denied, *settings.egress_denied_networks))
+                ),
+            ),
+        )
+
     return create_app(
         settings,
         policy=tool_policy,
@@ -508,6 +526,7 @@ def create_service(
         team_server_transport=team_server_transport,
         hook_egress=hook_egress,
         hook_internal_cidr=hook_internal_cidr,
+        hook_internal_origins=hook_internal_origins,
         prepare=prepare,
         tool_routers=(metadata, uses, contain),
         console_routers=(

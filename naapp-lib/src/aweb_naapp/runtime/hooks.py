@@ -101,6 +101,7 @@ class RuntimeHooks:
         resolver: HookResolver | None,
         egress: Egress | None,
         internal_cidr: IPv4Network | IPv6Network | None,
+        internal_origins: frozenset[str],
     ) -> RuntimeHooks:
         productions = _app_productions(manifest)
         policy = RetryPolicy(
@@ -147,6 +148,7 @@ class RuntimeHooks:
             egress=guard,
             registrations=registrations,
             internal_cidr=internal_cidr,
+            internal_origins=internal_origins,
         )
         return cls(
             manifest=manifest,
