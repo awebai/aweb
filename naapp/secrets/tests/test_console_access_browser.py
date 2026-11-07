@@ -13,6 +13,7 @@ from aweb_naapp.runtime.passkeys import RelyingParty
 from playwright.async_api import expect
 
 from aweb_secrets.use_approvals import UseApprovers, UsePolicies
+from tests.console_home import no_banner
 from tests.test_change_sets import Installations
 from tests.test_change_sets import world as _world
 from tests.test_console_access import (
@@ -48,8 +49,9 @@ def apart(a, b, gap=4):
 
 
 @asynccontextmanager
-async def serving(world, *, pages=lambda console: ()):
-    """The seeded owner console on a real local port, with any extra ``pages``."""
+async def serving(world, *, pages=lambda console: (), banner=lambda console: no_banner):
+    """The seeded owner console on a real local port, with any extra ``pages`` and
+    the home's ``banner``."""
     await apply_idempotency_migrations(world.db)
     await apply_ratelimit_migrations(world.db)
     clock = Clock()
@@ -70,7 +72,11 @@ async def serving(world, *, pages=lambda console: ()):
     origin = f"http://localhost:{port}"
     world.passkeys.rp = RelyingParty(origin=origin, name="Secrets")
     app = await application(
-        context, origin=origin, agent_origin=f"http://127.0.0.1:{port}", pages=pages
+        context,
+        origin=origin,
+        agent_origin=f"http://127.0.0.1:{port}",
+        pages=pages,
+        banner=banner,
     )
     server = uvicorn.Server(uvicorn.Config(app, log_level="warning", lifespan="off"))
     task = asyncio.create_task(server.serve(sockets=[sock]))

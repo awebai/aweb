@@ -4,7 +4,7 @@ import asyncio
 import base64
 import json
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
@@ -228,6 +228,19 @@ async def test_the_production_console_serves_audit_delivery_only_to_its_current_
     assert 'data-total="0"' in page
     css = await client.get(human + "/console-audit-delivery/audit.css")
     assert css.status_code == 200
+    assert "audit-banner" not in (await client.get(human + "/")).text
+    # Once the enrolment's change records wait past the configured bound, the
+    # page and the owner's home both say widening changes are refused.
+    db = service.runtime.db()
+    bound = timedelta(seconds=configured.hook_events_stalled_after_seconds)
+    await db.execute(
+        "UPDATE {{tables.outbox_events}} SET created_at = created_at - $1::interval",
+        2 * bound,
+    )
+    stalled = (await client.get(human + "/audit-delivery")).text
+    assert 'data-hook="post-governance-hook" data-admission="refused"' in stalled
+    home = (await client.get(human + "/")).text
+    assert 'data-refused="post-governance-hook" data-undelivered="0"' in home
     async with service.runtime.db().transaction() as tx:
         await unassign(
             tx, PrincipalKey(team_id=member.team_id, principal_did=body["principal"]), OWNER_ROLE

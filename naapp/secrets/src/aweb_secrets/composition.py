@@ -538,7 +538,11 @@ def create_service(
         tool_routers=(metadata, uses, contain),
         console_routers=(
             human(lambda s: owner_console_router(s.console)),
-            human(lambda s: console_ui_router(sessions=s.console.sessions)),
+            human(
+                lambda s: console_ui_router(
+                    sessions=s.console.sessions, banner=s.audit_delivery.banner
+                )
+            ),
             human(lambda s: console_bootstrap_router()),
             human(lambda s: console_values_router(s.values)),
             human(lambda s: console_changes_router(s.changes)),

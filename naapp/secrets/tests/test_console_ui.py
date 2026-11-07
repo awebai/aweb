@@ -16,6 +16,7 @@ from fastapi import FastAPI, HTTPException
 from aweb_secrets.console import OwnerConsole, owner_console_router
 from aweb_secrets.console_ui import console_ui_router
 from aweb_secrets.owners import OWNER_ROLE
+from tests.console_home import no_banner
 from tests.test_change_sets import ALICE, ORIGIN, World, enrol_owner
 from tests.test_change_sets import world as _world
 from tests.test_console import API, login
@@ -61,7 +62,7 @@ async def application(world: World, *, human_origin: str = ORIGIN, agent_origin:
     )
     human = FastAPI()
     human.include_router(owner_console_router(services))
-    human.include_router(console_ui_router(sessions=services.sessions))
+    human.include_router(console_ui_router(sessions=services.sessions, banner=no_banner))
     return split_origins(FastAPI(), human, agent_origin=agent_origin, human_origin=human_origin)
 
 

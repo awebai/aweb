@@ -33,7 +33,7 @@ from aweb_secrets import jobs, records, runners
 from aweb_secrets.admission import AdmissionRefused, UseRequest, admit_use
 from aweb_secrets.console import OwnerConsole, owner_console_router
 from aweb_secrets.console_access import ConsoleAccess, console_access_router
-from aweb_secrets.console_ui import console_ui_router
+from aweb_secrets.console_ui import Banner, console_ui_router
 from aweb_secrets.containment_routes import containment_console_router
 from aweb_secrets.grant import GrantRecord
 from aweb_secrets.operation import OperationTemplate
@@ -42,6 +42,7 @@ from aweb_secrets.policy import Policy
 from aweb_secrets.run_plan import RunPlanRefused
 from aweb_secrets.run_planner import RunPlanner
 from aweb_secrets.secret import SecretRecord
+from tests.console_home import no_banner
 from tests.test_admission import POLICY_BODY, STATUS, _member
 from tests.test_change_set_records import grant_after, item
 from tests.test_change_sets import (
@@ -177,8 +178,10 @@ async def application(
     origin: str = ORIGIN,
     agent_origin: str = API,
     pages: Callable[[OwnerConsole], Sequence[APIRouter]] = lambda console: (),
+    banner: Callable[[OwnerConsole], Banner] = lambda console: no_banner,
 ):
-    """The owner console's access and narrowing pages, plus any ``pages`` on the same console."""
+    """The owner console's access and narrowing pages, plus any ``pages`` and the
+    home's ``banner`` on the same console."""
     w = context.world
     await apply_console_migrations(w.db)
 
@@ -198,7 +201,7 @@ async def application(
     )
     app = FastAPI()
     app.include_router(owner_console_router(console))
-    app.include_router(console_ui_router(sessions=console.sessions))
+    app.include_router(console_ui_router(sessions=console.sessions, banner=banner(console)))
     app.include_router(console_access_router(services=ConsoleAccess(console=console)))
     app.include_router(containment_console_router(await service(context), console=console))
     for router in pages(console):
@@ -208,9 +211,12 @@ async def application(
 
 @asynccontextmanager
 async def clients(
-    context: Uses, *, pages: Callable[[OwnerConsole], Sequence[APIRouter]] = lambda console: ()
+    context: Uses,
+    *,
+    pages: Callable[[OwnerConsole], Sequence[APIRouter]] = lambda console: (),
+    banner: Callable[[OwnerConsole], Banner] = lambda console: no_banner,
 ):
-    composed = await application(context, pages=pages)
+    composed = await application(context, pages=pages, banner=banner)
     async with (
         httpx.AsyncClient(transport=httpx.ASGITransport(app=composed), base_url=ORIGIN) as human,
         httpx.AsyncClient(transport=httpx.ASGITransport(app=composed), base_url=API) as agent,

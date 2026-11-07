@@ -37,6 +37,7 @@ from tests.test_console_audit_delivery import (
     Receivers,
     Registrations,
     age,
+    audit_banner,
     audit_pages,
     producer,
     refusal,
@@ -171,3 +172,59 @@ async def test_a_hook_without_a_registration_view_is_shown_as_unknown_not_health
             await expect(page.locator(".audit-undelivered")).to_have_count(0)
             await page.screenshot(path=tmp_path / "audit-delivery-clear.png", full_page=True)
             assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+@pytest.mark.parametrize("width", [375, 1440])
+async def test_the_owner_home_points_to_what_secrets_refuses_and_what_was_never_delivered(
+    world, browser, tmp_path, width
+):
+    registrations = Registrations({USE: (LOGS,), GOVERNANCE: (PRIMARY,)})
+    async with serving(
+        world, pages=audit_pages(registrations), banner=audit_banner(registrations)
+    ) as (_, origin):
+        db = world.db
+        async with await browser.new_context(viewport={"width": width, "height": 1000}) as context:
+            page, _, _ = await enrolled_page(world, context, origin)
+            await page.goto(origin + "/")
+            await expect(page.locator(".audit-banner")).to_have_count(0)
+
+            use_producer = producer()
+            cancelled = await refusal(db, use_producer, "grant_revoked")
+            waiting = await refusal(db, use_producer, "policy_rate_limited")
+            receivers = Receivers()
+            receivers.answers.update(
+                {
+                    (cancelled, LOGS): Cancelled("binding_revoked"),
+                    (waiting, LOGS): Retryable("unavailable"),
+                }
+            )
+            await drain(
+                db,
+                channel=HOOKS_CHANNEL,
+                resolver=hook_targets(registrations),
+                transport=receivers,
+                policy=RetryPolicy(stalled_after=BOUND),
+            )
+            # The only use-record target has waited past the bound for one record.
+            await age(db, waiting, 2 * BOUND)
+
+            await page.goto(origin + "/")
+            banner = page.locator(".audit-banner")
+            await expect(banner).to_have_attribute("data-refused", USE)
+            await expect(banner).to_have_attribute("data-undelivered", "1")
+            for scheme in ("light", "dark"):
+                await page.emulate_media(color_scheme=scheme)
+                assert await text_contrast(banner.locator(".pill")) >= 4.5, scheme
+                assert await text_contrast(banner.locator("p")) >= 4.5, scheme
+            await page.emulate_media(color_scheme="light")
+            await page.screenshot(path=tmp_path / f"audit-banner-{width}.png", full_page=True)
+            assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+            await banner.get_by_role("link", name="Review audit delivery").click()
+            await expect(page).to_have_url(origin + "/audit-delivery")
+            await expect(page.locator(f'.audit-hook[data-hook="{USE}"]')).to_have_attribute(
+                "data-admission", "refused"
+            )
+            await expect(
+                page.locator(f'.audit-undelivered[data-event-id="{cancelled}"]')
+            ).to_have_count(1)
