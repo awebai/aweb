@@ -26,6 +26,8 @@ from aweb_naapp.hooks.envelope import verify
 from aweb_naapp.hooks.owner_act import VerifiedOwnerAct
 from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier, PreparedOwnerAct
 from aweb_naapp.hooks.strictjson import Refused
+from aweb_naapp.roles import principal_key
+from aweb_naapp.runtime.authorization import Grant
 from aweb_naapp.runtime.installation import AdmittedInstallation, InstallationFence
 from aweb_naapp.runtime.passkeys import (
     DesignationRefused,
@@ -33,6 +35,7 @@ from aweb_naapp.runtime.passkeys import (
     Passkeys,
     ProofContextResolver,
     ProofContextUnavailable,
+    RetirementRefused,
     contact_sha256,
     installation_context,
 )
@@ -43,6 +46,7 @@ from aweb_logs.ledger import Conflicted, LogsSigner, append_on
 
 if TYPE_CHECKING:
     from aweb_naapp.runtime.credential_audit import CredentialAudit
+    from aweb_naapp.runtime.team_auth import Principal
 
 READER_ROLE = "logs.reader"
 SLOT_TTL = timedelta(hours=1)
@@ -58,6 +62,15 @@ class ReaderRefused(Exception):
     """No pending, unexpired slot issued for this installation, team and contact."""
 
     code = "owner_required"
+
+
+class RemovalRefused(Exception):
+    """A member's removal of a reader that team authority cannot make."""
+
+    def __init__(self, code: str, status: int) -> None:
+        super().__init__(code)
+        self.code = code
+        self.status = status
 
 
 @dataclass(frozen=True)
@@ -390,3 +403,82 @@ class ReaderDesignations:
             return await self.verifier.consume_in(tx, prepared, expected_subject=expected)
         except Refused:
             raise ReaderRefused("the act does not name this reader") from None
+
+
+class ReaderRemovals:
+    """A team member removes a reader by team authority alone.
+
+    The member's team-auth request names a current reader's scope. One
+    transaction admits the installation, ends the holder's designation and
+    records ``role.revoked`` with the member's team certificate as authority,
+    which logs appends to its own chain. Team authority never removes the
+    installation's last current reader; only the owner's act can.
+    """
+
+    def __init__(
+        self,
+        directory: ReaderDirectory,
+        *,
+        fence: InstallationFence,
+        passkeys: Passkeys,
+        recorder: CredentialAudit,
+    ) -> None:
+        self.directory = directory
+        self.fence = fence
+        self.passkeys = passkeys
+        self.recorder = recorder
+
+    async def remove(self, *, principal: Principal, grant: Grant, scope: str) -> None:
+        if principal.team_id != grant.team_id:
+            raise RemovalRefused("reader_unknown", 404)
+        reader = await self.directory.reader(scope)
+        if reader is None or reader.team_id != grant.team_id:
+            raise RemovalRefused("reader_unknown", 404)
+        await self.fence.refresh(grant.team_id)
+        async with self.directory.db.transaction() as tx:
+            admitted = await self.fence.admit(tx, grant)
+            if admitted.installation_id != reader.installation_id:
+                raise RemovalRefused("reader_unknown", 404)
+            holder = await tx.fetch_value(
+                "SELECT subject FROM {{tables.passkey_approvers}}"
+                " WHERE scope = $1 AND superseded_at IS NULL",
+                scope,
+            )
+            if holder is None:
+                raise RemovalRefused("reader_unknown", 404)
+
+            async def protect(guard: TransactionManager, _scope: str, _subject: str) -> None:
+                # Admission holds the installation's fence row for update until
+                # commit, and every reader change holds it at least for share,
+                # so this count sees every earlier removal or revocation committed.
+                others = await guard.fetch_value(
+                    "SELECT count(*) FROM {{tables.readers}} r"
+                    " JOIN {{tables.passkey_approvers}} a"
+                    " ON a.scope = r.scope AND a.superseded_at IS NULL"
+                    " WHERE r.installation_id = $1 AND r.team_id = $2"
+                    " AND r.claimed_at IS NOT NULL AND r.scope <> $3",
+                    admitted.installation_id,
+                    admitted.team_id,
+                    scope,
+                )
+                if not others:
+                    raise RetirementRefused("last_reader_protected")
+
+            prepared = await self.recorder.prepare_containment(
+                tx, admitted=admitted, principal=principal
+            )
+            with self.recorder.prepared(prepared):
+                try:
+                    await self.passkeys.retire_in(
+                        tx,
+                        scope=scope,
+                        subject=holder,
+                        authorized_by=principal_key(principal).principal_did,
+                        protect=protect,
+                    )
+                except RetirementRefused as refused:
+                    code = refused.reason
+                    raise RemovalRefused(
+                        code, 409 if code == "last_reader_protected" else 404
+                    ) from None
+            await self.fence.check(tx, admitted)
