@@ -86,11 +86,14 @@ class Receivers:
         return self.answers.get((event.event_id, target.id), Acked("delivered"))
 
 
-def audit_pages(registrations):
+def audit_pages(registrations, *, newest: int = 100):
     return lambda console: (
         console_audit_delivery_router(
             services=ConsoleAuditDelivery(
-                console=console, registrations=registrations, max_backlog_age=BOUND
+                console=console,
+                registrations=registrations,
+                max_backlog_age=BOUND,
+                newest=newest,
             )
         ),
     )
@@ -205,3 +208,18 @@ async def test_an_owner_withdrawal_under_the_read_hides_every_fault(access):  # 
         refused = await asyncio.wait_for(read, 5)
     assert refused.status_code == 409 and refused.headers["retry-after"] == "0"
     assert str(fault) not in refused.text and LOGS not in refused.text
+
+
+async def test_the_page_lists_only_the_newest_undelivered_records_and_counts_them_all(
+    access,  # noqa: F811
+):
+    db = access.world.db
+    older = await cancelled_refusal(db)
+    newer = await cancelled_refusal(db)
+    pages = audit_pages(Registrations({USE: (LOGS,), GOVERNANCE: (PRIMARY,)}), newest=1)
+    async with clients(access, pages=pages) as (human, _):
+        await sign_in(access.world, human, owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did))
+        shown = await human.get("/audit-delivery")
+    assert shown.status_code == 200
+    assert str(newer) in shown.text and str(older) not in shown.text
+    assert 'data-shown="1"' in shown.text and 'data-total="2"' in shown.text

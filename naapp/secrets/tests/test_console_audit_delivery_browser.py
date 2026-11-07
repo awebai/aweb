@@ -136,8 +136,16 @@ async def test_the_owner_sees_which_audit_target_stalls_and_which_events_were_ne
             for owed in (waiting, narrowed):
                 await expect(page.locator(f'[data-event-id="{owed}"]')).to_have_count(0)
 
-            assert await text_contrast(use.locator(".audit-admission")) >= 4.5
-            assert await text_contrast(page.locator(".audit-undelivered .audit-delivery")) >= 4.5
+            for scheme in ("light", "dark"):
+                await page.emulate_media(color_scheme=scheme)
+                for badge in (
+                    use.locator(".audit-admission .pill"),
+                    use.locator(".audit-target .pill"),
+                    page.locator(".audit-undelivered .pill"),
+                ):
+                    assert await text_contrast(badge) >= 4.5, scheme
+                assert await text_contrast(page.locator(".audit-delivery")) >= 4.5, scheme
+            await page.emulate_media(color_scheme="light")
             await page.screenshot(path=tmp_path / f"audit-delivery-{width}.png", full_page=True)
             assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 

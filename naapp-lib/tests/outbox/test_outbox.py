@@ -26,6 +26,7 @@ from aweb_naapp.outbox import (
     StoredEvent,
     Target,
     UndeliveredEvent,
+    UndeliveredFaults,
     acknowledge_dead_letters,
     apply_outbox_migrations,
     cancel,
@@ -525,7 +526,8 @@ async def test_each_fault_names_its_team_and_how_every_delivery_ended(db) -> Non
 
     async with db.transaction() as tx:
         faults = await undelivered_critical_events(tx, channel="default", team_id=_TEAM)
-    assert faults == [
+        newest = await undelivered_critical_events(tx, channel="default", team_id=_TEAM, newest=1)
+    expected = (
         UndeliveredEvent(
             event_id=both_ended.event_id,
             team_id=_TEAM,
@@ -543,7 +545,10 @@ async def test_each_fault_names_its_team_and_how_every_delivery_ended(db) -> Non
             occurred_at=acknowledged.occurred_at,
             deliveries=(EndedDelivery(target_id="a", state="rejected", acknowledged=True),),
         ),
-    ]
+    )
+    assert faults == UndeliveredFaults(events=expected, total=2)
+    # A bounded read keeps the newest, in enqueue order, and still counts them all.
+    assert newest == UndeliveredFaults(events=expected[1:], total=2)
     # The operator status counts the same faults, for every team.
     assert (await outbox_status(db, "default")).faults == [
         both_ended.event_id,
