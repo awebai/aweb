@@ -23,9 +23,9 @@ from aweb_secrets.console import OwnerConsole
 from aweb_secrets.console_changes import _errors
 from aweb_secrets.console_ui import _login_redirect, console_page
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
+from aweb_secrets.principal_display import principal_html
 
 _LABELS = (
-    ("principal_did", "Agent"),
     ("secret_ref", "Secret"),
     ("secret_id", "Secret ID"),
     ("request_id", "Request ID"),
@@ -75,7 +75,8 @@ class ConsoleActivity:
 
     async def page(
         self, current: ConsoleSession, *, before: str | None, limit: int
-    ) -> ActivityPage:
+    ) -> tuple[ActivityPage, str]:
+        """The page and the owner-checked installation's team, its agents' display context."""
         if not 1 <= limit <= 100:
             raise HTTPException(400, "activity_limit_invalid")
         cursor = _decode(before)
@@ -107,10 +108,14 @@ class ConsoleActivity:
             await self.console.fence.check(tx, admitted)
             if current.expires_at <= datetime.now(UTC):
                 raise HTTPException(401, "console_session_required")
-        return result
+        return result, admitted.team_id
 
 
-def _render(page: ActivityPage, limit: int) -> str:
+def _escaped(value: object) -> str | None:
+    return None if value is None else escape(str(value))
+
+
+def _render(page: ActivityPage, limit: int, team_id: str) -> str:
     parts = ["<h1>Activity</h1><p>Recorded secret uses and job outcomes for your team.</p>"]
     if not page.entries:
         parts.append('<p id="activity-empty">No activity in this page.</p>')
@@ -125,13 +130,21 @@ def _render(page: ActivityPage, limit: int) -> str:
         parts.append(
             f'<article class="activity-entry" data-event-id="{escape(str(entry.event_id), quote=True)}"{correlation}><h2>{escape(label)}</h2><dl>'
         )
+        agent = (
+            None
+            if entry.principal_did is None
+            else principal_html(
+                principal_did=entry.principal_did, alias=entry.principal_alias, team_id=team_id
+            )
+        )
         for name, value in (
-            ("Time", entry.occurred_at.isoformat()),
-            ("Outcome", entry.outcome),
-            *((label, data.get(field)) for field, label in _LABELS),
+            ("Time", _escaped(entry.occurred_at.isoformat())),
+            ("Outcome", _escaped(entry.outcome)),
+            ("Agent", agent),
+            *((label, _escaped(data.get(field))) for field, label in _LABELS),
         ):
             if value is not None:
-                parts.append(f"<dt>{escape(name)}</dt><dd>{escape(str(value))}</dd>")
+                parts.append(f"<dt>{escape(name)}</dt><dd>{value}</dd>")
         parts.append("</dl>")
         if entry.outcome == "outcome_unknown" and entry.request_ref is not None:
             target = "/reconciliations/" + quote(entry.request_ref, safe="")
@@ -156,14 +169,16 @@ def console_activity_router(*, services: ConsoleActivity) -> APIRouter:
             return _login_redirect(refused)
         count = _limit(limit)
         async with _errors(services.console, current):
-            result = await services.page(current, before=before, limit=count)
-        return console_page(title="Activity", body_html=_render(result, count), session=current)
+            result, team_id = await services.page(current, before=before, limit=count)
+        return console_page(
+            title="Activity", body_html=_render(result, count, team_id), session=current
+        )
 
     @router.get("/activity/events")
     async def events(request: Request, before: str | None = None, limit: str = "50"):
         current = await services.console.sessions.current(request)
         async with _errors(services.console, current):
-            result = await services.page(current, before=before, limit=_limit(limit))
+            result, _ = await services.page(current, before=before, limit=_limit(limit))
         return {
             "entries": [asdict(entry) for entry in result.entries],
             "next_cursor": None if result.next_cursor is None else _encode(result.next_cursor),
