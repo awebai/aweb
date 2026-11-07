@@ -177,7 +177,6 @@ class RunStatus:
         closing = {
             State.APPROVAL_DENIED: "approval_denied",
             State.APPROVAL_EXPIRED: "approval_expired",
-            State.CANCELLED: "approval_revoked",
         }
         if state in closing:
             return ToolReply(200, {"state": "refused", **identity, "code": closing[state]})
@@ -205,6 +204,4 @@ class RunStatus:
             if reply.body["state"] in {"received", "admitted", "dispatching", "awaiting_approval"}
             else reply.status
         )
-        if dispatch.state is State.REFUSED:
-            status = 503
         return ToolReply(status, reply.body)
