@@ -1,15 +1,66 @@
 # Audit substrate build plan: aw-hooks and logs.aweb.ai
 
-Status: **build plan for aweb-acgh.1**, for review by an independent reviewer
-and Athena. Once reviewed, the coordinator creates the board tasks and staffs
-them. This is a plan, not an implementation. It contains no estimates.
+Status: **the build plan for aweb-acgh.1 (epic aweb-acgh.16), with the status
+of every task on main.** Each task names its board task and is **Built** (on
+main, with the code and its first-parent merge commit), **In flight** (what is
+on main and what remains), **Open** (decided and planned, not on main) or
+**After the first release** (decided and deliberately parked). It contains no
+estimates.
 
-The plan builds the accepted design, `docs/design/audit-substrate.md` at
-`98c1aa21`, under the coordinator's decision record of 2026-10-19 (Juan
-delegated it). It reuses three sibling lanes rather than re-specifying them:
-aweb-acgh.7 (docs/design/app-team-server-api.md at `2ee4615a`), the secrets
-design (docs/design/secrets.md at `a01085c0`), and D1
-(`docs/design/agent-pages.md` on main, §11 task graph).
+The plan builds the accepted design, [`audit-substrate.md`](audit-substrate.md),
+under the decision record, whose decisions it cites by number. It reuses three
+sibling lanes rather than re-specifying them: aweb-acgh.7
+([app-team-server-api.md](app-team-server-api.md)), the secrets design
+([secrets.md](secrets.md)), and D1 ([agent-pages.md](agent-pages.md), §11 task
+graph).
+
+## Status by task
+
+| Id | Board task | Task | Status | On main |
+| --- | --- | --- | --- | --- |
+| — | aweb-acgh.1 | Design | Built | `docs/design/audit-substrate.md` (e78d12ac3) |
+| H1 | aweb-acgh.16.1 | Catalog, binding and delivery contract | Built; activation refusal of unknown catalogs Open (aweb-acgh.16.35) | `docs/hook-events.md`, `docs/vectors/hook-catalog-v1.json`, `docs/vectors/hook-binding-cases-v1.json`, pointer in `docs/aw-hooks-sot.md` (f064438b4) |
+| H2 | aweb-acgh.16.2 | Envelope and delivery credential, Go authority | Built | `cli/go/hookevent/envelope.go`, `delivery.go`; `docs/vectors/hook-event-envelope-v1.json`, `hook-delivery-credential-v1.json`; case `oss_task_create_with_trace_id` in `team-auth-envelope-v2.json` (3c3195e74) |
+| H3 | aweb-acgh.16.3 | Owner act `aweb.owner-act/1` | Built | `docs/owner-act.md`, `cli/go/awid/owneract.go`, `docs/vectors/owner-act-v1.json` (7426a016e; subject canonicalization d76a7d253) |
+| — | aweb-acgh.16.34 | Owner act `logs.verify.delegate` | Open | — |
+| K0 | aweb-acgh.6 | Core-importable signing-key loader | Built | `naapp-lib/src/aweb_naapp/signing_key.py`, `signing-key` extra (fd806b7db) |
+| K1 | aweb-acgh.16.4 | Catalog loader, envelope, delivery credential (Python) | Built | `naapp-lib/src/aweb_naapp/hooks/catalog.py`, `envelope.py`, `delivery.py`, packaged `catalog-v1.json` (f064438b4) |
+| K2 | aweb-acgh.16.5 | Owner-act verifier | Built | `hooks/owner_act.py`, `hooks/owner_act_nonces.py`, `hooks/migrations/001_owner_act_nonces.sql` (f064438b4) |
+| — | aweb-acgh.16.28 | Move K2 nonces onto the shared nonce store | Open | `aweb_naapp.nonces` exists; owner-act nonces keep their own table |
+| K3a | aweb-acgh.16.6 | Producer: enqueue, gate, transport, resolver interface | Built | `hooks/producer.py`, `hooks/transport.py`, outbox channels `outbox/migrations/002_outbox_channels.sql` (7bd1acce6) |
+| K3b | aweb-acgh.16.7 | App-producer resolver | Built | `hooks/resolver.py`, `runtime/hook_resolver.py` (d66fe3e1c, 0131348ff) |
+| K4 | aweb-acgh.16.8 | `post-manifest-command-hook` firing | Built | `runtime/hooks.py`, `runtime/manifest_hooks.py`; `HookProducer.enqueue_refusal` and `require_admission`; `outbox/migrations/003_admission_backlog.sql` (5265fa2fb, 134bd3773) |
+| K4 helper | aweb-acgh.16.8.1 | Independent commitment helper (decision 76) | Built | `naapp-lib/src/aweb_naapp/hooks/commitment.py` (924bd0ff4) |
+| K5 | aweb-acgh.10 | Owner-act evidence in the approval primitive | Built | `runtime/passkeys/service.py` takes `VerifiedOwnerAct` (f064438b4) |
+| P1 | aweb-acgh.16.9 | Publish `aweb-naapp` | Built | `aweb-naapp` 0.5.1 (`naapp-lib/pyproject.toml`); the server declares `aweb-naapp[egress,hooks]>=0.5.1` (`server/pyproject.toml`) |
+| S1 | aweb-acgh.16.10 | `app_hook_bindings` and owner activation | Built; signer-readiness refusal Open (aweb-acgh.16.36) | `server/src/aweb/migrations/aweb/032_app_hook_bindings.sql`, `server/src/aweb/hook_bindings.py`, `server/src/aweb/routes/hook_bindings.py` (e6b14c292, 2ab7556f5) |
+| S2 | aweb-acgh.16.11 | Core producer | In flight | Public half only: `AWEB_HOOK_PRODUCER_KEYS` (`server/src/aweb/config.py`) and `GET /v1/hooks/producer-keys` (`server/src/aweb/routes/app_hooks.py`) (f562e8d33) |
+| — | aweb-acgh.16.31 | Core signer-unavailable reservations | Built (contract); implementation in S2 | `docs/hook-signer-unavailable.md` (2fcb7f481) |
+| — | aweb-acgh.16.29 | Terminal delivery authority and cancellation evidence | Built (contract) | `docs/hook-terminal-delivery.md` (2fcb7f481) |
+| — | aweb-acgh.16.30 | Shared outbox nonblocking end fence and attempt CAS | After the first release | — |
+| — | aweb-acgh.16.32 | Terminal helpers (capsule, credential, seal) and vectors | After the first release | — |
+| — | aweb-acgh.16.27 | `dispatch_in_flight` and `generation_superseded` refusal codes | Built | both in the catalog's `refusal_code` enum (decisions 29, 35) |
+| — | aweb-acgh.16.33 | Catalog v1 `use_ref` | Built | `use_ref` in `docs/vectors/hook-catalog-v1.json` and `docs/hook-events.md` (22f3cc779) |
+| S3a | aweb-acgh.16.12 | Sites vector, checker and task mutations | Open | — |
+| S3b | aweb-acgh.16.13 | Messaging mutations | Open | — |
+| S3c | aweb-acgh.16.14 | Identity, app, key and membership mutations | Open | — |
+| S4 | aweb-acgh.16.15 | Membership observer (M3) | Open | — |
+| C1 | aweb-acgh.16.16 | `trace_id` minting | Open | the H2 vector case only |
+| C2 | aweb-acgh.16.17 | `post-command-hook` | Open | the catalog's command classes only |
+| C3 | aweb-acgh.16.18 | Owner-act commands | Open | the Go library only (`cli/go/awid/owneract.go`) |
+| L1 | aweb-acgh.16.19 | Logs app skeleton | Built | `naapp/logs` (package `aweb_logs`), `aweb-app.json`, `naapp/logs/Dockerfile` (af1457baf, 74115acfd) |
+| L2 | aweb-acgh.16.20 | Ingest admission | Built (active registrations only) | `naapp/logs/src/aweb_logs/ingest.py`, `migrations/001_chain.sql`, `migrations/002_client_quotas.sql` (bf3c36d6c) |
+| L3 | aweb-acgh.16.21 | Chain, receipts, checkpoints, verify | Built | `aweb_logs/chain.py`, `ledger.py`, `verify.py`; `docs/logs-chain.md`, `docs/vectors/logs-chain-v1.json` (af1457baf, bf3c36d6c) |
+| L4 | aweb-acgh.16.22 | Owner-gated reads | Open | `ledger.append_on`, the caller-transaction append it needs, ships with L2 |
+| L5 | aweb-acgh.16.23 | Retention, erasure, legal hold, export, deletion | Open | the owner-act verifier knows the four logs acts; `verify` reports purged ranges |
+| L6 | aweb-acgh.16.24 | `aw logs` | In flight | `cli/go/logschain`, which passes `logs-chain-v1.json` (9ad392cc5) |
+| E1 | aweb-acgh.16.25 | Real-path end-to-end | Open | — |
+| E2 | aweb-acgh.16.26 | Athena security pass | Open | — |
+| X4 | aweb-acgh.12 | Operate hosted logs | Open | — |
+| X5 | aweb-acgh.13 | Hosted core hook producer operations | Open | — |
+
+X1, X2, X3 and X6 are carried by hosted-product tasks; this OSS plan does not
+record their status (see "Hosted-side items").
 
 ## Rules every task follows
 
@@ -36,14 +87,9 @@ design (docs/design/secrets.md at `a01085c0`), and D1
   - **R+A:** independent reviewer plus Athena. This applies to anything that
     signs, verifies, gates on authority, touches an identity path, or decides
     what leaves a team.
-- **Seats.** Every task runs on Claude Opus 5.5.
-  - **aweb-protocol-expert** owns public contracts, signing families, identity
-    paths and `aw` (Go).
-  - **aweb-expert** owns server and naapp implementation on top of a frozen
-    contract.
-- **The done-signal** for every task is a reviewer ACK on an exact SHA, merged
-  to main by the task's seat (or by the coordinator, where the task says so),
-  with the evidence its acceptance names.
+- **The done-signal** for every task is a reviewer ACK on an exact SHA, landed
+  on main through the coordinator's train, with the evidence its acceptance
+  names.
 
 ## Order of work
 
@@ -51,7 +97,7 @@ design (docs/design/secrets.md at `a01085c0`), and D1
    envelope, delivery credential, owner act and binding cases, together with
    their vectors and a Go authority. Nothing downstream freezes a byte without
    it.
-2. **The shared kit (phase 2)** goes into `aweb_naapp` behind a new
+2. **The shared kit (phase 2)** goes into `aweb_naapp` behind the
    dependency-light `hooks` extra. Core and every producing naapp install that
    extra; nothing is copied.
 3. **Core (phase 3), `aw` (phase 4) and logs (phase 5)** then build in
@@ -70,33 +116,34 @@ H2 ─ C1 ;  H3+S1 ─ C3 ;  H1+H2+G1-d ─ C2
 K1+K2+K3b+G1-c/d ─ L1..L5 ─ L6 ;  all ─ E1, E2
 ```
 
-## Phase 1: the hook contract (aweb-protocol-expert)
+## Phase 1: the hook contract
 
-| Id | Task | Repo and paths | Acceptance criteria | Depends | Review |
-| --- | --- | --- | --- | --- | --- |
-| H1 | Catalog, binding and delivery contract | docs/hook-events.md (new public source of truth); docs/vectors/hook-catalog-v1.json; docs/vectors/hook-binding-cases-v1.json; a pointer from `docs/aw-hooks-sot.md` stating that `on_mutation` is unchanged and is not an audit hook | - **Catalog** `aweb.hooks` v1 has the five hooks with class, producer kinds, audit-critical flag and precedence (design §A2).<br>- **Payloads** are strict flat allowlists, including the `post-secret-use-hook` fields with the 28 `refusal_code` values from secrets §11.5, the governance act/direction table, and every §A10 mutation type with its per-type fields (`app_key.revoked` included).<br>- **Client** command classes with local effects (design §A5) are listed.<br>- **Binding states and `active_from`** are specified, along with the ack dispositions, `409 event_conflict` and the audit-critical gate (§A3, §A7).<br>- **Binding cases** cover admin install leaving bindings pending, supersession by a new generation, an unknown catalog, the pad, and revocation's final entry and cancellation.<br>- **Python** loads the catalog with a strict reader in a test, and a schema with an extra field is refused. | design accepted (done) | R+A |
-| H2 | Envelope and delivery-credential signing family, Go authority | cli/go/hookevent/ (sign, verify, canonical bytes); `docs/vectors/hook-event-envelope-v1.json`, `hook-delivery-credential-v1.json`; a deliberate added `trace_id` positive case in `team-auth-envelope-v2.json`; vector README and consumer classification updated | - **Envelope** `aweb.hook-event/1`: the prefix, canonical JSON and detached Ed25519 (§A6).<br>- **Delivery credential** `AWEB-Hook DIDKey` binds the fields in §A7.<br>- **Envelope negatives** listed in §A11: wrong prefix, non-canonical bytes, float, duplicate key, unknown payload field, team mismatch, client-signed server hook, client actor not equal to signer, unknown catalog version; decision 73 removes the obsolete plain-SHA digest demonstration, leaving producer commitments to K4/S13 proofs.<br>- **Delivery-credential negatives:** an app-event or `hook-resolve` credential at a hook target, cross-audience, tampered body, wrong binding, stale timestamp.<br>- **Freeze:** the Go conformance test regenerates byte for byte. The `team-auth-envelope-v2.json` change is named as a deliberate re-freeze with an additive case only, and existing cases are byte-identical. | H1 | R+A |
-| H3 | Owner act `aweb.owner-act/1` | docs/owner-act.md (new public source of truth); cli/go/awid/owneract.go (sign, verify); docs/vectors/owner-act-v1.json | - **Signing bytes and subject** per act (§A3): `hook-binding.activate` and `.revoke`; the generic `app-role.designate`, `app-role.revoke` and `app-credential.recover`; logs' `logs.retention.set`, `logs.erase`, `logs.legal-hold.set` and `.release`.<br>- **Rules:** a closed vocabulary per audience, a lifetime of at most ten minutes, single-use nonce semantics, and the current team key.<br>- **Disclosure:** the doc states that a custodian of the controller key can mint any owner act (§2).<br>- **Negatives:** admin signer, rotated-out key, expired, nonce reuse, subject or generation mismatch, wrong type or audience, and a team certificate presented as an owner act.<br>- **Approval of record:** the commit records Juan's approval of `aweb.owner-act/1` as an identity-path change (given explicitly with the D1 decision package, coordination message 811c3b3e), and docs/owner-act.md states the constraint: an owner act is valid only from team controller authority exercised by the organization owner (for BYOT, the controller key holder), and a custodial deployment signs one only after the owner's fresh interactive step-up. | H1 | R+A |
+| Id | Task | Status and scope | Review |
+| --- | --- | --- | --- |
+| H1 | Catalog, binding and delivery contract | **Built (aweb-acgh.16.1).** The catalog `aweb.hooks` v1 with the five hooks, strict flat payload allowlists (the `post-secret-use-hook` fields with the 33 `refusal_code` values, the governance act/direction table, every §A10 mutation type, the client command classes), binding states, `active_from`, ack dispositions, `409 event_conflict` and the audit-critical gate. `docs/aw-hooks-sot.md` states that `on_mutation` is unchanged and is not an audit hook. The catalog is re-frozen in place by decisions 73, 92 and 93 and by `use_ref` (aweb-acgh.16.33). **Open (aweb-acgh.16.35):** core activation refusing an unknown catalog id, version or hook (`hook-binding-cases-v1.json` case `unknown_catalog_cannot_activate`, replayed only by `naapp-lib/tests/hooks/test_binding_cases.py`). | R+A |
+| H2 | Envelope and delivery-credential signing family, Go authority | **Built (aweb-acgh.16.2).** `aweb.hook-event/1` and `AWEB-Hook DIDKey` in `cli/go/hookevent`, with their vectors and negatives (§A11). The `team-auth-envelope-v2.json` change is an additive `trace_id` case. Decision 73 removed the obsolete plain-SHA digest demonstration, leaving producer commitments to K4/S13 proofs. | R+A |
+| H3 | Owner act `aweb.owner-act/1` | **Built (aweb-acgh.16.3).** `docs/owner-act.md` and `cli/go/awid/owneract.go`: the core acts `hook-binding.activate` and `.revoke`; the generic `app-role.designate`, `app-role.revoke` and `app-credential.recover`; logs' `logs.retention.set`, `logs.erase`, `logs.legal-hold.set` and `.release`. The commit records Juan's approval of `aweb.owner-act/1` as an identity-path change, and `docs/owner-act.md` states the constraint: an owner act is valid only from team controller authority exercised by the organization owner (for BYOT, the controller key holder), and a custodial deployment signs one only after the owner's fresh interactive step-up (decision 1). Adding an act is additive; changing an act's subject requires `aweb.owner-act/2` (decision 28). | R+A |
+| — | Owner act `logs.verify.delegate` | **Open (aweb-acgh.16.34).** Juan's ruling on verify delegation: the logs act `logs.verify.delegate` lets an owner delegate `verify` only (decision 5). Deliverables: the `docs/owner-act.md` delta, Go and Python verifiers, `owner-act-v1.json` cases, and the nonce, rollback and substitution proofs on real Postgres. It is additive under decision 28. | R+A |
 
 ## Phase 2: the shared kit in `aweb_naapp`
 
-A new `hooks` extra in `naapp-lib/pyproject.toml` depends on `pgdbm`,
-`pynacl`, `httpx` and `awid-service` only. It never depends on `webauthn`,
-`fastapi` or `pydantic-settings`, so core can install it (decision 12). It
-builds on the shipped `aweb_naapp.outbox` (Target meta, `Cancelled`,
-`latest_receipt`, status). It needs the approved `channel` addition, under
-which hooks use channel `hooks`.
+The `hooks` extra in `naapp-lib/pyproject.toml` depends on `awid-service`,
+`pgdbm` and `pynacl` only. It never depends on `webauthn`, `fastapi` or
+`pydantic-settings`, so core installs it (decision 12). It builds on the
+shared `aweb_naapp.outbox`, whose channels let hooks drain on channel `hooks`
+(`outbox/migrations/002_outbox_channels.sql`).
 
-| Id | Task | Repo and paths | Acceptance criteria | Depends | Seat | Review |
-| --- | --- | --- | --- | --- | --- | --- |
-| K0 | Core-importable signing-key loader | `naapp-lib/src/aweb_naapp/signing_key.py` behind a `signing-key` extra (stdlib plus `pynacl` only), built in aweb-acgh.6 | - **Decision 10:** `read_signing_key_file` and `parse_signing_key_hex` provide one loader for every app key and purpose. It fails closed, refuses writable or non-regular files, uses one 64-hex format, and puts no key material in errors.<br>- **Importable by core:** core loads its hook key with `read_signing_key_file`, with no runtime extra installed.<br>- **One copy:** the runtime's key loading calls this module. | decision 10 | aweb-expert (aweb-acgh.6) | R+A |
-| K1 | Catalog loader, envelope, delivery credential (Python) | `naapp-lib/src/aweb_naapp/hooks/` (`catalog.py`, `envelope.py`, `delivery.py`) | - The H1 and H2 vectors pass from the files themselves; no copy is made.<br>- The Python consumer is registered in the vector consumer classification.<br>- An import test proves that the `hooks` extra pulls in no runtime-only dependency. | H1, H2 | aweb-protocol-expert | R+A |
-| K2 | Owner-act verifier | `naapp-lib/src/aweb_naapp/hooks/owner_act.py` plus an ordered migration for the nonce table | - **Order of checks:** exactly as `docs/owner-act.md` states them, the single source, with every verifier option required. The current AWID team key is read fresh (≤ 60 s cache). Each check has a distinct error, and any key but the current team key fails with `owner_required`.<br>- **Single use:** the nonce table's migration has a unique constraint on (verifier scope, team, nonce). The insert happens in the act's effect transaction, a conflict rolls the effect back with `nonce_reused`, and rows are kept at least until `expires_at` plus 60 s. A test runs two concurrent uses of one act and shows exactly one commits.<br>- **Vector:** the `owner-act-v1.json` vector passes.<br>- **Rotation:** a real AWID test rotates the team key and shows the old key refused within the bound. | H3, K1 | aweb-protocol-expert | R+A |
-| K3a | Producer: enqueue, gate, transport, core resolver interface | `naapp-lib/src/aweb_naapp/hooks/producer.py`, `transport.py` | - **Enqueue** builds and signs the envelope inside the caller's transaction. It mints `event_id` once and assigns `producer.seq` through `next_sequence` scoped `(producer, team, hook)`.<br>- **Audit-critical gate:** an audit-critical enqueue refuses with `audit_target_unavailable` unless a view no older than 60 s holds a registration with `active_from <= occurred_at`. A narrowing governance act is never refused.<br>- **Resolver interface:** the drain takes a resolver that materializes one delivery per eligible registration and leaves the event pending when its view is stale. Core supplies its in-process resolver (S2); K3b supplies the app producers' one.<br>- **Transport** signs `hook-delivery` per request and sends to the stored endpoint (Target meta) after re-checking the binding (`Cancelled` if revoked).<br>- **Egress** follows the shared egress guard: HTTPS only and no redirects. A hosted deployment disables private and internal destinations at deploy level, whatever an owner configures (the same rule as secrets); allowing them is only a self-hosted operator's configuration.<br>- **Outcomes:** 2xx maps to delivered or duplicate with the receipt kept; 409 maps to conflict; authorization or schema rejection retries in bounded fashion and then ends rejected; network errors and 5xx are never dropped.<br>- **Faults:** an audit-critical event whose deliveries all end cancelled or rejected is reported as a fault.<br>- **Tests:** a drain crash on real Postgres, revocation between materialization and send, and a stale view keeping the event pending. | K1; aweb-acgh.6 `channel` addition; the shared egress guard (secrets lane, decision 12), which must also be importable without the runtime extra | aweb-expert | R+A |
-| K3b | App-producer resolver | `naapp-lib/src/aweb_naapp/hooks/resolver.py` | - **Resolution:** registrations come from acgh.7's `HookResolver`, with the ≤ 60 s fail-closed cache.<br>- **Gate input:** the audit-critical gate reads this resolver's view.<br>- **Test:** against a real core server with an activated registration, an expired view refuses and a revoked binding drops out within the bound. | K3a; acgh.7 G1-d (which depends on S1) | aweb-expert | R+A |
-| K5 | Owner-act evidence in the approval primitive | aweb-acgh.10 (already on the board) | - The `OwnerActEvidence` placeholder is replaced with K2's `VerifiedOwnerAct`, and secrets bootstrap uses it.<br>- **Call sites:** the designation calls `OwnerActVerifier.prepare` before its transaction and `consume_in` inside the transaction that records the designation, so the act is single-use and no registry read holds that transaction's locks. `role` is the approver scope, and `contact_sha256` is the enrolment contact's hash. | K2; aweb-acgh.4 | aweb-expert | R+A |
-| K4 | `post-manifest-command-hook` firing | `naapp-lib/src/aweb_naapp/runtime/` admission middleware, configured per app | - **What fires:** every admitted mutation tool call and every attributable refusal. Reads fire only for the production's `reads`.<br>- **Precedence:** a tool whose effect a specific hook covers (declared per tool) fires nothing here, so one effect never produces two events.<br>- **Payload (decision 70):** `request_sha256` is the producer-keyed HMAC-SHA-256 specified in docs/hook-events.md, with no parameter values or concrete path/query in event fields. Tests distinguish it from plain SHA-256, cover key and installation-context separation, missing/malformed key refusal, rotation with byte-identical outbox retry, and a credential-shaped parameter or path. The length-framed request binds method, external raw path+query, received content-type values and exact pre-injection body bytes; changing any component changes the MAC, including raw-body mode. An attributable refusal requires the complete bounded body; early/oversize refusals without it emit no manifest-command hook, with tests for both cases.<br>- **Runtime producer (decision 70):** K4 owns the hook-event key, `ServerProducer.app` per installation and the hooks drain with `HookTransport`, consuming `runtime.hook_resolver()` from decision 69.<br>- **Routing** uses B1's declared-tool route mapping, so firing and admission resolve the same tool. The admission layer supplies matched evidence; the effect owner passes its actual transaction to shared recording. Neither `runtime.authorized()` nor a completed response establishes an effect transaction.<br>- **Sequence:** decision 76 splits the independent framing/HMAC/key-loader helper into aweb-acgh.16.8.1, built now. Runtime attachment waits for aweb-acgh.23, D1 C3 and the decision-69 resolver on main. | K3b; aweb-acgh.3 (B1); aweb-acgh.23; D1 C3 (aweb-acgg.9); decision-69 runtime resolver | aweb-expert | R+A |
-| P1 | Publish `aweb-naapp` as a release artifact | `naapp-lib/pyproject.toml` version policy; the release skill's artifact list | - `aweb-naapp` ships as a versioned package, so the core server can declare `aweb-naapp[hooks]>=<floor>` the way it declares `awid-service`.<br>- The release dry run builds and installs the server with that dependency from the published artifacts.<br>- **Who tags:** the coordinator sends the reviewed SHA to the release owner, who tags and publishes `aweb-naapp` through the build-once release lane. No implementation seat cuts the tag. | K0, K1, K3a | aweb-protocol-expert (package and release-list change) | R |
+| Id | Task | Status and scope | Review |
+| --- | --- | --- | --- |
+| K0 | Core-importable signing-key loader | **Built (aweb-acgh.6).** Decision 10: `read_signing_key_file` and `parse_signing_key_hex` in `naapp-lib/src/aweb_naapp/signing_key.py`, behind the `signing-key` extra (stdlib plus `pynacl`). One loader for every app key and purpose; fails closed, refuses writable or non-regular files, one 64-hex format, no key material in errors. Core loading its hook key with it is S2's. | R+A |
+| K1 | Catalog loader, envelope, delivery credential (Python) | **Built (aweb-acgh.16.4).** `aweb_naapp.hooks` `catalog`, `envelope` and `delivery` pass the H1 and H2 vectors from `docs/vectors`; the packaged catalog is byte-identical to the public one. | R+A |
+| K2 | Owner-act verifier | **Built (aweb-acgh.16.5).** `aweb_naapp.hooks.owner_act` checks in the order `docs/owner-act.md` states, reads the current AWID team key fresh, and consumes the nonce in the act's effect transaction (`hooks/migrations/001_owner_act_nonces.sql`). **Open (aweb-acgh.16.28):** moving these nonces onto the shared nonce store `aweb_naapp.nonces` (decision 81). | R+A |
+| K3a | Producer: enqueue, gate, transport, core resolver interface | **Built (aweb-acgh.16.6).** `HookProducer.enqueue` signs inside the caller's transaction, mints `event_id` once and takes `producer.seq` per (producer, team, hook); the audit-critical gate; the drain resolver interface (`hook_targets`); `HookTransport` re-checks the binding before each send (`Cancelled` if revoked) and follows the shared egress guard. | R+A |
+| K3b | App-producer resolver | **Built (aweb-acgh.16.7).** `aweb_naapp.hooks.resolver` over the runtime's `runtime.hook_resolver()` (decision 69), with the ≤ 60 s fail-closed view. | R+A |
+| K5 | Owner-act evidence in the approval primitive | **Built (aweb-acgh.10).** The approval primitive takes `VerifiedOwnerAct` (`runtime/passkeys/service.py`); designation prepares the act before its transaction and consumes it inside. | R+A |
+| K4 | `post-manifest-command-hook` firing | **Built (aweb-acgh.16.8).** `runtime/hooks.py` and `runtime/manifest_hooks.py` fire for admitted mutation tool calls, attributable refusals and the production's `reads`, with tool precedence. `request_sha256` is the producer-keyed HMAC of decision 70. K4 owns the runtime producer per installation and the hooks drain, on `runtime.hook_resolver()`. The signed `trace_id` is taken from the verified team-auth payload. | R+A |
+| K4 helper | Independent commitment helper | **Built (aweb-acgh.16.8.1).** `aweb_naapp.hooks.commitment` (decision 76), shared by K4 and S13. | R+A |
+| P1 | Publish `aweb-naapp` as a release artifact | **Built (aweb-acgh.16.9).** `aweb-naapp` 0.5.1; the server declares `aweb-naapp[egress,hooks]>=0.5.1`. | R |
 
 ### Decision 73: secret-use contract re-freeze and S13 dependency
 
@@ -106,7 +153,7 @@ updates the public catalog, its managed package copy, secret-use transition
 examples and their consumers together. It adds the paired child secret/grant
 creation linkage and specifies separately keyed request/parameter MACs in
 `docs/hook-events.md`. The envelope vector's obsolete plain-SHA demonstration
-is removed; its signing cases remain unchanged. Review is R+A.
+is removed; its signing cases remain unchanged. The contract is on main.
 
 S13 (aweb-acgh.18.14) consumes the re-frozen shape. Its proofs must cover the
 initial authenticated inbound request (including raw path/query, content type
@@ -121,29 +168,26 @@ when the corresponding bytes are unavailable. Child/value/grant/result/outbox
 commit together; rollback and a lost recording fence emit no child pair.
 K4 supplies the generic framing/key helper once; S13 consumes it. No live
 producer is enabled before kit, ingest, resolution and owner activation.
+**After the first release (aweb-acgh.41):** the child secret/grant pair, since
+derived issuance (`store_as_secret`) is parked (decision 95).
 
 ### Decision 84: retained passkey proof (aweb-acgh.39)
 
-The shared contract/vectors preserve secrets §10.4's independent public-key
-check. The held summary-HMAC draft is superseded: approval_evidence_sha256 is
-SHA-256 of length-framed exact proof, key, challenge preimage and frozen
-verification context, with the B2 covered request bound transitively by its
-existing hash. No rotating commitment key is needed. Vector authority is
-`docs/vectors/passkey-evidence-v1.json`. Review is R+A, with B3, secrets-design,
-S13 and S14 fit checks before implementation.
+The shared contract and vector (`docs/vectors/passkey-evidence-v1.json`)
+preserve secrets §10.4's independent public-key check:
+`approval_evidence_sha256` is SHA-256 of length-framed exact proof, key,
+challenge preimage and frozen verification context, with the B2 covered
+request bound transitively by its existing hash. No rotating commitment key is
+needed. B3 holds the one canonical helper and the retained proof
+(`naapp-lib/src/aweb_naapp/runtime/passkeys/proof.py`,
+`runtime/passkeys/migrations/003_retained_proof.sql`).
 
-Juan assigns B3 the retention and sole canonical helper after acceptance.
-Thread scope, consumed challenge/preimage and exact StoredRequest.canonical
-bytes into verification. Capture raw assertion/key/context atomically with
-successful counter CAS/evidence insertion; an ordered migration adds retention.
-S13/S14 consume the reviewed helper only. Tests must distinguish trusted-key
-verification from an evidence lookup, preserve client-data bytes and the
-challenge's null task-answer spelling, verify request/policy/installation
-bindings, reject substituted valid proof, and recompute after rotation without
-a retired secret. Counters/timestamps/authority history must not be overstated
-as signed facts. Lifecycle deletion limits proof retrieval. The byte-vector
-reader uses real assertions; real B3 transaction/persistence/helper proofs
-remain its implementation responsibility.
+S13 and S14 consume the reviewed helper only. Their tests must distinguish
+trusted-key verification from an evidence lookup, preserve client-data bytes
+and the challenge's null task-answer spelling, verify request/policy/
+installation bindings, reject substituted valid proof, and recompute after
+rotation without a retired secret. Counters/timestamps/authority history must
+not be overstated as signed facts. Lifecycle deletion limits proof retrieval.
 
 No actor field/mode or catalog wire shape is added. Console governance uses
 the identity-free system actor, retaining distinct authorizing and affected
@@ -159,42 +203,40 @@ key-file reader. It imports no runtime, reads no HTTP stream and performs no
 upstream rendering. The caller supplies authoritative context and complete
 bounded bytes. Parameter bytes come from the caller's existing validated typed
 canonical-JSON path under B2's value rules, with no B2 prefix/wrapper; the
-helper does not introduce a second parameter codec.
-
-This helper is built and reviewed independently (R+A) and can land through the
-naapp train without waiting for runtime attachment. Runtime key configuration,
+helper does not introduce a second parameter codec. Runtime key configuration,
 MAC/context persistence, rotation/destruction and authorization-path wiring
-remain K4/S13 obligations. K4's attachment still waits for acgh.23, C3 and the
-runtime resolver. The helper's exact ACKed SHA is handed to S13 for reuse.
+are K4's (built) and S13's obligations.
 
 ## Phase 3: core server
 
-### Terminal revocation amendment (2026-10-23)
+### Terminal revocation amendment
 
-The [terminal delivery contract](../hook-terminal-delivery.md) corrects the
-active-only/final-entry conflict. It is pending receiver/resolution/producer
-fit, independent review and Athena. S2 builds its other work first; no receiver
-or producer enables a terminal exception ahead of acceptance.
+**After the first release (aweb-acgh.16.30, aweb-acgh.16.32).** The
+[terminal delivery contract](../hook-terminal-delivery.md) is on main; its
+implementation is parked. At the first release, revocation takes effect
+immediately: the owner act revokes the binding row in its transaction,
+uninstall revokes the install's bindings, and producers cancel deliveries to
+a revoked target on their pre-send re-check. The per-gap explanation below
+(final record, cancellation tombstones, `hook_delivery.cancelled`) comes after
+the first release. Logs ingest admits active registrations only.
 
-- **Shared kit, used by S2 and every app producer:** one transactional
-  end-binding fence shared with enqueue/materialization, explicit cancellation
-  tombstones for unmaterialized owed events, protected terminal targets in the
-  existing hooks outbox, and cancellation summaries scoped to their producer.
-  **aweb-acgh.16.30** supplies nonblocking end fencing, attempt CAS/leases and
-  deterministic multi-binding order before terminal S2 wiring; today's
-  network-held row lock plus `cancel` does not meet the no-ACK-wait rule.
-  Do not copy kit SQL or implement another sender/outbox in core. Apply new
+- **Shared kit, used by S2 and every app producer (aweb-acgh.16.30):** one
+  transactional end-binding fence shared with enqueue/materialization,
+  explicit cancellation tombstones for unmaterialized owed events, protected
+  terminal targets in the existing hooks outbox, and cancellation summaries
+  scoped to their producer. It supplies nonblocking end fencing, attempt
+  CAS/leases and deterministic multi-binding order before terminal S2 wiring;
+  a network-held row lock plus `cancel` does not meet the no-ACK-wait rule. Do
+  not copy kit SQL or implement another sender/outbox in core. Apply new
   ordered kit migrations through its migration module.
-- **Signing/verification:** Go-generated public terminal-authorization and
-  terminal-credential and binding-seal vectors, with a Python consumer in the
-  shared hooks kit.
-  The three vector files remain to-be-created implementation deliverables:
-  terminal authorization, terminal request credentials, and binding-seal
-  acknowledgements. Create them in the shared vector directory and register
-  their Go generator and Python consumers with their implementations, rather
-  than adding unconsumed placeholder bytes. Preserve all
-  existing ordinary event/delivery cases. A current core transport key can
-  retry a historically signed event/capsule; each uses its specified window.
+- **Signing/verification (aweb-acgh.16.32):** Go-generated public
+  terminal-authorization, terminal-credential and binding-seal vectors, with a
+  Python consumer in the shared hooks kit. Create the three vector files in
+  the shared vector directory and register their Go generator and Python
+  consumers with their implementations, rather than adding unconsumed
+  placeholder bytes. Preserve all existing ordinary event/delivery cases. A
+  current core transport key can retry a historically signed event/capsule;
+  each uses its specified window.
 - **S2:** atomically commit lifecycle state, local backlog accounting,
   immutable terminal event/capsule and fixed target; integrate owner revocation,
   uninstall and generation supersession. Other sinks get the identical event
@@ -214,8 +256,8 @@ or producer enables a terminal exception ahead of acceptance.
   terminal completion unacknowledgeable. Ordinary admission serializes with
   sealing.
 - **Cancellation evidence:** both catalog copies and payload cases are a
-  deliberate v1 re-freeze under decision 93 and coordinator receipts recorded
-  in the terminal contract. New `hook_delivery.cancelled/outbox_state` records
+  deliberate v1 re-freeze under decision 93, recorded in the terminal
+  contract, and are on main. `hook_delivery.cancelled/outbox_state` records
   require shared range-arithmetic, source-producer and system-actor checks in
   addition to the existing data-driven catalog parser. Missing producer
   evidence remains an unexplained gap; no implicit attribution is permitted.
@@ -227,91 +269,88 @@ or producer enables a terminal exception ahead of acceptance.
   producer/receiver path; helper-only or a warm cache is insufficient.
 
 The three fit checks are logs, app-team-api and hooks-producer. They precede
-independent naapp review and Athena on the exact delta. The doc delta lands
-through secrets' train-naapp lane; S2 code lands through aweb's OSS train.
+independent naapp review and Athena on the exact implementation delta.
 
-| Id | Task | Repo and paths | Acceptance criteria | Depends | Seat | Review |
-| --- | --- | --- | --- | --- | --- | --- |
-| S1 | `app_hook_bindings` and owner activation | `server/src/aweb/migrations/aweb/<next>_app_hook_bindings.sql`; server/src/aweb/hook_bindings.py; activation and revocation routes | - **Rows:** install or update creates pending rows from the digest-pinned manifest bytes, read through `manifest_registration()` for the v2 `hooks` slot. A new generation supersedes, and uninstall revokes.<br>- **Owner acts:** activation and revocation require an owner act verified by K2 with core's closed vocabulary. The subject must equal the stored pending row. Core calls `OwnerActVerifier.prepare` before the activation transaction and `consume_in` inside it, so the nonce is consumed with the binding's state change and no registry read holds that transaction's locks.<br>- **Pad and refusals:** `active_from = activated_at + 60 s`. Activation refuses until F6 supplies `installation_id` and generation. Production activation refuses until keys come from pinned bytes (acgh.7 G1-b). Activation of a post-mutation registration additionally follows the [core-signer readiness correction](../hook-signer-unavailable.md): a valid current signer is required; refusal consumes neither nonce nor activation.<br>- **Tests:** an admin or member signature is refused, a stale subject is refused, and so is a replayed nonce. | H3, K2; D1 F6 (aweb-acgg.5), C3 (aweb-acgg.9); aweb-acgh.8 step 1; acgh.7 G1-b | aweb-protocol-expert | R+A |
-| S2 | Core producer | `server/pyproject.toml` (`aweb-naapp[hooks]`); kit migrations applied to core's schema as new ordered migrations; server/src/aweb/hook_producer.py (service-layer `enqueue_mutation_hook(tx, …)`, an in-process resolver over S1, drain in the server lifespan); configuration for the core hook key (`kid`, key file path, validity window) | - **Key:** the core key is operator configuration, loaded by the one key loader of decision 10 (key file by `kid`, refusing writable or non-regular files). It is never a team, controller or agent key.<br>- **Gating:** an ordinary event is owed only when a fresh view shows an eligible active registration. With a valid signer it shares the mutation transaction; signer unavailability instead commits a typed missing-production sequence reservation with the mutation, per the [signer-loss correction](../hook-signer-unavailable.md). No unsigned event is sent, no target is required, and terminal obligations remain outstanding. Existing outbox/sequence storage and every scanner must distinguish reservations from signed events; implementation uses a new ordered kit migration.<br>- **`trace_id`:** a signed `trace_id` member is taken as `signed_request`; otherwise one is minted and marked `producer`.<br>- **Same transaction:** owed `hook_binding.activated` and `.revoked`, and `app.installed` and `.updated`, share the act's transaction as a signed event or, with an unavailable signer, a typed missing-production reservation.<br>- **Revocation:** the revoked target's final entry, cancellation of its backlog, and the gap-explaining governance event to the remaining registrations (§A3).<br>- **Server-lane task:** the `on_mutation` seam is unchanged. | S1, K3a, K0, P1 | aweb-expert | R+A |
-| S3a | Sites vector, checker and task mutations | docs/vectors/post-mutation-hook-sites-v1.json; second scan in `scripts/check-extension-docs.py`; task service enqueue sites | - **Checker:** the scan requires a literal `mutation_type`, the call lexically inside a transaction block, and counts that match in both directions. The `on_mutation` mapping covers all 23 pinned rows (each mapped or excluded with a reason). A new `on_mutation` event fails the build.<br>- **Task mutations:** `task.created`, `.updated` (one event per update, with `changes`), `.deleted`, `.comment_added` and `.dependency_changed`. Comment and dependency become transactional.<br>- **MCP:** MCP task tools are covered through the service layer, and a test drives them. | S2 | aweb-expert | R |
-| S3b | Messaging mutations | `server/src/aweb/messaging/` | - **Transactional sends:** mail send without attachments and ack become transactional.<br>- **Events:** `mail.sent`, `mail.acknowledged` and `chat.message_sent` are enqueued in the effect's transaction from REST and MCP.<br>- **Payloads:** no bodies, subjects or previews.<br>- **Rollback:** a failure injected after the insert rolls both back. | S2, S3a | aweb-expert | R |
-| S3c | Identity, app, key and membership mutations | `routes/identity_grants.py`, `routes/connect.py`, `lifecycle.py`, the acgh.7 key-revoke route | - **Events:** `identity_grant.minted` and `.revoked`; `app_key.revoked` (in the transaction that sets `revoked_at`); `membership.connected` (`connect` becomes transactional); `membership.workspace_retired` (in the lifecycle cascade).<br>- **Later:** `task.answered` is added once D1 C2 (aweb-acgg.8) lands, as its own follow-up row in the vector. | S2, S3a; acgh.7 G1-b (key revoke route) | aweb-expert | R |
-| S4 | Membership observer (M3) | server/src/aweb/membership_observer.py; an ordered cursor migration | - **Scope:** it runs only for teams with an active `post-mutation-hook` registration.<br>- **Reading:** it reads the certificate history from the team's home AWID with the documented same-operator read credential (`docs/awid-sot.md:117`–`:131`). It moves to a narrow per-capability read grant once the service-token split lands, so it never needs provisioning authority.<br>- **Enqueue:** `membership.certificate_issued` and `_revoked`, marked observed with AWID's timestamps and certificate digest, in the transaction that advances the cursor.<br>- **Failure:** a restart resumes without loss or duplicate events.<br>- **Limits:** the documented limit is that a private team on a foreign registry is not observed. | S2 | aweb-protocol-expert | R+A |
+| Id | Task | Status and scope | Review |
+| --- | --- | --- | --- |
+| S1 | `app_hook_bindings` and owner activation | **Built (aweb-acgh.16.10).** Install or update writes pending rows from the digest-pinned manifest bytes (`write_manifest_bindings_on`); a new generation supersedes, and uninstall revokes. `POST /v1/apps/hook-bindings/{binding_id}/activate` and `/revoke` take an owner act verified by K2 with core's closed vocabulary, whose subject must equal the stored row; the nonce is consumed in the binding's transaction. `active_from = activated_at + 60 s`. Activation refuses a binding without `installation_id` and generation, and a production unless its install was registered from the pinned bytes with a `hook-event` key. **Open (aweb-acgh.16.36):** activation of a `post-mutation-hook` registration requires a valid current core signer, per the [core-signer readiness correction](../hook-signer-unavailable.md); otherwise `409 core_hook_producer_unconfigured`, consuming neither the nonce nor the activation. Main has no such check. | R+A |
+| S2 | Core producer | **In flight (aweb-acgh.16.11):** the public half is on main, the producer is not. On main: the core producer's public keys `{kid, did_key, valid_from, valid_until}` from `AWEB_HOOK_PRODUCER_KEYS` (`server/src/aweb/config.py`), served at `GET /v1/hooks/producer-keys`. Remaining:<br>- **Key:** the private core key is operator configuration, loaded by the decision-10 loader (key file by `kid`, refusing writable or non-regular files). It is never a team, controller or agent key.<br>- **Kit:** core applies the kit's outbox migrations to its schema as new ordered migrations and runs the hooks drain in the server lifespan, with an in-process resolver over S1.<br>- **Gating:** an ordinary event is owed only when a fresh view shows an eligible active registration. With a valid signer it shares the mutation transaction; signer unavailability instead commits a typed missing-production sequence reservation with the mutation, per the [signer-loss correction](../hook-signer-unavailable.md) (aweb-acgh.16.31). No unsigned event is sent, and no target is required. Outbox/sequence storage and every scanner distinguish reservations from signed events, through a new ordered kit migration.<br>- **`trace_id`:** a signed `trace_id` member is taken as `signed_request`; otherwise one is minted and marked `producer`.<br>- **Same transaction:** owed `hook_binding.activated` and `.revoked`, and `app.installed` and `.updated`, share the act's transaction as a signed event or, with an unavailable signer, a typed reservation. `activate_binding` and `revoke_binding` take the `in_transaction` callback for this; the routes pass none on main.<br>- **After the first release (aweb-acgh.16.32):** the revoked target's final entry, cancellation of its backlog, and the gap-explaining governance event to the remaining registrations (§A3).<br>- The `on_mutation` seam is unchanged. | R+A |
+| S3a | Sites vector, checker and task mutations | **Open (aweb-acgh.16.12).** The vector docs/vectors/post-mutation-hook-sites-v1.json and a second scan in `scripts/check-extension-docs.py`: a literal `mutation_type`, the call lexically inside a transaction block, and counts that match in both directions. The `on_mutation` mapping covers every row of `mutation-hook-call-sites-v1.json` (each mapped or excluded with a reason), and a new `on_mutation` event fails the build. Task mutations `task.created`, `.updated` (one event per update, with `changes`), `.deleted`, `.comment_added` and `.dependency_changed` are enqueued at the service layer; comment and dependency become transactional. A test drives the MCP task tools through the service layer. | R |
+| S3b | Messaging mutations | **Open (aweb-acgh.16.13).** In `server/src/aweb/messaging/`: mail send without attachments and ack become transactional; `mail.sent`, `mail.acknowledged` and `chat.message_sent` are enqueued in the effect's transaction from REST and MCP; no bodies, subjects or previews; a failure injected after the insert rolls both back. | R |
+| S3c | Identity, app, key and membership mutations | **Open (aweb-acgh.16.14).** `identity_grant.minted` and `.revoked`; `app_key.revoked` in the transaction that sets `revoked_at`, on the per-team key-revoke route (aweb-acgh.17.6; the event is aweb-acgh.17.7); `membership.connected` (`connect` becomes transactional); `membership.workspace_retired` (in the lifecycle cascade); `task.answered` at D1 C2's answer site (aweb-acgg.8), as its own row in the vector. | R |
+| S4 | Membership observer (M3) | **Open (aweb-acgh.16.15).** Decision 6. It runs only for teams with an active `post-mutation-hook` registration and reads the team's certificate history from its home AWID with the documented same-operator read credential (`docs/awid-sot.md`), moving to a narrow per-capability read grant once the service-token split lands. It enqueues `membership.certificate_issued` and `_revoked`, marked observed with AWID's timestamps and certificate digest, in the transaction that advances an ordered-migration cursor. A restart resumes without loss or duplicates. The documented limit is that a private team on a foreign registry is not observed. | R+A |
 
 ### Core signer-unavailable correction (aweb-acgh.16.31)
 
-The separate [contract correction](../hook-signer-unavailable.md), assigned by
-secrets `f8904485` and ruled in `886aacd3`, specifies typed local reservations
-when a core event is owed but cannot be signed. It adds no catalog event type or
-recovery-signing path. S2/shared-kit acceptance must cover real HTTP activation,
-revocation and ordinary mutations with absent, runtime-expired and valid signers;
-atomic sequence/reservation rollback; scanner exclusion; later unexplained holes;
-and the unprovable trailing-loss limit. Terminal obligations stay owner/operator
-visible without a fabricated final entry or seal. Diagnostics use the existing
-store, one fault per state and a configurable warning lead of seven days by
-default, with no validity grace. Producer and Logs fit, then R+A, precede landing;
-reviewed runtime proof remains necessary before activation.
+The [contract correction](../hook-signer-unavailable.md) is on main. It
+specifies typed local reservations when a core event is owed but cannot be
+signed, and adds no catalog event type or recovery-signing path. Its
+implementation is S2's: S2/shared-kit acceptance must cover real HTTP
+activation, revocation and ordinary mutations with absent, runtime-expired and
+valid signers; atomic sequence/reservation rollback; scanner exclusion; later
+unexplained holes; and the unprovable trailing-loss limit. Terminal
+obligations stay owner/operator visible without a fabricated final entry or
+seal. Diagnostics use the existing store, one fault per state and a
+configurable warning lead of seven days by default, with no validity grace.
+Reviewed runtime proof remains necessary before activation.
 
-## Phase 4: `aw` client (aweb-protocol-expert)
+## Phase 4: `aw` client
 
-| Id | Task | Repo and paths | Acceptance criteria | Depends | Review |
-| --- | --- | --- | --- | --- | --- |
-| C1 | `trace_id` minting and propagation | `cli/go` team-auth request builder | - **Minting:** one W3C trace id per command invocation, placed in the signed `trace_id` member of every request the command makes (core and manifest tools), never inside `operation`.<br>- **Vectors:** the H2 `trace_id` case passes.<br>- **Compatibility:** a server at an older version accepts the request unchanged (a test against the released verifier behaviour). | H2 | R+A |
-| C2 | `post-command-hook` | `cli/go` local outbox, resolver and delivery | - **Scope:** it fires only for the catalog's command classes with local effects. Reads fire nothing.<br>- **Signing:** events are signed by the member key with actor equal to signer, and delivered with the team certificate to client-class registrations listed through acgh.7.<br>- **Outbox:** the local outbox survives a crash. A deleted outbox loses events by design, and the docs state that client events are agent-reported. | H1, H2; acgh.7 G1-d (client-class listing) | R+A |
-| C3 | Owner-act commands | `cli/go/cmd/aw` (`aw hooks bindings`, `aw hooks activate`, `aw hooks revoke`, `aw app role designate`, `aw app role revoke`, `aw app credential recover`) | - **Before signing:** the client fetches the manifest bytes from the origin, checks the pinned digest, resolves the tool, and shows the owner the hook, tool, scopes, `reads` and target before it signs.<br>- **Signing:** acts are signed under the existing controller custody (BYOT or local).<br>- **Refusal:** a member without the controller key gets a distinct refusal.<br>- **Test:** the real path against a local AWID and server, through activation. | H3, S1 | R+A |
+| Id | Task | Status and scope | Review |
+| --- | --- | --- | --- |
+| C1 | `trace_id` minting and propagation | **Open (aweb-acgh.16.16).** In the `cli/go` team-auth request builder: one W3C trace id per command invocation, in the signed `trace_id` member of every request the command makes (core and manifest tools), never inside `operation`. The H2 `trace_id` case passes. A server at an older version accepts the request unchanged (a test against the released verifier behaviour). | R+A |
+| C2 | `post-command-hook` | **Open (aweb-acgh.16.17).** A `cli/go` local outbox, resolver and delivery. It fires only for the catalog's command classes with local effects; reads fire nothing. Events are signed by the member key with actor equal to signer, and delivered with the team certificate to client-class registrations listed through acgh.7 (aweb-acgh.17.18). The local outbox survives a crash; a deleted outbox loses events by design, and the docs state that client events are agent-reported. | R+A |
+| C3 | Owner-act commands | **Open (aweb-acgh.16.18).** `aw hooks bindings`, `aw hooks activate`, `aw hooks revoke`, `aw app role designate`, `aw app role revoke`, `aw app credential recover` in `cli/go/cmd/aw`, on the library `cli/go/awid/owneract.go`. Before signing, the client fetches the manifest bytes from the origin, checks the pinned digest, resolves the tool, and shows the owner the hook, tool, scopes, `reads` and target. It sorts and de-duplicates scopes and `reads`, which the verifier requires (d76a7d253). Acts are signed under the existing controller custody (BYOT or local); a member without the controller key gets a distinct refusal. Test: the real path against a local AWID and server, through activation. | R+A |
 
 ## Phase 5: logs (`naapp/logs`)
 
 Logs is app-local (design §C). It uses the B1 verifier, acgh.4 passkeys and
-approvals, the K kit and acgh.7's client unchanged.
+approvals, the K kit and acgh.7's client unchanged. Its package is `aweb_logs`.
 
-| Id | Task | Repo and paths | Acceptance criteria | Depends | Seat | Review |
-| --- | --- | --- | --- | --- | --- | --- |
-| L1 | App skeleton | `naapp/logs/` package, manifest v2, migrations, health, generic deploy configuration | - **Manifest:** `ingest` is declared with `invocation_contexts: ["hook"]` and registered on all five v1 hooks. There are no app-event subscriptions.<br>- **Keys:** logs' own key (receipts and checkpoints) is loaded by the decision-10 loader.<br>- **Runtime:** it runs on the shared runtime with no copied auth code. | K0; D1 C3 (aweb-acgg.9); F0 (aweb-abre); aweb-acgh.3 (B1) | aweb-expert | R |
-| L2 | Ingest admission | `naapp/logs/src/logs/ingest.py` | - **Admission order** (design §B2), each step with a distinct error: transport, own binding (acgh.7 own-bindings read; 503 when authority is unavailable), provenance (app production key; core key anchored per team through `TeamServerDirectory`; client certificate through B1 with client-class only), schema, dedup (duplicate returns the original receipt; conflict returns 409 and records a fault), then append.<br>- **Key evidence** is recorded with each event.<br>- **Client quotas:** per-member rate and byte limits for client events.<br>- **Forgery:** a forged core event from an origin not anchored through acgh.7 is refused. | K1; acgh.7 G1-c, G1-d; L1 | aweb-expert | R+A |
-| L3 | Chain, receipts, checkpoints, verify | `naapp/logs/src/logs/chain.py`, `verify.py`; docs/vectors/logs-chain-v1.json | - **Chain:** commitments, `event_hash`, gap-free `team_seq` under a head-row lock, genesis and epochs (§B3).<br>- **Signed artefacts:** `aweb.logs-receipt/1` and `aweb.logs-checkpoint/1`.<br>- **`verify`** reports intact, broken, missing, purged with its act, per-producer and per-hook seq gaps inside binding intervals, and conflicts. It also accepts receipts and checkpoints as input.<br>- **Vector negatives:** reorder, gap, altered content, forged checkpoint, and a purged stub that still verifies. | L2 | aweb-expert | R+A |
-| L4 | Owner-gated reads | `naapp/logs/src/logs/readers.py`, viewer on logs' origin | - **Designation:** readers are designated by `app-role.designate` (role `reader`) through K2. Removing the last reader with team-auth alone is refused.<br>- **Passkeys:** enrolment and sessions come from acgh.4 on logs' origin.<br>- **Viewer:** `query`, `tail`, `verify` and `export` run only in such a session. A member signature, a hosted session or an MCP identity is refused.<br>- **Delegation:** delegated `verify` returns no content, and delegated `query` does not exist (decision 5).<br>- **Self-administration:** reader, retention and erasure changes become `logs.*` chain entries signed by logs.<br>- **Surface:** a D1 surface shows no content and only a `link_out` to logs' own origin.<br>- **Copy:** the viewer marks client events as agent-reported, never as mediated fact, and states that a revoked target may see up to 60 s of further redacted activity. | L3; aweb-acgh.4; K2 | aweb-expert | R+A |
-| L5 | Retention, erasure, legal hold, export and deletion | `naapp/logs/src/logs/retention.py`, jobs | - **Acts:** `logs.retention.set`, `logs.erase` and `logs.legal-hold.*` require owner acts.<br>- **Purge:** content, salt, projections, indexes and caches are purged, the skeleton is kept, and `verify` reports the range and its act.<br>- **Default:** the hosted default is to keep with no automatic expiry (decision 16).<br>- **Restore:** a restored database reapplies purge tombstones before it serves.<br>- **Export** produces a self-verifying bundle.<br>- **Deletion** runs as D1's durable job and keeps the final checkpoint and a receipt. | L3, L4; D1 N1 (aweb-acgg.13) backup-tombstone rule | aweb-expert | R+A |
-| L6 | `aw logs` | `cli/go/cmd/aw` (`aw logs query`, `tail`, `verify`, `export`) | - **Authorization:** a device-style flow on logs' origin with the reader's passkey yields a short-lived session bound to an ephemeral CLI key.<br>- **Offline:** `aw logs verify --bundle` works offline, and the `logs-chain-v1.json` vector passes in Go. | L3, L4 | aweb-protocol-expert | R+A |
+| Id | Task | Status and scope | Review |
+| --- | --- | --- | --- |
+| L1 | App skeleton | **Built (aweb-acgh.16.19).** Manifest v2 (`naapp/logs/src/aweb_logs/aweb-app.json`) declares `ingest` with `invocation_contexts: ["hook"]`, registered on all five v1 hooks, with no app-event subscriptions. Logs' own receipt and checkpoint key is loaded by the decision-10 loader, on the shared runtime; the Dockerfile serves the `aweb_logs.app:serve` factory. | R |
+| L2 | Ingest admission | **Built (aweb-acgh.16.20)** for active registrations: `aweb_logs/ingest.py` admits in the design's §B2 order, each step with a distinct error (transport, own binding with 503 when authority is unavailable, provenance, schema, dedup, append); records key evidence with each event; enforces per-member client quotas (decision 91: 30 events and 128 KiB per minute by default, configurable); refuses a forged core event from an origin not anchored through acgh.7. **After the first release (aweb-acgh.16.32):** terminal admission and sealing. | R+A |
+| L3 | Chain, receipts, checkpoints, verify | **Built (aweb-acgh.16.21).** `aweb_logs/chain.py` and `ledger.py`: commitments, `event_hash`, gap-free `team_seq` under a head-row lock, genesis and epochs; `aweb.logs-receipt/1` and `aweb.logs-checkpoint/1`, specified in `docs/logs-chain.md`; periodic checkpoints (`checkpoint_moved_heads`). `aweb_logs/verify.py` reports intact, broken, missing, purged with its act, per-producer and per-hook seq gaps inside binding intervals, conflicts, and contradicted receipts and checkpoints. `docs/vectors/logs-chain-v1.json` carries the negatives. | R+A |
+| L4 | Owner-gated reads | **Open (aweb-acgh.16.22).** Readers and the viewer on logs' origin:<br>- **Designation:** each reader is designated by `app-role.designate` through K2 into its own role slot `logs.reader.<hex>`, a random 128-bit opaque value bound before the owner signs. Removing the last reader with team-auth alone is refused, counted across slots.<br>- **Passkeys:** enrolment and login come from B3's passkey primitive on logs' origin. The session is bound to (subject, scope) and ends when the designation is superseded or the credential revoked. The `login_options` route rate-limits per (scope, client) in the app and meters its volume per scope.<br>- **Viewer:** `query`, `tail`, `verify`, `checkpoint` (on demand) and `export` run only in such a session. A member signature, a hosted session or an MCP identity is refused.<br>- **Delegation:** decision 5: delegated `verify` returns no content, and delegated `query` does not exist. The delegation is the owner act `logs.verify.delegate` (Juan's ruling on verify delegation; the act is aweb-acgh.16.34).<br>- **Self-administration:** by the coordinator's ruling on reader self-administration, reader, retention and erasure changes are ordinary `post-governance-hook` events: logs' manifest declares the production, the owner activates it, logs signs with a separate `hook-event` kid, each change is one `event_id` through the shared producer, and the chain append joins the caller's transaction (`ledger.append_on`, on main). There is no local-only path.<br>- **Projections:** the §B4 query projections and the derived `mediation` field.<br>- **Surface:** a D1 surface shows no content and only a `link_out` to logs' own origin.<br>- **Copy:** the viewer marks client events as agent-reported, never as mediated fact, and states that a revoked target may see up to 60 s of further redacted activity. | R+A |
+| L5 | Retention, erasure, legal hold, export and deletion | **Open (aweb-acgh.16.23).** `logs.retention.set`, `logs.erase` and `logs.legal-hold.*` require owner acts (the verifier knows them on main). Purge removes content, salt, projections, indexes and caches and keeps the skeleton (`purge_act` in `001_chain.sql`); `verify` reports the range and its act. The hosted default is to keep with no automatic expiry (decision 16). A restored database reapplies purge tombstones before it serves. Export produces a self-verifying bundle. Deletion runs as D1's durable job (D1 N1, aweb-acgg.13) and keeps the final checkpoint and a receipt. | R+A |
+| L6 | `aw logs` | **In flight (aweb-acgh.16.24):** the Go offline chain verifier is on main, the command is not. On main: `cli/go/logschain`, which passes `logs-chain-v1.json`. Remaining: `aw logs query`, `tail`, `verify` and `export` in `cli/go/cmd/aw`; a device-style flow on logs' origin with the reader's passkey yields a short-lived session bound to an ephemeral CLI key; `aw logs verify --bundle` works offline. | R+A |
 
 ## Phase 6: end-to-end and security pass
 
-| Id | Task | Acceptance criteria | Depends | Seat | Review |
-| --- | --- | --- | --- | --- | --- |
-| E1 | Real-path end-to-end | - **Harness:** the Docker e2e harness runs real AWID, aweb, logs, one fixture producer naapp, and `aw`, on a disposable BYOT fixture team whose credentials are referenced by name.<br>- **Activation:** the owner activates the logs registration and the fixture production with real owner acts.<br>- **Ingest:** a core mutation from REST and from MCP appears in the chain, and `verify` reports intact.<br>- **Gating:** an audit-critical event with no eligible target is refused (also inside the pad). A narrowing act passes with no target.<br>- **Revocation:** revoking a target produces its final entry and an explained gap elsewhere.<br>- **Switch:** the target-switch order between two logs installs with distinct app ids loses nothing.<br>- **Client and forgery:** a client event is shown as agent-reported, and forged core and app events are refused.<br>- **Faults:** conflicting bytes are recorded as a fault, a drain crash causes no loss and no duplicate effect, and a purged range still verifies.<br>- **Heavy-run hold:** this runs only after the coordinator lifts the hold. | all of phases 1–5 | aweb-expert | R+A |
-| E2 | Athena security pass | - Findings on owner-act custody, provenance at ingest, egress, redaction and erasure are resolved on the implementation deltas. | E1 | (Athena) | A |
+| Id | Task | Status and scope | Review |
+| --- | --- | --- | --- |
+| E1 | Real-path end-to-end | **Open (aweb-acgh.16.25).** The Docker e2e harness, over TLS, runs real AWID, aweb, logs, one fixture producer naapp, and `aw`, on a disposable BYOT fixture team whose credentials are referenced by name. The owner activates the logs registration and the fixture production with real owner acts. A core mutation from REST and from MCP appears in the chain, and `verify` reports intact. An audit-critical event with no eligible target is refused (also inside the pad); a narrowing act passes with no target. Revoking a target stops delivery to it; its final entry and an explained gap elsewhere are after the first release (aweb-acgh.16.32). The target-switch order between two logs installs with distinct app ids loses nothing. A client event is shown as agent-reported, and forged core and app events are refused. Conflicting bytes are recorded as a fault, a drain crash causes no loss and no duplicate effect, and a purged range still verifies. It runs only after the coordinator lifts the heavy-run hold. | R+A |
+| E2 | Athena security pass | **Open (aweb-acgh.16.26).** Findings on owner-act custody, provenance at ingest, egress, redaction and erasure are resolved on the implementation deltas. | A |
 
 ## Hosted-side items (custodial deployment)
 
-Each item is stated generically here. Where a board task already carries an
-item, that task is cited. X4 and X5 are operations tasks.
+Each item is stated generically here. X1, X2, X3 and X6 are carried by
+hosted-product tasks, which hold their status. X4 and X5 are operations tasks
+on this board.
 
 | Id | Requirement | Carried by | Depends |
 | --- | --- | --- | --- |
 | X1 | Sign `aweb.owner-act/1` for a managed team only for the organization owner (never an organization admin), after a fresh interactive step-up (passkey or re-authentication). It is never signed with a stored credential, an API key or an MCP token. The signer is a narrow provisioning signer, not controller-key material loaded into every web or worker request process. The owner copy discloses that the custodian can mint owner acts (decision 1; Juan's ruling: organization owners only). **Acceptance:** for a managed team, an organization admin's gesture, a stale session without step-up, and an API or MCP credential are each refused, and no owner act is signed. | D1 L1, aweb-acgg.21, and L3, aweb-acgg.22 | H3, K2 |
 | X2 | Hosted MCP mints one `trace_id` per tool call and signs it in the team-auth payload. It never lists or calls `hook`-context tools and logs no parameters or results. | D1 L2, aweb-abzo | H2, C1 |
-| X3 | The `aweb.principal-attestation/1` custody and principal attestation (secrets design contract). It is a launch requirement, and policy that needs it refuses until it ships (decision 2). | carried by D1 L1 (aweb-acgg.21), attached by D1 L2 (aweb-abzo) | secrets-lane contract |
-| X4 | Run the hosted logs installation: its own origin and key custody, the decision-16 retention default, an evidenced backup-expiry deadline with tombstone reapplication on restore, and inbound reachability for producers. | aweb-acgh.12 | L1–L5 |
-| X5 | Core hook producer key configuration and rotation, with retired keys kept listed. Also the same-operator AWID read credential for the M3 observer, the drain worker in the deployed server, and the operator-disclosed delivery horizon. | aweb-acgh.13 | S2, S4, P1 |
+| X3 | The `aweb.principal-attestation/1` custody and principal attestation (secrets design contract). It is a launch requirement, and policy that needs it refuses until it ships (decision 2). The hosted principal attestation (HO2) is a launch gate. | carried by D1 L1 (aweb-acgg.21), attached by D1 L2 (aweb-abzo) | secrets-lane contract |
+| X4 | **Open (aweb-acgh.12).** Run the hosted logs installation: its own origin and key custody, the decision-16 retention default, an evidenced backup-expiry deadline with tombstone reapplication on restore, and inbound reachability for producers. | aweb-acgh.12 | L1–L5 |
+| X5 | **Open (aweb-acgh.13).** Core hook producer key configuration and rotation, with retired keys kept listed. Also the same-operator AWID read credential for the M3 observer, the drain worker in the deployed server, and the operator-disclosed delivery horizon. | aweb-acgh.13 | S2, S4, P1 |
 | X6 | Publish and backfill `aweb.team-server/1` records for every team whose controller key the deployment holds, before any naapp depends on discovery (decision 3). | D1 L6, aweb-acgg.31 | acgh.7 G1-a |
 
 ## Decision 94: refusal recording and shared admission backlog
 
-K4 owns `HookProducer.enqueue_refusal` and `require_admission`, which S13 reuses.
-The refusal path preserves validation, signing, transaction and delivery
-eligibility, exempting only target/backlog gating and permitting no external
-effect. No-target refusals have zero owed deliveries, with no retroactive
-delivery to a later target. S13 retains its operational/console record.
-The local admission check requires a fresh matching view and at least one
-current eligible target, counting unmaterialized backlog; it maintains no
-parallel tracker. The outbox adds an ordered migration for its admission-read
-indexes. Runtime attachment remains on the one decision-69 resolver.
-
-Focused proofs cover no target, one healthy target, a stalled primary, a
-stalled secondary next to a healthy primary, unmaterialized age, scope/pad/
-freshness, boundary equality, refusal-only validation/key checks, atomic rollback,
-recovery with stable bytes and zero retroactive delivery. Review is R+A.
+Built in K4 (`naapp-lib/src/aweb_naapp/hooks/producer.py`,
+`outbox/migrations/003_admission_backlog.sql`, 28480ac71).
+`HookProducer.enqueue_refusal` and `require_admission` are K4's, and S13
+reuses them. The refusal path preserves validation, signing, transaction and
+delivery eligibility, exempting only target/backlog gating and permitting no
+external effect. No-target refusals have zero owed deliveries, with no
+retroactive delivery to a later target. S13 retains its operational/console
+record. The local admission check requires a fresh matching view and at least
+one current eligible target, counting unmaterialized backlog; it maintains no
+parallel tracker. The outbox migration adds its admission-read indexes.
+Runtime attachment uses the one decision-69 resolver.
 
 ## Decision 92: observed backend versions
 
@@ -323,6 +362,7 @@ activate nothing: pre-S3 use refusals carry `secret_value_invalid` or
 `custody_unavailable`; after `dispatching` commits, a final reread failure is
 `not_sent`, without a refusal code. See the normative
 [observed-version contract](../hook-events.md#observed-backend-versions-decision-92).
+The catalog entry is on main.
 
 M1/M2/S13 retain implementation ownership: prove immutable reference/shape,
 monotonic version/CAS and stale-no-event behavior, complete prelocks, old approval
@@ -334,19 +374,22 @@ checks do not substitute for these producer and end-to-end release proofs.
 
 ## Cross-lane dependencies
 
-- **aweb-acgh.6:** the outbox `channel` addition (approved, not yet on main)
-  and the shared egress guard.
+- **aweb-acgh.6:** the outbox `channel` addition and the shared egress guard
+  (`aweb_naapp.egress`), both on main.
 - **aweb-acgh.7:**
-  - G1-b (keys from pinned bytes, the per-team key revoke);
-  - G1-c (`TeamServerDirectory`);
-  - G1-d (resolution endpoints, own bindings, producer keys, client-class
-    listing).
+  - G1-b: keys from pinned bytes (on main; production activation checks
+    them); the per-team key revoke, **Open (aweb-acgh.17.6)**;
+  - G1-c: `TeamServerDirectory` (`aweb_naapp.runtime.team_server`, on main);
+  - G1-d: resolution endpoints, own bindings and producer keys
+    (`server/src/aweb/routes/app_hooks.py`, on main); the member client-class
+    listing, **Open (aweb-acgh.17.18)**.
 
   G1-d itself depends on S1.
-- **The decision-10 app-key loader** (agreed between acgh.7 and the shared
-  runtime seat) must sit in a module that core can import without the runtime
-  extra, because S2 loads the core hook key with it.
-- **aweb-acgh.8:** step 1 (team-scoped registrations, `manifest_registration()`).
+- **The decision-10 app-key loader** sits in `aweb_naapp.signing_key`, which
+  core can import without the runtime extra, because S2 loads the core hook
+  key with it.
+- **aweb-acgh.8:** step 1 (team-scoped registrations, `manifest_registration()`
+  in `server/src/aweb/app_registry.py`).
 - **aweb-acgh.3 (B1)** and **aweb-acgh.4 (approvals and WebAuthn).**
 - **D1:**
   - C3, aweb-acgg.9 (manifest v2 `hooks` slot, `app_keys`, invocation
