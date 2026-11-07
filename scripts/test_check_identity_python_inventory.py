@@ -1,9 +1,10 @@
 """The primitive guard covers source boundaries, not call counts."""
 import importlib.util
 from pathlib import Path
-import subprocess
 import tempfile
 import unittest
+
+from fixture_repo import init_fixture_repo
 
 spec = importlib.util.spec_from_file_location("guard", Path(__file__).with_name("check_identity_python_inventory.py"))
 guard = importlib.util.module_from_spec(spec)
@@ -13,7 +14,7 @@ class PrimitiveGuardTests(unittest.TestCase):
     def check(self, file, source, legacy=()):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            subprocess.run(["git", "init", "-q", directory], check=True)
+            init_fixture_repo(root)
             path = root / file
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(source)

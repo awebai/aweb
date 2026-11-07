@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from fixture_repo import init_fixture_repo, run_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -40,13 +41,14 @@ def copy_checkout(destination: Path) -> None:
         ROOT / "scripts" / "pytest_tracked_collection.py",
         destination / "scripts" / "pytest_tracked_collection.py",
     )
-    subprocess.run(["git", "init", "-q"], cwd=destination, check=True)
-    subprocess.run(
+    init_fixture_repo(destination)
+    run_fixture(
         [
             "git",
             "add",
             "-f",
             "awid/tests/test_external_authority.py",
+            "awid/tests/test_external_registry.py",
             "server/tests/test_contacts_http.py",
             "server/tests/test_federation_activation_contacts.py",
             "server/tests/test_federation_activation_delivery.py",
@@ -68,7 +70,7 @@ def run_test(root: Path, pattern: str) -> subprocess.CompletedProcess[str]:
         **os.environ,
         "GOCACHE": os.environ.get("GOCACHE", "/tmp/go-build"),
     }
-    return subprocess.run(
+    return run_fixture(
         ["go", "test", "./awid", "-run", pattern, "-count=1"],
         cwd=root / "cli" / "go",
         env=environment,
@@ -79,14 +81,15 @@ def run_test(root: Path, pattern: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def run_python_test(root: Path, pattern: str) -> subprocess.CompletedProcess[str]:
+def run_python_test(
+    root: Path, pattern: str, test_file: str = "tests/test_external_authority.py"
+) -> subprocess.CompletedProcess[str]:
     environment = {
         **os.environ,
         "UV_CACHE_DIR": os.environ.get("UV_CACHE_DIR", "/tmp/uv-cache"),
-        "PYTHONPYCACHEPREFIX": os.environ.get("PYTHONPYCACHEPREFIX", "/tmp/pycache"),
     }
-    return subprocess.run(
-        ["uv", "run", "--frozen", "pytest", "-q", "tests/test_external_authority.py", "-k", pattern],
+    return run_fixture(
+        ["uv", "run", "--frozen", "pytest", "-q", test_file, "-k", pattern],
         cwd=root / "awid",
         env=environment,
         text=True,
@@ -100,9 +103,8 @@ def run_server_tests(root: Path, *nodes: str) -> subprocess.CompletedProcess[str
     environment = {
         **os.environ,
         "UV_CACHE_DIR": os.environ.get("UV_CACHE_DIR", "/tmp/uv-cache"),
-        "PYTHONPYCACHEPREFIX": os.environ.get("PYTHONPYCACHEPREFIX", "/tmp/pycache"),
     }
-    return subprocess.run(
+    return run_fixture(
         ["uv", "run", "--frozen", "pytest", "-q", *nodes],
         cwd=root / "server",
         env=environment,
@@ -148,7 +150,7 @@ def main() -> None:
         copy_checkout(checkout)
         baseline = run_test(
             checkout,
-            "TestStrictFederationOriginAndIPVectors|TestStrictGoAuthorityLookupVectors",
+            "TestStrictFederationOriginAndIPVectors|TestStrictGoAuthorityLookupVectors|TestStrictNamespaceDelegationAuthority",
         )
         if baseline.returncode != 0:
             raise SystemExit(f"authority mutation baseline failed:\n{baseline.stdout}")
@@ -158,6 +160,13 @@ def main() -> None:
         if python_baseline.returncode != 0:
             raise SystemExit(
                 f"Python authority mutation baseline failed:\n{python_baseline.stdout}"
+            )
+        delegation_baseline = run_python_test(
+            checkout, "namespace_delegation_authority", "tests/test_external_registry.py"
+        )
+        if delegation_baseline.returncode != 0:
+            raise SystemExit(
+                f"Python delegation mutation baseline failed:\n{delegation_baseline.stdout}"
             )
         activation_nodes = (
             "tests/test_federation_activation_delivery.py::test_phase_b_rejects_missing_authority_token_without_effects",
@@ -229,8 +238,8 @@ def main() -> None:
         )
         replace_exact(
             registry,
-            'if domainErr != nil || namespaceDomain != domain || namespace.ControllerDID == "" ||\n\t\t(authority.Selection == "dns" && namespace.ControllerDID != authority.ControllerDID) {',
-            'if domainErr != nil || namespaceDomain != domain || namespace.ControllerDID == "" {',
+            'if authority.Selection == "dns" && namespace.ControllerDID != authority.ControllerDID {',
+            'if false && authority.Selection == "dns" && namespace.ControllerDID != authority.ControllerDID {',
         )
         require_killed(
             run_test(checkout, "TestStrictGoAuthorityLookupVectors/dns_controller_mismatch"),
@@ -240,6 +249,46 @@ def main() -> None:
             ROOT / "cli" / "go" / "awid" / "federation_external_registry.go",
             registry,
         )
+
+        # Keep the exact-DNS refusal and delegated-witness verification distinct:
+        # accepting every parseable witness must fail even with DNS checks intact.
+        replace_exact(
+            registry,
+            "verifyIDNamespaceAuthority(domain, dnsAuthority, namespace.ControllerDID, delegation) != nil",
+            "false && dnsAuthority.Inherited",
+        )
+        for route in ("contact", "sender"):
+            marker = f"TestStrictNamespaceDelegationAuthority/wrong_parent_key/{route}"
+            require_killed(run_test(checkout, marker), marker)
+        shutil.copy2(
+            ROOT / "cli" / "go" / "awid" / "federation_external_registry.go", registry
+        )
+
+        python_registry = checkout / "awid" / "src" / "awid" / "external_registry.py"
+        original_python_registry = python_registry.read_text(encoding="utf-8")
+        replace_exact(
+            python_registry,
+            'if authority.selection == "dns" and namespace_controller != authority.controller_did:',
+            'if False and authority.selection == "dns" and namespace_controller != authority.controller_did:',
+        )
+        require_killed(
+            run_python_test(checkout, "authority_lookup_vectors and dns_controller_mismatch"),
+            "dns_controller_mismatch",
+        )
+        python_registry.write_text(original_python_registry, encoding="utf-8")
+        replace_exact(
+            python_registry,
+            "if not authority.inherited or not namespace_authority_valid(",
+            "if not authority.inherited or False and not namespace_authority_valid(",
+        )
+        require_killed(
+            run_python_test(
+                checkout, "namespace_delegation_authority and wrong_parent_key",
+                "tests/test_external_registry.py",
+            ),
+            "test_namespace_delegation_authority[wrong_parent_key-False]",
+        )
+        python_registry.write_text(original_python_registry, encoding="utf-8")
 
         vector, original_vector = replace_unique_json(
             checkout / "docs" / "vectors",
@@ -575,7 +624,7 @@ def main() -> None:
         )
 
     print(
-        "authority and activation mutation controls passed: network authority, "
+        "authority and activation mutation controls passed: network authority, delegated witnesses, "
         "Phase-A gating, identity-bound contacts, Phase-B atomicity, signed-address "
         "extraction, E2E no-downgrade, HTTP/MCP strict composition, contact-conversation "
         "binding, route integrity, outbound continuation projection, refreshed chat "

@@ -24,6 +24,7 @@ from awid.external_http import PinnedRegistryHTTP, escaped_path_component
 from awid.federation_errors import FederationAuthorityError
 from awid.log import canonical_server_origin
 from awid.did import validate_did, validate_stable_id
+from awid.id_certificates import namespace_authority_valid
 from awid.identity_log_verify import (
     IdentityCheckpoint,
     VerifiedIdentityLog,
@@ -219,7 +220,19 @@ class StrictExternalRegistry:
         if not validate_did(namespace_controller):
             raise FederationAuthorityError("sender_registry_protocol_invalid")
         if authority.selection == "dns" and namespace_controller != authority.controller_did:
-            raise FederationAuthorityError("sender_address_did_mismatch")
+            # Preserve inherited same-key namespaces without a delegation witness.
+            if not authority.inherited or not namespace_authority_valid(
+                domain,
+                {
+                    "domain": domain,
+                    "dns_name": authority.authority_name,
+                    "inherited": authority.inherited,
+                    "controller_key": authority.controller_did,
+                },
+                namespace_controller,
+                namespace.get("delegation"),
+            ):
+                raise FederationAuthorityError("sender_address_did_mismatch")
         controller_did = namespace_controller
 
         statement = authority_statement(
