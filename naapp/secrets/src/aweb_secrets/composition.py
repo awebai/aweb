@@ -57,6 +57,7 @@ from aweb_secrets.config import ServiceSettings
 from aweb_secrets.console import OwnerConsole, owner_console_router
 from aweb_secrets.console_access import ConsoleAccess, console_access_router
 from aweb_secrets.console_activity import ConsoleActivity, console_activity_router
+from aweb_secrets.console_audit_delivery import ConsoleAuditDelivery, console_audit_delivery_router
 from aweb_secrets.console_bootstrap import console_bootstrap_router
 from aweb_secrets.console_changes import ConsoleChanges, console_changes_router
 from aweb_secrets.console_forms import console_forms_router
@@ -138,6 +139,7 @@ class _Services:
     values: ConsoleValues
     use_pages: ConsoleUseApprovals
     activity: ConsoleActivity
+    audit_delivery: ConsoleAuditDelivery
     catalog: Catalog
     broker: BrokerRequests
     runs: RunDispatch
@@ -368,6 +370,11 @@ async def _compose(
             console=console, approvals=approvals, use_audit=use_audit, registration_view=use_view
         ),
         ConsoleActivity(console=console, reads=ActivityReads()),
+        ConsoleAuditDelivery(
+            console=console,
+            registrations=registrations,
+            max_backlog_age=timedelta(seconds=settings.hook_events_stalled_after_seconds),
+        ),
         Catalog(db, fence=fence),
         broker,
         runs,
@@ -531,7 +538,11 @@ def create_service(
         tool_routers=(metadata, uses, contain),
         console_routers=(
             human(lambda s: owner_console_router(s.console)),
-            human(lambda s: console_ui_router(sessions=s.console.sessions)),
+            human(
+                lambda s: console_ui_router(
+                    sessions=s.console.sessions, banner=s.audit_delivery.banner
+                )
+            ),
             human(lambda s: console_bootstrap_router()),
             human(lambda s: console_values_router(s.values)),
             human(lambda s: console_changes_router(s.changes)),
@@ -541,6 +552,7 @@ def create_service(
             human(lambda s: console_run_approvals_router(services=s.use_pages)),
             human(lambda s: console_activity_router(services=s.activity)),
             human(lambda s: console_access_router(services=ConsoleAccess(console=s.console))),
+            human(lambda s: console_audit_delivery_router(services=s.audit_delivery)),
             human(lambda s: containment_console_router(s.containment, console=s.console)),
         ),
         runner_routers=(

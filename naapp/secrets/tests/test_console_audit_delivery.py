@@ -7,8 +7,10 @@ answers, the remote receivers' answers, and real signed hook refusals.
 import asyncio
 import os
 from datetime import UTC, datetime, timedelta
+from http.cookies import SimpleCookie
 
 import pytest
+from aweb_naapp.console import COOKIE_NAME
 from aweb_naapp.hooks.producer import (
     HOOKS_CHANNEL,
     HookProducer,
@@ -25,7 +27,15 @@ from aweb_secrets.broker_audit import _actor
 from aweb_secrets.console_audit_delivery import ConsoleAuditDelivery, console_audit_delivery_router
 from aweb_secrets.owners import OWNER_ROLE, approver_scope, owner_scope
 from tests.test_change_sets import ALICE, TEAM
-from tests.test_console_access import DB_AGENT, access, clients  # noqa: F401
+from tests.test_console_access import (  # noqa: F401
+    DB_AGENT,
+    Links,
+    Page,
+    access,
+    clients,
+    owner_role_held_by,
+    view_waits_on_owner_role,
+)
 from tests.test_console_access import uses as _uses
 from tests.test_console_access import world as _world
 from tests.test_console_changes import sign_in
@@ -97,6 +107,18 @@ def audit_pages(registrations, *, newest: int = 100):
             )
         ),
     )
+
+
+def audit_banner(registrations):
+    return lambda console: (
+        ConsoleAuditDelivery(
+            console=console, registrations=registrations, max_backlog_age=BOUND
+        ).banner
+    )
+
+
+def banners(html: str) -> list[dict[str, str]]:
+    return [attrs for name, attrs in Page(html).found if name == "audit-banner"]
 
 
 def producer() -> HookProducer:
@@ -223,3 +245,96 @@ async def test_the_page_lists_only_the_newest_undelivered_records_and_counts_the
     assert shown.status_code == 200
     assert str(newer) in shown.text and str(older) not in shown.text
     assert 'data-shown="1"' in shown.text and 'data-total="2"' in shown.text
+
+
+async def test_only_the_current_owner_is_told_on_the_home_of_audit_delivery_faults(
+    access,  # noqa: F811
+):
+    db = access.world.db
+    fault = await cancelled_refusal(db)
+    registrations = Registrations({USE: (LOGS,), GOVERNANCE: (PRIMARY,)})
+    await designate(access, "finance", "finance@acme.com")
+    async with clients(
+        access, pages=audit_pages(registrations), banner=audit_banner(registrations)
+    ) as (human, _):
+        await sign_in(
+            access.world,
+            human,
+            approver_scope(INSTALLATION_ID, TEAM, "finance"),
+            "finance@acme.com",
+        )
+        approver_home = await human.get("/")
+        await sign_in(access.world, human, owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did))
+        owner_home = await human.get("/")
+        async with db.transaction() as tx:
+            await unassign(tx, ALICE, OWNER_ROLE)
+        withdrawn_home = await human.get("/")
+    assert approver_home.status_code == 200 and banners(approver_home.text) == []
+    assert owner_home.status_code == 200
+    [banner] = banners(owner_home.text)
+    assert banner["data-undelivered"] == "1" and banner["data-refused"] == ""
+    assert ("/audit-delivery", "Review audit delivery") in Links(owner_home.text).found
+    # The banner names no event or target; the page does, for the owner.
+    assert str(fault) not in owner_home.text and LOGS not in owner_home.text
+    assert banners(withdrawn_home.text) == []
+
+
+async def test_the_home_has_no_banner_while_audit_delivery_is_healthy(access):  # noqa: F811
+    registrations = Registrations({USE: (LOGS,), GOVERNANCE: (PRIMARY,)})
+    async with clients(access, banner=audit_banner(registrations)) as (human, _):
+        await sign_in(access.world, human, owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did))
+        home = await human.get("/")
+    assert home.status_code == 200 and "Secrets console" in home.text
+    assert banners(home.text) == []
+
+
+async def test_the_home_names_what_secrets_refuses_while_no_audit_target_is_available(
+    access,  # noqa: F811
+):
+    # Core lists no use-record target, so secret uses are refused.
+    registrations = Registrations({GOVERNANCE: (PRIMARY,)})
+    async with clients(access, banner=audit_banner(registrations)) as (human, _):
+        await sign_in(access.world, human, owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did))
+        home = await human.get("/")
+    [banner] = banners(home.text)
+    assert banner["data-refused"] == USE and banner["data-undelivered"] == "0"
+
+
+async def test_a_session_ending_during_the_banner_read_goes_to_sign_in(access):  # noqa: F811
+    db = access.world.db
+    registrations = Registrations({USE: (LOGS,), GOVERNANCE: (PRIMARY,)})
+    async with clients(access, banner=audit_banner(registrations)) as (human, _):
+        await sign_in(access.world, human, owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did))
+        # The session ends well inside the connections' 5 s lock timeout.
+        assert await db.fetch_value("SHOW lock_timeout") == "5s"
+        deadline = await db.fetch_value(
+            "UPDATE {{tables.console_sessions}} SET expires_at = NOW() + interval '2 seconds'"
+            " WHERE closed_at IS NULL RETURNING expires_at"
+        )
+        lock, release = await owner_role_held_by(
+            db,
+            lambda tx: tx.execute(
+                "SELECT 1 FROM {{tables.role_assignments}}"
+                " WHERE team_id=$1 AND principal_did=$2 AND role=$3 FOR UPDATE",
+                TEAM,
+                ALICE.principal_did,
+                OWNER_ROLE,
+            ),
+        )
+        home = asyncio.create_task(human.get("/"))
+        try:
+            assert await view_waits_on_owner_role(db), "the banner did not reach the owner hold"
+            assert datetime.now(UTC) < deadline, (
+                "the banner reached the hold after the session ended"
+            )
+            while datetime.now(UTC) <= deadline:
+                await asyncio.sleep(0.05)
+        finally:
+            release.set()
+            await asyncio.gather(lock, home, return_exceptions=True)
+        response = home.result()
+    assert response.status_code == 303 and response.headers["location"] == "/login"
+    cleared = SimpleCookie()
+    for header in response.headers.get_list("set-cookie"):
+        cleared.load(header)
+    assert cleared[COOKIE_NAME].value == "" and cleared[COOKIE_NAME]["max-age"] == "0"

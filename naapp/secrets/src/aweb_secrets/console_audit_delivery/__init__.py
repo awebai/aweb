@@ -118,6 +118,21 @@ class ConsoleAuditDelivery:
             hooks, tuple(reversed(undelivered.events)), undelivered.total, labels
         )
 
+    async def banner(self, current: ConsoleSession) -> str:
+        """The console home's notice of this owner's audit delivery faults.
+
+        Empty while delivery is healthy, and for any session but the current
+        owner's: the home still serves every console session. A session that
+        ends during the read goes to sign-in, as on every console page."""
+        try:
+            async with _errors(self.console, current):
+                view = await self.view(current)
+        except HTTPException as refused:
+            if refused.status_code == 401:
+                raise
+            return ""
+        return _banner(view)
+
     async def _health(
         self, tx, team_id: str, hook: str, view: RegistrationView | None
     ) -> HookHealth:
@@ -140,18 +155,40 @@ def _time(moment: datetime) -> str:
     return f'<time datetime="{moment.isoformat()}">{moment.strftime("%Y-%m-%d %H:%M")} UTC</time>'
 
 
-def _admission(hook: HookHealth) -> str:
+def _refused(hook: HookHealth) -> str:
     _, _, blocks = HOOKS[hook.hook]
-    if hook.admission == "open":
-        return f'<p class="audit-admission">{escape(blocks)} are being recorded.</p>'
     reason = (
         "no audit target is available"
         if hook.admission == "unavailable"
         else "every audit target has stalled"
     )
+    return f"{escape(blocks)} are refused: {reason}."
+
+
+def _admission(hook: HookHealth) -> str:
+    _, _, blocks = HOOKS[hook.hook]
+    if hook.admission == "open":
+        return f'<p class="audit-admission">{escape(blocks)} are being recorded.</p>'
+    return f'<p class="audit-admission"><span class="pill stop">Refused</span> {_refused(hook)}</p>'
+
+
+def _banner(view: AuditDeliveryView) -> str:
+    refused = [hook for hook in view.hooks if hook.admission != "open"]
+    if not refused and not view.undelivered_total:
+        return ""
+    lines = [_refused(hook) for hook in refused]
+    if view.undelivered_total:
+        records = "record was" if view.undelivered_total == 1 else "records were"
+        lines.append(f"{view.undelivered_total} audit {records} never delivered.")
+    hooks = " ".join(hook.hook for hook in refused)
     return (
-        f'<p class="audit-admission"><span class="pill stop">Refused</span> '
-        f"{escape(blocks)} are refused: {reason}.</p>"
+        '<link rel="stylesheet" href="/console-audit-delivery/audit.css">'
+        f'<section class="audit-banner" data-refused="{escape(hooks, quote=True)}"'
+        f' data-undelivered="{view.undelivered_total}" aria-labelledby="audit-banner-title">'
+        '<h2 id="audit-banner-title"><span class="pill stop">Needs attention</span>'
+        " Audit delivery</h2>"
+        + "".join(f"<p>{line}</p>" for line in lines)
+        + '<p><a href="/audit-delivery">Review audit delivery</a></p></section>'
     )
 
 

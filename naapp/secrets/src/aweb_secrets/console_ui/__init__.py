@@ -8,6 +8,7 @@ The shell is the shared one (aweb_naapp.console.browser) in secrets' brand:
 its name, copy, stylesheet and tab CSRF storage key aweb.secrets.console.csrf.
 """
 
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from aweb_naapp.console import ConsoleSession, ConsoleSessions
@@ -40,11 +41,16 @@ console_page = SHELL.console_page
 recovery_page = SHELL.recovery_page
 _login_redirect = login_redirect
 
-HOME = (
+Banner = Callable[[ConsoleSession], Awaitable[str]]
+"""What the home tells this session before its navigation; empty when nothing."""
+
+_HEADING = (
     '<div class="heading"><h1>Secrets console</h1>'
     '<form id="logout" action="/logout" method="post">'
     '<button type="submit" class="secondary">Sign out</button></form></div>'
     "<p>Manage your team’s secrets and the people and agents who can use them.</p>"
+)
+_NAVIGATION = (
     '<nav aria-label="Console"><a href="/secrets/new">Create a secret</a>'
     '<a href="/grants/new">Grant access to a role</a>'
     '<a href="/approvals">Review approvals</a>'
@@ -53,11 +59,14 @@ HOME = (
 )
 
 
-async def home(session: ConsoleSession) -> str:
-    """The console's home for ``session``: its navigation."""
-    return HOME
+def console_ui_router(*, sessions: ConsoleSessions, banner: Banner) -> APIRouter:
+    """GET shell/login and static assets; mount only on the human origin.
 
+    The home shows ``banner``'s HTML for the session between its heading and
+    its navigation; ``banner`` escapes what it inserts, and a 401 it raises
+    sends the session to sign-in."""
 
-def console_ui_router(*, sessions: ConsoleSessions) -> APIRouter:
-    """GET shell/login and static assets; mount only on the human origin."""
+    async def home(session: ConsoleSession) -> str:
+        return _HEADING + await banner(session) + _NAVIGATION
+
     return SHELL.router(sessions=sessions, home_title="Console", home=home)

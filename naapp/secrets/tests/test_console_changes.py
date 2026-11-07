@@ -66,8 +66,9 @@ async def application(
     human_app = FastAPI()
     human_app.include_router(owner_console_router(console))
     from aweb_secrets.console_ui import console_ui_router
+    from tests.console_home import no_banner
 
-    human_app.include_router(console_ui_router(sessions=console.sessions))
+    human_app.include_router(console_ui_router(sessions=console.sessions, banner=no_banner))
     human_app.include_router(
         console_values_router(ConsoleValues(console=console, custody=w.custody))
     )

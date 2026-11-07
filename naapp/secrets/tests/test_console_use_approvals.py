@@ -18,6 +18,7 @@ from aweb_secrets.console_use_approvals import (
     console_run_approvals_router,
     console_use_approvals_router,
 )
+from tests.console_home import no_banner
 from tests.console_use_world import audit_for, mint
 from tests.test_change_sets import ORIGIN, TEAM, world  # noqa: F401
 from tests.test_console import API
@@ -51,7 +52,7 @@ async def application(uses, *, origin=ORIGIN, agent_origin=API, registration_vie
     )
     app = FastAPI()
     app.include_router(owner_console_router(console))
-    app.include_router(console_ui_router(sessions=console.sessions))
+    app.include_router(console_ui_router(sessions=console.sessions, banner=no_banner))
     from aweb_secrets.use_audit import UseApprovalAudit
 
     # Read-only legacy run fixtures have no audit association. Decisions on

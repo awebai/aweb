@@ -14,6 +14,7 @@ from aweb_secrets.console import owner_console_router
 from aweb_secrets.console_activity import ConsoleActivity, console_activity_router
 from aweb_secrets.console_reconciliation import ConsoleReconciliation, console_reconciliation_router
 from aweb_secrets.console_ui import console_ui_router
+from tests.console_home import no_banner
 from tests.reconciliation_world import service_world
 from tests.test_broker_audit import prepared
 from tests.test_broker_fence import authority
@@ -33,7 +34,7 @@ async def application(uses, *, origin=ORIGIN, agent_origin=API):
     )
     human = FastAPI()
     human.include_router(owner_console_router(console))
-    human.include_router(console_ui_router(sessions=console.sessions))
+    human.include_router(console_ui_router(sessions=console.sessions, banner=no_banner))
     human.include_router(
         console_activity_router(services=ConsoleActivity(console=console, reads=ActivityReads()))
     )

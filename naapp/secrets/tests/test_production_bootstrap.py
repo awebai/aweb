@@ -4,7 +4,7 @@ import asyncio
 import base64
 import json
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
@@ -208,6 +208,46 @@ async def test_the_production_console_serves_the_access_view_only_to_its_current
     withdrawn = await client.get(human + "/access")
     assert withdrawn.status_code in (303, 401, 403)
     assert 'id="access-empty"' not in withdrawn.text
+
+
+async def test_the_production_console_serves_audit_delivery_only_to_its_current_owner(root):
+    service, client, configured, member, installed, smtp, transport, dns = root
+    human = configured.console_origin
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(service)) as stranger:
+        signed_out = await stranger.get(human + "/audit-delivery")
+        assert signed_out.status_code == 303 and signed_out.headers["location"] == "/login"
+    assert (await client.get(AUDIENCE + "/audit-delivery")).status_code == 404
+    scope, body, _ = await signed_in_owner(root)
+    shown = await client.get(human + "/audit-delivery")
+    assert shown.status_code == 200
+    page = shown.text
+    # Core's governance registration reaches the page, and the enrolment's
+    # change records are owed to it but not yet stalled.
+    assert 'data-hook="post-governance-hook" data-admission="open"' in page
+    assert 'data-stalled="false"' in page and 'data-stalled="true"' not in page
+    assert 'data-total="0"' in page
+    css = await client.get(human + "/console-audit-delivery/audit.css")
+    assert css.status_code == 200
+    assert "audit-banner" not in (await client.get(human + "/")).text
+    # Once the enrolment's change records wait past the configured bound, the
+    # page and the owner's home both say widening changes are refused.
+    db = service.runtime.db()
+    bound = timedelta(seconds=configured.hook_events_stalled_after_seconds)
+    await db.execute(
+        "UPDATE {{tables.outbox_events}} SET created_at = created_at - $1::interval",
+        2 * bound,
+    )
+    stalled = (await client.get(human + "/audit-delivery")).text
+    assert 'data-hook="post-governance-hook" data-admission="refused"' in stalled
+    home = (await client.get(human + "/")).text
+    assert 'data-refused="post-governance-hook" data-undelivered="0"' in home
+    async with service.runtime.db().transaction() as tx:
+        await unassign(
+            tx, PrincipalKey(team_id=member.team_id, principal_did=body["principal"]), OWNER_ROLE
+        )
+    withdrawn = await client.get(human + "/audit-delivery")
+    assert withdrawn.status_code in (303, 401, 403)
+    assert "data-hook=" not in withdrawn.text
 
 
 @pytest.mark.parametrize("fault", ["wrong_team", "wrong_installation", "unavailable"])
