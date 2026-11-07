@@ -2,7 +2,7 @@
 
 import asyncio
 import hashlib
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -24,7 +24,7 @@ from aweb_naapp.runtime.team_auth import Principal, record_observed_principal
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
 from awid.did import did_from_public_key
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from nacl.signing import SigningKey
 from pgdbm import AsyncMigrationManager
 from pgdbm.core import TransactionManager
@@ -171,7 +171,14 @@ async def access(uses: Uses) -> Uses:
     return uses
 
 
-async def application(context: Uses, *, origin: str = ORIGIN, agent_origin: str = API):
+async def application(
+    context: Uses,
+    *,
+    origin: str = ORIGIN,
+    agent_origin: str = API,
+    pages: Callable[[OwnerConsole], Sequence[APIRouter]] = lambda console: (),
+):
+    """The owner console's access and narrowing pages, plus any ``pages`` on the same console."""
     w = context.world
     await apply_console_migrations(w.db)
 
@@ -194,6 +201,8 @@ async def application(context: Uses, *, origin: str = ORIGIN, agent_origin: str 
     app.include_router(console_ui_router(sessions=console.sessions))
     app.include_router(console_access_router(services=ConsoleAccess(console=console)))
     app.include_router(containment_console_router(await service(context), console=console))
+    for router in pages(console):
+        app.include_router(router)
     return split_origins(FastAPI(), app, human_origin=origin, agent_origin=agent_origin)
 
 
