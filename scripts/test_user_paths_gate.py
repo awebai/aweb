@@ -6,7 +6,7 @@ import tempfile
 import unittest
 import importlib.util
 
-from fixture_repo import init_fixture_repo
+from fixture_repo import fixture_env, init_fixture_repo, run_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('user_paths_result', ROOT / 'scripts/e2e/user_paths_result.py')
@@ -49,7 +49,7 @@ class UserPathsAdmission(unittest.TestCase):
             env = {key: value for key, value in os.environ.items()
                    if not key.startswith(('USER_PATHS_', 'CANDIDATE_GATE_IMAGE'))}
             env.update(USER_PATHS_EVIDENCE=str(root / 'evidence'), AWEB_DOCKER_BIND_ROOT=str(bind))
-            result = subprocess.run(['python3', str(ROOT / 'scripts/e2e/user_paths_stack.py')],
+            result = run_fixture(['python3', str(ROOT / 'scripts/e2e/user_paths_stack.py')],
                                     env=env, capture_output=True, text=True, timeout=10)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('infrastructure prerequisite failed; no pull or retry attempted', result.stderr)
@@ -102,7 +102,7 @@ class UserPathsAdmission(unittest.TestCase):
             make = root / 'make'
             make.write_text('#!/bin/bash\nprintf "%s\\n" "$1" >> "$CALLS"\n[[ "$1" != e2e-user-paths ]] || exit 86\n')
             make.chmod(0o755)
-            result = subprocess.run(['bash', str(ROOT / 'scripts/candidate-suite.sh'), 'checks user-paths unit'],
+            result = run_fixture(['bash', str(ROOT / 'scripts/candidate-suite.sh'), 'checks user-paths unit'],
                                     env=dict(os.environ, PATH=f'{root}:{os.environ["PATH"]}',
                                              CALLS=str(root / 'calls'), CANDIDATE_LOG_DIR=str(root)),
                                     capture_output=True, text=True)
@@ -118,7 +118,7 @@ class UserPathsAdmission(unittest.TestCase):
             make = root / 'make'
             make.write_text('#!/bin/bash\nmkdir -p "$CANDIDATE_LOG_DIR/user-paths"\nprintf "%s\\n" "incomplete: human paths not covered" > "$CANDIDATE_LOG_DIR/user-paths/coverage-summary.txt"\n')
             make.chmod(0o755)
-            result = subprocess.run(['bash', str(ROOT / 'scripts/candidate-suite.sh'), 'user-paths'],
+            result = run_fixture(['bash', str(ROOT / 'scripts/candidate-suite.sh'), 'user-paths'],
                                     env=dict(os.environ, PATH=f'{root}:{os.environ["PATH"]}', CANDIDATE_LOG_DIR=str(root)),
                                     capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -175,7 +175,7 @@ e2e-user-paths:
 \t@python3 scripts/coverage_fixture.py
 '''.lstrip())
                 def git(*args):
-                    return subprocess.run(['git', '-C', str(repo), *args], check=True, capture_output=True, text=True).stdout.strip()
+                    return run_fixture(['git', '-C', str(repo), *args], check=True, capture_output=True, text=True).stdout.strip()
                 init_fixture_repo(repo)
                 git('config', 'user.name', 'entrypoint test')
                 git('config', 'user.email', 'gate@example.test')
@@ -184,7 +184,7 @@ e2e-user-paths:
                 git('remote', 'add', 'origin', str(repo))
                 blueprints = repo / 'naapp/library/test-vectors/blueprints/team'
                 self.assertEqual(subprocess.check_output(
-                    ['git', '-C', str(blueprints), 'rev-parse', '--show-toplevel'], text=True).strip(),
+                    ['git', '-C', str(blueprints), 'rev-parse', '--show-toplevel'], text=True, env=fixture_env()).strip(),
                     str(repo.resolve()))
                 # Redirect only the registry transport to owned HTTP; run the real
                 # freeze implementation. Every other Python command is unchanged.
@@ -235,7 +235,7 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                 for path in commands.iterdir():
                     path.chmod(0o755)
                 env = {k: v for k,v in os.environ.items() if not k.startswith(
-                    ('AWEB_', 'CANDIDATE_', 'GATE_', 'LIBRARY_E2E_', 'USER_PATHS_', 'PYTHON'))}
+                    ('AWEB_', 'CANDIDATE_', 'GATE_', 'LIBRARY_E2E_', 'USER_PATHS_'))}
                 (root / 'home').mkdir()
                 env.pop('OATS_INSTANCE', None)
                 env.update(PATH=f'{commands}:{env["PATH"]}', AWEB_GATE_LEDGER=str(root / 'ledger.tsv'),
@@ -246,7 +246,7 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                     settings = dict(env)
                     if stages is not None:
                         settings['AWEB_CANDIDATE_STAGES'] = stages
-                    result = subprocess.run(['bash','scripts/candidate-docker-gate.sh'], cwd=repo,
+                    result = run_fixture(['bash','scripts/candidate-docker-gate.sh'], cwd=repo,
                         env=settings, capture_output=True, text=True, timeout=30)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     return result.stdout

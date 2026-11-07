@@ -244,3 +244,55 @@ def test_request_claim_comparison_is_not_stored_in_fetched_evidence() -> None:
         current_did_key="did:key:correct",
         delivery_origin="https://aweb.example",
     ) is evidence
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case,accepted", [
+    ("delegated", True), ("exact", True), ("inherited_same_key", True),
+    ("missing", False), ("wrong_parent_key", False), ("wrong_child_key", False),
+    ("wrong_ancestor", False), ("non_ancestor", False), ("exact_mismatch", False),
+])
+async def test_namespace_delegation_authority(case, accepted):
+    vector, _ = _identity()
+    parent = vector["mapping"]["initial_did_key"]
+    child = vector["mapping"]["rotated_did_key"]
+    namespace = {"domain": "alpha.example.com", "controller_did": child,
+                 "delegation": {"parent_domain": "example.com",
+                                "parent_controller_key": parent, "controller_key": child}}
+    exact = case in {"exact", "exact_mismatch"}
+    if case == "inherited_same_key":
+        namespace = {"domain": "alpha.example.com", "controller_did": parent}
+    elif case == "missing":
+        namespace.pop("delegation")
+    elif case == "wrong_parent_key":
+        namespace["delegation"]["parent_controller_key"] = child
+    elif case == "wrong_child_key":
+        namespace["delegation"]["controller_key"] = parent
+    elif case in {"wrong_ancestor", "non_ancestor"}:
+        namespace["delegation"]["parent_domain"] = "com" if case == "wrong_ancestor" else "other.com"
+
+    class DelegationDNS:
+        async def lookup_txt(self, name):
+            if name == "_awid.alpha.example.com" and not exact:
+                return DNSLookup("nodata")
+            assert name == ("_awid.alpha.example.com" if exact else "_awid.example.com")
+            key = child if case == "exact" else parent
+            return DNSLookup("record", (f"awid=v1; controller={key}; registry=https://registry-a.example;",))
+
+    objects = responses()
+    objects["/v1/namespaces/alpha.example.com"] = namespace
+    http = HTTP(objects)
+    resolver = StrictExternalRegistry(txt_resolver=DelegationDNS(), host_resolver=Hosts(), http_factory=lambda *_: http)
+    try:
+        if not accepted:
+            with pytest.raises(FederationAuthorityError) as caught:
+                await resolver.fetch_evidence("alpha.example.com/Alice", authority_generation=1)
+            assert caught.value.reason == "sender_address_did_mismatch"
+            assert [path for path, _ in http.paths] == ["/v1/namespaces/alpha.example.com"]
+        else:
+            evidence = await resolver.fetch_evidence("alpha.example.com/Alice", authority_generation=1)
+            assert evidence.controller_did == namespace["controller_did"]
+            assert evidence.inherited is (not exact)
+            assert evidence.did_aw == vector["mapping"]["did_aw"]
+    finally:
+        await resolver.aclose()
