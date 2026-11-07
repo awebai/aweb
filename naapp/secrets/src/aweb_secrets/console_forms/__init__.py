@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 
 from aweb_secrets.console_changes import ConsoleChanges, _errors
+from aweb_secrets.console_forms.grants import grant_forms_router
 from aweb_secrets.console_ui import _login_redirect, _page, console_page
 from aweb_secrets.operation import CAPTURE_FIELDS
 from aweb_secrets.secret import KINDS, mint_secret_id
@@ -131,6 +132,7 @@ def console_forms_router(*, changes: ConsoleChanges) -> APIRouter:
     The forms use only the shared POST and WebAuthn assertion helpers.
     """
     router = APIRouter(route_class=ConsoleRoute)
+    router.include_router(grant_forms_router(changes=changes))
 
     async def session(request: Request):
         return await changes.console.sessions.current(request)

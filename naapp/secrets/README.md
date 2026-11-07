@@ -324,6 +324,20 @@ data, retries no mutation automatically, and cannot activate a binding without
 fresh approval and confirmation. The form's successful external SDK path is
 part of the real-root/HO6 journey; local refusal tests do not replace that proof.
 
+`GET /grants/new` configures HTTP access to an existing secret for an owner-defined
+role. The form collects a fixed HTTPS URL, method, operation name, JSON response
+fields, side-effect declaration, response limit, rate limit and approval choice.
+It uses the toolkit's shared form controls. Query parameters, wildcards and
+request bodies are outside this form; no credential values are entered.
+`POST /installations/{installation_id}/grants/drafts` requires the current owner
+session and tab CSRF. It resolves the secret within that installation and team,
+derives operation/policy pins with the existing domain models, then drafts the
+destination, operation, policy and role grant together through `ConsoleChanges`.
+The draft has no effect before the normal fresh APPROVE/confirm path. The owner
+remains the policy's approver when the secret itself requires approval, even if
+the grant adds no extra approval requirement. Role membership and runner grants
+are separate configuration.
+
 `GET /approvals#token=<locator>` accepts the personal email fragment. With no
 session, the public read-only `POST /approvals/sign-in` accepts exactly `{token}`
 and returns only that link candidate's opaque sign-in scope. This neither
