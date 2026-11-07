@@ -178,9 +178,9 @@ class ConsoleShell:
     ) -> APIRouter:
         """``GET /`` (the session's home), ``GET /login`` and the shell's assets.
 
-        ``home`` returns the trusted, developer-authored HTML of the session's
-        home; it does its own reads for that session, and a 401 it raises is a
-        redirect to sign-in like S4's own.
+        ``home`` returns the HTML of the session's home. It does its own reads
+        for that session and escapes every value it inserts. A 401 it raises
+        is a redirect to sign-in like S4's own.
 
         Login uses the existing ``/login/options`` and ``/login`` ceremonies.
         The CSRF token lives only in the tab's sessionStorage under the
