@@ -192,21 +192,65 @@ def _grant_access(candidate: access_reads.GrantAccessCandidate) -> GrantAccess:
     )
 
 
+async def owner_installation(
+    console: OwnerConsole, current: ConsoleSession
+) -> tuple[str, AdmittedInstallation]:
+    """The installation this console session's owner scope belongs to, admitted."""
+    installation_id = await console.db.fetch_value(
+        "SELECT installation_id FROM {{tables.owner_principals}} WHERE scope=$1", current.scope
+    )
+    if installation_id is None:
+        raise HTTPException(403, "owner_required")
+    return installation_id, await console.installation(installation_id)
+
+
+async def hold_owner(
+    console: OwnerConsole,
+    tx: TransactionManager,
+    current: ConsoleSession,
+    admitted: AdmittedInstallation,
+    installation_id: str,
+) -> None:
+    """Hold the owner's authority in ``tx`` before any owner-scoped read:
+    F6, then OWNER, then the exact LOGIN credential, then the S4 session row."""
+    await console.fence.check(tx, admitted)
+    owner = await console.directory.owner_of(tx, current.scope)
+    if (
+        owner is None
+        or owner.team_id != admitted.team_id
+        or admitted.installation_id != installation_id
+        or current.scope != owner_scope(installation_id, admitted.team_id, owner.principal_did)
+        or not await hold_role(tx, owner, OWNER_ROLE)
+    ):
+        raise HTTPException(403, "owner_required")
+    if not await console.passkeys.login_evidence_is_current(
+        current.scope, current.subject, current.evidence_ref, tx=tx
+    ):
+        raise HTTPException(401, "console_session_required")
+    row = await tx.fetch_one(
+        "SELECT scope,subject,evidence_ref,expires_at,closed_at"
+        " FROM {{tables.console_sessions}} WHERE token_sha256=$1 FOR SHARE",
+        current.token_sha256,
+    )
+    if (
+        row is None
+        or row["closed_at"] is not None
+        or (row["scope"], row["subject"], row["evidence_ref"], row["expires_at"])
+        != (current.scope, current.subject, current.evidence_ref, current.expires_at)
+    ):
+        raise HTTPException(401, "console_session_required")
+
+
 class ConsoleAccess:
     def __init__(self, *, console: OwnerConsole) -> None:
         self.console = console
 
     async def view(self, current: ConsoleSession, *, secret_ref: str | None = None) -> AccessView:
-        installation_id = await self.console.db.fetch_value(
-            "SELECT installation_id FROM {{tables.owner_principals}} WHERE scope=$1", current.scope
-        )
-        if installation_id is None:
-            raise HTTPException(403, "owner_required")
-        admitted = await self.console.installation(installation_id)
+        installation_id, admitted = await owner_installation(self.console, current)
         try:
             async with self.console.db.transaction() as tx:
                 await tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
-                await self._hold(tx, current, admitted, installation_id)
+                await hold_owner(self.console, tx, current, admitted, installation_id)
                 secret_id = None
                 if secret_ref is not None:
                     stored = await records.secret_by_ref(
@@ -225,41 +269,6 @@ class ConsoleAccess:
             # A narrowing committed after this snapshot. A fresh request reads it.
             raise HTTPException(409, "access_changed", headers={"Retry-After": "0"}) from None
         return AccessView(installation_id, admitted.team_id, revision, secret_ref, agents)
-
-    async def _hold(
-        self,
-        tx: TransactionManager,
-        current: ConsoleSession,
-        admitted: AdmittedInstallation,
-        installation_id: str,
-    ) -> None:
-        """F6, then OWNER, then the exact LOGIN credential, then the S4 session row."""
-        await self.console.fence.check(tx, admitted)
-        owner = await self.console.directory.owner_of(tx, current.scope)
-        if (
-            owner is None
-            or owner.team_id != admitted.team_id
-            or admitted.installation_id != installation_id
-            or current.scope != owner_scope(installation_id, admitted.team_id, owner.principal_did)
-            or not await hold_role(tx, owner, OWNER_ROLE)
-        ):
-            raise HTTPException(403, "owner_required")
-        if not await self.console.passkeys.login_evidence_is_current(
-            current.scope, current.subject, current.evidence_ref, tx=tx
-        ):
-            raise HTTPException(401, "console_session_required")
-        row = await tx.fetch_one(
-            "SELECT scope,subject,evidence_ref,expires_at,closed_at"
-            " FROM {{tables.console_sessions}} WHERE token_sha256=$1 FOR SHARE",
-            current.token_sha256,
-        )
-        if (
-            row is None
-            or row["closed_at"] is not None
-            or (row["scope"], row["subject"], row["evidence_ref"], row["expires_at"])
-            != (current.scope, current.subject, current.evidence_ref, current.expires_at)
-        ):
-            raise HTTPException(401, "console_session_required")
 
     async def _agents(
         self, tx: TransactionManager, admitted: AdmittedInstallation, secret_id: str | None

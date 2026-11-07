@@ -2,6 +2,7 @@
 
 import asyncio
 import socket
+from contextlib import asynccontextmanager
 
 import pytest
 import uvicorn
@@ -46,8 +47,9 @@ def apart(a, b, gap=4):
     )
 
 
-@pytest.fixture
-async def service(world):
+@asynccontextmanager
+async def serving(world, *, pages=lambda console: ()):
+    """The seeded owner console on a real local port, with any extra ``pages``."""
     await apply_idempotency_migrations(world.db)
     await apply_ratelimit_migrations(world.db)
     clock = Clock()
@@ -67,7 +69,9 @@ async def service(world):
     port = sock.getsockname()[1]
     origin = f"http://localhost:{port}"
     world.passkeys.rp = RelyingParty(origin=origin, name="Secrets")
-    app = await application(context, origin=origin, agent_origin=f"http://127.0.0.1:{port}")
+    app = await application(
+        context, origin=origin, agent_origin=f"http://127.0.0.1:{port}", pages=pages
+    )
     server = uvicorn.Server(uvicorn.Config(app, log_level="warning", lifespan="off"))
     task = asyncio.create_task(server.serve(sockets=[sock]))
     try:
@@ -81,6 +85,12 @@ async def service(world):
         server.should_exit = True
         await asyncio.wait_for(task, 10)
         sock.close()
+
+
+@pytest.fixture
+async def service(world):
+    async with serving(world) as served:
+        yield served
 
 
 @pytest.mark.parametrize("width", [375, 1440])

@@ -17,6 +17,7 @@ from aweb_naapp.outbox import (
     Acked,
     Cancelled,
     Conflict,
+    EndedDelivery,
     OutboxConflict,
     OutboxEvent,
     Permanent,
@@ -24,6 +25,8 @@ from aweb_naapp.outbox import (
     RetryPolicy,
     StoredEvent,
     Target,
+    UndeliveredEvent,
+    UndeliveredFaults,
     acknowledge_dead_letters,
     apply_outbox_migrations,
     cancel,
@@ -34,6 +37,7 @@ from aweb_naapp.outbox import (
     next_sequence,
     outbox_status,
     redrive,
+    undelivered_critical_events,
 )
 
 _CHILD = Path(__file__).with_name("drain_child.py")
@@ -484,6 +488,73 @@ async def test_a_critical_event_with_no_surviving_delivery_is_a_fault(db) -> Non
         [cancelled_out.event_id, rejected.event_id, no_targets.event_id]
     )
     assert status.targets["a"].dead_letter == 1
+
+
+async def test_each_fault_names_its_team_and_how_every_delivery_ended(db) -> None:
+    both_ended, acknowledged, other_team, other_channel = (
+        _event(b"1", critical=True),
+        _event(b"2", critical=True),
+        _event(b"3", critical=True, team_id="other:example.com"),
+        _event(b"4", critical=True, channel="hooks"),
+    )
+    policy = RetryPolicy(stalled_after=timedelta(hours=1), rejected_after_attempts=1)
+    answers = {
+        (b"1", "a"): Cancelled("binding_revoked"),
+        (b"1", "b"): Permanent("schema_rejected"),
+        (b"2", "a"): Permanent("schema_rejected"),
+        (b"3", "a"): Cancelled("binding_revoked"),
+        (b"4", "h"): Cancelled("binding_revoked"),
+    }
+
+    class ByEvent(Scripted):
+        async def deliver(self, event: StoredEvent, target: Target):
+            return answers[(event.payload, target.id)]
+
+    async def resolver(event: StoredEvent):
+        if event.channel == "hooks":
+            return [Target("h")]
+        return [Target("a"), Target("b")] if event.payload == b"1" else [Target("a")]
+
+    async with db.transaction() as tx:
+        for event in (both_ended, acknowledged, other_team, other_channel):
+            await enqueue(tx, event)
+    for channel in ("default", "hooks"):
+        await drain(db, channel=channel, resolver=resolver, transport=ByEvent({}), policy=policy)
+    assert await acknowledge_dead_letters(db, "a", [acknowledged.event_id]) == [
+        acknowledged.event_id
+    ]
+
+    async with db.transaction() as tx:
+        faults = await undelivered_critical_events(tx, channel="default", team_id=_TEAM)
+        newest = await undelivered_critical_events(tx, channel="default", team_id=_TEAM, newest=1)
+    expected = (
+        UndeliveredEvent(
+            event_id=both_ended.event_id,
+            team_id=_TEAM,
+            kind=both_ended.kind,
+            occurred_at=both_ended.occurred_at,
+            deliveries=(
+                EndedDelivery(target_id="a", state="cancelled", acknowledged=False),
+                EndedDelivery(target_id="b", state="rejected", acknowledged=False),
+            ),
+        ),
+        UndeliveredEvent(
+            event_id=acknowledged.event_id,
+            team_id=_TEAM,
+            kind=acknowledged.kind,
+            occurred_at=acknowledged.occurred_at,
+            deliveries=(EndedDelivery(target_id="a", state="rejected", acknowledged=True),),
+        ),
+    )
+    assert faults == UndeliveredFaults(events=expected, total=2)
+    # A bounded read keeps the newest, in enqueue order, and still counts them all.
+    assert newest == UndeliveredFaults(events=expected[1:], total=2)
+    # The operator status counts the same faults, for every team.
+    assert (await outbox_status(db, "default")).faults == [
+        both_ended.event_id,
+        acknowledged.event_id,
+        other_team.event_id,
+    ]
 
 
 async def test_nothing_is_lost_or_duplicated_when_a_drain_is_killed_mid_send(
