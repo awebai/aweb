@@ -57,6 +57,23 @@ READER_SLOT_TOOL = {
     "body": {"mode": "json"},
     "invocation_contexts": ["agent"],
 }
+REMOVE_READER_TOOL = {
+    "name": "remove-reader",
+    "description": "Remove a reader of the team's log; never the last one.",
+    "method": "POST",
+    "path": "/v1/reader-removals",
+    "input_schema": {
+        "type": "object",
+        "properties": {"scope": {"type": "string"}},
+        "required": ["scope"],
+        "additionalProperties": False,
+    },
+    "params": [{"name": "scope", "in": "body"}],
+    "scopes": ["logs.readers"],
+    "mutation": True,
+    "body": {"mode": "json"},
+    "invocation_contexts": ["agent"],
+}
 
 
 class Installations:
@@ -306,3 +323,24 @@ async def test_slots_are_rate_limited_per_member(db, registry: Registry, tmp_pat
         assert refused.status_code == 429
         assert int(refused.headers["Retry-After"]) >= 1
         assert await logs_db.fetch_value("SELECT count(*) FROM {{tables.readers}}") == SLOT_LIMIT
+
+
+async def test_issuing_a_slot_sweeps_expired_pending_slots(
+    db, registry: Registry, tmp_path: Path
+) -> None:
+    member = await _member(registry)
+    async with running(db, registry, tmp_path, scopes=frozenset({"logs.readers"})) as (
+        client,
+        logs_db,
+    ):
+        first = (await _post(client, member, {"contact_sha256": CONTACT_SHA256})).json()
+        await logs_db.execute(
+            "UPDATE {{tables.readers}} SET expires_at = NOW() - INTERVAL '1 second'"
+            " WHERE scope = $1",
+            first["scope"],
+        )
+        second = (await _post(client, member, {"contact_sha256": CONTACT_SHA256})).json()
+        scopes = [
+            row["scope"] for row in await logs_db.fetch_all("SELECT scope FROM {{tables.readers}}")
+        ]
+        assert scopes == [second["scope"]]

@@ -39,9 +39,10 @@ from aweb_logs.read_routes import (
     ReaderReads,
     reader_governance_router,
     reader_read_router,
+    reader_removal_router,
     reader_slot_router,
 )
-from aweb_logs.readers import ReaderDesignations, ReaderDirectory
+from aweb_logs.readers import ReaderDesignations, ReaderDirectory, ReaderRemovals
 
 GOVERNANCE_HOOK = "post-governance-hook"
 CREDENTIAL_AUDIT_MODULE = "aweb_logs_credential_audit"
@@ -65,6 +66,7 @@ class ReaderService:
     ) -> None:
         self.directory = directory
         self.fence = fence
+        self.removals = ReaderRemovals(directory, fence=fence, passkeys=passkeys, recorder=recorder)
         router = APIRouter()
         router.include_router(console_login_router(sessions=sessions, limiter=limiter))
         router.include_router(credential_router(passkeys=passkeys, recorder=recorder))
@@ -79,7 +81,12 @@ class ReaderService:
 
     def agent_router(self, authorized: Callable[..., Awaitable[Authorization]]) -> APIRouter:
         """The reader tools of the agent origin, admitted by ``authorized``."""
-        return reader_slot_router(self.directory, authorized=authorized, fence=self.fence)
+        router = APIRouter()
+        router.include_router(
+            reader_slot_router(self.directory, authorized=authorized, fence=self.fence)
+        )
+        router.include_router(reader_removal_router(self.removals, authorized=authorized))
+        return router
 
 
 async def reader_service(

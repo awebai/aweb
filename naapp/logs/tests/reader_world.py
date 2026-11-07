@@ -6,7 +6,7 @@ from __future__ import annotations
 import base64
 import os
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -33,7 +33,7 @@ from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
 from aweb_logs import MIGRATIONS_MODULE, MIGRATIONS_PATH
 from aweb_logs.ledger import LogsSigner
-from aweb_logs.readers import ReaderDesignations, ReaderDirectory
+from aweb_logs.readers import ReaderDesignations, ReaderDirectory, ReaderRemovals
 
 LOGS = "https://logs.example.test"
 
@@ -102,6 +102,10 @@ def governance_registration() -> RegistrationView:
     )
 
 
+async def _unblocked() -> None:
+    return None
+
+
 @dataclass
 class World:
     db: AsyncDatabaseManager
@@ -110,10 +114,15 @@ class World:
     directory: ReaderDirectory
     inbox: Inbox
     registered: list[bool]
+    grant: Grant
     designations: ReaderDesignations = field(init=False)
+    removals: ReaderRemovals = field(init=False)
     recorder: CredentialAudit = field(init=False)
     passkeys: Passkeys = field(init=False)
     devices: dict[str, SoftAuthenticator] = field(default_factory=dict)
+    # Awaited inside each governance transaction just before logs appends its
+    # own event: a test holds one change open here while another runs.
+    before_append: Callable[[], Awaitable[None]] = _unblocked
 
 
 @pytest.fixture(name="world")
@@ -129,7 +138,8 @@ async def world_fixture(test_db_factory) -> AsyncIterator[World]:
     await AsyncMigrationManager(
         db, migrations_path=str(MIGRATIONS_PATH), module_name=MIGRATIONS_MODULE
     ).apply_pending_migrations()
-    fence = InstallationFence(db, app_id=APP_ID, grants=Installations())
+    installations = Installations()
+    fence = InstallationFence(db, app_id=APP_ID, grants=installations)
     producer = HookProducer(
         ServerProducer.app(
             origin=LOGS,
@@ -149,7 +159,13 @@ async def world_fixture(test_db_factory) -> AsyncIterator[World]:
 
     async with running_registry(registry_db.config.get_dsn()) as registry:
         owner = await team_owner(registry, team_id=TEAM_ID)
-        state = World(db, owner, signer, directory, Inbox(), registered)
+        state = World(db, owner, signer, directory, Inbox(), registered, installations.grant)
+        append_own = directory.appender(signer)
+
+        async def append(tx, event_id) -> None:
+            await state.before_append()
+            await append_own(tx, event_id)
+
         state.recorder = CredentialAudit(
             db=db,
             app_id=APP_ID,
@@ -162,7 +178,7 @@ async def world_fixture(test_db_factory) -> AsyncIterator[World]:
             registration_view=view,
             max_backlog_age=timedelta(minutes=5),
             migration_module="aweb_logs_credential_audit",
-            after_enqueue=directory.appender(signer),
+            after_enqueue=append,
         )
         await state.recorder.migrate()
         state.passkeys = Passkeys(
@@ -182,6 +198,9 @@ async def world_fixture(test_db_factory) -> AsyncIterator[World]:
             verifier=owner.verifier,
             passkeys=state.passkeys,
             recorder=state.recorder,
+        )
+        state.removals = ReaderRemovals(
+            directory, fence=fence, passkeys=state.passkeys, recorder=state.recorder
         )
         yield state
 
@@ -238,14 +257,20 @@ async def nothing_took_effect(world: World, scope: str) -> None:
     assert await chained(world) == []
 
 
-async def enrolled_reader(world: World) -> tuple[str, str]:
-    """A designated reader that has enrolled its passkey: its scope and holder."""
-    scope = await slot(world)
-    signing, signature = world.owner.sign("app-role.designate", designation(scope))
+async def designated_reader(world: World, contact: str = CONTACT) -> tuple[str, str]:
+    """A reader the owner designated that has not enrolled yet: its scope and holder."""
+    scope = await slot(world, contact)
+    signing, signature = world.owner.sign("app-role.designate", designation(scope, contact))
     await world.designations.designate(
-        signing=signing, signature=signature, scope=scope, contact=CONTACT
+        signing=signing, signature=signature, scope=scope, contact=contact
     )
-    token = world.inbox.enrolments[CONTACT][-1]
+    return scope, await holder(world, scope)
+
+
+async def enrolled_reader(world: World, contact: str = CONTACT) -> tuple[str, str]:
+    """A designated reader that has enrolled its passkey: its scope and holder."""
+    scope, _ = await designated_reader(world, contact)
+    token = world.inbox.enrolments[contact][-1]
     device = SoftAuthenticator(CONSOLE)
     enrolment = await world.recorder.prepare_enrolment(token)
     with world.recorder.prepared(enrolment):
