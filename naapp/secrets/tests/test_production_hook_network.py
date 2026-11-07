@@ -21,9 +21,9 @@ from tests.test_composition import settings
 from tests.test_production_bootstrap import owner_body
 
 
-@pytest.mark.parametrize("internal", [False, True])
+@pytest.mark.parametrize("internal,denied", [(False, False), (True, False), (True, True)])
 async def test_production_hook_delivery_uses_explicit_dns_ca_and_internal_network(
-    test_db_factory, registry, tmp_path, internal
+    test_db_factory, registry, tmp_path, internal, denied
 ):
     member = Member(team_id="root:example.com")
     host, name = local_address(), "logs.root-hooks.test"
@@ -67,6 +67,7 @@ async def test_production_hook_delivery_uses_explicit_dns_ca_and_internal_networ
                     update={
                         "public_origin": AUDIENCE,
                         "awid_service_token": SERVICE_TOKEN,
+                        "egress_denied_networks": (ip_network(f"{host}/32"),) if denied else (),
                     }
                 )
                 service = create_service(
@@ -111,14 +112,14 @@ async def test_production_hook_delivery_uses_explicit_dns_ca_and_internal_networ
                                 )
                                 if rows and all(
                                     row["state"] == "delivered"
-                                    if internal
+                                    if internal and not denied
                                     else row["last_error_class"] is not None
                                     for row in rows
                                 ):
                                     break
                                 await asyncio.sleep(0.02)
                         assert dns.queries[(name, "A")] > 0
-                        if internal:
+                        if internal and not denied:
                             assert [row["state"] for row in rows] == ["delivered"]
                             assert len(verified) == 1
                             event = verified[0].fields
