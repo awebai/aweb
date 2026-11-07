@@ -370,13 +370,14 @@ async def test_last_owner_can_revoke_one_key_when_another_survives(uses):  # noq
 
 async def test_runner_deregistration_invalidates_registered_key_and_unused_code(uses):  # noqa: F811
     from aweb_secrets import runners
+    from aweb_secrets.run_service import RunDispatch
     from aweb_secrets.runner_protocol import RunnerRefused
+    from tests.run_world import setup
     from tests.test_runners import keys
 
-    await seed(uses)
+    context = await setup(uses)
     svc = await service(uses)
-    await runners.apply_runner_migrations(uses.world.db)
-    svc.deregister_runner = runners.deregister_runner
+    svc.deregister_runner = RunDispatch(uses.world.db, **context.arguments).deregister_runner
     record = runners.RunnerRecord.from_after(
         {
             "v": 1,

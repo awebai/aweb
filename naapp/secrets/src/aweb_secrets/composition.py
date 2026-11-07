@@ -6,9 +6,10 @@ import asyncio
 import logging
 from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from functools import partial
+from ipaddress import IPv4Network, IPv6Network
 from typing import Any
 
 import httpx
@@ -30,6 +31,7 @@ from aweb_naapp.runtime.approvals import (
     Approver,
     PgApprovalStore,
 )
+from aweb_naapp.runtime.credential_audit import CredentialAudit, GovernanceUnavailable
 from aweb_naapp.runtime.health import CheckResult
 from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty
 from aweb_naapp.signing_key import read_signing_key_file
@@ -53,7 +55,9 @@ from aweb_secrets.change_sets import (
 )
 from aweb_secrets.config import ServiceSettings
 from aweb_secrets.console import OwnerConsole, owner_console_router
+from aweb_secrets.console_access import ConsoleAccess, console_access_router
 from aweb_secrets.console_activity import ConsoleActivity, console_activity_router
+from aweb_secrets.console_audit_delivery import ConsoleAuditDelivery, console_audit_delivery_router
 from aweb_secrets.console_bootstrap import console_bootstrap_router
 from aweb_secrets.console_changes import ConsoleChanges, console_changes_router
 from aweb_secrets.console_forms import console_forms_router
@@ -67,7 +71,11 @@ from aweb_secrets.console_use_approvals import (
 from aweb_secrets.console_values import ConsoleValues, console_values_router
 from aweb_secrets.containment import Containment
 from aweb_secrets.containment_routes import containment_api_router, containment_console_router
-from aweb_secrets.credential_audit import CredentialAudit, GovernanceUnavailable
+from aweb_secrets.credential_governance import (
+    CREDENTIAL_AUDIT_MIGRATIONS,
+    ChangeApprovals,
+    credential_role,
+)
 from aweb_secrets.custody import (
     AwsKmsProvider,
     BackendCredentialOpener,
@@ -90,7 +98,7 @@ from aweb_secrets.response_audit import ResponseKey
 from aweb_secrets.run_context import apply_run_dispatch_migrations
 from aweb_secrets.run_service import RunDispatch
 from aweb_secrets.runner_routes import runner_dispatch_router, runner_registration_router
-from aweb_secrets.runners import apply_runner_migrations, deregister_runner
+from aweb_secrets.runners import apply_runner_migrations
 from aweb_secrets.status_service import UseStatus
 from aweb_secrets.tokens import ProcessTokenCache
 from aweb_secrets.use_approvals import UseApprovers, UsePolicies, apply_use_approval_migrations
@@ -131,6 +139,7 @@ class _Services:
     values: ConsoleValues
     use_pages: ConsoleUseApprovals
     activity: ConsoleActivity
+    audit_delivery: ConsoleAuditDelivery
     catalog: Catalog
     broker: BrokerRequests
     runs: RunDispatch
@@ -191,9 +200,11 @@ async def _compose(
         owner_act_scope=settings.app_id,
         producer=runtime.hook_producer,
         passkeys=shared_passkeys,
-        approval=approval,
+        role_of=credential_role,
+        approvals=ChangeApprovals(approval),
         registration_view=governance_view,
         max_backlog_age=timedelta(seconds=settings.hook_events_stalled_after_seconds),
+        migration_module=CREDENTIAL_AUDIT_MIGRATIONS,
     )
     # Run stores are ready before opting this same branch into run recording.
     use_audit = UseApprovalAudit(
@@ -282,7 +293,6 @@ async def _compose(
         tokens=tokens,
         governance=governance,
         credential_audit=credentials,
-        deregister_runner=deregister_runner,
     )
     writer = ChangeSets(
         db,
@@ -328,7 +338,10 @@ async def _compose(
         db,
         **common,
         egress=Egress(
-            addresses=AddressPolicy(internal_destinations=settings.internal_destinations),
+            addresses=AddressPolicy(
+                internal_destinations=settings.internal_destinations,
+                denied=settings.egress_denied_networks,
+            ),
             resolver=DnsResolver(),
             user_agent="aweb-secrets",
             ca_file=settings.egress_ca_file,
@@ -347,6 +360,7 @@ async def _compose(
         assignment_ttl=timedelta(seconds=settings.runner_assignment_ttl_seconds),
         claim_wait=timedelta(seconds=settings.runner_claim_wait_seconds),
     )
+    containment.deregister_runner = runs.deregister_runner
     return _Services(
         console,
         changes,
@@ -356,6 +370,11 @@ async def _compose(
             console=console, approvals=approvals, use_audit=use_audit, registration_view=use_view
         ),
         ConsoleActivity(console=console, reads=ActivityReads()),
+        ConsoleAuditDelivery(
+            console=console,
+            registrations=registrations,
+            max_backlog_age=timedelta(seconds=settings.hook_events_stalled_after_seconds),
+        ),
         Catalog(db, fence=fence),
         broker,
         runs,
@@ -382,6 +401,9 @@ def create_service(
     *,
     awid_transport: httpx.AsyncBaseTransport | None = None,
     team_server_transport: httpx.AsyncBaseTransport | None = None,
+    hook_egress: Egress | None = None,
+    hook_internal_cidr: IPv4Network | IPv6Network | None = None,
+    hook_internal_origins: frozenset[str] = frozenset(),
 ) -> SecretsService:
     """The production entry point; construction and startup require every dependency."""
     key_files = {
@@ -486,17 +508,41 @@ def create_service(
 
         return build
 
+    if hook_egress is None:
+        hook_egress = Egress(
+            addresses=AddressPolicy(denied=settings.egress_denied_networks),
+            resolver=DnsResolver(),
+            user_agent="aweb-naapp/hooks",
+        )
+    else:
+        hook_egress = replace(
+            hook_egress,
+            addresses=replace(
+                hook_egress.addresses,
+                denied=tuple(
+                    dict.fromkeys((*hook_egress.addresses.denied, *settings.egress_denied_networks))
+                ),
+            ),
+        )
+
     return create_app(
         settings,
         policy=tool_policy,
         kms=kms,
         awid_transport=awid_transport,
         team_server_transport=team_server_transport,
+        hook_egress=hook_egress,
+        hook_internal_cidr=hook_internal_cidr,
+        hook_internal_origins=hook_internal_origins,
         prepare=prepare,
         tool_routers=(metadata, uses, contain),
         console_routers=(
             human(lambda s: owner_console_router(s.console)),
-            human(lambda s: console_ui_router(sessions=s.console.sessions)),
+            human(
+                lambda s: console_ui_router(
+                    sessions=s.console.sessions, banner=s.audit_delivery.banner
+                )
+            ),
             human(lambda s: console_bootstrap_router()),
             human(lambda s: console_values_router(s.values)),
             human(lambda s: console_changes_router(s.changes)),
@@ -505,6 +551,8 @@ def create_service(
             human(lambda s: console_use_approvals_router(services=s.use_pages)),
             human(lambda s: console_run_approvals_router(services=s.use_pages)),
             human(lambda s: console_activity_router(services=s.activity)),
+            human(lambda s: console_access_router(services=ConsoleAccess(console=s.console))),
+            human(lambda s: console_audit_delivery_router(services=s.audit_delivery)),
             human(lambda s: containment_console_router(s.containment, console=s.console)),
         ),
         runner_routers=(

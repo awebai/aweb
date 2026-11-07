@@ -67,6 +67,7 @@ async def main(argv: list[str]) -> None:
             egress=egress,
             registrations=views,
             internal_cidr=ip_network(f"{address}/32"),
+            internal_origins=frozenset({origin}),
         ),
         policy=RetryPolicy(stalled_after=timedelta(hours=1)),
     )

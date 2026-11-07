@@ -3,8 +3,8 @@
 import asyncio
 import base64
 import json
-from dataclasses import replace
-from datetime import UTC, datetime
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
@@ -12,6 +12,7 @@ import httpx
 import pytest
 from aweb_naapp.egress import DnsResolver, InternalDestinations
 from aweb_naapp.hooks.envelope import KID_PATTERN, verify
+from aweb_naapp.roles import PrincipalKey, unassign
 from aweb_naapp.runtime.passkeys import contact_sha256
 from aweb_naapp_testing import Member
 from aweb_naapp_testing.network import DnsServer
@@ -29,7 +30,7 @@ from aweb_secrets.custody import Custody, LocalKeyFileProvider, encode_value
 from aweb_secrets.destination import DestinationRecord
 from aweb_secrets.grant import GrantRecord
 from aweb_secrets.manifest import MANIFEST_PATH
-from aweb_secrets.owners import owner_scope
+from aweb_secrets.owners import OWNER_ROLE, owner_scope
 from aweb_secrets.policy import Policy
 from aweb_secrets.secret import SecretRecord
 from tests.production_authority import authority, install, install_audit_receiver, no_dns_override
@@ -127,7 +128,8 @@ def owner_body(configured, member, installation_id):
     }
 
 
-async def test_first_owner_enrols_from_actual_smtp_and_logs_into_production_console(root):
+async def signed_in_owner(root):
+    """The first owner, enrolled from the delivered email, signed in to the console."""
     service, client, configured, member, installed, smtp, transport, dns = root
     installation_id = installed["installation_id"]
     scope, body = owner_body(configured, member, installation_id)
@@ -151,6 +153,13 @@ async def test_first_owner_enrols_from_actual_smtp_and_logs_into_production_cons
         human + "/login", json={"scope": scope, "assertion": device.get(options.json())}
     )
     assert logged.status_code == 200, logged.text
+    return scope, body, token
+
+
+async def test_first_owner_enrols_from_actual_smtp_and_logs_into_production_console(root):
+    service, client, configured, member, installed, smtp, transport, dns = root
+    human = configured.console_origin
+    scope, body, token = await signed_in_owner(root)
     home = await client.get(human + "/")
     assert home.status_code == 200 and "Secrets console" in home.text
     assert (await client.get(AUDIENCE + "/enrolment")).status_code == 404
@@ -179,6 +188,66 @@ async def test_first_owner_enrols_from_actual_smtp_and_logs_into_production_cons
         while dns.queries[("logs.example", "A")] == 0:
             await asyncio.sleep(0.01)
     assert dns.queries[("logs.example", "AAAA")] > 0
+
+
+async def test_the_production_console_serves_the_access_view_only_to_its_current_owner(root):
+    service, client, configured, member, installed, smtp, transport, dns = root
+    human = configured.console_origin
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(service)) as stranger:
+        signed_out = await stranger.get(human + "/access")
+        assert signed_out.status_code == 303 and signed_out.headers["location"] == "/login"
+    assert (await client.get(AUDIENCE + "/access")).status_code == 404
+    scope, body, _ = await signed_in_owner(root)
+    shown = await client.get(human + "/access")
+    assert shown.status_code == 200 and 'id="access-empty"' in shown.text
+    assert (await client.get(human + "/console-access/access.js")).status_code == 200
+    async with service.runtime.db().transaction() as tx:
+        await unassign(
+            tx, PrincipalKey(team_id=member.team_id, principal_did=body["principal"]), OWNER_ROLE
+        )
+    withdrawn = await client.get(human + "/access")
+    assert withdrawn.status_code in (303, 401, 403)
+    assert 'id="access-empty"' not in withdrawn.text
+
+
+async def test_the_production_console_serves_audit_delivery_only_to_its_current_owner(root):
+    service, client, configured, member, installed, smtp, transport, dns = root
+    human = configured.console_origin
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(service)) as stranger:
+        signed_out = await stranger.get(human + "/audit-delivery")
+        assert signed_out.status_code == 303 and signed_out.headers["location"] == "/login"
+    assert (await client.get(AUDIENCE + "/audit-delivery")).status_code == 404
+    scope, body, _ = await signed_in_owner(root)
+    shown = await client.get(human + "/audit-delivery")
+    assert shown.status_code == 200
+    page = shown.text
+    # Core's governance registration reaches the page, and the enrolment's
+    # change records are owed to it but not yet stalled.
+    assert 'data-hook="post-governance-hook" data-admission="open"' in page
+    assert 'data-stalled="false"' in page and 'data-stalled="true"' not in page
+    assert 'data-total="0"' in page
+    css = await client.get(human + "/console-audit-delivery/audit.css")
+    assert css.status_code == 200
+    assert "audit-banner" not in (await client.get(human + "/")).text
+    # Once the enrolment's change records wait past the configured bound, the
+    # page and the owner's home both say widening changes are refused.
+    db = service.runtime.db()
+    bound = timedelta(seconds=configured.hook_events_stalled_after_seconds)
+    await db.execute(
+        "UPDATE {{tables.outbox_events}} SET created_at = created_at - $1::interval",
+        2 * bound,
+    )
+    stalled = (await client.get(human + "/audit-delivery")).text
+    assert 'data-hook="post-governance-hook" data-admission="refused"' in stalled
+    home = (await client.get(human + "/")).text
+    assert 'data-refused="post-governance-hook" data-undelivered="0"' in home
+    async with service.runtime.db().transaction() as tx:
+        await unassign(
+            tx, PrincipalKey(team_id=member.team_id, principal_did=body["principal"]), OWNER_ROLE
+        )
+    withdrawn = await client.get(human + "/audit-delivery")
+    assert withdrawn.status_code in (303, 401, 403)
+    assert "data-hook=" not in withdrawn.text
 
 
 @pytest.mark.parametrize("fault", ["wrong_team", "wrong_installation", "unavailable"])
@@ -213,6 +282,20 @@ async def test_bootstrap_authority_controls_leave_no_owner_nonce_or_audit(root, 
     assert smtp.received == []
 
 
+@dataclass(repr=False)
+class ProductionRequest:
+    token: str
+    device: SoftAuthenticator
+    path: str
+    raw: bytes
+    reply: dict
+    job_id: str
+    runner_id: str
+    runner_signing_key: SigningKey
+    runner_encryption_key: X25519PrivateKey
+    credential: str
+
+
 async def approval_request(root, kind):
     """Seed confirmed metadata, then mint through the actual signed root tool.
 
@@ -230,9 +313,10 @@ async def approval_request(root, kind):
     url = delivered_url(smtp.received, contact=body["contact"], path="/enrolment")
     [token] = parse_qs(urlsplit(url).fragment)["token"]
     options = await client.post(human + "/enrolment/options", json={"link_token": token})
+    device = SoftAuthenticator(human)
     enrolled = await client.post(
         human + "/enrolment",
-        json={"link_token": token, "credential": SoftAuthenticator(human).create(options.json())},
+        json={"link_token": token, "credential": device.create(options.json())},
     )
     assert enrolled.status_code == 200
     policy = Policy.from_body({**POLICY_BODY, "approvers": ["owner:" + member.did_key]})
@@ -243,6 +327,9 @@ async def approval_request(root, kind):
     job_body["env"] = {"DB_ADMIN": {"$credential": SECRET["ref"], "field": "value"}}
     job = jobs.JobDefinition.from_after(job_body)
     runner_id = job.after["runner_ids"][0]
+    runner_signing_key = SigningKey.generate()
+    runner_encryption_key = X25519PrivateKey.generate()
+    credential = uuid4().hex
     async with db.transaction() as tx:
         await records.create_policy(tx, installation_id, policy)
         await records.create_secret(
@@ -253,7 +340,7 @@ async def approval_request(root, kind):
             installation_id=installation_id,
             team_id=member.team_id,
             secret_id=SECRET["secret_id"],
-            value=encode_value("bearer", {"value": uuid4().hex}),
+            value=encode_value("bearer", {"value": credential}),
         )
         await records.set_active_version(
             tx, installation_id, member.team_id, SECRET["secret_id"], version
@@ -317,9 +404,9 @@ async def approval_request(root, kind):
             await runners.register_runner(
                 tx,
                 code=code,
-                signing_key=did_from_public_key(bytes(SigningKey.generate().verify_key)),
+                signing_key=did_from_public_key(bytes(runner_signing_key.verify_key)),
                 encryption_key=encode_base64url(
-                    X25519PrivateKey.generate().public_key().public_bytes_raw()
+                    runner_encryption_key.public_key().public_bytes_raw()
                 ),
             )
     path = (
@@ -344,13 +431,25 @@ async def approval_request(root, kind):
     url = delivered_url(smtp.received, contact=body["contact"], path="/approvals")
     assert urlsplit(url).path == "/approvals"
     [token] = parse_qs(urlsplit(url).fragment)["token"]
-    return token
+    return ProductionRequest(
+        token,
+        device,
+        path,
+        raw,
+        reply.json(),
+        job.job_id,
+        runner_id,
+        runner_signing_key,
+        runner_encryption_key,
+        credential,
+    )
 
 
 @pytest.mark.parametrize("kind,path", [("use", "/use-approvals"), ("run", "/run-approvals")])
 async def test_production_email_dispatch_uses_migrated_and_mounted_providers(root, kind, path):
     service, client, configured, *_ = root
-    token = await approval_request(root, kind)
+    pending = await approval_request(root, kind)
+    token = pending.token
     db = service.runtime.db()
     # Reconciliation is deliberately uncomposed: routing must not query its tables.
     assert await db.fetch_value("SELECT to_regclass('reconciliation_controls')") is None

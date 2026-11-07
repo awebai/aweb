@@ -258,7 +258,7 @@ async def test_customer_browser_token_draft_and_fresh_passkey_confirmation(
             scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
             await page.evaluate(
                 """async scope => {
-                const api = window.awebSecretsConsole;
+                const api = window.awebConsole;
                 const options = await api.post('/login/options', {scope});
                 await api.post('/login', {scope, assertion: await api.assertion(options)});
             }""",

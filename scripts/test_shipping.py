@@ -20,6 +20,7 @@ import zipfile
 from email.message import Message
 from pathlib import Path
 
+from fixture_repo import fixture_env, init_fixture_repo, run_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -40,7 +41,7 @@ NAAPP_PACKAGE = load("check_naapp_lib_package", "scripts/check-naapp-lib-package
 
 
 def command(root: Path, *argv: str) -> str:
-    return subprocess.check_output(argv, cwd=root, text=True).strip()
+    return subprocess.check_output(argv, cwd=root, text=True, env=fixture_env()).strip()
 
 
 class TagContractTest(unittest.TestCase):
@@ -61,7 +62,7 @@ class TagContractTest(unittest.TestCase):
                        DOCKER_CALLS=str(calls), TMP_ROOT=str(runtime),
                        GATEWAY_CONTAINER="fixture-gateway", GATEWAY_IMAGE="fixture-image",
                        PROJECT="fixture-project", ENV_FILE="fixture.env", COMPOSE_FILE="fixture.yml")
-            result = subprocess.run(["bash", "-c", "set -euo pipefail\nfail=1; pass=0\n" + cleanup + "\ncleanup"],
+            result = run_fixture(["bash", "-c", "set -euo pipefail\nfail=1; pass=0\n" + cleanup + "\ncleanup"],
                                     env=env, text=True, capture_output=True)
             self.assertEqual(result.returncode, 1)
             self.assertIn("gateway-stdout", result.stdout)
@@ -96,7 +97,7 @@ class TagContractTest(unittest.TestCase):
                         env[f"AWEB_{side}_WHEEL"] = str(wheel)
                         env[f"AWEB_{side}_WHEEL_SHA256"] = hashlib.sha256(wheel.read_bytes()).hexdigest()
                         env[f"AWEB_{side}_VERSION"] = version
-                    result = subprocess.run(["bash", str(ROOT / "scripts/e2e-oss-federation.sh")],
+                    result = run_fixture(["bash", str(ROOT / "scripts/e2e-oss-federation.sh")],
                                             env=env, text=True, capture_output=True)
                     if version in ("1.27.34rc1", "1.27.34"):
                         self.assertTrue(reached.exists(), result.stdout + result.stderr)
@@ -117,7 +118,7 @@ class TagContractTest(unittest.TestCase):
     def repository(self):
         temporary = tempfile.TemporaryDirectory()
         root = Path(temporary.name)
-        command(root, "git", "init", "-q")
+        init_fixture_repo(root)
         command(root, "git", "config", "user.name", "test")
         command(root, "git", "config", "user.email", "test@example.com")
         (root / "server").mkdir()
@@ -527,7 +528,6 @@ sdist = { url = "https://files.example/unrelated.tar.gz", hash = "sha256:unchang
             (root / directory / "implementation.py").write_text("value = 1\n")
         (root / "scripts").mkdir(exist_ok=True)
         (root / "scripts/publish_release.py").write_text("# build recipe\n")
-        (root / ".gitignore").write_text("__pycache__/\n")
         (root / "Makefile").write_text("original-target:\n\t@true\n")
         command(root, "git", "add", ".")
         command(root, "git", "commit", "-qm", "RC code")
@@ -793,7 +793,7 @@ class NpmRcContractTest(unittest.TestCase):
     def test_candidate_declares_staged_final_before_publication(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            command(root, "git", "init", "-qb", "main")
+            init_fixture_repo(root)
             command(root, "git", "config", "user.name", "fixture")
             command(root, "git", "config", "user.email", "fixture@example.test")
             (root / "scripts").mkdir()
@@ -811,7 +811,12 @@ class NpmRcContractTest(unittest.TestCase):
             package.write_text('{"name":"@awebai/aw","version":"1.2.3"}')
             command(root, "git", "commit", "-qam", "final")
             command(root, "git", "remote", "add", "origin", ".")
-            CANDIDATE.create_candidate(root, ["aw-v1.2.3"], stage_aw_final=True)
+            result = run_fixture(
+                [sys.executable, str(ROOT / "scripts/release_candidate.py"),
+                 "--stage-aw-final", "aw-v1.2.3"],
+                cwd=root, capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             message = command(root, "git", "tag", "-l", "aw-v1.2.3", "--format=%(contents)")
             self.assertIn("Npm-Publish-Channel: next", message)
 
@@ -833,7 +838,7 @@ class NpmRcContractTest(unittest.TestCase):
                     entry = tarfile.TarInfo("package/package.json")
                     entry.size = len(raw)
                     tar.addfile(entry, io.BytesIO(raw))
-                result = subprocess.run(["bash", "scripts/npm-exact-publish.sh", "publish-exact", "--tgz", str(archive)] + (["--staged-final"] if staged else []),
+                result = run_fixture(["bash", "scripts/npm-exact-publish.sh", "publish-exact", "--tgz", str(archive)] + (["--staged-final"] if staged else []),
                                         cwd=ROOT, env=environment, text=True, capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 args = (root / "args").read_text().splitlines()
@@ -849,7 +854,7 @@ class NpmRcContractTest(unittest.TestCase):
             npm_root, artifacts = root / "npm", root / "artifacts"
             npm_root.mkdir()
             artifacts.mkdir()
-            command(root, "git", "init", "-q")
+            init_fixture_repo(root)
             # A release checkout has a commit: the publisher records it as each package's gitHead.
             command(root, "git", "-c", "user.name=fixture", "-c", "user.email=fixture@example.test",
                     "commit", "--allow-empty", "-qm", "source")
@@ -917,7 +922,7 @@ class NpmRcContractTest(unittest.TestCase):
                         self.assertEqual(command(root, "git", "cat-file", "-t", "refs/tags/" + tag), "commit")
                 if staged in ("checkout", "ci-final", "ci-rc", "ci-missing"):
                     environment["GITHUB_ACTIONS"] = "true"
-                result = subprocess.run(["bash", str(npm_root / "publish.sh")] + (["--staged-final"] if staged is True else []), env=environment,
+                result = run_fixture(["bash", str(npm_root / "publish.sh")] + (["--staged-final"] if staged is True else []), env=environment,
                                         text=True, capture_output=True)
                 if staged == "ci-missing":
                     self.assertNotEqual(result.returncode, 0, result.stdout)
@@ -935,7 +940,7 @@ class NpmRcContractTest(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/aw-release.yml").read_text()
         guard = next(line.strip() for line in workflow.splitlines() if '[[ "$version" =~' in line)
         for version, accepted in (("1.2.3-rc.1", True), ("1.2.3", True), ("1.2.3rc1", False), ("1.2.3-rc.0", False)):
-            result = subprocess.run(["bash", "-c", 'version="$1"\n' + guard, "guard", version])
+            result = run_fixture(["bash", "-c", 'version="$1"\n' + guard, "guard", version])
             self.assertEqual(result.returncode == 0, accepted, version)
 
     def test_aw_workflow_refuses_source_changed_final_before_downstream_clone(self):
@@ -946,7 +951,7 @@ class NpmRcContractTest(unittest.TestCase):
         for case in ("rc", "version-only-final", "source-changed-final", "final-without-rc"):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
-                command(root, "git", "init", "-q")
+                init_fixture_repo(root)
                 command(root, "git", "config", "user.name", "test")
                 command(root, "git", "config", "user.email", "test@example.com")
                 (root / "scripts").mkdir()
@@ -979,7 +984,7 @@ class NpmRcContractTest(unittest.TestCase):
                                    "SIDE_EFFECT": str(side_effect), "RUNNER_TEMP": str(root / "runner"),
                                    "AW_REPO_TOKEN": "test-boundary-not-a-secret",
                                    "GITHUB_REF_NAME": "aw-v1.36.48-rc.1" if case == "rc" else "aw-v1.36.48"}
-                    result = subprocess.run(["bash", "-c", shell], cwd=root, env=environment,
+                    result = run_fixture(["bash", "-c", shell], cwd=root, env=environment,
                                             text=True, capture_output=True)
                 if case in {"source-changed-final", "final-without-rc"}:
                     self.assertNotEqual(result.returncode, 0)
@@ -998,7 +1003,7 @@ class NpmRcContractTest(unittest.TestCase):
             upstream, seed, remote = root / "upstream", root / "seed", root / "remote.git"
             for repo in (upstream, seed):
                 repo.mkdir()
-                command(repo, "git", "init", "-qb", "main")
+                init_fixture_repo(repo)
                 command(repo, "git", "config", "user.name", "fixture")
                 command(repo, "git", "config", "user.email", "fixture@example.test")
             (seed / ".github").mkdir()
@@ -1035,7 +1040,7 @@ class NpmRcContractTest(unittest.TestCase):
                    "REAL_GIT": shutil.which("git"), "OWN_REMOTE": str(remote),
                    "RUNNER_TEMP": str(root / "runner"), "GITHUB_REF_NAME": "aw-v1.2.3",
                    "AW_REPO_TOKEN": "fixture-not-a-secret"}
-            result = subprocess.run(["bash", "-c", shell], cwd=upstream, env=env,
+            result = run_fixture(["bash", "-c", shell], cwd=upstream, env=env,
                                     text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             annotation = command(root, "git", "--git-dir", str(remote), "tag", "-l", "v1.2.3", "--format=%(contents)")
@@ -1045,10 +1050,10 @@ class NpmRcContractTest(unittest.TestCase):
     def test_dispatch_refuses_bad_rc_spellings(self):
         for version in ("1.2.3rc1", "1.2.3-rc.0", "1.2.3-rc.01", "01.2.3", "1.2.3-beta.1"):
             with self.subTest(version=version):
-                result = subprocess.run(["bash", "scripts/npm-exact-publish.sh", "validate-inputs", "--version", version],
+                result = run_fixture(["bash", "scripts/npm-exact-publish.sh", "validate-inputs", "--version", version],
                                         cwd=ROOT, text=True, capture_output=True)
                 self.assertNotEqual(result.returncode, 0)
-        result = subprocess.run(["bash", "scripts/npm-exact-publish.sh", "validate-inputs", "--version", "1.2.3-rc.1"],
+        result = run_fixture(["bash", "scripts/npm-exact-publish.sh", "validate-inputs", "--version", "1.2.3-rc.1"],
                                 cwd=ROOT, text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
@@ -1070,7 +1075,7 @@ class ReleaseStampContractTest(unittest.TestCase):
             fake_go.chmod(0o755)
             environment = os.environ.copy()
             environment["GO_BINARY"] = str(fake_go)
-            result = subprocess.run(
+            result = run_fixture(
                 ["bash", "scripts/check-cli-release-vcs-stamps.sh"],
                 cwd=ROOT,
                 env=environment,

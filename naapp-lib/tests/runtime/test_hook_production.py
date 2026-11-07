@@ -35,6 +35,7 @@ def runtime(
     keys=None,
     egress=None,
     internal=None,
+    internal_origins=frozenset(),
     registry=None,
     tools=None,
     reads=(),
@@ -91,6 +92,7 @@ def runtime(
         manifest_path=manifest,
         hook_egress=egress,
         hook_internal_cidr=internal,
+        hook_internal_origins=internal_origins,
         awid_transport=registry.transport if registry is not None else None,
         root_path=root_path,
     )
@@ -278,6 +280,7 @@ async def test_runtime_lifespan_drains_through_one_resolver_and_guarded_real_tls
         db_schema=db.config.schema_name,
         egress=target.egress() if allow_private else target.egress(AddressPolicy()),
         internal=ip_network(f"{target.host}/32") if allow_private else None,
+        internal_origins=frozenset({target.origin}),
     )
     source = app.hook_resolver()
     calls = []

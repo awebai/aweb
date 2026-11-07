@@ -6,12 +6,11 @@ import os
 import re
 from pathlib import Path
 import shutil
-import subprocess
 import sys
 import tempfile
 
 from test_candidate_ports import held_library_default
-from fixture_repo import init_fixture_repo
+from fixture_repo import init_fixture_repo, run_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 STAGES = "checks user-paths unit artifacts integration"
@@ -41,7 +40,7 @@ def run(root: Path, *args: str, env: dict[str, str] | None = None):
     environment = dict(os.environ if env is None else env)
     for name in ("MAKEFLAGS", "MAKELEVEL", "MAKEOVERRIDES", "MFLAGS"):
         environment.pop(name, None)
-    return subprocess.run(args, cwd=root, env=environment, text=True, capture_output=True, timeout=900)
+    return run_fixture(args, cwd=root, env=environment, text=True, capture_output=True, timeout=900)
 
 
 def checked(root: Path, *args: str):

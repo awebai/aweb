@@ -147,6 +147,7 @@ class NaappRuntime:
         stores: Sequence[Store] = (),
         hook_egress: Egress | None = None,
         hook_internal_cidr: IPv4Network | IPv6Network | None = None,
+        hook_internal_origins: frozenset[str] = frozenset(),
     ) -> None:
         self.settings = settings
         # The external prefix the server serves the app under (its ASGI root path).
@@ -212,6 +213,7 @@ class NaappRuntime:
         self._hooks = RuntimeHooks.from_settings(
             settings, self._manifest, resolver=self._hook_resolver,
             egress=hook_egress, internal_cidr=hook_internal_cidr,
+            internal_origins=hook_internal_origins,
         )
         # Each authorized() guard, with the action_kind it was given.
         self._guards: dict[Callable[..., object], ActionKind | None] = {}

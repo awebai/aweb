@@ -33,6 +33,7 @@ from aweb_secrets.console_use_approvals import (
     console_use_approvals_router,
 )
 from aweb_secrets.owners import owner_scope
+from tests.console_home import no_banner
 from tests.console_use_world import audit_for, mint
 from tests.test_approval_email import contents, mailer
 from tests.test_change_sets import ALICE, TEAM, Installations, enrol_owner
@@ -111,7 +112,7 @@ async def entry_service(world, tmp_path, request, script_delivery):
     )
     human = FastAPI()
     human.include_router(owner_console_router(console))
-    human.include_router(console_ui_router(sessions=console.sessions))
+    human.include_router(console_ui_router(sessions=console.sessions, banner=no_banner))
     human.include_router(console_changes_router(changes))
     human.include_router(console_forms_router(changes=changes))
     human.include_router(console_use_approvals_router(services=typed))

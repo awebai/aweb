@@ -52,6 +52,31 @@ loopback development origin. Choose that ID before installing: changing it later
 creates a different app identity and orphans existing installations; it does not
 rename or migrate them.
 
+For broker and hook egress, set `SECRETS_EGRESS_DENIED_NETWORKS` to a JSON array of the
+deployment's own egress and metadata IP addresses or CIDRs, for example
+`["203.0.113.4", "2001:db8::/64"]`. IPv4 and IPv6 addresses become `/32` and
+`/128` networks; CIDRs must be exact network addresses with no host bits set.
+The service validates the setting at startup. The default `[]` adds no
+deployment ranges. These denials apply even to owner-confirmed internal
+destinations when `SECRETS_INTERNAL_DESTINATIONS=allowed`; the shared mandatory
+loopback/link-local/metadata floor always remains in force. This setting covers
+the service's broker and hook egress; runner job networking is separate.
+A supplied `hook_egress` retains its own denials as well as these deployment
+ranges, and retains its resolver, CA, bounds and internal-destination setting.
+
+An operator enabling hook internal delivery must supply all three production
+constructor inputs: an internal-enabled `hook_egress`, `hook_internal_cidr`,
+and `hook_internal_origins=frozenset({"https://logs.example.com:8443"})`.
+List each origin exactly as its installation shows it: normalization omits
+`https`'s default `:443`, while non-default ports must match. The set contains
+exact receiver origins;
+it is independent of owner registrations and accepts no wildcard or prefix
+matches. Its default empty set permits no internal retry. Public delivery
+remains available to other registered origins. An allowed origin still must
+resolve entirely inside the configured CIDR and pass every address denial;
+setting the CIDR alone never authorizes an internal delivery. The default
+hook guard keeps internal destinations disabled and uses system TLS trust.
+
 ### Public surfaces
 
 `aweb_secrets.surfaces` supplies the landing, `/reference`, `/llms.txt` and
@@ -237,7 +262,7 @@ services whose migrations and routers it actually mounts; defaults query neither
 optional table. No routing policy belongs in the root.
 
 Authenticated POSTs require JSON, the S4 cookie and this tab's `X-CSRF-Token`. Browser
-forms call `window.awebSecretsConsole.post(path, body)`. Under
+forms call `window.awebConsole.post(path, body)`. Under
 `/installations/{installation_id}/change-sets`:
 
 - `POST` takes exactly `{changes, sealed, reason}`. `changes` uses existing
@@ -298,6 +323,20 @@ through the sole writer and navigates to canonical review. It stores no form
 data, retries no mutation automatically, and cannot activate a binding without
 fresh approval and confirmation. The form's successful external SDK path is
 part of the real-root/HO6 journey; local refusal tests do not replace that proof.
+
+`GET /grants/new` configures HTTP access to an existing secret for an owner-defined
+role. The form collects a fixed HTTPS URL, method, operation name, JSON response
+fields, side-effect declaration, response limit, rate limit and approval choice.
+It uses the toolkit's shared form controls. Query parameters, wildcards and
+request bodies are outside this form; no credential values are entered.
+`POST /installations/{installation_id}/grants/drafts` requires the current owner
+session and tab CSRF. It resolves the secret within that installation and team,
+derives operation/policy pins with the existing domain models, then drafts the
+destination, operation, policy and role grant together through `ConsoleChanges`.
+The draft has no effect before the normal fresh APPROVE/confirm path. The owner
+remains the policy's approver when the secret itself requires approval, even if
+the grant adds no extra approval requirement. Role membership and runner grants
+are separate configuration.
 
 `GET /approvals#token=<locator>` accepts the personal email fragment. With no
 session, the public read-only `POST /approvals/sign-in` accepts exactly `{token}`

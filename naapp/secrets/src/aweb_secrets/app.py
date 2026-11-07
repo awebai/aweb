@@ -14,9 +14,11 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
+from ipaddress import IPv4Network, IPv6Network
 from pathlib import Path
 
 import httpx
+from aweb_naapp.egress import Egress
 from aweb_naapp.idempotency import apply_idempotency_migrations
 from aweb_naapp.ratelimit import apply_ratelimit_migrations
 from aweb_naapp.roles import apply_roles_migrations, purge_team
@@ -106,6 +108,9 @@ def create_app(
     kms: HealthCheck,
     awid_transport: httpx.AsyncBaseTransport | None = None,
     team_server_transport: httpx.AsyncBaseTransport | None = None,
+    hook_egress: Egress | None = None,
+    hook_internal_cidr: IPv4Network | IPv6Network | None = None,
+    hook_internal_origins: frozenset[str] = frozenset(),
     tool_routers: Sequence[ToolRouter] = (),
     prepare: Prepare | None = None,
     console_routers: Sequence[ConsoleRouter] = (),
@@ -129,6 +134,9 @@ def create_app(
         manifest_path=MANIFEST_PATH,
         awid_transport=awid_transport,
         team_server_transport=team_server_transport,
+        hook_egress=hook_egress,
+        hook_internal_cidr=hook_internal_cidr,
+        hook_internal_origins=hook_internal_origins,
         stores=STORES,
     )
     checks = {**runtime.health_checks(), "kms": kms}
