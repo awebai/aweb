@@ -354,11 +354,16 @@ identity/route resolution.
 registry to resolve an external sender held elsewhere. Its strict
 external-address authority path selects a registry from the client-signed
 sender address and `_awid.<domain>` DNS statement, then requires that registry's
-exact namespace controller, address row, stable `did:aw`, current `did:key`,
-identity log, and delivery origin to agree. No AWID request field or federation
-wrapper may supply a registry URL. Absence of an AWID DNS record selects the
-canonical public registry; malformed, multiple, timed-out, or failed discovery
-does not fall back.
+exact namespace controller (or, under an inherited ancestor TXT, a child
+controller witnessed by the parent-authorized delegation in
+[`id-certificates.md` §2](id-certificates.md#2-certificate-and-exact-bytes)), address row, stable
+`did:aw`, current `did:key`, identity log, and delivery origin to agree.
+Inherited children that reuse the ancestor TXT key remain valid without a
+delegation witness. Exact TXT authority is unchanged; delegation cannot override
+an exact record. The authority statement records the child's own controller.
+No AWID request field or federation wrapper may supply a registry URL. Absence
+of an AWID DNS record selects the canonical public registry; malformed,
+multiple, timed-out, or failed discovery does not fall back.
 
 The receiving service may reuse one complete verified authority cohort for no
 more than 60 seconds and then rereads DNS, namespace, address, key-or-log, and
