@@ -2,12 +2,14 @@
   const button = document.getElementById('complete');
   const notice = document.getElementById('notice');
   const continueLink = document.getElementById('continue');
-  const ceremony = document.body.dataset.ceremony;
+  // The app's page names the ceremony and the copy shown here.
+  const config = document.body.dataset;
+  const ceremony = config.ceremony;
   const fragment = window.location.hash.slice(1);
   window.history.replaceState(null, '', window.location.pathname);
   let token = new URLSearchParams(fragment).get('token');
   if (!token) {
-    notice.textContent = 'Open the link from your email to continue.';
+    notice.textContent = config.copyMissingLink;
     return;
   }
   button.disabled = false;
@@ -25,7 +27,7 @@
 
   button.addEventListener('click', async () => {
     button.disabled = true;
-    notice.textContent = 'Completing your request…';
+    notice.textContent = config.copyCompleting;
     try {
       if (ceremony === 'enrolment') {
         // Each explicit retry obtains a new registration challenge. A failed
@@ -38,18 +40,18 @@
         const result = await post('/enrolment', {
           link_token: token, credential: credential.toJSON(),
         });
-        notice.textContent = 'Passkey is ready.';
+        notice.textContent = config.copyDone;
         if (typeof result.scope === 'string' && result.scope) {
           continueLink.href = '/login?' + new URLSearchParams({scope: result.scope});
           continueLink.hidden = false;
         }
       } else {
         await post('/contact-proof', {proof_token: token});
-        notice.textContent = 'Email address confirmed. The waiting period still applies.';
+        notice.textContent = config.copyDone;
       }
       token = '';
     } catch {
-      notice.textContent = 'Unable to finish. Try again, or request a new link.';
+      notice.textContent = config.copyCeremonyFailed;
       button.disabled = false;
     }
   });

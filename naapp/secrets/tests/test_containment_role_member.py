@@ -8,12 +8,12 @@ from uuid import uuid4
 
 import pytest
 from aweb_naapp.roles import PrincipalKey, assign, has_role, hold_role, principal_key
+from aweb_naapp.runtime.credential_audit import GovernanceUnavailable
 from aweb_naapp.runtime.installation import InstallationRefused
 from aweb_naapp_testing import Member
 
 from aweb_secrets import records
 from aweb_secrets.containment import ContainmentRefused
-from aweb_secrets.credential_audit import GovernanceUnavailable
 from aweb_secrets.grant import GrantRecord
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
 from aweb_secrets.revisions import config_revision

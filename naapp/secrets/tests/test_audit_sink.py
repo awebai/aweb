@@ -24,7 +24,7 @@ async def composite(world):
     use = UseApprovalAudit(
         producer=credentials._producer,
         passkeys=lambda: world.passkeys,
-        approval=credentials._approval,
+        approval=credentials._approvals.approval,
         max_backlog_age=timedelta(minutes=5),
     )
     sink = SecretsAudit(credentials=credentials, use=use)
