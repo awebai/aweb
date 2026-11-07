@@ -207,9 +207,21 @@ async def test_run_view_uses_immutable_slot_plan_after_b2_authentication(uses):
         assert job["frozen_plan"] == plan.body
         assert job["credential_delivery"] == "durable"
         assert (await uses.approvals.get(approval_id)).consumed_operation_id is None
+        # This component has no original-run audit binding. A genuine fresh
+        # decision proof must still roll back instead of using governance audit.
+        options = await human.post(
+            "/run-approvals/decision-options",
+            json={"token": token, "decision": "approve"},
+            headers=headers,
+        )
+        assert options.status_code == 200
         refused = await human.post(
             "/run-approvals/decide",
-            json={"token": token, "decision": "approve", "assertion": {}},
+            json={
+                "token": token,
+                "decision": "approve",
+                "assertion": uses.world.devices["finance@acme.com"].get(options.json()),
+            },
             headers=headers,
         )
         assert refused.status_code == 503
