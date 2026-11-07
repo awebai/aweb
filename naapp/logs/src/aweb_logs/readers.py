@@ -123,7 +123,9 @@ class ReaderDirectory:
 
     async def sweep_expired(self, *, limit: int) -> int:
         """Delete up to ``limit`` expired pending slots; the number deleted.
-        A claim needs an unexpired slot, so a sweep never races one."""
+        A claim racing a sweep is resolved by the row lock: a claim that waits
+        finds the slot deleted and claims nothing, and the sweep skips a slot a
+        claim holds and never deletes a claimed one."""
         deleted: int = await self.db.fetch_value(
             "WITH expired AS (SELECT scope FROM {{tables.readers}}"
             " WHERE claimed_at IS NULL AND expires_at <= NOW()"
