@@ -212,6 +212,18 @@ consuming the nonce in the transaction that applies the effect
 ([Verification](owner-act.md#verification)). For designate and recover it also
 requires the SHA-256 of `contact` to equal the row's contact hash.
 
+The anonymous route makes its local checks before it reads the registry:
+
+- the body;
+- the act's parse, fields and subject;
+- the team, audience, vocabulary and lifetime;
+- the nonce;
+- the pending row or holder, and the contact hash.
+
+Only an act that passes them costs a read of the team's current controller key
+and a signature check. Every fault is the same `owner_required`, so this
+order changes no response.
+
 Response `200`:
 
 ```json
@@ -228,7 +240,7 @@ names its end.
 | 403 | `owner_required` | Every other fault of the act or its row: any owner-act verification code, no pending row or holder, a row of another installation, a contact that does not match, a reused nonce. |
 | as given | the installation's code | The installation is not admitted. |
 | 503 | `release_context_unavailable`, or the verifier's code | The governance event cannot be recorded, or the team's registry cannot be read. Nothing took effect. |
-| 429 | `owner_act_rate_limited` | The app's per-client budget is spent; the response carries `Retry-After`. |
+| 429 | `owner_act_rate_limited` | The client's delivery budget is spent; the response carries `Retry-After`. The budget is keyed on the client address that `aweb_naapp.console.ClientIdentity` resolves: the peer, or the entry the deployment's trusted proxy header names. |
 
 The route is anonymous, so every act and row fault is one refusal, and no
 response echoes the request. An anonymous caller learns nothing about which
@@ -261,6 +273,9 @@ its 72-hour cooling-off period. **logs.** logs' reader role declares
 
 ## Rollout of manifest version 3
 
+- Only an app that declares `owner_acts` serves version 3, and only its
+  installations are re-pinned. An app that declares none serves no version 3,
+  and its installations are untouched.
 - An app that declares `owner_acts` serves a catalog listing its version 2
   and version 3 variants ([Variant discovery](app-manifest.md#variant-discovery)).
 - Released clients, which support version 2 at most, keep selecting version 2,
@@ -272,6 +287,10 @@ its 72-hour cooling-off period. **logs.** logs' reader role declares
   the installation's next generation, so every hook binding of the installation is superseded and
   the owner re-activates each one. Role holders, enrolments and app data are
   keyed by installation id and are kept.
+- Between the re-pin and the re-activation, an app whose effects require an
+  active audit binding refuses them. secrets refuses every secret use until
+  both of its hook bindings are re-activated. The owner re-pins and
+  re-activates in one sitting.
 
 ## Work this contract creates
 
@@ -280,8 +299,10 @@ Filed after Juan rules on the design. Each item is one reviewed change.
 - **Go manifest interpreter** (`cli/go/internal/appmanifest`): version 3 and
   `owner_acts`, against the version 3 vectors.
 - **`aweb_naapp`**: version 3 in `aweb_naapp.manifest`; a generic owner-act
-  delivery router mounted on the human origin; a generic prepare router with
-  pending rows, the per-member rate limit, and the per-client delivery limit.
+  delivery router mounted on the human origin, which makes its local checks
+  before the registry read and keys its delivery limit on the
+  `ClientIdentity` client address; a generic prepare router with pending
+  rows and the per-member rate limit.
   `split_origins` accepts two origins on one hostname with different ports, so
   the runtime refuses an `owner_acts.origin` that shares `app.origin`'s
   hostname.
