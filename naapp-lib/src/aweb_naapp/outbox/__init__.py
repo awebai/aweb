@@ -184,6 +184,27 @@ class OutboxStatus:
     faults: list[UUID]
 
 
+@dataclass(frozen=True)
+class EndedDelivery:
+    """How one delivery of a faulted event ended: cancelled, rejected or conflict.
+    ``acknowledged`` means an operator accepted a rejected or conflicting one as lost."""
+
+    target_id: str
+    state: str
+    acknowledged: bool
+
+
+@dataclass(frozen=True)
+class UndeliveredEvent:
+    """A critical event left with no delivery pending or acknowledged by its target."""
+
+    event_id: UUID
+    team_id: str
+    kind: str
+    occurred_at: datetime
+    deliveries: tuple[EndedDelivery, ...]
+
+
 async def apply_outbox_migrations(db: AsyncDatabaseManager) -> None:
     await AsyncMigrationManager(
         db, migrations_path=str(MIGRATIONS_PATH), module_name=MIGRATIONS_MODULE
@@ -630,6 +651,68 @@ async def latest_receipt(db: AsyncDatabaseManager, target_id: str) -> bytes | No
     return bytes(value) if value is not None else None
 
 
+async def undelivered_critical_events(
+    db: AsyncDatabaseManager | TransactionManager,
+    *,
+    channel: str | None,
+    team_id: str | None = None,
+) -> list[UndeliveredEvent]:
+    """The faults: materialized critical events none of whose deliveries is
+    pending, stalled or acknowledged by its target, in enqueue order, each with
+    how every delivery ended. An event materialized with no target is one too.
+    ``channel`` and ``team_id`` limit them; None covers all."""
+    rows = await db.fetch_all(
+        """
+        SELECT e.event_id, e.team_id, e.kind, e.occurred_at,
+               coalesce(
+                   jsonb_agg(
+                       jsonb_build_object(
+                           'target_id', d.target_id,
+                           'state', d.state,
+                           'acknowledged', d.acknowledged_at IS NOT NULL
+                       ) ORDER BY d.target_id
+                   ) FILTER (WHERE d.target_id IS NOT NULL),
+                   '[]'::jsonb
+               ) AS deliveries
+        FROM {{tables.outbox_events}} e
+        LEFT JOIN {{tables.outbox_deliveries}} d ON d.event_id = e.event_id
+        WHERE e.critical AND e.materialized_at IS NOT NULL
+          AND ($1::text IS NULL OR e.channel = $1)
+          AND ($2::text IS NULL OR e.team_id = $2)
+          AND NOT EXISTS (
+            SELECT 1 FROM {{tables.outbox_deliveries}} live
+            WHERE live.event_id = e.event_id
+              AND live.state IN ('pending', 'stalled', 'delivered', 'duplicate')
+          )
+        GROUP BY e.event_id
+        ORDER BY e.position
+        """,
+        channel,
+        team_id,
+    )
+    return [
+        UndeliveredEvent(
+            event_id=row["event_id"],
+            team_id=row["team_id"],
+            kind=row["kind"],
+            occurred_at=row["occurred_at"],
+            deliveries=tuple(
+                EndedDelivery(
+                    target_id=delivery["target_id"],
+                    state=delivery["state"],
+                    acknowledged=delivery["acknowledged"],
+                )
+                for delivery in (
+                    json.loads(row["deliveries"])
+                    if isinstance(row["deliveries"], str)
+                    else row["deliveries"]
+                )
+            ),
+        )
+        for row in rows
+    ]
+
+
 async def outbox_status(db: AsyncDatabaseManager, channel: str | None = None) -> OutboxStatus:
     """Per target: undelivered, stalled, dead-letter (conflict or rejected, not
     yet acknowledged) and cancelled counts, and the age of the oldest
@@ -664,20 +747,7 @@ async def outbox_status(db: AsyncDatabaseManager, channel: str | None = None) ->
         """,
         channel,
     )
-    fault_rows = await db.fetch_all(
-        """
-        SELECT e.event_id FROM {{tables.outbox_events}} e
-        WHERE e.critical AND e.materialized_at IS NOT NULL
-          AND ($1::text IS NULL OR e.channel = $1)
-          AND NOT EXISTS (
-            SELECT 1 FROM {{tables.outbox_deliveries}} d
-            WHERE d.event_id = e.event_id
-              AND d.state IN ('pending', 'stalled', 'delivered', 'duplicate')
-          )
-        ORDER BY e.position
-        """,
-        channel,
-    )
+    faults = await undelivered_critical_events(db, channel=channel)
     return OutboxStatus(
         targets={
             row["target_id"]: TargetStatus(
@@ -697,5 +767,5 @@ async def outbox_status(db: AsyncDatabaseManager, channel: str | None = None) ->
             )
             for row in unmaterialized_rows
         },
-        faults=[row["event_id"] for row in fault_rows],
+        faults=[fault.event_id for fault in faults],
     )
