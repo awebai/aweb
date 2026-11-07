@@ -10,8 +10,8 @@ eagerly (no postponed annotations) for FastAPI to see the session dependency.
 
 import asyncio
 import hashlib
-from dataclasses import dataclass
-from datetime import timedelta
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 from http.cookies import SimpleCookie
 from typing import Annotated
 
@@ -19,7 +19,12 @@ import httpx
 import pytest
 from fastapi import APIRouter, Depends, FastAPI, Response
 
-from aweb_naapp.console import ConsoleRoute, ConsoleSession, ConsoleSessions
+from aweb_naapp.console import (
+    ConsoleRoute,
+    ConsoleSession,
+    ConsoleSessions,
+    session_is_current,
+)
 from tests.console.support import HUMAN, OWNER_A, OWNER_B, Console
 
 ORIGIN = HUMAN
@@ -288,3 +293,103 @@ async def test_a_failing_prune_does_not_fail_opening_a_session(
     [record] = [r for r in caplog.records if r.name == "aweb_naapp.console"]
     assert "console_sessions" in record.getMessage()
     assert cookie.split("=", 1)[1] not in record.getMessage()
+
+
+async def _session(console: Console, cookie: str) -> ConsoleSession:
+    """The persisted session behind a cookie, as the request authenticated it."""
+    token = cookie.split("=", 1)[1]
+    row = await console.db.fetch_one(
+        "SELECT * FROM {{tables.console_sessions}} WHERE token_sha256=$1",
+        hashlib.sha256(token.encode()).digest(),
+    )
+    return ConsoleSession(
+        subject=row["subject"],
+        scope=row["scope"],
+        evidence_ref=row["evidence_ref"],
+        expires_at=row["expires_at"],
+        token_sha256=bytes(row["token_sha256"]),
+    )
+
+
+async def _current(console: Console, session: ConsoleSession, *, hold: bool = False) -> bool:
+    async with console.db.transaction() as tx:
+        return await session_is_current(tx, session, hold=hold)
+
+
+async def test_only_the_exact_open_session_is_current(
+    console: Console, owners: dict[str, Owner]
+) -> None:
+    async with await _client(console.sessions()) as client:
+        cookie, csrf = await _login(client, owners)
+        other, _ = await _login(client, owners, OWNER_B)
+        session = await _session(console, cookie)
+        assert await _current(console, session)
+        assert await _current(console, session, hold=True)
+        # Every field binds back to the exact row the token names.
+        for field, value in (
+            ("scope", OWNER_B),
+            ("subject", owners[OWNER_B].subject),
+            ("evidence_ref", owners[OWNER_B].evidence_ref),
+            ("expires_at", session.expires_at + timedelta(seconds=1)),
+            ("token_sha256", (await _session(console, other)).token_sha256),
+        ):
+            assert not await _current(console, replace(session, **{field: value})), field
+        await client.post("/logout", headers={"Cookie": cookie, "X-CSRF-Token": csrf})
+        assert not await _current(console, session)
+
+
+async def test_an_expired_session_is_not_current(
+    console: Console, owners: dict[str, Owner]
+) -> None:
+    async with await _client(console.sessions(ttl=timedelta(seconds=1))) as client:
+        session = await _session(console, (await _login(client, owners))[0])
+        await asyncio.sleep(1.2)
+        assert not await _current(console, session)
+
+
+async def _blocked_by(console: Console, pid: int) -> bool:
+    for _ in range(500):
+        if await console.db.fetch_value(
+            "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))",
+            pid,
+        ):
+            return True
+        await asyncio.sleep(0.01)
+    return False
+
+
+async def test_a_held_session_is_closed_only_after_the_holder_ends(
+    console: Console, owners: dict[str, Owner]
+) -> None:
+    sessions = console.sessions()
+    async with await _client(sessions) as client:
+        session = await _session(console, (await _login(client, owners))[0])
+    async with console.db.transaction() as tx:
+        pid = await tx.fetch_value("SELECT pg_backend_pid()")
+        assert await session_is_current(tx, session, hold=True)
+        closing = asyncio.create_task(sessions.close(session))
+        waited = await _blocked_by(console, pid)
+        still_current = await session_is_current(tx, session, hold=True)
+    await asyncio.wait_for(closing, 5)
+    assert waited, "logout did not wait on the held session"
+    assert still_current
+    assert not await _current(console, session)
+
+
+async def test_a_session_that_expires_while_waiting_for_its_row_is_not_current(
+    console: Console, owners: dict[str, Owner]
+) -> None:
+    async with await _client(console.sessions(ttl=timedelta(seconds=2))) as client:
+        session = await _session(console, (await _login(client, owners))[0])
+    async with console.db.transaction() as gate:
+        pid = await gate.fetch_value("SELECT pg_backend_pid()")
+        await gate.execute(
+            "SELECT 1 FROM {{tables.console_sessions}} WHERE token_sha256=$1 FOR UPDATE",
+            session.token_sha256,
+        )
+        holding = asyncio.create_task(_current(console, session, hold=True))
+        assert await _blocked_by(console, pid), "the hold did not wait on the session row"
+        assert datetime.now(UTC) < session.expires_at, "the hold waited after the session ended"
+        while datetime.now(UTC) <= session.expires_at:
+            await asyncio.sleep(0.05)
+    assert not await asyncio.wait_for(holding, 5)

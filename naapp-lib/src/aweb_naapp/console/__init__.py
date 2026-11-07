@@ -33,6 +33,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
+from pgdbm.core import TransactionManager
 from pydantic import BaseModel
 
 from aweb_naapp import ratelimit
@@ -86,6 +87,31 @@ class ConsoleSession:
     evidence_ref: str
     expires_at: datetime
     token_sha256: bytes
+
+
+async def session_is_current(
+    tx: TransactionManager, session: ConsoleSession, *, hold: bool
+) -> bool:
+    """Whether ``session`` is still the exact open, unexpired session row in ``tx``.
+
+    Every field binds back to the row its token names, never another live
+    session. With ``hold`` the row is held ``FOR SHARE`` until ``tx`` ends, so
+    a logout waits for the caller; the caller takes it after its own earlier
+    locks. The clock is read after any row-lock wait.
+    """
+    row = await tx.fetch_one(
+        "SELECT scope,subject,evidence_ref,expires_at,closed_at"
+        " FROM {{tables.console_sessions}} WHERE token_sha256=$1"
+        + (" FOR SHARE" if hold else ""),
+        session.token_sha256,
+    )
+    return (
+        row is not None
+        and row["closed_at"] is None
+        and (row["scope"], row["subject"], row["evidence_ref"], row["expires_at"])
+        == (session.scope, session.subject, session.evidence_ref, session.expires_at)
+        and session.expires_at > datetime.now(UTC)
+    )
 
 
 async def apply_console_migrations(db: AsyncDatabaseManager) -> None:
