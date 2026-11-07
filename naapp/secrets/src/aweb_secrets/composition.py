@@ -328,7 +328,10 @@ async def _compose(
         db,
         **common,
         egress=Egress(
-            addresses=AddressPolicy(internal_destinations=settings.internal_destinations),
+            addresses=AddressPolicy(
+                internal_destinations=settings.internal_destinations,
+                denied=settings.egress_denied_networks,
+            ),
             resolver=DnsResolver(),
             user_agent="aweb-secrets",
             ca_file=settings.egress_ca_file,
