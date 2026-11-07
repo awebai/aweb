@@ -12,7 +12,7 @@ import secrets
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID
 
 from aweb_naapp.console import ConsoleSession
@@ -242,7 +242,18 @@ ACTIONS = {
     "deregister-runner": "runner.deregistered",
 }
 GovernanceEnqueue = Callable[..., Awaitable[UUID]]
-RunnerDeregistration = Callable[..., Awaitable[object]]
+
+
+class RunnerDeregistration(Protocol):
+    async def __call__(
+        self,
+        tx: TransactionManager,
+        installation_id: str,
+        runner_id: str,
+        *,
+        now: datetime,
+        revoked_by: str,
+    ) -> bool: ...
 
 
 class Containment:
@@ -607,11 +618,13 @@ class Containment:
         elif action == "deregister-runner":
             if self.deregister_runner is None:
                 raise ContainmentRefused("runner_unavailable", 503)
+            assert target is not None
             await self.deregister_runner(
                 tx,
                 installation_id,
                 target,
                 now=datetime.now(UTC),
+                revoked_by=authorized_by,
             )
             ids = ()
         else:
