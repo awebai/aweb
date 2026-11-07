@@ -54,6 +54,7 @@ from aweb_secrets.change_sets import (
 )
 from aweb_secrets.config import ServiceSettings
 from aweb_secrets.console import OwnerConsole, owner_console_router
+from aweb_secrets.console_access import ConsoleAccess, console_access_router
 from aweb_secrets.console_activity import ConsoleActivity, console_activity_router
 from aweb_secrets.console_bootstrap import console_bootstrap_router
 from aweb_secrets.console_changes import ConsoleChanges, console_changes_router
@@ -513,6 +514,7 @@ def create_service(
             human(lambda s: console_use_approvals_router(services=s.use_pages)),
             human(lambda s: console_run_approvals_router(services=s.use_pages)),
             human(lambda s: console_activity_router(services=s.activity)),
+            human(lambda s: console_access_router(services=ConsoleAccess(console=s.console))),
             human(lambda s: containment_console_router(s.containment, console=s.console)),
         ),
         runner_routers=(
