@@ -353,6 +353,26 @@ class CredentialAudit:
             signed_trace_id=signed_trace_id,
         )
 
+    async def record_role_revoked(
+        self,
+        tx: TransactionManager,
+        *,
+        context: PreparedContainment,
+        role: str,
+        subject_ref: str,
+        occurred_at: datetime,
+    ) -> UUID:
+        from aweb_naapp.runtime.credential_audit.narrowing import record_role_revoked
+
+        return await record_role_revoked(
+            self,
+            tx,
+            context=context,
+            role=role,
+            subject_ref=subject_ref,
+            occurred_at=occurred_at,
+        )
+
     async def prepare_owner_act(
         self, admitted: AdmittedInstallation, *, signing: bytes, signature: str
     ) -> _OwnerActContext:
