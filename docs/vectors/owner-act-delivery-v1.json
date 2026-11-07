@@ -1,0 +1,2331 @@
+{
+  "client_cases": [
+    {
+      "declared": {
+        "app_id": "logs",
+        "owner_acts_origin": "https://console.logs.example.com",
+        "role": {
+          "acts": [
+            "app-credential.recover",
+            "app-role.designate",
+            "app-role.revoke"
+          ],
+          "description": "Reads the team's audit log in a passkey session on the console.",
+          "label": "Log reader",
+          "name": "logs.reader",
+          "prepare_tool": "owner-act-prepare",
+          "principal": "refused"
+        }
+      },
+      "error": null,
+      "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+      "name": "accepted",
+      "request": {
+        "act": "app-role.designate",
+        "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+        "role": "logs.reader"
+      },
+      "response": {
+        "act": "app-role.designate",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T13:00:00Z",
+        "subject": {
+          "app_id": "logs",
+          "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "role": "logs.reader.00112233445566778899aabbccddeeff"
+        }
+      },
+      "typed_contact": "reader@example.com"
+    },
+    {
+      "declared": {
+        "app_id": "logs",
+        "owner_acts_origin": "https://console.logs.example.com",
+        "role": {
+          "acts": [
+            "app-credential.recover",
+            "app-role.designate",
+            "app-role.revoke"
+          ],
+          "description": "Reads the team's audit log in a passkey session on the console.",
+          "label": "Log reader",
+          "name": "logs.reader",
+          "prepare_tool": "owner-act-prepare",
+          "principal": "refused"
+        }
+      },
+      "error": null,
+      "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+      "name": "revoke_accepted",
+      "request": {
+        "act": "app-role.revoke",
+        "holder": "logs.reader.00112233445566778899aabbccddeeff",
+        "role": "logs.reader"
+      },
+      "response": {
+        "act": "app-role.revoke",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T13:00:00Z",
+        "subject": {
+          "app_id": "logs",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "role": "logs.reader.00112233445566778899aabbccddeeff",
+          "subject_ref": "b3:subject:7f3e9a1c"
+        }
+      },
+      "typed_contact": "reader@example.com"
+    },
+    {
+      "declared": {
+        "app_id": "logs",
+        "owner_acts_origin": "https://console.logs.example.com",
+        "role": {
+          "acts": [
+            "app-credential.recover",
+            "app-role.designate",
+            "app-role.revoke"
+          ],
+          "description": "Reads the team's audit log in a passkey session on the console.",
+          "label": "Log reader",
+          "name": "logs.reader",
+          "prepare_tool": "owner-act-prepare",
+          "principal": "refused"
+        }
+      },
+      "error": "prepare_mismatch",
+      "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+      "name": "aud_is_the_agent_origin",
+      "request": {
+        "act": "app-role.designate",
+        "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+        "role": "logs.reader"
+      },
+      "response": {
+        "act": "app-role.designate",
+        "aud": "https://logs.example.com",
+        "expires_at": "2026-11-07T13:00:00Z",
+        "subject": {
+          "app_id": "logs",
+          "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "role": "logs.reader.00112233445566778899aabbccddeeff"
+        }
+      },
+      "typed_contact": "reader@example.com"
+    },
+    {
+      "declared": {
+        "app_id": "logs",
+        "owner_acts_origin": "https://console.logs.example.com",
+        "role": {
+          "acts": [
+            "app-credential.recover",
+            "app-role.designate",
+            "app-role.revoke"
+          ],
+          "description": "Reads the team's audit log in a passkey session on the console.",
+          "label": "Log reader",
+          "name": "logs.reader",
+          "prepare_tool": "owner-act-prepare",
+          "principal": "refused"
+        }
+      },
+      "error": "prepare_mismatch",
+      "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+      "name": "another_act",
+      "request": {
+        "act": "app-role.designate",
+        "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+        "role": "logs.reader"
+      },
+      "response": {
+        "act": "app-credential.recover",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T13:00:00Z",
+        "subject": {
+          "app_id": "logs",
+          "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "role": "logs.reader.00112233445566778899aabbccddeeff"
+        }
+      },
+      "typed_contact": "reader@example.com"
+    },
+    {
+      "declared": {
+        "app_id": "logs",
+        "owner_acts_origin": "https://console.logs.example.com",
+        "role": {
+          "acts": [
+            "app-credential.recover",
+            "app-role.designate",
+            "app-role.revoke"
+          ],
+          "description": "Reads the team's audit log in a passkey session on the console.",
+          "label": "Log reader",
+          "name": "logs.reader",
+          "prepare_tool": "owner-act-prepare",
+          "principal": "refused"
+        }
+      },
+      "error": "prepare_mismatch",
+      "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+      "name": "another_app",
+      "request": {
+        "act": "app-role.designate",
+        "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+        "role": "logs.reader"
+      },
+      "response": {
+        "act": "app-role.designate",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T13:00:00Z",
+        "subject": {
+          "app_id": "secrets",
+          "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "role": "logs.reader.00112233445566778899aabbccddeeff"
+        }
+      },
+      "typed_contact": "reader@example.com"
+    },
+    {
+      "declared": {
+        "app_id": "logs",
+        "owner_acts_origin": "https://console.logs.example.com",
+        "role": {
+          "acts": [
+            "app-credential.recover",
+            "app-role.designate",
+            "app-role.revoke"
+          ],
+          "description": "Reads the team's audit log in a passkey session on the console.",
+          "label": "Log reader",
+          "name": "logs.reader",
+          "prepare_tool": "owner-act-prepare",
+          "principal": "refused"
+        }
+      },
+      "error": "prepare_mismatch",
+      "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+      "name": "another_installation",
+      "request": {
+        "act": "app-role.designate",
+        "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+        "role": "logs.reader"
+      },
+      "response": {
+        "act": "app-role.designate",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T13:00:00Z",
+        "subject": {
+          "app_id": "logs",
+          "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+          "installation_id": "2c5f39cb-3fb2-4e4c-b4f6-f02ac6b8744c",
+          "role": "logs.reader.00112233445566778899aabbccddeeff"
+        }
+      },
+      "typed_contact": "reader@example.com"
+    },
+    {
+      "declared": {
+        "app_id": "logs",
+        "owner_acts_origin": "https://console.logs.example.com",
+        "role": {
+          "acts": [
+            "app-credential.recover",
+            "app-role.designate",
+            "app-role.revoke"
+          ],
+          "description": "Reads the team's audit log in a passkey session on the console.",
+          "label": "Log reader",
+          "name": "logs.reader",
+          "prepare_tool": "owner-act-prepare",
+          "principal": "refused"
+        }
+      },
+      "error": "prepare_mismatch",
+      "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+      "name": "token_of_another_role",
+      "request": {
+        "act": "app-role.designate",
+        "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+        "role": "logs.reader"
+      },
+      "response": {
+        "act": "app-role.designate",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T13:00:00Z",
+        "subject": {
+          "app_id": "logs",
+          "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "role": "secrets.owner.0123456789abcdef0123456789abcdef01234567"
+        }
+      },
+      "typed_contact": "reader@example.com"
+    },
+    {
+      "declared": {
+        "app_id": "logs",
+        "owner_acts_origin": "https://console.logs.example.com",
+        "role": {
+          "acts": [
+            "app-credential.recover",
+            "app-role.designate",
+            "app-role.revoke"
+          ],
+          "description": "Reads the team's audit log in a passkey session on the console.",
+          "label": "Log reader",
+          "name": "logs.reader",
+          "prepare_tool": "owner-act-prepare",
+          "principal": "refused"
+        }
+      },
+      "error": "prepare_mismatch",
+      "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+      "name": "token_suffix_of_31_hex",
+      "request": {
+        "act": "app-role.designate",
+        "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+        "role": "logs.reader"
+      },
+      "response": {
+        "act": "app-role.designate",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T13:00:00Z",
+        "subject": {
+          "app_id": "logs",
+          "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "role": "logs.reader.00112233445566778899aabbccddeef"
+        }
+      },
+      "typed_contact": "reader@example.com"
+    },
+    {
+      "declared": {
+        "app_id": "logs",
+        "owner_acts_origin": "https://console.logs.example.com",
+        "role": {
+          "acts": [
+            "app-credential.recover",
+            "app-role.designate",
+            "app-role.revoke"
+          ],
+          "description": "Reads the team's audit log in a passkey session on the console.",
+          "label": "Log reader",
+          "name": "logs.reader",
+          "prepare_tool": "owner-act-prepare",
+          "principal": "refused"
+        }
+      },
+      "error": "prepare_mismatch",
+      "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+      "name": "contact_hash_of_another_contact",
+      "request": {
+        "act": "app-role.designate",
+        "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+        "role": "logs.reader"
+      },
+      "response": {
+        "act": "app-role.designate",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T13:00:00Z",
+        "subject": {
+          "app_id": "logs",
+          "contact_sha256": "7ddde008fdee507de4150307b1e0936b2fd55c9c357d07a8ccc79e5ae85b195f",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "role": "logs.reader.00112233445566778899aabbccddeeff"
+        }
+      },
+      "typed_contact": "reader@example.com"
+    },
+    {
+      "declared": {
+        "app_id": "logs",
+        "owner_acts_origin": "https://console.logs.example.com",
+        "role": {
+          "acts": [
+            "app-credential.recover",
+            "app-role.designate",
+            "app-role.revoke"
+          ],
+          "description": "Reads the team's audit log in a passkey session on the console.",
+          "label": "Log reader",
+          "name": "logs.reader",
+          "prepare_tool": "owner-act-prepare",
+          "principal": "refused"
+        }
+      },
+      "error": "prepare_mismatch",
+      "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+      "name": "designation_naming_a_subject",
+      "request": {
+        "act": "app-role.designate",
+        "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+        "role": "logs.reader"
+      },
+      "response": {
+        "act": "app-role.designate",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T13:00:00Z",
+        "subject": {
+          "app_id": "logs",
+          "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "role": "logs.reader.00112233445566778899aabbccddeeff",
+          "subject_ref": "b3:subject:7f3e9a1c"
+        }
+      },
+      "typed_contact": "reader@example.com"
+    },
+    {
+      "declared": {
+        "app_id": "logs",
+        "owner_acts_origin": "https://console.logs.example.com",
+        "role": {
+          "acts": [
+            "app-credential.recover",
+            "app-role.designate",
+            "app-role.revoke"
+          ],
+          "description": "Reads the team's audit log in a passkey session on the console.",
+          "label": "Log reader",
+          "name": "logs.reader",
+          "prepare_tool": "owner-act-prepare",
+          "principal": "refused"
+        }
+      },
+      "error": "prepare_mismatch",
+      "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+      "name": "revoke_of_another_holder",
+      "request": {
+        "act": "app-role.revoke",
+        "holder": "logs.reader.00112233445566778899aabbccddeeff",
+        "role": "logs.reader"
+      },
+      "response": {
+        "act": "app-role.revoke",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T13:00:00Z",
+        "subject": {
+          "app_id": "logs",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "role": "logs.reader.ffeeddccbbaa99887766554433221100",
+          "subject_ref": "b3:subject:7f3e9a1c"
+        }
+      },
+      "typed_contact": "reader@example.com"
+    }
+  ],
+  "delivery_cases": [
+    {
+      "act": {
+        "act": "app-role.designate",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T12:05:00Z",
+        "issued_at": "2026-11-07T12:00:00Z",
+        "nonce": "02020202020202020202020202020202",
+        "subject": {
+          "app_id": "logs",
+          "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "role": "logs.reader.00112233445566778899aabbccddeeff"
+        },
+        "team_id": "demo:example.com",
+        "team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "type": "aweb.owner-act",
+        "v": 1
+      },
+      "body": {
+        "contact": "reader@example.com",
+        "signature": "wL2mePi4SjvnF/NHS1i2uqEz1QDibcNPUXuJprRbSNMvjNwpZF2VcamzDseqMBFbVXs8czWZYq2frkEqZfGFDw",
+        "signing": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6ImFwcC1yb2xlLmRlc2lnbmF0ZSIsImF1ZCI6Imh0dHBzOi8vY29uc29sZS5sb2dzLmV4YW1wbGUuY29tIiwiZXhwaXJlc19hdCI6IjIwMjYtMTEtMDdUMTI6MDU6MDBaIiwiaXNzdWVkX2F0IjoiMjAyNi0xMS0wN1QxMjowMDowMFoiLCJub25jZSI6IjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyIiwic3ViamVjdCI6eyJhcHBfaWQiOiJsb2dzIiwiY29udGFjdF9zaGEyNTYiOiJkMTA4YjI3OTQzNGZlMWQ1NGFjMGYxZGE2MzM1NjQ2MDRiMjZjMmUwZTIyMWQxMDhiMGZiYWRiODdhYmEwMmMwIiwiaW5zdGFsbGF0aW9uX2lkIjoiMWI0ZTI4YmEtMmZhMS00ZDNiLWEzZjUtZWYxOWI1YTc2MzNiIiwicm9sZSI6ImxvZ3MucmVhZGVyLjAwMTEyMjMzNDQ1NTY2Nzc4ODk5YWFiYmNjZGRlZWZmIn0sInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9rZXlfZGlkIjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0eXBlIjoiYXdlYi5vd25lci1hY3QiLCJ2IjoxfQ=="
+      },
+      "name": "designate_a_reader",
+      "result": {
+        "detail": null,
+        "response": {
+          "act": "app-role.designate",
+          "effective_at": "2026-11-07T12:01:00Z",
+          "role": "logs.reader.00112233445566778899aabbccddeeff"
+        },
+        "status": 200
+      },
+      "row": {
+        "app_id": "logs",
+        "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "role": "logs.reader.00112233445566778899aabbccddeeff"
+      },
+      "verifier": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "audience": "https://console.logs.example.com",
+        "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "nonce_used": false,
+        "now": "2026-11-07T12:01:00Z",
+        "team_id": "demo:example.com"
+      },
+      "verifier_code": null
+    },
+    {
+      "act": {
+        "act": "app-role.revoke",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T12:05:00Z",
+        "issued_at": "2026-11-07T12:00:00Z",
+        "nonce": "02020202020202020202020202020202",
+        "subject": {
+          "app_id": "logs",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "role": "logs.reader.00112233445566778899aabbccddeeff",
+          "subject_ref": "b3:subject:7f3e9a1c"
+        },
+        "team_id": "demo:example.com",
+        "team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "type": "aweb.owner-act",
+        "v": 1
+      },
+      "body": {
+        "signature": "NSYOr4unKdceUSFezPgHK8jkaHWo6HECqbyXHKABWtZn7jUxA90otwHnV5ELAzrNMCcWVVRztfFohhkAVggmAA",
+        "signing": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6ImFwcC1yb2xlLnJldm9rZSIsImF1ZCI6Imh0dHBzOi8vY29uc29sZS5sb2dzLmV4YW1wbGUuY29tIiwiZXhwaXJlc19hdCI6IjIwMjYtMTEtMDdUMTI6MDU6MDBaIiwiaXNzdWVkX2F0IjoiMjAyNi0xMS0wN1QxMjowMDowMFoiLCJub25jZSI6IjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyIiwic3ViamVjdCI6eyJhcHBfaWQiOiJsb2dzIiwiaW5zdGFsbGF0aW9uX2lkIjoiMWI0ZTI4YmEtMmZhMS00ZDNiLWEzZjUtZWYxOWI1YTc2MzNiIiwicm9sZSI6ImxvZ3MucmVhZGVyLjAwMTEyMjMzNDQ1NTY2Nzc4ODk5YWFiYmNjZGRlZWZmIiwic3ViamVjdF9yZWYiOiJiMzpzdWJqZWN0OjdmM2U5YTFjIn0sInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9rZXlfZGlkIjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0eXBlIjoiYXdlYi5vd25lci1hY3QiLCJ2IjoxfQ=="
+      },
+      "name": "revoke_a_reader",
+      "result": {
+        "detail": null,
+        "response": {
+          "act": "app-role.revoke",
+          "effective_at": "2026-11-07T12:01:00Z",
+          "role": "logs.reader.00112233445566778899aabbccddeeff"
+        },
+        "status": 200
+      },
+      "row": {
+        "app_id": "logs",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "role": "logs.reader.00112233445566778899aabbccddeeff",
+        "subject_ref": "b3:subject:7f3e9a1c"
+      },
+      "verifier": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "audience": "https://console.logs.example.com",
+        "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "nonce_used": false,
+        "now": "2026-11-07T12:01:00Z",
+        "team_id": "demo:example.com"
+      },
+      "verifier_code": null
+    },
+    {
+      "act": {
+        "act": "app-credential.recover",
+        "aud": "https://console.secrets.example.com",
+        "expires_at": "2026-11-07T12:05:00Z",
+        "issued_at": "2026-11-07T12:00:00Z",
+        "nonce": "02020202020202020202020202020202",
+        "subject": {
+          "app_id": "secrets",
+          "contact_sha256": "c8cd3c6427301eaf6665bccacd65ddb614527acc843a15463e3faba57124c351",
+          "installation_id": "2c5f39cb-3fb2-4e4c-b4f6-f02ac6b8744c",
+          "role": "secrets.owner.0123456789abcdef0123456789abcdef01234567"
+        },
+        "team_id": "demo:example.com",
+        "team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "type": "aweb.owner-act",
+        "v": 1
+      },
+      "body": {
+        "contact": "owner@example.com",
+        "signature": "5p48lrQzJF89gqzin4/z7Iuo2ox0Uet+DSCorMSwFFVvAk7EzO2WKQ3MQlomtG9Ip+3SHutCtrXsFeln8qx/DQ",
+        "signing": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6ImFwcC1jcmVkZW50aWFsLnJlY292ZXIiLCJhdWQiOiJodHRwczovL2NvbnNvbGUuc2VjcmV0cy5leGFtcGxlLmNvbSIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTA3VDEyOjA1OjAwWiIsImlzc3VlZF9hdCI6IjIwMjYtMTEtMDdUMTI6MDA6MDBaIiwibm9uY2UiOiIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMiIsInN1YmplY3QiOnsiYXBwX2lkIjoic2VjcmV0cyIsImNvbnRhY3Rfc2hhMjU2IjoiYzhjZDNjNjQyNzMwMWVhZjY2NjViY2NhY2Q2NWRkYjYxNDUyN2FjYzg0M2ExNTQ2M2UzZmFiYTU3MTI0YzM1MSIsImluc3RhbGxhdGlvbl9pZCI6IjJjNWYzOWNiLTNmYjItNGU0Yy1iNGY2LWYwMmFjNmI4NzQ0YyIsInJvbGUiOiJzZWNyZXRzLm93bmVyLjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1NjcifSwidGVhbV9pZCI6ImRlbW86ZXhhbXBsZS5jb20iLCJ0ZWFtX2tleV9kaWQiOiJkaWQ6a2V5Ono2TWt2NGZodUpOZXBnZ1RMUTRMdFlTc2lZRmF5am92TGoxZnBLTWVxZTlzczJHdyIsInR5cGUiOiJhd2ViLm93bmVyLWFjdCIsInYiOjF9"
+      },
+      "name": "recover_an_owner_after_the_cooling_off_period",
+      "result": {
+        "detail": null,
+        "response": {
+          "act": "app-credential.recover",
+          "effective_at": "2026-11-10T12:01:00Z",
+          "role": "secrets.owner.0123456789abcdef0123456789abcdef01234567"
+        },
+        "status": 200
+      },
+      "row": {
+        "app_id": "secrets",
+        "contact_sha256": "c8cd3c6427301eaf6665bccacd65ddb614527acc843a15463e3faba57124c351",
+        "installation_id": "2c5f39cb-3fb2-4e4c-b4f6-f02ac6b8744c",
+        "role": "secrets.owner.0123456789abcdef0123456789abcdef01234567"
+      },
+      "verifier": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "audience": "https://console.secrets.example.com",
+        "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "nonce_used": false,
+        "now": "2026-11-07T12:01:00Z",
+        "team_id": "demo:example.com"
+      },
+      "verifier_code": null
+    },
+    {
+      "act": {
+        "act": "app-role.designate",
+        "aud": "https://logs.example.com",
+        "expires_at": "2026-11-07T12:05:00Z",
+        "issued_at": "2026-11-07T12:00:00Z",
+        "nonce": "02020202020202020202020202020202",
+        "subject": {
+          "app_id": "logs",
+          "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "role": "logs.reader.00112233445566778899aabbccddeeff"
+        },
+        "team_id": "demo:example.com",
+        "team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "type": "aweb.owner-act",
+        "v": 1
+      },
+      "body": {
+        "contact": "reader@example.com",
+        "signature": "Sm4bN8Fp7gKUMLsuyZWVzUKext5XfjpBGZHVsZHrVRsnsYfSrcVreg72z/gq0EOWz7JHKVGY1Bd0JixjGFs3Dw",
+        "signing": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6ImFwcC1yb2xlLmRlc2lnbmF0ZSIsImF1ZCI6Imh0dHBzOi8vbG9ncy5leGFtcGxlLmNvbSIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTA3VDEyOjA1OjAwWiIsImlzc3VlZF9hdCI6IjIwMjYtMTEtMDdUMTI6MDA6MDBaIiwibm9uY2UiOiIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMiIsInN1YmplY3QiOnsiYXBwX2lkIjoibG9ncyIsImNvbnRhY3Rfc2hhMjU2IjoiZDEwOGIyNzk0MzRmZTFkNTRhYzBmMWRhNjMzNTY0NjA0YjI2YzJlMGUyMjFkMTA4YjBmYmFkYjg3YWJhMDJjMCIsImluc3RhbGxhdGlvbl9pZCI6IjFiNGUyOGJhLTJmYTEtNGQzYi1hM2Y1LWVmMTliNWE3NjMzYiIsInJvbGUiOiJsb2dzLnJlYWRlci4wMDExMjIzMzQ0NTU2Njc3ODg5OWFhYmJjY2RkZWVmZiJ9LCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInRlYW1fa2V5X2RpZCI6ImRpZDprZXk6ejZNa3Y0Zmh1Sk5lcGdnVExRNEx0WVNzaVlGYXlqb3ZMajFmcEtNZXFlOXNzMkd3IiwidHlwZSI6ImF3ZWIub3duZXItYWN0IiwidiI6MX0="
+      },
+      "name": "aud_is_the_agent_origin",
+      "result": {
+        "detail": "owner_required",
+        "response": null,
+        "status": 403
+      },
+      "row": {
+        "app_id": "logs",
+        "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "role": "logs.reader.00112233445566778899aabbccddeeff"
+      },
+      "verifier": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "audience": "https://console.logs.example.com",
+        "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "nonce_used": false,
+        "now": "2026-11-07T12:01:00Z",
+        "team_id": "demo:example.com"
+      },
+      "verifier_code": "audience_mismatch"
+    },
+    {
+      "act": {
+        "act": "app-role.designate",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T12:05:00Z",
+        "issued_at": "2026-11-07T12:00:00Z",
+        "nonce": "02020202020202020202020202020202",
+        "subject": {
+          "app_id": "logs",
+          "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "role": "logs.reader.00112233445566778899aabbccddeeff"
+        },
+        "team_id": "demo:example.com",
+        "team_key_did": "did:key:z6Mkr9XVJHgr8os96FL5UUrkdS226nfM3RuAMsqxKk1BJ8N2",
+        "type": "aweb.owner-act",
+        "v": 1
+      },
+      "body": {
+        "contact": "reader@example.com",
+        "signature": "cABNX1949Vs6tl0fr5XkxbsEUp+/08oivFerUB8i0MzWC/MtNxpwcKYmjfQ8umd7fO8GYV1SR6tqvzSAxgrKDQ",
+        "signing": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6ImFwcC1yb2xlLmRlc2lnbmF0ZSIsImF1ZCI6Imh0dHBzOi8vY29uc29sZS5sb2dzLmV4YW1wbGUuY29tIiwiZXhwaXJlc19hdCI6IjIwMjYtMTEtMDdUMTI6MDU6MDBaIiwiaXNzdWVkX2F0IjoiMjAyNi0xMS0wN1QxMjowMDowMFoiLCJub25jZSI6IjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyIiwic3ViamVjdCI6eyJhcHBfaWQiOiJsb2dzIiwiY29udGFjdF9zaGEyNTYiOiJkMTA4YjI3OTQzNGZlMWQ1NGFjMGYxZGE2MzM1NjQ2MDRiMjZjMmUwZTIyMWQxMDhiMGZiYWRiODdhYmEwMmMwIiwiaW5zdGFsbGF0aW9uX2lkIjoiMWI0ZTI4YmEtMmZhMS00ZDNiLWEzZjUtZWYxOWI1YTc2MzNiIiwicm9sZSI6ImxvZ3MucmVhZGVyLjAwMTEyMjMzNDQ1NTY2Nzc4ODk5YWFiYmNjZGRlZWZmIn0sInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9rZXlfZGlkIjoiZGlkOmtleTp6Nk1rcjlYVkpIZ3I4b3M5NkZMNVVVcmtkUzIyNm5mTTNSdUFNc3F4S2sxQko4TjIiLCJ0eXBlIjoiYXdlYi5vd25lci1hY3QiLCJ2IjoxfQ=="
+      },
+      "name": "signed_by_an_admin_key",
+      "result": {
+        "detail": "owner_required",
+        "response": null,
+        "status": 403
+      },
+      "row": {
+        "app_id": "logs",
+        "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "role": "logs.reader.00112233445566778899aabbccddeeff"
+      },
+      "verifier": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "audience": "https://console.logs.example.com",
+        "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "nonce_used": false,
+        "now": "2026-11-07T12:01:00Z",
+        "team_id": "demo:example.com"
+      },
+      "verifier_code": "owner_required"
+    },
+    {
+      "act": {
+        "act": "app-role.designate",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T12:05:00Z",
+        "issued_at": "2026-11-07T12:00:00Z",
+        "nonce": "02020202020202020202020202020202",
+        "subject": {
+          "app_id": "logs",
+          "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "role": "logs.reader.00112233445566778899aabbccddeeff"
+        },
+        "team_id": "demo:example.com",
+        "team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "type": "aweb.owner-act",
+        "v": 1
+      },
+      "body": {
+        "contact": "reader@example.com",
+        "signature": "wL2mePi4SjvnF/NHS1i2uqEz1QDibcNPUXuJprRbSNMvjNwpZF2VcamzDseqMBFbVXs8czWZYq2frkEqZfGFDw",
+        "signing": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6ImFwcC1yb2xlLmRlc2lnbmF0ZSIsImF1ZCI6Imh0dHBzOi8vY29uc29sZS5sb2dzLmV4YW1wbGUuY29tIiwiZXhwaXJlc19hdCI6IjIwMjYtMTEtMDdUMTI6MDU6MDBaIiwiaXNzdWVkX2F0IjoiMjAyNi0xMS0wN1QxMjowMDowMFoiLCJub25jZSI6IjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyIiwic3ViamVjdCI6eyJhcHBfaWQiOiJsb2dzIiwiY29udGFjdF9zaGEyNTYiOiJkMTA4YjI3OTQzNGZlMWQ1NGFjMGYxZGE2MzM1NjQ2MDRiMjZjMmUwZTIyMWQxMDhiMGZiYWRiODdhYmEwMmMwIiwiaW5zdGFsbGF0aW9uX2lkIjoiMWI0ZTI4YmEtMmZhMS00ZDNiLWEzZjUtZWYxOWI1YTc2MzNiIiwicm9sZSI6ImxvZ3MucmVhZGVyLjAwMTEyMjMzNDQ1NTY2Nzc4ODk5YWFiYmNjZGRlZWZmIn0sInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9rZXlfZGlkIjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0eXBlIjoiYXdlYi5vd25lci1hY3QiLCJ2IjoxfQ=="
+      },
+      "name": "nonce_already_used",
+      "result": {
+        "detail": "owner_required",
+        "response": null,
+        "status": 403
+      },
+      "row": {
+        "app_id": "logs",
+        "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "role": "logs.reader.00112233445566778899aabbccddeeff"
+      },
+      "verifier": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "audience": "https://console.logs.example.com",
+        "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "nonce_used": true,
+        "now": "2026-11-07T12:01:00Z",
+        "team_id": "demo:example.com"
+      },
+      "verifier_code": "nonce_reused"
+    },
+    {
+      "act": {
+        "act": "app-role.designate",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T12:05:00Z",
+        "issued_at": "2026-11-07T12:00:00Z",
+        "nonce": "02020202020202020202020202020202",
+        "subject": {
+          "app_id": "logs",
+          "contact_sha256": "7ddde008fdee507de4150307b1e0936b2fd55c9c357d07a8ccc79e5ae85b195f",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "role": "logs.reader.00112233445566778899aabbccddeeff"
+        },
+        "team_id": "demo:example.com",
+        "team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "type": "aweb.owner-act",
+        "v": 1
+      },
+      "body": {
+        "contact": "reader@example.com",
+        "signature": "4sV4j7kIDc+517YuEpELdhSW9tHYQPlneX6q+N9FgYbuiclR1K4Uu6zP0bW55E6NciUBNeACd13APig8FKDRCA",
+        "signing": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6ImFwcC1yb2xlLmRlc2lnbmF0ZSIsImF1ZCI6Imh0dHBzOi8vY29uc29sZS5sb2dzLmV4YW1wbGUuY29tIiwiZXhwaXJlc19hdCI6IjIwMjYtMTEtMDdUMTI6MDU6MDBaIiwiaXNzdWVkX2F0IjoiMjAyNi0xMS0wN1QxMjowMDowMFoiLCJub25jZSI6IjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyIiwic3ViamVjdCI6eyJhcHBfaWQiOiJsb2dzIiwiY29udGFjdF9zaGEyNTYiOiI3ZGRkZTAwOGZkZWU1MDdkZTQxNTAzMDdiMWUwOTM2YjJmZDU1YzljMzU3ZDA3YThjY2M3OWU1YWU4NWIxOTVmIiwiaW5zdGFsbGF0aW9uX2lkIjoiMWI0ZTI4YmEtMmZhMS00ZDNiLWEzZjUtZWYxOWI1YTc2MzNiIiwicm9sZSI6ImxvZ3MucmVhZGVyLjAwMTEyMjMzNDQ1NTY2Nzc4ODk5YWFiYmNjZGRlZWZmIn0sInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9rZXlfZGlkIjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0eXBlIjoiYXdlYi5vd25lci1hY3QiLCJ2IjoxfQ=="
+      },
+      "name": "row_for_another_contact",
+      "result": {
+        "detail": "owner_required",
+        "response": null,
+        "status": 403
+      },
+      "row": {
+        "app_id": "logs",
+        "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "role": "logs.reader.00112233445566778899aabbccddeeff"
+      },
+      "verifier": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "audience": "https://console.logs.example.com",
+        "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "nonce_used": false,
+        "now": "2026-11-07T12:01:00Z",
+        "team_id": "demo:example.com"
+      },
+      "verifier_code": "subject_mismatch"
+    },
+    {
+      "act": {
+        "act": "app-role.designate",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T12:05:00Z",
+        "issued_at": "2026-11-07T12:00:00Z",
+        "nonce": "02020202020202020202020202020202",
+        "subject": {
+          "app_id": "logs",
+          "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "role": "logs.reader.00112233445566778899aabbccddeeff"
+        },
+        "team_id": "demo:example.com",
+        "team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "type": "aweb.owner-act",
+        "v": 1
+      },
+      "body": {
+        "contact": "someone-else@example.com",
+        "signature": "wL2mePi4SjvnF/NHS1i2uqEz1QDibcNPUXuJprRbSNMvjNwpZF2VcamzDseqMBFbVXs8czWZYq2frkEqZfGFDw",
+        "signing": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6ImFwcC1yb2xlLmRlc2lnbmF0ZSIsImF1ZCI6Imh0dHBzOi8vY29uc29sZS5sb2dzLmV4YW1wbGUuY29tIiwiZXhwaXJlc19hdCI6IjIwMjYtMTEtMDdUMTI6MDU6MDBaIiwiaXNzdWVkX2F0IjoiMjAyNi0xMS0wN1QxMjowMDowMFoiLCJub25jZSI6IjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyIiwic3ViamVjdCI6eyJhcHBfaWQiOiJsb2dzIiwiY29udGFjdF9zaGEyNTYiOiJkMTA4YjI3OTQzNGZlMWQ1NGFjMGYxZGE2MzM1NjQ2MDRiMjZjMmUwZTIyMWQxMDhiMGZiYWRiODdhYmEwMmMwIiwiaW5zdGFsbGF0aW9uX2lkIjoiMWI0ZTI4YmEtMmZhMS00ZDNiLWEzZjUtZWYxOWI1YTc2MzNiIiwicm9sZSI6ImxvZ3MucmVhZGVyLjAwMTEyMjMzNDQ1NTY2Nzc4ODk5YWFiYmNjZGRlZWZmIn0sInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9rZXlfZGlkIjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0eXBlIjoiYXdlYi5vd25lci1hY3QiLCJ2IjoxfQ=="
+      },
+      "name": "contact_that_does_not_match_the_row",
+      "result": {
+        "detail": "owner_required",
+        "response": null,
+        "status": 403
+      },
+      "row": {
+        "app_id": "logs",
+        "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "role": "logs.reader.00112233445566778899aabbccddeeff"
+      },
+      "verifier": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "audience": "https://console.logs.example.com",
+        "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "nonce_used": false,
+        "now": "2026-11-07T12:01:00Z",
+        "team_id": "demo:example.com"
+      },
+      "verifier_code": null
+    },
+    {
+      "act": {
+        "act": "app-role.designate",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T12:05:00Z",
+        "issued_at": "2026-11-07T12:00:00Z",
+        "nonce": "02020202020202020202020202020202",
+        "subject": {
+          "app_id": "logs",
+          "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "role": "logs.reader.00112233445566778899aabbccddeeff"
+        },
+        "team_id": "demo:example.com",
+        "team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "type": "aweb.owner-act",
+        "v": 1
+      },
+      "body": {
+        "contact": "reader@example.com",
+        "signature": "wL2mePi4SjvnF/NHS1i2uqEz1QDibcNPUXuJprRbSNMvjNwpZF2VcamzDseqMBFbVXs8czWZYq2frkEqZfGFDw",
+        "signing": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6ImFwcC1yb2xlLmRlc2lnbmF0ZSIsImF1ZCI6Imh0dHBzOi8vY29uc29sZS5sb2dzLmV4YW1wbGUuY29tIiwiZXhwaXJlc19hdCI6IjIwMjYtMTEtMDdUMTI6MDU6MDBaIiwiaXNzdWVkX2F0IjoiMjAyNi0xMS0wN1QxMjowMDowMFoiLCJub25jZSI6IjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyIiwic3ViamVjdCI6eyJhcHBfaWQiOiJsb2dzIiwiY29udGFjdF9zaGEyNTYiOiJkMTA4YjI3OTQzNGZlMWQ1NGFjMGYxZGE2MzM1NjQ2MDRiMjZjMmUwZTIyMWQxMDhiMGZiYWRiODdhYmEwMmMwIiwiaW5zdGFsbGF0aW9uX2lkIjoiMWI0ZTI4YmEtMmZhMS00ZDNiLWEzZjUtZWYxOWI1YTc2MzNiIiwicm9sZSI6ImxvZ3MucmVhZGVyLjAwMTEyMjMzNDQ1NTY2Nzc4ODk5YWFiYmNjZGRlZWZmIn0sInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9rZXlfZGlkIjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0eXBlIjoiYXdlYi5vd25lci1hY3QiLCJ2IjoxfQ=="
+      },
+      "name": "no_pending_row",
+      "result": {
+        "detail": "owner_required",
+        "response": null,
+        "status": 403
+      },
+      "row": null,
+      "verifier": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "audience": "https://console.logs.example.com",
+        "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "nonce_used": false,
+        "now": "2026-11-07T12:01:00Z",
+        "team_id": "demo:example.com"
+      },
+      "verifier_code": null
+    },
+    {
+      "act": {
+        "act": "app-role.revoke",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T12:05:00Z",
+        "issued_at": "2026-11-07T12:00:00Z",
+        "nonce": "02020202020202020202020202020202",
+        "subject": {
+          "app_id": "logs",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "role": "logs.reader.00112233445566778899aabbccddeeff",
+          "subject_ref": "b3:subject:7f3e9a1c"
+        },
+        "team_id": "demo:example.com",
+        "team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "type": "aweb.owner-act",
+        "v": 1
+      },
+      "body": {
+        "contact": "reader@example.com",
+        "signature": "NSYOr4unKdceUSFezPgHK8jkaHWo6HECqbyXHKABWtZn7jUxA90otwHnV5ELAzrNMCcWVVRztfFohhkAVggmAA",
+        "signing": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6ImFwcC1yb2xlLnJldm9rZSIsImF1ZCI6Imh0dHBzOi8vY29uc29sZS5sb2dzLmV4YW1wbGUuY29tIiwiZXhwaXJlc19hdCI6IjIwMjYtMTEtMDdUMTI6MDU6MDBaIiwiaXNzdWVkX2F0IjoiMjAyNi0xMS0wN1QxMjowMDowMFoiLCJub25jZSI6IjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyIiwic3ViamVjdCI6eyJhcHBfaWQiOiJsb2dzIiwiaW5zdGFsbGF0aW9uX2lkIjoiMWI0ZTI4YmEtMmZhMS00ZDNiLWEzZjUtZWYxOWI1YTc2MzNiIiwicm9sZSI6ImxvZ3MucmVhZGVyLjAwMTEyMjMzNDQ1NTY2Nzc4ODk5YWFiYmNjZGRlZWZmIiwic3ViamVjdF9yZWYiOiJiMzpzdWJqZWN0OjdmM2U5YTFjIn0sInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9rZXlfZGlkIjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0eXBlIjoiYXdlYi5vd25lci1hY3QiLCJ2IjoxfQ=="
+      },
+      "name": "contact_on_revoke",
+      "result": {
+        "detail": "request_invalid",
+        "response": null,
+        "status": 400
+      },
+      "row": {
+        "app_id": "logs",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "role": "logs.reader.00112233445566778899aabbccddeeff",
+        "subject_ref": "b3:subject:7f3e9a1c"
+      },
+      "verifier": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "audience": "https://console.logs.example.com",
+        "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "nonce_used": false,
+        "now": "2026-11-07T12:01:00Z",
+        "team_id": "demo:example.com"
+      },
+      "verifier_code": null
+    },
+    {
+      "act": {
+        "act": "app-role.designate",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T12:05:00Z",
+        "issued_at": "2026-11-07T12:00:00Z",
+        "nonce": "02020202020202020202020202020202",
+        "subject": {
+          "app_id": "logs",
+          "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "role": "logs.reader.00112233445566778899aabbccddeeff"
+        },
+        "team_id": "demo:example.com",
+        "team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "type": "aweb.owner-act",
+        "v": 1
+      },
+      "body": {
+        "signature": "wL2mePi4SjvnF/NHS1i2uqEz1QDibcNPUXuJprRbSNMvjNwpZF2VcamzDseqMBFbVXs8czWZYq2frkEqZfGFDw",
+        "signing": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6ImFwcC1yb2xlLmRlc2lnbmF0ZSIsImF1ZCI6Imh0dHBzOi8vY29uc29sZS5sb2dzLmV4YW1wbGUuY29tIiwiZXhwaXJlc19hdCI6IjIwMjYtMTEtMDdUMTI6MDU6MDBaIiwiaXNzdWVkX2F0IjoiMjAyNi0xMS0wN1QxMjowMDowMFoiLCJub25jZSI6IjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyIiwic3ViamVjdCI6eyJhcHBfaWQiOiJsb2dzIiwiY29udGFjdF9zaGEyNTYiOiJkMTA4YjI3OTQzNGZlMWQ1NGFjMGYxZGE2MzM1NjQ2MDRiMjZjMmUwZTIyMWQxMDhiMGZiYWRiODdhYmEwMmMwIiwiaW5zdGFsbGF0aW9uX2lkIjoiMWI0ZTI4YmEtMmZhMS00ZDNiLWEzZjUtZWYxOWI1YTc2MzNiIiwicm9sZSI6ImxvZ3MucmVhZGVyLjAwMTEyMjMzNDQ1NTY2Nzc4ODk5YWFiYmNjZGRlZWZmIn0sInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9rZXlfZGlkIjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0eXBlIjoiYXdlYi5vd25lci1hY3QiLCJ2IjoxfQ=="
+      },
+      "name": "no_contact_on_designate",
+      "result": {
+        "detail": "request_invalid",
+        "response": null,
+        "status": 400
+      },
+      "row": {
+        "app_id": "logs",
+        "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "role": "logs.reader.00112233445566778899aabbccddeeff"
+      },
+      "verifier": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "audience": "https://console.logs.example.com",
+        "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "nonce_used": false,
+        "now": "2026-11-07T12:01:00Z",
+        "team_id": "demo:example.com"
+      },
+      "verifier_code": null
+    },
+    {
+      "act": {
+        "act": "app-role.designate",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T12:05:00Z",
+        "issued_at": "2026-11-07T12:00:00Z",
+        "nonce": "02020202020202020202020202020202",
+        "subject": {
+          "app_id": "logs",
+          "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "role": "logs.reader.00112233445566778899aabbccddeeff"
+        },
+        "team_id": "demo:example.com",
+        "team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "type": "aweb.owner-act",
+        "v": 1
+      },
+      "body": {
+        "contact": "reader@example.com",
+        "signature": "wL2mePi4SjvnF/NHS1i2uqEz1QDibcNPUXuJprRbSNMvjNwpZF2VcamzDseqMBFbVXs8czWZYq2frkEqZfGFDw",
+        "signing": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6ImFwcC1yb2xlLmRlc2lnbmF0ZSIsImF1ZCI6Imh0dHBzOi8vY29uc29sZS5sb2dzLmV4YW1wbGUuY29tIiwiZXhwaXJlc19hdCI6IjIwMjYtMTEtMDdUMTI6MDU6MDBaIiwiaXNzdWVkX2F0IjoiMjAyNi0xMS0wN1QxMjowMDowMFoiLCJub25jZSI6IjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyIiwic3ViamVjdCI6eyJhcHBfaWQiOiJsb2dzIiwiY29udGFjdF9zaGEyNTYiOiJkMTA4YjI3OTQzNGZlMWQ1NGFjMGYxZGE2MzM1NjQ2MDRiMjZjMmUwZTIyMWQxMDhiMGZiYWRiODdhYmEwMmMwIiwiaW5zdGFsbGF0aW9uX2lkIjoiMWI0ZTI4YmEtMmZhMS00ZDNiLWEzZjUtZWYxOWI1YTc2MzNiIiwicm9sZSI6ImxvZ3MucmVhZGVyLjAwMTEyMjMzNDQ1NTY2Nzc4ODk5YWFiYmNjZGRlZWZmIn0sInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9rZXlfZGlkIjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0eXBlIjoiYXdlYi5vd25lci1hY3QiLCJ2IjoxfQ==",
+        "team_id": "demo:example.com"
+      },
+      "name": "a_field_outside_the_body",
+      "result": {
+        "detail": "request_invalid",
+        "response": null,
+        "status": 400
+      },
+      "row": {
+        "app_id": "logs",
+        "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "role": "logs.reader.00112233445566778899aabbccddeeff"
+      },
+      "verifier": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "audience": "https://console.logs.example.com",
+        "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "nonce_used": false,
+        "now": "2026-11-07T12:01:00Z",
+        "team_id": "demo:example.com"
+      },
+      "verifier_code": null
+    },
+    {
+      "act": {
+        "act": "app-role.designate",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T12:05:00Z",
+        "issued_at": "2026-11-07T12:00:00Z",
+        "nonce": "02020202020202020202020202020202",
+        "subject": {
+          "app_id": "logs",
+          "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "role": "logs.reader.00112233445566778899aabbccddeeff"
+        },
+        "team_id": "demo:example.com",
+        "team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "type": "aweb.owner-act",
+        "v": 1
+      },
+      "body": {
+        "contact": "reader@example.com",
+        "signature": "wL2mePi4SjvnF/NHS1i2uqEz1QDibcNPUXuJprRbSNMvjNwpZF2VcamzDseqMBFbVXs8czWZYq2frkEqZfGFDw",
+        "signing": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6ImFwcC1yb2xlLmRlc2lnbmF0ZSIsImF1ZCI6Imh0dHBzOi8vY29uc29sZS5sb2dzLmV4YW1wbGUuY29tIiwiZXhwaXJlc19hdCI6IjIwMjYtMTEtMDdUMTI6MDU6MDBaIiwiaXNzdWVkX2F0IjoiMjAyNi0xMS0wN1QxMjowMDowMFoiLCJub25jZSI6IjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyIiwic3ViamVjdCI6eyJhcHBfaWQiOiJsb2dzIiwiY29udGFjdF9zaGEyNTYiOiJkMTA4YjI3OTQzNGZlMWQ1NGFjMGYxZGE2MzM1NjQ2MDRiMjZjMmUwZTIyMWQxMDhiMGZiYWRiODdhYmEwMmMwIiwiaW5zdGFsbGF0aW9uX2lkIjoiMWI0ZTI4YmEtMmZhMS00ZDNiLWEzZjUtZWYxOWI1YTc2MzNiIiwicm9sZSI6ImxvZ3MucmVhZGVyLjAwMTEyMjMzNDQ1NTY2Nzc4ODk5YWFiYmNjZGRlZWZmIn0sInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9rZXlfZGlkIjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0eXBlIjoiYXdlYi5vd25lci1hY3QiLCJ2IjoxfQ"
+      },
+      "name": "signing_in_url_safe_base64_without_padding",
+      "result": {
+        "detail": "request_invalid",
+        "response": null,
+        "status": 400
+      },
+      "row": {
+        "app_id": "logs",
+        "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "role": "logs.reader.00112233445566778899aabbccddeeff"
+      },
+      "verifier": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "audience": "https://console.logs.example.com",
+        "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "nonce_used": false,
+        "now": "2026-11-07T12:01:00Z",
+        "team_id": "demo:example.com"
+      },
+      "verifier_code": null
+    }
+  ],
+  "manifest_cases": [
+    {
+      "app_origin": "https://logs.example.com",
+      "error": null,
+      "name": "logs_reader",
+      "owner_acts": {
+        "origin": "https://console.logs.example.com",
+        "roles": [
+          {
+            "acts": [
+              "app-credential.recover",
+              "app-role.designate",
+              "app-role.revoke"
+            ],
+            "description": "Reads the team's audit log in a passkey session on the console.",
+            "label": "Log reader",
+            "name": "logs.reader",
+            "prepare_tool": "owner-act-prepare",
+            "principal": "refused"
+          }
+        ]
+      },
+      "tools": [
+        {
+          "body": {
+            "mode": "json"
+          },
+          "invocation_contexts": [
+            "agent"
+          ],
+          "method": "POST",
+          "name": "owner-act-prepare",
+          "params": [
+            {
+              "in": "body",
+              "name": "act"
+            },
+            {
+              "in": "body",
+              "name": "role"
+            },
+            {
+              "in": "body",
+              "name": "contact_sha256"
+            },
+            {
+              "in": "body",
+              "name": "principal"
+            },
+            {
+              "in": "body",
+              "name": "holder"
+            }
+          ],
+          "path": "/v1/owner-act-subjects",
+          "scopes": [
+            "logs.readers"
+          ]
+        }
+      ]
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": null,
+      "name": "secrets_owner",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "app-credential.recover",
+              "app-role.designate",
+              "app-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "prepare_tool": "owner-act-prepare",
+            "principal": "required"
+          }
+        ]
+      },
+      "tools": [
+        {
+          "body": {
+            "mode": "json"
+          },
+          "invocation_contexts": [
+            "agent"
+          ],
+          "method": "POST",
+          "name": "owner-act-prepare",
+          "params": [
+            {
+              "in": "body",
+              "name": "act"
+            },
+            {
+              "in": "body",
+              "name": "role"
+            },
+            {
+              "in": "body",
+              "name": "contact_sha256"
+            },
+            {
+              "in": "body",
+              "name": "principal"
+            },
+            {
+              "in": "body",
+              "name": "holder"
+            }
+          ],
+          "path": "/v1/owner-act-subjects",
+          "scopes": [
+            "secrets:owner-act"
+          ]
+        }
+      ]
+    },
+    {
+      "app_origin": "https://logs.example.com",
+      "error": "owner_acts_invalid",
+      "name": "origin_shares_the_app_host",
+      "owner_acts": {
+        "origin": "https://logs.example.com:8443",
+        "roles": [
+          {
+            "acts": [
+              "app-credential.recover",
+              "app-role.designate",
+              "app-role.revoke"
+            ],
+            "description": "Reads the team's audit log in a passkey session on the console.",
+            "label": "Log reader",
+            "name": "logs.reader",
+            "prepare_tool": "owner-act-prepare",
+            "principal": "refused"
+          }
+        ]
+      },
+      "tools": [
+        {
+          "body": {
+            "mode": "json"
+          },
+          "invocation_contexts": [
+            "agent"
+          ],
+          "method": "POST",
+          "name": "owner-act-prepare",
+          "params": [
+            {
+              "in": "body",
+              "name": "act"
+            },
+            {
+              "in": "body",
+              "name": "role"
+            },
+            {
+              "in": "body",
+              "name": "contact_sha256"
+            },
+            {
+              "in": "body",
+              "name": "principal"
+            },
+            {
+              "in": "body",
+              "name": "holder"
+            }
+          ],
+          "path": "/v1/owner-act-subjects",
+          "scopes": [
+            "logs.readers"
+          ]
+        }
+      ]
+    },
+    {
+      "app_origin": "https://logs.example.com",
+      "error": "owner_acts_invalid",
+      "name": "origin_with_a_path",
+      "owner_acts": {
+        "origin": "https://console.logs.example.com/console",
+        "roles": [
+          {
+            "acts": [
+              "app-credential.recover",
+              "app-role.designate",
+              "app-role.revoke"
+            ],
+            "description": "Reads the team's audit log in a passkey session on the console.",
+            "label": "Log reader",
+            "name": "logs.reader",
+            "prepare_tool": "owner-act-prepare",
+            "principal": "refused"
+          }
+        ]
+      },
+      "tools": [
+        {
+          "body": {
+            "mode": "json"
+          },
+          "invocation_contexts": [
+            "agent"
+          ],
+          "method": "POST",
+          "name": "owner-act-prepare",
+          "params": [
+            {
+              "in": "body",
+              "name": "act"
+            },
+            {
+              "in": "body",
+              "name": "role"
+            },
+            {
+              "in": "body",
+              "name": "contact_sha256"
+            },
+            {
+              "in": "body",
+              "name": "principal"
+            },
+            {
+              "in": "body",
+              "name": "holder"
+            }
+          ],
+          "path": "/v1/owner-act-subjects",
+          "scopes": [
+            "logs.readers"
+          ]
+        }
+      ]
+    },
+    {
+      "app_origin": "https://logs.example.com",
+      "error": "owner_acts_invalid",
+      "name": "no_roles",
+      "owner_acts": {
+        "origin": "https://console.logs.example.com",
+        "roles": []
+      },
+      "tools": [
+        {
+          "body": {
+            "mode": "json"
+          },
+          "invocation_contexts": [
+            "agent"
+          ],
+          "method": "POST",
+          "name": "owner-act-prepare",
+          "params": [
+            {
+              "in": "body",
+              "name": "act"
+            },
+            {
+              "in": "body",
+              "name": "role"
+            },
+            {
+              "in": "body",
+              "name": "contact_sha256"
+            },
+            {
+              "in": "body",
+              "name": "principal"
+            },
+            {
+              "in": "body",
+              "name": "holder"
+            }
+          ],
+          "path": "/v1/owner-act-subjects",
+          "scopes": [
+            "logs.readers"
+          ]
+        }
+      ]
+    },
+    {
+      "app_origin": "https://logs.example.com",
+      "error": "owner_acts_invalid",
+      "name": "duplicate_role",
+      "owner_acts": {
+        "origin": "https://console.logs.example.com",
+        "roles": [
+          {
+            "acts": [
+              "app-credential.recover",
+              "app-role.designate",
+              "app-role.revoke"
+            ],
+            "description": "Reads the team's audit log in a passkey session on the console.",
+            "label": "Log reader",
+            "name": "logs.reader",
+            "prepare_tool": "owner-act-prepare",
+            "principal": "refused"
+          },
+          {
+            "acts": [
+              "app-credential.recover",
+              "app-role.designate",
+              "app-role.revoke"
+            ],
+            "description": "Reads the team's audit log in a passkey session on the console.",
+            "label": "Log reader",
+            "name": "logs.reader",
+            "prepare_tool": "owner-act-prepare",
+            "principal": "refused"
+          }
+        ]
+      },
+      "tools": [
+        {
+          "body": {
+            "mode": "json"
+          },
+          "invocation_contexts": [
+            "agent"
+          ],
+          "method": "POST",
+          "name": "owner-act-prepare",
+          "params": [
+            {
+              "in": "body",
+              "name": "act"
+            },
+            {
+              "in": "body",
+              "name": "role"
+            },
+            {
+              "in": "body",
+              "name": "contact_sha256"
+            },
+            {
+              "in": "body",
+              "name": "principal"
+            },
+            {
+              "in": "body",
+              "name": "holder"
+            }
+          ],
+          "path": "/v1/owner-act-subjects",
+          "scopes": [
+            "logs.readers"
+          ]
+        }
+      ]
+    },
+    {
+      "app_origin": "https://logs.example.com",
+      "error": "owner_acts_invalid",
+      "name": "role_name_of_32_bytes",
+      "owner_acts": {
+        "origin": "https://console.logs.example.com",
+        "roles": [
+          {
+            "acts": [
+              "app-credential.recover",
+              "app-role.designate",
+              "app-role.revoke"
+            ],
+            "description": "Reads the team's audit log in a passkey session on the console.",
+            "label": "Log reader",
+            "name": "logs.reader-of-the-teams-records",
+            "prepare_tool": "owner-act-prepare",
+            "principal": "refused"
+          }
+        ]
+      },
+      "tools": [
+        {
+          "body": {
+            "mode": "json"
+          },
+          "invocation_contexts": [
+            "agent"
+          ],
+          "method": "POST",
+          "name": "owner-act-prepare",
+          "params": [
+            {
+              "in": "body",
+              "name": "act"
+            },
+            {
+              "in": "body",
+              "name": "role"
+            },
+            {
+              "in": "body",
+              "name": "contact_sha256"
+            },
+            {
+              "in": "body",
+              "name": "principal"
+            },
+            {
+              "in": "body",
+              "name": "holder"
+            }
+          ],
+          "path": "/v1/owner-act-subjects",
+          "scopes": [
+            "logs.readers"
+          ]
+        }
+      ]
+    },
+    {
+      "app_origin": "https://logs.example.com",
+      "error": "owner_acts_invalid",
+      "name": "role_name_of_one_segment",
+      "owner_acts": {
+        "origin": "https://console.logs.example.com",
+        "roles": [
+          {
+            "acts": [
+              "app-credential.recover",
+              "app-role.designate",
+              "app-role.revoke"
+            ],
+            "description": "Reads the team's audit log in a passkey session on the console.",
+            "label": "Log reader",
+            "name": "reader",
+            "prepare_tool": "owner-act-prepare",
+            "principal": "refused"
+          }
+        ]
+      },
+      "tools": [
+        {
+          "body": {
+            "mode": "json"
+          },
+          "invocation_contexts": [
+            "agent"
+          ],
+          "method": "POST",
+          "name": "owner-act-prepare",
+          "params": [
+            {
+              "in": "body",
+              "name": "act"
+            },
+            {
+              "in": "body",
+              "name": "role"
+            },
+            {
+              "in": "body",
+              "name": "contact_sha256"
+            },
+            {
+              "in": "body",
+              "name": "principal"
+            },
+            {
+              "in": "body",
+              "name": "holder"
+            }
+          ],
+          "path": "/v1/owner-act-subjects",
+          "scopes": [
+            "logs.readers"
+          ]
+        }
+      ]
+    },
+    {
+      "app_origin": "https://logs.example.com",
+      "error": "owner_acts_invalid",
+      "name": "acts_out_of_order",
+      "owner_acts": {
+        "origin": "https://console.logs.example.com",
+        "roles": [
+          {
+            "acts": [
+              "app-role.designate",
+              "app-credential.recover"
+            ],
+            "description": "Reads the team's audit log in a passkey session on the console.",
+            "label": "Log reader",
+            "name": "logs.reader",
+            "prepare_tool": "owner-act-prepare",
+            "principal": "refused"
+          }
+        ]
+      },
+      "tools": [
+        {
+          "body": {
+            "mode": "json"
+          },
+          "invocation_contexts": [
+            "agent"
+          ],
+          "method": "POST",
+          "name": "owner-act-prepare",
+          "params": [
+            {
+              "in": "body",
+              "name": "act"
+            },
+            {
+              "in": "body",
+              "name": "role"
+            },
+            {
+              "in": "body",
+              "name": "contact_sha256"
+            },
+            {
+              "in": "body",
+              "name": "principal"
+            },
+            {
+              "in": "body",
+              "name": "holder"
+            }
+          ],
+          "path": "/v1/owner-act-subjects",
+          "scopes": [
+            "logs.readers"
+          ]
+        }
+      ]
+    },
+    {
+      "app_origin": "https://logs.example.com",
+      "error": "owner_acts_invalid",
+      "name": "act_outside_the_app_vocabulary",
+      "owner_acts": {
+        "origin": "https://console.logs.example.com",
+        "roles": [
+          {
+            "acts": [
+              "hook-binding.activate"
+            ],
+            "description": "Reads the team's audit log in a passkey session on the console.",
+            "label": "Log reader",
+            "name": "logs.reader",
+            "prepare_tool": "owner-act-prepare",
+            "principal": "refused"
+          }
+        ]
+      },
+      "tools": [
+        {
+          "body": {
+            "mode": "json"
+          },
+          "invocation_contexts": [
+            "agent"
+          ],
+          "method": "POST",
+          "name": "owner-act-prepare",
+          "params": [
+            {
+              "in": "body",
+              "name": "act"
+            },
+            {
+              "in": "body",
+              "name": "role"
+            },
+            {
+              "in": "body",
+              "name": "contact_sha256"
+            },
+            {
+              "in": "body",
+              "name": "principal"
+            },
+            {
+              "in": "body",
+              "name": "holder"
+            }
+          ],
+          "path": "/v1/owner-act-subjects",
+          "scopes": [
+            "logs.readers"
+          ]
+        }
+      ]
+    },
+    {
+      "app_origin": "https://logs.example.com",
+      "error": "owner_acts_invalid",
+      "name": "principal_neither_required_nor_refused",
+      "owner_acts": {
+        "origin": "https://console.logs.example.com",
+        "roles": [
+          {
+            "acts": [
+              "app-credential.recover",
+              "app-role.designate",
+              "app-role.revoke"
+            ],
+            "description": "Reads the team's audit log in a passkey session on the console.",
+            "label": "Log reader",
+            "name": "logs.reader",
+            "prepare_tool": "owner-act-prepare",
+            "principal": "optional"
+          }
+        ]
+      },
+      "tools": [
+        {
+          "body": {
+            "mode": "json"
+          },
+          "invocation_contexts": [
+            "agent"
+          ],
+          "method": "POST",
+          "name": "owner-act-prepare",
+          "params": [
+            {
+              "in": "body",
+              "name": "act"
+            },
+            {
+              "in": "body",
+              "name": "role"
+            },
+            {
+              "in": "body",
+              "name": "contact_sha256"
+            },
+            {
+              "in": "body",
+              "name": "principal"
+            },
+            {
+              "in": "body",
+              "name": "holder"
+            }
+          ],
+          "path": "/v1/owner-act-subjects",
+          "scopes": [
+            "logs.readers"
+          ]
+        }
+      ]
+    },
+    {
+      "app_origin": "https://logs.example.com",
+      "error": "owner_acts_invalid",
+      "name": "prepare_tool_not_declared",
+      "owner_acts": {
+        "origin": "https://console.logs.example.com",
+        "roles": [
+          {
+            "acts": [
+              "app-credential.recover",
+              "app-role.designate",
+              "app-role.revoke"
+            ],
+            "description": "Reads the team's audit log in a passkey session on the console.",
+            "label": "Log reader",
+            "name": "logs.reader",
+            "prepare_tool": "reader-slot",
+            "principal": "refused"
+          }
+        ]
+      },
+      "tools": [
+        {
+          "body": {
+            "mode": "json"
+          },
+          "invocation_contexts": [
+            "agent"
+          ],
+          "method": "POST",
+          "name": "owner-act-prepare",
+          "params": [
+            {
+              "in": "body",
+              "name": "act"
+            },
+            {
+              "in": "body",
+              "name": "role"
+            },
+            {
+              "in": "body",
+              "name": "contact_sha256"
+            },
+            {
+              "in": "body",
+              "name": "principal"
+            },
+            {
+              "in": "body",
+              "name": "holder"
+            }
+          ],
+          "path": "/v1/owner-act-subjects",
+          "scopes": [
+            "logs.readers"
+          ]
+        }
+      ]
+    },
+    {
+      "app_origin": "https://logs.example.com",
+      "error": "owner_acts_invalid",
+      "name": "prepare_tool_also_a_surface_tool",
+      "owner_acts": {
+        "origin": "https://console.logs.example.com",
+        "roles": [
+          {
+            "acts": [
+              "app-credential.recover",
+              "app-role.designate",
+              "app-role.revoke"
+            ],
+            "description": "Reads the team's audit log in a passkey session on the console.",
+            "label": "Log reader",
+            "name": "logs.reader",
+            "prepare_tool": "owner-act-prepare",
+            "principal": "refused"
+          }
+        ]
+      },
+      "tools": [
+        {
+          "body": {
+            "mode": "json"
+          },
+          "invocation_contexts": [
+            "agent",
+            "surface"
+          ],
+          "method": "POST",
+          "name": "owner-act-prepare",
+          "params": [
+            {
+              "in": "body",
+              "name": "act"
+            },
+            {
+              "in": "body",
+              "name": "role"
+            },
+            {
+              "in": "body",
+              "name": "contact_sha256"
+            },
+            {
+              "in": "body",
+              "name": "principal"
+            },
+            {
+              "in": "body",
+              "name": "holder"
+            }
+          ],
+          "path": "/v1/owner-act-subjects",
+          "scopes": [
+            "logs.readers"
+          ]
+        }
+      ]
+    },
+    {
+      "app_origin": "https://logs.example.com",
+      "error": "owner_acts_invalid",
+      "name": "prepare_tool_is_a_get",
+      "owner_acts": {
+        "origin": "https://console.logs.example.com",
+        "roles": [
+          {
+            "acts": [
+              "app-credential.recover",
+              "app-role.designate",
+              "app-role.revoke"
+            ],
+            "description": "Reads the team's audit log in a passkey session on the console.",
+            "label": "Log reader",
+            "name": "logs.reader",
+            "prepare_tool": "owner-act-prepare",
+            "principal": "refused"
+          }
+        ]
+      },
+      "tools": [
+        {
+          "body": {
+            "mode": "json"
+          },
+          "invocation_contexts": [
+            "agent"
+          ],
+          "method": "GET",
+          "name": "owner-act-prepare",
+          "params": [
+            {
+              "in": "body",
+              "name": "act"
+            },
+            {
+              "in": "body",
+              "name": "role"
+            },
+            {
+              "in": "body",
+              "name": "contact_sha256"
+            },
+            {
+              "in": "body",
+              "name": "principal"
+            },
+            {
+              "in": "body",
+              "name": "holder"
+            }
+          ],
+          "path": "/v1/owner-act-subjects",
+          "scopes": [
+            "logs.readers"
+          ]
+        }
+      ]
+    },
+    {
+      "app_origin": "https://logs.example.com",
+      "error": "owner_acts_invalid",
+      "name": "prepare_tool_params_differ",
+      "owner_acts": {
+        "origin": "https://console.logs.example.com",
+        "roles": [
+          {
+            "acts": [
+              "app-credential.recover",
+              "app-role.designate",
+              "app-role.revoke"
+            ],
+            "description": "Reads the team's audit log in a passkey session on the console.",
+            "label": "Log reader",
+            "name": "logs.reader",
+            "prepare_tool": "owner-act-prepare",
+            "principal": "refused"
+          }
+        ]
+      },
+      "tools": [
+        {
+          "body": {
+            "mode": "json"
+          },
+          "invocation_contexts": [
+            "agent"
+          ],
+          "method": "POST",
+          "name": "owner-act-prepare",
+          "params": [
+            {
+              "in": "body",
+              "name": "act"
+            },
+            {
+              "in": "body",
+              "name": "role"
+            },
+            {
+              "in": "body",
+              "name": "contact"
+            }
+          ],
+          "path": "/v1/owner-act-subjects",
+          "scopes": [
+            "logs.readers"
+          ]
+        }
+      ]
+    },
+    {
+      "app_origin": "https://logs.example.com",
+      "error": "manifest_invalid",
+      "name": "owner_acts_null",
+      "owner_acts": null,
+      "tools": [
+        {
+          "body": {
+            "mode": "json"
+          },
+          "invocation_contexts": [
+            "agent"
+          ],
+          "method": "POST",
+          "name": "owner-act-prepare",
+          "params": [
+            {
+              "in": "body",
+              "name": "act"
+            },
+            {
+              "in": "body",
+              "name": "role"
+            },
+            {
+              "in": "body",
+              "name": "contact_sha256"
+            },
+            {
+              "in": "body",
+              "name": "principal"
+            },
+            {
+              "in": "body",
+              "name": "holder"
+            }
+          ],
+          "path": "/v1/owner-act-subjects",
+          "scopes": [
+            "logs.readers"
+          ]
+        }
+      ]
+    }
+  ],
+  "name": "owner-act-delivery",
+  "prepare_cases": [
+    {
+      "body": {
+        "act": "app-role.designate",
+        "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+        "role": "logs.reader"
+      },
+      "error": null,
+      "name": "designate_a_reader",
+      "role": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "description": "Reads the team's audit log in a passkey session on the console.",
+        "label": "Log reader",
+        "name": "logs.reader",
+        "prepare_tool": "owner-act-prepare",
+        "principal": "refused"
+      }
+    },
+    {
+      "body": {
+        "act": "app-credential.recover",
+        "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+        "holder": "logs.reader.00112233445566778899aabbccddeeff",
+        "role": "logs.reader"
+      },
+      "error": null,
+      "name": "recover_a_reader",
+      "role": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "description": "Reads the team's audit log in a passkey session on the console.",
+        "label": "Log reader",
+        "name": "logs.reader",
+        "prepare_tool": "owner-act-prepare",
+        "principal": "refused"
+      }
+    },
+    {
+      "body": {
+        "act": "app-role.revoke",
+        "holder": "logs.reader.00112233445566778899aabbccddeeff",
+        "role": "logs.reader"
+      },
+      "error": null,
+      "name": "revoke_a_reader",
+      "role": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "description": "Reads the team's audit log in a passkey session on the console.",
+        "label": "Log reader",
+        "name": "logs.reader",
+        "prepare_tool": "owner-act-prepare",
+        "principal": "refused"
+      }
+    },
+    {
+      "body": {
+        "act": "app-role.designate",
+        "contact_sha256": "c8cd3c6427301eaf6665bccacd65ddb614527acc843a15463e3faba57124c351",
+        "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+        "role": "secrets.owner"
+      },
+      "error": null,
+      "name": "designate_an_owner",
+      "role": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "label": "Secrets owner",
+        "name": "secrets.owner",
+        "prepare_tool": "owner-act-prepare",
+        "principal": "required"
+      }
+    },
+    {
+      "body": {
+        "act": "app-credential.recover",
+        "contact_sha256": "c8cd3c6427301eaf6665bccacd65ddb614527acc843a15463e3faba57124c351",
+        "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+        "role": "secrets.owner"
+      },
+      "error": null,
+      "name": "recover_an_owner",
+      "role": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "label": "Secrets owner",
+        "name": "secrets.owner",
+        "prepare_tool": "owner-act-prepare",
+        "principal": "required"
+      }
+    },
+    {
+      "body": {
+        "act": "app-role.revoke",
+        "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+        "role": "secrets.owner"
+      },
+      "error": null,
+      "name": "revoke_an_owner",
+      "role": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "label": "Secrets owner",
+        "name": "secrets.owner",
+        "prepare_tool": "owner-act-prepare",
+        "principal": "required"
+      }
+    },
+    {
+      "body": {
+        "act": "app-role.revoke",
+        "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+        "holder": "logs.reader.00112233445566778899aabbccddeeff",
+        "role": "logs.reader"
+      },
+      "error": "request_invalid",
+      "name": "contact_on_revoke",
+      "role": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "description": "Reads the team's audit log in a passkey session on the console.",
+        "label": "Log reader",
+        "name": "logs.reader",
+        "prepare_tool": "owner-act-prepare",
+        "principal": "refused"
+      }
+    },
+    {
+      "body": {
+        "act": "app-role.designate",
+        "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+        "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+        "role": "logs.reader"
+      },
+      "error": "request_invalid",
+      "name": "principal_for_a_role_that_refuses_one",
+      "role": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "description": "Reads the team's audit log in a passkey session on the console.",
+        "label": "Log reader",
+        "name": "logs.reader",
+        "prepare_tool": "owner-act-prepare",
+        "principal": "refused"
+      }
+    },
+    {
+      "body": {
+        "act": "app-role.designate",
+        "contact_sha256": "c8cd3c6427301eaf6665bccacd65ddb614527acc843a15463e3faba57124c351",
+        "role": "secrets.owner"
+      },
+      "error": "request_invalid",
+      "name": "no_principal_for_a_role_that_requires_one",
+      "role": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "label": "Secrets owner",
+        "name": "secrets.owner",
+        "prepare_tool": "owner-act-prepare",
+        "principal": "required"
+      }
+    },
+    {
+      "body": {
+        "act": "app-role.designate",
+        "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+        "holder": "logs.reader.00112233445566778899aabbccddeeff",
+        "role": "logs.reader"
+      },
+      "error": "request_invalid",
+      "name": "holder_on_designate",
+      "role": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "description": "Reads the team's audit log in a passkey session on the console.",
+        "label": "Log reader",
+        "name": "logs.reader",
+        "prepare_tool": "owner-act-prepare",
+        "principal": "refused"
+      }
+    },
+    {
+      "body": {
+        "act": "app-role.revoke",
+        "holder": "secrets.owner.0123456789abcdef0123456789abcdef01234567",
+        "role": "secrets.owner"
+      },
+      "error": "request_invalid",
+      "name": "holder_for_a_principal_role",
+      "role": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "label": "Secrets owner",
+        "name": "secrets.owner",
+        "prepare_tool": "owner-act-prepare",
+        "principal": "required"
+      }
+    },
+    {
+      "body": {
+        "act": "app-role.revoke",
+        "holder": "logs.reader.00112233445566778899aabbccddeeff",
+        "role": "logs.reader"
+      },
+      "error": "request_invalid",
+      "name": "act_not_declared_for_the_role",
+      "role": {
+        "acts": [
+          "app-role.designate"
+        ],
+        "description": "Reads the team's audit log in a passkey session on the console.",
+        "label": "Log reader",
+        "name": "logs.reader",
+        "prepare_tool": "owner-act-prepare",
+        "principal": "refused"
+      }
+    },
+    {
+      "body": {
+        "act": "app-role.designate",
+        "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+        "role": "logs.writer"
+      },
+      "error": "request_invalid",
+      "name": "role_not_declared",
+      "role": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "description": "Reads the team's audit log in a passkey session on the console.",
+        "label": "Log reader",
+        "name": "logs.reader",
+        "prepare_tool": "owner-act-prepare",
+        "principal": "refused"
+      }
+    },
+    {
+      "body": {
+        "act": "app-role.designate",
+        "contact_sha256": "d108b279434fe1d54ac0f1da633564604b26c2e0e221d108b0fbadb87aba02c0",
+        "principal": null,
+        "role": "logs.reader"
+      },
+      "error": "request_invalid",
+      "name": "null_field",
+      "role": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "description": "Reads the team's audit log in a passkey session on the console.",
+        "label": "Log reader",
+        "name": "logs.reader",
+        "prepare_tool": "owner-act-prepare",
+        "principal": "refused"
+      }
+    },
+    {
+      "body": {
+        "act": "app-role.designate",
+        "contact_sha256": "D108B279434FE1D54AC0F1DA633564604B26C2E0E221D108B0FBADB87ABA02C0",
+        "role": "logs.reader"
+      },
+      "error": "request_invalid",
+      "name": "contact_hash_in_upper_case",
+      "role": {
+        "acts": [
+          "app-credential.recover",
+          "app-role.designate",
+          "app-role.revoke"
+        ],
+        "description": "Reads the team's audit log in a passkey session on the console.",
+        "label": "Log reader",
+        "name": "logs.reader",
+        "prepare_tool": "owner-act-prepare",
+        "principal": "refused"
+      }
+    }
+  ],
+  "scheme": {
+    "authority": "docs/owner-act-delivery.md",
+    "client": "client_cases: the client's checks of a prepare response before it shows the owner anything; error is the local refusal code, or null when it may sign",
+    "delivery": "delivery_cases: a delivery body against the app's own row (null when it has none); verifier_code is the owner-act/1 refusal behind a 403, or null when the act verifies; result is the HTTP status, detail and response",
+    "manifest": "manifest_cases: a version 3 manifest's owner_acts with the tools it names; error is the manifest refusal code, or null when it is valid",
+    "prepare": "prepare_cases: the app's reading of a prepare body against the declared role; error is the 400 detail, or null when it records or reads a row",
+    "role_token": "the declared role name, a dot, and 32 to 40 lowercase hex characters",
+    "signing": "standard base64 with padding of the owner-act/1 signing bytes"
+  },
+  "status": "specified (aweb-acgh.16.38); not shipped",
+  "version": 1
+}
