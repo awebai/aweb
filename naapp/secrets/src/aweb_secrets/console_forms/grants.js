@@ -1,6 +1,6 @@
 "use strict";
 (() => {
-  const api = window.awebSecretsConsole;
+  const api = window.awebConsole;
   const form = document.querySelector("#role-grant");
   if (!form) return;
   const status = document.querySelector("#form-status");

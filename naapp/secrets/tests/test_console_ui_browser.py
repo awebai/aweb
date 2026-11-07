@@ -133,7 +133,7 @@ async def test_browser_login_and_bodiless_csrf_logout(
         packed = await page.evaluate(
             """async options => {
               const before = JSON.stringify(options);
-              const packed = await window.awebSecretsConsole.assertion(options);
+              const packed = await window.awebConsole.assertion(options);
               if (JSON.stringify(options) !== before) throw new Error("Server options mutated");
               return packed;
             }""",
@@ -235,7 +235,7 @@ async def test_browser_login_and_bodiless_csrf_logout(
         async with page.expect_response(service + "/logout") as refused:
             rejected = await page.evaluate(
                 """async () => {
-                  try { await window.awebSecretsConsole.post('/logout'); return false; }
+                  try { await window.awebConsole.post('/logout'); return false; }
                   catch { return true; }
                 }"""
             )

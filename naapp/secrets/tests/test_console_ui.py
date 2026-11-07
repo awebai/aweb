@@ -11,7 +11,7 @@ from aweb_naapp.console import CONSOLE_HEADERS, apply_console_migrations
 from aweb_naapp.css import font_bytes
 from aweb_naapp.roles import unassign
 from aweb_naapp.runtime.origins import split_origins
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 from aweb_secrets.console import OwnerConsole, owner_console_router
 from aweb_secrets.console_ui import console_ui_router
@@ -157,3 +157,19 @@ async def test_console_loads_shared_toolkit_styles_and_only_the_toolkit_font(wor
         for path in styles:
             response = await browser.get(path)
             assert "BerkeleyMono" not in response.text
+
+
+def test_recovery_page_is_exported_in_the_secrets_brand():
+    from aweb_secrets.console_ui import recovery_page
+
+    response = recovery_page(
+        HTTPException(status_code=404, headers={"X-Refusal": "kept"}),
+        message="That record is not available",
+        action_href="/activity",
+        action_label="Back to activity",
+    )
+    page = Elements(response.body.decode())
+    assert response.status_code == 404 and response.headers["X-Refusal"] == "kept"
+    assert "That record is not available · Secrets" in response.body.decode()
+    action = next(attrs for tag, attrs in page.tags if attrs.get("id") == "console-recovery-action")
+    assert action["href"] == "/activity"

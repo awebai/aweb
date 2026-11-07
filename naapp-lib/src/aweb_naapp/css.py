@@ -31,7 +31,7 @@ def font_bytes(name: str) -> bytes | None:
 
 # Hash of layer 1 only: the shared design-system stylesheet at
 # src/aweb_naapp/assets/aweb.css. Its hash is intentionally separate from CSS_SHA256.
-VENDORED_AWEB_CSS_SHA256 = "f37adec4e7dd53472bafb4eae981ab4001964f8b5540e392e66c1a377c5d6fef"
+VENDORED_AWEB_CSS_SHA256 = "b40061563ea1675f0ea0ec4662bcc0628eb5e0220356e35df04e3bedb77d0e4e"
 
 
 @lru_cache(maxsize=1)

@@ -3,6 +3,7 @@ plus the console's own origin."""
 
 from __future__ import annotations
 
+from ipaddress import IPv4Network, IPv6Network
 from pathlib import Path
 from typing import Literal, Self
 
@@ -55,11 +56,23 @@ class ServiceSettings(SecretsSettings):
     email_from: str
     email_ca_file: Path | None = None
     egress_ca_file: Path | None = None
+    egress_denied_networks: tuple[IPv4Network | IPv6Network, ...] = ()
     broker_max_dispatch_seconds: int = Field(default=30, gt=0)
     sweep_margin_seconds: int = Field(default=5, gt=0)
     sweep_interval_seconds: int = Field(default=15, gt=0)
     runner_assignment_ttl_seconds: int = Field(default=60, ge=1, le=300)
     runner_claim_wait_seconds: int = Field(default=1, ge=0, le=30)
+
+    @field_validator("egress_denied_networks", mode="before")
+    @classmethod
+    def network_inputs(cls, value):
+        # ipaddress also accepts integer/bool inputs; operator entries are
+        # address/CIDR strings or already validated network objects only.
+        if not isinstance(value, (list, tuple)) or any(
+            not isinstance(entry, (str, IPv4Network, IPv6Network)) for entry in value
+        ):
+            raise ValueError("egress_denied_networks must list IP addresses or strict CIDRs")
+        return value
 
     @model_validator(mode="after")
     def one_custody_provider(self) -> Self:

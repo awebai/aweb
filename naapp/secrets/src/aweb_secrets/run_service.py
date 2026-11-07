@@ -23,7 +23,7 @@ from aweb_naapp.dispatch import Dispatch, Dispatches, DispatchInFlight, Reconcil
 from aweb_naapp.egress import InternalDestinations
 from aweb_naapp.hooks.catalog import packaged_catalog
 from aweb_naapp.hooks.commitment import CommitmentContext
-from aweb_naapp.hooks.producer import RegistrationView
+from aweb_naapp.hooks.producer import HookProducerFactory, RegistrationView
 from aweb_naapp.hooks.strictjson import Refused as HookRefused
 from aweb_naapp.idempotency import IdempotencyConflict, IdempotencyExpired, claim
 from aweb_naapp.roles import hold_role, principal_key, roles_of
@@ -91,7 +91,7 @@ from aweb_secrets.runner_protocol import (
 )
 from aweb_secrets.runner_results import RunnerResultInvalid, process_runner_result
 from aweb_secrets.runner_types import RunnerReply, RunnerSubmission
-from aweb_secrets.use_audit import HookProducerFactory, UseApprovalAudit, UseAuditUnavailable
+from aweb_secrets.use_audit import UseApprovalAudit, UseAuditUnavailable
 from aweb_secrets.use_context import UseCommitter
 
 if TYPE_CHECKING:
@@ -1286,6 +1286,81 @@ class RunDispatch:
         ):
             raise UseAuditUnavailable()
         await self._machine(frozen).reconcile(tx, original.dispatch_id, state, dict(result))
+
+    async def deregister_runner(
+        self,
+        tx: TransactionManager,
+        installation_id: str,
+        runner_id: str,
+        *,
+        now: datetime,
+        revoked_by: str,
+    ) -> bool:
+        """Narrow in the owner's fenced transaction, using the sole B2/S3 sinks.
+
+        Already delivered assignments cannot be recalled: record their outcome
+        unknown. Close every still-unclaimed original, including older install
+        generations, so registering a replacement key cannot revive it.
+        """
+        changed = await runners.deregister_runner(tx, installation_id, runner_id, now=now)
+        unclaimed = {State.AWAITING_APPROVAL, State.ADMITTED, State.NOT_SENT}
+        live = [*unclaimed, State.DISPATCHING]
+        rows = await tx.fetch_all(
+            "SELECT c.dispatch_id FROM {{tables.run_contexts}} c"
+            " JOIN {{tables.dispatches}} d USING(dispatch_id)"
+            " WHERE c.installation_id=$1 AND c.runner_id=$2 AND d.state=ANY($3::text[])"
+            " ORDER BY c.dispatch_id",
+            installation_id,
+            runner_id,
+            live,
+        )
+        originals: list[OriginalRun] = []
+        approvals: dict[UUID, tuple[Approval, ...]] = {}
+        for row in rows:
+            original = await original_run(tx, row["dispatch_id"])
+            if original is None:
+                raise UseAuditUnavailable()
+            originals.append(original)
+            approvals[original.dispatch_id] = await self._use_audit.dispatch_approvals(
+                tx, original.dispatch_id
+            )
+        # Lock the complete union before ANY S3 row, not one B2/S3 pair per run.
+        await self._approvals.lock_many(
+            tx, [item.approval_id for group in approvals.values() for item in group]
+        )
+        for original in originals:
+            current = await tx.fetch_one(
+                "SELECT state FROM {{tables.dispatches}} WHERE dispatch_id=$1 FOR UPDATE",
+                original.dispatch_id,
+            )
+            if current is None:
+                raise UseAuditUnavailable()
+            associated = approvals[original.dispatch_id]
+            if current["state"] in unclaimed:
+                await self._approvals.revoke_many(
+                    [item.approval_id for item in associated],
+                    revoked_by=revoked_by,
+                    reason="runner_deregistered",
+                    tx=tx,
+                )
+                await self._machine(original, cancellation_reason="runner_deregistered").close(
+                    tx, original.dispatch_id, State.CANCELLED
+                )
+            elif current["state"] == State.DISPATCHING:
+                await self._record(
+                    tx,
+                    original,
+                    State.OUTCOME_UNKNOWN,
+                    ToolReply(
+                        200,
+                        tool_results.outcome_unknown(
+                            request_id=original.request_id, request_ref=original.intent_id
+                        ),
+                    ),
+                    None,
+                    associated,
+                )
+        return changed
 
     async def sweep(self, *, limit: int = 50) -> int:
         if type(limit) is not int or not 1 <= limit <= 100:
