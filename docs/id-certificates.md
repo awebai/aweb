@@ -214,6 +214,43 @@ Unverifiable active members remain explicitly unresolved and unstamped; release
 requires the operator's disposition rather than a silent change in treatment.
 No identity, certificate or membership is minted by revalidation.
 
+The shared operator command is `aweb revalidate-human-kind`: it reports only
+JSON counts and makes no database writes by default. `--apply` stamps live
+verified humans with a compare-and-set on row ID, key, stable ID and human label;
+retirement or a changed identity prevents the write. Retired rows are verified
+for the report only. Other outcomes never write or clear a marker. Counts include
+before/after active and retired totals and verified markers, each group's
+human/agent/revoked/unregistered/unavailable/invalid outcomes, stamps and lost
+compare-and-sets. Exit 1 means unresolved active outcomes or a lost compare-and-set;
+operators must compare this with their explicitly approved inventory, even if
+some unresolved rows are accepted. Exit 0 does not replace that comparison.
+
+The command uses `AWEB_DATABASE_URL` (`DATABASE_URL` fallback),
+`AWEB_REDIS_URL` (`REDIS_URL` fallback), `AWID_REGISTRY_URL` and
+`AWID_SERVICE_TOKEN`; `--schema` defaults to `aweb`. It never creates schema,
+extensions or migrations. Redis may cache public verifier evidence as in normal
+request verification. Hosted deployments invoke this same command against their
+canonical aweb schema, without a separate revalidation implementation.
+
+Release order is mandatory:
+
+1. Apply migration 047 **before** deploying the new application code. It is
+   additive and leaves old code unaffected.
+2. From the new package in an operator environment, run
+   `aweb revalidate-human-kind --apply` against that database.
+3. Compare before/after counts and all outcome buckets with the approved inventory;
+   resolve unexpected active outcomes and compare-and-set failures.
+4. Deploy the new code only after the operator's go.
+
+Quiesce human member creation/reconnects during the revalidation-to-deploy window
+or repeat revalidation and reconcile changes before enabling the policy. If the
+deployment cannot apply migration ahead of code, use a maintenance window from
+migration through revalidation, count approval and application startup; do not
+serve the new policy between those steps. A verified human reconnecting without
+verifiable ID-chain evidence is rewritten to `agent` with no human marker, per the
+ruling. Omitting a chain header still permits registered evidence discovery by
+the public verifier; it is absence of verified evidence that removes the marker.
+
 Raw legacy labels may identify only the **predecessor** in owner-checked retired
 mail succession, contact transfer and pre-cutover alias retirement. They do not
 make any row a current human; the live/new destination must satisfy the verified

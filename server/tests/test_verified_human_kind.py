@@ -85,6 +85,51 @@ async def test_connect_own_verified_kind_controls_chat_mail_and_roster(privacy_a
                     **_signed_team_headers(sender.sk, sender.did, TEAM, sender.certificate, body),
                     'Content-Type': 'application/json'})
                 assert response.status_code == expected, response.text
+            # The deployment command uses the same public verifier. Default is
+            # read-only; only a verified human subject may be stamped on apply.
+            from aweb.human_kind_revalidation import revalidate_human_kind
+            await env.db.execute("UPDATE {{tables.agents}} SET agent_type='human',human_verified_key=NULL WHERE agent_id=$1", row['agent_id'])
+            preview = await revalidate_human_kind(env.db, cached)
+            outcome = 'human' if kind == 'human' else 'agent'
+            assert preview['outcomes']['active'][outcome] == 1
+            assert preview['before'] == preview['after']
+            assert preview['stamped'] == 0
+            applied = await revalidate_human_kind(env.db, cached, apply=True)
+            assert applied['stamped'] == (1 if kind == 'human' else 0)
+            assert applied['after']['active']['verified'] == (1 if kind == 'human' else 0)
+            if kind == 'human':
+                from dataclasses import replace
+                from aweb import human_kind_revalidation as revalidation
+                observe = revalidation.observe_identity_kind
+                # Start with real public human evidence, then vary its row or
+                # observation binding at the point just before compare-and-set.
+                for change in ('did_key', 'did_aw', 'cross-subject', 'retirement'):
+                    await env.db.execute("UPDATE {{tables.agents}} SET did_key=$2,did_aw=$3,human_verified_key=NULL,deleted_at=NULL WHERE agent_id=$1",
+                                         row['agent_id'], subject['did_key'], subject['did_aw'])
+                    async def changed_observation(client, binding):
+                        verified = await observe(client, binding)
+                        assert verified.is_human
+                        if change == 'cross-subject':
+                            return replace(verified, did_key=ROOT['did_key'])
+                        if change == 'retirement':
+                            await env.db.execute('UPDATE {{tables.agents}} SET deleted_at=NOW() WHERE agent_id=$1', row['agent_id'])
+                        elif change == 'did_key':
+                            await env.db.execute('UPDATE {{tables.agents}} SET did_key=$2 WHERE agent_id=$1', row['agent_id'], ROOT['did_key'])
+                        else:
+                            await env.db.execute('UPDATE {{tables.agents}} SET did_aw=$2 WHERE agent_id=$1', row['agent_id'], ROOT['did_aw'])
+                        return verified
+                    with monkeypatch.context() as patch:
+                        patch.setattr(revalidation, 'observe_identity_kind', changed_observation)
+                        raced = await revalidate_human_kind(env.db, cached, apply=True)
+                    assert raced['stamped'] == 0, change
+                    assert raced['unresolved_active'] == 1, change
+                    assert raced['changed'] == (0 if change == 'cross-subject' else 1), change
+                    assert await env.db.fetch_val('SELECT human_verified_key FROM {{tables.agents}} WHERE agent_id=$1', row['agent_id']) is None
+                # Retired human rows are observed and counted, never stamped.
+                await env.db.execute('UPDATE {{tables.agents}} SET did_key=$2,did_aw=$3 WHERE agent_id=$1', row['agent_id'], subject['did_key'], subject['did_aw'])
+                retired = await revalidate_human_kind(env.db, cached, apply=True)
+                assert retired['outcomes']['retired']['human'] == 1
+                assert retired['stamped'] == retired['unresolved_active'] == 0
         finally:
             env.app.state.awid_registry_client = writer
             await cached.aclose()
@@ -191,6 +236,88 @@ async def test_self_derived_binding_does_not_establish_human_kind(privacy_app, m
             assert row['did_aw_verified_key'] == row['did_key'] == ALICE['did_key']
             assert row['agent_type'] == response.json()['agent_type'] == 'agent'
             assert row['human_verified_key'] is None
+            from aweb.human_kind_revalidation import revalidate_human_kind
+            await env.db.execute("UPDATE {{tables.agents}} SET agent_type='human' WHERE agent_id=$1", row['agent_id'])
+            report = await revalidate_human_kind(env.db, cached, apply=True)
+            assert report['outcomes']['active']['unregistered'] == 1
+            assert report['stamped'] == 0
+            assert report['unresolved_active'] == 1
         finally:
             env.app.state.awid_registry_client = writer
             await cached.aclose()
+
+
+@pytest.mark.asyncio
+async def test_revalidation_cli_defaults_to_read_only_and_reports_unresolved(test_db_factory):
+    import asyncio
+    import os
+    import sys
+    from aweb.db import DatabaseInfra
+    from awid.db_config import build_database_config
+    from pgdbm import AsyncDatabaseManager
+
+    base = await test_db_factory.create_db(suffix='human_revalidation_cli')
+    await base.execute('CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public')
+    pool = await AsyncDatabaseManager.create_shared_pool(build_database_config(connection_string=base.config.get_dsn()))
+    infra = DatabaseInfra()
+    await infra.initialize(shared_pool=pool)
+    db = infra.get_manager()
+    try:
+        await db.execute("INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) VALUES ('cli:test','test','test',$1)", ALICE['did_key'])
+        await db.execute("INSERT INTO {{tables.agents}} (team_id,alias,did_key,agent_type) VALUES ('cli:test','old-human',$1,'human')", ALICE['did_key'])
+        for args in ([], ['--apply']):
+            child_env = {**os.environ, 'AWEB_DATABASE_URL': base.config.get_dsn()}
+            # A server-enforced read-only session proves the default path does
+            # not attempt DDL or DML (nor apply for a nonhuman observation).
+            dsn = child_env['AWEB_DATABASE_URL']
+            child_env['AWEB_DATABASE_URL'] = dsn + ('&' if '?' in dsn else '?') + 'default_transaction_read_only=on'
+            process = await asyncio.create_subprocess_exec(sys.executable, '-c',
+                'from aweb.cli import app; app()', 'revalidate-human-kind', *args,
+                env=child_env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            stdout, stderr = await asyncio.wait_for(process.communicate(), 20)
+            assert process.returncode == 1, stderr.decode()
+            report = json.loads(stdout)
+            assert report['apply'] == bool(args)
+            assert report['outcomes']['active']['unregistered'] == 1
+            assert report['before'] == report['after']
+            assert report['stamped'] == 0
+            assert report['unresolved_active'] == 1
+        assert await db.fetch_val('SELECT human_verified_key FROM {{tables.agents}}') is None
+    finally:
+        await infra.close()
+        await pool.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('case_name,expected', [
+    ('team-omission-of-enrolled-revoked-id', 'revoked'),
+    ('wrong-authenticated-key', 'invalid'),
+    ('human-leaf-is-itself', 'unavailable'),
+])
+async def test_revalidation_failed_public_evidence_reports_without_clearing(privacy_app, case_name, expected):
+    from copy import deepcopy
+    from types import SimpleNamespace
+    from awid.id_certificates import IDChainEvidence
+    from awid.registry import IDTreeEnrollment, KeyResolution
+    from aweb.human_kind_revalidation import revalidate_human_kind
+
+    case = next(c for c in VECTORS['verification_cases'] if c['name'] == case_name)
+    subject = {**case['subject'], **case.get('subject_patch', {})}
+    status = deepcopy(VECTORS['status_fixtures'][case['status']])
+    epoch = next(e for e in status['namespace']['epochs'] if e['retired_at'] is None)
+    authority = dict(domain=status['domain'], dns_name='_awid.' + status['domain'], inherited=False, controller_key=epoch['did_key'])
+    async def resolve(did):
+        return KeyResolution(did, subject['did_key'], id_tree=IDTreeEnrollment(True, status['domain']))
+    async def evidence(bundle, bound, *, domain):
+        assert bound == {key: subject[key] for key in ('id', 'did_key')}
+        return IDChainEvidence(status, authority, None if expected == 'unavailable' else 0)
+    client = SimpleNamespace(resolve_key_fresh=resolve, id_chain_evidence=evidence)
+    row_id = privacy_app.actors['bob'].id
+    await privacy_app.db.execute("UPDATE {{tables.agents}} SET agent_type='human',did_key=$2,did_aw=$3,human_verified_key=$2 WHERE agent_id=$1",
+                                 row_id, subject['did_key'], subject['id'])
+    before = await privacy_app.db.fetch_val('SELECT xmin::text FROM {{tables.agents}} WHERE agent_id=$1', row_id)
+    report = await revalidate_human_kind(privacy_app.db, client, apply=True)
+    assert report['outcomes']['active'][expected] == 1
+    assert report['stamped'] == 0
+    assert report['unresolved_active'] == 1
+    assert await privacy_app.db.fetch_val('SELECT xmin::text FROM {{tables.agents}} WHERE agent_id=$1', row_id) == before
