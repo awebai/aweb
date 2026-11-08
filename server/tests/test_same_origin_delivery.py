@@ -13,10 +13,18 @@ import socket
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 import pytest_asyncio
-import httpx
 import uvicorn
+from nacl.signing import SigningKey
+
+from awid.dns_verify import DomainAuthority
+from awid.external_authority import DNSLookup
+from awid.registry import CachedRegistryClient
+from awid_service.deps import get_domain_verifier
+from aweb.human_kind_revalidation import revalidate_human_kind
+from test_id_chain_request_auth import ROOT, _signed_fixture_certificate
 
 from awid.signing import canonical_json_bytes, sign_message
 from awid.e2ee_keys import build_encryption_key_assertion
@@ -72,6 +80,57 @@ async def same_origin(privacy_app, monkeypatch):
         )
         env.app.state.federation_authority = authority
 
+        # Human fixtures enroll the actual subject key in the real public tree.
+        # DNS alone is fixture authority; production revalidation projects kind.
+        human_domain = f"awtest-same-origin-{uuid4().hex}.test"
+        human_namespace_registered = False
+        env.registry_app.state.awid_public_origins = (registry_origin,)
+
+        async def exact_dns(domain):
+            assert domain == human_domain
+            return DomainAuthority(ROOT["did_key"], registry_origin, "_awid." + domain)
+
+        async def lookup_txt(name):
+            controllers = {
+                "_awid." + human_domain: ROOT["did_key"],
+                "_awid.example.test": env.team_did,
+                "_awid.recipient.test": env.team_did,
+            }
+            assert name in controllers
+            return DNSLookup("record", (
+                f"awid=v1; controller={controllers[name]}; registry={registry_origin};",
+            ))
+
+        env.registry_app.dependency_overrides[get_domain_verifier] = lambda: exact_dns
+        cached = CachedRegistryClient(
+            registry_origin, env.redis, service_token=registry.service_token,
+            domain_verifier=exact_dns,
+        )
+        env.app.state.awid_registry_client = cached
+
+        async def verify_human(actor, did_aw, db):
+            nonlocal human_namespace_registered
+            if not human_namespace_registered:
+                await registry.register_namespace(
+                    human_domain, ROOT["did_key"], bytes.fromhex(ROOT["seed_hex"]),
+                )
+                human_namespace_registered = True
+            certificate = _signed_fixture_certificate(
+                "alice", domain=human_domain, identity=did_aw,
+                parent={"kind": "namespace", "id": human_domain}, issuer="root",
+            )
+            await registry.register_id_certificate(
+                {"v": 1, "type": "aweb.id-chain", "certificates": [certificate]},
+                signer=lambda payload: (actor.did, SigningKey(actor.sk).sign(payload).signature),
+                expected_head=None, invitation_id=None,
+            )
+            report = await revalidate_human_kind(db, cached, apply=True)
+            assert report["unresolved_active"] == 0, report
+            assert await db.fetch_value(
+                "SELECT human_verified_key FROM {{tables.agents}} WHERE agent_id=$1",
+                actor.id,
+            ) == actor.did
+
         async def resident(*, human=False, deleted=False, inbound_mode="open", db=None):
             db = db or env.db
             await db.execute(
@@ -86,8 +145,15 @@ async def same_origin(privacy_app, monkeypatch):
                 "VALUES ($1,$2,'recipient',$3,$4,$3,$5,'global',$8,$6, "
                 "CASE WHEN $7 THEN clock_timestamp() ELSE NULL END)",
                 target.id, target_team, target.did, stable, address,
-                "human" if human else "agent", deleted, inbound_mode,
+                "human" if human else "agent", False if human else deleted, inbound_mode,
             )
+            if human:
+                await verify_human(target, stable, db)
+                if deleted:
+                    await db.execute(
+                        "UPDATE {{tables.agents}} SET deleted_at=clock_timestamp() WHERE agent_id=$1",
+                        target.id,
+                    )
 
         async def send_message(kind, sender_kind="local", *, continuation=None, target_key=None, target_sk=None, encrypted=False):
             actor = env.actors["alice"]
@@ -107,6 +173,8 @@ async def same_origin(privacy_app, monkeypatch):
                     "WHERE agent_id=$4", sender_stable, sender_address,
                     "human" if sender_kind == "human" else "agent", actor.id,
                 )
+                if sender_kind == "human":
+                    await verify_human(actor, sender_stable, env.db)
             certificate = _make_certificate(
                 env.team_sk, env.team_did, actor.did, team_id=TEAM, alias="alice",
                 identity_scope="global" if sender_stable else "local",
@@ -173,9 +241,12 @@ async def same_origin(privacy_app, monkeypatch):
 
         try:
             yield SimpleNamespace(env=env, resident=resident, send=send_message,
+                                  dns=SimpleNamespace(lookup_txt=lookup_txt),
                                   ingress=ingress, effects=effects, target_did=stable, target=target)
         finally:
             env.app.middleware_stack = stack
+            env.app.state.awid_registry_client = registry
+            await cached.aclose()
             await authority.aclose()
 
 
@@ -370,6 +441,11 @@ async def foreign_receiver(same_origin, test_db_factory, monkeypatch):
         database.config.get_dsn(), env.redis,
         awid_transport=httpx.AsyncHTTPTransport(), public_origin=origin,
     ) as receiver:
+        # An enrolled human sender requires controller authority for its ID
+        # namespace, which a default-registry pin alone cannot establish.
+        activation = receiver.app.state.federation_authority
+        activation.test_default_registry_authority = None
+        activation.txt_resolver = same_origin.dns
         manager = receiver.db.get_manager("aweb")
         await same_origin.resident(db=manager)
         await env.registry_db.execute(
