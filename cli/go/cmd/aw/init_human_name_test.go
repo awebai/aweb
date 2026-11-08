@@ -32,11 +32,11 @@ func TestAgentAndHumanCreationNames(t *testing.T) {
 			{name: "agent-no-env"},
 			{name: "runtime-agent", human: "Environment Human", user: "machine-user", envType: "codex"},
 			{name: "explicit", human: "Environment Human", user: "machine-user", flags: []string{"--human-name", "  Chosen Name  "}, want: "Chosen Name"},
-			{name: "human-env", human: "Environment Human", user: "machine-user", envType: "human", want: "Environment Human"},
-			{name: "human-user", user: "machine-user", envType: "human", want: "machine-user"},
-			{name: "human-legacy", legacy: "Legacy Human", envType: "human", want: "Legacy Human"},
-			{name: "human-no-env", envType: "human", want: "developer"},
-			{name: "human-flag", human: "Environment Human", flags: []string{"--agent-type", "human"}, want: "Environment Human"},
+			{name: "human-env", human: "Environment Human", user: "machine-user", envType: "human"},
+			{name: "human-user", user: "machine-user", envType: "human"},
+			{name: "human-legacy", legacy: "Legacy Human", envType: "human"},
+			{name: "human-no-env", envType: "human"},
+			{name: "human-flag", human: "Environment Human", flags: []string{"--agent-type", "human"}},
 			{name: "human-explicit", human: "Environment Human", envType: "human", flags: []string{"--human-name", "Chosen Name"}, want: "Chosen Name"},
 		} {
 			t.Run(path+"/"+tc.name, func(t *testing.T) {
@@ -126,6 +126,9 @@ func TestAgentAndHumanCreationNames(t *testing.T) {
 					t.Fatal("no creation request")
 				}
 				for i, body := range bodies {
+					if body.AgentType == "human" {
+						t.Errorf("request %d still claims human kind", i)
+					}
 					if body.HumanName != tc.want {
 						t.Errorf("request %d human_name=%q, want %q", i, body.HumanName, tc.want)
 					}
