@@ -76,7 +76,7 @@ async def _local_sender_mail(env, tmp_path, global_resident, grant, sender_retir
                                 signing_key=actor.sk, private_key=private, encryption_key=assertion)
     sender, agent = identities["alice"], identities["bob"]
     if human:
-        await env.db.execute("UPDATE {{tables.agents}} SET agent_type='human', certificate_id='privacy-alice' WHERE agent_id=$1",
+        await env.db.execute("UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key, certificate_id='privacy-alice' WHERE agent_id=$1",
                              env.actors["alice"].id)
     message_id, conversation_id = str(uuid4()), str(uuid4())
     source = encrypt_e2ee_mail(sender=sender, recipients=[agent], subject="Local encrypted",

@@ -10,21 +10,13 @@ from awid.id_certificates import (
     IDCertificateError,
     decode_id_chain_header,
     request_disposition,
-    status_request,
-    verify_id_chain,
 )
 from fastapi import HTTPException, Request
 
 from aweb.identity_binding import IdentityBinding
+from aweb.human_kind import observe_identity_kind, unverified_kind
 
 logger = logging.getLogger(__name__)
-
-
-def _unverified(reason: str) -> dict[str, Any]:
-    unavailable = reason in ('evidence_unavailable', 'status_expired')
-    return {'outcome': 'unavailable' if unavailable else 'unknown', 'human_id': None,
-            'identity_valid': None if unavailable or reason == 'unregistered_identity' else False,
-            'kind': None, 'reason': reason}
 
 
 async def authenticate_id_chain(request: Request, binding: IdentityBinding, *, registry_client=None) -> dict[str, Any]:
@@ -41,26 +33,12 @@ async def authenticate_id_chain(request: Request, binding: IdentityBinding, *, r
         if len(headers) > 1:
             raise IDCertificateError('invalid_shape')
         bundle = decode_id_chain_header(headers[0]) if headers else None
-        enrollment = binding.id_tree
-        if binding.did_aw and enrollment is None:
-            result = _unverified('evidence_unavailable')
-        elif binding.did_aw and not enrollment.enrolled and bundle is None:
-            result = _unverified('unregistered_identity')
-        else:
-            domain = enrollment.domain if binding.did_aw and enrollment.enrolled else None
-            plan = status_request(bundle, subject, domain=domain)
-            evidence = None
-            if plan is not None:
-                client = registry_client if registry_client is not None else getattr(request.app.state, 'awid_registry_client', None)
-                cached_evidence = getattr(client, 'id_chain_evidence', None)
-                if callable(cached_evidence):
-                    try:
-                        evidence = await cached_evidence(bundle, subject, domain=plan['domain'])
-                    except Exception:
-                        logger.warning('ID-tree cached evidence failed', exc_info=True)
-            result = verify_id_chain(bundle, subject=subject, evidence=evidence, domain=domain)
+        client = registry_client if registry_client is not None else getattr(request.app.state, 'awid_registry_client', None)
+        observation = await observe_identity_kind(client, binding, bundle)
+        request.state.identity_kind = observation
+        result = dict(observation.result)
     except IDCertificateError as exc:
-        result = _unverified(exc.code)
+        result = unverified_kind(exc.code)
     request.state.id_chain_result = result
     if request_disposition(result, subject=subject, original_auth_passed=True) == 'refuse':
         logger.warning('ID-tree request refused: %s', result['reason'])

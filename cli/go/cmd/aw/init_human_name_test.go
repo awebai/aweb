@@ -23,9 +23,13 @@ func TestAgentAndHumanCreationNames(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 	for _, path := range []string{"api-key", "certificate", "team-create"} {
 		for _, tc := range []struct {
-			name, human, legacy, user, envType, want string
-			flags                                    []string
+			name, human, legacy, user, envType, want, serverType string
+			flags                                                []string
 		}{
+			{name: "verified-human-env", human: "Environment Human", want: "Environment Human", serverType: "human"},
+			{name: "verified-human-user", user: "machine-user", want: "machine-user", serverType: "human"},
+			{name: "verified-human-legacy", legacy: "Legacy Human", want: "Legacy Human", serverType: "human"},
+			{name: "verified-human-no-env", want: "developer", serverType: "human"},
 			{name: "agent-env", human: "Environment Human", legacy: "Legacy Human", user: "machine-user"},
 			{name: "agent-user", user: "machine-user"},
 			{name: "agent-legacy", legacy: "Legacy Human"},
@@ -42,7 +46,7 @@ func TestAgentAndHumanCreationNames(t *testing.T) {
 			t.Run(path+"/"+tc.name, func(t *testing.T) {
 				// team create exposes no name/type flags; environment cases still
 				// cover its first-agent bootstrap path.
-				if path == "team-create" && len(tc.flags) > 0 {
+				if (path == "team-create" && len(tc.flags) > 0) || (tc.serverType == "human" && path != "certificate") {
 					return
 				}
 				root := t.TempDir()
@@ -81,7 +85,7 @@ func TestAgentAndHumanCreationNames(t *testing.T) {
 							return
 						}
 						bodies = append(bodies, body)
-						_ = json.NewEncoder(w).Encode(map[string]any{"team_id": "backend:acme.com", "alias": "worker", "agent_id": "agent-1", "workspace_id": "ws-1", "team_did_key": awid.ComputeDIDKey(teamPub)})
+						_ = json.NewEncoder(w).Encode(map[string]any{"team_id": "backend:acme.com", "alias": "worker", "agent_id": "agent-1", "workspace_id": "ws-1", "agent_type": tc.serverType, "team_did_key": awid.ComputeDIDKey(teamPub)})
 					case "/v1/agents/me/encryption-key":
 						writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "backend:acme.com", "worker")
 					case "/api/v1/discovery":
@@ -129,13 +133,20 @@ func TestAgentAndHumanCreationNames(t *testing.T) {
 					if body.AgentType == "human" {
 						t.Errorf("request %d still claims human kind", i)
 					}
-					if body.HumanName != tc.want {
-						t.Errorf("request %d human_name=%q, want %q", i, body.HumanName, tc.want)
+					want := tc.want
+					if tc.serverType == "human" && i == 0 {
+						want = ""
+					}
+					if body.HumanName != want {
+						t.Errorf("request %d human_name=%q, want %q", i, body.HumanName, want)
 					}
 				}
 				ws, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(root, ".aw", "workspace.yaml"))
 				if err != nil {
 					t.Fatal(err)
+				}
+				if tc.serverType == "human" && (len(bodies) != 2 || ws.AgentType != "human") {
+					t.Errorf("verified human: %d requests, saved type %q", len(bodies), ws.AgentType)
 				}
 				if ws.HumanName != tc.want {
 					t.Errorf("saved human_name=%q, want %q", ws.HumanName, tc.want)

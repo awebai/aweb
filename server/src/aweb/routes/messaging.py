@@ -3,6 +3,8 @@
 # ruff: noqa: B008
 from __future__ import annotations
 
+from aweb.human_kind import effective_agent_type
+
 import json
 import logging
 from datetime import UTC, datetime
@@ -125,6 +127,7 @@ async def participant(
                 "status",
             )
         },
+        "agent_type": effective_agent_type(row),
         "team_id": auth.team_id,
         "encryption_key": key,
     }

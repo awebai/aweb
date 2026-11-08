@@ -136,7 +136,7 @@ Init and upgrades never remove them implicitly.
 
 Flags:
 - `--admission-team-id string Add an agent through host human admission for this explicit team ID`
-- `--agent-type string Runtime type (default: AWEB_AGENT_TYPE or agent)`
+- `--agent-type string Runtime label (default: AWEB_AGENT_TYPE or agent; human kind is verified by the server)`
 - `--aweb-url string Base URL for the aweb server used by aw init (overrides AWEB_URL)`
 - `--awid-registry string Base URL for the awid registry used by aw init (overrides AWID_REGISTRY_URL)`
 - `--byod Use a domain you control instead of hosted aweb.ai onboarding`

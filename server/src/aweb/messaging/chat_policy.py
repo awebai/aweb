@@ -1,6 +1,8 @@
 """Chat is for agents; authoritative human recipients are reached by mail."""
 from __future__ import annotations
 
+from aweb.human_kind import human_predicate_sql
+
 import asyncio
 import logging
 from uuid import uuid4
@@ -50,8 +52,8 @@ async def require_agent_chat(db, recipients: list[dict], *, registry_client=None
         if not did:
             continue
         human = await manager.fetch_one(
-            """SELECT 1 FROM {{tables.agents}} WHERE deleted_at IS NULL
-                 AND agent_type='human'
+            f"""SELECT 1 FROM {{{{tables.agents}}}} WHERE deleted_at IS NULL
+                 AND {human_predicate_sql()}
                  AND ((did_aw=$1 AND did_aw_verified_key=did_key)
                       OR did_key=$1)
                LIMIT 1""", did,

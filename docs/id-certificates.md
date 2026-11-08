@@ -184,6 +184,41 @@ chainless local key is not re-parenting. Explicit registered enrollment may
 keep its private key and acquire a stable ID, without guessing its past. Local
 descendants do not silently change their parent ID when that conversion occurs.
 
+### Team-row human classification
+
+A team member is treated as human only from its **own** verified subject kind:
+`identity_valid=true` and `kind=human`. Neither a human ancestor, a team
+certificate, account ownership, custody, nor `agent_type=human` in a client
+payload supplies that evidence. This identity-path correction was approved by
+Juan on 2026-11-08 (aweb-acwb).
+
+The server projects verified kind at connect. A verified human gets
+`agent_type=human` and `human_verified_key` equal to the verified subject key.
+Otherwise a claimed human runtime type becomes `agent`; other runtime labels
+remain metadata. Current human consumers require both the human type and an
+exact non-null key marker. Agent roster and dashboard display filters still
+exclude raw human labels, so unverifiable legacy members are not presented as
+agents. This display exclusion grants no human capability; their effective kind
+is unknown. The connect response returns the effective
+`agent_type`; the CLI uses it for local state and human-only name defaults.
+The marker establishes classification only, never membership, custody or live
+request authority. Existing authentication, revocation and admission checks
+still apply. A changed subject key cannot inherit an old marker.
+
+Migration adds the nullable marker without stamping old labels. Before enabling
+the new policy, an operator revalidates existing human-labelled members through
+the public verifier and reports before/after counts by human, agent, revoked,
+unregistered, unavailable and invalid evidence, separately for active/retired
+rows. Only verified human subjects with unchanged row key/ID are stamped.
+Unverifiable active members remain explicitly unresolved and unstamped; release
+requires the operator's disposition rather than a silent change in treatment.
+No identity, certificate or membership is minted by revalidation.
+
+Raw legacy labels may identify only the **predecessor** in owner-checked retired
+mail succession, contact transfer and pre-cutover alias retirement. They do not
+make any row a current human; the live/new destination must satisfy the verified
+predicate. This preserves history without asserting identity-kind evidence.
+
 ## 3. Registration, heads, rotation and revocation
 
 Human and global IDs are valid in this tree only after AWID registration.

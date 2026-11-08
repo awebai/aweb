@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.human_kind import agent_listing_predicate_sql, effective_agent_type
+
 import json
 
 from aweb.mcp.tools._common import require_team_context
@@ -20,16 +22,16 @@ async def list_agents(db_infra, redis) -> str:
     aweb_db = db_infra.get_manager("aweb")
 
     rows = await aweb_db.fetch_all(
-        """
-        SELECT a.agent_id, w.workspace_id, a.alias, a.human_name, a.agent_type,
+        f"""
+        SELECT a.agent_id, w.workspace_id, a.alias, a.human_name, a.agent_type, a.human_verified_key, a.did_key,
                a.identity_scope, a.status
-        FROM {{tables.agents}} a
-        LEFT JOIN {{tables.workspaces}} w
+        FROM {{{{tables.agents}}}} a
+        LEFT JOIN {{{{tables.workspaces}}}} w
           ON w.team_id = a.team_id
          AND w.agent_id = a.agent_id
          AND w.alias = a.alias
          AND w.deleted_at IS NULL
-        WHERE a.team_id = $1 AND a.deleted_at IS NULL AND a.agent_type != 'human'
+        WHERE a.team_id = $1 AND a.deleted_at IS NULL AND {agent_listing_predicate_sql("a")}
         ORDER BY a.alias
         """,
         auth.team_id,
@@ -53,7 +55,7 @@ async def list_agents(db_infra, redis) -> str:
                 "agent_id": aid,
                 "alias": r["alias"],
                 "human_name": r.get("human_name") or "",
-                "agent_type": r.get("agent_type") or "agent",
+                "agent_type": effective_agent_type(r),
                 "online": p is not None,
                 "identity_scope": r.get("identity_scope") or "local",
                 "status": r.get("status") or "active",

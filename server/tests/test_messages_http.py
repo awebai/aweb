@@ -594,7 +594,7 @@ async def test_signed_human_plaintext_mail_lost_response_retry(aweb_cloud_db):
         did_key=human_key, did_aw=human_did, address="acme.com/person",
     )
     await aweb_cloud_db.aweb_db.execute(
-        "UPDATE {{tables.agents}} SET agent_type = 'human' WHERE agent_id = $1",
+        "UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE agent_id = $1",
         UUID(human_id),
     )
     await _insert_agent(

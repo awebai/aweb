@@ -38,6 +38,7 @@ type connectOutput struct {
 
 // connectResponse is the server response from POST /v1/connect.
 type connectResponse struct {
+	AgentType   string `json:"agent_type"`
 	TeamID      string `json:"team_id"`
 	Alias       string `json:"alias"`
 	AgentID     string `json:"agent_id"`
@@ -125,6 +126,17 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 		return connectOutput{}, err
 	}
 
+	// Only the server's verified subject kind enables environment name defaults.
+	// Initial requests contain explicit names only. Reconnect once to publish a
+	// human default after the server has established that this identity is human.
+	if resp.AgentType == "human" && reqBody.HumanName == "" {
+		reqBody.HumanName = resolveHumanNameValue("", "human")
+		resp, err = postConnect(ctx, awebURL, signingKey, cert, reqBody)
+		if err != nil {
+			return connectOutput{}, err
+		}
+	}
+
 	workspacePath, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "workspace.yaml")
 	if err != nil {
 		return connectOutput{}, err
@@ -166,7 +178,10 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 		workspaceState.CanonicalOrigin = ""
 	}
 	workspaceState.HumanName = reqBody.HumanName
-	workspaceState.AgentType = reqBody.AgentType
+	workspaceState.AgentType = resolveAgentTypeValue(reqBody.AgentType)
+	if resp.AgentType != "" {
+		workspaceState.AgentType = resp.AgentType
+	}
 	workspaceState.Hostname = hostname
 	workspaceState.WorkspacePath = bindingWorkspacePath
 	workspaceState.UpdatedAt = time.Now().UTC().Format(time.RFC3339)

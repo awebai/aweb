@@ -133,7 +133,7 @@ func init() {
 	initCmd.Flags().BoolVar(&initRemoveNotifyHook, "remove-notify-hook", false, "Remove only the exact aw notify PostToolUse hook from current directory and repository root settings, with backups (standalone local action)")
 	initCmd.Flags().BoolVar(&initSetupChannel, "setup-channel", false, "Set up Claude Code aweb-channel plugin for real-time coordination")
 	initCmd.Flags().StringVar(&initHumanName, "human-name", "", "Human name (agents: explicit only; humans: AWEB_HUMAN or $USER)")
-	initCmd.Flags().StringVar(&initAgentType, "agent-type", "", "Runtime type (default: AWEB_AGENT_TYPE or agent)")
+	initCmd.Flags().StringVar(&initAgentType, "agent-type", "", "Runtime label (default: AWEB_AGENT_TYPE or agent; human kind is verified by the server)")
 	initCmd.Flags().BoolVar(&initWriteContext, "write-context", true, "Ensure .aw/context exists in the current directory")
 	initCmd.Flags().BoolVar(&initPrintExports, "print-exports", false, "Print shell export lines after JSON output")
 	addWorkspaceRoleFlags(initCmd, &initRole, "Workspace role name (must match a role in the active team roles bundle)")
@@ -1010,14 +1010,16 @@ func resolveAgentType() string {
 	return resolveAgentTypeValue(strings.TrimSpace(initAgentType))
 }
 
+// Runtime hints never establish identity kind. The server verifies human kind.
 func resolveAgentTypeValue(value string) string {
-	if v := strings.TrimSpace(value); v != "" {
-		return v
+	v := strings.TrimSpace(value)
+	if v == "" {
+		v = strings.TrimSpace(os.Getenv("AWEB_AGENT_TYPE"))
 	}
-	if v := strings.TrimSpace(os.Getenv("AWEB_AGENT_TYPE")); v != "" {
-		return v
+	if v == "" || v == "human" {
+		return "agent"
 	}
-	return "agent"
+	return v
 }
 
 func resolveInitLocalName() string {

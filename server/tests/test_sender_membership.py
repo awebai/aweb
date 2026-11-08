@@ -14,7 +14,7 @@ async def test_sender_membership_mail_and_chat_is_current_and_participant_scoped
     sender = env.actors['alice']
     stable_id = stable_id_from_did_key(sender.did)
     await env.db.execute(
-        "UPDATE {{tables.agents}} SET agent_type='human', identity_scope='global', "
+        "UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key, identity_scope='global', "
         "did_aw=$1, certificate_id='privacy-alice' WHERE agent_id=$2", stable_id, sender.id,
     )
     mail_id = await _seed_mail(env)

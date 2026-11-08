@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.human_kind import agent_listing_predicate_sql
+
 import json
 from datetime import datetime, timezone
 
@@ -17,19 +19,19 @@ async def workspace_status(db_infra, redis, *, limit: int = 15) -> str:
     aweb_db = db_infra.get_manager("aweb")
 
     workspaces = await aweb_db.fetch_all(
-        """
+        f"""
         SELECT
             w.workspace_id,
             w.agent_id,
             w.alias,
             w.human_name,
             COALESCE(w.role, a.role) AS role
-        FROM {{tables.workspaces}} w
-        JOIN {{tables.agents}} a ON a.agent_id = w.agent_id
+        FROM {{{{tables.workspaces}}}} w
+        JOIN {{{{tables.agents}}}} a ON a.agent_id = w.agent_id
         WHERE w.team_id = $1
           AND w.deleted_at IS NULL
           AND a.deleted_at IS NULL
-          AND COALESCE(a.agent_type, 'agent') != 'human'
+          AND {agent_listing_predicate_sql("a")}
         ORDER BY w.alias
         """,
         auth.team_id,

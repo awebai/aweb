@@ -111,7 +111,7 @@ async def native_send(aweb_cloud_db):
         address=None,
     )
     await db.execute(
-        "UPDATE {{tables.agents}} SET agent_type='human' WHERE agent_id=$1", UUID(b)
+        "UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE agent_id=$1", UUID(b)
     )
     await db.execute(
         "CREATE TABLE public.host_authority (actor_id UUID PRIMARY KEY,principal TEXT,signing_key TEXT,custody TEXT,active BOOLEAN,revision INTEGER,encryption_assertion JSONB)"
