@@ -1,9 +1,9 @@
 ---
 type: Lesson
 title: Unauthenticated input must not drive remote work
-description: Order checks so cheap local verification and admission controls run before per-request remote lookups; a remote check moved earlier must not create exits that skip existing admission controls, and lookups driven by caller-chosen input cache their negative answers.
-tags: [lesson, security, rate-limits, awid, review]
-timestamp: 2026-10-21
+description: Order checks so cheap local verification and admission controls run before per-request remote lookups; a remote check moved earlier must not create exits that skip existing admission controls, lookups driven by caller-chosen input cache their negative answers, and on an anonymous signed-act route state lookups wait until the act is authenticated.
+tags: [lesson, security, rate-limits, awid, review, oracle]
+timestamp: 2026-11-07
 ---
 
 Two review findings in October 2026, both caught in review before release.
@@ -32,6 +32,34 @@ Two review findings in October 2026, both caught in review before release.
 - In the same review: renewal copies fields only from the verified old
   certificate, never from unsigned registry rows, and policy is verified
   against the controller or team key, not a key carried in the same response.
+
+# State lookups are not local verification
+
+"Local checks first" means stateless checks, not every check that avoids the
+network. On an anonymous route that accepts a signed act, a cheap state lookup
+(does the pending row, holder or nonce exist?) placed before the registry read
+of the signing key is an existence oracle: a forged act gets `403` for an
+absent row and reaches the registry for a present one, where an unavailable
+registry answers `503`. Making every refusal before authentication a uniform
+`403` does not help, because the difference shows up in a later stage's
+failure mode. The ordering was proposed in review as cost hygiene and NACKed
+for this oracle (aweb-acgh.16.38, 2026-11-07); it recurs on every anonymous
+signed-artifact endpoint.
+
+The order that passed review:
+
+1. **Stateless:** body, parse, fields, audience, vocabulary, lifetime.
+2. **Authentication:** the current key of the act's own `team_id`, then the
+   signature, so any `503` depends only on input the caller chose.
+3. **State, for an authenticated act only:** installation, nonce, row or
+   holder, contact.
+
+Prove it with pairs in the vectors: the same forged act with and without the
+row, under each registry condition, must get equal results. The fix carries
+such pairs in `docs/vectors/owner-act-delivery-v1.json` (branch commit
+9283451be, ACKed by the independent reviewer and the security reviewer).
+
+Evidence: OKF proposal from aweb-protocol-expert/aweb-protocol-expert-secrets-docs, 2026-11-07; notes/anonymous-route-authenticate-before-state.md.
 
 Related: [preserve capability boundaries through adapter changes](/coordinator/preserve-capability-boundaries-through-adapter-changes.md).
 
