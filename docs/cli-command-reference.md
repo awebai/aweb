@@ -145,7 +145,7 @@ Flags:
 - `--expect-account string Expected hosted account ID for workspace-team or admission init`
 - `--global Create an addressed self-custodial global identity instead of the default local workspace`
 - `-h, --help help for init`
-- `--human-name string Human name (default: AWEB_HUMAN or $USER)`
+- `--human-name string Human name (agents: explicit only; humans: AWEB_HUMAN or $USER)`
 - `--inbound-mode string Inbound delivery mode for a global identity (open|team-and-contacts|contacts-only). Only valid with --global.`
 - `--inject-docs Inject aw coordination instructions into CLAUDE.md and AGENTS.md`
 - `--join-from string Add an agent to a team by minting one invite from this existing workspace or identity home`

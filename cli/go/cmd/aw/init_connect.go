@@ -113,7 +113,7 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 		Hostname:      hostname,
 		WorkspacePath: bindingWorkspacePath,
 		Role:          strings.TrimSpace(opts.Role),
-		HumanName:     resolveHumanNameValue(strings.TrimSpace(opts.HumanName)),
+		HumanName:     resolveHumanNameValue(opts.HumanName, resolveAgentTypeValue(opts.AgentType)),
 		AgentType:     resolveAgentTypeValue(strings.TrimSpace(opts.AgentType)),
 	}
 

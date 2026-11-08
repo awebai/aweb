@@ -690,7 +690,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 			Name:         apiName,
 			Alias:        apiAlias,
 			Global:       firstAgentGlobal,
-			HumanName:    resolveHumanNameValue(strings.TrimSpace(initHumanName)),
+			HumanName:    resolveHumanNameValue(initHumanName, resolveAgentType()),
 			AgentType:    resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
 		})
 		if err != nil {
@@ -715,7 +715,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		RegistryURL: registryURL,
 		Alias:       alias,
 		TeamName:    teamName,
-		HumanName:   resolveHumanNameValue(strings.TrimSpace(initHumanName)),
+		HumanName:   resolveHumanNameValue(initHumanName, resolveAgentType()),
 		AgentType:   resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
 	})
 	if err != nil {
@@ -978,7 +978,7 @@ func runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, username, alia
 		Domain:             strings.TrimSpace(initDomain),
 		Alias:              requestAlias,
 		Name:               requestName,
-		HumanName:          resolveHumanNameValue(strings.TrimSpace(initHumanName)),
+		HumanName:          resolveHumanNameValue(initHumanName, resolveAgentType()),
 		AgentType:          resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
 		Role:               resolveRequestedRole(strings.TrimSpace(initRole)),
 		Global:             firstAgentGlobal,
