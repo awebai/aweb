@@ -16,23 +16,33 @@ from aweb_naapp_testing.smtp import SmtpServer
 from awid_service.testing import SERVICE_TOKEN
 
 from aweb_secrets.composition import create_service
+from aweb_secrets.deployment import DeploymentSettings, create_deployment
 from tests.production_authority import authority, install, install_audit_receiver, no_dns_override
 from tests.test_composition import settings
 from tests.test_production_bootstrap import owner_body
 
 
 @pytest.mark.parametrize(
-    "internal,listed,denied,guard_denied",
+    "internal,listed,denied,guard_denied,deployment",
     [
-        (False, True, False, False),
-        (True, True, False, False),
-        (True, False, False, False),
-        (True, True, True, False),
-        (True, True, False, True),
+        (False, True, False, False, False),
+        (True, True, False, False, False),
+        (True, False, False, False, False),
+        (True, True, True, False, False),
+        (True, True, False, True, False),
+        (True, True, False, False, True),
     ],
 )
 async def test_production_hook_delivery_uses_explicit_dns_ca_and_internal_network(
-    test_db_factory, registry, tmp_path, internal, listed, denied, guard_denied
+    test_db_factory,
+    registry,
+    tmp_path,
+    monkeypatch,
+    internal,
+    listed,
+    denied,
+    guard_denied,
+    deployment,
 ):
     deliverable = internal and listed and not denied and not guard_denied
     member = Member(team_id="root:example.com")
@@ -82,24 +92,36 @@ async def test_production_hook_delivery_uses_explicit_dns_ca_and_internal_networ
                         ),
                     }
                 )
-                service = create_service(
-                    configured,
-                    awid_transport=registry.transport,
-                    team_server_transport=transport,
-                    hook_egress=Egress(
-                        addresses=AddressPolicy(
-                            internal_destinations=InternalDestinations.ALLOWED,
-                            denied=(
-                                ip_network(f"{host}/32" if guard_denied else "198.51.100.0/24"),
+                if not deployment:
+                    service = create_service(
+                        configured,
+                        awid_transport=registry.transport,
+                        team_server_transport=transport,
+                        hook_egress=Egress(
+                            addresses=AddressPolicy(
+                                internal_destinations=InternalDestinations.ALLOWED,
+                                denied=(
+                                    ip_network(f"{host}/32" if guard_denied else "198.51.100.0/24"),
+                                ),
                             ),
+                            resolver=DnsResolver(nameservers=["127.0.0.1"], port=dns.port),
+                            user_agent="secrets-root/hooks-test",
+                            ca_file=certificates.ca_file,
                         ),
+                        hook_internal_cidr=ip_network(f"{host}/32") if internal else None,
+                        hook_internal_origins=frozenset({origin}) if listed else frozenset(),
+                    )
+                else:
+                    monkeypatch.setenv("SECRETS_HOOK_INTERNAL_DESTINATIONS", "allowed")
+                    monkeypatch.setenv("SECRETS_HOOK_INTERNAL_CIDR", f"{host}/32")
+                    monkeypatch.setenv("SECRETS_HOOK_INTERNAL_ORIGINS", json.dumps([origin]))
+                    monkeypatch.setenv("SECRETS_HOOK_CA_FILE", str(certificates.ca_file))
+                    service = create_deployment(
+                        DeploymentSettings(_env_file=None, **configured.model_dump()),
                         resolver=DnsResolver(nameservers=["127.0.0.1"], port=dns.port),
-                        user_agent="secrets-root/hooks-test",
-                        ca_file=certificates.ca_file,
-                    ),
-                    hook_internal_cidr=ip_network(f"{host}/32") if internal else None,
-                    hook_internal_origins=frozenset({origin}) if listed else frozenset(),
-                )
+                        awid_transport=registry.transport,
+                        team_server_transport=transport,
+                    )
                 service.runtime.team_server_directory()._registry_override = no_dns_override
                 async with service.api_app.router.lifespan_context(service.api_app):
                     async with httpx.AsyncClient(transport=httpx.ASGITransport(service)) as client:
