@@ -93,11 +93,23 @@ def test_manifest_registration_refuses_bytes_that_do_not_match_the_install(app_i
         manifest_registration(manifest, app_id=app_id, origin=origin, digest=digest)
 
 
-def test_manifest_registration_refuses_an_unsupported_manifest_version():
+def test_manifest_registration_accepts_v3_without_owner_acts():
     manifest = json.dumps({"manifest_version": 3, "app": {"id": "notes", "origin": ORIGIN, "version": "1"}}).encode()
 
-    with pytest.raises(ValidationError):
+    registration = manifest_registration(manifest, app_id="notes", origin=ORIGIN, digest=_digest(manifest))
+
+    assert registration.manifest_version == 3
+    assert registration.app_version == "1"
+    assert registration.event_types == []
+    assert registration.emit_keys == []
+
+
+def test_manifest_registration_refuses_an_unsupported_manifest_version():
+    manifest = json.dumps({"manifest_version": 4, "app": {"id": "notes", "origin": ORIGIN, "version": "1"}}).encode()
+
+    with pytest.raises(ValidationError) as exc:
         manifest_registration(manifest, app_id="notes", origin=ORIGIN, digest=_digest(manifest))
+    assert exc.value.detail["code"] == "manifest_version_unsupported"
 
 
 @pytest.mark.asyncio
