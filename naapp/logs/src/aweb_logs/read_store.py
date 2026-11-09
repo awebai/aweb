@@ -23,6 +23,7 @@ from typing import Any
 
 from aweb_naapp.hooks import envelope as hook_envelope
 from pgdbm import AsyncDatabaseManager
+from pgdbm.core import TransactionManager
 
 MAX_LIMIT = 200
 DEFAULT_LIMIT = 50
@@ -184,13 +185,7 @@ async def query(
     limit = _limit(limit)
     start = Cursor.decode(before) if before is not None else None
     await project(db, team_id)
-    conditions, arguments = _conditions(team_id, where)
-    if start is not None:
-        arguments += [start.chain_epoch, start.team_seq]
-        conditions.append(
-            f"(r.chain_epoch, r.team_seq) < (${len(arguments) - 1}, ${len(arguments)})"
-        )
-    rows = await _rows(db, conditions, arguments, "DESC", limit + 1)
+    rows = await db.fetch_all(*_page(team_id, where, start, "DESC", limit + 1))
     more = len(rows) > limit
     rows = rows[:limit]
     next_cursor = _position(rows[-1]).encode() if more else None
@@ -217,10 +212,7 @@ async def tail(
         return Page([], position.encode())
     start = Cursor.decode(after)
     await project(db, team_id)
-    conditions, arguments = _conditions(team_id, where)
-    arguments += [start.chain_epoch, start.team_seq]
-    conditions.append(f"(r.chain_epoch, r.team_seq) > (${len(arguments) - 1}, ${len(arguments)})")
-    rows = await _rows(db, conditions, arguments, "ASC", limit)
+    rows = await db.fetch_all(*_page(team_id, where, start, "ASC", limit))
     position = _position(rows[-1]) if rows else start
     return Page([_event(row) for row in rows], position.encode())
 
@@ -243,12 +235,27 @@ _UNPROJECTED = (
 )
 
 
-async def project(db: AsyncDatabaseManager, team_id: str) -> None:
+async def project(db: AsyncDatabaseManager | TransactionManager, team_id: str) -> None:
     """Project the team's chain events that have no projection yet."""
-    while True:
-        rows = await db.fetch_all(_UNPROJECTED, team_id, _PROJECTION_BATCH)
-        if not rows:
-            return
+    while await project_batch(db, team_id):
+        pass
+
+
+async def project_batch(
+    db: AsyncDatabaseManager | TransactionManager,
+    team_id: str,
+    *,
+    limit: int = _PROJECTION_BATCH,
+) -> int:
+    """Project up to ``limit`` of the team's earliest unprojected chain events,
+    returning how many were projected.
+
+    The transaction appending to the team's chain calls this under its locked
+    head: it projects the appended event with any earlier ones still
+    unprojected and rolls back with the append, while one batch bounds the
+    work done holding that lock. Readers' catch-up projects whatever remains."""
+    rows = await db.fetch_all(_UNPROJECTED, team_id, limit)
+    if rows:
         await db.executemany(
             "INSERT INTO {{tables.read_events}} (team_id, chain_epoch, team_seq, purged, hook,"
             " event_id, event_type, mediation, occurred_at, result_status, trace_id,"
@@ -259,6 +266,7 @@ async def project(db: AsyncDatabaseManager, team_id: str) -> None:
             " ON CONFLICT (team_id, chain_epoch, team_seq) DO NOTHING",
             [_projection(team_id, row) for row in rows],
         )
+    return len(rows)
 
 
 def _projection(team_id: str, row: Mapping[str, Any]) -> tuple[Any, ...]:
@@ -304,7 +312,10 @@ def _conditions(team_id: str, where: EventFilter) -> tuple[list[str], list[Any]]
     if where.needs_content():
         conditions.append("NOT r.purged AND e.signing_bytes IS NOT NULL")
     if where.actor is not None:
-        add("(r.actor_did_key = ? OR r.actor_did_aw = ?)", where.actor)
+        # An actor filter is a did:key or a did:aw, and only that form's column
+        # can hold it, so the read uses that column's ordered index.
+        column = "actor_did_key" if where.actor.startswith("did:key:") else "actor_did_aw"
+        add(f"r.{column} = ?", where.actor)
     if where.event_id is not None:
         add("r.event_id = ?::uuid", where.event_id)
     if where.occurred_from is not None:
@@ -326,11 +337,21 @@ def _conditions(team_id: str, where: EventFilter) -> tuple[list[str], list[Any]]
     return conditions, arguments
 
 
-async def _rows(
-    db: AsyncDatabaseManager, conditions: list[str], arguments: list[Any], order: str, limit: int
-) -> list[dict[str, Any]]:
-    arguments = [*arguments, limit]
-    return await db.fetch_all(
+def _page(
+    team_id: str, where: EventFilter, start: Cursor | None, order: str, limit: int
+) -> tuple[Any, ...]:
+    """The statement and arguments reading up to ``limit`` of the team's events
+    matching ``where`` in position ``order``, strictly past ``start`` in that
+    order when it is given."""
+    conditions, arguments = _conditions(team_id, where)
+    if start is not None:
+        arguments += [start.chain_epoch, start.team_seq]
+        past = "<" if order == "DESC" else ">"
+        conditions.append(
+            f"(r.chain_epoch, r.team_seq) {past} (${len(arguments) - 1}, ${len(arguments)})"
+        )
+    arguments.append(limit)
+    return (
         "SELECT e.chain_epoch, e.team_seq, e.event_hash, e.received_at, e.hook,"
         " e.producer_origin, e.signing_bytes, e.purge_act"
         " FROM {{tables.read_events}} r JOIN {{tables.chain_events}} e"

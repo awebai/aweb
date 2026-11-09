@@ -53,11 +53,14 @@ class ValueType:
     pattern: re.Pattern[str] | None = None
     minimum: int | None = None
     maximum: int | None = None
+    # A string's most characters, where its pattern alone does not bound it.
+    max_length: int | None = None
 
     def accepts(self, value: Any) -> bool:
         if self.kind == "string":
             return (
                 isinstance(value, str)
+                and (self.max_length is None or len(value) <= self.max_length)
                 and self.pattern is not None
                 and bool(self.pattern.fullmatch(value))
             )
@@ -575,12 +578,15 @@ class _Reader:
             raise CatalogError(f"type {name} needs a kind")
         kind = spec["kind"]
         if kind == "string":
-            spec = self._object(spec, f"type {name}", {"kind", "pattern"})
+            spec = self._object(spec, f"type {name}", {"kind", "pattern"}, {"max_length"})
             try:
                 pattern = re.compile(self._string(spec["pattern"], f"type {name} pattern"))
             except re.error as exc:
                 raise CatalogError(f"type {name} pattern does not compile: {exc}") from None
-            return ValueType(kind, pattern=pattern)
+            max_length = spec.get("max_length")
+            if max_length is not None and (type(max_length) is not int or max_length < 1):
+                raise CatalogError(f"type {name} has a bad max_length")
+            return ValueType(kind, pattern=pattern, max_length=max_length)
         if kind == "integer":
             spec = self._object(spec, f"type {name}", {"kind", "min", "max"})
             minimum, maximum = spec["min"], spec["max"]

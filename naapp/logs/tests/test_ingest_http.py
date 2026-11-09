@@ -20,7 +20,7 @@ import pytest
 from aweb.app_manifests import FetchedManifest
 from aweb.installations import install_verified_manifest_on
 from aweb_naapp.hooks import envelope
-from aweb_naapp.hooks.delivery import sign_delivery
+from aweb_naapp.hooks.delivery import MAX_DELIVERY_BYTES, sign_delivery
 from aweb_naapp.hooks.strictjson import decode_base64url
 from aweb_naapp.manifest import load_manifest
 from aweb_naapp_testing import Member
@@ -33,7 +33,7 @@ from aweb_logs.config import LogsSettings
 from aweb_logs.ledger import load_epoch
 from aweb_logs.verify import verify_chain
 
-from .deployment import TEST_APP_ID, served_manifest, write_key_files
+from .deployment import TEST_APP_ID, no_mail, served_manifest, write_key_files
 from .fixtures import (
     CORE_SEED,
     MEMBER_SEED,
@@ -44,6 +44,7 @@ from .fixtures import (
 )
 
 ORIGIN = "https://logs.example.test"
+CONSOLE = "https://console.logs.example.test"
 PATH = "/v1/hooks/ingest"
 APP_ID = "secrets-test"
 SEEDS = {"core": CORE_SEED, "app": SECRETS_SEED, "client": MEMBER_SEED}
@@ -134,7 +135,7 @@ async def world(coordination, test_db_factory, tmp_path, monkeypatch, request):
     server_db = coordination.server.db.get_manager("aweb")
     settings = LogsSettings(
         _env_file=None, database_url=db.config.get_dsn(), db_schema=db.schema,
-        app_id=TEST_APP_ID, public_origin=ORIGIN,
+        app_id=TEST_APP_ID, public_origin=ORIGIN, console_origin=CONSOLE,
         awid_registry_url=REGISTRY_URL, awid_service_token=SERVICE_TOKEN,
         app_key_files=write_key_files(tmp_path),
         **{"client_events_per_minute": 1, **getattr(request, "param", {})},
@@ -158,15 +159,16 @@ async def world(coordination, test_db_factory, tmp_path, monkeypatch, request):
         member.team_id, now - timedelta(minutes=1), "ab" * 32,
     )
     bindings = {row["hook"]: str(row["binding_id"]) for row in await server_db.fetch_all(
-        "SELECT hook, binding_id FROM {{tables.app_hook_bindings}} WHERE team_id=$1 AND app_id=$2",
+        "SELECT hook, binding_id FROM {{tables.app_hook_bindings}}"
+        " WHERE team_id=$1 AND app_id=$2 AND kind='registration'",
         member.team_id, TEST_APP_ID,
     )}
-    app = create_app(
-        settings, awid_transport=coordination.registry.transport,
+    service = create_app(
+        settings, email=no_mail(), awid_transport=coordination.registry.transport,
         team_server_transport=coordination.server.transport, now=lambda: now,
     )
-    async with app.router.lifespan_context(app):
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=ORIGIN) as client:
+    async with service.api_app.router.lifespan_context(service.api_app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=service), base_url=ORIGIN) as client:
             yield World(coordination, db, server_db, member, settings, installation, bindings, now, client)
 
 
@@ -213,6 +215,13 @@ async def test_bad_transport_precedes_binding_and_writes_nothing(world):
     delivery = world.delivery("core", binding_id=str(uuid4()))
     response = await world.send(delivery, body=delivery.body + b" ")
     assert (response.status_code, _code(response)) == (401, "transport_body_mismatch")
+    assert await world.db.fetch_value("SELECT count(*) FROM {{tables.chain_events}}") == 0
+
+
+async def test_a_delivery_over_the_size_bound_is_refused_and_writes_nothing(world):
+    delivery = world.delivery("core")
+    response = await world.send(delivery, body=delivery.body + b" " * MAX_DELIVERY_BYTES)
+    assert (response.status_code, _code(response)) == (413, "request_too_large")
     assert await world.db.fetch_value("SELECT count(*) FROM {{tables.chain_events}}") == 0
 
 

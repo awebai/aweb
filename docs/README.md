@@ -186,8 +186,12 @@ presented as shipped.
   experimental contract for owner-activated named hooks, not yet shipped.
 - [Owner act](owner-act.md) — specified experimental controller-signed artifact
   for owner-only governance acts, not yet shipped.
+- [Owner-act delivery](owner-act-delivery.md) — specified contract for how a
+  client prepares and delivers an app owner act to the app's declared human
+  origin, not yet shipped.
 - [App manifest](app-manifest.md) — current experimental manifest versions 1
-  and 2, variant discovery, and the byte-identical CLI interpretation contract.
+  and 2, version 3 specified but not shipped, variant discovery, and the
+  byte-identical CLI interpretation contract.
 - [App registry and team grants](app-registry.md) — current experimental install,
   digest-pin, and grants read surface.
 - [Page format](page-format.md) — the frozen `aweb.page/1` page snapshot

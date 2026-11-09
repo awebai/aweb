@@ -55,6 +55,7 @@ from aweb_naapp.outbox import (
     Retryable,
     StoredEvent,
     Target,
+    Unacceptable,
 )
 
 __all__ = ["HookTransport"]
@@ -207,6 +208,8 @@ def _classify(status: int, body: bytes, event_id: str) -> Outcome:
         return _ack(body, event_id)
     if status == 409:
         return Conflict()
+    if status == 413:
+        return Unacceptable(f"http_{status}")
     if status >= 500 or status in _RETRIED_STATUSES:
         return Retryable(f"http_{status}")
     # A redirect is never followed, and an authorization or schema rejection

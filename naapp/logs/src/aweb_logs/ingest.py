@@ -17,6 +17,7 @@ import httpx
 from aweb_naapp.hooks.catalog import Catalog, PayloadRefused
 from aweb_naapp.hooks.delivery import (
     AUTH_SCHEME,
+    MAX_DELIVERY_BYTES,
     SIGNED_PAYLOAD_HEADER,
     ReceiveOptions,
     verify_delivery,
@@ -35,6 +36,7 @@ from aweb_naapp.runtime.hook_resolver import (
     HookResolutionUnavailable,
     OwnHookBinding,
 )
+from aweb_naapp.runtime.manifest_hooks import bounded_body
 from aweb_naapp.runtime.team_auth import raw_request_target, require_active_certificate
 from awid.log import canonical_server_origin
 from awid.registry import RegistryClient, RegistryError
@@ -131,6 +133,7 @@ class Ingestor:
         self.resolver = runtime.hook_resolver()
 
     async def admit(self, request: Request, *, received_at: datetime) -> dict[str, Any]:
+        await bounded_body(request, MAX_DELIVERY_BYTES)
         body = await request.body()
         headers = dict(request.headers)
         team_key_did = ""
