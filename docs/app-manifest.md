@@ -582,8 +582,11 @@ unchanged. Its semantics and the delivery call are in
   plus:
   - `role`, a declared `owner_acts.roles` name;
   - `kind`: `read` with method `GET`, only `in: path` and `in: query`
-    params and no `body`; or `stage`, `draft` or `confirm` with method `POST`
-    and `body.mode` `json`;
+    params and no `body` member; or `stage`, `draft` or `confirm` with
+    method `POST` and `body.mode` `json`. These rules apply to the values
+    after version 2's tool validation normalizes them: `method` trimmed and
+    uppercased, `in` and `body.mode` trimmed, and an absent `body` read as
+    `json`;
   - `protected: true` on a param, allowed only on an `in: body` param of a
     `stage` action; `true` is its only value, and an unprotected param omits
     it;
