@@ -326,6 +326,18 @@ async def load_epoch(
     db: AsyncDatabaseManager | TransactionManager, team_id: str, chain_epoch: int
 ) -> tuple[Genesis, list[StoredEvent]]:
     """One team epoch's genesis and stored events, in team_seq order, for verify."""
+    genesis = await load_genesis(db, team_id, chain_epoch)
+    rows = await db.fetch_all(
+        _EVENTS + " WHERE team_id = $1 AND chain_epoch = $2 ORDER BY team_seq",
+        team_id,
+        chain_epoch,
+    )
+    return genesis, [_stored_event(team_id, chain_epoch, row) for row in rows]
+
+
+async def load_genesis(
+    db: AsyncDatabaseManager | TransactionManager, team_id: str, chain_epoch: int
+) -> Genesis:
     epoch = await db.fetch_one(
         "SELECT logs_origin, created_at, previous_checkpoint_sha256"
         " FROM {{tables.chain_epochs}} WHERE team_id = $1 AND chain_epoch = $2",
@@ -334,22 +346,76 @@ async def load_epoch(
     )
     if epoch is None:
         raise LookupError(f"team {team_id} has no epoch {chain_epoch}")
-    genesis = Genesis(
+    return Genesis(
         team_id=team_id,
         chain_epoch=chain_epoch,
         logs_origin=epoch["logs_origin"],
         created_at=epoch["created_at"],
         previous_checkpoint_sha256=epoch["previous_checkpoint_sha256"],
     )
+
+
+async def load_head(db: AsyncDatabaseManager, team_id: str) -> tuple[int, int] | None:
+    """The team's current ``(chain_epoch, team_seq)``, read without its lock;
+    None for a team with no chain."""
+    row = await db.fetch_one(
+        "SELECT chain_epoch, team_seq FROM {{tables.chain_heads}} WHERE team_id = $1", team_id
+    )
+    return None if row is None else (row["chain_epoch"], row["team_seq"])
+
+
+async def load_events_after(
+    db: AsyncDatabaseManager,
+    team_id: str,
+    chain_epoch: int,
+    *,
+    after: int,
+    through: int | None,
+    limit: int,
+) -> list[tuple[StoredEvent, tuple[bytes, str]]]:
+    """Up to ``limit`` of an epoch's stored events with ``after < team_seq <=
+    through`` (unbounded above when ``through`` is None), in team_seq order,
+    each with the receipt logs signed for it."""
     rows = await db.fetch_all(
-        "SELECT team_seq, prev_event_hash, event_hash, received_at, hook, producer_origin,"
-        " content_commitment, salt, signing_bytes, signature, key_evidence, purge_act"
-        " FROM {{tables.chain_events}} WHERE team_id = $1 AND chain_epoch = $2"
-        " ORDER BY team_seq",
+        _EVENTS + " WHERE team_id = $1 AND chain_epoch = $2 AND team_seq > $3"
+        " AND ($4::bigint IS NULL OR team_seq <= $4) ORDER BY team_seq LIMIT $5",
         team_id,
         chain_epoch,
+        after,
+        through,
+        limit,
     )
-    return genesis, [_stored_event(team_id, chain_epoch, row) for row in rows]
+    return [
+        (
+            _stored_event(team_id, chain_epoch, row),
+            (bytes(row["receipt_bytes"]), row["receipt_signature"]),
+        )
+        for row in rows
+    ]
+
+
+async def load_checkpoints(
+    db: AsyncDatabaseManager, team_id: str, chain_epoch: int, *, after: int, through: int
+) -> list[tuple[int, tuple[bytes, str]]]:
+    """An epoch's checkpoints with ``after < team_seq <= through``, each as its
+    team_seq and artefact, in team_seq then issue order."""
+    rows = await db.fetch_all(
+        "SELECT team_seq, signing_bytes, signature FROM {{tables.chain_checkpoints}}"
+        " WHERE team_id = $1 AND chain_epoch = $2 AND team_seq > $3 AND team_seq <= $4"
+        " ORDER BY team_seq, position",
+        team_id,
+        chain_epoch,
+        after,
+        through,
+    )
+    return [(row["team_seq"], (bytes(row["signing_bytes"]), row["signature"])) for row in rows]
+
+
+_EVENTS = (
+    "SELECT team_seq, prev_event_hash, event_hash, received_at, hook, producer_origin,"
+    " content_commitment, salt, signing_bytes, signature, key_evidence, purge_act,"
+    " receipt_bytes, receipt_signature FROM {{tables.chain_events}}"
+)
 
 
 def _stored_event(team_id: str, chain_epoch: int, row: Mapping[str, Any]) -> StoredEvent:
@@ -431,6 +497,14 @@ async def _locked_head(tx: Any, signer: LogsSigner, team_id: str, at: datetime) 
     head = await _existing_head(tx, team_id)
     assert head is not None
     return head
+
+
+async def lock_head(tx: TransactionManager, team_id: str) -> None:
+    """Hold the team's chain head for the rest of ``tx``, as an append does
+    first. A writer that will lock chain events and then append (an erasure)
+    takes it before those events, so it locks in an append's order: head, then
+    events."""
+    await _existing_head(tx, team_id)
 
 
 async def _existing_head(tx: Any, team_id: str) -> _Head | None:

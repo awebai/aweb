@@ -22,7 +22,7 @@ from aweb_naapp.console import (
     console_login_router,
     credential_router,
 )
-from aweb_naapp.hooks.owner_act import APP_ACTS
+from aweb_naapp.hooks.owner_act import APP_ACTS, LOGS_ACTS
 from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier, apply_owner_act_migrations
 from aweb_naapp.hooks.producer import RegistrationView
 from aweb_naapp.runtime.app import NaappRuntime
@@ -34,6 +34,7 @@ from fastapi import APIRouter
 from pgdbm import AsyncDatabaseManager
 
 from aweb_logs.console_ui import console_pages_router
+from aweb_logs.governance import SELF_RECORDED_ACTS, LogsGovernance
 from aweb_logs.ledger import LogsSigner
 from aweb_logs.read_routes import (
     ReaderReads,
@@ -65,8 +66,12 @@ class ReaderService:
         sessions: ConsoleSessions,
         limiter: LoginLimiter,
         chain_keys: frozenset[str],
+        governance: LogsGovernance,
     ) -> None:
         self.directory = directory
+        # The owner's retention, erasure and hold acts. No route delivers them
+        # yet: owner-act delivery covers only the app-role and credential acts.
+        self.governance = governance
         self.fence = fence
         self.sessions = sessions
         self.removals = ReaderRemovals(directory, fence=fence, passkeys=passkeys, recorder=recorder)
@@ -137,6 +142,7 @@ async def reader_service(
         max_backlog_age=backlog_age,
         migration_module=CREDENTIAL_AUDIT_MODULE,
         after_enqueue=directory.appender(signer),
+        ungated_acts=SELF_RECORDED_ACTS,
     )
     passkeys = Passkeys(
         db,
@@ -150,17 +156,14 @@ async def reader_service(
     )
     await recorder.migrate()
     await passkeys.migrate()
+    verifier = OwnerActVerifier(
+        scope=app_id,
+        audience=runtime.settings.public_origin,
+        acts=APP_ACTS + LOGS_ACTS,
+        team_key_for=team_key,
+    )
     designations = ReaderDesignations(
-        directory,
-        fence=fence,
-        verifier=OwnerActVerifier(
-            scope=app_id,
-            audience=runtime.settings.public_origin,
-            acts=APP_ACTS,
-            team_key_for=team_key,
-        ),
-        passkeys=passkeys,
-        recorder=recorder,
+        directory, fence=fence, verifier=verifier, passkeys=passkeys, recorder=recorder
     )
     sessions = ConsoleSessions(db, passkeys=passkeys, scopes=directory.is_current_reader)
     limiter = LoginLimiter(
@@ -176,4 +179,11 @@ async def reader_service(
         sessions=sessions,
         limiter=limiter,
         chain_keys=frozenset({signer.did_key}),
+        governance=LogsGovernance(
+            db,
+            fence=fence,
+            verifier=verifier,
+            recorder=recorder,
+            logs_origin=runtime.settings.public_origin,
+        ),
     )

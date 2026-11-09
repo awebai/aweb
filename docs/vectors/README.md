@@ -638,6 +638,21 @@ changed skeleton) and expects the earlier. The
 Python implementation in `naapp/logs` regenerates it byte for byte, and the Go
 verifier in `cli/go/logschain` passes it.
 
+
+### `logs-export-v1.json`
+
+A team's exported log, `aweb.logs-export/1` (aweb-acgh.16.23; contract in
+[`logs-chain.md`](../logs-chain.md), "Exporting a team's log"). Each case is a
+bundle as its JSON Lines, the keys and independently held witnesses the
+verifier is given, and the report a bundle verifier must return: a whole log
+of two epochs, a purged event, events after the last checkpoint reported as
+unanchored, a truncated tail and a dropped final epoch each alone and against a
+witness of what was dropped, witnesses that hold and one signed by another
+key, an epoch naming an earlier checkpoint, a skipped epoch and a bundle
+starting after the first epoch reported unlinked, a misplaced receipt, an
+event out of position order, a repeated event, altered content, key evidence
+that is not the producer, and a checkpoint by a key not accepted. Malformed
+cases give a bundle the verifier refuses and the number of its first bad line.
 ### `owner-act-v1.json`
 
 The `aweb.owner-act/1` artifact, signed by a team's current controller key
