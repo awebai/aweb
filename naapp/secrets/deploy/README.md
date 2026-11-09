@@ -146,4 +146,9 @@ expires during a real registry outage. It removes its own containers, network
 and private generated files. External authority rows are fixture setup; the
 proof does not claim customer namespace/team bootstrap, SMTP delivery, AWS KMS
 or the full LF demo. The focused production-hook tests separately exercise the
-environment loader with real DNS/TLS and the existing shared outbox drain.
+environment loader with real DNS/TLS and the existing shared outbox drain into
+the actual Logs ingest root, checking its persisted event and signed receipt.
+Their [Logs fixture](../tests/production_logs.py) uses the existing S19 serving
+lifecycle and actual served Logs manifest. Receiver installation and activated
+bindings are external fixture preconditions; the owner activation ceremony and
+designated-reader journey remain separate acceptance.
