@@ -134,7 +134,7 @@ async def test_response_capacity_is_released_after_success_failure_and_cancellat
             await asyncio.gather(sender, return_exceptions=True)
 
 
-@pytest.mark.parametrize("maximum", [None, 131072, 0, -1])
+@pytest.mark.parametrize("maximum", [None, 64 * 1024 * 1024, 32 * 1024 * 1024, 0, -1])
 async def test_response_budget_environment_is_validated_by_the_actual_root(
     test_db_factory, registry, tmp_path, monkeypatch, maximum
 ):
@@ -152,7 +152,7 @@ async def test_response_budget_environment_is_validated_by_the_actual_root(
         )
         if maximum is not None:
             monkeypatch.setenv("SECRETS_BROKER_RESPONSE_BUDGET_BYTES", str(maximum))
-        if maximum is not None and maximum <= 0:
+        if maximum is not None and maximum < 64 * 1024 * 1024:
             with pytest.raises(ValueError):
                 ServiceSettings(_env_file=None, **data)
             return
