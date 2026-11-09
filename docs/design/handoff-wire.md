@@ -12,12 +12,12 @@ The handoff spans the installation's two pinned origins:
 - `O`, the human origin: `owner_acts.origin`, which refuses every team-auth
   header ([The handoff](human-confirmation-from-aw.md#the-handoff)).
 
-| Step | Origin | Request | Authentication |
-| --- | --- | --- | --- |
-| 1. Start | `A` | `POST /handoffs` | team-auth v2 as the holder, `aud` `A` |
-| 2. Page | `O` | `GET /handoff/{id}` | the browser's own ceremony |
-| 3. Result | `O` | `POST /handoffs/{id}/result` | console headers, ephemeral key |
-| 4. Session requests | `O` | the console's routes | console headers, ephemeral key |
+| Step | Origin | Request | Authentication | `aud` |
+| --- | --- | --- | --- | --- |
+| 1. Start | `A` | `POST /handoffs` | team-auth v2 as the holder | `A` |
+| 2. Page | `O` | `GET /handoff/{id}` | the browser's own ceremony | none |
+| 3. Result | `O` | `POST /handoffs/{id}/result` | code and verifier in the body; the ephemeral key's signature in console headers | `O` |
+| 4. Session requests | `O` | the console's routes | the ephemeral key's signature in console headers | `O` |
 
 `aw` sends each request only to its step's pinned origin, follows no redirect,
 and builds every URL it opens from `O`. It takes none from a response. It
