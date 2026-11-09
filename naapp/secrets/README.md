@@ -86,6 +86,9 @@ resolve entirely inside the configured CIDR and pass every address denial;
 setting the CIDR alone never authorizes an internal delivery. The default
 hook guard keeps internal destinations disabled and uses system TLS trust.
 
+For the customer-run image and explicit environment startup, see the
+[deployment recipe](deploy/README.md).
+
 ### Public surfaces
 
 `aweb_secrets.surfaces` supplies the landing, `/reference`, `/llms.txt` and

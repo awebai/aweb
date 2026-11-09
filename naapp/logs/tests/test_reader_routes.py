@@ -25,7 +25,7 @@ from aweb_naapp_testing import Member
 from awid_service.testing import REGISTRY_URL, Registry, running_registry
 from fastapi import FastAPI
 
-from aweb_logs import MIGRATIONS_MODULE, MIGRATIONS_PATH
+from aweb_logs import MANIFEST_PATH, MIGRATIONS_MODULE, MIGRATIONS_PATH
 from aweb_logs.config import LogsSettings
 from aweb_logs.read_routes import reader_slot_router
 from aweb_logs.readers import ReaderDirectory, is_reader_scope
@@ -151,25 +151,17 @@ async def db(test_db_factory):
     return await test_db_factory.create_db(suffix="logs_reader_routes")
 
 
-def _manifest(directory: Path) -> Path:
-    manifest = template()
-    manifest["app_keys"].append({"kid": "logs-grants", "purposes": ["app-grant-read"]})
-    manifest["tools"].append(READER_SLOT_TOOL)
-    path = directory / "aweb-app.json"
-    path.write_text(json.dumps(manifest))
-    return path
-
-
 @asynccontextmanager
 async def running(
     db, registry: Registry, tmp_path: Path, *, scopes: frozenset[str]
 ) -> AsyncIterator[tuple[httpx.AsyncClient, Any]]:
-    kids = [entry["kid"] for entry in template()["app_keys"]] + ["logs-grants"]
+    kids = [entry["kid"] for entry in template()["app_keys"]]
     settings = LogsSettings(
         _env_file=None,
         database_url=db.config.get_dsn(),
         db_schema=db.schema or "public",
         public_origin=API,
+        console_origin=CONSOLE,
         app_id=TEST_APP_ID,
         awid_registry_url=REGISTRY_URL,
         app_key_files={kid: write_key_file(tmp_path / f"key-{i}") for i, kid in enumerate(kids)},
@@ -178,7 +170,7 @@ async def running(
         settings,
         module_name=MIGRATIONS_MODULE,
         migrations_path=MIGRATIONS_PATH,
-        manifest_path=_manifest(tmp_path),
+        manifest_path=MANIFEST_PATH,
         awid_transport=registry.transport,
     )
     grants = Installations(scopes)

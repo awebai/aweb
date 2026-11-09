@@ -47,6 +47,74 @@
       "invocation_contexts": [
         "hook"
       ]
+    },
+    {
+      "name": "reader-slot",
+      "description": "Issue a pending reader slot for the contact the owner will designate.",
+      "method": "POST",
+      "path": "/v1/reader-slots",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "contact_sha256": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contact_sha256"
+        ],
+        "additionalProperties": false
+      },
+      "params": [
+        {
+          "name": "contact_sha256",
+          "in": "body"
+        }
+      ],
+      "scopes": [
+        "logs.readers"
+      ],
+      "mutation": true,
+      "body": {
+        "mode": "json"
+      },
+      "invocation_contexts": [
+        "agent"
+      ]
+    },
+    {
+      "name": "remove-reader",
+      "description": "Remove a reader of the team's log; never the last one.",
+      "method": "POST",
+      "path": "/v1/reader-removals",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope"
+        ],
+        "additionalProperties": false
+      },
+      "params": [
+        {
+          "name": "scope",
+          "in": "body"
+        }
+      ],
+      "scopes": [
+        "logs.readers"
+      ],
+      "mutation": true,
+      "body": {
+        "mode": "json"
+      },
+      "invocation_contexts": [
+        "agent"
+      ]
     }
   ],
   "app_keys": [
@@ -61,6 +129,18 @@
       "kid": "logs-resolve",
       "purposes": [
         "hook-resolve"
+      ]
+    },
+    {
+      "kid": "logs-grants",
+      "purposes": [
+        "app-grant-read"
+      ]
+    },
+    {
+      "kid": "logs-governance",
+      "purposes": [
+        "hook-event"
       ]
     }
   ],
@@ -123,6 +203,15 @@
         ]
       }
     ],
-    "productions": []
+    "productions": [
+      {
+        "catalog": {
+          "id": "aweb.hooks",
+          "version": 1
+        },
+        "hook": "post-governance-hook",
+        "reads": []
+      }
+    ]
   }
 }

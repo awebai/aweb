@@ -94,7 +94,9 @@ def test_authorities_equal_the_catalog_enum():
 def test_governance_acts_cover_the_complete_catalog_enum():
     acts = [row["act"] for row in TABLE["governance_acts"]]
     assert len(acts) == len(set(acts))
-    assert set(acts) == set(GOVERNANCE_HOOK["fields"]["act"]["enum"])
+    # Logs records its own retention, erasure and legal-hold acts; secrets never does.
+    catalog_acts = GOVERNANCE_HOOK["fields"]["act"]["enum"]
+    assert set(acts) == {act for act in catalog_acts if not act.startswith("logs.")}
 
 
 def test_example_secret_kinds_are_use_approval_kinds():

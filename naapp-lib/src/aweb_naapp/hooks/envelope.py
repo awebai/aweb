@@ -28,9 +28,13 @@ from aweb_naapp.hooks.strictjson import (
     parse_canonical_object,
 )
 
-__all__ = ["PREFIX", "Envelope", "Refused", "sign", "signing_bytes", "verify"]
+__all__ = ["MAX_ENVELOPE_BYTES", "PREFIX", "Envelope", "Refused", "sign", "signing_bytes", "verify"]
 
 PREFIX = b"aweb.hook-event/1\n"
+# The most signing bytes an event may have, prefix included. Producers never
+# build a larger one and receivers refuse it; the catalog's worst case is far
+# below it (tests/hooks/test_envelope_bound.py).
+MAX_ENVELOPE_BYTES = 256 * 1024
 CATALOG_ID = "aweb.hooks"
 CATALOG_VERSION = 1
 
@@ -92,6 +96,7 @@ class Envelope:
 def signing_bytes(envelope: dict[str, Any]) -> bytes:
     """Validate an envelope and return the prefix followed by its canonical JSON."""
     encoded = canonical(envelope)
+    _check_size(len(PREFIX) + len(encoded))
     _check_envelope(parse_canonical_object(encoded))
     return PREFIX + encoded
 
@@ -120,9 +125,15 @@ def verify(signing: bytes, signature: str, *, team_id: str) -> Envelope:
 
 def open_envelope(signing: bytes) -> Envelope:
     """Every check but the expected team and the signature."""
+    _check_size(len(signing))
     if not signing.startswith(PREFIX):
         raise Refused("wrong_prefix", "signing bytes do not start with the envelope prefix")
     return _check_envelope(parse_canonical_object(signing[len(PREFIX) :]))
+
+
+def _check_size(length: int) -> None:
+    if length > MAX_ENVELOPE_BYTES:
+        raise Refused("envelope_too_large", f"{length} bytes, at most {MAX_ENVELOPE_BYTES}")
 
 
 def verify_signature(did_key: str, message: bytes, signature: str) -> None:

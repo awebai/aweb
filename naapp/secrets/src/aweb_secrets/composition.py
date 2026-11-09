@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import timedelta
+from enum import StrEnum
 from functools import partial
 from ipaddress import IPv4Network, IPv6Network
 from typing import Any
@@ -108,6 +109,11 @@ from aweb_secrets.use_dispatch_authority import UseDispatchAuthority
 from aweb_secrets.use_routes import UseServices, use_router
 
 _LOG = logging.getLogger(__name__)
+
+
+class CustodyMode(StrEnum):
+    KMS = "kms"
+    LOCAL_KEY_FILE = "local_key_file"
 
 
 class _Policies:
@@ -431,6 +437,10 @@ def create_service(
         provider = AwsKmsProvider(key_id=settings.kms_key_id, region_name=settings.kms_region)
     else:
         raise ValueError("custody provider is required")
+    custody_mode = {
+        LocalKeyFileProvider: CustodyMode.LOCAL_KEY_FILE,
+        AwsKmsProvider: CustodyMode.KMS,
+    }[type(provider)]
     committer = UseCommitter.from_files(
         settings.secret_request_key_file, settings.secret_params_key_file
     )
@@ -530,6 +540,7 @@ def create_service(
         settings,
         policy=tool_policy,
         kms=kms,
+        health_labels={"custody_mode": custody_mode},
         awid_transport=awid_transport,
         team_server_transport=team_server_transport,
         hook_egress=hook_egress,
