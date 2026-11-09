@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-09
+* **Harvest**: one proposal from the `servers` coordinator seat.
+* **Creation**: decision [swarm permissions are explicit grants](swarm-permissions-are-explicit-grants.md) — operator-accepted architecture direction (source-reported) composing endorsement with explicit resource-owner swarm grants at admission.
+
 ## 2026-10-25
 * **Harvest**: the OSS part of the `integrations`, `naapps` and `secrets` coordinator seats (notes, logs, session transcripts and answers to harvest questions); hosted-product material went to the hosted base.
 * **Creation**: decisions [harvest before retire](harvest-before-retire.md), [lane trains share main](lane-trains-share-main.md), [migration number collisions](migration-number-collisions.md), [prove a generic core with two consumers](prove-a-generic-core-with-two-consumers.md), [required invariants belong on the fix](required-invariants-belong-on-the-fix.md), [scope belongs to the operator](scope-belongs-to-the-operator.md), [support claims follow the released public route](support-claims-follow-the-released-public-route.md) and [the coordinator does not build](the-coordinator-does-not-build.md).
