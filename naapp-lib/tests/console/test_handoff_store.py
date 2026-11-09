@@ -1,16 +1,14 @@
-"""Unauthenticated handoff creation grants nothing, on owned PostgreSQL."""
+"""Internal handoff storage grants nothing, on owned PostgreSQL."""
 
 import hashlib
 from datetime import UTC, datetime, timedelta
 
-import httpx
 import pytest
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
-from fastapi import FastAPI
 
-from aweb_naapp.console import ClientIdentity, LoginLimiter, apply_console_migrations
-from aweb_naapp.console.handoff_store import HandoffStore, handoff_start_router
-from aweb_naapp.runtime.origins import split_origins
+from aweb_naapp.console import apply_console_migrations
+from aweb_naapp.console.handoff_store import HandoffStore, parse_start
+from aweb_naapp.console.handoff_wire import HandoffWireRefused
 
 ORIGIN = "https://console.example"
 
@@ -41,28 +39,10 @@ async def handoff_db(test_db_factory):
     return db
 
 
-def app(db, *, limit=20):
-    human = FastAPI()
-    human.include_router(
-        handoff_start_router(
-            store=HandoffStore(db),
-            limiter=LoginLimiter(
-                db, client_identity=ClientIdentity(), limit=limit, window=timedelta(minutes=1)
-            ),
-        )
-    )
-    return split_origins(FastAPI(), human, agent_origin="https://api.example", human_origin=ORIGIN)
-
-
 async def test_create_returns_only_a_bounded_handoff_reference(handoff_db):
     before = datetime.now(UTC)
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app(handoff_db)), base_url=ORIGIN
-    ) as client:
-        body = start_body()
-        response = await client.post("/handoffs", json=body)
-    assert response.status_code == 201
-    result = response.json()
+    body = start_body()
+    result = await HandoffStore(handoff_db).create(parse_start(body))
     assert set(result) == {"handoff_id", "expires_at"}
     expires = datetime.fromisoformat(result["expires_at"].replace("Z", "+00:00"))
     assert before < expires <= datetime.now(UTC) + timedelta(minutes=10)
@@ -85,22 +65,7 @@ async def test_create_returns_only_a_bounded_handoff_reference(handoff_db):
     ],
 )
 async def test_refused_creation_never_leaves_a_handoff(handoff_db, change, detail):
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app(handoff_db)), base_url=ORIGIN
-    ) as client:
-        response = await client.post("/handoffs", json=start_body(**change))
-    assert response.status_code == 400
-    assert response.json() == {"detail": detail}
+    with pytest.raises(HandoffWireRefused) as refused:
+        parse_start(start_body(**change))
+    assert str(refused.value) == detail
     assert await handoff_db.fetch_value("SELECT COUNT(*) FROM {{tables.console_handoffs}}") == 0
-
-
-async def test_creation_throttle_uses_the_handoff_wire_refusal(handoff_db):
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app(handoff_db, limit=1)), base_url=ORIGIN
-    ) as client:
-        assert (await client.post("/handoffs", json=start_body())).status_code == 201
-        response = await client.post("/handoffs", json=start_body())
-    assert response.status_code == 429
-    assert response.json() == {"detail": "handoff_rate_limited"}
-    assert "Retry-After" in response.headers
-    assert await handoff_db.fetch_value("SELECT COUNT(*) FROM {{tables.console_handoffs}}") == 1

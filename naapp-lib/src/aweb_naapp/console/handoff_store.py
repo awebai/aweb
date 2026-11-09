@@ -1,9 +1,10 @@
-"""Bounded anonymous handoff creation; ceremonies never follow from an id."""
+"""Bounded, member-signed API starts; ceremonies never follow from an id."""
 
 import json
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID, uuid4
 
 from awid.did import public_key_from_did, strict_ed25519_point, validate_stable_id
@@ -13,13 +14,13 @@ from pgdbm import AsyncDatabaseManager
 from aweb_naapp.console import ConsoleRoute, LoginLimiter, require_json
 from aweb_naapp.console.handoff_wire import HandoffWireRefused, loopback_redirect
 from aweb_naapp.runtime.approvals.request import parse_request_json
+from aweb_naapp.runtime.team_auth import Principal
 
 _START_REQUIRED = {
     "v",
     "purpose",
     "client_key",
     "return",
-    "redirect_uri",
     "verifier_sha256",
     "scope",
 }
@@ -38,16 +39,18 @@ class HandoffStart:
 
 
 def parse_start(body: Any) -> HandoffStart:
-    """The loopback profile. User-code mode refuses until its hook is supported."""
+    """The loopback profile; unsupported fallback cannot start a session."""
     try:
         if (
             not isinstance(body, dict)
             or not _START_REQUIRED <= set(body)
-            or set(body) - (_START_REQUIRED | {"client_hostname"})
+            or set(body) - (_START_REQUIRED | {"client_hostname", "redirect_uri"})
             or type(body["v"]) is not int
             or body["v"] != 1
             or body["purpose"] not in ("credential", "session")
-            or body["return"] != "loopback"
+            or body["return"] not in ("loopback", "user_code")
+            or (body["return"] == "loopback" and "redirect_uri" not in body)
+            or (body["return"] == "user_code" and "redirect_uri" in body)
         ):
             raise ValueError()
         key = body["client_key"]
@@ -71,10 +74,15 @@ def parse_start(body: Any) -> HandoffStart:
             not isinstance(hostname, str)
             or len(hostname) > 255
             or any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in hostname)
+            or (body["return"] == "user_code" and not hostname)
         ):
             raise ValueError()
     except (ValueError, TypeError, KeyError) as exc:
         raise HandoffWireRefused("handoff_invalid") from exc
+    if body["return"] == "user_code":
+        if body["purpose"] == "session":
+            raise HandoffWireRefused("fallback_unavailable")
+        raise HandoffWireRefused("handoff_invalid")
     # Preserve the distinct fixed redirect refusal, without reflecting its URI.
     redirect = loopback_redirect(body["redirect_uri"])
     return HandoffStart(
@@ -106,11 +114,23 @@ class HandoffStore:
         }
 
 
-def handoff_start_router(*, store: HandoffStore, limiter: LoginLimiter) -> APIRouter:
+def handoff_start_router(
+    *,
+    store: HandoffStore,
+    limiter: LoginLimiter,
+    principal: Callable[[Request], Awaitable[Principal]],
+) -> APIRouter:
+    """Mount on the API origin, with the runtime's verified principal dependency.
+
+    The supplied dependency authenticates team-auth, including the current
+    exact DID/key binding. It grants no role or passkey authority.
+    """
     router = APIRouter(route_class=ConsoleRoute, dependencies=[Depends(require_json)])
 
     @router.post("/handoffs", status_code=201)
-    async def start(request: Request) -> dict[str, str]:
+    async def start(
+        request: Request, signer: Annotated[Principal, Depends(principal)]
+    ) -> dict[str, str]:
         try:
             await limiter.admit(request, "console.handoff")
         except HTTPException as exc:
@@ -125,7 +145,11 @@ def handoff_start_router(*, store: HandoffStore, limiter: LoginLimiter) -> APIRo
             parsed = parse_start(value)
         except (ValueError, UnicodeError, RecursionError) as exc:
             code = str(exc) if isinstance(exc, HandoffWireRefused) else "handoff_invalid"
-            raise HTTPException(status_code=400, detail=code) from None
+            raise HTTPException(
+                status_code=409 if code == "fallback_unavailable" else 400, detail=code
+            ) from None
+        if not signer.did_aw_registry_verified or parsed.scope["principal"] != signer.did_aw:
+            raise HTTPException(403, "scope_not_signer")
         return await store.create(parsed)
 
     return router
