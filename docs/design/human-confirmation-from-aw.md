@@ -68,14 +68,17 @@ for native apps:
    `127.0.0.1:<random port>`, and makes a random verifier. It calls
    `POST <origin>/handoffs` with its purpose, the public key, that loopback
    redirect URI, the verifier's SHA-256 and, for a session, the holder's
-   scope. The app answers a handoff id and a ten-minute expiry. The handoff
-   grants nothing.
+   scope. The app accepts only a redirect URI of the form
+   `http://127.0.0.1:<port>/<path>` or `http://[::1]:<port>/<path>`, a
+   literal loopback address; `localhost` and every other URI are refused
+   (RFC 8252 §8.3). It answers a handoff id and a ten-minute expiry. The
+   handoff grants nothing.
 2. `aw` opens `<origin>/handoff/{id}` in the local browser. The page names
    the purpose, the app and the installation.
 3. The browser runs the purpose's ceremony (below) with B3's existing
    routes, challenges and checks.
-4. The page then redirects the browser to the registered loopback URI with a
-   single-use code. That is a redirect the browser follows to `aw`, not one
+4. The page then redirects the browser to the stored loopback URI, never to
+   one taken from a request, with a single-use code. That is a redirect the browser follows to `aw`, not one
    that `aw` follows.
 5. `aw` collects the result from `POST <origin>/handoffs/{id}/result` with
    the code and the verifier, signed by the ephemeral key. The app releases
@@ -186,8 +189,11 @@ contact roles.
 
 ## N4. Terminal input and the runner code
 
-By default, values are entered on the console and the runner code is shown
-there, as on main. N4 adds a terminal path through a `session` handoff.
+In the approved journey, a value reaches secrets either from the human's
+terminal through `aw`, as below, or from the team's vault by reference, with
+no value typed. The runner code reaches the human only through `aw` on the
+controlling terminal. Both use a `session` handoff. The console's value entry
+and its display of the runner code stay available, outside this journey.
 
 **Values.** A secret value, or the 1Password service-account token at
 `POST /installations/{id}/backend-credentials/onepassword/versions`
@@ -207,12 +213,15 @@ there, as on main. N4 adds a terminal path through a `session` handoff.
   set is confirmed (secrets §6.2).
 
 **Runner code.** The confirmation result carries it
-(`naapp/secrets/src/aweb_secrets/console_results.py:56`). Under N4:
+(`naapp/secrets/src/aweb_secrets/console_results.py:56`):
 
 - `aw` writes it only to the controlling terminal. Machine-readable output
   carries `runner_id` and `registration_required: true`.
 - `aweb-secrets-runner register` reads it from its own controlling terminal
-  when `--code` is absent. `--code` stays accepted (secrets §9.2).
+  when `--code` is absent, and the protected journey uses that prompt.
+  `--code` stays accepted because released runners send it (secrets §9.2),
+  but it is outside the protected journey: a code passed in argv has left the
+  protected client.
 - Its limits are unchanged: ten minutes, single use, stored as a hash.
 
 ## L6: the `aw logs` reader
@@ -266,8 +275,10 @@ Each item is filed after review, and each is one reviewed change.
 
 - **`aweb_naapp`:** the handoff routes and page, on B3's registration and
   login, with the loopback rule and the signed session requests; the
-  human-kind check at use. Tests: a result requested without the loopback
-  code is refused; a replayed session request is refused.
+  human-kind check at use. Tests:
+  - a handoff registering a non-loopback redirect URI is refused;
+  - a result requested without the loopback code is refused;
+  - a replayed session request is refused.
 - **B2 (`aweb_naapp`):** the session-issued link, with tests:
   - a non-candidate session is refused;
   - an ineligible session is refused;
@@ -280,7 +291,8 @@ Each item is filed after review, and each is one reviewed change.
   from tracing.
 - **The runner:** N4's terminal prompt for the code.
 - **L6:** the `session` handoff on logs' origin.
-- **The optional security key:** the `aweb:` relying party and evidence rule
+- **The optional security key**, a separate item that blocks none of the
+  above: the `aweb:` relying party and evidence rule
   in B3; CTAP2 creation and assertion in `aw`; a test that a redirect from
   one app's route to another's is refused and no assertion is made; the
   measured authenticator list.
