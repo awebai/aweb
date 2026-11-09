@@ -3,7 +3,7 @@
 import json
 import re
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pgdbm import AsyncDatabaseManager
 
 from aweb_naapp.console import ConsoleRoute, LoginLimiter, require_json
+from aweb_naapp.console.handoff_authority import PublicScope
 from aweb_naapp.console.handoff_wire import HandoffWireRefused, loopback_redirect
 from aweb_naapp.runtime.approvals.request import parse_request_json
 from aweb_naapp.runtime.team_auth import Principal
@@ -34,7 +35,7 @@ class HandoffStart:
     client_key: str
     redirect_uri: str
     verifier_sha256: bytes
-    scope: dict[str, str]
+    scope: PublicScope
     client_hostname: str
 
 
@@ -86,7 +87,12 @@ def parse_start(body: Any) -> HandoffStart:
     # Preserve the distinct fixed redirect refusal, without reflecting its URI.
     redirect = loopback_redirect(body["redirect_uri"])
     return HandoffStart(
-        body["purpose"], key, redirect, bytes.fromhex(digest), dict(scope), hostname
+        body["purpose"],
+        key,
+        redirect,
+        bytes.fromhex(digest),
+        PublicScope(scope["installation_id"], scope["role"], scope["principal"]),
+        hostname,
     )
 
 
@@ -105,7 +111,7 @@ class HandoffStore:
             start.client_key,
             start.redirect_uri,
             start.verifier_sha256,
-            json.dumps(start.scope),
+            json.dumps(asdict(start.scope)),
             start.client_hostname,
         )
         return {
@@ -148,7 +154,7 @@ def handoff_start_router(
             raise HTTPException(
                 status_code=409 if code == "fallback_unavailable" else 400, detail=code
             ) from None
-        if not signer.did_aw_registry_verified or parsed.scope["principal"] != signer.did_aw:
+        if not signer.did_aw_registry_verified or parsed.scope.principal != signer.did_aw:
             raise HTTPException(403, "scope_not_signer")
         return await store.create(parsed)
 
