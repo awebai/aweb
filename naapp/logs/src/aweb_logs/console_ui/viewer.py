@@ -534,7 +534,7 @@ class Viewer:
 # events and the receipts and checkpoints logs keeps, and verifies with no
 # server against keys the holder trusts (docs/logs-chain.md).
 _TAKE_AWAY = (
-    '<section id="take-away" class="integrity">'
+    '<section id="take-away" class="take-away">'
     "<h2>Keep a copy</h2>"
     "<p>Download your team’s whole log: its signed events and the receipts and"
     " checkpoints this server keeps. It can be checked with no server, against"
