@@ -161,8 +161,12 @@ these 18 names, under the same `AWEB_SECRETS_E2E_` prefix:
 | CLI selection | `AW_BINARY`, `HUMAN_IDENTITY_HOME`, `AGENT_A_IDENTITY_HOME`, `AGENT_B_IDENTITY_HOME` |
 | Customer authority | `AWID_REGISTRY_URL`, `COORDINATION_ORIGIN` |
 
-Binary and identity-home paths are absolute; a home is the actual credential
-directory used by `aw --identity-home`, usually the selected workspace's `.aw`.
+Binary and identity-home paths are absolute. Agent homes are the actual credential
+directories used by `aw --identity-home`, usually the selected workspace's `.aw`.
+The human home is the public `HumanRecordDir` under the driver's
+`~/.awid/humans/<normalized-domain>/<stable-id-suffix>`, as created by the
+protected human initializer. Its public `identity.yaml` must resolve back to that
+canonical directory and name a registered human.
 There is no fallback to the driver identity. All three homes and their certified
 principals are distinct. `AWID_REGISTRY_URL` and `COORDINATION_ORIGIN` are HTTPS
 origins without credentials, query strings or fragments. Service-origin separation
@@ -205,7 +209,16 @@ async with publish_lab_runtime(
 ```
 
 Publication runs the selected checkout CLI's offline local certificate/key
-checks, verifies the current certificate against the explicitly selected AWID
+checks for agents. For HUMAN it reads public records only, verifies the human-kind
+ID chain against fresh registry status and independent namespace DNS authority,
+and records `custody="not_tested"` and `signing_readiness="not_tested"`.
+It never calls the foreground human signer, reads the encrypted key store,
+or reads or requires a human `signing.key`. An agent identity cannot substitute
+for the human. The actual protected human gesture in the rehearsal establishes
+signing readiness. Namespace DNS verification is required even when the separate
+private-address refusal scenario is excluded.
+
+For every actor publication verifies the current certificate against the selected AWID
 registry, verifies the team's signed coordination-server record, and resolves
 any `did:aw` to its current key. An unavailable, revoked or mismatched authority
 refuses publication. CLI probes inherit neither driver API keys nor identity,

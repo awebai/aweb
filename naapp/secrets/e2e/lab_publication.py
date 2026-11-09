@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import tempfile
+import time
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -21,6 +22,9 @@ import httpx
 import yaml
 from aweb_naapp.runtime.team_auth import AWIDTeamCache, require_active_certificate
 from aweb_naapp.runtime.team_server import TeamServerDirectory
+from awid.dns_verify import verify_domain
+from awid.id_certificates import IDChainEvidence, status_request, verify_id_chain
+from awid.registry import RegistryClient
 from awid.team_certificate import verify_team_certificate_signature
 from lab_environment import (
     ACTORS,
@@ -146,6 +150,103 @@ async def _local_actor(environment: Mapping[str, str], actor: str) -> dict[str, 
     return certificate
 
 
+async def _public_human(
+    environment: Mapping[str, str], registry_transport: httpx.AsyncBaseTransport | None
+) -> dict[str, Any]:
+    """Verify public protected-human facts, without probing or unlocking custody.
+
+    HumanRecordDir is independent of every agent home. The foreground human
+    signer/keychain resolver is never called here; signing readiness can only
+    be demonstrated by the rehearsal's actual protected human gesture.
+    """
+    __tracebackhide__ = True
+    name = PREFIX + "HUMAN_IDENTITY_HOME"
+    home = Path(environment[name])
+    try:
+        record = _metadata(home / "identity.yaml")
+        stable, did, domain = record["stable_id"], record["did_key"], record["domain"]
+        if not is_did_aw(stable) or not is_did_key(did):
+            raise ValueError
+        # Same public directory rule as awconfig.HumanRecordDir/NormalizeDomain.
+        if not isinstance(domain, str) or not domain or "/" in domain or "\\" in domain:
+            raise ValueError
+        domain = domain.strip().lower().rstrip(".")
+        canonical = Path.home() / ".awid" / "humans" / domain / stable[7:]
+        if home.resolve() != canonical.resolve() or record["state"] != "registered":
+            raise ValueError
+        registry_url = environment[PREFIX + "AWID_REGISTRY_URL"]
+        if _origin(record["registry_url"]) != _origin(registry_url):
+            raise ValueError
+        team = environment[PREFIX + "TEAM_ID"]
+        membership = next(
+            item
+            for item in _metadata(home / "teams.yaml")["memberships"]
+            if item["team_id"] == team
+        )
+        if _origin(membership["aweb_url"]) != _origin(environment[PREFIX + "COORDINATION_ORIGIN"]):
+            raise ValueError
+        if membership.get("registry_url") and _origin(membership["registry_url"]) != _origin(
+            registry_url
+        ):
+            raise ValueError
+        path = home / membership["cert_path"]
+        if not path.resolve().is_relative_to(home.resolve()):
+            raise ValueError
+        certificate = json.loads(path.read_text())
+        if (
+            certificate["team_id"],
+            certificate["member_did_aw"],
+            certificate["member_did_key"],
+        ) != (team, stable, did):
+            raise ValueError
+        bundle = json.loads((home / "id-chain.json").read_text())
+        subject = {"id": stable, "did_key": did}
+        request = status_request(bundle, subject, domain=domain)
+    except Exception:
+        raise LabConfigurationError({name}, "lab_human_record_invalid") from None
+
+    started = time.monotonic()
+    client = RegistryClient(registry_url=registry_url, transport=registry_transport)
+    try:
+        authority = await verify_domain(domain)
+        if authority.registry_explicit and _origin(authority.registry_url) != _origin(registry_url):
+            raise LabConfigurationError({name}, "lab_human_registry_mismatch")
+        status = await client.fetch_id_certificate_status(domain, request)
+    except LabConfigurationError:
+        raise
+    except Exception:
+        raise LabConfigurationError({name}, "lab_human_identity_unavailable") from None
+    finally:
+        await client.aclose()
+    result = verify_id_chain(
+        bundle,
+        subject=subject,
+        domain=domain,
+        evidence=IDChainEvidence(
+            status=status,
+            namespace_authority={
+                "domain": domain,
+                "dns_name": authority.dns_name,
+                "inherited": authority.inherited,
+                "controller_key": authority.controller_did,
+            },
+            age_seconds=time.monotonic() - started,
+        ),
+    )
+    if (
+        result["identity_valid"] is not True
+        or result["kind"] != "human"
+        or result["human_id"] != stable
+    ):
+        reason = (
+            "lab_human_identity_unavailable"
+            if result["outcome"] == "unavailable"
+            else "lab_human_identity_invalid"
+        )
+        raise LabConfigurationError({name}, reason)
+    return certificate
+
+
 async def _certify_lab_actors(
     environment: Mapping[str, str], *, registry_transport: httpx.AsyncBaseTransport | None = None
 ) -> dict[str, dict[str, str]]:
@@ -175,7 +276,11 @@ async def _certify_lab_actors(
         name = PREFIX + actor + "_IDENTITY_HOME"
         try:
             async with asyncio.timeout_at(deadline):
-                certificate = await _local_actor(environment, actor)
+                certificate = (
+                    await _public_human(environment, registry_transport)
+                    if actor == "HUMAN"
+                    else await _local_actor(environment, actor)
+                )
                 team, cid = certificate["team_id"], certificate["certificate_id"]
                 facts = await require_active_certificate(cache, team_id=team, certificate_id=cid)
                 verify_team_certificate_signature(certificate, facts.team_did_key)
@@ -193,6 +298,10 @@ async def _certify_lab_actors(
                     "did_key": did,
                     "certificate_id": cid,
                 }
+                if actor == "HUMAN":
+                    actors[actor].update(custody="not_tested", signing_readiness="not_tested")
+        except LabConfigurationError:
+            raise
         except Exception:
             raise LabConfigurationError({name}, "lab_actor_unverified") from None
     if len({value["principal_did"] for value in actors.values()}) != len(ACTORS) or len(
