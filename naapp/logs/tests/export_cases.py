@@ -290,6 +290,17 @@ def cases() -> list[ExportCase]:
             ],
         ),
         ExportCase(
+            "witness_of_another_team_than_the_bundle_is_wrong_chain",
+            [header_line("other:example.com"), *bundle(log, second_epoch=False, first_events=2)[1:]],
+            {
+                "intact": False,
+                "witnesses": {
+                    "contradicted": [{"artefact": "receipt", "index": 0, "reason": "wrong_chain"}]
+                },
+            },
+            witness_receipts=[later_receipt],
+        ),
+        ExportCase(
             "epoch_naming_an_earlier_checkpoint_is_unlinked",
             _spliced(log),
             {"intact": False, "epochs": [_epoch(1, linked=True), _epoch(2, linked=False)]},
@@ -392,6 +403,21 @@ def malformed_cases() -> list[MalformedCase]:
             len(lines) - second_genesis + 2,
         ),
         MalformedCase(
+            "first_genesis_with_an_empty_previous_checkpoint",
+            _replace(1, _set_field(lines[1], "genesis", "previous_checkpoint_sha256", ""))(lines),
+            2,
+        ),
+        MalformedCase(
+            "first_genesis_with_a_number_for_previous_checkpoint",
+            _replace(1, _set_field(lines[1], "genesis", "previous_checkpoint_sha256", 7))(lines),
+            2,
+        ),
+        MalformedCase(
+            "empty_purge_act",
+            _replace(2, _set_field(lines[2], "event", "purge_act", ""))(lines),
+            3,
+        ),
+        MalformedCase(
             "event_without_key_evidence",
             _replace(2, _drop_field(lines[2], "event", "key_evidence"))(lines),
             3,
@@ -403,3 +429,11 @@ def _drop_field(line: bytes, record: str, name: str) -> bytes:
     value = json.loads(line)
     del value[record][name]
     return (json.dumps(value, separators=(",", ":"), sort_keys=True) + "\n").encode()
+
+
+def _set_field(line: bytes, record: str, name: str, value: Any) -> bytes:
+    changed = json.loads(line)
+    changed[record][name] = value
+    if record == "event" and name == "purge_act":
+        del changed[record]["content"]
+    return (json.dumps(changed, separators=(",", ":"), sort_keys=True) + "\n").encode()

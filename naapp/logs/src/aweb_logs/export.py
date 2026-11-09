@@ -299,6 +299,8 @@ def verify_bundle(
     def close(epoch: _Epoch) -> None:
         epochs.append(epoch.report())
         for witness in witnesses:
+            if (witness.kind, witness.index) in held:
+                continue
             if witness.artefact.chain_epoch == epoch.genesis.chain_epoch:
                 reason = epoch.witness_fault(witness, keys[witness.kind])
                 if reason is not None:
@@ -457,7 +459,7 @@ def _event(value: Any, number: int) -> StoredEvent:
         if not isinstance(content.signature, str):
             raise BundleMalformed(number, "content signature")
     purge_act = stored.get("purge_act")
-    if purge_act is not None and not isinstance(purge_act, str):
+    if purge_act is not None and (not isinstance(purge_act, str) or not purge_act):
         raise BundleMalformed(number, "purge_act")
     return StoredEvent(
         link=Link(**link_fields),

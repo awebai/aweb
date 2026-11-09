@@ -454,6 +454,13 @@ func bundleGenesis(value map[string]any, number int) (Genesis, error) {
 	if err != nil {
 		return Genesis{}, err
 	}
+	// The genesis is exactly as hashed: a present optional field is a non-empty
+	// string, never read as absent.
+	if raw, present := fields["previous_checkpoint_sha256"]; present {
+		if value, ok := raw.(string); !ok || value == "" {
+			return Genesis{}, &BundleMalformed{number, "genesis: previous_checkpoint_sha256"}
+		}
+	}
 	genesis := Genesis{
 		TeamID: text(fields, "team_id"), ChainEpoch: integer(fields, "chain_epoch"),
 		LogsOrigin: text(fields, "logs_origin"), CreatedAt: text(fields, "created_at"),
@@ -515,7 +522,7 @@ func bundleEvent(value map[string]any, number int) (StoredEvent, error) {
 	}
 	if raw, present := stored["purge_act"]; present {
 		act, ok := raw.(string)
-		if !ok {
+		if !ok || act == "" {
 			return StoredEvent{}, &BundleMalformed{number, "purge_act"}
 		}
 		event.PurgeAct = act
