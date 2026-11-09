@@ -162,12 +162,18 @@ Completion is what each kind already defines:
     for the owner's scope. The human approves in the browser, with the
     APPROVE assertion. `aw` reads the change set in its session until it is
     approved, then calls `confirm` itself, so only `aw` receives the result.
-    A change set drafted from `aw` records that its confirm belongs to a
-    key-bound session, and the browser's confirm refuses it with
-    `confirm_in_aw`. On a lost reply, `aw` reads the change set's state and
+    A change set drafted in a key-bound console session (the human's
+    `aw`, through a `session` handoff) records that its confirm belongs to
+    a key-bound session. A team-auth draft, such as an agent's
+    `secrets.propose-change`, and a browser draft set no mark. A marked
+    change set is confirmable by any key-bound session of the deciding
+    owner's (scope, subject): the decider check confirm already makes, plus
+    a key-bound session. The browser's confirm refuses it with
+    `confirm_in_aw`. When `aw`'s session has expired, it opens a fresh
+    `session` handoff and confirms there. On a lost reply, `aw` reads the change set's state and
     never confirms twice; a code lost with the reply is not recovered.
-  - **Console journey.** A change set drafted on the console is confirmed on
-    the console, and the browser shows its result, as on main.
+  - **Console journey.** An unmarked change set is confirmed on the
+    console, and the browser shows its result, as on main.
 - **Reconciliation:** as secrets §11.4 defines.
 
 **N3: finding the request.** A human role has no approval email: its
@@ -301,11 +307,16 @@ Each item is filed after review, and each is one reviewed change.
   - a second issue revokes the first.
 - **Consoles (secrets, logs):** the `session` handoff and the N3 pending
   list, opening each entry through a session-issued link.
-- **secrets change sets:** the confirm mark on a change set drafted from
-  `aw`, and the browser's `confirm_in_aw` refusal. Test: for such a change
-  set that creates a runner, the browser's confirm is refused and returns no
-  code, `aw`'s confirm applies it once and alone receives the code, and a
-  repeated confirm does not apply it again.
+- **secrets change sets:** the confirm mark, set only by a draft in a
+  key-bound session, and the browser's `confirm_in_aw` refusal. Tests, for a
+  marked change set that creates a runner:
+  - the browser's confirm is refused and returns no code;
+  - `aw`'s confirm applies it once and alone receives the code;
+  - a confirm from a second key-bound session of the same decider succeeds
+    once;
+  - a repeated confirm does not apply it again.
+
+  And a team-auth-drafted change set stays confirmable on the console.
 - **`aw`:** opening the browser, the loopback listener and the handoff, and
   `--no-browser`; N4's terminal input and code output and their exclusion
   from tracing.
