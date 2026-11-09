@@ -4,26 +4,21 @@ from __future__ import annotations
 
 import logging
 from collections import OrderedDict
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from time import monotonic
 
-from awid.did import stable_id_from_did_key
-from awid.registry import DIDKeyNotFoundError, IDTreeEnrollment, RegistryError
+from awid.identity_observation import (
+    IdentityBinding,
+    IdentityObservationRefused,
+)
+from awid.identity_observation import (
+    observe_identity_binding as observe_public_identity_binding,
+)
 from fastapi import HTTPException, Request
 
 logger = logging.getLogger(__name__)
 _BINDING_TTL = 60
 _CACHE_LIMIT = 4096
-
-
-@dataclass(frozen=True)
-class IdentityBinding:
-    did_aw: str = ""
-    address: str = ""
-    fresh_observation: bool = False
-    self_derived: bool = False
-    did_key: str = ""
-    id_tree: IDTreeEnrollment | None = None
 
 
 def verified_projection(row):
@@ -91,69 +86,14 @@ async def verify_identity_binding(
 
 
 async def observe_identity_binding(client, *, did_key: str, did_aw: str, address: str = "") -> IdentityBinding:
-    """Return a fresh key-bound observation for trusted in-process provisioning.
-
-    Call before opening a provisioning transaction. This is the authoritative
-    producer of IdentityBinding: it reads AWID fresh and applies the same
-    identity/address rules as request authentication. A mismatch raises 403;
-    unavailable evidence raises 503. Pass the returned object to connect_agent;
-    never construct a fresh observation from a certificate or transport input.
-    """
-    if not did_aw or not did_aw.startswith("did:aw:"):
-        raise HTTPException(status_code=403, detail="identity_binding_mismatch")
-    self_derived = False
-    enrollment = None
+    """The compatible server adapter for the shared public AWID observation."""
     try:
-        try:
-            # The SDK's ordinary key/address caches have a longer lifetime
-            # and can serve stale values. They cannot establish this binding.
-            resolution = await client.resolve_key_fresh(did_aw)
-        except RegistryError as exc:
-            if exc.status_code != 404:
-                raise
-            if did_aw != stable_id_from_did_key(did_key):
-                raise HTTPException(
-                    status_code=403, detail="identity_binding_mismatch"
-                ) from exc
-            self_derived = True
-            # Key absence proves no enrollment only when AWID states it.
-            enrollment = exc.id_tree if isinstance(exc, DIDKeyNotFoundError) else None
-        else:
-            if resolution.did_aw != did_aw or resolution.current_did_key != did_key:
-                raise HTTPException(status_code=403, detail="identity_binding_mismatch")
-            enrollment = resolution.id_tree
-        if address:
-            domain, separator, name = address.partition("/")
-            if not separator or not domain or not name or "/" in name:
-                raise HTTPException(status_code=403, detail="identity_binding_mismatch")
-            resolved_address = await client.resolve_address_fresh(domain, name)
-            if (
-                resolved_address is None
-                or resolved_address.did_aw != did_aw
-                or resolved_address.current_did_key != did_key
-                or f"{resolved_address.domain}/{resolved_address.name}" != address
-            ):
-                raise HTTPException(status_code=403, detail="identity_binding_mismatch")
-    except HTTPException:
-        raise
-    except RegistryError as exc:
-        if exc.status_code == 404:
-            raise HTTPException(
-                status_code=403, detail="identity_binding_mismatch"
-            ) from exc
-        logger.warning("Identity binding registry dependency failed", exc_info=True)
-        raise HTTPException(
-            status_code=503, detail="identity_binding_unavailable"
-        ) from exc
-    except Exception as exc:
-        logger.warning("Identity binding registry dependency failed", exc_info=True)
-        raise HTTPException(
-            status_code=503, detail="identity_binding_unavailable"
-        ) from exc
-    return IdentityBinding(
-        did_aw, address, fresh_observation=True, self_derived=self_derived,
-        did_key=did_key, id_tree=enrollment,
-    )
+        return await observe_public_identity_binding(
+            client, did_key=did_key, did_aw=did_aw, address=address,
+        )
+    except IdentityObservationRefused as exc:
+        status = 403 if exc.code == "identity_binding_mismatch" else 503
+        raise HTTPException(status_code=status, detail=exc.code) from exc
 
 
 async def refresh_projection_binding(
