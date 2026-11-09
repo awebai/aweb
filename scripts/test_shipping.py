@@ -1103,6 +1103,8 @@ class CustomerReleaseContractTest(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
         init_fixture_repo(root)
+        command(root, "git", "config", "user.name", "test")
+        command(root, "git", "config", "user.email", "test@example.com")
         self.projects = {
             "naapp/secrets": ("aweb-secrets", "0.1.0"),
             "naapp/logs": ("aweb-logs", "0.1.0"),
