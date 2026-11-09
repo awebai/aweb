@@ -276,3 +276,43 @@ async def test_hold_serializes_withdrawal_without_locking_another_owner(enrolled
         if writer is not None:
             writer.cancel()
             await asyncio.gather(writer, return_exceptions=True)
+
+
+async def test_a_preexisting_b3_guard_cannot_cover_rolled_back_local_holds(enrolled):
+    service = authority(enrolled)
+    target = await service.session_target(PublicScope())
+    async with enrolled.db.transaction() as tx:
+        union = await enrolled.passkeys.prepare_current_approvers(
+            tx, [(target.b3_scope, target.subject)]
+        )
+        await tx.execute("SAVEPOINT local_holding")
+        try:
+            held = await service.hold_session_target(tx, target, approvers=union)
+        except TypeError:
+            # Removing the unsafe prebuilt-handle input also closes this path.
+            held = None
+        await tx.execute("ROLLBACK TO SAVEPOINT local_holding")
+        assert await enrolled.passkeys.check_current_approver(
+            tx, union, scope=target.b3_scope, subject=target.subject
+        )
+        # The older B3 guard survives, while another real transaction can now
+        # lock the role row: the adapter's serialization hold was rolled back.
+        async with enrolled.db.transaction() as writer:
+            await writer.execute("SET LOCAL lock_timeout='500ms'")
+            assert await writer.fetch_value(
+                "SELECT 1 FROM {{tables.role_assignments}}"
+                " WHERE team_id=$1 AND principal_did=$2 AND role=$3 FOR UPDATE",
+                TEAM,
+                ALICE.principal_did,
+                OWNER_ROLE,
+            )
+            assert held is None or not await service.check_session_target(tx, held)
+
+
+async def test_only_the_actual_returned_handle_may_be_checked(enrolled):
+    service = authority(enrolled)
+    target = await service.session_target(PublicScope())
+    async with enrolled.db.transaction() as tx:
+        held = await service.hold_session_target(tx, target)
+        assert not await service.check_session_target(tx, replace(held))
+        assert await service.check_session_target(tx, held)
