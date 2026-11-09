@@ -1432,9 +1432,28 @@ Flags:
 
 ### `id team request`
 
-Protocol/admin bridge: print the add-member command the team owner should run
+Print the public add-member command for the team controller.
+
+On a fresh worker, --create-local-key prepares a self-custodial local key
+without contacting a registry or server. It accepts only an empty identity
+home or a valid signing.key alone; retries reuse that key. Existing identity
+state must use request without the flag. Select the current directory's .aw
+or an explicit absolute --identity-home; an inherited AWEB_IDENTITY_HOME is
+not a preparation destination. Unsafe or symlinked paths refuse.
+
+Preparation writes only signing.key (0600). It grants no membership, address
+or global identity. JSON adds status=prepared, identity_scope=local,
+custody=self, identity_home and key_created. The home is a custody locator,
+not a security boundary.
+
+Have the controller run the printed add-member command, then use its
+certificate ID with id team fetch-cert on this machine, selecting the same
+identity home. Connect afterward with aw workspace connect --service <url>.
+Without --create-local-key, request remains read-only and requires an
+existing signing key.
 
 Flags:
+- `--create-local-key Prepare a local key in an empty or key-only identity home; membership still requires controller approval`
 - `-h, --help help for request`
 - `--name string Suggested member name for the new team membership`
 - `--team string Canonical team ID (<name>:<domain>)`
