@@ -54,25 +54,83 @@ is the parent in a **team-membership dependency**, not proof of a particular
 OS process or an ID-tree parentage. An ID-parent certificate alone never
 enables this lane; this lane never manufactures one.
 
-### Local and global identities
+### Local children are the primary case
 
-[Identity scope](../identity.md#identity) remains unchanged: a local identity
-belongs to one team; an existing global identity may join several teams.
+Juan clarified on 2026-11-09 that most spawned deployment instances will be
+local. A fresh child therefore needs only its own Ed25519 key (`did:key`),
+not a `did:aw`, namespace identity registration, public address or human-kind
+classification. Publishing its **team membership** at AWID remains mandatory;
+that is not global-identity registration. The inheritance lane must not use a
+missing `did:aw` as a reason to refuse or silently promote the child.
 
-- A global A can select T1 from T1/T2 for a global B using B's existing
-  registered identity, or admit a fresh local B to T1 alone.
-- An OATS worker using separate local identities for separate teams selects
-  the corresponding parent credential for each team. Multiple selected teams
-  yield separate local child identities/homes, as the provider does today.
-  The logical worker is not thereby one portable identity across those teams.
-- One child identity shared across T1/T2 uses the existing global path. This
-  proposal grants no address-claim or global-identity creation authority and
-  does not silently reuse a local key across teams.
+[Identity scope](../identity.md#identity) currently makes a local identity
+single-team and permits an existing global identity to join multiple teams
+(`docs/identity.md:65-77`). An instance is an execution/workspace grouping;
+it can use several distinct local identity contexts. One instance with two
+local keys is not one local identity with two memberships.
 
-Recommendation: retain this distinction. Allowing one local identity to hold
-several teams would be a separate identity-scope change, not an incidental
-effect of inheritance. The interface must tell the operator which child
-principal was admitted to each team.
+**Choice for Juan — local instance in several selected teams:**
+
+| Option | Result and cost |
+| --- | --- |
+| **Recommend: a local key/home per selected team within one instance.** | Preserve single-team identity scope. A worker in deployment team D and resource team H uses B_D and B_H, each a distinct `did:key`, with separate certificates, publication, status and withdrawal. No global identity is needed. Cost is one key/context and admission per selected team, explicit credential selection for each request, and per-team receipts/recovery. |
+| Relax local single-team scope for inherited membership. | One B `did:key` holds certificates for D and H. Certificates remain separately team-authorized, so this need not copy roles or controller power. It changes the canonical local-identity/reuse rule and requires versioned capability handling across CLI selection/storage, providers, registry scope checks and accepting consumers. Existing clients that refuse local reuse cannot be presumed compatible. |
+
+The recommended option reuses the provider's existing per-team local identity
+arrangement; new inherited-issuance orchestration still needs implementation.
+For each selected team, A must use its own membership context for that team
+and obtain policy authorization there. A global A in T1/T2 can admit a local
+B_T1 to T1 alone. A local-only parent instance can instead hold A_T1 and A_T2
+and select the corresponding key for each admission. Neither case requires
+creating a global child. Selecting two teams yields two local child principals,
+not silent reuse of either key.
+
+The second option saves a local key/context per additional team; it does not
+save the separate signed authorizations, publications, status checks or per-team
+failure recovery. A minimal relaxation could apply only to the new inherited
+lane, leaving v1 behavior unchanged, but would introduce a scope distinction
+by certificate version. A fresh client could then reuse a key where released
+clients refuse it. That compatibility and every local-scope assumption must be
+inventoried and explicitly approved before adopting it; this draft does not
+silently authorize the change. A global identity remains an optional existing
+route for users needing stable cross-team identity, not the default workaround.
+
+### Local evidence and the protected-resource flow
+
+Every inheritance mechanism applies to local roots and children:
+
+| Mechanism | Local `did:key` case |
+| --- | --- |
+| Eligibility and issuer proof | Named eligibility identifies the exact direct member in that team by its `did:key`; all-direct mode uses its verified direct certificate. A signs with that key, B proves possession of its own key. No global lookup or ID-tree proof is required for a local subject. |
+| Registration and accounting | The team registry publishes B's signed inherited certificate and its parent/policy dependencies, charges that team's allowance and preserves exact-operation replay. It creates no global ID record or address. |
+| Use and status | B signs team-auth with the key named in that team's certificate. The shared verifier checks the signed path and effective leaf status exactly as for a global child; only the optional global-key continuity lookup is absent. |
+| Withdrawal and key replacement | Revoking the referenced parent/child certificate or policy denies that team path. A new local key is a new principal and needs new admission; no stable-DID rotation or automatic grant transfer is implied. Another team's separately authorized local context is unaffected. |
+
+For protected secrets, the recommended arrangement is one instance with B_D
+for deployment messaging and B_H for requests to the separately governed H
+installation. The parent needs an eligible membership in H to admit B_H; its
+membership in D cannot authorize that. H's controller stays outside worker
+custody. The app receives B_H's H certificate, not B_D's D certificate and not
+an instance-name assertion. Secrets already models a local principal as
+`(team_id, member_did_key)` and skips global-key lookup when `member_did_aw` is
+absent (`docs/design/secrets.md:238-258`;
+`naapp-lib/src/aweb_naapp/runtime/team_auth.py:740-753`).
+
+This solves the membership side without per-worker human admission once H's
+policy enables it. **It does not grant secrets use:** the resource owner must
+supply a supported policy that actually covers B_H. A grant only to A_H or
+its role does not cover B_H, and global-subtree/W1 rules cannot be presumed to
+cover a local-only child. If the selected resource policy has no supported
+way to cover these newly admitted local members without per-worker grants,
+that resource-policy gap remains explicit; inheritance does not invent one.
+
+If the operator insists on one local key/home only, the child can join D or H,
+not both under the recommended rule. It cannot simultaneously do deployment
+messaging and access H's same-team secrets installation with that one local
+identity. The choices are the recommended extra local context, an optional
+global identity, or Juan's explicit approval of the scope relaxation above.
+Several keys under the same worker UID remain one compromise boundary; the
+extra homes provide credential selection, not isolation from that worker.
 
 ## Choices for review
 
@@ -80,6 +138,7 @@ None of these recommendations is an additional ruling attributed to Juan.
 
 | Question | Recommendation | Alternative and consequence |
 | --- | --- | --- |
+| Local child needs several teams? | Separate local key/home per selected team within one instance; no global registration required. | Relaxing single-team scope for inherited local identities changes identity/reuse compatibility and needs explicit approval. |
 | Who enables inheritance? | The team's current controller publishes a signed, explicit policy; absent policy means disabled. | Treating ordinary membership or ID ancestry as permission would silently widen existing teams. |
 | Which parents qualify? | Controller signs a bounded eligibility grant per named directly admitted principal, or policy explicitly enables all directly admitted members. Current membership is required at issuance and use. | Allowing any former member preserves issuance/access after removal. |
 | Can children pass membership onward? | Ship depth 1 first; retain a bounded path format for later controller opt-in to greater depth. Every generation shares the policy and budget. | Unlimited recursion removes a simple bound; forbidding recursion entirely prevents nested worker spawning. |
@@ -399,7 +458,11 @@ The public decision corpus must cover both server and direct-naapp consumers:
 
 | Case | Expected result |
 | --- | --- |
-| A belongs to T1/T2; selects only T1; T1 permits it | B joins T1 with its own key; no request or membership in T2. |
+| A belongs to T1/T2; selects only T1; T1 permits it | Local B_T1 joins T1 with its own key and no did:aw; no request or membership in T2. |
+| Local parent and child, no global ID records | Signed eligibility/path, publication, effective status and withdrawal work without global identity lookup or creation. |
+| One instance selects deployment D and resource H | Distinct local B_D/B_H keys and receipts; each team independently authorizes its parent context. |
+| B_D presents D membership to an H installation | Refuse; B_H with H membership is the valid neighbor, subject to H's resource grants. |
+| H withdraws B_H's parent path | H use denies under bounded freshness; separately authorized B_D messaging is unchanged. |
 | T1 policy allows a named current A; B proves its key | Registered inherited membership admits ordinary T1 use. |
 | B requests a resource granted to all T1 members | Existing resource policy decides normally. |
 | B presents only A's principal/role grant or owner authority | Refuse; membership inheritance copied none of those rights. |
@@ -511,7 +574,9 @@ choices. Direction provenance: Juan in the servers conversation on 2026-11-09,
 relayed as `f0d7526e-ddb3-4bfe-97cc-ca7527c70d15`; assignment
 `7b73ac2a-ee6d-4876-bd46-af1ea0bfd4fe`. The direction is selective,
 team-authorized child membership without per-spawn approval or parent custody
-of the team key. It does not settle the recommendations above.
+of the team key. Juan's local-child priority was relayed in
+`1500015a-6c61-4153-996a-fb4f8e14fd56`; local children are the primary case,
+and the multi-team identity choice above is explicit for his consideration. It does not settle the recommendations above.
 
 Prior accepted knowledge:
 `aweb/aweb-protocol-expert/decisions/team-certificates-are-controller-only.md@9a54c7392429`.
