@@ -32,13 +32,38 @@ from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
 from aweb_logs import read_store
-from aweb_logs.retention import HELD, lock_holds, purge, set_retention
+from aweb_logs.retention import GOVERNANCE_HOOK, HELD, lock_holds, purge, set_retention
 
 # Fixed in reviewed code, never configuration: adding an act is a reviewed change.
 SELF_RECORDED_ACTS = frozenset({"logs.legal_hold.set"})
 
-GOVERNANCE_HOOK = "post-governance-hook"
+# The governance event acts each owner act may record, so no act is recorded
+# under a name (and so a gate) that its signed act does not permit.
+_EVENT_ACTS = {
+    "logs.retention.set": frozenset({"logs.retention.shortened", "logs.retention.lengthened"}),
+    "logs.erase": frozenset({"logs.erased"}),
+    "logs.legal-hold.set": frozenset({"logs.legal_hold.set"}),
+    "logs.legal-hold.release": frozenset({"logs.legal_hold.released"}),
+}
 _ACTOR_PREFIXES = ("did:aw:", "did:key:")
+
+
+# The unpurged events an erasure names, each with whether a hold holds it: a
+# range of the chain's positions, or every event whose projection names the
+# actor. logs' own governance records ($2 its hook, $3 its origin) are never
+# erased.
+_ERASABLE = "SELECT e.chain_epoch, e.team_seq, " + HELD + " AS held FROM {{tables.chain_events}} e"
+_NOT_OWN = " AND NOT (e.hook = $2 AND e.producer_origin = $3)"
+_RANGE_ERASED = (
+    _ERASABLE + " WHERE e.team_id = $1 AND e.chain_epoch = $4 AND e.team_seq BETWEEN $5 AND $6"
+    " AND e.purge_act IS NULL" + _NOT_OWN + " ORDER BY e.chain_epoch, e.team_seq"
+)
+_ACTOR_ERASED = (
+    _ERASABLE + " JOIN {{tables.read_events}} r ON r.team_id = e.team_id"
+    " AND r.chain_epoch = e.chain_epoch AND r.team_seq = e.team_seq"
+    " WHERE e.team_id = $1 AND (r.actor_did_aw = $4 OR r.actor_did_key = $4)"
+    " AND e.purge_act IS NULL" + _NOT_OWN + " ORDER BY e.chain_epoch, e.team_seq"
+)
 
 
 class GovernanceRefused(Exception):
@@ -138,24 +163,13 @@ class LogsGovernance:
             # The actor of an event is known from its projection: bring them up to date.
             await read_store.project(tx, team_id)
             positions = await tx.fetch_all(
-                "SELECT e.chain_epoch, e.team_seq, " + HELD + " AS held"
-                " FROM {{tables.chain_events}} e"
-                " LEFT JOIN {{tables.read_events}} r ON r.team_id = e.team_id"
-                "   AND r.chain_epoch = e.chain_epoch AND r.team_seq = e.team_seq"
-                " WHERE e.team_id = $1 AND e.purge_act IS NULL"
-                " AND NOT (e.hook = $2 AND e.producer_origin = $3)"
-                " AND CASE WHEN $4::text IS NOT NULL"
-                "   THEN r.actor_did_aw = $4 OR r.actor_did_key = $4"
-                "   ELSE e.chain_epoch = $5 AND e.team_seq BETWEEN $6 AND $7 END"
-                " ORDER BY e.chain_epoch, e.team_seq",
+                (_ACTOR_ERASED if erase_scope == "actor" else _RANGE_ERASED),
                 team_id,
                 GOVERNANCE_HOOK,
                 self.logs_origin,
-                actor_ref if erase_scope == "actor" else None,
-                chain_epoch,
-                team_seq_first,
-                team_seq_last,
-            )
+                *((actor_ref,) if erase_scope == "actor" else
+                  (chain_epoch, team_seq_first, team_seq_last)),
+            )  # fmt: skip
             if any(row["held"] for row in positions):
                 raise GovernanceRefused("a legal hold holds events this erasure names")
             covered = [(row["chain_epoch"], row["team_seq"]) for row in positions]
@@ -280,6 +294,8 @@ class LogsGovernance:
     async def _record(
         self, tx: TransactionManager, act: VerifiedOwnerAct, payload: dict[str, Any]
     ) -> str:
+        if payload["act"] not in _EVENT_ACTS.get(act.act, frozenset()):
+            raise GovernanceRefused(f"{act.act} does not record {payload['act']}")
         return str(await self.recorder.record_owner_act(tx, act, payload, occurred_at=self.now()))
 
 

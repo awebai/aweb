@@ -6,18 +6,22 @@ widening act still needs one. Real PostgreSQL, a real AWID registry."""
 
 from __future__ import annotations
 
+import copy
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from aweb_naapp.hooks import envelope as hook_envelope
-from aweb_naapp.hooks.owner_act import Refused
+from aweb_naapp.hooks.owner_act import Refused, VerifiedOwnerAct
 from aweb_naapp_testing.owner_acts import APP_ID, INSTALLATION_ID, TEAM_ID
 
 from aweb_logs.governance import GovernanceRefused
 from aweb_logs.ledger import append
 from aweb_logs.retention import apply_retention
 
+from .fixtures import _APP_EVENT, SECRETS_SEED
 from .reader_world import (
+    LOGS,
     World,
     count,
     designation,
@@ -120,7 +124,7 @@ async def test_a_shortened_retention_is_recorded_and_its_purges_name_that_record
         30,
     )
     assert entry["authority"] == "owner_act"
-    assert await apply_retention(world.db, now=NOW) == 1
+    assert await apply_retention(world.db, now=NOW, logs_origin=LOGS) == 1
     assert await purged(world) == {1: f"logs.retention.set:{event_id}", 2: None}
 
 
@@ -181,11 +185,11 @@ async def test_a_hold_on_everything_stops_retention_and_erasure_until_released(w
     await appended(world, secret_use(seq=1), age=timedelta(days=45))
     await hold(world, "hold-1")
     await set_retention(world, "all", 30)
-    assert await apply_retention(world.db, now=NOW) == 0
+    assert await apply_retention(world.db, now=NOW, logs_origin=LOGS) == 0
     with pytest.raises(GovernanceRefused):
         await erase(world, erase_scope="range", chain_epoch=1, team_seq_first=1, team_seq_last=1)
     await release(world, "hold-1")
-    assert await apply_retention(world.db, now=NOW) == 1
+    assert await apply_retention(world.db, now=NOW, logs_origin=LOGS) == 1
     assert [entry["act"] for entry in await governance(world)] == [
         "logs.legal_hold.set",
         "logs.retention.shortened",
@@ -198,7 +202,7 @@ async def test_a_hold_on_an_actor_keeps_only_that_actors_events(world: World):
     await appended(world, secret_use(seq=2, actor=OTHER_AGENT), age=timedelta(days=45))
     await hold(world, "hold-1", actor_ref=AGENT)
     await set_retention(world, "all", 30)
-    assert await apply_retention(world.db, now=NOW) == 1
+    assert await apply_retention(world.db, now=NOW, logs_origin=LOGS) == 1
     after = await purged(world)
     assert after[1] is None and after[2] is not None
 
@@ -243,3 +247,39 @@ async def test_a_hold_id_is_set_once(world: World):
         await hold(world, "hold-1")
     with pytest.raises(GovernanceRefused):
         await release(world, "hold-2")
+
+
+def another_apps_governance() -> tuple[bytes, str]:
+    """A post-governance-hook event another app produced and logs received."""
+    event = copy.deepcopy(_APP_EVENT)
+    event["event_id"] = str(uuid.uuid4())
+    event["hook"] = "post-governance-hook"
+    event["payload"] = {"act": "role.revoked", "direction": "narrowing"}
+    return hook_envelope.sign(SECRETS_SEED, event)
+
+
+async def test_retention_never_purges_logs_own_governance_records(world: World):
+    await hold(world, "hold-1")
+    await release(world, "hold-1")
+    await appended(world, another_apps_governance(), age=timedelta(days=2))
+    await appended(world, secret_use(seq=1), age=timedelta(days=2))
+    await set_retention(world, "all", 1)
+    later = datetime.now(UTC) + timedelta(days=3)
+    assert await apply_retention(world.db, now=later, logs_origin=LOGS) == 2
+    rows = await world.db.fetch_all(
+        "SELECT producer_origin = $2 AS own, purge_act IS NOT NULL AS purged"
+        " FROM {{tables.chain_events}} WHERE team_id = $1 ORDER BY team_seq",
+        TEAM_ID,
+        LOGS,
+    )
+    assert {(row["own"], row["purged"]) for row in rows} == {(True, False), (False, True)}
+
+
+async def test_an_owner_act_records_only_the_event_acts_it_permits(world: World):
+    erase = VerifiedOwnerAct(
+        fields={}, act="logs.erase", team_id=TEAM_ID, audience=LOGS, subject={},
+        nonce="n", issued_at=NOW, expires_at=NOW, transaction_id=None,
+    )  # fmt: skip
+    async with world.db.transaction() as tx:
+        with pytest.raises(GovernanceRefused):
+            await world.governance._record(tx, erase, {"act": "logs.legal_hold.set"})

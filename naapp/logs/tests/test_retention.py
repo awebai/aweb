@@ -21,7 +21,7 @@ from aweb_logs.chain import format_time
 from aweb_logs.ledger import append, verify_epoch
 from aweb_logs.retention import EXPIRED, apply_retention, purge, set_retention
 
-from .fixtures import TEAM_ID
+from .fixtures import LOGS_ORIGIN, TEAM_ID
 from .test_read_store import OTHER_TEAM, SIGNER, START, certificate_observed, secret_use
 
 NOW = START + timedelta(days=60)
@@ -85,7 +85,7 @@ async def report(db: AsyncDatabaseManager) -> dict:
 
 async def test_a_team_without_a_retention_keeps_every_event(db) -> None:
     await appended(db, secret_use(seq=1), age=timedelta(days=3650))
-    assert await apply_retention(db, now=NOW) == 0
+    assert await apply_retention(db, now=NOW, logs_origin=LOGS_ORIGIN) == 0
     assert await contents(db) == [(1, True, None)]
 
 
@@ -95,13 +95,13 @@ async def test_events_older_than_the_retention_lose_their_content_and_keep_the_c
     await appended(db, secret_use(seq=3), age=timedelta(days=29))
     setting = await retention_setting(db, TEAM_ID, "all", days=30)
 
-    assert await apply_retention(db, now=NOW) == 2
+    assert await apply_retention(db, now=NOW, logs_origin=LOGS_ORIGIN) == 2
     act = f"logs.retention.set:{setting}"
     assert await contents(db) == [(1, False, act), (2, False, act), (3, True, None)]
     verified = await report(db)
     assert verified["intact"] is True
     assert verified["purged"] == [{"from": 1, "to": 2, "act": act}]
-    assert await apply_retention(db, now=NOW) == 0
+    assert await apply_retention(db, now=NOW, logs_origin=LOGS_ORIGIN) == 0
 
 
 async def test_a_hooks_own_retention_comes_before_the_teams(db) -> None:
@@ -110,7 +110,7 @@ async def test_a_hooks_own_retention_comes_before_the_teams(db) -> None:
     await retention_setting(db, TEAM_ID, "all", days=None)
     setting = await retention_setting(db, TEAM_ID, "post-secret-use-hook", days=7)
 
-    assert await apply_retention(db, now=NOW) == 1
+    assert await apply_retention(db, now=NOW, logs_origin=LOGS_ORIGIN) == 1
     assert await contents(db) == [(1, False, f"logs.retention.set:{setting}"), (2, True, None)]
 
 
@@ -118,7 +118,7 @@ async def test_setting_a_class_again_replaces_its_retention(db) -> None:
     await appended(db, secret_use(seq=1), age=timedelta(days=10))
     await retention_setting(db, TEAM_ID, "all", days=7)
     await retention_setting(db, TEAM_ID, "all", days=None)
-    assert await apply_retention(db, now=NOW) == 0
+    assert await apply_retention(db, now=NOW, logs_origin=LOGS_ORIGIN) == 0
     assert await contents(db) == [(1, True, None)]
 
 
@@ -165,8 +165,8 @@ async def test_a_pass_stops_between_batches_once_asked_to(db) -> None:
     await retention_setting(db, TEAM_ID, "all", days=30)
     stop = asyncio.Event()
     stop.set()
-    assert await apply_retention(db, now=NOW, batch=1, stop=stop) == 0
-    assert await apply_retention(db, now=NOW, batch=1) == 3
+    assert await apply_retention(db, now=NOW, logs_origin=LOGS_ORIGIN, batch=1, stop=stop) == 0
+    assert await apply_retention(db, now=NOW, logs_origin=LOGS_ORIGIN, batch=1) == 3
 
 
 async def test_a_team_whose_purge_fails_does_not_keep_the_others_from_theirs(
@@ -187,7 +187,7 @@ async def test_a_team_whose_purge_fails_does_not_keep_the_others_from_theirs(
         f" FOR EACH ROW WHEN (OLD.team_id = '{TEAM_ID}') EXECUTE FUNCTION refuse_update()"
     )
     with caplog.at_level(logging.ERROR, logger="aweb_logs.retention"):
-        assert await apply_retention(db, now=NOW) == 1
+        assert await apply_retention(db, now=NOW, logs_origin=LOGS_ORIGIN) == 1
     assert await contents(db, OTHER_TEAM) == [(1, False, f"logs.retention.set:{other}")]
     assert await contents(db) == [(1, True, None)]
     assert [(record.getMessage(), record.exc_info is not None) for record in caplog.records] == [
@@ -204,6 +204,7 @@ async def test_a_pass_reads_each_class_by_a_range_bounded_by_its_cutoff(db) -> N
             "post-secret-use-hook",
             format_time(NOW),
             500,
+            LOGS_ORIGIN,
         )
     conditions: list[str] = []
 

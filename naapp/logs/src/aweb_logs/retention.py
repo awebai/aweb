@@ -26,6 +26,7 @@ from aweb_logs.chain import format_time
 logger = logging.getLogger(__name__)
 
 RETENTION_ACT = "logs.retention.set"
+GOVERNANCE_HOOK = "post-governance-hook"
 ALL_EVENTS = "all"
 _BATCH = 500
 
@@ -41,11 +42,14 @@ HELD = (
     "     AND r.actor_did_key IS DISTINCT FROM h.actor_ref)))"
 )
 
-# One hook's events with content received before a cutoff and not held,
-# earliest first: a range of idx_chain_events_retained.
+# One hook's events with content received before a cutoff, not held and not
+# logs' own governance records ($5 is logs' origin), earliest first: a range of
+# idx_chain_events_retained. Like an erasure, retention never purges the record
+# of an owner act, so every purge's act stays resolvable to its signed act.
 EXPIRED = (
     "SELECT e.chain_epoch, e.team_seq FROM {{tables.chain_events}} e"
     " WHERE e.team_id = $1 AND e.hook = $2 AND e.purge_act IS NULL AND e.received_at < $3"
+    " AND NOT (e.hook = '" + GOVERNANCE_HOOK + "' AND e.producer_origin = $5)"
     " AND NOT " + HELD + " ORDER BY e.received_at LIMIT $4"
     " FOR UPDATE OF e SKIP LOCKED"
 )
@@ -123,6 +127,7 @@ async def apply_retention(
     db: AsyncDatabaseManager,
     *,
     now: datetime,
+    logs_origin: str,
     batch: int = _BATCH,
     stop: asyncio.Event | None = None,
 ) -> int:
@@ -139,7 +144,9 @@ async def apply_retention(
         if stop is not None and stop.is_set():
             break
         try:
-            total += await _apply_team(db, row["team_id"], now=now, batch=batch, stop=stop)
+            total += await _apply_team(
+                db, row["team_id"], now=now, logs_origin=logs_origin, batch=batch, stop=stop
+            )
         except Exception:
             logger.exception("Retention failed for team %s", row["team_id"])
     return total
@@ -150,6 +157,7 @@ async def _apply_team(
     team_id: str,
     *,
     now: datetime,
+    logs_origin: str,
     batch: int,
     stop: asyncio.Event | None,
 ) -> int:
@@ -159,7 +167,7 @@ async def _apply_team(
         while not (stop is not None and stop.is_set()):
             async with db.transaction() as tx:
                 await lock_holds(tx, team_id)
-                expired = await tx.fetch_all(EXPIRED, team_id, hook, cutoff, batch)
+                expired = await tx.fetch_all(EXPIRED, team_id, hook, cutoff, batch, logs_origin)
                 purged += await purge(
                     tx,
                     team_id,
@@ -199,6 +207,7 @@ async def run_retention(
     db: AsyncDatabaseManager,
     *,
     interval_seconds: float,
+    logs_origin: str,
     stop: asyncio.Event,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> None:
@@ -206,7 +215,7 @@ async def run_retention(
     failing pass is logged and tried again at the next interval."""
     while not stop.is_set():
         try:
-            await apply_retention(db, now=now(), stop=stop)
+            await apply_retention(db, now=now(), logs_origin=logs_origin, stop=stop)
         except Exception:
             logger.exception("Retention pass failed")
         try:

@@ -153,6 +153,7 @@ def create_app(
                     run_retention(
                         runtime.db(),
                         interval_seconds=settings.retention_interval_seconds,
+                        logs_origin=settings.public_origin,
                         stop=stop,
                     )
                 )
