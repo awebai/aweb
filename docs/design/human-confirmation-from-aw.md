@@ -174,13 +174,16 @@ is needed.
   revoked, the app refuses with `403 role_not_held`, and a `session` handoff
   requested for a scope in which the signing principal holds no current
   holding refuses the same way. `role_not_held` is final: no new handoff
-  restores a holding, so `aw` never renews on it. When the session's login
-  credential is superseded by a `human-credential.replace` whose cooling-off
-  has ended, the principal still holds the role, so the app refuses with
-  `401 console_session_required` instead: the one renewal asks for a login
-  with the bound credential, which the holder of the new passkey passes and
-  anyone with only the old one fails. A replace still in its cooling-off
-  leaves the session's credential current.
+  restores a holding, so `aw` never renews on it. A `human-credential.replace`
+  retires the session's login credential at once and freezes the holder's
+  approvals and the widening changes they gate until its cooling-off ends
+  ([effects](human-role-holders.md#delivery-body-and-stage-3)). The principal still holds the
+  role, so a session that logged in with the retired credential is refused
+  with `401 console_session_required`, not `role_not_held`. During the
+  cooling-off no credential of the holding can log in, so the one renewal
+  fails and `aw` reports it. After the cooling-off, the renewal logs in with
+  the replacement credential, which the holder of the new passkey passes and
+  anyone with only the old one fails.
 
 ### Membership evidence
 
