@@ -106,7 +106,7 @@ def human_fixture_binary(tmp_path_factory):
             "build",
             "-o",
             str(binary),
-            str(Path(__file__).parent / "helpers/lab_human_fixture.go"),
+            str(Path(__file__).parent / "testdata/lab_human_fixture.go"),
         ],
         cwd=root / "cli/go",
         env={**os.environ, "GOMAXPROCS": "2"},
