@@ -78,7 +78,8 @@ human origin:
 | Owner-act delivery | human origin | `POST /.well-known/aweb-owner-act` | the act alone, unchanged | the human origin |
 
 The console headers are `X-Console-Key`, `X-Console-Signature`,
-`X-Console-Timestamp` and `X-Console-Signed-Payload`; none is a team-auth
+`X-Console-Timestamp` and `X-Console-Signed-Payload`, and the handoff wire
+design (aweb-acwd.4.6) defines their signed bytes; none is a team-auth
 header, so the human origin admits them. The handoff id ties the steps
 together; both origins are one service with shared state. By default the result comes back to `aw` through a loopback
 redirect on the same machine, as RFC 8252 describes for native apps:
