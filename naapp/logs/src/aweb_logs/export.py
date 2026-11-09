@@ -378,7 +378,12 @@ def _record(raw: bytes, number: int) -> dict[str, Any]:
 
 
 def _header(record: dict[str, Any], number: int) -> str:
-    if set(record) != {"v", "type", "team_id"} or record["v"] != 1 or record["type"] != EXPORT_TYPE:
+    if (
+        set(record) != {"v", "type", "team_id"}
+        or type(record["v"]) is not int
+        or record["v"] != 1
+        or record["type"] != EXPORT_TYPE
+    ):
         raise BundleMalformed(number, f"the first line is the {EXPORT_TYPE} v1 header")
     team_id = record["team_id"]
     if not isinstance(team_id, str):
@@ -417,7 +422,7 @@ def _event(value: Any, number: int) -> StoredEvent:
         value, number, {"link", "event_hash", "key_evidence"}, {"content", "purge_act"}
     )
     link_fields = _object(stored["link"], number, set(Link.__dataclass_fields__), set())
-    if not isinstance(link_fields["team_seq"], int) or isinstance(link_fields["team_seq"], bool):
+    if type(link_fields["team_seq"]) is not int:
         raise BundleMalformed(number, "team_seq")
     evidence = _object(
         stored["key_evidence"],
@@ -432,7 +437,7 @@ def _event(value: Any, number: int) -> StoredEvent:
             and all(isinstance(item, str) for item in evidence.get(name, []))
             for name in _EVIDENCE_LISTS
         )
-        and isinstance(evidence.get("generation", 1), int)
+        and type(evidence.get("generation", 1)) is int
     ):
         raise BundleMalformed(number, "key_evidence")
     if not isinstance(stored["event_hash"], str):
