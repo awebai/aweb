@@ -9,6 +9,17 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var installedAppIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
+
+// installedAppID is the app id a team installation is known by.
+func installedAppID(raw string) (string, error) {
+	appID := strings.ToLower(strings.TrimSpace(raw))
+	if !installedAppIDPattern.MatchString(appID) {
+		return "", usageError("app_id_invalid: use the installed app id")
+	}
+	return appID, nil
+}
+
 type pluginUninstallOutput struct {
 	AppID string `json:"app_id"`
 	appInstallationReceipt
@@ -23,9 +34,9 @@ func init() {
 			"Local plugin files and approvals are retained; use aw plugin remove for local removal only.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			appID := strings.ToLower(strings.TrimSpace(args[0]))
-			if valid, _ := regexp.MatchString(`^[a-z][a-z0-9-]{0,62}$`, appID); !valid {
-				return usageError("app_id_invalid: use the installed app id")
+			appID, err := installedAppID(args[0])
+			if err != nil {
+				return err
 			}
 			explicit := cmd.Flags().Changed("expected-generation")
 			if explicit && expected <= 0 {

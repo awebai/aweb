@@ -166,7 +166,7 @@ def build_vector() -> dict[str, Any]:
     first_epoch = cases()[0].genesis
     return {
         "name": "logs-chain-v1",
-        "status": "proposed (aweb-acgh.16.21); frozen once reviewed",
+        "status": "frozen (aweb-acgh.16.21)",
         "scheme": SCHEME,
         "logs_key": {"kid": "logs-2026-10", "did_key": LOGS_DID},
         "genesis_cases": [
