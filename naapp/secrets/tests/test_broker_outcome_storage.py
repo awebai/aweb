@@ -2,15 +2,27 @@
 
 import json
 import secrets
+from pathlib import Path
+from uuid import uuid4
 
 import asyncpg
 import pytest
+from aweb_naapp.dispatch import (
+    MIGRATIONS_MODULE,
+    MIGRATIONS_PATH,
+    Dispatches,
+    apply_dispatch_migrations,
+)
+from aweb_naapp.hooks.commitment import CommitmentContext
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from pgdbm import AsyncMigrationManager
 
+from aweb_secrets.broker_outcomes import prepare_legacy_broker_outcomes
+from aweb_secrets.use_context import UseCommitments, apply_use_context_migrations, store_use_context
 from tests.harness import running_upstream
-from tests.test_admission import SECRET
-from tests.test_broker_audit import envelopes
+from tests.test_admission import SECRET, TEAM, _admit, _grant_source_grant, _install
+from tests.test_broker_audit import INSTALLATION, envelopes
 from tests.test_broker_service import db as db
 from tests.test_broker_service import fence as fence
 from tests.test_broker_service import setup, submission
@@ -87,3 +99,96 @@ async def test_a_recorded_dispatch_outcome_cannot_be_overwritten(db, fence, tmp_
         with pytest.raises(asyncpg.PostgresError):
             async with db.transaction() as tx:
                 await tx.execute("UPDATE {{tables.dispatches}} SET result='{}'::jsonb")
+
+
+async def test_recorded_upgrade_purges_broker_payloads_before_immutable_import(db, fence, tmp_path):
+    # Apply the actual historical migrations to a real database. The fixture
+    # is an old stored row, not a fake dispatch implementation or SDK.
+    for source, module, count in (
+        (MIGRATIONS_PATH, MIGRATIONS_MODULE, 2),
+        (
+            Path(__file__).parents[1] / "src/aweb_secrets/dispatch_migrations",
+            "aweb_secrets_dispatch",
+            4,
+        ),
+    ):
+        old = tmp_path / module
+        old.mkdir()
+        for migration in sorted(source.glob("*.sql"))[:count]:
+            (old / migration.name).write_bytes(migration.read_bytes())
+        await AsyncMigrationManager(
+            db, migrations_path=str(old), module_name=module
+        ).apply_pending_migrations()
+    await _install(db, installation_id=INSTALLATION)
+    admitted = await _admit(db, fence, grant=_grant_source_grant(installation_id=INSTALLATION))
+
+    async def record(tx, transition):
+        await tx.execute("SELECT 1")
+
+    from datetime import timedelta
+
+    machine = Dispatches(
+        on_transition=record, max_dispatch=timedelta(seconds=30), sweep_margin=timedelta(seconds=5)
+    )
+    dispatch_id, other_id = uuid4(), uuid4()
+    password, header, other_output = (secrets.token_urlsafe(24) for _ in range(3))
+    legacy = {
+        "state": "completed",
+        "request_id": "req_1",
+        "request_ref": admitted.intent_id,
+        "result": {
+            "body": {"root_password": password},
+            "headers": [["ETag", header]],
+            "status": 201,
+            "upstream_bytes": 100,
+            "truncated": False,
+        },
+    }
+    async with db.transaction() as tx:
+        await store_use_context(
+            tx,
+            admission=admitted,
+            dispatch_id=dispatch_id,
+            commitments=UseCommitments(
+                CommitmentContext(
+                    "secrets", TEAM, INSTALLATION, admitted.installation.generation, "request"
+                ),
+                "a" * 64,
+                None,
+            ),
+        )
+        for identity in (dispatch_id, other_id):
+            await machine.create(tx, dispatch_id=identity, subject=str(identity), action="fixture")
+        await tx.execute(
+            "UPDATE {{tables.dispatches}} SET state='completed',attempts=1,result=$2::jsonb,"
+            " late_results=jsonb_build_array($2::jsonb) WHERE dispatch_id=$1",
+            dispatch_id,
+            json.dumps(legacy),
+        )
+        await tx.execute(
+            "UPDATE {{tables.dispatches}} SET state='completed',attempts=1,result=$2::jsonb"
+            " WHERE dispatch_id=$1",
+            other_id,
+            json.dumps({"sanitized_output": other_output}),
+        )
+    await apply_dispatch_migrations(db, before_upgrade=prepare_legacy_broker_outcomes)
+    await apply_use_context_migrations(db)
+    assert not await _is_stored(db, password), "historical broker body survived upgrade"
+    assert not await _is_stored(db, header), "historical broker header survived upgrade"
+    assert await _is_stored(db, other_output), "non-broker output was purged"
+    assert await db.fetch_value("SELECT classified_rows FROM {{tables.broker_outcome_purges}}") == 1
+    observations = await db.fetch_all(
+        "SELECT attempt,provenance FROM {{tables.dispatch_observations}} WHERE dispatch_id=$1",
+        dispatch_id,
+    )
+    assert len(observations) == 2
+    assert all(r["attempt"] is None and r["provenance"] == "legacy_snapshot" for r in observations)
+    with pytest.raises(asyncpg.PostgresError):
+        async with db.transaction() as tx:
+            await tx.execute(
+                "INSERT INTO {{tables.dispatch_observations}}"
+                " (dispatch_id,attempt,kind,state,result,provenance)"
+                " VALUES ($1,1,'late','completed',$2::jsonb,'live')",
+                dispatch_id,
+                json.dumps(legacy),
+            )
