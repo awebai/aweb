@@ -1115,7 +1115,10 @@ def _check_session_actions(raw: Any, roles: set[str]) -> None:
         if not isinstance(completion, dict) or set(completion) != {"read", "ready", "done", "stop"}:
             refuse()
         read = completion["read"]
-        if (not isinstance(read, str) or read not in actions or actions[read]["kind"] != "read"
+        if not isinstance(read, str):
+            refuse()
+        read = _go_trim(read)
+        if (read not in actions or actions[read]["kind"] != "read"
                 or actions[read]["role"] != action["role"]):
             refuse()
         read_inputs = {_go_trim(param) for param, _ in decoded[read].params}
