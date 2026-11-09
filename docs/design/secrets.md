@@ -687,7 +687,8 @@ requirement.
 
    The production broker also reserves each final effective response bound from
    an in-process budget before committing dispatch or sending any upstream
-   request. `SECRETS_BROKER_RESPONSE_BUDGET_BYTES` defaults to 256 MiB per process;
+   request. `SECRETS_BROKER_RESPONSE_BUDGET_BYTES` defaults to 256 MiB per process
+   and must be at least the 64 MiB response ceiling, checked at startup;
    an operator sizes it for the container, allowing for JSON parsing and other
    process memory as well as raw response bytes. Reservation never waits for
    capacity. Exhaustion returns retryable HTTP 503 `capacity_unavailable` with

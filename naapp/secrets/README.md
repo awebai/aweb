@@ -6,7 +6,8 @@ records every use. The design is `docs/design/secrets.md`; the build plan is
 `docs/design/secrets-build-plan.md`.
 
 The production broker's `SECRETS_BROKER_RESPONSE_BUDGET_BYTES` limits concurrent
-response reservations per process (default 256 MiB, positive whole bytes).
+response reservations per process (default 256 MiB, minimum 64 MiB).
+Startup rejects a smaller budget so any single permitted response fits when idle.
 Size it below the container's memory limit with room for parsing and the rest
 of the process. Each dispatch reserves its effective response limit before
 sending and holds it through response processing. Exhaustion returns HTTP 503
