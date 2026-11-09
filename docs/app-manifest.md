@@ -577,21 +577,30 @@ unchanged. Its semantics and the delivery call are in
   [Session actions](design/human-confirmation-from-aw.md#session-actions-what-aw-drives).
   Absent declares none; an empty array is refused. It has at most 64
   entries, unique by `name` under the tool `name` rules. Each entry is a
-  version 2 tool object without `scopes`, `mutation` or
-  `invocation_contexts`, whose `path` is relative to `owner_acts.origin`,
+  version 2 tool object without `scopes`, `mutation`,
+  `invocation_contexts` or `auth`, whose `path` is relative to `owner_acts.origin`,
   plus:
   - `role`, a declared `owner_acts.roles` name;
-  - `kind`: `read` with method `GET`, or `stage`, `draft` or `confirm` with
-    method `POST` and `body.mode` `json`;
+  - `kind`: `read` with method `GET`, only `in: path` and `in: query`
+    params and no `body`; or `stage`, `draft` or `confirm` with method `POST`
+    and `body.mode` `json`;
   - `protected: true` on a param, allowed only on an `in: body` param of a
-    `stage` action;
+    `stage` action; `true` is its only value, and an unprotected param omits
+    it;
   - `terminal_output`, allowed only on a `confirm` action: 1 to 16 JSON
-    pointers, each non-empty, whose segments are member names or `*`;
+    pointers of 1 to 8 segments, each `/` followed by a member name in the
+    manifest field-name grammar (`[a-z][a-z0-9_]{0,63}`) or by `*`, which
+    matches every index of an array. The last segment is a member name. No
+    segment is empty, numeric or escaped (`~` is refused), and no pointer
+    repeats;
   - `completion`, required on a `confirm` action and refused elsewhere:
     `read`, naming a `read` action of the same role whose path parameters
     are a subset of the confirm's; `ready` and `done`, one predicate each;
     and `stop`, 1 to 8 predicates. A predicate is
-    `{"member": <name>, "in": [<1 to 16 JSON strings, booleans or integers>]}`.
+    `{"member": <name>, "in": [<1 to 16 values>]}`, where `member` is a
+    top-level member name in the field-name grammar and each value is a JSON
+    string, a boolean or an integer in the safe range (±(2^53−1)), with no
+    repeat.
 
 Every fault in `owner_acts` is `owner_acts_invalid`, except `owner_acts: null`,
 which is `manifest_invalid` like any null member. An absent `owner_acts`

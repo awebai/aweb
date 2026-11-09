@@ -436,6 +436,61 @@ def session_action_bound_cases(case, read, completion) -> list[dict[str, Any]]:
             read,
             confirm_action(completion={**completion, "done": values(0)}),
         ),
+        *session_action_grammar_cases(case, read, completion),
+    ]
+
+
+def session_action_grammar_cases(case, read, completion) -> list[dict[str, Any]]:
+    """The boundaries of the session-action grammar that both readers decide alike."""
+
+    def pointer(value: str) -> dict[str, Any]:
+        return confirm_action(terminal_output=[value])
+
+    def predicate(member: str, values: list[Any]) -> dict[str, Any]:
+        return confirm_action(completion={**completion, "done": {"member": member, "in": values}})
+
+    stage_false = stage_action()
+    stage_false["params"] = [
+        {"name": "installation_id", "in": "path"},
+        {"name": "value", "in": "body", "protected": False},
+    ]
+    read_with_body_param = read_action(
+        params=[{"name": "installation_id", "in": "path"}, {"name": "change_id", "in": "body"}]
+    )
+    safe = 2**53 - 1
+    return [
+        case("session_action_declares_auth", read_action(auth="none")),
+        case("protected_false", stage_false),
+        case("read_action_with_a_body", read_action(body={"mode": "json"})),
+        case("read_action_with_a_body_param", read_with_body_param),
+        case("pointer_of_8_segments", read, pointer("/a/*/b/*/c/*/d/e"), error=None),
+        case("pointer_of_9_segments", read, pointer("/a/*/b/*/c/*/d/e/f")),
+        case("pointer_without_a_leading_slash", read, pointer("runner_registrations/*/code")),
+        case("pointer_with_an_empty_segment", read, pointer("/runner_registrations//code")),
+        case("pointer_with_a_trailing_slash", read, pointer("/runner_registrations/*/code/")),
+        case("pointer_ending_in_a_wildcard", read, pointer("/runner_registrations/*")),
+        case("pointer_with_a_numeric_segment", read, pointer("/runner_registrations/0/code")),
+        case("pointer_with_an_escape", read, pointer("/runner~1registrations/*/code")),
+        case("pointer_with_an_upper_case_name", read, pointer("/Runner_registrations/*/code")),
+        case(
+            "pointers_repeat",
+            read,
+            confirm_action(
+                terminal_output=[
+                    "/runner_registrations/*/registration_code",
+                    "/runner_registrations/*/registration_code",
+                ]
+            ),
+        ),
+        case("predicate_member_upper_case", read, predicate("State", ["applied"])),
+        case("predicate_member_empty", read, predicate("", ["applied"])),
+        case(
+            "predicate_integers_at_the_safe_bound", read, predicate("n", [safe, -safe]), error=None
+        ),
+        case("predicate_integer_past_the_safe_bound", read, predicate("n", [safe + 1])),
+        case("predicate_values_repeat", read, predicate("state", ["applied", "applied"])),
+        case("predicate_value_null", read, predicate("state", [None])),
+        case("predicate_value_object", read, predicate("state", [{"state": "applied"}])),
     ]
 
 

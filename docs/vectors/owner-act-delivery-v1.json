@@ -10519,6 +10519,2381 @@
           }
         ]
       }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": "owner_acts_invalid",
+      "name": "session_action_declares_auth",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "auth": "none",
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": "owner_acts_invalid",
+      "name": "protected_false",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "body": {
+              "mode": "json"
+            },
+            "description": "Stage the 1Password service-account token from the terminal.",
+            "input_schema": {
+              "properties": {
+                "installation_id": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "value"
+              ],
+              "type": "object"
+            },
+            "kind": "stage",
+            "method": "POST",
+            "name": "onepassword-token",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "body",
+                "name": "value",
+                "protected": false
+              }
+            ],
+            "path": "/installations/{installation_id}/backend-credentials/onepassword/versions",
+            "role": "secrets.owner"
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": "owner_acts_invalid",
+      "name": "read_action_with_a_body",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "body": {
+              "mode": "json"
+            },
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": "owner_acts_invalid",
+      "name": "read_action_with_a_body_param",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "body",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": null,
+      "name": "pointer_of_8_segments",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "body": {
+              "mode": "json"
+            },
+            "completion": {
+              "done": {
+                "in": [
+                  "applied"
+                ],
+                "member": "state"
+              },
+              "read": "change-set",
+              "ready": {
+                "in": [
+                  true
+                ],
+                "member": "can_confirm"
+              },
+              "stop": [
+                {
+                  "in": [
+                    "cancelled",
+                    "expired"
+                  ],
+                  "member": "state"
+                },
+                {
+                  "in": [
+                    "rejected",
+                    "revoked",
+                    "expired"
+                  ],
+                  "member": "approval_state"
+                }
+              ]
+            },
+            "description": "Confirm an approved change set; runner codes go to the terminal.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "confirm",
+            "method": "POST",
+            "name": "confirm",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}/confirm",
+            "role": "secrets.owner",
+            "terminal_output": [
+              "/a/*/b/*/c/*/d/e"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": "owner_acts_invalid",
+      "name": "pointer_of_9_segments",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "body": {
+              "mode": "json"
+            },
+            "completion": {
+              "done": {
+                "in": [
+                  "applied"
+                ],
+                "member": "state"
+              },
+              "read": "change-set",
+              "ready": {
+                "in": [
+                  true
+                ],
+                "member": "can_confirm"
+              },
+              "stop": [
+                {
+                  "in": [
+                    "cancelled",
+                    "expired"
+                  ],
+                  "member": "state"
+                },
+                {
+                  "in": [
+                    "rejected",
+                    "revoked",
+                    "expired"
+                  ],
+                  "member": "approval_state"
+                }
+              ]
+            },
+            "description": "Confirm an approved change set; runner codes go to the terminal.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "confirm",
+            "method": "POST",
+            "name": "confirm",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}/confirm",
+            "role": "secrets.owner",
+            "terminal_output": [
+              "/a/*/b/*/c/*/d/e/f"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": "owner_acts_invalid",
+      "name": "pointer_without_a_leading_slash",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "body": {
+              "mode": "json"
+            },
+            "completion": {
+              "done": {
+                "in": [
+                  "applied"
+                ],
+                "member": "state"
+              },
+              "read": "change-set",
+              "ready": {
+                "in": [
+                  true
+                ],
+                "member": "can_confirm"
+              },
+              "stop": [
+                {
+                  "in": [
+                    "cancelled",
+                    "expired"
+                  ],
+                  "member": "state"
+                },
+                {
+                  "in": [
+                    "rejected",
+                    "revoked",
+                    "expired"
+                  ],
+                  "member": "approval_state"
+                }
+              ]
+            },
+            "description": "Confirm an approved change set; runner codes go to the terminal.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "confirm",
+            "method": "POST",
+            "name": "confirm",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}/confirm",
+            "role": "secrets.owner",
+            "terminal_output": [
+              "runner_registrations/*/code"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": "owner_acts_invalid",
+      "name": "pointer_with_an_empty_segment",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "body": {
+              "mode": "json"
+            },
+            "completion": {
+              "done": {
+                "in": [
+                  "applied"
+                ],
+                "member": "state"
+              },
+              "read": "change-set",
+              "ready": {
+                "in": [
+                  true
+                ],
+                "member": "can_confirm"
+              },
+              "stop": [
+                {
+                  "in": [
+                    "cancelled",
+                    "expired"
+                  ],
+                  "member": "state"
+                },
+                {
+                  "in": [
+                    "rejected",
+                    "revoked",
+                    "expired"
+                  ],
+                  "member": "approval_state"
+                }
+              ]
+            },
+            "description": "Confirm an approved change set; runner codes go to the terminal.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "confirm",
+            "method": "POST",
+            "name": "confirm",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}/confirm",
+            "role": "secrets.owner",
+            "terminal_output": [
+              "/runner_registrations//code"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": "owner_acts_invalid",
+      "name": "pointer_with_a_trailing_slash",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "body": {
+              "mode": "json"
+            },
+            "completion": {
+              "done": {
+                "in": [
+                  "applied"
+                ],
+                "member": "state"
+              },
+              "read": "change-set",
+              "ready": {
+                "in": [
+                  true
+                ],
+                "member": "can_confirm"
+              },
+              "stop": [
+                {
+                  "in": [
+                    "cancelled",
+                    "expired"
+                  ],
+                  "member": "state"
+                },
+                {
+                  "in": [
+                    "rejected",
+                    "revoked",
+                    "expired"
+                  ],
+                  "member": "approval_state"
+                }
+              ]
+            },
+            "description": "Confirm an approved change set; runner codes go to the terminal.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "confirm",
+            "method": "POST",
+            "name": "confirm",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}/confirm",
+            "role": "secrets.owner",
+            "terminal_output": [
+              "/runner_registrations/*/code/"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": "owner_acts_invalid",
+      "name": "pointer_ending_in_a_wildcard",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "body": {
+              "mode": "json"
+            },
+            "completion": {
+              "done": {
+                "in": [
+                  "applied"
+                ],
+                "member": "state"
+              },
+              "read": "change-set",
+              "ready": {
+                "in": [
+                  true
+                ],
+                "member": "can_confirm"
+              },
+              "stop": [
+                {
+                  "in": [
+                    "cancelled",
+                    "expired"
+                  ],
+                  "member": "state"
+                },
+                {
+                  "in": [
+                    "rejected",
+                    "revoked",
+                    "expired"
+                  ],
+                  "member": "approval_state"
+                }
+              ]
+            },
+            "description": "Confirm an approved change set; runner codes go to the terminal.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "confirm",
+            "method": "POST",
+            "name": "confirm",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}/confirm",
+            "role": "secrets.owner",
+            "terminal_output": [
+              "/runner_registrations/*"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": "owner_acts_invalid",
+      "name": "pointer_with_a_numeric_segment",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "body": {
+              "mode": "json"
+            },
+            "completion": {
+              "done": {
+                "in": [
+                  "applied"
+                ],
+                "member": "state"
+              },
+              "read": "change-set",
+              "ready": {
+                "in": [
+                  true
+                ],
+                "member": "can_confirm"
+              },
+              "stop": [
+                {
+                  "in": [
+                    "cancelled",
+                    "expired"
+                  ],
+                  "member": "state"
+                },
+                {
+                  "in": [
+                    "rejected",
+                    "revoked",
+                    "expired"
+                  ],
+                  "member": "approval_state"
+                }
+              ]
+            },
+            "description": "Confirm an approved change set; runner codes go to the terminal.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "confirm",
+            "method": "POST",
+            "name": "confirm",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}/confirm",
+            "role": "secrets.owner",
+            "terminal_output": [
+              "/runner_registrations/0/code"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": "owner_acts_invalid",
+      "name": "pointer_with_an_escape",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "body": {
+              "mode": "json"
+            },
+            "completion": {
+              "done": {
+                "in": [
+                  "applied"
+                ],
+                "member": "state"
+              },
+              "read": "change-set",
+              "ready": {
+                "in": [
+                  true
+                ],
+                "member": "can_confirm"
+              },
+              "stop": [
+                {
+                  "in": [
+                    "cancelled",
+                    "expired"
+                  ],
+                  "member": "state"
+                },
+                {
+                  "in": [
+                    "rejected",
+                    "revoked",
+                    "expired"
+                  ],
+                  "member": "approval_state"
+                }
+              ]
+            },
+            "description": "Confirm an approved change set; runner codes go to the terminal.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "confirm",
+            "method": "POST",
+            "name": "confirm",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}/confirm",
+            "role": "secrets.owner",
+            "terminal_output": [
+              "/runner~1registrations/*/code"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": "owner_acts_invalid",
+      "name": "pointer_with_an_upper_case_name",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "body": {
+              "mode": "json"
+            },
+            "completion": {
+              "done": {
+                "in": [
+                  "applied"
+                ],
+                "member": "state"
+              },
+              "read": "change-set",
+              "ready": {
+                "in": [
+                  true
+                ],
+                "member": "can_confirm"
+              },
+              "stop": [
+                {
+                  "in": [
+                    "cancelled",
+                    "expired"
+                  ],
+                  "member": "state"
+                },
+                {
+                  "in": [
+                    "rejected",
+                    "revoked",
+                    "expired"
+                  ],
+                  "member": "approval_state"
+                }
+              ]
+            },
+            "description": "Confirm an approved change set; runner codes go to the terminal.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "confirm",
+            "method": "POST",
+            "name": "confirm",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}/confirm",
+            "role": "secrets.owner",
+            "terminal_output": [
+              "/Runner_registrations/*/code"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": "owner_acts_invalid",
+      "name": "pointers_repeat",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "body": {
+              "mode": "json"
+            },
+            "completion": {
+              "done": {
+                "in": [
+                  "applied"
+                ],
+                "member": "state"
+              },
+              "read": "change-set",
+              "ready": {
+                "in": [
+                  true
+                ],
+                "member": "can_confirm"
+              },
+              "stop": [
+                {
+                  "in": [
+                    "cancelled",
+                    "expired"
+                  ],
+                  "member": "state"
+                },
+                {
+                  "in": [
+                    "rejected",
+                    "revoked",
+                    "expired"
+                  ],
+                  "member": "approval_state"
+                }
+              ]
+            },
+            "description": "Confirm an approved change set; runner codes go to the terminal.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "confirm",
+            "method": "POST",
+            "name": "confirm",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}/confirm",
+            "role": "secrets.owner",
+            "terminal_output": [
+              "/runner_registrations/*/registration_code",
+              "/runner_registrations/*/registration_code"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": "owner_acts_invalid",
+      "name": "predicate_member_upper_case",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "body": {
+              "mode": "json"
+            },
+            "completion": {
+              "done": {
+                "in": [
+                  "applied"
+                ],
+                "member": "State"
+              },
+              "read": "change-set",
+              "ready": {
+                "in": [
+                  true
+                ],
+                "member": "can_confirm"
+              },
+              "stop": [
+                {
+                  "in": [
+                    "cancelled",
+                    "expired"
+                  ],
+                  "member": "state"
+                },
+                {
+                  "in": [
+                    "rejected",
+                    "revoked",
+                    "expired"
+                  ],
+                  "member": "approval_state"
+                }
+              ]
+            },
+            "description": "Confirm an approved change set; runner codes go to the terminal.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "confirm",
+            "method": "POST",
+            "name": "confirm",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}/confirm",
+            "role": "secrets.owner",
+            "terminal_output": [
+              "/runner_registrations/*/registration_code"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": "owner_acts_invalid",
+      "name": "predicate_member_empty",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "body": {
+              "mode": "json"
+            },
+            "completion": {
+              "done": {
+                "in": [
+                  "applied"
+                ],
+                "member": ""
+              },
+              "read": "change-set",
+              "ready": {
+                "in": [
+                  true
+                ],
+                "member": "can_confirm"
+              },
+              "stop": [
+                {
+                  "in": [
+                    "cancelled",
+                    "expired"
+                  ],
+                  "member": "state"
+                },
+                {
+                  "in": [
+                    "rejected",
+                    "revoked",
+                    "expired"
+                  ],
+                  "member": "approval_state"
+                }
+              ]
+            },
+            "description": "Confirm an approved change set; runner codes go to the terminal.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "confirm",
+            "method": "POST",
+            "name": "confirm",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}/confirm",
+            "role": "secrets.owner",
+            "terminal_output": [
+              "/runner_registrations/*/registration_code"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": null,
+      "name": "predicate_integers_at_the_safe_bound",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "body": {
+              "mode": "json"
+            },
+            "completion": {
+              "done": {
+                "in": [
+                  9007199254740991,
+                  -9007199254740991
+                ],
+                "member": "n"
+              },
+              "read": "change-set",
+              "ready": {
+                "in": [
+                  true
+                ],
+                "member": "can_confirm"
+              },
+              "stop": [
+                {
+                  "in": [
+                    "cancelled",
+                    "expired"
+                  ],
+                  "member": "state"
+                },
+                {
+                  "in": [
+                    "rejected",
+                    "revoked",
+                    "expired"
+                  ],
+                  "member": "approval_state"
+                }
+              ]
+            },
+            "description": "Confirm an approved change set; runner codes go to the terminal.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "confirm",
+            "method": "POST",
+            "name": "confirm",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}/confirm",
+            "role": "secrets.owner",
+            "terminal_output": [
+              "/runner_registrations/*/registration_code"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": "owner_acts_invalid",
+      "name": "predicate_integer_past_the_safe_bound",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "body": {
+              "mode": "json"
+            },
+            "completion": {
+              "done": {
+                "in": [
+                  9007199254740992
+                ],
+                "member": "n"
+              },
+              "read": "change-set",
+              "ready": {
+                "in": [
+                  true
+                ],
+                "member": "can_confirm"
+              },
+              "stop": [
+                {
+                  "in": [
+                    "cancelled",
+                    "expired"
+                  ],
+                  "member": "state"
+                },
+                {
+                  "in": [
+                    "rejected",
+                    "revoked",
+                    "expired"
+                  ],
+                  "member": "approval_state"
+                }
+              ]
+            },
+            "description": "Confirm an approved change set; runner codes go to the terminal.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "confirm",
+            "method": "POST",
+            "name": "confirm",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}/confirm",
+            "role": "secrets.owner",
+            "terminal_output": [
+              "/runner_registrations/*/registration_code"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": "owner_acts_invalid",
+      "name": "predicate_values_repeat",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "body": {
+              "mode": "json"
+            },
+            "completion": {
+              "done": {
+                "in": [
+                  "applied",
+                  "applied"
+                ],
+                "member": "state"
+              },
+              "read": "change-set",
+              "ready": {
+                "in": [
+                  true
+                ],
+                "member": "can_confirm"
+              },
+              "stop": [
+                {
+                  "in": [
+                    "cancelled",
+                    "expired"
+                  ],
+                  "member": "state"
+                },
+                {
+                  "in": [
+                    "rejected",
+                    "revoked",
+                    "expired"
+                  ],
+                  "member": "approval_state"
+                }
+              ]
+            },
+            "description": "Confirm an approved change set; runner codes go to the terminal.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "confirm",
+            "method": "POST",
+            "name": "confirm",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}/confirm",
+            "role": "secrets.owner",
+            "terminal_output": [
+              "/runner_registrations/*/registration_code"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": "owner_acts_invalid",
+      "name": "predicate_value_null",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "body": {
+              "mode": "json"
+            },
+            "completion": {
+              "done": {
+                "in": [
+                  null
+                ],
+                "member": "state"
+              },
+              "read": "change-set",
+              "ready": {
+                "in": [
+                  true
+                ],
+                "member": "can_confirm"
+              },
+              "stop": [
+                {
+                  "in": [
+                    "cancelled",
+                    "expired"
+                  ],
+                  "member": "state"
+                },
+                {
+                  "in": [
+                    "rejected",
+                    "revoked",
+                    "expired"
+                  ],
+                  "member": "approval_state"
+                }
+              ]
+            },
+            "description": "Confirm an approved change set; runner codes go to the terminal.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "confirm",
+            "method": "POST",
+            "name": "confirm",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}/confirm",
+            "role": "secrets.owner",
+            "terminal_output": [
+              "/runner_registrations/*/registration_code"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": "owner_acts_invalid",
+      "name": "predicate_value_object",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "body": {
+              "mode": "json"
+            },
+            "completion": {
+              "done": {
+                "in": [
+                  {
+                    "state": "applied"
+                  }
+                ],
+                "member": "state"
+              },
+              "read": "change-set",
+              "ready": {
+                "in": [
+                  true
+                ],
+                "member": "can_confirm"
+              },
+              "stop": [
+                {
+                  "in": [
+                    "cancelled",
+                    "expired"
+                  ],
+                  "member": "state"
+                },
+                {
+                  "in": [
+                    "rejected",
+                    "revoked",
+                    "expired"
+                  ],
+                  "member": "approval_state"
+                }
+              ]
+            },
+            "description": "Confirm an approved change set; runner codes go to the terminal.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "confirm",
+            "method": "POST",
+            "name": "confirm",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}/confirm",
+            "role": "secrets.owner",
+            "terminal_output": [
+              "/runner_registrations/*/registration_code"
+            ]
+          }
+        ]
+      }
     }
   ],
   "name": "owner-act-delivery",
