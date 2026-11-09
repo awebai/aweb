@@ -19,12 +19,16 @@ uv run aweb-secrets-runner register --origin https://secrets.example \
   --state-dir /absolute/private/runner-state
 ```
 
-For the protected journey, run this command in the dedicated runner user's
-terminal and type the one-use owner-issued code that `aw` showed on its
-controlling terminal. The runner's existing hidden prompt reads it with echo off.
-`aw`'s machine-readable output contains `runner_id` and
-`registration_required: true`, never the code. See
-[N4's runner-code journey](../../../docs/design/human-confirmation-from-aw.md#n4-terminal-input-and-the-runner-code).
+Today, obtain the one-use owner-issued code from the owner's confirmation result
+on the console. Run this command in the dedicated runner user's terminal and type
+that code at the existing hidden prompt, which reads it with echo off.
+
+[N4's protected runner-code journey](../../../docs/design/human-confirmation-from-aw.md#n4-terminal-input-and-the-runner-code)
+specifies that `aw` shows the code only on its controlling terminal, and the
+operator types it at the same runner prompt. Under N4, `aw`'s machine-readable
+output carries `runner_id` and `registration_required: true`, never the code.
+That `aw` confirmation and terminal-display support is tracked by
+`aweb-acwd.4.6` and is not yet shipped.
 
 For automation without a terminal, the caller supplies exactly one line on a
 private stdin pipe, as `RunnerHarness.register` does. This path is outside the
