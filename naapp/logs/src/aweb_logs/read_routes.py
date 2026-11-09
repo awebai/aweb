@@ -16,6 +16,9 @@ hosted session never reaches these routes.
   unless ``chain_epoch`` is given). ``POST /v1/verify`` also checks receipts
   and checkpoints given as ``{"signing": <base64>, "signature": <base64>}``.
   Verify returns no event content.
+- ``GET /v1/export``: the team's whole log as an ``aweb.logs-export/1`` bundle
+  (:mod:`aweb_logs.export`), streamed as it is read, for verification with no
+  server (``aw logs verify --bundle``).
 
 On the agent origin, ``POST /v1/reader-slots`` issues a pending reader slot
 (:mod:`aweb_logs.readers`) to a member the installation grants
@@ -48,8 +51,10 @@ from aweb_naapp.runtime.authorization import Authorization
 from aweb_naapp.runtime.credential_audit import GovernanceUnavailable
 from aweb_naapp.runtime.installation import InstallationFence, InstallationRefused
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pgdbm import AsyncDatabaseManager
 
+from aweb_logs.export import export_bundle
 from aweb_logs.ledger import verify_epoch
 from aweb_logs.read_store import DEFAULT_LIMIT, EventFilter, InvalidRead, Page, query, tail
 from aweb_logs.readers import (
@@ -166,6 +171,15 @@ def reader_read_router(reads: ReaderReads) -> APIRouter:
             )
         )
         return {"events": page.events, "next_cursor": page.next_cursor}
+
+    @router.get("/v1/export")
+    async def export(reader: Annotated[Reader, Depends(current_reader)]) -> StreamingResponse:
+        """The reader's team's whole log as an ``aweb.logs-export/1`` bundle,
+        streamed as it is read; ``aw logs verify --bundle`` checks it with no
+        server."""
+        return StreamingResponse(
+            export_bundle(reads.db, reader.team_id), media_type="application/jsonl"
+        )
 
     @router.get("/v1/verify")
     async def verify(

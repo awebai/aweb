@@ -5,6 +5,8 @@ is the only thing that says which team it reads."""
 
 from __future__ import annotations
 
+import io
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -19,8 +21,10 @@ from aweb_naapp.console import (
 )
 from aweb_naapp.hooks.envelope import verify
 from aweb_naapp.runtime.origins import split_origins
+from aweb_naapp_testing.owner_acts import TEAM_ID
 from fastapi import FastAPI
 
+from aweb_logs.export import verify_bundle
 from aweb_logs.ledger import append
 from aweb_logs.read_routes import ReaderReads, reader_read_router
 from aweb_logs.read_store import Cursor
@@ -109,7 +113,7 @@ async def test_a_reader_reads_its_own_teams_events_in_a_passkey_session(world: W
 async def test_without_a_session_nothing_is_read(world: World):
     await enrolled_reader(world)
     async with origins(world) as (human, _):
-        for path in ("/v1/events", "/v1/tail", "/v1/verify"):
+        for path in ("/v1/events", "/v1/tail", "/v1/verify", "/v1/export"):
             response = await human.get(path)
             assert (response.status_code, response.json()) == (
                 401,
@@ -122,7 +126,7 @@ async def test_the_agent_origin_serves_no_reads(world: World):
     async with origins(world) as (human, agent):
         await login(world, human, scope)
         agent.cookies = human.cookies
-        for path in ("/v1/events", "/v1/tail", "/v1/verify"):
+        for path in ("/v1/events", "/v1/tail", "/v1/verify", "/v1/export"):
             assert (await agent.get(path)).status_code == 404, path
 
 
@@ -212,3 +216,25 @@ async def test_verify_refuses_an_epoch_outside_the_chain_s_range(world: World):
                 400,
                 {"detail": "invalid_filter"},
             ), epoch
+
+
+async def test_a_reader_exports_its_teams_log_and_it_verifies_with_no_server(world: World):
+    scope, _ = await enrolled_reader(world)
+    await other_team_event(world)
+    async with origins(world) as (human, _):
+        await login(world, human, scope)
+        async with human.stream("GET", "/v1/export") as response:
+            body = b"".join([chunk async for chunk in response.aiter_bytes()])
+    assert response.status_code == 200
+    assert console_headed(response)
+    assert response.headers["content-type"].split(";")[0] == "application/jsonl"
+    lines = [json.loads(line) for line in body.splitlines()]
+    assert lines[0] == {"v": 1, "type": "aweb.logs-export", "team_id": TEAM_ID}
+    assert sum("event" in line for line in lines) == 2  # its designation and enrolment
+    report = verify_bundle(
+        io.BytesIO(body),
+        receipt_keys=frozenset({world.signer.did_key}),
+        checkpoint_keys=frozenset({world.signer.did_key}),
+    )
+    assert report.intact
+    assert [epoch.chain_epoch for epoch in report.epochs] == [1]

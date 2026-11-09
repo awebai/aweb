@@ -525,8 +525,23 @@ class Viewer:
             f"<p>Chain epoch {escape(str(report['chain_epoch']))}.</p>"
             + _chain_section(report)
             + _observed_section(report)
+            + _TAKE_AWAY
         )
         return self.shell.console_page(title="Integrity", body_html=body, session=session)
+
+
+# The whole log, to check away from this server: the bundle carries the signed
+# events and the receipts and checkpoints logs keeps, and verifies with no
+# server against keys the holder trusts (docs/logs-chain.md).
+_TAKE_AWAY = (
+    '<section id="take-away" class="integrity">'
+    "<h2>Keep a copy</h2>"
+    "<p>Download your team’s whole log: its signed events and the receipts and"
+    " checkpoints this server keeps. It can be checked with no server, against"
+    " keys you trust. A copy you keep is what shows, later, that events it holds"
+    " were removed from this server.</p>"
+    '<p><a id="export" href="/v1/export" download>Download the log</a></p></section>'
+)
 
 
 def _chain_section(report: dict[str, Any]) -> str:

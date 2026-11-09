@@ -448,3 +448,16 @@ async def test_a_moment_finer_than_events_are_recorded_is_refused_not_rounded(wo
     page = Html(finer.text)
     assert events_of(page) == []
     assert page.first("input", id="filter-occurred_from")["aria-invalid"] == "true"
+
+
+async def test_integrity_offers_the_whole_log_to_take_away(world: World):
+    async with console(world) as human:
+        await signed_in(world, human)
+        await recorded(world, "client")
+        page = Html((await human.get("/integrity")).text)
+        link = page.first("a", id="export")
+        bundle = await human.get(link["href"])
+    assert "download" in link
+    assert bundle.status_code == 200
+    assert bundle.headers["content-type"].split(";")[0] == "application/jsonl"
+    assert b'"type":"aweb.logs-export"' in bundle.content.splitlines()[0]

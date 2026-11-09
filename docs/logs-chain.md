@@ -221,8 +221,10 @@ terminal implementation; ordinary admission remains active-only.
 
 ## Exporting a team's log: `aweb.logs-export/1`
 
-**Open (aweb-acgh.16.23):** logs' export endpoint. This section specifies what
-it produces and how a holder verifies it, with no server. Its vector is
+A designated reader downloads it from logs' console origin, in a reader
+session, as `GET /v1/export` (`application/jsonl`, streamed); the reader's
+viewer links to it from its integrity page. This section specifies what it
+produces and how a holder verifies it, with no server. Its vector is
 `docs/vectors/logs-export-v1.json`.
 
 An export holds one team's whole log: every epoch from 1, each with its
