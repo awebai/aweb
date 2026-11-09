@@ -14,7 +14,10 @@ CREATE TABLE {{tables.dispatch_observations}} (
     provenance TEXT NOT NULL CHECK (provenance IN ('live','legacy_snapshot')),
     occurred_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     CHECK (provenance='legacy_snapshot' OR attempt IS NOT NULL),
-    CHECK (kind<>'snapshot' OR provenance='legacy_snapshot')
+    CHECK (kind<>'snapshot' OR provenance='legacy_snapshot'),
+    CHECK (kind<>'outcome' OR state IN ('completed','not_sent','outcome_unknown')),
+    CHECK (kind<>'settlement' OR state IN
+        ('reconciled_completed','reconciled_failed','reconciled_unknown'))
 );
 CREATE UNIQUE INDEX dispatch_one_attempt_outcome
     ON {{tables.dispatch_observations}}(dispatch_id,attempt) WHERE kind='outcome';
@@ -29,7 +32,7 @@ CREATE UNIQUE INDEX dispatch_one_legacy_snapshot
 -- recorded before_upgrade migration before this generic import runs.
 INSERT INTO {{tables.dispatch_observations}}(dispatch_id,kind,state,result,provenance)
     SELECT dispatch_id,'snapshot',state,result,'legacy_snapshot'
-    FROM {{tables.dispatches}} WHERE result IS NOT NULL;
+    FROM {{tables.dispatches}};
 INSERT INTO {{tables.dispatch_observations}}(dispatch_id,kind,state,result,provenance)
     SELECT d.dispatch_id,'late',d.state,e.value,'legacy_snapshot'
     FROM {{tables.dispatches}} d

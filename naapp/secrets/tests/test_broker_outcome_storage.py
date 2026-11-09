@@ -1,5 +1,6 @@
 """Broker response bytes are transient; durable outcomes contain metadata only."""
 
+import asyncio
 import json
 import secrets
 from pathlib import Path
@@ -99,6 +100,54 @@ async def test_a_recorded_dispatch_outcome_cannot_be_overwritten(db, fence, tmp_
         with pytest.raises(asyncpg.PostgresError):
             async with db.transaction() as tx:
                 await tx.execute("UPDATE {{tables.dispatches}} SET result='{}'::jsonb")
+
+
+async def test_a_late_live_response_is_metadata_only_and_cannot_replace_unknown(
+    db, fence, tmp_path
+):
+    marker, header = (secrets.token_hex(24) for _ in range(2))
+    entered, release = asyncio.Event(), asyncio.Event()
+    async with running_upstream(tmp_path) as upstream:
+
+        @upstream.app.post("/bearer/late-create")
+        async def create(request: Request):
+            if request.headers.get("authorization") != f"Bearer {upstream.creds.bearer}":
+                return JSONResponse({}, status_code=401)
+            entered.set()
+            await release.wait()
+            return JSONResponse({"message": marker}, status_code=201, headers={"ETag": header})
+
+        service = await setup(db, fence, tmp_path, upstream)
+        task = asyncio.create_task(
+            service.submit(
+                secret=SECRET["ref"],
+                submission=submission(upstream, url=upstream.url("/bearer/late-create")),
+            )
+        )
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=5)
+            await db.execute(
+                "UPDATE {{tables.dispatches}} SET sweep_after=clock_timestamp()-interval '1 second'"
+            )
+            assert await service.sweep() == 1
+            release.set()
+            reply = await task
+        finally:
+            release.set()
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        assert reply.body["state"] == "outcome_unknown"
+        assert not await _is_stored(db, marker), "late response body survived"
+        assert not await _is_stored(db, header), "late response header survived"
+        rows = await db.fetch_all(
+            "SELECT attempt,kind,state FROM {{tables.dispatch_observations}} ORDER BY observation_id"
+        )
+        assert [(r["attempt"], r["kind"], r["state"]) for r in rows] == [
+            (1, "outcome", "outcome_unknown"),
+            (1, "late", "completed"),
+        ]
+        assert upstream.paths == ["/bearer/late-create"]
 
 
 async def test_recorded_upgrade_purges_broker_payloads_before_immutable_import(db, fence, tmp_path):

@@ -7,14 +7,17 @@ import logging
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import timedelta
+from pathlib import Path
 from uuid import UUID
 
 import asyncpg
 import pytest
-from pgdbm import AsyncDatabaseManager
+from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
 
 from aweb_naapp.dispatch import (
+    MIGRATIONS_MODULE,
+    MIGRATIONS_PATH,
     RECONCILED_STATES,
     Dispatch,
     Dispatches,
@@ -159,6 +162,41 @@ async def test_unknown_late_observation_and_settlement_keep_the_original(db, mac
         ("late", "completed"),
         ("settlement", "reconciled_failed"),
         ("late", "completed"),
+    ]
+
+
+async def test_upgrade_keeps_a_legacy_unknown_snapshot_without_inventing_an_attempt(
+    test_db_factory,
+    tmp_path: Path,
+    machine,
+):
+    database = await test_db_factory.create_db(suffix="dispatch_legacy_unknown")
+    historical = tmp_path / "historical"
+    historical.mkdir()
+    for migration in sorted(MIGRATIONS_PATH.glob("*.sql"))[:2]:
+        (historical / migration.name).write_bytes(migration.read_bytes())
+    await AsyncMigrationManager(
+        database,
+        migrations_path=str(historical),
+        module_name=MIGRATIONS_MODULE,
+    ).apply_pending_migrations()
+    identity = uuid.uuid4()
+    await database.execute(
+        "INSERT INTO {{tables.dispatches}}(dispatch_id,subject,action,state,attempts)"
+        " VALUES ($1,'legacy','effect','outcome_unknown',1)",
+        identity,
+    )
+    await apply_dispatch_migrations(database)
+    async with database.transaction() as tx:
+        await machine.reconcile(tx, identity, State.RECONCILED_FAILED, {"decision": "failed"})
+    rows = await database.fetch_all(
+        "SELECT attempt,kind,state,provenance FROM {{tables.dispatch_observations}}"
+        " WHERE dispatch_id=$1 ORDER BY observation_id",
+        identity,
+    )
+    assert [(r["attempt"], r["kind"], r["state"], r["provenance"]) for r in rows] == [
+        (None, "snapshot", "outcome_unknown", "legacy_snapshot"),
+        (1, "settlement", "reconciled_failed", "live"),
     ]
 
 
