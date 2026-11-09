@@ -267,10 +267,19 @@ async def project_batch(
     The transaction appending to the team's chain calls this under its locked
     head: it projects the appended event with any earlier ones still
     unprojected and rolls back with the append, while one batch bounds the
-    work done holding that lock. Readers' catch-up projects whatever remains."""
-    rows = await db.fetch_all(_UNPROJECTED, team_id, limit)
+    work done holding that lock. Readers' catch-up projects whatever remains,
+    each batch in one transaction of its own, so the rows it reads stay locked
+    against a purge until their projections are written."""
+    if isinstance(db, TransactionManager):
+        return await _project_batch_in(db, team_id, limit)
+    async with db.transaction() as tx:
+        return await _project_batch_in(tx, team_id, limit)
+
+
+async def _project_batch_in(tx: TransactionManager, team_id: str, limit: int) -> int:
+    rows = await tx.fetch_all(_UNPROJECTED, team_id, limit)
     if rows:
-        await db.executemany(_INSERT_PROJECTION, [_projection(team_id, row) for row in rows])
+        await tx.executemany(_INSERT_PROJECTION, [_projection(team_id, row) for row in rows])
     return len(rows)
 
 
