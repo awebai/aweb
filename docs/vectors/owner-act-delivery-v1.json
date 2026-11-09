@@ -14154,6 +14154,120 @@
           }
         ]
       }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": null,
+      "name": "session_action_description_null",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": null,
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": null,
+      "name": "stage_action_body_mode_null",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "body": {
+              "mode": null
+            },
+            "description": "Stage the 1Password service-account token from the terminal.",
+            "input_schema": {
+              "properties": {
+                "installation_id": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "value"
+              ],
+              "type": "object"
+            },
+            "kind": "stage",
+            "method": "POST",
+            "name": "onepassword-token",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "body",
+                "name": "value",
+                "protected": true
+              }
+            ],
+            "path": "/installations/{installation_id}/backend-credentials/onepassword/versions",
+            "role": "secrets.owner"
+          }
+        ]
+      }
     }
   ],
   "name": "owner-act-delivery",
