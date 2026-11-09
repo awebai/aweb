@@ -272,10 +272,14 @@ class PypiLaneContractTest(unittest.TestCase):
 
         for prefix, (_needs_awid, packages) in PUBLISH.PYPI_LANES.items():
             manifest = PUBLISH.MANIFESTS[prefix]
-            self.assertEqual(Path(manifest).parent.as_posix(), packages[0][1], prefix)
+            primary = Path(manifest).parent.as_posix()
+            self.assertIn(primary, [directory for _, directory in packages], prefix)
             self.assertEqual(CANDIDATE.MANIFESTS[prefix], manifest, prefix)
-            lockstep = [f"{directory}/pyproject.toml" for _, directory in packages[1:]]
+            lockstep = [f"{directory}/pyproject.toml" for _, directory in packages if directory != primary]
             self.assertEqual(CANDIDATE.LOCKSTEP.get(prefix, []), lockstep, prefix)
+            if prefix == "aweb-secrets-runner-v":
+                names = [package for package, _ in packages]
+                self.assertLess(names.index("aweb-secrets-values"), names.index("aweb-secrets-runner"))
             for package, directory in packages:
                 project = tomllib.loads((ROOT / directory / "pyproject.toml").read_text(encoding="utf-8"))["project"]
                 self.assertEqual(project["name"], package, prefix)
@@ -1167,6 +1171,21 @@ class CustomerReleaseContractTest(unittest.TestCase):
                 prefix, version, observed = PUBLISH.tag_identity(root, tag)
                 self.assertEqual((prefix, version), VERSIONS.tag_parts(tag))
                 self.assertEqual(observed, source)
+
+    def test_equal_versions_with_wrong_values_dependency_refuse(self):
+        root = self.repository()
+        tag = "aweb-secrets-runner-v0.1.0rc1"
+        CANDIDATE.validate_tags(root, [tag])
+        manifest = root / "naapp/secrets/runner/pyproject.toml"
+        manifest.write_text(manifest.read_text().replace(
+            'aweb-secrets-values==0.1.0rc1', 'aweb-secrets-values==0.0.9'
+        ))
+        command(root, "git", "commit", "-qam", "wrong dependency with equal package versions")
+        with self.assertRaises(CANDIDATE.CandidateRefusal):
+            CANDIDATE.validate_tags(root, [tag])
+        command(root, "git", "tag", "-a", tag, "-m", "bad dependency")
+        with self.assertRaises(PUBLISH.PublishRefusal):
+            PUBLISH.tag_identity(root, tag)
 
     def test_runner_final_needs_prior_rc_and_keeps_values_source(self):
         root = self.repository()

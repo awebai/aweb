@@ -8,11 +8,11 @@ or release approval. Do not substitute this draft for missing restore or
 rotation tooling.
 
 Read the [host configuration recipe](README.md), the
-[release proposal](RELEASE.md), [acceptance map](../e2e/RELEASE.md) and
+[release procedure](RELEASE.md), [acceptance map](../e2e/RELEASE.md) and
 [Secrets design](../../../docs/design/secrets.md), especially §15 item 5.
-The source inventory for this draft uses main `a0a71caef`, the reviewed D2
-delta at `3d8933915`, and the Logs integration contract at `8f3ad5b5f`.
-The latter two require landed receipts before execution. Logs packaging and
+The source inventory includes main `161f02d1f`, which landed D2 custody mode
+and the Logs integration, including the hook envelope bound. These landed source
+components do not qualify packaged customer operation. Logs packaging and
 shared deployment configuration (`aweb-acwd.8`/`.9`) are further prerequisites.
 These references describe source, not execution results.
 
@@ -49,7 +49,7 @@ or bypass Host routing to make a check pass.
 | Observation | Interpretation and next action | Qualification |
 | --- | --- | --- |
 | Secrets `/live` | Process liveness; it runs no dependency checks. A 200 does not establish readiness. | Pending |
-| Secrets `/health` and `/ready` | Inspect selected-provider, database and delivery checks. In D2, both origins and all three health routes carry `labels.custody_mode`. The legacy `checks.kms` slot checks the selected provider, including local-key mode. A failed check and its mode are separate facts. | Pending landed D2 and packaged lab |
+| Secrets `/health` and `/ready` | Inspect selected-provider, database and delivery checks. Both origins and all three health routes carry `labels.custody_mode`. The legacy `checks.kms` slot checks the selected provider, including local-key mode. A failed check and its mode are separate facts. | Source landed; packaged lab pending |
 | Secrets outbox age or stalled delivery | Use the owner audit-delivery view and the configured `hook_events_stalled_after_seconds` admission bound. Correlate target and event IDs with the receiver; do not delete outbox rows or treat retry as a new event. | Pending |
 | Logs `/live` | Liveness only. | Pending |
 | Logs `/ready` | Database and outbox query must answer. An old outbox does not itself make the current Logs readiness check fail. Inspect its age separately. | Pending |
@@ -74,7 +74,7 @@ manifest or manufacture a receipt to clear a backlog.
 | 422 | `occurred_after_receipt`, `unknown_catalog`, `schema_<code>` | Check envelope schema, version/catalog/time compatibility using metadata only. |
 | 429 | `client_quota_exceeded` | Respect configured event/byte quotas and producer retry behavior. |
 | 503 | `binding_authority_unavailable`, `chain_origin_mismatch`, `client_authority_changed`, `client_authority_unavailable`, `provenance_authority_unavailable` | Inspect authority, registry and configuration availability; producers retry these refusals. |
-| 413 | Delivery exceeds the supported size | Pending the reviewed size-bound change; such delivery is unacceptable to the producer, not an ordinary retryable outage. |
+| 413 | Delivery exceeds the supported size | Source landed; such delivery is unacceptable to the producer, not an ordinary retryable outage. Packaged lab proof remains pending. |
 
 All dispositions above are pending lab exercises. Do not infer the incident's
 cause from an HTTP status alone; use its fixed code and correlated source and
@@ -168,7 +168,7 @@ as a fresh request to make an incident disappear.
 
 ## Audit access and export
 
-Logs' integrated reader path is **pending landed integration and lab proof**.
+Logs' integrated reader path has landed; **packaged lab proof is pending**.
 A designated reader signs in on the separate console origin and reads its
 team's `/v1/events`, `/v1/tail` and verification routes. An ingest receipt does
 not qualify that read journey. Revocation must remove access to the existing
