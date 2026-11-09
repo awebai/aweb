@@ -222,6 +222,170 @@ def manifest_cases() -> list[dict[str, Any]]:
             error=invalid,
         ),
         manifest_case("owner_acts_null", owner_acts=None, error="manifest_invalid"),
+        *session_action_cases(),
+    ]
+
+
+CHANGE_SET = "/installations/{installation_id}/change-sets"
+
+
+def path_inputs(*names: str, protected: str | None = None) -> dict[str, Any]:
+    """input_schema and params for string path params, and one body param."""
+    fields = [*names, *([protected] if protected else [])]
+    params: list[dict[str, Any]] = [{"name": name, "in": "path"} for name in names]
+    if protected:
+        params.append({"name": protected, "in": "body", "protected": True})
+    return {
+        "input_schema": {
+            "type": "object",
+            "properties": {name: {"type": "string"} for name in fields},
+            "required": fields,
+        },
+        "params": params,
+    }
+
+
+def read_action(**changes: Any) -> dict[str, Any]:
+    action: dict[str, Any] = {
+        "name": "change-set",
+        "description": "Read a change set in the owner's session.",
+        "kind": "read",
+        "role": "secrets.owner",
+        "method": "GET",
+        "path": CHANGE_SET + "/{change_id}",
+        **path_inputs("installation_id", "change_id"),
+    }
+    action.update(changes)
+    return action
+
+
+def stage_action(**changes: Any) -> dict[str, Any]:
+    action: dict[str, Any] = {
+        "name": "onepassword-token",
+        "description": "Stage the 1Password service-account token from the terminal.",
+        "kind": "stage",
+        "role": "secrets.owner",
+        "method": "POST",
+        "path": "/installations/{installation_id}/backend-credentials/onepassword/versions",
+        **path_inputs("installation_id", protected="value"),
+        "body": {"mode": "json"},
+    }
+    action.update(changes)
+    return action
+
+
+def confirm_action(**changes: Any) -> dict[str, Any]:
+    action: dict[str, Any] = {
+        "name": "confirm",
+        "description": "Confirm an approved change set; runner codes go to the terminal.",
+        "kind": "confirm",
+        "role": "secrets.owner",
+        "method": "POST",
+        "path": CHANGE_SET + "/{change_id}/confirm",
+        **path_inputs("installation_id", "change_id"),
+        "body": {"mode": "json"},
+        "terminal_output": ["/runner_registrations/*/registration_code"],
+        "completion": {
+            "read": "change-set",
+            "ready": {"member": "can_confirm", "in": [True]},
+            "done": {"member": "state", "in": ["applied"]},
+            "stop": [
+                {"member": "state", "in": ["cancelled", "expired"]},
+                {"member": "approval_state", "in": ["rejected", "revoked", "expired"]},
+            ],
+        },
+    }
+    action.update(changes)
+    return action
+
+
+def session_action_cases() -> list[dict[str, Any]]:
+    def secrets(*actions: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "origin": SECRETS_CONSOLE,
+            "roles": [owner_role()],
+            "session_actions": list(actions),
+        }
+
+    def case(name: str, *actions: dict[str, Any], error: str | None = "owner_acts_invalid"):
+        return manifest_case(
+            name, owner_acts=secrets(*actions), app_origin=SECRETS_ORIGIN, error=error
+        )
+
+    read, stage, confirm = read_action(), stage_action(), confirm_action()
+    completion = confirm["completion"]
+    unprotected = stage_action(**path_inputs("installation_id"))
+    unprotected["params"] = [{"name": "installation_id", "in": "path"}]
+    return [
+        case("session_actions_of_secrets", read, stage, confirm, error=None),
+        case("a_stage_action_with_nothing_protected", unprotected, error=None),
+        case("session_actions_empty"),
+        case("session_action_names_repeat", read, read_action(path=CHANGE_SET)),
+        case("session_action_of_an_undeclared_role", read_action(role="secrets.issuer")),
+        case("session_action_of_an_unknown_kind", read_action(kind="write")),
+        case("read_action_is_a_post", read_action(method="POST", body={"mode": "json"})),
+        case("stage_action_is_a_put", stage_action(method="PUT")),
+        case("session_action_path_is_absolute", read_action(path=SECRETS_CONSOLE + CHANGE_SET)),
+        case("session_action_declares_scopes", read_action(scopes=["secrets:admin"])),
+        case(
+            "session_action_declares_invocation_contexts",
+            read_action(invocation_contexts=["agent"]),
+        ),
+        case(
+            "protected_param_on_a_read",
+            read_action(
+                params=[
+                    {"name": "installation_id", "in": "path"},
+                    {"name": "change_id", "in": "path", "protected": True},
+                ],
+            ),
+        ),
+        case(
+            "protected_path_param_on_a_stage",
+            stage_action(
+                params=[
+                    {"name": "installation_id", "in": "path", "protected": True},
+                    {"name": "value", "in": "body"},
+                ]
+            ),
+        ),
+        case(
+            "terminal_output_on_a_stage",
+            stage_action(terminal_output=["/version"]),
+        ),
+        case("terminal_output_with_an_empty_pointer", read, confirm_action(terminal_output=[""])),
+        case("confirm_without_completion", read, without(confirm, "completion")),
+        case("completion_on_a_read", read_action(completion=completion), confirm),
+        case(
+            "completion_reads_an_undeclared_action",
+            confirm_action(completion={**completion, "read": "change-set"}),
+        ),
+        case(
+            "completion_reads_a_stage_action",
+            read,
+            stage,
+            confirm_action(completion={**completion, "read": "onepassword-token"}),
+        ),
+        case(
+            "completion_read_has_a_path_param_the_confirm_lacks",
+            read_action(
+                path=CHANGE_SET + "/{change_id}/{revision}",
+                **path_inputs("installation_id", "change_id", "revision"),
+            ),
+            confirm,
+        ),
+        case(
+            "completion_stop_is_empty",
+            read,
+            confirm_action(completion={**completion, "stop": []}),
+        ),
+        case(
+            "completion_predicate_with_a_float",
+            read,
+            confirm_action(
+                completion={**completion, "ready": {"member": "can_confirm", "in": [1.5]}}
+            ),
+        ),
     ]
 
 

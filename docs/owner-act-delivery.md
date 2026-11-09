@@ -85,6 +85,8 @@ fixes its validation codes. An app with no owner-designated role omits it.
     point with no repeat.
   - `notice_contact` is `true` when designate and replace name a notice
     contact for the holder, and `false` when they name none.
+- `session_actions`, optional, declares the human-origin actions `aw` drives
+  in a holder's session ([Session actions](design/human-confirmation-from-aw.md#session-actions-what-aw-drives)).
 - `owner_acts` and the version 2 `roles` field are separate. The version 2
   field declares roles a team admin designates; `owner_acts` declares roles
   only an owner act designates.

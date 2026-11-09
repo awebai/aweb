@@ -252,6 +252,134 @@ and its display of the runner code stay available, outside this journey.
   `aw` never writes the code anywhere but the controlling terminal.
 - Its limits are unchanged: ten minutes, single use, stored as a hash.
 
+## Session actions: what `aw` drives
+
+`aw` drives an app's human-origin routes in a `session` handoff only through
+actions the pinned manifest declares, in `owner_acts.session_actions`
+([manifest version 3](../app-manifest.md#manifest-version-3)). `aw` carries no
+per-app code: the declaration names the route, which inputs come only from
+the terminal, which outputs go only to the terminal, and how a confirm
+completes. An app with no such action declares none. logs declares none,
+since its reader needs only the `session` handoff.
+
+```json
+"session_actions": [
+  {"name": "change-set", "kind": "read", "role": "secrets.owner",
+   "method": "GET", "path": "/installations/{installation_id}/change-sets/{change_id}",
+   "input_schema": {"type": "object", "properties": {"installation_id": {"type": "string"},
+     "change_id": {"type": "string"}}, "required": ["installation_id", "change_id"]},
+   "params": [{"name": "installation_id", "in": "path"}, {"name": "change_id", "in": "path"}]},
+  {"name": "onepassword-token", "kind": "stage", "role": "secrets.owner",
+   "method": "POST", "path": "/installations/{installation_id}/backend-credentials/onepassword/versions",
+   "input_schema": {"type": "object", "properties": {"installation_id": {"type": "string"},
+     "value": {"type": "string"}}, "required": ["installation_id", "value"]},
+   "params": [{"name": "installation_id", "in": "path"},
+              {"name": "value", "in": "body", "protected": true}],
+   "body": {"mode": "json"}},
+  {"name": "confirm", "kind": "confirm", "role": "secrets.owner",
+   "method": "POST", "path": "/installations/{installation_id}/change-sets/{change_id}/confirm",
+   "input_schema": {"type": "object", "properties": {"installation_id": {"type": "string"},
+     "change_id": {"type": "string"}}, "required": ["installation_id", "change_id"]},
+   "params": [{"name": "installation_id", "in": "path"}, {"name": "change_id", "in": "path"}],
+   "body": {"mode": "json"},
+   "terminal_output": ["/runner_registrations/*/registration_code"],
+   "completion": {"read": "change-set",
+                  "ready": {"member": "can_confirm", "in": [true]},
+                  "done": {"member": "state", "in": ["applied"]},
+                  "stop": [{"member": "state", "in": ["cancelled", "expired"]},
+                           {"member": "approval_state", "in": ["rejected", "revoked", "expired"]}]}}
+]
+```
+
+An action is a tool object of version 2 with these differences:
+
+- `name` is unique among the session actions. `aw app human <app> <name>`
+  runs it, and `aw app human <app> --help` lists the declared actions with
+  their descriptions. Session actions are not agent tools: they never appear
+  in `aw <app> --help`, a grant snapshot or an MCP tool list, and an agent
+  call to one is not possible, because its route is on the human origin.
+- `role` names a role of `owner_acts.roles`. `aw` runs the action in a
+  `session` handoff for that role's holder scope, on `owner_acts.origin`. It
+  reuses one live session for every action of one invocation, and signs each
+  request as the `session` purpose requires.
+- `path` is relative to `owner_acts.origin`, under the version 2 path and
+  parameter rules. A path parameter named `installation_id` is filled by `aw`
+  with the resolved installation and is not a flag. `scopes`, `mutation` and
+  `invocation_contexts` are not declared: authority is the holder's session.
+- `kind` is one of:
+  - **`read`**: a `GET` with no protected input. It changes nothing.
+  - **`stage`**: a `POST` that stages a value or a vault reference. The app
+    guarantees that what it stages grants nothing until a change that names
+    it is confirmed.
+  - **`draft`**: a `POST` that creates a change for approval. A draft made in
+    a key-bound session is what sets the confirm mark
+    ([Change set](#confirming-a-frozen-request)); `aw` does nothing more.
+  - **`confirm`**: a `POST` that applies an approved change, with the
+    `completion` rules below.
+- A param may declare `protected: true`, only on an `in: body` param of a
+  `stage` action. Every other kind declares none.
+- `terminal_output` lists the response members that go only to the
+  terminal, as JSON pointers (RFC 6901) in which a `*` segment matches every
+  index of an array. Only a `confirm` action may declare it.
+
+**Protected input.** `aw` reads each protected field from the controlling
+terminal with echo off, as in [N4](#n4-terminal-input-and-the-runner-code),
+and never from a flag, the environment, a pipe or a file: a protected field
+has no flag. With no controlling terminal, or under an agent-runtime marker,
+`aw` refuses with `protected_input_unavailable` before it opens a handoff.
+The request body is excluded from `--trace` and every log, and wiped after
+sending.
+
+**Terminal output.** Before it calls an action that declares
+`terminal_output`, `aw` requires a controlling terminal and no agent-runtime
+marker, or refuses with `protected_output_unavailable`, so a one-time value
+is never produced where it cannot be shown. It writes each matching value
+only to the controlling terminal, labelled with its concrete pointer (for
+example `/runner_registrations/0/registration_code`). It removes those
+members from the response it prints or returns as JSON, and keeps every
+other member, such as `runner_id` and `registration_required`. A value is
+never logged, traced or stored.
+
+**Completion of a confirm.** `completion.read` names a `read` action whose
+path parameters are a subset of the confirm's. A predicate names a top-level
+member of that read's response and the JSON values that satisfy it. `ready`
+and `done` are one predicate each; `stop` is a list of predicates, any of
+which stops.
+
+1. `aw` reads the state. `done` means the change is already applied: `aw`
+   reports `confirm_already_applied` and does not call confirm. `stop` refuses
+   with `confirm_stopped`, naming the member's value. Otherwise it waits,
+   reading again at most every two seconds, until `ready`, `done` or `stop`,
+   for as long as the session lives.
+2. On `ready`, `aw` calls the confirm action once, and shows its result under
+   the terminal-output rule.
+3. On a lost reply (no response, or a `5xx` with no JSON body), `aw` never
+   calls confirm again. It reads the state: `done` reports
+   `confirm_result_lost`, because the change applied and a one-time output
+   with it is not recovered; `ready` reports `confirm_not_applied`, and a
+   later run may confirm; anything else reports the read's state.
+4. When the session has expired (`401 console_session_required`), `aw` opens
+   a fresh `session` handoff once and resumes from step 1, so a confirm whose
+   reply was lost is never sent twice.
+
+The app's own refusals pass through with their status and `detail`, such as
+`409 change_not_approved` or `403 owner_required`. `aw`'s own codes are
+`protected_input_unavailable`, `protected_output_unavailable`,
+`session_action_unknown` (no declared action of that name),
+`confirm_already_applied`, `confirm_stopped`, `confirm_result_lost` and
+`confirm_not_applied`. Each exits non-zero except `confirm_already_applied`.
+
+**secrets** declares, for `secrets.owner`:
+- the change-set `read`, `draft` and `confirm`, with the runner code as
+  `terminal_output`, as in the example;
+- `stage` actions for the 1Password service-account token (its `value`
+  protected) and for a 1Password reference
+  (`POST /installations/{installation_id}/onepassword/references`, nothing
+  protected).
+
+A native secret value is declared the same way, its value protected, on the
+route that stages it.
+
 ## L6: the `aw logs` reader
 
 `aw logs` signs in through a `session` handoff on logs' origin, with the
@@ -325,9 +453,15 @@ Each item is filed after review, and each is one reviewed change.
   - a repeated confirm does not apply it again.
 
   And a team-auth-drafted change set stays confirmable on the console.
+- **Manifest readers** (Go `cli/go/internal/appmanifest`, `aweb_naapp.manifest`):
+  `owner_acts.session_actions`, against the `manifest` cases of
+  `docs/vectors/owner-act-delivery-v1.json`.
 - **`aw`:** opening the browser, the loopback listener and the handoff, and
-  `--no-browser`; N4's terminal input and code output and their exclusion
-  from tracing.
+  `--no-browser`; `aw app human` driving the declared
+  [session actions](#session-actions-what-aw-drives), with N4's terminal
+  input and output, their exclusion from tracing, and a confirm's
+  completion and lost-reply rules.
+- **secrets:** the `session_actions` declaration.
 - **The runner:** the registration runbook for the protected journey (the
   operator types the code at the runner's existing terminal prompt), and a
   test that the private-stdin path still reads one line.
