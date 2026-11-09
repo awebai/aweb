@@ -620,7 +620,8 @@
             "logs.retention.lengthened",
             "logs.erased",
             "logs.legal_hold.set",
-            "logs.legal_hold.released"
+            "logs.legal_hold.released",
+            "session.handoff_completed"
           ],
           "required": true
         },
@@ -768,6 +769,10 @@
             "actor"
           ],
           "required": false
+        },
+        "session_ref": {
+          "type": "ref",
+          "required": false
         }
       },
       "rules": [
@@ -830,7 +835,8 @@
             "team_seq_last",
             "erased_count",
             "hold_id",
-            "hold_scope"
+            "hold_scope",
+            "session_ref"
           ],
           "require_equals": {
             "authority": "outbox_state",
@@ -890,7 +896,8 @@
             "team_seq_last",
             "erased_count",
             "hold_id",
-            "hold_scope"
+            "hold_scope",
+            "session_ref"
           ]
         },
         {
@@ -924,7 +931,8 @@
             "team_seq_last",
             "erased_count",
             "hold_id",
-            "hold_scope"
+            "hold_scope",
+            "session_ref"
           ],
           "require_equals": {
             "authority": "backend_observation",
@@ -1028,7 +1036,8 @@
             "source_hook",
             "source_seq_first",
             "source_seq_last",
-            "cancelled_count"
+            "cancelled_count",
+            "session_ref"
           ],
           "require_equals": {
             "authority": "owner_act"
@@ -1211,6 +1220,48 @@
             "hold_scope",
             "reason_code"
           ]
+        },
+        {
+          "when": {
+            "field": "act",
+            "in": [
+              "session.handoff_completed"
+            ]
+          },
+          "require": [
+            "role",
+            "subject_ref",
+            "session_ref"
+          ],
+          "forbid": [
+            "resource_type",
+            "resource_ref",
+            "before_ref",
+            "after_ref",
+            "owner_act_sha256",
+            "approval_id",
+            "policy_digest",
+            "reason_code",
+            "source_binding_id",
+            "source_hook",
+            "source_seq_first",
+            "source_seq_last",
+            "cancelled_count",
+            "event_class",
+            "retention",
+            "retention_days",
+            "erase_scope",
+            "actor_ref",
+            "chain_epoch",
+            "team_seq_first",
+            "team_seq_last",
+            "erased_count",
+            "hold_id",
+            "hold_scope"
+          ],
+          "require_equals": {
+            "authority": "passkey_session"
+          }
         }
       ],
       "act_directions": {
@@ -1239,7 +1290,8 @@
         "logs.retention.lengthened": "widening",
         "logs.erased": "narrowing",
         "logs.legal_hold.set": "widening",
-        "logs.legal_hold.released": "narrowing"
+        "logs.legal_hold.released": "narrowing",
+        "session.handoff_completed": "widening"
       }
     },
     "post-manifest-command-hook": {
@@ -3048,6 +3100,19 @@
         "direction": "narrowing",
         "hold_id": "hold:case-1"
       }
+    },
+    {
+      "name": "session_handoff_completed",
+      "hook": "post-governance-hook",
+      "payload": {
+        "authority": "passkey_session",
+        "approval_evidence_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "act": "session.handoff_completed",
+        "direction": "widening",
+        "role": "secrets.approver.refunds",
+        "subject_ref": "approver-1",
+        "session_ref": "session:4f1c9a2e"
+      }
     }
   ],
   "negative_cases": [
@@ -4671,6 +4736,153 @@
       },
       "error": "rule_violation",
       "field": "reason_code"
+    },
+    {
+      "name": "session_handoff_without_session_ref",
+      "hook": "post-governance-hook",
+      "payload": {
+        "authority": "passkey_session",
+        "approval_evidence_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "act": "session.handoff_completed",
+        "direction": "widening",
+        "role": "secrets.approver.refunds",
+        "subject_ref": "approver-1"
+      },
+      "error": "rule_violation",
+      "field": "session_ref"
+    },
+    {
+      "name": "session_handoff_without_subject_ref",
+      "hook": "post-governance-hook",
+      "payload": {
+        "authority": "passkey_session",
+        "approval_evidence_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "act": "session.handoff_completed",
+        "direction": "widening",
+        "role": "secrets.approver.refunds",
+        "session_ref": "session:4f1c9a2e"
+      },
+      "error": "rule_violation",
+      "field": "subject_ref"
+    },
+    {
+      "name": "session_handoff_without_role",
+      "hook": "post-governance-hook",
+      "payload": {
+        "authority": "passkey_session",
+        "approval_evidence_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "act": "session.handoff_completed",
+        "direction": "widening",
+        "subject_ref": "approver-1",
+        "session_ref": "session:4f1c9a2e"
+      },
+      "error": "rule_violation",
+      "field": "role"
+    },
+    {
+      "name": "session_handoff_without_approval_evidence",
+      "hook": "post-governance-hook",
+      "payload": {
+        "authority": "passkey_session",
+        "act": "session.handoff_completed",
+        "direction": "widening",
+        "role": "secrets.approver.refunds",
+        "subject_ref": "approver-1",
+        "session_ref": "session:4f1c9a2e"
+      },
+      "error": "rule_violation",
+      "field": "approval_evidence_sha256"
+    },
+    {
+      "name": "session_handoff_by_owner_act",
+      "hook": "post-governance-hook",
+      "payload": {
+        "authority": "owner_act",
+        "owner_act_sha256": "abababababababababababababababababababababababababababababababab",
+        "act": "session.handoff_completed",
+        "direction": "widening",
+        "role": "secrets.approver.refunds",
+        "subject_ref": "approver-1",
+        "session_ref": "session:4f1c9a2e"
+      },
+      "error": "rule_violation",
+      "field": "owner_act_sha256"
+    },
+    {
+      "name": "session_handoff_as_narrowing",
+      "hook": "post-governance-hook",
+      "payload": {
+        "authority": "passkey_session",
+        "approval_evidence_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "act": "session.handoff_completed",
+        "direction": "narrowing",
+        "role": "secrets.approver.refunds",
+        "subject_ref": "approver-1",
+        "session_ref": "session:4f1c9a2e"
+      },
+      "error": "direction_mismatch",
+      "field": "direction"
+    },
+    {
+      "name": "session_handoff_carrying_an_approval_id",
+      "hook": "post-governance-hook",
+      "payload": {
+        "authority": "passkey_session",
+        "approval_evidence_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "act": "session.handoff_completed",
+        "direction": "widening",
+        "role": "secrets.approver.refunds",
+        "subject_ref": "approver-1",
+        "session_ref": "session:4f1c9a2e",
+        "approval_id": "apr_c2"
+      },
+      "error": "rule_violation",
+      "field": "approval_id"
+    },
+    {
+      "name": "session_handoff_carrying_a_resource_ref",
+      "hook": "post-governance-hook",
+      "payload": {
+        "authority": "passkey_session",
+        "approval_evidence_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "act": "session.handoff_completed",
+        "direction": "widening",
+        "role": "secrets.approver.refunds",
+        "subject_ref": "approver-1",
+        "session_ref": "session:4f1c9a2e",
+        "resource_ref": "sec:1"
+      },
+      "error": "rule_violation",
+      "field": "resource_ref"
+    },
+    {
+      "name": "role_designated_carrying_a_session_ref",
+      "hook": "post-governance-hook",
+      "payload": {
+        "authority": "owner_act",
+        "owner_act_sha256": "abababababababababababababababababababababababababababababababab",
+        "act": "role.designated",
+        "direction": "widening",
+        "role": "secrets.owner",
+        "subject_ref": "member:did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk",
+        "session_ref": "session:4f1c9a2e"
+      },
+      "error": "rule_violation",
+      "field": "session_ref"
+    },
+    {
+      "name": "logs_act_carrying_a_session_ref",
+      "hook": "post-governance-hook",
+      "payload": {
+        "authority": "owner_act",
+        "owner_act_sha256": "abababababababababababababababababababababababababababababababab",
+        "act": "logs.legal_hold.released",
+        "direction": "narrowing",
+        "hold_id": "hold:case-1",
+        "session_ref": "session:4f1c9a2e"
+      },
+      "error": "rule_violation",
+      "field": "session_ref"
     }
   ]
 }
