@@ -87,30 +87,66 @@ class ReaderReads:
         self.directory = directory
         self.chain_keys = chain_keys
 
+    async def session(self, request: Request) -> tuple[ConsoleSession, Reader]:
+        """The request's console session and the current reader it belongs to,
+        or a 401 ``console_session_required``."""
+        session = await self.sessions.current(request)
+        reader = await self.directory.reader(session.scope)
+        if reader is None:
+            raise HTTPException(status_code=401, detail="console_session_required")
+        return session, reader
+
+    async def verify(
+        self,
+        reader: Reader,
+        chain_epoch: int | None,
+        *,
+        receipts: list[tuple[bytes, str]],
+        checkpoints: list[tuple[bytes, str]],
+    ) -> dict[str, Any]:
+        """The integrity report of the reader's team's epoch ``chain_epoch``, its
+        current one when that is None, or a 404 ``no_chain``."""
+        if chain_epoch is None:
+            chain_epoch = await self.db.fetch_value(
+                "SELECT chain_epoch FROM {{tables.chain_heads}} WHERE team_id = $1",
+                reader.team_id,
+            )
+            if chain_epoch is None:
+                raise HTTPException(status_code=404, detail="no_chain")
+        try:
+            report = await verify_epoch(
+                self.db,
+                reader.team_id,
+                chain_epoch,
+                receipt_keys=self.chain_keys,
+                checkpoint_keys=self.chain_keys,
+                receipts=receipts,
+                checkpoints=checkpoints,
+            )
+        except LookupError:
+            raise HTTPException(status_code=404, detail="no_chain") from None
+        return {"chain_epoch": chain_epoch, **report}
+
 
 def reader_read_router(reads: ReaderReads) -> APIRouter:
     """The reader routes. Mount only on the console (human) origin."""
     router = APIRouter(route_class=ConsoleRoute)
 
-    async def current_reader(
-        session: Annotated[ConsoleSession, Depends(reads.sessions.current)],
-    ) -> Reader:
-        reader = await reads.directory.reader(session.scope)
-        if reader is None:
-            raise HTTPException(status_code=401, detail="console_session_required")
+    async def current_reader(request: Request) -> Reader:
+        _, reader = await reads.session(request)
         return reader
 
     @router.get("/v1/events")
     async def events(
         request: Request, reader: Annotated[Reader, Depends(current_reader)]
     ) -> dict[str, Any]:
-        where, paging = _read_query(request, allowed=("limit", "cursor"))
-        page = await _read(
+        where, paging = read_query(request.query_params.multi_items(), allowed=("limit", "cursor"))
+        page = await read_page(
             query(
                 reads.db,
                 reader.team_id,
                 where,
-                limit=_limit(paging),
+                limit=read_limit(paging),
                 before=paging.get("cursor"),
             )
         )
@@ -120,9 +156,11 @@ def reader_read_router(reads: ReaderReads) -> APIRouter:
     async def follow(
         request: Request, reader: Annotated[Reader, Depends(current_reader)]
     ) -> dict[str, Any]:
-        where, paging = _read_query(request, allowed=("limit", "after"))
-        page = await _read(
-            tail(reads.db, reader.team_id, where, after=paging.get("after"), limit=_limit(paging))
+        where, paging = read_query(request.query_params.multi_items(), allowed=("limit", "after"))
+        page = await read_page(
+            tail(
+                reads.db, reader.team_id, where, after=paging.get("after"), limit=read_limit(paging)
+            )
         )
         return {"events": page.events, "next_cursor": page.next_cursor}
 
@@ -130,7 +168,7 @@ def reader_read_router(reads: ReaderReads) -> APIRouter:
     async def verify(
         reader: Annotated[Reader, Depends(current_reader)], chain_epoch: int | None = None
     ) -> dict[str, Any]:
-        return await _verify(reads, reader, chain_epoch, receipts=[], checkpoints=[])
+        return await reads.verify(reader, chain_epoch, receipts=[], checkpoints=[])
 
     @router.post("/v1/verify")
     async def verify_artefacts(
@@ -144,8 +182,7 @@ def reader_read_router(reads: ReaderReads) -> APIRouter:
             not isinstance(chain_epoch, int) or isinstance(chain_epoch, bool)
         ):
             raise HTTPException(status_code=400, detail="request_invalid")
-        return await _verify(
-            reads,
+        return await reads.verify(
             reader,
             chain_epoch,
             receipts=_artefacts(body.get("receipts", [])),
@@ -155,10 +192,11 @@ def reader_read_router(reads: ReaderReads) -> APIRouter:
     return router
 
 
-def _read_query(
-    request: Request, *, allowed: tuple[str, ...]
+def read_query(
+    items: list[tuple[str, str]], *, allowed: tuple[str, ...]
 ) -> tuple[EventFilter, dict[str, str]]:
-    items = request.query_params.multi_items()
+    """The filter and the paging parameters ``items`` names, or a 400
+    ``invalid_filter``: each name at most once, paging only from ``allowed``."""
     names = [name for name, _ in items]
     if len(names) != len(set(names)):
         raise HTTPException(status_code=400, detail=InvalidRead.code)
@@ -172,7 +210,8 @@ def _read_query(
     return where, paging
 
 
-def _limit(paging: dict[str, str]) -> int:
+def read_limit(paging: dict[str, str]) -> int:
+    """The page size ``paging`` asks for, or a 400 ``invalid_filter``."""
     text = paging.get("limit")
     if text is None:
         return DEFAULT_LIMIT
@@ -181,7 +220,8 @@ def _limit(paging: dict[str, str]) -> int:
     return int(text)
 
 
-async def _read(page: Any) -> Page:
+async def read_page(page: Any) -> Page:
+    """The page ``page`` reads, or a 400 ``invalid_filter`` for a cursor it refuses."""
     try:
         result: Page = await page
     except InvalidRead:
@@ -220,35 +260,6 @@ def _artefacts(value: Any) -> list[tuple[bytes, str]]:
             raise HTTPException(status_code=400, detail="request_invalid") from None
         artefacts.append((signing, item["signature"]))
     return artefacts
-
-
-async def _verify(
-    reads: ReaderReads,
-    reader: Reader,
-    chain_epoch: int | None,
-    *,
-    receipts: list[tuple[bytes, str]],
-    checkpoints: list[tuple[bytes, str]],
-) -> dict[str, Any]:
-    if chain_epoch is None:
-        chain_epoch = await reads.db.fetch_value(
-            "SELECT chain_epoch FROM {{tables.chain_heads}} WHERE team_id = $1", reader.team_id
-        )
-        if chain_epoch is None:
-            raise HTTPException(status_code=404, detail="no_chain")
-    try:
-        report = await verify_epoch(
-            reads.db,
-            reader.team_id,
-            chain_epoch,
-            receipt_keys=reads.chain_keys,
-            checkpoint_keys=reads.chain_keys,
-            receipts=receipts,
-            checkpoints=checkpoints,
-        )
-    except LookupError:
-        raise HTTPException(status_code=404, detail="no_chain") from None
-    return {"chain_epoch": chain_epoch, **report}
 
 
 def reader_slot_router(

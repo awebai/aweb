@@ -243,7 +243,9 @@ async def designated_reader(deployment: Deployment, contact: str) -> str:
 def enrolment_token(deployment: Deployment, contact: str = CONTACT) -> str:
     [received] = [mail for mail in deployment.smtp.received if mail.rcpt_tos == [contact]]
     message = email.message_from_bytes(received.content, policy=email.policy.default)
-    [url] = Links(message.get_body(("html",)).get_content()).urls
+    body = message.get_body(("html",))
+    assert body is not None
+    [url] = Links(body.get_content()).urls
     parts = urlsplit(url)
     assert parts._replace(fragment="").geturl() == CONSOLE + "/enrolment"
     [token] = parse_qs(parts.fragment)["token"]
@@ -290,6 +292,10 @@ async def test_a_designated_reader_enrols_from_its_mail_logs_in_and_reads(
     scoped = [attrs for tag, attrs in Elements(home.text).tags if "data-console-scope" in attrs]
     assert [attrs["data-console-scope"] for attrs in scoped] == [scope]
 
+    assert {"/events", "/follow", "/integrity"} <= set(Links(home.text).urls)
+    for page in ("/events", "/follow", "/integrity"):
+        viewed = await deployment.console.get(page)
+        assert viewed.status_code == 200, page
     events = await deployment.console.get("/v1/events")
     verified = await deployment.console.get("/v1/verify")
     assert events.status_code == 200, events.text
@@ -322,13 +328,16 @@ async def test_the_console_origin_serves_logs_pages_and_the_shell_assets_only_th
         assert response.status_code == 200, path
         body = Elements(response.text).first("body")
         assert body["data-console-csrf-key"] == "aweb.logs.console.csrf", path
-    anonymous = await deployment.console.get("/")
-    assert (anonymous.status_code, anonymous.headers["location"]) == (303, "/login")
+    for path in ("/", "/events", "/follow", "/integrity"):
+        anonymous = await deployment.console.get(path)
+        assert (anonymous.status_code, anonymous.headers["location"]) == (303, "/login"), path
+        assert (await deployment.agent.get(path)).status_code == 404, path
     for path in (
         "/console-ui/console.js",
         "/console-ui/style.css",
         "/console-bootstrap/bootstrap.js",
         "/console-bootstrap/style.css",
+        "/logs-viewer/follow.js",
         f"/css/aweb.{CSS_SHA256[:12]}.css",
     ):
         assert (await deployment.console.get(path)).status_code == 200, path

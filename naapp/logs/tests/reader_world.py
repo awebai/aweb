@@ -115,6 +115,7 @@ class World:
     inbox: Inbox
     registered: list[bool]
     grant: Grant
+    fence: InstallationFence
     designations: ReaderDesignations = field(init=False)
     removals: ReaderRemovals = field(init=False)
     recorder: CredentialAudit = field(init=False)
@@ -159,7 +160,7 @@ async def world_fixture(test_db_factory) -> AsyncIterator[World]:
 
     async with running_registry(registry_db.config.get_dsn()) as registry:
         owner = await team_owner(registry, team_id=TEAM_ID)
-        state = World(db, owner, signer, directory, Inbox(), registered, installations.grant)
+        state = World(db, owner, signer, directory, Inbox(), registered, installations.grant, fence)
         append_own = directory.appender(signer)
 
         async def append(tx, event_id) -> None:
@@ -264,7 +265,9 @@ async def designated_reader(world: World, contact: str = CONTACT) -> tuple[str, 
     await world.designations.designate(
         signing=signing, signature=signature, scope=scope, contact=contact
     )
-    return scope, await holder(world, scope)
+    current = await holder(world, scope)
+    assert current is not None
+    return scope, current
 
 
 async def enrolled_reader(world: World, contact: str = CONTACT) -> tuple[str, str]:
@@ -280,7 +283,9 @@ async def enrolled_reader(world: World, contact: str = CONTACT) -> tuple[str, st
             fence=enrolment,
         )
     world.devices[scope] = device
-    return scope, await holder(world, scope)
+    current = await holder(world, scope)
+    assert current is not None
+    return scope, current
 
 
 async def holder(world: World, scope: str) -> str | None:
