@@ -17,7 +17,15 @@ It takes none from a response.
 - **The ephemeral key:** an Ed25519 key that `aw` generates per handoff and
   holds only in memory. It is named by its `did:key`.
 - **Signatures:** Ed25519 over the signed payload's exact bytes, in standard
-  base64 with no padding, as team-auth's `Authorization: DIDKey` carries them.
+  base64 with no padding.
+- **Signed requests carry console headers:** `X-Console-Key`,
+  `X-Console-Signature`, `X-Console-Timestamp` and `X-Console-Signed-Payload`.
+  - The human origin's `split_origins` boundary refuses every `Authorization`,
+    `X-AWEB-*` and `X-AWID-*` header before the app
+    (`naapp-lib/src/aweb_naapp/runtime/origins.py`). So these requests carry
+    none of them, and team-auth admission never sees them.
+  - They reuse team-auth's signature, raw-target and canonical-JSON
+    primitives, and nothing else of it.
 - **`verifier`:** 32 random bytes in base64url with no padding (43
   characters). `verifier_sha256` is the lowercase hex SHA-256 of the
   verifier's ASCII text.
@@ -123,12 +131,13 @@ None of this adds a field to `aw`'s requests.
 The body is `{"v": 1, "code": "<code>", "verifier": "<verifier>"}`. With
 `user_code`, `code` is absent.
 
-The ephemeral key signs it, in team-auth's header form:
+The ephemeral key signs it:
 
 ```
-Authorization: DIDKey <client_key> <signature>
-X-AWEB-Timestamp: <timestamp>
-X-AWEB-Signed-Payload: <base64url canonical JSON>
+X-Console-Key: <client_key>
+X-Console-Signature: <signature>
+X-Console-Timestamp: <timestamp>
+X-Console-Signed-Payload: <base64url canonical JSON, no padding>
 ```
 
 The signed payload is the canonical JSON of
@@ -174,9 +183,10 @@ transaction.
 Every console request in a `session` handoff carries:
 
 ```
-Authorization: DIDKey <client_key> <signature>
-X-AWEB-Timestamp: <timestamp>
-X-AWEB-Signed-Payload: <base64url canonical JSON>
+X-Console-Key: <client_key>
+X-Console-Signature: <signature>
+X-Console-Timestamp: <timestamp>
+X-Console-Signed-Payload: <base64url canonical JSON, no padding>
 X-CSRF-Token: <csrf_token>                       (on every non-GET)
 ```
 
@@ -189,7 +199,7 @@ Its field set is exactly `v: 2`, `auth: "handoff-session"`, `aud`, `method`,
 - `aud` is exactly the app's configured `O`;
 - `path` is the actual raw request target, including the query;
 - `body_sha256` is the lowercase hex hash of the actual decoded body;
-- `timestamp` equals `X-AWEB-Timestamp`.
+- `timestamp` equals `X-Console-Timestamp`.
 
 A result payload's field set is exactly the one in section 3. Neither carries
 `team_id`, and a field outside its set is refused.
