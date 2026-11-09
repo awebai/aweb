@@ -8,6 +8,7 @@ credential, real or realistic, is written in the repository.
 from __future__ import annotations
 
 import json
+import secrets
 
 import pytest
 
@@ -26,6 +27,15 @@ def test_app_shape_helpers_are_the_standalone_shared_objects() -> None:
         "is_credential_shaped_value",
     ):
         assert getattr(app, name) is getattr(shared, name)
+
+
+@pytest.mark.parametrize(
+    "key", ["root_password", "rootPassword", "ROOT-PASSWORD", "admin_password", "initial_password"]
+)
+def test_provider_generated_password_fields_are_credentials(key: str) -> None:
+    value = secrets.token_urlsafe(24)
+    detected = has_credential_shape(json.dumps({"server": {key: value}}).encode())
+    assert detected, "provider password field was not detected"
 
 
 def _filler(n: int, alphabet: str = "Ab3dEf7hJk") -> str:
