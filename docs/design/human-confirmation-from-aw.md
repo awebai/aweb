@@ -303,6 +303,11 @@ endorsing an identity installs no app and needs no secrets or logs.
   that record, never from a caller, a response or a redirect. A changed origin
   hostname orphans the bound passkeys (a new rp_id); rebinding is
   `human-credential.replace`, and there is no migration path.
+  When the team server's origin changes, its existing endorsement rows stay
+  valid, because their retained assertions verify under their recorded rp_id;
+  new confirmations need a credential rebound with `human-credential.replace`. A
+  move to a different team server carries no rows, and endorsements there are
+  made afresh.
 - **The endorser role.** The server is a first-party human-role host with one
   fixed declaration, shipped with the server and known to `aw`: `app_id`
   `team-server`, role `endorser`, label "Deployment endorser", acts
@@ -375,16 +380,19 @@ client runs the handoff and signs the act in one sitting, as
    B3 verifies it and retains its proof (`aweb.passkey-evidence/1`); B2
    records the decision.
 4. **Consuming it.** `aw` reads the endorsement in its session until it is
-   approved, then calls `POST /endorsements/{id}/consume`. In one transaction
-   the server checks that the approval is approved, unexpired and not yet
-   consumed, re-reads the holding under its lock, and records the consumption
-   with the holding it was made under. The answer is the covered request and
+   approved, then calls `POST /endorsements/{id}/consume`. In one
+   transaction the server takes the holding's lock and re-reads the holding;
+   then it reads the clock and checks that the approval is approved,
+   unexpired and not yet consumed, and that its assertion was made by the
+   current holding's credential; then it records the consumption with that
+   holding. A consume that waited on a concurrent `human-credential.replace`
+   refuses; it never records the new holding. The answer is the covered request and
    `approval_evidence_sha256`.
 5. **Signing.** `aw` signs D's certificate with H's key only if the consumed
    covered request's `csr_sha256` equals the request it is about to sign. The
    issuance log records the endorsement id.
 6. **Linking.** `aw` posts the issued certificate to
-   `POST /endorsements/{id}/certificate`. The server accepts it only if H's
+   `POST /endorsements/{id}/certificate`, in H's endorser session. The server accepts it only if H's
    current key signed it, and its `id`, `domain`, `parent` and `kind` equal
    the request's. It records `certificate_sha256`, over the certificate's
    signed bytes, once. The same certificate again returns the same record;
@@ -410,8 +418,20 @@ freshness deployment endorsement (c) bounds.
 ### What admission verifies
 
 Admission that requires protected endorsement checks D's registered
-certificate against a row whose `certificate_sha256` matches it, the row not
-withdrawn, and the current H-rooted ancestry (deployment endorsement (c), (d)). A direct
+certificate against a row whose `certificate_sha256` matches it, D's current
+registered key against the row's `subject_key`, the row not withdrawn, and
+the current H-rooted ancestry (deployment endorsement (c), (d)). The key
+check costs nothing extra: the ancestry check already resolves D's current
+key.
+
+**Continuity.** A protected endorsement covers one D, one key and one
+certificate revision. When D's key rotates, D is re-endorsed. When D is
+re-parented or gets a new certificate revision, D is re-endorsed, because no
+row matches the new certificate. `resign` does not apply: it is for `did:key`
+children, and the covered request names a registered D. An unrelated refresh
+of D's ancestry evidence, with the same D, key and certificate, changes
+nothing.
+ A direct
 naapp verifies the original artifacts, not the row's word:
 
 - the controller's `human-role.designate` act for the holding, under the team
@@ -476,6 +496,10 @@ Each is a vector row, for the server and for a direct naapp:
 | An endorsement made before a `human-credential.replace` | still verifies |
 | A confirmation consumed after the replace, using the old credential | refused |
 | A withdrawn endorsement | admission denies; history kept |
+| D's key rotated after the endorsement | admission refuses; D is re-endorsed |
+| D re-parented after the endorsement | admission refuses; no row matches |
+| The same D and key after an unrelated refresh of ancestry evidence | admits |
+| The team server's origin changed after the endorsement | the row still verifies; a new confirmation needs the replaced credential |
 | An owner act naming any other app or installation at the server | `owner_required` |
 | The server's handoff in the typed-code fallback | refused |
 
