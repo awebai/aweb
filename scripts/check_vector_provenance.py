@@ -498,6 +498,10 @@ ROOT_CONSUMERS = {
         "logs-chain-v1.json",
         'AWEB_ROOT / "docs" / "vectors" / "logs-chain-v1.json"',
     ),
+    PurePosixPath("naapp/logs/tests/export_vector.py"): _consumer(
+        "logs-export-v1.json",
+        'AWEB_ROOT / "docs" / "vectors" / "logs-export-v1.json"',
+    ),
     PurePosixPath("naapp-lib/tests/hooks/test_owner_act_vector.py"): _consumer(
         "owner-act-v1.json",
         '(AWEB_ROOT / "docs" / "vectors" / "owner-act-v1.json")',

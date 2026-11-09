@@ -1,4 +1,4 @@
-"""Exported team logs for the tests and for ``docs/vectors/logs-export-v1.json``:
+"""Exported team logs for the tests and for the logs export vector:
 real signed envelopes, receipts and checkpoints, laid out as the bundle places
 them, and the damage an exporter or anyone between it and the holder can do."""
 
