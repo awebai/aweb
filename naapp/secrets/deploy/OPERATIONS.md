@@ -38,7 +38,7 @@ An operator able to run code as Secrets can access plaintext during authorized
 processing. In local-key mode, reading the key and stored ciphertext permits
 full decryption outside application policy. KMS adds provider policy and an
 independent audit trail; it does not make service operators unable to read
-values. Describe those boundaries honestly when offering support.
+values. State those boundaries plainly when offering support.
 
 ## Health and delivery diagnosis
 
@@ -54,7 +54,7 @@ or bypass Host routing to make a check pass.
 | Logs `/live` | Liveness only. | Pending |
 | Logs `/ready` | Database and outbox query must answer. An old outbox does not itself make the current Logs readiness check fail. Inspect its age separately. | Pending |
 | Logs `/health` | Always HTTP 200 with check detail; results are cached. A 200 alone is not a healthy dependency verdict. | Pending |
-| Logs checkpoint failure | The periodic checkpoint loop logs its failure; it is not currently a readiness check. Escalate a sanitized failure/status and last successful checkpoint metadata. | Operational gap: no dedicated checkpoint diagnostic surface |
+| Logs checkpoint failure | The periodic checkpoint loop logs its failure; it is not currently a readiness check. Escalate a sanitized failure/status and last successful checkpoint metadata. Chain verification is available today only through a designated reader's console-session `/v1/verify`; there is no operator-side verification tool. | Operational gap: no dedicated checkpoint diagnostic or operator verification surface |
 
 Native backend evidence is always split into `local_key_file` and `kms`.
 Correct mode reporting while a backend refuses is useful failure evidence,
@@ -68,10 +68,10 @@ manifest or manufacture a receipt to clear a backlog.
 
 | Logs ingest status | Public codes / meaning | Operator disposition to exercise |
 | --- | --- | --- |
-| 401 | `transport_certificate_invalid`, `transport_invalid_value` | Check the actual sender identity/certificate contract; do not bypass verification. |
+| 401 | `transport_certificate_invalid`, `transport_invalid_value`, `transport_<code>` (for example `transport_wrong_scheme`), `provenance_client_certificate` | Check the actual sender identity/certificate contract and whether the producer certificate is active; do not bypass verification. |
 | 403 | `binding_required`, `provenance_app_production`, `provenance_core_key` | Check installation, activated binding and provenance; this is not a transient successful delivery. |
 | 409 | `event_conflict` | Preserve both event identity and existing receiver evidence; escalate the conflict. |
-| 422 | `occurred_after_receipt`, `unknown_catalog` | Check version/catalog/time compatibility using metadata only. |
+| 422 | `occurred_after_receipt`, `unknown_catalog`, `schema_<code>` | Check envelope schema, version/catalog/time compatibility using metadata only. |
 | 429 | `client_quota_exceeded` | Respect configured event/byte quotas and producer retry behavior. |
 | 503 | `binding_authority_unavailable`, `chain_origin_mismatch`, `client_authority_changed`, `client_authority_unavailable`, `provenance_authority_unavailable` | Inspect authority, registry and configuration availability; producers retry these refusals. |
 | 413 | Delivery exceeds the supported size | Pending the reviewed size-bound change; such delivery is unacceptable to the producer, not an ordinary retryable outage. |
@@ -85,10 +85,12 @@ receiver metadata.
 **Gap: restore is not supported by this draft.** Secrets design §15 item 5
 requires a destroyed-version tombstone list outside restorable content,
 reapplied before a restored database serves, and a bounded backup-expiry
-policy. The Logs owner identifies the external tombstone/restore foundation
-as dependent on `aweb-acgg.13`. There is no exercised combined restore command
-or procedure. A database restore without those controls must not be opened to
-customer traffic.
+policy. Logs must reapply its purge tombstones before a restored database serves
+(L5 acceptance in the [audit build plan](../../../docs/design/audit-substrate-build-plan.md),
+following the closed `aweb-acgg.13` backup-tombstone rule); this is not implemented.
+That Logs gap does not establish the Secrets tombstone implementation status.
+There is no exercised combined restore command or procedure. A database restore
+without the required controls must not be opened to customer traffic.
 
 Before a supported procedure can be approved, the operator must establish:
 
@@ -105,7 +107,9 @@ Before a supported procedure can be approved, the operator must establish:
    the customer's enforceable expiry policy.
 4. Logs chain/epoch verification against receipts and checkpoints retained by
    readers or independent witnesses. An older backup can regress or fork from
-   those witnesses. Never re-sign old history to conceal a restore mismatch.
+   those witnesses. Today verification is only through a designated reader's
+   console-session GET/POST `/v1/verify`; operator-side verification tooling is
+   a gap. Never re-sign old history to conceal a restore mismatch.
 
 The qualification must prove a successful authorized recovery and refusal of
 resurrected destroyed data, not merely that PostgreSQL accepts a dump.
@@ -182,19 +186,22 @@ is required before sending an export to support or any outside recipient.
 This matrix records requirements, not passes. Every pending row needs an exact
 landed SHA, packaged artifact digest/checksum and platform, selected backend,
 actual procedure/command, expected and observed outcomes, refusal/fault control,
-and cleanup result. Keep separate KMS and local-key records even where a row's
-logic is common. A missing backend run stays unqualified.
+and cleanup result. Keep separate KMS and local-key records for Secrets rows.
+A missing Secrets backend run stays unqualified. Logs-only rows have no custody
+backend: their receipt/checkpoint and other app keys are mounted through
+`LOGS_APP_KEY_FILES`. Their single qualification state is stated in the path.
 
 | Path | Local key-file | KMS | Required positive and failure evidence |
 | --- | --- | --- | --- |
 | Packaged startup, health and delivery | Pending | Pending | Correct build/mode/readiness; actual Logs delivery; selected-provider failure and stalled target |
 | Backup/restore | Gap | Gap | Supported backup set, pre-serve tombstones, expiry bound, old data readable where authorized, destroyed data refused, Logs witnesses intact |
 | Native custody rotation | Gap | Gap | Prior data and fresh writes after rotation/restart; wrong/unavailable key refuses; backup policy retained |
-| Logs signing-key rotation | Gap | Gap | Historical receipts/checkpoints verify; new signatures verify; wrong key/reforged history refuses |
+| Logs signing-key rotation — gap | Not applicable: Logs has no custody backend | Not applicable: Logs has no custody backend | Historical receipts/checkpoints verify; new signatures verify; wrong key/reforged history refuses |
 | Upgrade/migration | Pending | Pending | Prior-release state survives supported upgrade; authority/chain intact; incompatible schema/version refuses |
 | Revoke/contain/credential replacement | Pending | Pending | Revoked principal refused; authorized neighbor succeeds; actual upstream/reference behavior and audit correlation |
-| Reader designation and revocation | Pending | Pending | Delivered enrolment/login, scoped read, existing session loses revoked authority, outsider/agent refused |
-| Customer audit export | Gap | Gap | Actual export endpoint/command, byte verification/order, tamper refusal and approved sharing |
+| Logs reader designation and revocation — pending | Not applicable: Logs has no custody backend | Not applicable: Logs has no custody backend | Delivered enrolment/login, scoped read, existing session loses revoked authority on its next request, outsider/agent refused |
+| Logs customer audit export — gap | Not applicable: Logs has no custody backend | Not applicable: Logs has no custody backend | Actual export endpoint/command, byte verification/order, tamper refusal and approved sharing |
+| Operator chain verification — gap | Not applicable: Logs has no custody backend | Not applicable: Logs has no custody backend | Operator-side verification tool required; today's reader-session routes do not supply one |
 | Sanitized support diagnosis | Pending | Pending | Needed failure diagnosed from codes/metadata; sensitive I/O/state excluded; unauthorized read refused |
 | Runner restart and dispatch recovery | Pending | Pending | Same journal and actual pending result acknowledgment; real separate UID, signal/grace cleanup and pinned job success |
 
