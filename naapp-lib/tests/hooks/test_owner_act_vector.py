@@ -50,12 +50,13 @@ def test_negative_case_is_refused_with_its_code(case) -> None:
 
 
 def test_vocabularies_match_the_vector() -> None:
-    from aweb_naapp.hooks.owner_act import APP_ACTS, CORE_ACTS, LOGS_ACTS
+    from aweb_naapp.hooks.owner_act import APP_ACTS, CORE_ACTS, HUMAN_ROLE_ACTS, LOGS_ACTS
 
     vocabularies = VECTOR["scheme"]["vocabularies"]
-    assert (list(CORE_ACTS), list(APP_ACTS), list(LOGS_ACTS)) == (
+    assert (list(CORE_ACTS), list(APP_ACTS), list(HUMAN_ROLE_ACTS), list(LOGS_ACTS)) == (
         vocabularies["core"],
         vocabularies["app"],
+        vocabularies["human_role"],
         vocabularies["logs"],
     )
 
@@ -116,6 +117,7 @@ def test_only_the_verified_type_the_signing_bytes_and_constants_are_public() -> 
     assert set(owner_act.__all__) == {
         "APP_ACTS",
         "CORE_ACTS",
+        "HUMAN_ROLE_ACTS",
         "LOGS_ACTS",
         "PREFIX",
         "Refused",

@@ -29,6 +29,10 @@ var (
 	CoreOwnerActs = []string{"hook-binding.activate", "hook-binding.revoke"}
 	// AppOwnerActs are the generic governance acts every naapp accepts.
 	AppOwnerActs = []string{"app-role.designate", "app-role.revoke", "app-credential.recover"}
+	// HumanRoleOwnerActs bind an owner-designated role to a team's human
+	// member and that member's credential. An app accepts them once it serves
+	// them on the owner-act delivery route.
+	HumanRoleOwnerActs = []string{"human-credential.replace", "human-role.designate", "human-role.revoke"}
 	// LogsOwnerActs are the acts logs accepts in addition to AppOwnerActs.
 	LogsOwnerActs = []string{"logs.retention.set", "logs.erase", "logs.legal-hold.set", "logs.legal-hold.release"}
 )
@@ -38,6 +42,7 @@ var (
 	ownerTeamID      = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}:[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$`)
 	ownerOrigin      = regexp.MustCompile(`^https://[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?(:[0-9]{1,5})?$`)
 	ownerDIDKey      = regexp.MustCompile(`^did:key:z[1-9A-HJ-NP-Za-km-z]{40,60}$`)
+	ownerDIDAW       = regexp.MustCompile(`^did:aw:[1-9A-HJ-NP-Za-km-z]{20,32}$`)
 	ownerNonce       = regexp.MustCompile(`^[0-9a-f]{32}$`)
 	ownerTime        = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$`)
 	ownerAppID       = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
@@ -128,6 +133,27 @@ func revocationSubject() ownerSubject {
 	}
 }
 
+// humanHoldingSubject binds a member principal to a role and to the
+// credential it uses, by the credential's hash; a role that declares a notice
+// contact also names that contact's hash.
+func humanHoldingSubject() ownerSubject {
+	return ownerSubject{
+		fields: appFields(map[string]ownerField{
+			"role": ownerString(ownerToken), "principal": ownerString(ownerDIDAW),
+			"credential_sha256": ownerString(ownerSHA256), "notice_contact_sha256": ownerString(ownerSHA256),
+		}),
+		required: []string{"app_id", "installation_id", "role", "principal", "credential_sha256"},
+	}
+}
+
+// humanRevocationSubject names the holding of a role by a member principal.
+func humanRevocationSubject() ownerSubject {
+	return ownerSubject{
+		fields:   appFields(map[string]ownerField{"role": ownerString(ownerToken), "principal": ownerString(ownerDIDAW)}),
+		required: []string{"app_id", "installation_id", "role", "principal"},
+	}
+}
+
 func appFields(extra map[string]ownerField) map[string]ownerField {
 	fields := map[string]ownerField{"app_id": ownerString(ownerAppID), "installation_id": ownerString(ownerUUID)}
 	for name, field := range extra {
@@ -137,11 +163,14 @@ func appFields(extra map[string]ownerField) map[string]ownerField {
 }
 
 var ownerSubjects = map[string]ownerSubject{
-	"hook-binding.activate":  bindingSubject(),
-	"hook-binding.revoke":    bindingSubject(),
-	"app-role.designate":     enrolmentSubject(),
-	"app-role.revoke":        revocationSubject(),
-	"app-credential.recover": enrolmentSubject(),
+	"hook-binding.activate":    bindingSubject(),
+	"hook-binding.revoke":      bindingSubject(),
+	"app-role.designate":       enrolmentSubject(),
+	"app-role.revoke":          revocationSubject(),
+	"app-credential.recover":   enrolmentSubject(),
+	"human-role.designate":     humanHoldingSubject(),
+	"human-credential.replace": humanHoldingSubject(),
+	"human-role.revoke":        humanRevocationSubject(),
 	"logs.retention.set": {
 		fields: appFields(map[string]ownerField{
 			"event_class": ownerString(ownerEventClass), "retention": ownerEnum("keep", "days"),

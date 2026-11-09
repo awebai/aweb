@@ -106,7 +106,7 @@ key or a link. Removing prepare also removes:
 - the pending rows and their lifetimes;
 - `secrets:owner-act` and the per-member prepare limit;
 - the client's `prepare_mismatch` checks;
-- the section [Why a member gains nothing from prepare](../owner-act-delivery.md#why-a-member-gains-nothing-from-prepare).
+- the delivery contract's section on why a member gains nothing from prepare.
 
 A member takes no part in designation.
 
