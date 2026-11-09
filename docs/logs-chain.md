@@ -85,9 +85,9 @@ The link fields are the event's **skeleton**. Retention and erasure purge the
 content (signing bytes, signature and salt) and every projection, index and
 cache derived from it. They keep the skeleton, so the chain still verifies
 across a purged event. Deleting the salt makes the commitment unlinkable to
-guessed content. **Open (aweb-acgh.16.23):** the retention and erasure acts
-that purge content; the chain schema records a purge act and `verify` handles
-a purged event.
+guessed content. The owner's retention and erasure acts
+([owner acts](owner-act.md)) purge content; the chain schema records the purge act,
+and `verify` handles a purged event.
 
 ## Signed artefacts
 
@@ -132,8 +132,9 @@ of an empty epoch has `team_seq` 0 and the epoch's `genesis_hash`.
 `previous_checkpoint_sha256` is the SHA-256 of the signing bytes of the
 epoch's previous checkpoint; the first checkpoint of an epoch has none. Logs
 issues checkpoints periodically while events arrive
-(`naapp/logs/src/aweb_logs/app.py`, `run_checkpoints`). **Open (aweb-acgh.16.22,
-aweb-acgh.16.23):** checkpoints on demand and the owner's export of them.
+(`naapp/logs/src/aweb_logs/app.py`, `run_checkpoints`), and an export carries
+them. **Open (aweb-acgh.16.22, aweb-acgh.16.23):** checkpoints on demand and
+the route that serves an export.
 
 The receipt and checkpoint prefixes are unique to logs, so neither verifies as
 any other signed aweb object, and no other object verifies as either.
@@ -227,9 +228,10 @@ which explains a gap left by a revoked binding.
 
 ## Exporting a team's log: `aweb.logs-export/1`
 
-**Open (aweb-acgh.16.23):** logs' export endpoint. This section specifies what
-it produces and how a holder verifies it, with no server. Its vector is
-`docs/vectors/logs-export-v1.json`.
+Logs writes an export with `export_bundle`
+(`naapp/logs/src/aweb_logs/export.py`). **Open (aweb-acgh.16.23):** the route
+that serves it. This section specifies what an export holds and how a holder
+verifies it, with no server. Its vector is `docs/vectors/logs-export-v1.json`.
 
 An export holds one team's whole log: every epoch from 1, each with its
 genesis, its stored events (skeleton, retained content or purge act, and key
