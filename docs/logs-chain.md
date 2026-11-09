@@ -85,9 +85,9 @@ The link fields are the event's **skeleton**. Retention and erasure purge the
 content (signing bytes, signature and salt) and every projection, index and
 cache derived from it. They keep the skeleton, so the chain still verifies
 across a purged event. Deleting the salt makes the commitment unlinkable to
-guessed content. **Open (aweb-acgh.16.23):** the retention and erasure acts
-that purge content; the chain schema records a purge act and `verify` handles
-a purged event.
+guessed content. The owner's retention and erasure acts
+([owner acts](owner-act.md)) purge content; the chain schema records the purge act,
+and `verify` handles a purged event.
 
 ## Signed artefacts
 
@@ -132,8 +132,9 @@ of an empty epoch has `team_seq` 0 and the epoch's `genesis_hash`.
 `previous_checkpoint_sha256` is the SHA-256 of the signing bytes of the
 epoch's previous checkpoint; the first checkpoint of an epoch has none. Logs
 issues checkpoints periodically while events arrive
-(`naapp/logs/src/aweb_logs/app.py`, `run_checkpoints`). **Open (aweb-acgh.16.22,
-aweb-acgh.16.23):** checkpoints on demand and the owner's export of them.
+(`naapp/logs/src/aweb_logs/app.py`, `run_checkpoints`), and an export carries
+them. **Open (aweb-acgh.16.22, aweb-acgh.16.23):** checkpoints on demand and
+the route that serves an export.
 
 The receipt and checkpoint prefixes are unique to logs, so neither verifies as
 any other signed aweb object, and no other object verifies as either.
@@ -224,3 +225,137 @@ integers alone do not prove that every integer was owed to this interval, or
 establish a loss cause. Ordinary admission is active-only. **After the first
 release (aweb-acgh.16.30, aweb-acgh.16.32):** terminal cancellation coverage,
 which explains a gap left by a revoked binding.
+
+## Exporting a team's log: `aweb.logs-export/1`
+
+Logs writes an export with `export_bundle`
+(`naapp/logs/src/aweb_logs/export.py`). **Open (aweb-acgh.16.23):** the route
+that serves it. This section specifies what an export holds and how a holder
+verifies it, with no server. Its vector is `docs/vectors/logs-export-v1.json`.
+
+An export holds one team's whole log: every epoch from 1, each with its
+genesis, its stored events (skeleton, retained content or purge act, and key
+evidence), and the receipts and checkpoints logs holds for it. The export is
+not signed. It proves what it proves through the hashes and the logs-signed
+artefacts inside it, under keys the verifier supplies.
+
+### The bundle
+
+A bundle is JSON Lines: each line is one object in the strict canonical JSON of
+the encoding rules, followed by one newline. Byte strings are unpadded
+base64url; signatures and digests are spelled as above.
+
+The first line is the header:
+
+    {"v": 1, "type": "aweb.logs-export", "team_id"}
+
+Then, for each epoch in increasing `chain_epoch` order:
+
+- `{"genesis": genesis}`: the epoch's genesis object, exactly as hashed;
+- `{"checkpoint": artefact}` for each checkpoint of the epoch at `team_seq` 0;
+- for each stored event, in increasing `team_seq` order:
+  - `{"event": event}`;
+  - `{"receipt": artefact}` with the receipt logs holds for it, if any;
+  - `{"checkpoint": artefact}` for each checkpoint whose `team_seq` is the
+    event's.
+
+An `artefact` is `{"signing_bytes", "signature"}`: the artefact's signing bytes
+and its signature. An `event` is:
+
+- `link`: the event's link object, exactly as hashed;
+- `event_hash`;
+- `content`, while it is retained: `{"salt", "signing_bytes", "signature"}`,
+  the producer envelope's signing bytes and signature;
+- `purge_act`, once the content is purged: the act's opaque reference;
+- `key_evidence`: the producer key logs verified the envelope against
+  (audit-substrate §B2): `kid`, `did_key` and `purposes`, and
+  `installation_id`, `generation` and `binding_ids` when logs recorded them.
+  An unrecorded field is absent.
+
+This placement is normative. It puts every artefact right after the event it
+witnesses, so a verifier checks each epoch in one pass with state that does
+not grow with the epoch.
+
+No line, its newline excluded, is longer than **1 MiB (1,048,576 bytes)**. An
+event line carries at most one hook envelope, whose signing bytes are bounded
+at 256 KiB ([hook events, "Event envelope"](hook-events.md#event-envelope)),
+base64url-encoded beside its link and key evidence, so every line an exporter
+writes fits with room to spare. A verifier reads at most that many bytes for a
+line and refuses a longer one as malformed at its number, before it holds the
+line whole.
+
+A bundle is **malformed**, and is refused with the number of its first bad
+line, when a line is longer than that bound, when a line is not a strict
+canonical JSON object, when the header is not the first line or is invalid,
+when a record is not one of those above, when a record of an epoch precedes its
+genesis, or when an epoch's `chain_epoch` is not greater than the previous
+one's. Everything else is verified and reported.
+
+### Verifying a bundle
+
+A verifier takes the bundle, the receipt keys and checkpoint keys it accepts
+(from the logs manifest, or pinned by the owner), and optionally
+**witnesses**: receipts and checkpoints it holds independently of the
+exporter. It verifies each epoch as `verify` does above, with these
+differences, which follow from the placement:
+
+- an event whose `team_seq` is not greater than the previous event's breaks
+  the epoch: `sequence_duplicate` when it equals it, `misplaced` when it is
+  lower;
+- an artefact of the bundle is checked against the event it follows, or the
+  genesis for `team_seq` 0. After `signature_invalid` and `wrong_chain`, one
+  whose `team_seq` is not that position's is contradicted as `misplaced`;
+- the `index` of a contradicted artefact counts that kind of artefact in the
+  epoch, from 0, in bundle order;
+- an event's `content` is checked against its `key_evidence.did_key`.
+
+An epoch is **unlinked** when it is the first in the bundle and its
+`chain_epoch` is not 1, when its `chain_epoch` is not the previous epoch's
+plus one, when its genesis `team_id` is not the header's, or when its genesis
+`previous_checkpoint_sha256` is not the SHA-256 of the signing bytes of a
+checkpoint of the previous epoch that verifies, is not contradicted, and
+witnesses that epoch's last event (`team_seq` 0 for an empty epoch).
+
+Each witness is checked in this order, and reports its first fault:
+`signature_invalid` (as `verify` checks it); `wrong_chain` when its `team_id`
+is not the header's; `epoch_absent` when the bundle holds no epoch with its
+`chain_epoch`; then against that epoch as `verify` checks a given artefact:
+`wrong_chain`, `not_in_chain`, `hash_mismatch` and, for a receipt,
+`event_mismatch`.
+
+The report is:
+
+- `intact`: every epoch is intact and linked, and no witness is contradicted;
+- `accepted_keys`: `{"receipt": [...], "checkpoint": [...]}`, the keys given;
+- `epochs`: for each epoch in bundle order, its `chain_epoch`, the per-epoch
+  report of `verify` (`intact`, `first_break`, `missing`, `purged`,
+  `contradicted`), `linked`, and its **coverage**:
+  - `anchored_to`: the highest `team_seq` witnessed by a checkpoint of the
+    bundle that verifies and is not contradicted; absent when there is none;
+  - `unanchored`: the inclusive `[from, to]` range of the epoch's events
+    after `anchored_to` (from its first event when there is no anchor);
+    absent when there are none. Unanchored events are present and verified;
+    no checkpoint covers them;
+- `last_checkpoint`: `{"chain_epoch", "team_seq", "signing_bytes_sha256"}` of
+  the last checkpoint of the bundle that verifies and is not contradicted;
+  absent when there is none;
+- `witnesses`: `{"contradicted": [...]}`, each `{"artefact", "index",
+  "reason"}`, indexed per kind in the order given.
+
+**What a bundle proves, and what it does not.** A verified bundle proves that
+its events form the chains its checkpoints and receipts witness, up to its
+`last_checkpoint`.
+
+`key_evidence` is logs' record, committed by no hash and no signature. For an
+event whose content is retained, the bundle proves only that
+`key_evidence.did_key` signed that content: the committed signature verifies
+under no other key. It does not prove that this key was the producer's
+declared key, nor any of `kid`, `purposes`, `installation_id`, `generation` or
+`binding_ids`, which an exporter can change undetected. For a purged event it
+proves nothing of `key_evidence`.
+
+A bundle cannot prove that it is complete: an exporter can drop
+the events after the last checkpoint, or whole trailing epochs, and the rest
+still verifies. Only an artefact held independently of the exporter proves the
+tail: give it as a witness, and a receipt or checkpoint past the bundle's end
+is contradicted as `not_in_chain`, or `epoch_absent` for a dropped epoch.
