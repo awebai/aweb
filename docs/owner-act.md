@@ -106,6 +106,7 @@ audience or vocabulary is refused.
 | --- | --- |
 | The coordination server | `hook-binding.activate`, `hook-binding.revoke` |
 | Every naapp | `app-role.designate`, `app-role.revoke`, `app-credential.recover` |
+| A naapp that declares human roles ([owner-act delivery](owner-act-delivery.md)), on its delivery route | `human-role.designate`, `human-role.revoke`, `human-credential.replace` |
 | logs, in addition | `logs.retention.set`, `logs.erase`, `logs.legal-hold.set`, `logs.legal-hold.release` |
 
 Subjects are flat objects. A field marked "when" is required in that case and
@@ -129,10 +130,9 @@ refused otherwise.
   app mints the subject when it enrols the holder. `contact_sha256` is the
   lowercase hex SHA-256 of the UTF-8 contact the enrolment link goes to. The
   act commits to the contact without carrying it, and the app refuses to enrol
-  any other contact under it. The first holder of an owner-designated role,
-  such as a logs reader or a secrets owner, is designated this way and never by
-  install or admin authority; recovery after a lockout uses
-  `app-credential.recover`.
+  any other contact under it. These contact acts stay in the vocabulary, and no
+  role declared in [owner-act delivery](owner-act-delivery.md) uses them: its
+  holders are named by the human-role acts below.
 - **`app-role.revoke`**: `app_id`, `installation_id`, `role` and
   `subject_ref`, the existing holder.
 
@@ -141,8 +141,28 @@ suffix the app chooses, such as `logs.reader.` followed by 32 hex characters
 or `secrets.owner.` followed by 40. It is the B3 scope the holder enrols
 under. The `post-governance-hook` `role` field carries the role, the token's
 name prefix (`logs.reader`, `secrets.owner`), not the token. The app issues
-the token, and the act is delivered to the app's declared human origin
-([owner-act delivery](owner-act-delivery.md)).
+the token.
+- **`human-role.designate` and `human-credential.replace`**: `app_id`,
+  `installation_id`, `role`, `principal`, `credential_sha256` and, for a role
+  that declares a notice contact, `notice_contact_sha256`. Designate makes
+  `principal` the holder of `role` with that credential; replace binds a new
+  credential to the current holder after the cooling-off period.
+  - `role` is the declared role name (`secrets.owner`, `logs.reader`), not a
+    token.
+  - `principal` is the holder's `did:aw`: `did:aw:` and 20 to 32 base58
+    characters. A `did:key` is refused.
+  - `credential_sha256` is the lowercase hex SHA-256 of the credential the act
+    binds, and `notice_contact_sha256` that of the notice contact
+    ([The credential](owner-act-delivery.md#the-credential)).
+- **`human-role.revoke`**: `app_id`, `installation_id`, `role` and
+  `principal`, the current holder.
+
+The human-role acts name a team member who already exists, so the app needs
+no pending row: the verifier's stored row is the subject the app builds from
+its own installation, the declared role, the principal and the hashes of the
+credential and notice contact it was given
+([Delivery](owner-act-delivery.md#delivery)). An app that declares a role with
+the human-role acts accepts no contact act for that role.
 - **`logs.retention.set`**: `app_id`, `installation_id`, `event_class` (`all`
   or one hook) and `retention` (`keep`, or `days` with `retention_days` from 1
   to 36500).

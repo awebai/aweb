@@ -546,17 +546,18 @@ Status: **specified, not shipped**, with
 consumer supports it, and no app publishes it.
 
 Version 3 is version 2 with one more optional member, `owner_acts`: the app's
-human origin and the roles only a team owner act designates. Every other field
-and rule is version 2's, unchanged. Its semantics, the prepare and delivery
-calls, and the role tokens are in [owner-act delivery](owner-act-delivery.md).
+human origin and the roles only a team owner act designates, each held by a
+human member of the team. Every other field and rule is version 2's,
+unchanged. Its semantics and the delivery call are in
+[owner-act delivery](owner-act-delivery.md).
 
 ```json
 "owner_acts": {
   "origin": "https://console.logs.example",
   "roles": [
     {"name": "logs.reader", "label": "Log reader",
-     "acts": ["app-credential.recover", "app-role.designate", "app-role.revoke"],
-     "principal": "refused", "prepare_tool": "owner-act-prepare"}
+     "acts": ["human-credential.replace", "human-role.designate", "human-role.revoke"],
+     "notice_contact": false}
   ]
 }
 ```
@@ -565,16 +566,12 @@ calls, and the role tokens are in [owner-act delivery](owner-act-delivery.md).
   host, an optional port, nothing after it), and its hostname differs from
   `app.origin`'s; a port does not separate them, because cookies ignore ports.
 - `roles` has 1 to 16 entries, unique by `name`. `name` follows the
-  designatable role grammar, begins with a letter and is at most 23 bytes, so
-  that its token fits owner-act/1's; `label` and the optional
+  designatable role grammar, begins with a letter and is at most 64 bytes, so
+  that it fits owner-act/1's `role`; `label` and the optional
   `description` follow the `roles` rules above. `acts` is a nonempty set of
-  `app-role.designate`, `app-role.revoke` and `app-credential.recover`,
-  ascending by code point with no repeat. `principal` is `required` or
-  `refused`.
-- `prepare_tool` names a tool of this manifest with method `POST`,
-  `invocation_contexts` exactly `["agent"]`, `body.mode` `json`, and params
-  exactly `act`, `role`, `contact_sha256`, `principal` and `holder`, each
-  `in: body`.
+  `human-credential.replace`, `human-role.designate` and `human-role.revoke`,
+  ascending by code point with no repeat. `notice_contact` is a boolean,
+  `true` when designate and replace name a notice contact.
 
 Every fault in `owner_acts` is `owner_acts_invalid`, except `owner_acts: null`,
 which is `manifest_invalid` like any null member. An absent `owner_acts`
