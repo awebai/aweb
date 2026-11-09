@@ -1,33 +1,33 @@
-# Customer release procedure: proposed lanes
+# Customer release procedure
 
-This is the `aweb-acwd.6` proposal for review. The Secrets, Logs and runner
-lanes below are **not implemented** in the release scripts yet. Do not invoke
-the proposed tags or treat the packaging proofs as a customer release. The
-existing [OSS release procedure](../../../docs/release.md) remains authoritative.
+The Secrets, Logs and runner lanes use the existing release scripts. They may
+publish a customer release only after their source has landed and passed the
+ordinary candidate gate and full Secrets gate. Packaging proofs or recognition
+of a tag alone do not establish that qualification. The
+[OSS release procedure](../../../docs/release.md) remains authoritative.
 
 ## Artifacts and versions
 
-Extend the existing tag parser, candidate creator and publisher; do not create
-a separate publisher or release ledger.
+Use the existing tag parser, candidate creator, publisher and qualification
+ledger. There is no separate customer publisher.
 
-| Proposed immutable tag | Version input | Published artifact |
+| Immutable tag | Version input | Published artifact |
 | --- | --- | --- |
 | `secrets-vX.Y.Z` | `naapp/secrets/pyproject.toml` | `ghcr.io/awebai/secrets:X.Y.Z`, with the OCI index and platform digests recorded |
 | `logs-vX.Y.Z` | `naapp/logs/pyproject.toml`, supplied by Logs | `ghcr.io/awebai/logs:X.Y.Z`, with the OCI index and platform digests recorded |
 | `aweb-secrets-runner-vX.Y.Z` | `naapp/secrets/runner/pyproject.toml` and `naapp/secrets/values/pyproject.toml`, lockstep | PyPI wheels and source distributions for `aweb-secrets-values`, then `aweb-secrets-runner`, with SHA-256 checksums |
 
-The runner proposal uses Python distributions rather than a new platform
-archive publisher. The values package is a runtime dependency that is not
-covered by today's PyPI lanes. Publish it first at the same version; the runner
-must require that exact values version. Use reviewed published dependency floors
+The runner uses Python distributions rather than a platform archive publisher.
+The values package is its lockstep runtime dependency. Publish it first at the
+same version; the runner must require that exact values version. Use reviewed published dependency floors
 for the shared toolkit, following the existing release conventions. An editable
 checkout installation is not the released artifact.
 
-The Python lane should accept the existing `X.Y.ZrcN` spelling and promotion
-checks. Scope promotion to both runner and values source/build trees, manifests,
-locks and their shared build inputs. Only the allowed version/dependency changes
-may differ from the selected RC. The proposed image lanes follow today's
-final-version OCI lanes; this proposal does not add an OCI prerelease policy.
+The Python lane accepts the existing `X.Y.ZrcN` spelling and promotion checks.
+Promotion covers both runner and values source/build trees, manifests, locks and
+their shared build inputs. Only the allowed version/dependency changes may
+differ from the selected RC. The image lanes follow the existing final-version
+OCI lanes; there is no additional OCI prerelease policy.
 Following the existing Python RC convention, publish the values RC to PyPI
 before qualifying the runner RC installed from registry dependencies, then
 publish the runner RC through the same lane. Do not introduce a private index.
@@ -36,28 +36,27 @@ Each component may have its own version. A release record binds the compatible
 component versions and their exact source SHAs; matching version numbers alone
 do not establish compatibility.
 
-## Bounded release-tooling changes
+## Release-tooling boundaries
 
-1. Add these prefixes and manifest mappings to `scripts/release_versions.py`
-   and `scripts/release_candidate.py`, including the runner/values lockstep and
-   Python promotion scope. Keep the existing clean, landed-source, immutable-tag
-   and complete candidate-gate requirements.
-2. Extend `scripts/publish_release.py` with two OCI mappings. Use repository-root
+1. `scripts/release_versions.py` and `scripts/release_candidate.py` bind prefixes
+   to manifests, enforce runner/values lockstep and Python promotion scope, and
+   retain clean, landed-source, immutable-tag and complete candidate-gate requirements.
+2. `scripts/publish_release.py` uses the two OCI mappings with repository-root
    build contexts, `naapp/secrets/Dockerfile` and `naapp/logs/Dockerfile`, the
-   required full `SOURCE_COMMIT`, and version/revision OCI labels. Model the
-   workflows on `.github/workflows/awid-image-release.yml`; they call the same
-   publisher used without GitHub Actions.
-3. Reuse its staged OCI inspection, exact immutable-tag adoption/refusal and
+   required full `SOURCE_COMMIT`, and version/revision OCI labels. The shared
+   `.github/workflows/service-image-release.yml` handles AWID, Secrets and Logs tags
+   and calls the same publisher used without GitHub Actions.
+3. The publisher reuses staged OCI inspection, exact immutable-tag adoption/refusal and
    post-publication digest verification. Keep registry publication usable
    without GitHub. Record the published digest; customers deploy by digest.
-4. Add runner/values to the existing Python publication path in dependency
-   order. Inspect each built archive's name, version and dependency metadata;
-   retain its checksum and refuse an existing version with different bytes.
-   Resume identical publication under the existing conventions.
-5. Add behavioral release-tooling regressions for tag/manifest mismatch,
+4. Runner/values use the existing Python publication path in dependency order.
+   Inspect archive name/version and exact dependency metadata, retain checksums,
+   and refuse an existing version with different bytes. Resume identical
+   publication under the existing conventions.
+5. The existing release tests and customer-lane regressions cover tag/manifest mismatch,
    unlanded or dirty source, absent full qualification, unequal runner/values
    versions, changed RC source, immutable-version byte conflicts and resumable
-   identical publication. These are additions to the existing release tests.
+   identical publication. These are release-tooling checks, not the full customer journey.
 
 Whether the two images can advertise both Linux architectures must be proved
 by their packaged-image tests. Do not inherit AWID's platform list as evidence.
@@ -67,8 +66,8 @@ bundled interpreter, OCI runtime, job image or privileged installation.
 
 ## Qualification and publication sequence
 
-The release owner executes this sequence only after the lane implementation
-and component source have landed:
+The release owner executes this sequence only after component source and lane
+implementation have landed:
 
 1. Select exact landed RC source, component versions and the supported platform
    list. Verify the candidate checkout and tag manifests using the existing
