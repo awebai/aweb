@@ -278,7 +278,7 @@ direction, and a consumer refuses an event whose `direction` differs:
 
 | Widening | Narrowing |
 | --- | --- |
-| `role.designated`, `credential.enrolled`, `credential.recovered`, `grant.created`, `grant.changed`, `resource.created`, `resource.changed`, `resource.version_added`, `resource.enabled`, `policy.changed`, `runner.registered`, `installation.enabled`, `logs.retention.lengthened`, `logs.legal_hold.set` | `role.revoked`, `credential.revoked`, `grant.revoked`, `resource.disabled`, `resource.replaced`, `resource.version_observed`, `runner.deregistered`, `installation.disabled`, `hook_delivery.cancelled`, `logs.retention.shortened`, `logs.erased`, `logs.legal_hold.released` |
+| `role.designated`, `credential.enrolled`, `credential.recovered`, `grant.created`, `grant.changed`, `resource.created`, `resource.changed`, `resource.version_added`, `resource.enabled`, `policy.changed`, `runner.registered`, `installation.enabled`, `logs.retention.lengthened`, `logs.legal_hold.set`, `session.handoff_completed` | `role.revoked`, `credential.revoked`, `grant.revoked`, `resource.disabled`, `resource.replaced`, `resource.version_observed`, `runner.deregistered`, `installation.disabled`, `hook_delivery.cancelled`, `logs.retention.shortened`, `logs.erased`, `logs.legal_hold.released` |
 
 `grant.changed` is widening whatever the change, so a change that only narrows
 a grant is still gated. A producer that must contain without waiting uses
@@ -341,6 +341,23 @@ Keeping content readable longer widens exposure, so lengthening and setting a
 hold are widening; shortening, erasing and releasing a hold are narrowing.
 These acts and fields were added to v1 in place under decision 93's
 pre-deployment exception (aweb-acgh.16.23); no logs installation is deployed.
+
+**The fallback session handoff.** An app that completes a `session` handoff
+through the typed-code fallback
+([Human confirmation started from `aw`](design/human-confirmation-from-aw.md#the-handoff))
+emits `session.handoff_completed`. It carries `role` (the holder scope's
+role), `subject_ref` (the app-local subject that logged in) and
+`session_ref`, an opaque reference to the issued session that is neither its
+session id nor its CSRF token. Its `authority` is `passkey_session`, and
+`approval_evidence_sha256` commits to the login proof the handoff page
+retained (`binding_kind` `login`, purpose `login`). It carries none of the
+other acts' fields, and no other act carries `session_ref`. A handoff through
+the loopback emits nothing. The act is widening: the session it opens can
+confirm in `aw`, so the producer enqueues the event in the transaction that
+releases the result, and a handoff whose event cannot be admitted releases
+nothing. This act and `session_ref` were added to v1 in place under decision
+93's pre-deployment exception
+([its conditions](hook-terminal-delivery.md#deliberate-catalog-re-freeze-and-implementation-evidence)).
 
 `authority` is how the act was authorized:
 

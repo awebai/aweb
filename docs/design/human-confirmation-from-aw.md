@@ -108,7 +108,10 @@ it. The page:
 - shows the requesting `aw`'s hostname, as reported.
 
 Each completed fallback `session` handoff emits a `post-governance-hook`
-event, so the owner sees it. The `credential` purpose may use either path,
+event, `session.handoff_completed`
+([hook events](../hook-events.md#post-governance-hook)), in the transaction
+that releases the result, so the owner sees it; a handoff whose event cannot
+be admitted releases nothing. The `credential` purpose may use either path,
 because it grants nothing: a phished registration gives the attacker only a
 public key, and binding still needs the owner's act and the
 [fingerprint comparison](human-role-holders.md#what-the-owners-client-shows-and-signs).

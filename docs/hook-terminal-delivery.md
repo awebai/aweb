@@ -428,6 +428,23 @@ installation is deployed, and no other act may carry the new fields, so no
 previously accepted payload is refused
 ([hook events](hook-events.md#post-governance-hook)).
 
+A fourth adds `session.handoff_completed` and its `session_ref` field, the
+event the fallback `session` handoff of
+[human confirmation from `aw`](design/human-confirmation-from-aw.md#the-handoff)
+requires. It meets each condition:
+
+- No deployed v1 consumer or producer: DEPLOYMENT_EVIDENCE.
+- No previously accepted payload is refused: the act is new, and
+  `session_ref` is forbidden on every other act, which no producer emits.
+- No accepted payload, enum value, envelope or signature format, or existing
+  signed vector changes: the act enum, `act_directions` and the field set
+  only gain entries, and every existing positive and negative case is
+  unchanged.
+- The public catalog and its byte-identical packaged copy change together,
+  with positive and refusal cases for the act and for `session_ref` on
+  other acts; activation still needs the producer and receiver packages that
+  carry this catalog.
+
 This delta updates the public catalog and its byte-identical packaged copy,
 adds positive and single-fault payload cases for the new act and exact core
 range lists, and preserves
