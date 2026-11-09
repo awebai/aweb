@@ -12,12 +12,14 @@ from typing import Any
 
 import pytest
 from aweb_naapp.hooks import envelope as hook_envelope
+from aweb_naapp.hooks.catalog import packaged_catalog
+from awid.did import stable_id_from_public_key
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
 from aweb_logs import MIGRATIONS_MODULE, MIGRATIONS_PATH, read_store
-from aweb_logs.ledger import LogsSigner, append, open_next_epoch
-from aweb_logs.read_store import Cursor, EventFilter, InvalidRead, query, tail
+from aweb_logs.ledger import LogsSigner, append, append_on, open_next_epoch
+from aweb_logs.read_store import REFERENCES, Cursor, EventFilter, InvalidRead, query, tail
 
 from .fixtures import (
     CORE_ORIGIN,
@@ -38,6 +40,7 @@ OTHER_TEAM = "other:example.com"
 START = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
 AGENT = did_key(MEMBER_SEED)
 OTHER_AGENT = did_key(SigningKey(bytes(range(200, 232))).encode())
+AGENT_AW = stable_id_from_public_key(bytes(SigningKey(MEMBER_SEED).verify_key))
 
 _SECRET_USE: dict[str, Any] = {
     "v": 1,
@@ -68,6 +71,7 @@ def secret_use(
     trace_id: str = "0af7651916cd43dd8448eb211c80319c",
     occurred_at: str = "2026-10-20T12:00:01.000Z",
     result_status: str = "success",
+    actor_aw: str | None = None,
     **payload: Any,
 ) -> tuple[bytes, str]:
     event = copy.deepcopy(_SECRET_USE)
@@ -85,6 +89,8 @@ def secret_use(
         "certificate_id": "c_41",
         "did_key": actor,
     }
+    if actor_aw is not None:
+        event["actor"]["did_aw"] = actor_aw
     body: dict[str, Any] = {"action": action, "op_kind": "run_job"}
     if action == "completed":
         body |= {"disposition": "withheld", "undeclared_credential": False}
@@ -174,6 +180,16 @@ async def _chain_rows_read_by_catch_up(db: AsyncDatabaseManager) -> int:
 
     document = json.loads(plan) if isinstance(plan, str) else plan
     return read(document[0]["Plan"])
+
+
+async def _unproject(db: AsyncDatabaseManager, *, after_seq: int) -> None:
+    """Leave the team's events after ``after_seq`` unprojected, as events
+    appended before the write path projected them are."""
+    await db.execute(
+        "DELETE FROM {{tables.read_events}} WHERE team_id = $1 AND team_seq > $2",
+        TEAM_ID,
+        after_seq,
+    )
 
 
 def _filter(**values: str) -> EventFilter:
@@ -420,13 +436,9 @@ async def test_limit_is_bounded(db: AsyncDatabaseManager) -> None:
 async def test_catching_up_reads_only_the_events_not_yet_projected(
     db: AsyncDatabaseManager,
 ) -> None:
-    for seq in range(1, 41):
+    for seq in range(1, 43):
         await _append(db, secret_use(seq=seq))
-    await query(db, TEAM_ID, _filter())
-    assert await _chain_rows_read_by_catch_up(db) == 0
-
-    await _append(db, secret_use(seq=41))
-    await _append(db, secret_use(seq=42))
+    await _unproject(db, after_seq=40)
     assert await _chain_rows_read_by_catch_up(db) == 2
     assert len((await query(db, TEAM_ID, _filter(), limit=50)).events) == 42
     assert await _chain_rows_read_by_catch_up(db) == 0
@@ -445,3 +457,159 @@ async def test_events_of_a_later_epoch_are_read_after_the_earlier_one(
     assert [(e["event_id"], e["chain_epoch"]) for e in page.events] == [(second, 2)]
     newest = await query(db, TEAM_ID, _filter())
     assert [e["event_id"] for e in newest.events] == [second, first]
+
+
+async def test_an_appended_event_is_readable_with_no_catch_up(
+    db: AsyncDatabaseManager,
+) -> None:
+    appended = await _append(db, secret_use(seq=1))
+
+    assert await _chain_rows_read_by_catch_up(db) == 0
+    rows = await db.fetch_all(
+        "SELECT event_id FROM {{tables.read_events}} WHERE team_id = $1", TEAM_ID
+    )
+    assert [str(row["event_id"]) for row in rows] == [appended]
+
+
+def test_every_hook_of_the_packaged_catalog_has_its_event_type_field() -> None:
+    # Ingest projects every event it appends; a hook without one would refuse it.
+    assert set(read_store._EVENT_TYPE_FIELD) == set(packaged_catalog().hooks)
+
+
+async def test_an_append_projects_at_most_one_batch_of_a_backlog(
+    db: AsyncDatabaseManager,
+) -> None:
+    # The append holds the team's head; a backlog beyond one batch is the read path's.
+    backlog = read_store._PROJECTION_BATCH + 1
+    for seq in range(1, backlog + 1):
+        await _append(db, secret_use(seq=seq))
+    await _unproject(db, after_seq=0)
+
+    await _append(db, secret_use(seq=backlog + 1))
+    projected = await db.fetch_value(
+        "SELECT count(*) FROM {{tables.read_events}} WHERE team_id = $1", TEAM_ID
+    )
+    assert projected == read_store._PROJECTION_BATCH
+    assert await _chain_rows_read_by_catch_up(db) == 2
+
+
+async def test_projecting_in_the_appending_transaction_leaves_nothing_to_catch_up(
+    db: AsyncDatabaseManager,
+) -> None:
+    earlier = await _append(db, secret_use(seq=1))
+    await _unproject(db, after_seq=0)
+    signing, signature = secret_use(seq=2)
+    event = hook_envelope.verify(signing, signature, team_id=TEAM_ID)
+    async with db.transaction() as tx:
+        await append_on(
+            tx,
+            SIGNER,
+            event=event,
+            signing_bytes=signing,
+            signature=signature,
+            key_evidence={"did_key": event.producer_did_key, "kid": event.producer_kid},
+            received_at=START + timedelta(minutes=1),
+        )
+
+    # The earlier event, appended before projection ran in the write path, is
+    # projected too: catch-up never skips a position below the highest one.
+    assert await _chain_rows_read_by_catch_up(db) == 0
+    rows = await db.fetch_all(
+        "SELECT event_id FROM {{tables.read_events}} WHERE team_id = $1"
+        " ORDER BY chain_epoch, team_seq",
+        TEAM_ID,
+    )
+    assert [str(row["event_id"]) for row in rows] == [earlier, event.event_id]
+
+
+async def test_a_projection_rolls_back_with_its_append(db: AsyncDatabaseManager) -> None:
+    signing, signature = secret_use(seq=1)
+    event = hook_envelope.verify(signing, signature, team_id=TEAM_ID)
+    with pytest.raises(RuntimeError):
+        async with db.transaction() as tx:
+            await append_on(
+                tx,
+                SIGNER,
+                event=event,
+                signing_bytes=signing,
+                signature=signature,
+                key_evidence={"did_key": event.producer_did_key, "kid": event.producer_kid},
+                received_at=START,
+            )
+            raise RuntimeError("the effect failed")
+    assert (await query(db, TEAM_ID, _filter())).events == []
+
+
+# For each exact-identifier filter: the event fields that match it, the fields
+# that miss it, and the filter value.
+_POLLED = {
+    "trace_id": ({"trace_id": "1" * 32}, {"trace_id": "2" * 32}, "1" * 32),
+    **{name: ({name: "wanted"}, {name: "other"}, "wanted") for name in REFERENCES},
+    "actor did:key": ({"actor": AGENT}, {"actor": OTHER_AGENT}, AGENT),
+    "actor did:aw": ({"actor_aw": AGENT_AW}, {}, AGENT_AW),
+}
+
+
+async def _read_events_rows_read(db: AsyncDatabaseManager, statement: tuple[Any, ...]) -> int:
+    """The read_events rows a read page's statement reads, from its executed
+    plan, with index scans forced as in the catch-up measure."""
+    sql, *arguments = statement
+    await db.execute("ANALYZE {{tables.read_events}}")
+    await db.execute("ANALYZE {{tables.chain_events}}")
+    async with db.transaction() as tx:
+        await tx.execute("SET LOCAL enable_seqscan = off")
+        plan = await tx.fetch_value("EXPLAIN (ANALYZE, FORMAT JSON) " + sql, *arguments)
+
+    def read(node: dict[str, Any]) -> int:
+        rows = 0
+        if node.get("Relation Name", "").endswith("read_events"):
+            removed = node.get("Rows Removed by Filter", 0) + node.get(
+                "Rows Removed by Index Recheck", 0
+            )
+            rows += (node["Actual Rows"] + removed) * node["Actual Loops"]
+        return rows + sum(read(child) for child in node.get("Plans", []))
+
+    document = json.loads(plan) if isinstance(plan, str) else plan
+    return read(document[0]["Plan"])
+
+
+@pytest.mark.parametrize("name", list(_POLLED))
+async def test_a_filtered_read_reads_only_its_matching_events_past_its_cursor(
+    db: AsyncDatabaseManager, name: str
+) -> None:
+    match, miss, value = _POLLED[name]
+    where = _filter(**{name.split(" ")[0]: value})
+    seq = iter(range(1, 1000))
+    for _ in range(40):
+        await _append(db, secret_use(seq=next(seq), **match))
+    start = await tail(db, TEAM_ID, where)
+    for _ in range(160):
+        await _append(db, secret_use(seq=next(seq), **miss))
+    for _ in range(2):
+        await _append(db, secret_use(seq=next(seq), **match))
+    await query(db, TEAM_ID, where)
+    cursor = Cursor.decode(start.next_cursor or "")
+
+    following = read_store._page(TEAM_ID, where, cursor, "ASC", 50)
+    assert await _read_events_rows_read(db, following) == 2
+    newest = read_store._page(TEAM_ID, where, None, "DESC", 2)
+    assert await _read_events_rows_read(db, newest) == 2
+
+
+async def test_one_projection_batch_projects_the_earliest_unprojected_events_only(
+    db: AsyncDatabaseManager,
+) -> None:
+    ids = [await _append(db, secret_use(seq=seq)) for seq in range(1, 6)]
+    await _unproject(db, after_seq=0)
+
+    async with db.transaction() as tx:
+        assert await read_store.project_batch(tx, TEAM_ID, limit=2) == 2
+
+    rows = await db.fetch_all(
+        "SELECT event_id FROM {{tables.read_events}} WHERE team_id = $1"
+        " ORDER BY chain_epoch, team_seq",
+        TEAM_ID,
+    )
+    assert [str(row["event_id"]) for row in rows] == ids[:2]
+    assert await _chain_rows_read_by_catch_up(db) == 3
+    assert [e["event_id"] for e in (await query(db, TEAM_ID, _filter())).events] == ids[::-1]

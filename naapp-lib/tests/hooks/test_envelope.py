@@ -8,7 +8,14 @@ from pathlib import Path
 
 import pytest
 
-from aweb_naapp.hooks.envelope import Refused, sign, signing_bytes, verify
+from aweb_naapp.hooks.envelope import (
+    MAX_ENVELOPE_BYTES,
+    PREFIX,
+    Refused,
+    sign,
+    signing_bytes,
+    verify,
+)
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]
 VECTOR = json.loads((AWEB_ROOT / "docs" / "vectors" / "hook-event-envelope-v1.json").read_bytes())
@@ -60,8 +67,23 @@ def test_signing_bytes_refuse_an_invalid_envelope() -> None:
     assert refused.value.code == "unknown_field"
 
 
+def test_an_envelope_over_the_size_bound_is_never_built() -> None:
+    envelope = dict(VECTOR["positive_cases"][0]["envelope"])
+    envelope["payload"] = {"padding": "a" * MAX_ENVELOPE_BYTES}
+    with pytest.raises(Refused) as refused:
+        signing_bytes(envelope)
+    assert refused.value.code == "envelope_too_large"
+
+
+def test_signing_bytes_over_the_size_bound_are_refused_before_parsing() -> None:
+    hostile = PREFIX + b"[" * MAX_ENVELOPE_BYTES
+    with pytest.raises(Refused) as refused:
+        verify(hostile, "A" * 86, team_id="demo:example.com")
+    assert refused.value.code == "envelope_too_large"
+
+
 def test_deep_nesting_is_refused_before_parsing() -> None:
-    hostile = b"aweb.hook-event/1\n" + b"[" * 1_000_000
+    hostile = b"aweb.hook-event/1\n" + b"[" * 100_000
     with pytest.raises(Refused) as refused:
         verify(hostile, "A" * 86, team_id="demo:example.com")
     assert refused.value.code == "too_deep"
