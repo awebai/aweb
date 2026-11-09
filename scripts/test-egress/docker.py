@@ -21,6 +21,49 @@ def docker(*args):
     return subprocess.check_output(['docker', *args], text=True).strip()
 
 
+def postgres_args(runner):
+    # Disposable databases must not wait on the host disk's WAL fsync. Bound
+    # both RAM and WAL growth, and prohibit swapping the tmpfs back to disk.
+    return ['run', '-d', '--network', 'container:' + runner,
+            '--cpus', '1', '--memory', '2g', '--memory-swap', '2g', '--pids-limit', '512',
+            '--tmpfs', '/var/lib/postgresql/data:rw,noexec,nosuid,size=1g',
+            '-e', 'PGDATA=/var/lib/postgresql/data/pgdata',
+            '-e', 'POSTGRES_PASSWORD=postgres', 'postgres:17',
+            '-c', 'max_wal_size=128MB', '-c', 'min_wal_size=32MB']
+
+
+def wait_for_postgres(container):
+    # The entrypoint's temporary initialization server has no TCP listener.
+    for _ in range(60):
+        if subprocess.run(['docker', 'exec', container, 'pg_isready', '-h', '127.0.0.1', '-U', 'postgres'],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+            return
+        time.sleep(.5)
+    raise RuntimeError('Postgres did not become ready')
+
+
+def postgres_storage(container):
+    data = docker('exec', container, 'psql', '-At', '-U', 'postgres', '-d', 'postgres',
+                  '-c', 'SHOW data_directory')
+    result = {}
+    for name, path in [('data', data), ('wal', data + '/pg_wal')]:
+        resolved = docker('exec', container, 'readlink', '-f', path)
+        filesystem = docker('exec', container, 'stat', '-f', '-c', '%T', resolved)
+        result[name] = {'path': resolved, 'filesystem': filesystem}
+    result['swap_max'] = docker('exec', container, 'cat', '/sys/fs/cgroup/memory.swap.max')
+    return result
+
+
+def require_memory_postgres(container):
+    storage = postgres_storage(container)
+    for name in ('data', 'wal'):
+        if storage[name]['filesystem'] != 'tmpfs':
+            raise RuntimeError(f'Postgres {name} must be on tmpfs: {storage[name]}')
+    if storage['swap_max'] != '0':
+        raise RuntimeError(f'Postgres swap must be disabled: memory.swap.max={storage["swap_max"]}')
+    return storage
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--evidence', type=Path, required=True)
@@ -82,16 +125,12 @@ def main():
                         '-e', 'REDIS_URL=redis://127.0.0.1:6379/0',
                         image, 'sleep', 'infinity')
         containers.append(runner)
-        for name, command in [('postgres:17', ['-e', 'POSTGRES_PASSWORD=postgres']), ('redis:7', [])]:
-            containers.append(docker('run', '-d', '--network', 'container:' + runner,
-                                     '--cpus', '1', '--memory', '1g', '--pids-limit', '512', *command, name))
-        # The entrypoint's temporary initialization server has a socket but no TCP listener.
-        for _ in range(60):
-            if subprocess.run(['docker', 'exec', containers[-2], 'pg_isready', '-h', '127.0.0.1', '-U', 'postgres'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
-                break
-            time.sleep(.5)
-        else:
-            raise RuntimeError('Postgres did not become ready')
+        containers.append(docker(*postgres_args(runner)))
+        containers.append(docker('run', '-d', '--network', 'container:' + runner,
+                                 '--cpus', '1', '--memory', '1g', '--pids-limit', '512', 'redis:7'))
+        wait_for_postgres(containers[-2])
+        storage = require_memory_postgres(containers[-2])
+        (evidence / 'postgres-storage.json').write_text(json.dumps(storage, indent=2) + '\n')
         # Preserve the candidate gate's production role-default control.
         docker('exec', containers[-2], 'psql', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres', '-d', 'postgres',
                '-c', 'ALTER ROLE postgres SET search_path = pg_catalog')

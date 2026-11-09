@@ -21,6 +21,10 @@ that publishes two packages (`aweb-naapp-v`) requires both manifests at the tag
 version, and `aweb-naapp-testing` requires exactly that `aweb-naapp`. CLI and
 A2A gateway versions are explicit in their tags.
 
+The [customer Secrets/Logs/runner release proposal](../naapp/secrets/deploy/RELEASE.md)
+describes bounded additions to these same entry points. Those lanes are not
+implemented or accepted release tags yet; the table above is the current set.
+
 ## Release candidates and the Cloud pair
 
 Python lanes also accept strict `X.Y.ZrcN` versions, with `N >= 1`:
