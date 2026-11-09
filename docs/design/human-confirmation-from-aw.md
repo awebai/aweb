@@ -238,11 +238,15 @@ and its display of the runner code stay available, outside this journey.
 
 - `aw` writes it only to the controlling terminal. Machine-readable output
   carries `runner_id` and `registration_required: true`.
-- `aweb-secrets-runner register` reads it from its own controlling terminal
-  when `--code` is absent, and the protected journey uses that prompt.
-  `--code` stays accepted because released runners send it (secrets §9.2),
-  but it is outside the protected journey: a code passed in argv has left the
-  protected client.
+- `aweb-secrets-runner register` takes no code argument, because argv
+  leaks; it refuses one with `runner_arguments_invalid`
+  (`naapp/secrets/runner/src/aweb_secrets_runner/main.py:17-28`). With a
+  controlling terminal it prompts for the code with echo off, and that is the
+  protected journey: the operator types the code that `aw` showed. Without a
+  terminal it reads one line from stdin (`main.py:47-52`), for an automated
+  caller on a private pipe, such as the e2e harness. That path is outside the
+  protected journey, because the code is then held by another program, and
+  `aw` never writes the code anywhere but the controlling terminal.
 - Its limits are unchanged: ten minutes, single use, stored as a hash.
 
 ## L6: the `aw logs` reader
@@ -320,7 +324,9 @@ Each item is filed after review, and each is one reviewed change.
 - **`aw`:** opening the browser, the loopback listener and the handoff, and
   `--no-browser`; N4's terminal input and code output and their exclusion
   from tracing.
-- **The runner:** N4's terminal prompt for the code.
+- **The runner:** the registration runbook for the protected journey (the
+  operator types the code at the runner's existing terminal prompt), and a
+  test that the private-stdin path still reads one line.
 - **L6:** the `session` handoff on logs' origin.
 - **The optional security key**, a separate item that blocks none of the
   above: the `aweb:` relying party and evidence rule
