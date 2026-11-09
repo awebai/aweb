@@ -48,13 +48,18 @@ This request is anonymous and rate-limited as login is.
 - `return` is `loopback` or `user_code`. `redirect_uri` is required with
   `loopback` and refused with `user_code`.
   - A redirect URI must be exactly `http://127.0.0.1:<port>/<path>` or
-    `http://[::1]:<port>/<path>`. Anything else is refused, including
-    `localhost`, `https`, userinfo, a query and a fragment. A refused URI is
-    `400 redirect_uri_refused`.
+    `http://[::1]:<port>/<path>`, where `<port>` is a decimal from 1 to
+    65535 with no leading zero and `<path>` is unreserved characters and `/`
+    only. Anything else is refused: `localhost`, `https`, userinfo, a query,
+    a fragment, a backslash, any percent-encoding and any other spelling of
+    the address. A refused URI is `400 redirect_uri_refused`. The app
+    redirects only to the URI it stored.
 - `scope` names the holding: (installation, role, principal).
   - It is required for both purposes. For `credential`, the page shows it and
     the registration is for that principal.
   - For `session`, it is the holder's scope that the session is for.
+  - The app's adapter resolves it to its own B3 scope and exact approver
+    subject. Nothing a caller sends becomes key-bound authority directly.
 - `client_hostname` is the hostname as `aw` reports it. It is required with
   `user_code`, where the fallback page shows it, and optional with `loopback`.
 
@@ -88,13 +93,30 @@ browser to the stored URI:
 http://127.0.0.1:53817/callback?handoff_id=<uuid>&code=<code>
 ```
 
-- `aw` accepts exactly one `GET` on its own path whose `handoff_id` is the one
-  it started.
+- `aw` accepts exactly one `GET` on the exact path it registered. The query
+  must carry exactly one `handoff_id`, equal to the one it started, and
+  exactly one `code` in its canonical 43-character encoding. A missing,
+  repeated or extra parameter is refused.
 - It answers that request with a short page telling the human to return to
   the terminal. Every other request gets `404`, and nothing is read from it.
 - The listener closes after the first accepted callback or at `expires_at`.
 - With `user_code`, there is no redirect. The page says the handoff is
   complete, and `aw` learns of it from the result.
+
+### What binds the result (the app's duty)
+
+A result comes only from this handoff's own B3 ceremony. It never comes from a
+subject or evidence reference that a caller supplies, or from a cookie that
+existed before the handoff.
+
+- **`credential`:** the WebAuthn challenge is bound to the handoff.
+- **`session`:** the verified login and the human's explicit allow are bound
+  to this handoff and its scope. No result can be collected before that
+  binding exists.
+- **Browser writes:** the page's completion writes are same-origin and carry
+  CSRF protection.
+
+None of this adds a field to `aw`'s requests.
 
 ## 3. Result: `POST O/handoffs/{handoff_id}/result`
 
@@ -159,13 +181,23 @@ X-CSRF-Token: <csrf_token>                       (on every non-GET)
 ```
 
 **The signed payload** is team-auth v2's request-bound object with the session
-id in place of `team_id`, plus a nonce:
+id in place of `team_id`, plus a nonce, under its own `auth` value.
 
-- the fields: `v: 2`, `aud: O`, `method`, the raw `path` including the query,
-  `session_id`, `body_sha256` (lowercase hex of the decoded body),
-  `timestamp`, and `nonce`;
-- a session payload has no `team_id`, and a team-auth payload has no
-  `session_id`, so neither verifies as the other.
+Its field set is exactly `v: 2`, `auth: "handoff-session"`, `aud`, `method`,
+`path`, `session_id`, `body_sha256`, `timestamp` and `nonce`:
+
+- `aud` is exactly the app's configured `O`;
+- `path` is the actual raw request target, including the query;
+- `body_sha256` is the lowercase hex hash of the actual decoded body;
+- `timestamp` equals `X-AWEB-Timestamp`.
+
+A result payload's field set is exactly the one in section 3. Neither carries
+`team_id`, and a field outside its set is refused.
+
+The session id travels only inside the signed object. No cookie or bearer
+header stands in for it. The app uses that untrusted id only to look the
+session up. Only after it has checked the stored ephemeral key, the signature
+and every field does it treat the request as that console session.
 
 **The app checks,** in order:
 
@@ -185,13 +217,10 @@ id in place of `team_id`, plus a nonce:
 - `503 principal_status_unavailable`, the only retryable one. An unknown
   answer refuses, as [Use](human-role-holders.md#use) requires.
 
-## Open points
+## Refusals stay merged
 
-- **`auth` in the session payload.** The result payload carries
-  `auth: "handoff-result"`. The session payload follows the contract's "v2
-  with the session id in place of `team_id`" literally and has no `auth`.
-  Adding `auth: "handoff-session"` would name the protocol in the bytes, as
-  identity-grant does. The missing `team_id` already separates the two.
-- **One refusal code.** `handoff_refused` and `session_refused` merge the
-  faults on purpose. A separate `handoff_expired` would let `aw` say so, but
-  the human sees the same remedy either way: start again.
+`handoff_refused` and `session_refused` each cover every signature, key,
+expiry, release and replay fault, so a probe learns nothing. The answer never
+says whether a handoff expired or was already used. The three
+principal refusals stay distinct, because human-role-holders.md names them
+and they separate a final refusal from authority that is unavailable.
