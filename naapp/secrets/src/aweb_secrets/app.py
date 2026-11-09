@@ -30,11 +30,10 @@ from aweb_naapp.runtime.installation import (
     InstallationGrantSource,
     apply_installation_migrations,
 )
-from aweb_naapp.runtime.origins import split_origins
+from aweb_naapp.runtime.origins import OriginApps
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.routing import APIRoute
 from pgdbm import AsyncDatabaseManager
-from starlette.types import Receive, Scope, Send
 
 from aweb_secrets.config import SecretsSettings
 from aweb_secrets.manifest import MANIFEST_PATH
@@ -50,24 +49,19 @@ RunnerRouter = Callable[[NaappRuntime], APIRouter]
 Prepare = Callable[[NaappRuntime], AbstractAsyncContextManager[None]]
 
 
-class SecretsService:
+class SecretsService(OriginApps):
     """The ASGI app serving both origins, with the runtime and the app of each."""
 
     def __init__(self, runtime: NaappRuntime, api_app: FastAPI, console_app: FastAPI) -> None:
-        self.runtime = runtime
-        self.api_app = api_app
-        self.console_app = console_app
         settings = runtime.settings
         assert isinstance(settings, SecretsSettings)
-        self._asgi = split_origins(
+        super().__init__(
             api_app,
             console_app,
             agent_origin=settings.public_origin,
             human_origin=settings.console_origin,
         )
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        await self._asgi(scope, receive, send)
+        self.runtime = runtime
 
 
 async def not_implemented() -> None:
