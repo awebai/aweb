@@ -26,6 +26,8 @@ to refresh it.
 
 - `--debug Log background errors to stderr`
 - `-h, --help help for aw`
+- `--human string Sign interactively as this locally enrolled human did:aw`
+- `--human-domain string Namespace of the selected human ID`
 - `--identity-home string Use this absolute credential directory (contains signing.key or grant.yaml; usually <workspace>/.aw, not its parent)`
 - `--json Output as JSON`
 - `--server-name string Override the server host or name for this command`

@@ -274,6 +274,10 @@ func postConnect(ctx context.Context, awebURL string, signingKey ed25519.Private
 	if err != nil {
 		return nil, err
 	}
+	return postConnectClient(ctx, client, cert, body)
+}
+
+func postConnectClient(ctx context.Context, client *awid.Client, cert *awid.TeamCertificate, body connectRequest) (*connectResponse, error) {
 	client.SetHTTPClient(&http.Client{Timeout: 30 * time.Second, Transport: awid.NewAPITransport()})
 	resp, err := client.DoRaw(ctx, http.MethodPost, "/v1/connect", "application/json", body)
 	if err != nil {

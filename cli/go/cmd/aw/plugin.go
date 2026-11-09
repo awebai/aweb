@@ -1059,6 +1059,12 @@ func awHomeDir() (string, error) {
 }
 
 func dispatchPluginIfRequested(args []string) (int, bool) {
+	var selectorErr error
+	args, selectorErr = humanSelectorsForPlugin(args)
+	if selectorErr != nil {
+		fmt.Fprintln(os.Stderr, selectorErr)
+		return 1, true
+	}
 	commandName, commandIndex := firstNonFlagArg(args)
 	if commandName == "" || commandIndex < 0 {
 		return 0, false
@@ -1088,6 +1094,13 @@ func dispatchPluginIfRequested(args []string) (int, bool) {
 	pluginArgs := stripPluginTraceFlags(args[commandIndex+1:])
 	switch resolution.Kind {
 	case pluginResolutionManifest:
+		if humanSelectionRequested() {
+			activeHuman, err = loadHumanParticipation(humanFlag, humanDomainFlag, awconfig.HumanKeychain{}, awid.TerminalPassphrasePrompt(), humanAtTerminal)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1, true
+			}
+		}
 		// Cobra does not run for installed apps, so validate its global JSON
 		// boolean here as well as in the tool argument parser.
 		for _, arg := range args[:commandIndex] {
@@ -1100,6 +1113,10 @@ func dispatchPluginIfRequested(args []string) (int, bool) {
 		}
 		return dispatchInstalledManifestPlugin(commandName, pluginArgs)
 	case pluginResolutionExternal:
+		if humanSelectionRequested() {
+			fmt.Fprintln(os.Stderr, "--human is not supported for external executable plugins")
+			return 1, true
+		}
 		if argsContainTraceFlag(args) {
 			fmt.Fprintf(os.Stderr, "AW TRACE unavailable for external plugin %q: aw does not control the plugin HTTP client\n", commandName)
 		}
@@ -1131,13 +1148,13 @@ func firstNonFlagArg(args []string) (string, int) {
 			}
 			return "", -1
 		}
-		if strings.HasPrefix(arg, "--server-name=") || strings.HasPrefix(arg, "--identity-home=") || strings.HasPrefix(arg, "--json=") {
+		if strings.HasPrefix(arg, "--human=") || strings.HasPrefix(arg, "--human-domain=") || strings.HasPrefix(arg, "--server-name=") || strings.HasPrefix(arg, "--identity-home=") || strings.HasPrefix(arg, "--json=") {
 			continue
 		}
 		switch arg {
 		case "--json", "--debug", "--trace":
 			continue
-		case "--server-name", "--identity-home":
+		case "--server-name", "--identity-home", "--human", "--human-domain":
 			i++
 			continue
 		}
@@ -1401,7 +1418,7 @@ func executeInstalledManifestTool(name string, args []string) (*installedManifes
 		return result, true, nil
 	}
 	var installedResult *installedManifestToolResult
-	if _, isGrant := activeGrantHome(); isGrant {
+	if _, isGrant := activeGrantHome(); isGrant && activeHuman == nil {
 		// Grant path: custody re-interprets the call against the resident's
 		// mint-time tool snapshot and returns the exact signed request. Nothing
 		// from the local manifest is merged into it.
@@ -1410,7 +1427,7 @@ func executeInstalledManifestTool(name string, args []string) (*installedManifes
 			return nil, true, err
 		}
 	} else {
-		identity, err := resolveLocalSigningIdentity()
+		identity, err := resolveParticipationRequestIdentity()
 		if err != nil {
 			return nil, true, err
 		}
@@ -1523,6 +1540,9 @@ func parseManifestDispatchArgs(args []string) (map[string]any, []byte, error) {
 			}
 			i++
 			value = args[i]
+		}
+		if name == "human" || name == "human-domain" {
+			continue
 		}
 		if name == "body-file" {
 			data, err := readManifestBodyFile(value)
