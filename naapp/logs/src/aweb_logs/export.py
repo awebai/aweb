@@ -11,7 +11,7 @@ report says how far that reaches.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, BinaryIO
 
@@ -22,6 +22,7 @@ from aweb_naapp.hooks.strictjson import (
     encode_base64url,
     parse_canonical_object,
 )
+from pgdbm import AsyncDatabaseManager
 
 from aweb_logs.chain import (
     Checkpoint,
@@ -32,6 +33,7 @@ from aweb_logs.chain import (
     open_checkpoint,
     open_receipt,
 )
+from aweb_logs.ledger import load_checkpoints, load_events_after, load_genesis, load_head
 from aweb_logs.verify import (
     ChainReport,
     Content,
@@ -48,6 +50,8 @@ EXPORT_TYPE = "aweb.logs-export"
 # beside its link and key evidence; this leaves room for those and refuses a
 # line no exporter writes before a verifier holds it whole.
 MAX_LINE_BYTES = 1 << 20
+# Events an export reads per database query.
+EXPORT_PAGE = 500
 _EVIDENCE_TEXT = ("kid", "did_key", "installation_id")
 _EVIDENCE_LISTS = ("purposes", "binding_ids")
 
@@ -104,6 +108,50 @@ def receipt_line(signing_bytes: bytes, signature: str) -> bytes:
 
 def checkpoint_line(signing_bytes: bytes, signature: str) -> bytes:
     return _line({"checkpoint": _artefact_json(signing_bytes, signature)})
+
+
+async def export_bundle(
+    db: AsyncDatabaseManager, team_id: str, *, page: int = EXPORT_PAGE
+) -> AsyncGenerator[bytes, None]:
+    """The team's whole log as bundle lines, each ending in its newline.
+
+    The bundle ends at the head the team has when its first line is taken:
+    events appended later are not in it. Rows are read ``page`` events at a time, each
+    page by its own query, so no connection or lock is held while the consumer
+    waits. A purge that lands during the export can therefore show some events
+    of the bundle purged; a purge keeps each event's skeleton and hash, so the
+    bundle still verifies. A team with no log exports its header alone.
+    Authorization belongs to the caller.
+    """
+    head = await load_head(db, team_id)
+    yield header_line(team_id)
+    if head is None:
+        return
+    head_epoch, head_seq = head
+    for chain_epoch in range(1, head_epoch + 1):
+        through = head_seq if chain_epoch == head_epoch else None
+        yield genesis_line(await load_genesis(db, team_id, chain_epoch))
+        for _, checkpoint in await load_checkpoints(db, team_id, chain_epoch, after=-1, through=0):
+            yield checkpoint_line(*checkpoint)
+        after = 0
+        while rows := await load_events_after(
+            db, team_id, chain_epoch, after=after, through=through, limit=page
+        ):
+            last = rows[-1][0].link.team_seq
+            checkpoints = await load_checkpoints(
+                db, team_id, chain_epoch, after=after, through=last
+            )
+            witnessed = 0
+            for event, receipt in rows:
+                yield event_line(event)
+                yield receipt_line(*receipt)
+                while (
+                    witnessed < len(checkpoints)
+                    and checkpoints[witnessed][0] == event.link.team_seq
+                ):
+                    yield checkpoint_line(*checkpoints[witnessed][1])
+                    witnessed += 1
+            after = last
 
 
 def _artefact_json(signing_bytes: bytes, signature: str) -> dict[str, str]:
