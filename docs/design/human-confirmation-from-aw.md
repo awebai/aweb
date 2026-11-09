@@ -73,12 +73,14 @@ human origin:
 | --- | --- | --- | --- | --- |
 | Start | app origin | `POST /handoffs` | team-auth v2, as the holder | the app origin |
 | Page | human origin | `GET /handoff/{id}` | none; the browser's own ceremony | none |
-| Result | human origin | `POST /handoffs/{id}/result` | the code, the verifier and the ephemeral key's signature, in the body | none |
-| Session requests | human origin | the console's routes | the session id and the ephemeral key's signature, in no team-auth header | none |
+| Result | human origin | `POST /handoffs/{id}/result` | the code and the verifier in the body, signed by the ephemeral key in the console headers | the human origin |
+| Session requests | human origin | the console's routes | the session id, signed by the ephemeral key in the console headers | the human origin |
 | Owner-act delivery | human origin | `POST /.well-known/aweb-owner-act` | the act alone, unchanged | the human origin |
 
-The handoff id ties the steps together; both origins are one service with
-shared state. By default the result comes back to `aw` through a loopback
+The console headers are `X-Console-Key`, `X-Console-Signature`,
+`X-Console-Timestamp` and `X-Console-Signed-Payload`; none is a team-auth
+header, so the human origin admits them. The handoff id ties the steps
+together; both origins are one service with shared state. By default the result comes back to `aw` through a loopback
 redirect on the same machine, as RFC 8252 describes for native apps:
 
 1. `aw` makes an ephemeral key, held only in memory, listens on
@@ -87,7 +89,7 @@ redirect on the same machine, as RFC 8252 describes for native apps:
    redirect URI, the verifier's SHA-256 and, for a session, the holder's
    scope, signed with team-auth v2 as the holder
    ([Membership evidence](#membership-evidence)). The app refuses a scope
-   whose principal is not the verified signer. `aw` builds the page and
+   whose principal is not the verified signer with `403 scope_not_signer`. `aw` builds the page and
    result URLs from the pinned human origin, never from the response. The app accepts only a redirect URI of the form
    `http://127.0.0.1:<port>/<path>` or `http://[::1]:<port>/<path>`, a
    literal loopback address; `localhost` and every other URI are refused
@@ -101,8 +103,8 @@ redirect on the same machine, as RFC 8252 describes for native apps:
    one taken from a request, with a single-use code. That is a redirect the browser follows to `aw`, not one
    that `aw` follows.
 5. `aw` collects the result from `POST <human origin>/handoffs/{id}/result`
-   with the code and the verifier, signed by the ephemeral key, all in the
-   body and in no team-auth header. The app releases
+   with the code and the verifier in the body, signed by the ephemeral key in
+   the console headers, and with no team-auth header. The app releases
    the result only for all three, once, before the handoff expires.
 
 **Why the loopback.** A typed user code ties nothing to the `aw` that started
