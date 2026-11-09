@@ -6,9 +6,22 @@ refusals that [Human confirmation started from `aw`](human-confirmation-from-aw.
 leaves open. Every rule of that contract stands, and where this text and the
 contract differ, the contract wins.
 
-`O` is the installation's pinned `owner_acts.origin`. `aw` sends every request
-below only to `O`, follows no redirect, and builds every URL it opens from `O`.
-It takes none from a response.
+The handoff spans the installation's two pinned origins:
+
+- `A`, the app origin: the manifest's `origin`, where team-auth is admitted;
+- `O`, the human origin: `owner_acts.origin`, which refuses every team-auth
+  header ([The handoff](human-confirmation-from-aw.md#the-handoff)).
+
+| Step | Origin | Request | Authentication |
+| --- | --- | --- | --- |
+| 1. Start | `A` | `POST /handoffs` | team-auth v2 as the holder, `aud` `A` |
+| 2. Page | `O` | `GET /handoff/{id}` | the browser's own ceremony |
+| 3. Result | `O` | `POST /handoffs/{id}/result` | console headers, ephemeral key |
+| 4. Session requests | `O` | the console's routes | console headers, ephemeral key |
+
+`aw` sends each request only to its step's pinned origin, follows no redirect,
+and builds every URL it opens from `O`. It takes none from a response. It
+never sends a team-auth header to `O`.
 
 ## Encodings
 
@@ -18,7 +31,9 @@ It takes none from a response.
   holds only in memory. It is named by its `did:key`.
 - **Signatures:** Ed25519 over the signed payload's exact bytes, in standard
   base64 with no padding.
-- **Signed requests carry console headers:** `X-Console-Key`,
+- **The start is signed with team-auth v2** as the holder, exactly as any
+  request `aw` makes to `A`.
+- **Requests to `O` carry console headers:** `X-Console-Key`,
   `X-Console-Signature`, `X-Console-Timestamp` and `X-Console-Signed-Payload`.
   - The human origin's `split_origins` boundary refuses every `Authorization`,
     `X-AWEB-*` and `X-AWID-*` header before the app
@@ -35,9 +50,12 @@ It takes none from a response.
   `XXXX-XXXX`. The app compares it ignoring case and the hyphen.
 - **`nonce`:** 16 random bytes as 32 lowercase hex characters.
 
-## 1. Start: `POST O/handoffs`
+## 1. Start: `POST A/handoffs`
 
-This request is anonymous and rate-limited as login is.
+`aw` signs this request with [team-auth v2](../team-auth-envelope-v2.md) as
+the holder, with `aud` `A`. `A`'s existing team-auth admission verifies it and
+its certificate, as for any request. An unsigned start is refused. It is
+rate-limited as login is.
 
 ```json
 {
@@ -68,6 +86,7 @@ This request is anonymous and rate-limited as login is.
   - For `session`, it is the holder's scope that the session is for.
   - The app's adapter resolves it to its own B3 scope and exact approver
     subject. Nothing a caller sends becomes key-bound authority directly.
+  - `scope.principal` must be the verified team-auth signer.
 - `client_hostname` is the hostname as `aw` reports it. It is required with
   `user_code`, where the fallback page shows it, and optional with `loopback`.
 
@@ -87,10 +106,16 @@ This request is anonymous and rate-limited as login is.
 - `400 handoff_invalid`: a malformed body, an unknown field, or a missing or
   forbidden member.
 - `400 redirect_uri_refused`.
+- `403 scope_not_signer`: `scope.principal` is not the verified signer.
+- `403 role_not_held`: a `session` start for a scope in which the signer
+  holds no current holding. It is final, and `aw` reports it and stops.
+- `409 fallback_unavailable`: a `session` start with `user_code` that the app
+  cannot serve ([Fallback](human-confirmation-from-aw.md#the-handoff)).
 - `429 handoff_rate_limited`.
+- A team-auth refusal is team-auth v2's own answer.
 
-The handoff grants nothing, so naming an unknown installation or role is
-refused only later, by the page's ceremony.
+A `credential` handoff grants nothing, so for it an unknown installation or
+role is refused only later, by the page's ceremony.
 
 ## 2. The ceremony and the loopback redirect
 
@@ -227,6 +252,11 @@ and every field does it treat the request as that console session.
   ([human confirmation from aw](human-confirmation-from-aw.md)). Because the
   code is merged, `aw` renews on a signature or replay fault too. That stays
   safe because a confirm is sent at most once across a renewal.
+- `403 role_not_held`: the session's holding was revoked. It is final, and
+  `aw` never renews on it. A credential superseded by a replace whose
+  cooling-off has ended is not this: the principal still holds the role, so
+  the app answers `401 console_session_required`, and the renewal's login
+  needs the new passkey.
 - `403 principal_not_member`.
 - `403 principal_not_human`.
 - `503 principal_status_unavailable`, the only retryable one. An unknown
