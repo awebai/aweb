@@ -33,7 +33,14 @@ async def test_capacity_refuses_immediately_before_send_and_preserves_resubmissi
                 await released[name].wait()
             return Response(b'{"ok":true}', media_type="application/json")
 
-        service = await setup(db, fence, tmp_path, upstream, response_budget_bytes=2 * LIMIT)
+        service = await setup(
+            db,
+            fence,
+            tmp_path,
+            upstream,
+            response_budget_bytes=2 * LIMIT,
+            policy_body={**POLICY_BODY, "rate": []},
+        )
 
         def call(name):
             return service.submit(
@@ -52,7 +59,11 @@ async def test_capacity_refuses_immediately_before_send_and_preserves_resubmissi
             # Neither response is released: a waiting reservation cannot pass.
             async with asyncio.timeout(0.5):
                 third = await call("three")
-            assert third.status == 503 and third.body["code"] == "capacity_unavailable"
+            assert third.status == 503 and third.body.get("code") == "capacity_unavailable", (
+                third.status,
+                third.body.get("state"),
+                third.body.get("code"),
+            )
             assert third.headers["Retry-After"] == "1"
             assert set(applied) == {"one", "two"}
             assert (
@@ -91,6 +102,8 @@ async def test_response_capacity_is_released_after_success_failure_and_cancellat
 
                 async def broken():
                     yield b'{"ok":'
+                    # Flush a real partial response before breaking the stream.
+                    await asyncio.sleep(0.05)
                     raise RuntimeError("fixture response stream interrupted")
 
                 return StreamingResponse(broken(), media_type="application/json")
@@ -114,7 +127,7 @@ async def test_response_capacity_is_released_after_success_failure_and_cancellat
                 original = await sender
                 assert original.body["state"] == (
                     "outcome_unknown" if exit_path == "stream_failure" else "completed"
-                )
+                ), (original.status, original.body.get("state"), original.body.get("code"))
             following = await service.submit(
                 secret=SECRET["ref"],
                 submission=submission(upstream, request_id="after-release"),

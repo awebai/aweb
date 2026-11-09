@@ -76,8 +76,9 @@ async def setup(
     clock=None,
     sweep_margin=timedelta(seconds=5),
     response_budget_bytes=None,
+    policy_body=None,
 ):
-    await _install(db, installation_id=INSTALLATION, active_version=None)
+    await _install(db, installation_id=INSTALLATION, active_version=None, policy_body=policy_body)
     for migration in (
         apply_dispatch_migrations,
         apply_outbox_migrations,
