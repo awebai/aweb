@@ -7,6 +7,7 @@ query or event behavior is mocked. All identities and data are disposable.
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 import json
 import os
@@ -54,7 +55,15 @@ _TEAM_SIGNING_KEY, _, _TEAM_DID_KEY = _make_keypair()
 
 
 @pytest_asyncio.fixture
-async def privacy_app(shared_test_pool, monkeypatch, privacy_server_tls):
+async def privacy_app(shared_test_pool, monkeypatch):
+    async with privacy_stack(shared_test_pool, monkeypatch) as env:
+        yield env
+
+
+@asynccontextmanager
+async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
+    """The real apps behind one HTTP server; tls is (host, Certificates covering
+    host) to serve over TLS, so the server's public origin is https."""
     monkeypatch.setenv("AWID_DATABASE_URL", "postgresql://unused/test")
     service_token = "privacy-tests-disposable-service-token"
     monkeypatch.setenv("AWID_SERVICE_TOKEN", service_token)
@@ -126,14 +135,14 @@ async def privacy_app(shared_test_pool, monkeypatch, privacy_server_tls):
                 actors[alias] = SimpleNamespace(
                     sk=sk, did=did, id=agent_id, workspace=workspace_id, certificate=certificate,
                 )
-            host, certificates = privacy_server_tls or ("127.0.0.1", None)
+            host, certificates = tls or ("127.0.0.1", None)
             scheme = "https" if certificates else "http"
             sock = socket.socket()
             sock.bind((host, 0))
             base_url = f"{scheme}://{host}:{sock.getsockname()[1]}"
             app.state.public_origin = base_url
-            tls = {"ssl_certfile": str(certificates.cert_file), "ssl_keyfile": str(certificates.key_file)} if certificates else {}
-            server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="error", ws="none", **tls))
+            server_tls = {"ssl_certfile": str(certificates.cert_file), "ssl_keyfile": str(certificates.key_file)} if certificates else {}
+            server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="error", ws="none", **server_tls))
             serving = asyncio.create_task(server.serve(sockets=[sock]))
             try:
                 for _ in range(100):

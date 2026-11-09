@@ -95,12 +95,3 @@ def aw_cli_binary(tmp_path_factory):
 def source_cli_binary(aw_cli_binary, monkeypatch):
     monkeypatch.setenv("AW_TEST_CLI_BINARY", str(aw_cli_binary))
     return aw_cli_binary
-
-
-@pytest.fixture
-def privacy_server_tls():
-    """What test_dashboard_privacy's server listens with: None for plain HTTP.
-
-    A module overrides this with (host, Certificates covering host) to serve
-    over TLS, so the server's public origin is https, as owner acts require."""
-    return None

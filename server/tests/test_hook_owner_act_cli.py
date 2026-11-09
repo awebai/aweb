@@ -22,7 +22,6 @@ from awid.signing import canonical_json_bytes, sign_message
 from test_agent_activity_emitter_e2e import _pem, _team_home
 
 origin_fixture = manifest_fixture.origin
-privacy_app = services.privacy_app
 pytestmark = pytest.mark.asyncio
 
 CATALOG = {"id": "aweb.hooks", "version": 1}
@@ -34,11 +33,13 @@ async def origin(origin_fixture):
     return origin_fixture
 
 
-@pytest.fixture
-def privacy_server_tls(origin):
+@pytest_asyncio.fixture
+async def privacy_app(shared_test_pool, monkeypatch, origin):
     # aweb listens on the origin's address with its certificate, so one CA
     # file lets the CLI trust both, and the server's public origin is https.
-    return local_address(), origin.tls.certificates
+    tls = (local_address(), origin.tls.certificates)
+    async with services.privacy_stack(shared_test_pool, monkeypatch, tls) as env:
+        yield env
 
 
 def hooked_manifest(origin, **app_changes):
