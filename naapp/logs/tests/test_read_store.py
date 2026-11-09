@@ -16,7 +16,7 @@ from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
 from aweb_logs import MIGRATIONS_MODULE, MIGRATIONS_PATH, read_store
-from aweb_logs.ledger import LogsSigner, append, open_next_epoch
+from aweb_logs.ledger import LogsSigner, append, append_on, open_next_epoch
 from aweb_logs.read_store import Cursor, EventFilter, InvalidRead, query, tail
 
 from .fixtures import (
@@ -445,3 +445,51 @@ async def test_events_of_a_later_epoch_are_read_after_the_earlier_one(
     assert [(e["event_id"], e["chain_epoch"]) for e in page.events] == [(second, 2)]
     newest = await query(db, TEAM_ID, _filter())
     assert [e["event_id"] for e in newest.events] == [second, first]
+
+
+async def test_projecting_in_the_appending_transaction_leaves_nothing_to_catch_up(
+    db: AsyncDatabaseManager,
+) -> None:
+    earlier = await _append(db, secret_use(seq=1))
+    signing, signature = secret_use(seq=2)
+    event = hook_envelope.verify(signing, signature, team_id=TEAM_ID)
+    async with db.transaction() as tx:
+        await append_on(
+            tx,
+            SIGNER,
+            event=event,
+            signing_bytes=signing,
+            signature=signature,
+            key_evidence={"did_key": event.producer_did_key, "kid": event.producer_kid},
+            received_at=START + timedelta(minutes=1),
+        )
+        await read_store.project(tx, TEAM_ID)
+
+    # The earlier event, appended before projection ran in the write path, is
+    # projected too: catch-up never skips a position below the highest one.
+    assert await _chain_rows_read_by_catch_up(db) == 0
+    rows = await db.fetch_all(
+        "SELECT event_id FROM {{tables.read_events}} WHERE team_id = $1"
+        " ORDER BY chain_epoch, team_seq",
+        TEAM_ID,
+    )
+    assert [str(row["event_id"]) for row in rows] == [earlier, event.event_id]
+
+
+async def test_a_projection_rolls_back_with_its_append(db: AsyncDatabaseManager) -> None:
+    signing, signature = secret_use(seq=1)
+    event = hook_envelope.verify(signing, signature, team_id=TEAM_ID)
+    with pytest.raises(RuntimeError):
+        async with db.transaction() as tx:
+            await append_on(
+                tx,
+                SIGNER,
+                event=event,
+                signing_bytes=signing,
+                signature=signature,
+                key_evidence={"did_key": event.producer_did_key, "kid": event.producer_kid},
+                received_at=START,
+            )
+            await read_store.project(tx, TEAM_ID)
+            raise RuntimeError("the effect failed")
+    assert (await query(db, TEAM_ID, _filter())).events == []

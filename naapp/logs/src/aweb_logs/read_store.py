@@ -23,6 +23,7 @@ from typing import Any
 
 from aweb_naapp.hooks import envelope as hook_envelope
 from pgdbm import AsyncDatabaseManager
+from pgdbm.core import TransactionManager
 
 MAX_LIMIT = 200
 DEFAULT_LIMIT = 50
@@ -243,8 +244,12 @@ _UNPROJECTED = (
 )
 
 
-async def project(db: AsyncDatabaseManager, team_id: str) -> None:
-    """Project the team's chain events that have no projection yet."""
+async def project(db: AsyncDatabaseManager | TransactionManager, team_id: str) -> None:
+    """Project the team's chain events that have no projection yet.
+
+    Called in the transaction that appends to the team's chain, under its
+    locked head, it projects the appended event with any earlier ones still
+    unprojected, and rolls back with the append."""
     while True:
         rows = await db.fetch_all(_UNPROJECTED, team_id, _PROJECTION_BATCH)
         if not rows:
