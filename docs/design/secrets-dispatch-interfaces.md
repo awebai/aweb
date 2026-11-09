@@ -1,26 +1,28 @@
 # S13 consumer interfaces
 
-Status: **proposed consumer boundary, implementation pending** (aweb-acgh.18.14).
-This note lets S16 and S15a build adapters against S13. Consumer fit does not
-constitute implementation review or enable routes. Changes return to both
-consumers. S13 owns the services, shared S3 composition, registry and sole
-`UseSecretOpener`; adapters receive no independent dispatch or custody authority.
+Status: the S13 consumer boundary (aweb-acgh.18.14), with what main implements.
+The member services, member routes and runner adapter are built and mounted.
+Anything unmarked is on main; anything else carries a bold **Open**, **In
+flight** or **After the first release** lead-in with its task id. Changes
+return to both consumers (S16 and S15a). S13 owns the services, shared S3
+composition, registry and sole `UseSecretOpener`; adapters receive no
+independent dispatch or custody authority.
 
 Sources: [secrets](secrets.md) §§4.1, 7, 9–11, 13; the
-[runner protocol](../secrets-runner-protocol.md) §§1–4; and the existing
+[runner protocol](../secrets-runner-protocol.md) §§1–4; and
 `manifest.py`, `broker_input.py`, `tool_results.py`, `run_plan.py`,
 `run_approvals.py`, `runners.py` and `runner_results.py` in `naapp/secrets`.
-Short-lived issuance remains parked. The first runner implementation accepts
-durable slots; it does not silently convert a short-lived slot to durable.
-The first release uses the job's own fixed durable slots. Ordinary-child
-selection remains guarded: a valid `secret` selector refuses with
-`job_not_allowed` before an idempotency claim, run preparation or release.
+**After the first release (aweb-acgh.41.1):** short-lived issuance and
+ordinary-child runs. The runner accepts durable slots; it does not silently
+convert a short-lived slot to durable. The first release uses the job's own
+fixed durable slots. Ordinary-child selection is guarded: a valid `secret`
+selector refuses with `job_not_allowed` before an idempotency claim, run preparation or release.
 
 ## Member tools: inputs and replay
 
 All routes below use the exact shared B1 dependency on the API origin. Cookie
 presence grants nothing. These tools are absent from the human console origin.
-JSON inputs use the existing strict integer/Unicode-scalar value rules; unknown
+JSON inputs use the strict integer/Unicode-scalar value rules; unknown
 fields, duplicate keys, floats and invalid types refuse without sending.
 
 | Tool | Method and path | JSON body |
@@ -31,7 +33,7 @@ fields, duplicate keys, floats and invalid types refuse without sending.
 
 Path parameters are not repeated in the HTTP body. Named input forbids
 `method`, `url`, `data`; open input forbids `operation`, `params`. Named headers
-are supported by the existing renderer, but only where the operation explicitly
+are supported by the operation renderer, but only where the operation explicitly
 allows the name; fixed, injected and broker idempotency headers cannot be
 overridden. `headers` is an ordered array of `"Name: value"` strings in either
 form. No credential, source version, job definition, slot ordinal, grant or
@@ -47,13 +49,13 @@ Examples (metadata only):
 
 The last body is for `/v1/jobs/nightly-backup/runs`. `runner` resolves to the
 current scoped runner record; it is not an endpoint or key override. Optional
-`secret` is the existing ordinary-child selector for the unique durable slot.
+`secret` is the ordinary-child selector for the unique durable slot.
 Omission keeps the job's fixed selectors; there is no caller slot map.
 
 Normalization follows `BrokerInput`: omitted `params` becomes `{}`, omitted
 `headers` becomes `[]`, and omitted `reason` becomes `""` (at most 1024
 characters). Open `data` defaults to the empty string. String data is UTF-8;
-object data uses sorted-key compact UTF-8 JSON. The existing egress canonical
+object data uses sorted-key compact UTF-8 JSON. The egress canonical
 URL is used. Headers retain order, name spelling and value spelling after
 removing leading space/tab following the first colon. No sorting or merging
 of duplicate headers occurs. Typed parameters are validated without coercion.
@@ -70,16 +72,35 @@ explicit child ref. A new runner selection or effect field conflicts.
 Transport retries and post-approval execution require a **fresh authenticated
 POST** with the same request ID and original logical body. New signature time
 and nonce are expected. The initial authenticated-byte MAC remains unchanged;
-it is separate from the normalized equality hash. Neither a status read nor a
-background broker task reconstructs and sends the original request. A
+it is separate from the normalized equality hash. A status read never
+reconstructs or sends the original request. A
 `not_sent` broker retry keeps the same dispatch and upstream idempotency key,
 and must still meet its original approval expiry or total time bound. An
 uncertain/completed/reconciled attempt never becomes a new send on replay.
 
+**Safe automatic repeat (Juan's §11.4 safe-repeat ruling).** The one background
+send is the single repeat of an `outcome_unknown` broker dispatch whose
+immutable operation terms opt in with `outcome_unknown_retry`. Validation in
+`operation.py` admits the opt-in only with no `reconcile` lookup and either
+`side_effect: none` or a declared idempotency header with
+`upstream_honours_idempotency_key: true`. After the pinned delay, the repeat
+is its own fenced, audited S3 dispatch linked to the original. It rechecks the
+original authority at the fence, keeps the original upstream idempotency key
+and consumed approval, and rearms nothing. A definite repeat outcome settles
+the original as `reconciled_completed` or `reconciled_failed`; a refused,
+unsent or uncertain repeat leaves the original for owner settlement. Until the
+original settles, the member's status for it stays `outcome_unknown` with its
+`reconcile_ref`. Runner jobs and open requests without operation terms are
+never repeated, and there is no generic reconcile lookup in the first release.
+**In flight (aweb-acgh.18.14):** the operation-term validation and the shared
+S3 continuation seam (`Dispatches.continue_dispatch` and `resolve_original` in
+`aweb_naapp.dispatch`, migration `002_continuations.sql`; aweb-acgh.18.47) are
+on main; the broker call site that schedules and sends the repeat is not.
+
 ## Member tools: replies
 
-Replies use the existing `tool_results` envelope vocabulary, with the pending
-and receipt states below added by S13. The client reads `state` independently
+Replies use the `tool_results` envelope vocabulary, with the pending
+and receipt states below. The client reads `state` independently
 of HTTP status. `request_id` is the original caller ID; `request_ref` is an
 opaque persisted intent locator, never a token. Status lookup by request ID is
 scoped to the caller; owner inspection uses a scoped opaque locator. Unknown
@@ -98,12 +119,13 @@ renewal; it never rewrites original certificate/plan/audit provenance.
 | `result_withheld` | 200 | `request_ref`, `code`, `result` (safe status/count metadata, no body). |
 | `not_sent` | 503 | `request_ref`, `next: "resubmit"`; fresh-send checks may still refuse a retry. |
 | `outcome_unknown` | 200 | `request_ref` and `reconcile_ref` name the same original opaque association. Reading either never sends or retries; §11.4 governs reconciliation. |
-| `refused` | refusal HTTP below | `code`; `request_ref` only if an intent exists. |
-| `cancelled`, `reconciled_completed`, `reconciled_failed`, `reconciled_unknown` | 200 on retrieval | `request_ref`; sanitized `result` if one exists. No new execution. |
+| `refused` | refusal HTTP below; 200 on replay of a stored refusal | `code`. A live POST refusal adds `use_ref` when it is attributable (see "Public signed use correlation"). A refusal presented from a stored receipt carries `request_ref`. |
+| `cancelled` | 200 | `request_ref`. No `next`. |
+| `reconciled_completed`, `reconciled_failed`, `reconciled_unknown` | 200 on retrieval | `request_ref`; sanitized `result` if one exists. No new execution. |
 
 Successful status reads return `200` with this envelope at the top level,
 including pending/progress/withheld/refused states. Looking up an approval
-locator additionally uses S12's existing `denied`, `expired`, `revoked` and
+locator additionally uses S12's `denied`, `expired`, `revoked` and
 consumed `admitted` states; `next: "resubmit"` occurs only for `approved`.
 An intent lookup aggregates its slot decisions: still pending is
 `awaiting_approval`, every required approval ready is `approved`, and a failed
@@ -111,6 +133,20 @@ required slot is `refused` with its fixed approval refusal code. `approval_ref`
 names the first unresolved required slot; `approval_refs` lists all unresolved
 ones. Clients should poll `request_ref` for the aggregate, not infer readiness
 from one approved slot. These references expose no approval link or evidence.
+
+A persisted S3 `cancelled` receipt has one presentation in broker status, run
+status and terminal receipt replay: HTTP 200, `state: "cancelled"`, the
+original `request_id` and `request_ref`, and no `next: "resubmit"`.
+Cancellation covers requester withdrawal and containment, so it is never
+presented as `approval_revoked`. A separate observation is an intent still
+`awaiting_approval` in S3 whose B2 slot was revoked: its aggregate status is
+`refused` with `code: "approval_revoked"`, and a fresh POST that detects the
+revocation is refused with 403. Replaying a stored S3 `refused` returns 200
+with `state: "refused"` and its persisted refusal code. A new live dependency
+or audit failure on a POST can be 503; a new policy or approval denial is 403.
+**Open (aweb-acgh.18.52):** run status diverges on main. `RunStatus` presents a
+persisted `cancelled` as `refused` with `approval_revoked`, and its POST
+receipt returns a stored `refused` as 503. The correction is planned test-first.
 
 ```json
 {"state":"awaiting_approval","request_id":"refund-17","request_ref":"int_example","approval_ref":"approval_example"}
@@ -126,8 +162,8 @@ For broker results, `result` contains `status` (upstream HTTP status), filtered
 Runner results contain the pinned output projection plus exit/local/server
 metadata from `RunnerOutput`; loss of original redaction context withholds
 output with `code: "release_context_unavailable"` and preserves safe metadata.
-The existing `result_withheld` helper needs its safe-result/receipt extension;
-this note does not claim that helper or any route is already implemented.
+The `result_withheld` envelope carries `request_ref` and `code`; the service
+attaches the safe `result` metadata.
 
 POST refusals: `400` invalid input, `403` policy/grant/approval/containment
 denial, `409 idempotency_conflict`, `410 idempotency_expired`, `429
@@ -136,16 +172,17 @@ availability. S3 `dispatch_in_flight` and `reconciliation_pending` map to
 `409` refused envelopes, not an admitted result. B1 authentication/scope errors
 retain the runtime's own HTTP error shape; clients must also handle that shape.
 Malformed transport retains `413`/`415` as appropriate. No exception text or
-raw input is returned. No new public hook refusal enum is introduced here.
+raw input is returned. These refusals add no public hook refusal code.
 
 ## Callable boundary and mounting
 
-The following signatures name the planned S13 implementation modules; they are
-design declarations, not callable shipped stubs. `ToolReply.body` is the JSON
-envelope above. `MemberSubmission` is internal data constructed only after B1,
-using the matched `Authorization.tool` and the complete original request bytes.
-`JSONValue` denotes the strict JSON value domain above. Types from existing
-modules (`Authorization`, `RequestBytes`) retain their existing definitions.
+The following signatures are the S13 member services. `MemberSubmission`,
+`ToolReply` and the `JobRunRequests` protocol live in
+`aweb_secrets.member_types`. `ToolReply.body` is the JSON envelope above.
+`MemberSubmission` is internal data constructed only after B1, using the
+matched `Authorization.tool` and the complete original request bytes.
+`JSONValue` denotes the strict JSON value domain above. `Authorization` and
+`RequestBytes` keep their own modules' definitions.
 
 ```python
 @dataclass(frozen=True, repr=False)
@@ -163,7 +200,7 @@ class ToolReply:
 class BrokerRequests:  # aweb_secrets.broker_service
     async def submit(self, *, secret: str, submission: MemberSubmission) -> ToolReply: ...
 
-class JobRuns:  # aweb_secrets.run_service
+class JobRunRequests(Protocol):  # aweb_secrets.member_types; RunDispatch implements it
     async def submit(self, *, job: str, submission: MemberSubmission) -> ToolReply: ...
 
 class UseStatus:  # aweb_secrets.status_service
@@ -177,18 +214,24 @@ dispatching each commit their own required outbox records; the final live
 fence follows all awaited writes before dispatching commits. Exact custody
 opening then precedes every token-cache lookup and outbound call.
 
-Keep `metadata_router(MetadataServices(catalog=get_catalog), authorized=...)`.
-S13 adds `use_router(UseServices(broker=get_broker, runs=get_runs,
-status=get_status), authorized=...)` in `aweb_secrets.use_routes`, with request-time
-getters because runtime DB/services exist after startup. The app owner passes
-both factories through `create_app(tool_routers=...)` and uses the exact
-`authorized` supplied by that factory. S16 owns client rendering/tests and can
-supply its metadata factory. The secrets-app seat owns the use router and the
-broker/run services; secrets-root owns `app.py`, configuration, final root
-mounting and S19. The root constructs one shared set of dependencies and injects
-it into the services; all admission, dispatch and release transactions and final
-fences remain in those services. Human routers use the one shared OwnerConsole
-separately.
+The installation fence comes first in every transaction (decision 43). S3
+enforces this through its `Fence` protocol in `aweb_naapp.dispatch`:
+`prepare(tx)` takes every lock the fence needs before S3 locks the dispatch row
+or pair, and `check(tx, dispatch)` re-reads under those locks and takes none of
+its own.
+
+Root mounts `metadata_router(MetadataServices(catalog=...), authorized=...)`
+and `use_router(UseServices(broker=..., runs=..., status=...), authorized=...)`
+from `aweb_secrets.use_routes`, with request-time getters because runtime
+DB/services exist after startup. Both factories go through
+`create_app(tool_routers=...)`, which supplies the exact `authorized`
+dependency. S16 owns client rendering/tests. The secrets-app seat owns the use
+router and the broker/run services; secrets-root owns root composition and
+final mounting (`create_service` and `_compose` in `composition.py`; `app.py`
+holds the generic `create_app` mount seam), configuration and S19. The root
+constructs one shared set of dependencies and injects it into the services;
+all admission, dispatch and release transactions and final fences remain in
+those services. Human routers use the one shared `OwnerConsole` separately.
 
 ### Concrete durable-run construction
 
@@ -204,36 +247,40 @@ The S3 execution bound uses each original job timeout plus `sweep_margin`,
 independently of assignment expiry. Root schedules `RunDispatch.sweep`, which
 selects only original run contexts and locks the B2 union before S3.
 
-`RunDispatch.status` is its inert `RunStatus` reader. Construct the ONE shared
-`UseStatus(db, fence=shared_fence, approvals=shared_approvals,
-runs=run_dispatch.status)`, pass that status getter to `UseServices`, and use
-the run instance itself for the member-run and runner-adapter getters. Status
-never dispatches or consumes; another principal's held owner inspection
-receives state/code/refs without result contents. `runs=None` preserves the
-existing broker-only status path without querying run tables.
+`RunDispatch.status` is its inert `RunStatus` reader. Root constructs one
+member-route `UseStatus(db, fence=shared_fence, approvals=shared_approvals,
+runs=run_dispatch.status)`, passes that status getter to `UseServices`, and
+uses the run instance itself for the member-run and runner-adapter getters.
+`BrokerRequests` holds its own broker-only `UseStatus` (`runs=None`) for its
+POST receipts; `runs=None` reads no run tables. Status never dispatches or
+consumes; another principal's held owner inspection receives state/code/refs
+without result contents.
 
 Root applies `apply_run_dispatch_migrations` after app records, shared S3,
 S12/run approvals, jobs/runners and use-context migrations, BEFORE constructing
 `UseApprovalAudit(enable_runs=True)`. The same use-audit branch then routes
 `is_use_approval` and `is_run_approval`; root does not implement either policy
-or proof grammar. This replaces the reserved run failure branch only when the
-actual service is composed. Mount `runner_dispatch_router(service=get_runs)`
-on the API origin outside B1, while `use_router` stays under its exact B1
-dependency. These constructors and routers alone do not establish the final
-root/S19 journey proof. Short-lived/internal issuance remains unavailable.
+or proof grammar. **Open (aweb-acgh.18.14):** the console still refuses every
+run approval decision with 503 `release_context_unavailable`, so a run that
+needs approval cannot be decided. Root mounts
+`runner_dispatch_router(service=...)` with the run instance on the API origin
+outside B1, while `use_router` stays under its exact B1 dependency.
+**In flight (aweb-acgh.18.21):** the constructors and routers are on main; the
+final root/S19 journey proof is not. Short-lived/internal issuance is
+unavailable (**After the first release (aweb-acgh.41.1)**).
 
 ## Runner adapter boundary
 
 The concrete immutable `RunnerSubmission` and `RunnerReply` DTOs and structural
-`RunDispatchAPI` protocol live in `aweb_secrets.runner_types`. The actual service
-implementation remains `aweb_secrets.run_service.RunDispatch`; publishing the
-transport types does not implement or activate its transactions.
+`RunDispatchAPI` protocol live in `aweb_secrets.runner_types`. The service
+implementation is `aweb_secrets.run_service.RunDispatch`, which root mounts
+through `runner_dispatch_router`.
 
-S15a implements bounded HTTP framing and maps `RunnerRefused` using the existing
+S15a implements bounded HTTP framing and maps `RunnerRefused` using the
 runner protocol §4.5. S13's service owns all database transactions. The adapter
 passes immutable raw bytes; it does not authenticate in a separate committed
 transaction, consume a nonce early, select work, open values or publish an
-assignment. Registration keeps the existing separate code-exchange router.
+assignment. Registration keeps its separate code-exchange router.
 
 ```python
 @dataclass(frozen=True, repr=False)
@@ -257,19 +304,19 @@ class RunDispatch:  # aweb_secrets.run_service
     async def result(self, dispatch_ref: str, submission: RunnerSubmission) -> RunnerReply: ...
 ```
 
-S15a can implement `runner_dispatch_router(service=get_run_dispatch)` beside
-`runner_registration_router`. It mounts only the three existing protocol paths
+`runner_dispatch_router(service=...)` in `aweb_secrets.runner_routes` sits beside
+`runner_registration_router`. It mounts only the three protocol paths
 on the API origin, outside B1's member-tool router. It sends `Cache-Control:
 no-store` on every success/error and returns `RunnerReply.body` without JSON
 re-encoding. It never accepts team-auth or a console session as runner authority.
-Claim/started accept exactly `{}`; result has the existing six-field report and
+Claim/started accept exactly `{}`; result has the six-field report and
 pinned bounds. The service rechecks semantic shape after runner authentication;
 framing/media limits can refuse before unbounded reads. Reports return `204`.
 
 For a result, the adapter first applies the global framing/media/header caps,
 then calls `result_body_limit` **before streaming the body**. S13 parses the
 signed header, reads the active registered runner key, checks its signature
-through `verify_request_signature` (source-reviewed helper at `9a98d8600`),
+through `verify_request_signature` (`aweb_secrets.runner_protocol`),
 and checks signed origin/method/exact external target/time. Actual body-hash
 verification is necessarily deferred. It then resolves the original scoped
 dispatch/run association for that runner and its persisted pinned output
@@ -282,7 +329,7 @@ protocol's global cap. All read transactions and temporary key locks end
 size hint: no nonce, admission, custody read, state change, assignment or
 effect authority. It exposes no plan, key, raw output or alternate dispatch
 handle. Dependency failure is `503 runner_unavailable`; other precheck errors
-use the existing runner protocol statuses. The adapter enforces the returned
+use the runner protocol statuses. The adapter enforces the returned
 limit incrementally, aborting an oversized frame with `413
 runner_request_too_large`; it then passes the original complete bytes to
 `result`. That final method independently resolves scope/bounds and reverifies
@@ -292,8 +339,8 @@ installation or scope change during streaming therefore refuses at the final
 check. Neither a returned integer nor an earlier successful preflight is
 accepted as final authority. Claim/started retain their fixed 4096-byte bounds.
 
-S13 calls the existing `runner_scope` for routing only, refreshes F6 outside
-locks, takes the installation fence first and then the complete authority lock
+S13 calls `runner_scope` for routing only, refreshes F6 outside
+locks, takes the installation fence first (decision 43) and then the complete authority lock
 order (roles/forest/grants/job/runner, then coverage/B2 as applicable, then S3).
 Before external preparation, verify the runner signature/binding/time without
 committing a nonce or effect; discovery is inert and any read transaction ends
@@ -318,7 +365,7 @@ dispatching and required outbox rows commit together before returning bytes.
 
 | Call | Permitted effect |
 | --- | --- |
-| `JobRuns.submit` | New received/pending or jointly admitted run and required events. No credential release. Fresh same-body resubmission may consume approvals once. |
+| `RunDispatch.submit` | New received/pending or jointly admitted run and required events. No credential release. Fresh same-body resubmission may consume approvals once. |
 | `RunDispatch.claim` | Wait at most 30 s without a tx/locks; final authenticated empty claim consumes nonce. Original admitted run may become dispatching with one stored assignment. |
 | Claim preparation failure | Recheck for a concurrent published winner first. Only still-admitted attempt may become refused, atomically with nonce/refusal event; return `503 runner_unavailable`. |
 | Claim replay | Current registration/key and original scope/generation/containment checks, fresh nonce, exact unexpired stored bytes. No reopen/reseal/new expiry. |
@@ -339,6 +386,15 @@ protocol's, without a second lifecycle in an adapter.
 
 ## Owner reconciliation control boundary (§11.4)
 
+**In flight (aweb-acgh.18.14):** the types, reader, policy, local audit
+branch, `ReconciliationControls` service and the console settlement page
+(`aweb_secrets.console_reconciliation`) are on main. Root does not compose
+them: its migration list omits `apply_reconciliation_migrations`,
+`SecretsAudit` routes only use and run approvals, the console change-set
+approval kind passes `enable_reconciliation=False`, and
+`console_reconciliation_router` is not among the console routers. Until root
+composes them, an owner cannot settle an `outcome_unknown` from the console.
+
 The frozen types live in `reconciliation_types.py`. `ReconciliationOriginal`
 names the original installation/team/generation, opaque `reconcile_ref`, caller
 request ID, S3 dispatch UUID, original requester and value-free resource/job or
@@ -353,6 +409,8 @@ mismatched or multiple association refuses. Run originals retain `None`.
 Shared S3 migrations, including 002 continuations, must be applied before
 constructing or serving this reader. The observation adds no authority and
 never changes `ReconciliationOriginal` or the covered control request/hash.
+No broker continuation exists until the safe-repeat call site is built (see
+"Member tools: inputs and replay"), so on main `repeat_state` is always `None`.
 The page can show an admitted/dispatching repeat in flight, an unknown repeat
 as uncertain, and a settled original whose unknown repeat no longer blocks
 the pair while retaining its result as evidence. The owner may still settle
@@ -395,10 +453,8 @@ approval locks; final live authority and expiry checks follow all waits and
 audit writes. The control uses its own provider/audit branch; settlement does
 not acquire the positive-use target/backlog availability gate. GET, reload and
 status never mint, decide or settle, and a lost reply never triggers automatic
-mutation retry. The DTO/read checkpoint precedes the concrete control
-association, provider/audit and mutation-service implementation. Root will
-inject the same branch into the composite and console when that source is
-reviewed; these types alone do not mount it.
+mutation retry. Root injects the same branch into the composite and console
+when it composes reconciliation (see the In flight note above).
 
 
 The concrete control policy and local audit branch are
@@ -414,7 +470,7 @@ same shared B2 store's plain `get_in(id, tx)`, never a locking read.
 owner_subject)` and `reconciliation_policy_ref(request)` freeze the original
 pins, chosen outcome and exact owner into B2's canonical covered request.
 The owner-only policy expires within five minutes. Candidate selection returns
-only that exact current owner; an empty set remains final. Existing
+only that exact current owner; an empty set remains final. The
 OwnerDirectory/UseApprovers current-holder routing still supplies B2's
 `is_current`, with no new authority interpreter in root.
 
@@ -425,8 +481,7 @@ scope, approval_id)` returns the frozen association without tokens or effects.
 Control associations, local events and retained-proof commitments are immutable.
 No hook producer is injected into this branch. Actual settlement retains the
 original S3 reconciled hook. These providers and audit do not themselves mint,
-consume or settle; the caller-owned mutation/final-fence service remains the
-next composition step.
+consume or settle; the caller-owned `ReconciliationControls` service below does.
 
 
 `OwnerReconciliationFence` is the frozen console-owned protocol in
@@ -464,15 +519,15 @@ broker/run backend refuses before any control write. Its methods are:
 `ReconciliationRefused` exposes fixed `.code`/`.status` pairs:
 `reconciliation_not_found`/404, `owner_required`/403,
 `reconciliation_invalid`/400 and `reconciliation_conflict`/409. Shared
-`ApprovalRefused` maps to existing 409 `approval_refused`;
+`ApprovalRefused` maps to 409 `approval_refused`;
 `InstallationRefused` retains its fixed code/status; `UseAuditUnavailable`
 remains 503 `release_context_unavailable`. Caller 401 session and 403 owner
 refusals pass through; other database failures propagate and roll back.
 
 ## Public signed use correlation
 
-For newly admitted broker/run uses, signed `post-secret-use` payload `use_ref`
-is exactly the member response's existing server-minted `request_ref`. Frozen
+For admitted broker/run uses, signed `post-secret-use` payload `use_ref`
+is exactly the member response's server-minted `request_ref`. Frozen
 audit contexts retain it through approval decisions, resubmission, transport
 and result replay, uncertainty and owner settlement. Separate executions have
 separate refs; `dispatch_id`, `job_id` and `job_digest` retain their meanings.
@@ -489,6 +544,7 @@ lookup, retry, deduplication or execution authority.
 Member input models reject `use_ref`; refs never contain caller request IDs,
 parameters, reasons or credential material. Owners join the actual response ref
 to signed retained `payload.use_ref`, installation/generation, team and canonical
-actor DID. Legacy events may omit it and are not backfilled. Compatible receiver
-publication must precede new emission; the catalog v1 compatibility decision and
-upgrade requirement are recorded in the hook contract/changelog.
+actor DID. `use_ref` is optional in hook catalog v1; events without it stay
+valid and are not backfilled. The field is in catalog v1 in place, under Juan's
+ruling on use_ref in place in v1; receivers on earlier published catalogs
+refuse events carrying it and must upgrade (CHANGELOG.md).

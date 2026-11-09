@@ -542,8 +542,9 @@ those two. An unrecognized purpose is shown to the admin and grants nothing. A v
 
 Status: **specified, not shipped**, with
 [owner-act delivery](owner-act-delivery.md) (aweb-acgh.16.38) and the
-[human-role holders](design/human-role-holders.md) design that Juan ruled. No
-consumer supports it, and no app publishes it.
+[human-role holders](design/human-role-holders.md) design that Juan ruled. The Go
+interpreter and the Python reader read it; no released client selects it, and
+no app publishes it.
 
 Version 3 is version 2 with one more optional member, `owner_acts`: the app's
 human origin and the roles only a team owner act designates, each held by a
