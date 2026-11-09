@@ -191,6 +191,7 @@ def create_app(
 
 
 def serve() -> OriginApps:
-    """The service for this deployment, configured from its ``LOGS_`` environment,
-    its mail from ``LOGS_EMAIL_*``: ``uvicorn aweb_logs.app:serve --factory``."""
-    return create_app(LogsSettings(), email=EmailSettings.from_env("LOGS_"))
+    """The service for this deployment, configured from its ``LOGS_`` environment
+    only, never a ``.env`` file, its mail from ``LOGS_EMAIL_*``:
+    ``uvicorn aweb_logs.app:serve --factory``."""
+    return create_app(LogsSettings(_env_file=None), email=EmailSettings.from_env("LOGS_"))
