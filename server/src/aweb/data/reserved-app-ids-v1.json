@@ -21,6 +21,7 @@
     "gc-mail",
     "heartbeat",
     "help",
+    "hooks",
     "id",
     "inbound-mode",
     "init",

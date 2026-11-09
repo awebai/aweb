@@ -160,9 +160,9 @@ def is_fully_substituted(tool: dict[str, Any], values: dict[str, str]) -> bool:
     return "{" not in example_path(tool, values)
 
 
-# --- Manifest versions 1 and 2 -------------------------------------------------
+# --- Manifest versions 1, 2 and 3 ---------------------------------------------
 
-SUPPORTED_MANIFEST_VERSIONS = (1, 2)
+SUPPORTED_MANIFEST_VERSIONS = (1, 2, 3)
 CATALOG_PATH = "/.well-known/aweb-app-versions.json"
 LEGACY_MANIFEST_PATH = "/.well-known/aweb-app.json"
 MAX_CATALOG_BYTES = 64 << 10
@@ -178,6 +178,11 @@ _MAX_ROLE_DESCRIPTION = 512
 # segments, at least two, no ':'.
 _ROLE_NAME = re.compile(r"[a-z0-9][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)+")
 _ROLE = frozenset({"name", "label", "description"})
+# owner-act/1's audience grammar, kept dependency-free for the core reader.
+# The signed verifier and Go interpreter consume the same public contract.
+_OWNER_ORIGIN = re.compile(r"https://[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?(:[0-9]{1,5})?")
+_HUMAN_ROLE_ACTS = frozenset({"human-credential.replace", "human-role.designate", "human-role.revoke"})
+_OWNER_ROLE = frozenset({"name", "label", "description", "acts", "notice_contact"})
 
 AGENT, SURFACE, HOOK = "agent", "surface", "hook"
 _CONTEXTS = (AGENT, SURFACE, HOOK)
@@ -444,10 +449,11 @@ def _decode(doc: Any) -> dict[str, Any]:
     """Type-check the whole document before any value rule, as Go's decoder does."""
     if not isinstance(doc, dict):
         raise _invalid("manifest must be a JSON object")
-    unknown = set(doc) - _TOP
+    fields = _TOP | {"owner_acts"} if doc.get("manifest_version") == 3 else _TOP
+    unknown = set(doc) - fields
     if unknown:
         raise _invalid(f"manifest has unknown field {sorted(unknown)[0]!r}")
-    for key in _V2_TOP:
+    for key in (*_V2_TOP, "owner_acts"):
         if key in doc and doc[key] is None:
             raise _invalid(f"{key} must not be null")
     out: dict[str, Any] = {"present": set(doc)}
@@ -518,6 +524,7 @@ def _decode(doc: Any) -> dict[str, Any]:
                         "registrations": registrations, "productions": productions}
     # Roles stay raw until validation, so every fault in them is role_invalid.
     out["roles"] = doc.get("roles")
+    out["owner_acts"] = doc.get("owner_acts")
     return out
 
 
@@ -993,6 +1000,45 @@ def _valid_role_text(text: str, max_runes: int) -> bool:
     return not any(ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F or _is_bidi_control(ord(c)) for c in text)
 
 
+def _parse_owner_acts(raw: Any, app_origin: str) -> Mapping[str, Any] | None:
+    if raw is None:
+        return None
+
+    def invalid() -> ManifestError:
+        return _refuse("owner_acts_invalid", "invalid owner-designated human roles or origin")
+
+    if not isinstance(raw, dict) or set(raw) != {"origin", "roles"}:
+        raise invalid()
+    origin, roles = raw["origin"], raw["roles"]
+    if not isinstance(origin, str) or not _OWNER_ORIGIN.fullmatch(origin):
+        raise invalid()
+    if (urlsplit(origin).hostname or "").rstrip(".") == (urlsplit(_go_trim(app_origin)).hostname or "").rstrip("."):
+        raise invalid()
+    if not isinstance(roles, list) or not 1 <= len(roles) <= 16:
+        raise invalid()
+    names: set[str] = set()
+    for role in roles:
+        if not isinstance(role, dict) or set(role) - _OWNER_ROLE:
+            raise invalid()
+        name, label = role.get("name"), role.get("label")
+        if (not isinstance(name, str) or not _ROLE_NAME.fullmatch(name)
+                or name[0] not in "abcdefghijklmnopqrstuvwxyz" or len(name.encode("utf-8")) > 64
+                or name in names):
+            raise invalid()
+        names.add(name)
+        if not isinstance(label, str) or not _valid_role_text(label, _MAX_ROLE_LABEL):
+            raise invalid()
+        if "description" in role and (not isinstance(role["description"], str)
+                or not _valid_role_text(role["description"], _MAX_ROLE_DESCRIPTION)):
+            raise invalid()
+        acts = role.get("acts")
+        if (not isinstance(acts, list) or not acts
+                or not all(isinstance(act, str) and act in _HUMAN_ROLE_ACTS for act in acts)
+                or acts != sorted(set(acts)) or type(role.get("notice_contact")) is not bool):
+            raise invalid()
+    return copy.deepcopy(raw)
+
+
 def _is_bidi_control(code: int) -> bool:
     return code in (0x061C, 0x200E, 0x200F) or 0x202A <= code <= 0x202E or 0x2066 <= code <= 0x2069
 
@@ -1076,10 +1122,11 @@ class Manifest:
     hooks: Mapping[str, Any] | None
     roles: tuple[Mapping[str, str | None], ...]
     _tools: Mapping[str, _Tool]
+    owner_acts: Mapping[str, Any] | None = None
 
     def view(self) -> dict[str, Any]:
         """The resolved view the shared vectors assert."""
-        return {
+        result = {
             "manifest_version": self.manifest_version,
             "app_id": self.app_id,
             "agent_tools": list(self.agent_tools),
@@ -1093,6 +1140,9 @@ class Manifest:
             "hooks": copy.deepcopy(self.hooks),
             "roles": [dict(role) for role in self.roles],
         }
+        if self.owner_acts is not None:
+            result["owner_acts"] = copy.deepcopy(self.owner_acts)
+        return result
 
     def tools_by_name(self) -> dict[str, Mapping[str, Any]]:
         """Each declared tool as the manifest declares it, keyed by the name a
@@ -1126,7 +1176,7 @@ class Manifest:
         """Refuse a version 2 body that carries an ``answer`` member, top-level
         or in a top-level object member, for any tool except a surface
         answer_tool. Answers reach an app only through that tool."""
-        if self.manifest_version != 2 or _go_trim(tool) in _answer_tools(self.surfaces):
+        if self.manifest_version == 1 or _go_trim(tool) in _answer_tools(self.surfaces):
             return
         if not isinstance(body, dict):
             return
@@ -1135,7 +1185,7 @@ class Manifest:
 
 
 def load_manifest(data: bytes, *, reserved_names: frozenset[str] = frozenset()) -> Manifest:
-    """Decode exact manifest bytes of either supported version, validate them
+    """Decode exact manifest bytes of any supported version, validate them
     and resolve them. Refusals raise :class:`ManifestError` with a stable code."""
     document = _decode_document(data)
     d = _decode(document)
@@ -1191,6 +1241,7 @@ def load_manifest(data: bytes, *, reserved_names: frozenset[str] = frozenset()) 
         hooks=hooks,
         roles=tuple(_parse_roles(d["roles"])),
         _tools=tools,
+        owner_acts=_parse_owner_acts(d["owner_acts"], d["app"]["origin"]),
     )
 
 
