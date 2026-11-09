@@ -15,6 +15,10 @@ bytes. Driver connect timeout is 3 seconds, each round trip 2 seconds, the progr
 alarm 10 seconds, and the existing runner hard execution deadline 20 seconds.
 The job retains the runner's generic 2,048-byte output bound, projection and
 known-value redaction. Driver errors produce a fixed value-free refusal.
+The program removes credential variables from its environment mapping, but the
+initial values can remain visible in `/proc/<pid>/environ` to the same UID or
+root. Those readers are inside the runner's credential boundary; the separate
+runner UID and protected runtime remain necessary.
 
 The disposable account has only `CREATE SESSION` and object `READ`, and is marked
 `READ ONLY`. The report additionally starts a read-only transaction. The test
@@ -61,6 +65,9 @@ Seeding waits for Oracle's final startup hook, then uses SQLPlus OS authenticati
 and private stdin. All client and database
 containers share one **internal** Docker network, with no published port. The
 report's only endpoint is the fixed lab address `10.203.0.2:1521/FREEPDB1`.
+This isolated synthetic lab uses plain TCP. A deployment outside the lab must use
+TCPS with server certificate verification; changing this fixed destination and
+transport requires a reviewed program, image digest and matching job pins.
 
 ## Real proof
 

@@ -86,6 +86,7 @@ class Lab:
             self.network,
             "--cap-drop=ALL",
             "--security-opt=no-new-privileges",
+            # Proof harness only: permit nested rootless namespaces inside Docker.
             "--security-opt=seccomp=unconfined",
             "--security-opt=systempaths=unconfined",
             "--tmpfs",
