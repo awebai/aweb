@@ -85,8 +85,11 @@ def revocation_subject(scope: str, subject_ref: str) -> dict[str, Any]:
     }
 
 
-async def team_owner(registry, *, team_id: str = TEAM_ID) -> TeamOwner:
-    """Register a real owner key for the team the app fixture actually uses."""
+async def team_owner(
+    registry, *, team_id: str = TEAM_ID, acts: tuple[str, ...] = APP_ACTS
+) -> TeamOwner:
+    """Register a real owner key for the team the app fixture actually uses,
+    with a verifier for ``acts``."""
     key = SigningKey.generate()
     await registry.add_team(team_id, did_key(key))
     cache = AWIDTeamCache(
@@ -100,6 +103,6 @@ async def team_owner(registry, *, team_id: str = TEAM_ID) -> TeamOwner:
         return (await cache.get(team_id)).team_did_key
 
     verifier = OwnerActVerifier(
-        scope=APP_ID, audience=AUDIENCE, acts=APP_ACTS, team_key_for=current_team_key
+        scope=APP_ID, audience=AUDIENCE, acts=acts, team_key_for=current_team_key
     )
     return TeamOwner(team_key=key, verifier=verifier, team_id=team_id)

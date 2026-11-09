@@ -66,6 +66,16 @@ def test_checkpoints_are_issued_every_five_minutes_by_default(monkeypatch: pytes
         LogsSettings(_env_file=None)
 
 
+def test_retention_is_applied_every_hour_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LOGS_DATABASE_URL", "postgresql://localhost/logs")
+    monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", "https://logs.example.test")
+    monkeypatch.setenv("LOGS_CONSOLE_ORIGIN", "https://console.logs.example.test")
+    assert LogsSettings(_env_file=None).retention_interval_seconds == 3600
+    monkeypatch.setenv("LOGS_RETENTION_INTERVAL_SECONDS", "0")
+    with pytest.raises(ValueError):
+        LogsSettings(_env_file=None)
+
+
 def test_client_quotas_default_and_read_their_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LOGS_DATABASE_URL", "postgresql://localhost/logs")
     monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", "https://logs.example.test")

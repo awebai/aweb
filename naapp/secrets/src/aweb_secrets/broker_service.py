@@ -71,6 +71,11 @@ from aweb_secrets.custody.opening import BackendObservation, UseSecretOpener
 from aweb_secrets.member_types import MemberSubmission, ToolReply, broker_result_reply
 from aweb_secrets.onepassword_reconciliation import BackendReconciler
 from aweb_secrets.response_audit import ResponseKey
+from aweb_secrets.response_capacity import (
+    DEFAULT_RESPONSE_BUDGET_BYTES,
+    ResponseBudget,
+    ResponseCapacityUnavailable,
+)
 from aweb_secrets.status_service import UseStatus
 from aweb_secrets.tokens import TokenCache
 from aweb_secrets.use_approval import BrokerOpen, BrokerOperation, UseApprovalRefused
@@ -255,6 +260,7 @@ class BrokerRequests:
         sweep_margin: timedelta,
         derived_max_ttl_s: int,
         internal_destinations: InternalDestinations,
+        response_budget_bytes: int = DEFAULT_RESPONSE_BUDGET_BYTES,
         approvals: Approvals | None = None,
         approval_authority: Callable[[Principal, Admission], DispatchAuthority] | None = None,
         use_audit: UseApprovalAudit | None = None,
@@ -280,6 +286,7 @@ class BrokerRequests:
             producer,
             registration_view,
         )
+        self._response_budget = ResponseBudget(response_budget_bytes)
         self._max_backlog_age, self._max_dispatch, self._sweep_margin = (
             max_backlog_age,
             max_dispatch,
@@ -695,6 +702,16 @@ class BrokerRequests:
         submission: MemberSubmission,
         view: RegistrationView | None,
     ) -> ToolReply:
+        with self._response_budget.reservation() as reserve:
+            return await self._dispatch_reserved(use, submission, view, reserve)
+
+    async def _dispatch_reserved(
+        self,
+        use: _PreparedUse,
+        submission: MemberSubmission,
+        view: RegistrationView | None,
+        reserve: Callable[[int], None],
+    ) -> ToolReply:
         try:
             observation = await self._opener.observe(_context(use.call))
             if (
@@ -730,6 +747,7 @@ class BrokerRequests:
                         await self._fence.check(tx, use.admission.installation)
                         return reply
                     return await self._publication_receipt(tx, use)
+                reserve(final.broker.call.rendered.max_bytes)
                 if current.state in {State.RECEIVED, State.AWAITING_APPROVAL}:
                     current = await self._machine(view).admit(tx, use.dispatch_id, fence=final)
                 send_until = asyncio.get_running_loop().time() + final.send_budget()
@@ -737,6 +755,16 @@ class BrokerRequests:
                 await final.check(tx, current)
             # The only opening/cache/egress path follows the committed winner.
             call = final.broker.call
+        except ResponseCapacityUnavailable:
+            # Preparation rolled back: no B2 consumption or dispatching commit.
+            # This transient availability response never closes the original use.
+            return ToolReply(
+                503,
+                tool_results.refused(
+                    "capacity_unavailable", request_id=use.inputs.request.request_id
+                ),
+                {"Retry-After": "1"},
+            )
         except (
             AdmissionRefused,
             CustodyUnavailable,

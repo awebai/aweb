@@ -333,11 +333,19 @@ async def publish_lab_runtime(
         raise LabConfigurationError(set(), "lab_publication_invalid")
     actors = await _certify_lab_actors(environment, registry_transport=registry_transport)
     body = {
-        "profile": "byot-native-kms-lab/1",
+        "profile": "byot-native-lab/1",
+        "custody_mode": environment[PREFIX + "CUSTODY_MODE"],
         "inputs": dict(environment),
         "actors": actors,
         "runner_uid": runner_uid(environment),
-        "coverage": {"private_address_refusal": private_dns, "full_release_gate": False},
+        "coverage": {
+            "private_address_refusal": private_dns,
+            "full_release_gate": False,
+            "custody": {
+                mode: "not_tested" if mode == environment[PREFIX + "CUSTODY_MODE"] else "excluded"
+                for mode in ("kms", "local_key_file")
+            },
+        },
     }
     path = directory / "runtime.json"
     try:
