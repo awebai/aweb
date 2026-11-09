@@ -1,18 +1,23 @@
 """Owner-defined broker response limits reach the real DNS/TLS egress path."""
 
 import copy
+import json
 
 import pytest
 from fastapi import Response
 
+from aweb_secrets.change import ChangeRefused, covered_bytes, parse_change, validate_change
 from aweb_secrets.destination import DestinationInvalid, DestinationRecord
 from aweb_secrets.operation import OperationInvalid, OperationTemplate
 from aweb_secrets.operation_request import render_operation
+from aweb_secrets.policy import Policy, PolicyInvalid
 
 from .harness import NAME, running_upstream
 from .test_broker_operation import _send, _template
+from .test_change import POLICY, _change
 from .test_destination_record import DISABLED, RECORD
 from .test_operation_record import REFUND
+from .test_policy import BODY
 
 DEFAULT = 16 * 1024 * 1024
 CEILING = 64 * 1024 * 1024
@@ -67,6 +72,59 @@ def test_operation_refuses_invalid_response_limit_at_definition(maximum):
     after["response"]["max_bytes"] = maximum
     with pytest.raises(OperationInvalid):
         OperationTemplate.from_after(after)
+
+
+@pytest.mark.parametrize("maximum", [None, 1024, 32 * 1024 * 1024, CEILING])
+def test_policy_can_lower_the_effective_limit_without_rewriting_covered_bytes(maximum):
+    body = copy.deepcopy(BODY)
+    body["result"] = {} if maximum is None else {"max_bytes": maximum}
+    policy = Policy.from_body(body)
+    assert policy.max_response_bytes == (DEFAULT if maximum is None else maximum)
+    assert policy.body == body
+
+
+@pytest.mark.parametrize("maximum", [True, 0, -1, CEILING + 1])
+def test_policy_refuses_invalid_response_limit_at_definition(maximum):
+    body = copy.deepcopy(BODY)
+    body["result"] = {"max_bytes": maximum}
+    with pytest.raises(PolicyInvalid):
+        Policy.from_body(body)
+
+
+@pytest.mark.parametrize("kind", ["destination", "operation"])
+@pytest.mark.parametrize("maximum", [None, CEILING, CEILING + 1])
+def test_owner_confirmation_covers_exact_limit_or_its_omission(kind, maximum):
+    after = copy.deepcopy(RECORD if kind == "destination" else REFUND)
+    if kind == "destination":
+        if maximum is not None:
+            after["response_max_bytes"] = maximum
+    elif maximum is None:
+        del after["response"]["max_bytes"]
+    else:
+        after["response"]["max_bytes"] = maximum
+    change = _change(
+        changes=[
+            {
+                "kind": kind,
+                "op": "create",
+                "ref": after[f"{kind}_id"],
+                "after": after,
+            }
+        ]
+    )
+    if maximum == CEILING + 1:
+        with pytest.raises(ChangeRefused):
+            validate_change(change)
+        return
+    validate_change(change)
+    parsed = parse_change(json.dumps(change).encode())
+    assert parsed["changes"][0]["after"] == after
+    changed = copy.deepcopy(change)
+    if kind == "destination":
+        changed["changes"][0]["after"]["response_max_bytes"] = 1024
+    else:
+        changed["changes"][0]["after"]["response"]["max_bytes"] = 1024
+    assert covered_bytes(change, POLICY) != covered_bytes(changed, POLICY)
 
 
 @pytest.mark.parametrize(

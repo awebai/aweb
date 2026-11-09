@@ -20,6 +20,7 @@ from aweb_naapp.runtime.attestation import VerifiedAttestation
 from awid.signing import canonical_json_bytes
 
 from aweb_secrets.principal import is_principal
+from aweb_secrets.response_limits import DEFAULT_RESPONSE_BYTES, MAX_RESPONSE_BYTES
 
 DIGEST_PREFIX = b"aweb.secrets.policy/1\n"
 
@@ -29,7 +30,8 @@ RATE_SCOPES = ("principal_secret", "secret")
 CHANNELS = ("mcp_l2", "dashboard", "api")
 DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 MAX_APPROVAL_TTL_S = 86_400
-MAX_RESULT_BYTES = 16 * 1024 * 1024
+
+MAX_RESULT_BYTES = MAX_RESPONSE_BYTES
 MAX_REQUEST_BYTES = 1024 * 1024
 
 FIELDS = frozenset(
@@ -218,10 +220,14 @@ def _check(body: Any) -> None:
         _is_int(request["max_bytes"]) and 1 <= request["max_bytes"] <= MAX_REQUEST_BYTES,
         "request.max_bytes is 1 byte to 1 MiB",
     )
-    result = _exact_keys(body["result"], frozenset({"max_bytes"}), "result")
+    result = body["result"]
     _require(
-        _is_int(result["max_bytes"]) and 1 <= result["max_bytes"] <= MAX_RESULT_BYTES,
-        "result.max_bytes is 1 byte to 16 MiB",
+        isinstance(result, Mapping) and set(result) <= {"max_bytes"}, "result has only max_bytes"
+    )
+    maximum = result.get("max_bytes", DEFAULT_RESPONSE_BYTES)
+    _require(
+        _is_int(maximum) and 1 <= maximum <= MAX_RESULT_BYTES,
+        "result.max_bytes is 1 byte to 64 MiB",
     )
     _check_attestation(body["requires_attestation"])
     _require(
@@ -238,6 +244,10 @@ def policy_digest(body: Mapping[str, Any]) -> str:
 class Policy:
     body: Mapping[str, Any]
     digest: str
+
+    @property
+    def max_response_bytes(self) -> int:
+        return self.body["result"].get("max_bytes", DEFAULT_RESPONSE_BYTES)
 
     @classmethod
     def from_body(cls, body: Mapping[str, Any]) -> Policy:

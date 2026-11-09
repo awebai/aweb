@@ -38,7 +38,7 @@ CONNECT_TIMEOUT_SECONDS = 5.0
 TOTAL_TIMEOUT_SECONDS = 30.0
 MAX_REQUEST_BYTES = 1024 * 1024
 # The hard maximum any caller may ask for; a caller that sets no bound gets the default.
-MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+MAX_RESPONSE_BYTES = 64 * 1024 * 1024
 DEFAULT_RESPONSE_BYTES = 4 * 1024 * 1024
 
 
@@ -54,7 +54,7 @@ class EgressOutcomeUnknown(Exception):
 class Bounds:
     """Timeouts and sizes for one request, each above 0 and at most its ceiling.
 
-    The response bound defaults to 4 MiB; a caller may set it up to the 16 MiB
+    The response bound defaults to 4 MiB; a caller may set it up to the 64 MiB
     ceiling. The others default to their ceilings.
     """
 

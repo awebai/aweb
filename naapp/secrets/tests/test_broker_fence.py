@@ -248,8 +248,21 @@ async def test_policy_window_is_checked_after_a_real_s3_row_lock_wait(db, fence,
         assert current.attempts == (0 if expired else 1)
 
 
-async def test_open_request_is_bounded_and_has_no_token_issuing_authority(db, fence):
-    await _install(db, policy_body={**POLICY_BODY, "result": {"max_bytes": 1024}})
+@pytest.mark.parametrize(
+    "destination_limit,policy_limit,expected",
+    [
+        (None, 1024, 1024),
+        (512, 1024, 512),
+        (None, None, 16 * 1024 * 1024),
+        (32 * 1024 * 1024, 64 * 1024 * 1024, 32 * 1024 * 1024),
+    ],
+)
+async def test_open_request_is_bounded_and_has_no_token_issuing_authority(
+    db, fence, destination_limit, policy_limit, expected
+):
+    result = {} if policy_limit is None else {"max_bytes": policy_limit}
+    await _install(db, policy_body={**POLICY_BODY, "result": result})
+    limit = {} if destination_limit is None else {"response_max_bytes": destination_limit}
     destination = DestinationRecord.from_after(
         {
             "v": 1,
@@ -264,6 +277,7 @@ async def test_open_request_is_bounded_and_has_no_token_issuing_authority(db, fe
             "header_allow": [],
             "network": "public",
             "cidr": None,
+            **limit,
         },
         internal_destinations=InternalDestinations.DISABLED,
     )
@@ -288,6 +302,6 @@ async def test_open_request_is_bounded_and_has_no_token_issuing_authority(db, fe
         assert prepared.call.operation is None
         assert prepared.call.rendered.token_issuing is False
         assert prepared.call.rendered.projection is None
-        assert prepared.call.rendered.bounds.max_response_bytes == 1024
-        assert prepared.call.rendered.max_bytes == 1024
+        assert prepared.call.rendered.bounds.max_response_bytes == expected
+        assert prepared.call.rendered.max_bytes == expected
         assert prepared.call.target_path_template == "/v1/**"
