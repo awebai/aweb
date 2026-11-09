@@ -363,7 +363,7 @@ class RegistryClient:
     _domain_verifier: DomainVerifier | None = field(init=False, repr=False, compare=False)
     _http_client: httpx.AsyncClient = field(init=False, repr=False, compare=False)
 
-    def __post_init__(self, domain_verifier: DomainVerifier | None) -> None:
+    def __post_init__(self, domain_verifier: DomainVerifier | None = None) -> None:
         object.__setattr__(self, "_domain_verifier", domain_verifier)
         object.__setattr__(self, "service_token", normalize_service_token(self.service_token))
         object.__setattr__(
@@ -395,6 +395,8 @@ class RegistryClient:
         attempt as the cached client. Failures return unavailable evidence;
         cancellation propagates. Every invocation performs the required live
         reads; callers choose explicitly between this and CachedRegistryClient.
+        Capability-detecting callers now discover this method and perform live
+        DNS authority and status reads instead of treating evidence as unavailable.
         """
         try:
             request = status_request(bundle, subject, domain=domain)

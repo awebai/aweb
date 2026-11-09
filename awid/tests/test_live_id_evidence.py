@@ -230,3 +230,17 @@ async def test_live_evidence_timeout_bounds_authority_acquisition(live_registry)
         evidence = await client.id_chain_evidence(BUNDLE, SUBJECT, domain=DOMAIN)
     assert evidence.age_seconds is None
     assert cancelled.is_set()
+
+
+async def test_manual_registry_subclass_keeps_no_argument_post_init_compatibility():
+    class ManualRegistryClient(RegistryClient):
+        def __init__(self, registry_url):
+            object.__setattr__(self, "registry_url", registry_url)
+            RegistryClient.__post_init__(self)
+
+    client = ManualRegistryClient("http://127.0.0.1:1")
+    try:
+        assert client._domain_verifier is None
+        assert client.registry_url == "http://127.0.0.1:1"
+    finally:
+        await client.aclose()
