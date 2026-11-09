@@ -234,3 +234,21 @@ func TestSessionActionsRefuseNullInTheFieldsTheyAdd(t *testing.T) {
 		})
 	}
 }
+
+// A null inside input_schema is schema content, not an absent tool field, so
+// it survives resolution.
+func TestSessionActionsKeepNullsInsideInputSchema(t *testing.T) {
+	ownerActs := secretsSessionActions(t)
+	read := action(ownerActs["session_actions"].([]any), "change-set")
+	read["input_schema"].(map[string]any)["properties"].(map[string]any)["change_id"].(map[string]any)["default"] = nil
+	raw, _ := json.Marshal(ownerActs)
+	resolved, err := Load(ownerActCaseManifest(t, "https://secrets.example.com", raw), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := resolved.OwnerActs.SessionActions[0].InputSchema
+	changeID := schema["properties"].(map[string]any)["change_id"].(map[string]any)
+	if value, present := changeID["default"]; !present || value != nil {
+		t.Fatalf("change_id schema %#v", changeID)
+	}
+}

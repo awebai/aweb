@@ -73,8 +73,9 @@ func TestOwnerActManifestVectors(t *testing.T) {
 			if err := json.Unmarshal(tc.OwnerActs, &wantValue); err != nil {
 				t.Fatal(err)
 			}
-			// A null member reads as absent, so the resolved form omits it.
-			if !reflect.DeepEqual(gotValue, withoutNullMembers(wantValue)) {
+			// A null inherited tool field reads as absent, so the resolved
+			// form omits it.
+			if !reflect.DeepEqual(gotValue, withoutNullToolFields(wantValue)) {
 				t.Fatalf("owner_acts\n got: %s\nwant: %s", got, tc.OwnerActs)
 			}
 		})
@@ -208,25 +209,33 @@ func TestManifestV3KeepsEveryVersion2CallContextVerdict(t *testing.T) {
 	}
 }
 
-// withoutNullMembers drops every object member whose value is null, at any
-// depth.
-func withoutNullMembers(value any) any {
-	switch v := value.(type) {
-	case map[string]any:
-		out := map[string]any{}
-		for name, member := range v {
-			if member != nil {
-				out[name] = withoutNullMembers(member)
-			}
-		}
-		return out
-	case []any:
-		out := make([]any, len(v))
-		for i, item := range v {
-			out[i] = withoutNullMembers(item)
-		}
-		return out
-	default:
+// withoutNullToolFields drops the null inherited tool fields of each session
+// action, which the reader reads as absent: description, input_schema and
+// body, and a null member of body. It leaves everything else, input_schema's
+// contents included, exactly as given.
+func withoutNullToolFields(value any) any {
+	ownerActs, ok := value.(map[string]any)
+	if !ok {
 		return value
 	}
+	actions, _ := ownerActs["session_actions"].([]any)
+	for _, item := range actions {
+		action, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, name := range []string{"description", "input_schema", "body"} {
+			if member, present := action[name]; present && member == nil {
+				delete(action, name)
+			}
+		}
+		if body, ok := action["body"].(map[string]any); ok {
+			for name, member := range body {
+				if member == nil {
+					delete(body, name)
+				}
+			}
+		}
+	}
+	return ownerActs
 }
