@@ -12,6 +12,8 @@ from aweb_naapp.runtime.settings import NaappSettings
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import SettingsConfigDict
 
+from aweb_secrets.response_capacity import DEFAULT_RESPONSE_BUDGET_BYTES
+
 
 class SecretsSettings(NaappSettings):
     model_config = SettingsConfigDict(env_prefix="SECRETS_", env_file=".env", extra="ignore")
@@ -58,6 +60,7 @@ class ServiceSettings(SecretsSettings):
     egress_ca_file: Path | None = None
     egress_denied_networks: tuple[IPv4Network | IPv6Network, ...] = ()
     broker_max_dispatch_seconds: int = Field(default=30, gt=0)
+    broker_response_budget_bytes: int = Field(default=DEFAULT_RESPONSE_BUDGET_BYTES, gt=0)
     sweep_margin_seconds: int = Field(default=5, gt=0)
     sweep_interval_seconds: int = Field(default=15, gt=0)
     runner_assignment_ttl_seconds: int = Field(default=60, ge=1, le=300)

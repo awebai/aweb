@@ -5,6 +5,14 @@ it brokers requests and runner jobs under owner-defined grants and policy, and
 records every use. The design is `docs/design/secrets.md`; the build plan is
 `docs/design/secrets-build-plan.md`.
 
+The production broker's `SECRETS_BROKER_RESPONSE_BUDGET_BYTES` limits concurrent
+response reservations per process (default 256 MiB, positive whole bytes).
+Size it below the container's memory limit with room for parsing and the rest
+of the process. Each dispatch reserves its effective response limit before
+sending and holds it through response processing. Exhaustion returns HTTP 503
+`capacity_unavailable` with `Retry-After: 1`; resubmit the original request.
+Reservations never wait for capacity and are released on failure and cancellation.
+
 The service (`aweb_secrets.app.create_app`) runs on the shared naapp runtime,
 `aweb_naapp`, as one process on two origins:
 

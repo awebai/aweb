@@ -685,6 +685,17 @@ requirement.
    is no in-place definition edit. Credential-shape scanning and marked truncation
    remain as in §7.6. Both request and response bounds are reduced by policy.
 
+   The production broker also reserves each final effective response bound from
+   an in-process budget before committing dispatch or sending any upstream
+   request. `SECRETS_BROKER_RESPONSE_BUDGET_BYTES` defaults to 256 MiB per process;
+   an operator sizes it for the container, allowing for JSON parsing and other
+   process memory as well as raw response bytes. Reservation never waits for
+   capacity. Exhaustion returns retryable HTTP 503 `capacity_unavailable` with
+   `Retry-After: 1`, leaving the original request and any unconsumed approval
+   available for exact resubmission. The reservation is held through response
+   processing and released on success, failure, or cancellation. This byte
+   budget bounds concurrently reserved responses, not the process's entire heap.
+
 "Internal" means internal to the secrets deployment's network. Whether such a
 destination is possible at all is an **operator deploy setting**,
 `internal_destinations: disabled | allowed`, which defaults to `disabled`.
