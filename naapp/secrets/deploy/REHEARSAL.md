@@ -45,8 +45,10 @@ host as an implicit fallback.
 
 ## 2. Complete host and identity prerequisites first
 
-Before installing either CLI, the OATS owner must confirm that Desktop0.69.12's
-accepted CLI version range includes the selected aw version. If it does not,
+Where Desktop manages the selected CLI, the OATS owner must confirm before
+installation that Desktop0.69.12's accepted range includes that aw version.
+The headless worker/server uses CLI/SSH and needs no Desktop; human keychain
+operations stay on the operator's own machine. If it does not,
 the owner supplies a compatible Desktop/CLI pair. Never upgrade the CLI alone.
 Keep the published OATS agent baseline and integrated candidate explicitly
 separate. A side-by-side candidate is usable only with an owner-confirmed
@@ -69,7 +71,15 @@ join route. Run it only with row-2's selected namespace/registry/coordination
 inputs and command/version artifact. Do not create another team or identity
 as a substitute for a failed prerequisite. Human-kind89bf111d supplies the
 source-qualified row2 sequence: released aw1.36.56/server1.27.48 at
-e3a1d9f76cb4f08913603accd48ba04120f3df82 for controller-issued local invitations;
+e3a1d9f76cb4f08913603accd48ba04120f3df82. Correction b4baf7cd: a native invitation
+is not a transferable remote-enrolment credential. Redemption loads the local
+issuer record and controller key. Never copy that key to the worker VM. The
+supported cross-machine sequence, for a worker signing identity already on the
+worker, is aw id team request -> controller aw id team add-member -> worker
+aw id team fetch-cert -> workspace connect. Fresh remote local-key preparation
+remains unresolved in that command handoff (request refuses without a key);
+OATS/identity owners must supply an existing supported operation or retain this
+as a journey gap. Do not seed a fixture or invent a key-creation command;
 separate human participation uses RCcfdc06255e2ad00e63640255f4f6d4b294d30f4f.
 Actual namespace/TXT, controller public DID and custody boundary, registry
 origin/cohort, coordination origin/TLS and resource-use authorization must
@@ -224,7 +234,15 @@ registration doctor must pass before run. Root stages a Linux x64 interpreter/im
 creates a locked system aweb-runner account; records its UID and tester's UID
 rather than copying macOS499; protects root-owned ancestors/code, runner-owned
 0700 state and0600 config; validates the included sudoers rule with visudo and
-sudo -l. Exact artifact/install commands and their review remain an S19 gap.
+sudo -l. Retain sudo -l run as tester and tester's complete group membership
+(id -Gn). A demonstrated driver/runner boundary requires that tester can invoke
+only the exact no-argument supervisor rule and cannot regain broader privilege
+through general sudo or Docker/host administration. Ubuntu cloud defaults may
+grant both. If either is reachable, mark driver-to-runner isolation NOT
+DEMONSTRATED; INT/grace-kill/doctor/job observations can be recorded as lifecycle
+mechanics only. Do not silently change group/sudo policy or claim containment
+from differing UIDs. Any missing isolation remains with the VM/host operator.
+Exact artifact/install commands and their review remain an S19 gap.
 The existing S19 control pipe owns lifecycle; no systemd unit is added for this
 rehearsal. Keep the same identity/journal/locks across restart. Prove INT via the actual sudo PID, and grace kill via a
 noncooperative worker. Any privileged worker-only STOP is the disposable VM operator's explicit line
@@ -314,6 +332,10 @@ On the VM, the operator records these bounded probes (no environment dump):
 ```sh
 uname -srm
 cat /etc/os-release
+id -u
+id -g
+id -Gn
+sudo -l
 free -b
 df -B1 /
 findmnt -no FSTYPE,OPTIONS /dev/shm
@@ -369,7 +391,7 @@ claimed yet. The product source is pinned; no second harness is introduced.
 
 | Acceptance row | Next executable step | Current blocking dependency / owner |
 | --- | --- | --- |
-| 3 Services | Finish the source Secrets build/probe under the lock; on the reserved fresh host apply the actual private settings and run real root readiness | Allocated Ubuntu24.04amd64 VM: capacity/capability/readiness still required from root + VM operator; real row2 authority inputs: lab operator; Logs .9->.8: Logs owner. Audit activation also waits on row4. |
+| 3 Services | Finish the source Secrets build/probe under the lock; on the reserved fresh host apply the actual private settings and run real root readiness | Allocated Ubuntu24.04amd64 VM: capacity/capability/readiness still required from root + VM operator; real row2 authority inputs: lab operator; fresh remote signing-key preparation: OATS/identity owners; Logs .9->.8: Logs owner. Audit activation also waits on row4. |
 | 4 Human/workload | Consume the reviewed4.2 handback, drive actual first-owner/reader designation and protected confirmation, then register the operator-installed runner | 4.2/.3 ->16.41/16.43/16.44 and4.4/.5/.6;4.9/C3; Root Linux artifact/install instructions and runner-fitted TLS job pins under4.7/HO6. Owners as named in section5. |
 | 5 Effects/refusal | Enter one S19 runtime and execute the five cases in section6 with actual target/read evidence | Rows3–4 and S19 context18.21 (root); app18.14 consumer; no invented approval or binding. |
 | 6 Operations/support | Exercise each supported OPERATIONS matrix path against that same exact arrangement; leave unsupported paths blocked | Row3–5 state and each existing restore/rotation/export procedure gap; accountable root/acwd.7 with Logs reviewing its part. |
