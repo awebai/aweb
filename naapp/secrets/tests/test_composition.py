@@ -1,5 +1,6 @@
 """The production constructor starts both origins on a fresh real database."""
 
+import asyncio
 import secrets
 from ipaddress import ip_address, ip_network
 
@@ -12,6 +13,71 @@ from aweb_naapp_testing.smtp import SmtpServer
 from aweb_secrets.composition import create_service
 from aweb_secrets.config import ServiceSettings
 from tests.test_app import API, CONSOLE, _settings
+
+
+async def test_failed_kms_health_keeps_the_selected_custody_mode(
+    test_db_factory, registry, tmp_path, monkeypatch
+):
+    """Real SDK failure at an owned endpoint; this is not an AWS KMS proof."""
+    import boto3
+
+    attempts = 0
+
+    async def unavailable(reader, writer):
+        nonlocal attempts
+        try:
+            headers = await reader.readuntil(b"\r\n\r\n")
+            length = next(
+                int(line.split(b":", 1)[1])
+                for line in headers.split(b"\r\n")
+                if line.lower().startswith(b"content-length:")
+            )
+            await reader.readexactly(length)
+            attempts += 1
+            writer.write(
+                b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+            await writer.drain()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    server = await asyncio.start_server(unavailable, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    monkeypatch.setenv("AWS_ENDPOINT_URL_KMS", f"http://127.0.0.1:{port}")
+    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", secrets.token_hex(16))
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", secrets.token_hex(32))
+    monkeypatch.setenv("AWS_SESSION_TOKEN", secrets.token_hex(32))
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "no-aws-config"))
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "no-aws-credentials"))
+    monkeypatch.delenv("AWS_PROFILE", raising=False)
+    # Use the test's synthetic environment, never a previously cached session.
+    monkeypatch.setattr(boto3, "DEFAULT_SESSION", None)
+    try:
+        database = await test_db_factory.create_db(suffix="secrets_kms_mode")
+        with SmtpServer(tmp_path / "smtp", password=secrets.token_urlsafe(32)) as smtp:
+            configured = settings(database, tmp_path, smtp).model_copy(
+                update={
+                    "custody_key_file": None,
+                    "kms_key_id": "alias/lab-d2",
+                    "kms_region": "us-east-1",
+                }
+            )
+            service = create_service(configured, awid_transport=registry.transport)
+            async with service.api_app.router.lifespan_context(service.api_app):
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(service)) as client:
+                    health = await client.get(API + "/health")
+                    assert health.json()["labels"]["custody_mode"] == "kms"
+                    assert health.json()["checks"]["kms"]["ok"] is False
+                    ready = await client.get(API + "/ready")
+                    assert ready.status_code == 503
+                    assert ready.json()["labels"]["custody_mode"] == "kms"
+                    assert ready.json()["checks"]["kms"]["ok"] is False
+                    assert attempts > 0
+    finally:
+        server.close()
+        await server.wait_closed()
 
 
 def settings(database, directory, smtp):
@@ -44,8 +110,9 @@ def settings(database, directory, smtp):
 
 
 async def test_production_startup_prepares_every_store_before_serving_and_cleans_up(
-    test_db_factory, registry, tmp_path
+    test_db_factory, registry, tmp_path, monkeypatch
 ):
+    monkeypatch.setenv("APP_ENV", "production")
     database = await test_db_factory.create_db(suffix="secrets_production_root")
     with SmtpServer(tmp_path / "smtp", password=secrets.token_urlsafe(32)) as smtp:
         service = create_service(
@@ -79,6 +146,10 @@ async def test_production_startup_prepares_every_store_before_serving_and_cleans
                     health = await client.get(API + "/health")
                     assert health.status_code == 200
                     assert health.json()["checks"]["kms"]["ok"]
+                    assert health.json()["labels"]["custody_mode"] == "local_key_file"
+                    ready = await client.get(API + "/ready")
+                    assert ready.status_code == 200
+                    assert ready.json()["labels"]["custody_mode"] == "local_key_file"
             assert service.runtime.connected_db() is None
             async with httpx.AsyncClient(transport=httpx.ASGITransport(service)) as client:
                 assert (await client.get(CONSOLE + "/enrolment")).status_code == 404

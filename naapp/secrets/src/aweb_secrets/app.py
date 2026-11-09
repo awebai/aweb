@@ -12,8 +12,9 @@ accepts team-auth. It serves no tool.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
+from enum import StrEnum
 from ipaddress import IPv4Network, IPv6Network
 from pathlib import Path
 
@@ -106,6 +107,7 @@ def create_app(
     grants: GrantSource | None = None,
     policy: ActionPolicy,
     kms: HealthCheck,
+    health_labels: Mapping[str, StrEnum] | None = None,
     awid_transport: httpx.AsyncBaseTransport | None = None,
     team_server_transport: httpx.AsyncBaseTransport | None = None,
     hook_egress: Egress | None = None,
@@ -213,5 +215,5 @@ def create_app(
 
     api = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     mount_manifest_routes(api, runtime=runtime)
-    mount_health(api, settings, checks=checks)
+    mount_health(api, settings, checks=checks, labels=health_labels)
     return SecretsService(runtime, api, console)
