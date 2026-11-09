@@ -25,6 +25,8 @@ CREATE UNIQUE INDEX dispatch_one_settlement
     ON {{tables.dispatch_observations}}(dispatch_id) WHERE kind='settlement';
 CREATE UNIQUE INDEX dispatch_one_legacy_snapshot
     ON {{tables.dispatch_observations}}(dispatch_id) WHERE kind='snapshot';
+CREATE INDEX dispatch_observations_by_dispatch_kind
+    ON {{tables.dispatch_observations}}(dispatch_id,kind);
 
 -- The previous mutable slot does not prove which attempt produced its value.
 -- Preserve it explicitly as a snapshot, with no invented attempt association.
@@ -77,4 +79,7 @@ END;
 $$;
 CREATE TRIGGER dispatch_result_projection BEFORE INSERT OR UPDATE ON {{tables.dispatches}}
     FOR EACH ROW EXECUTE FUNCTION {{tables.dispatch_result_projection}}();
+-- Initial projection fill rewrites every existing dispatch once. There are no
+-- deployed installations at this change; a deployed upgrade pays this full
+-- table update before serving requests.
 UPDATE {{tables.dispatches}} SET updated_at=updated_at;
