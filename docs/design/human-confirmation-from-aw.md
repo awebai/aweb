@@ -117,6 +117,12 @@ public key, and binding still needs the owner's act and the
 `aw` sends these requests only to the pinned origin and follows no
 redirects. The app rate-limits handoffs as it rate-limits login.
 
+An app that cannot emit that event refuses a fallback `session` handoff with
+`409 fallback_unavailable`. That includes an app whose hook catalog lacks the
+act, and the team server, which produces no hooks. It is not a session
+refusal: `aw` does not renew, and it reports the code and that a local browser
+is needed.
+
 **Purposes:**
 
 - **`credential`.** The page runs WebAuthn registration with B3's options:
@@ -142,7 +148,13 @@ redirects. The app rate-limits handoffs as it rate-limits login.
   current human member ([Use](human-role-holders.md#use)), from the session's
   retained certificate ([Membership evidence](#membership-evidence)), and
   refuses with `403 principal_not_member`, `403 principal_not_human` or
-  `503 principal_status_unavailable`.
+  `503 principal_status_unavailable`. When the session's holding is no longer
+  current, the app refuses with `403 role_not_held`. That covers a revoked
+  holding and one superseded by a `human-credential.replace` whose cooling-off
+  has ended; a replace still in its cooling-off leaves the holding current. A
+  `session` handoff requested for a scope in which the signing principal holds
+  no current holding refuses the same way. `role_not_held` is final: no new
+  handoff restores a holding, so `aw` never renews on it.
 
 ### Membership evidence
 
@@ -454,6 +466,9 @@ which stops.
    reports, and never sends the confirm again, even when the read says
    `ready`, because the first confirm may still be committing. An invocation
    sends the confirm at most once.
+5. A `403 role_not_held` ends the invocation. `aw` does not renew; it reports
+   the code and, when it had already sent the confirm, that the confirm's
+   outcome was not read.
 
 The app's own refusals pass through with their status and `detail`, such as
 `409 change_not_approved` or `403 owner_required`. `aw`'s own codes are
