@@ -1054,7 +1054,8 @@
             "team_seq_last",
             "erased_count",
             "hold_id",
-            "hold_scope"
+            "hold_scope",
+            "reason_code"
           ]
         },
         {
@@ -4654,6 +4655,22 @@
       },
       "error": "rule_violation",
       "field": "hold_id"
+    },
+    {
+      "name": "logs_retention_carrying_a_reason",
+      "hook": "post-governance-hook",
+      "payload": {
+        "authority": "owner_act",
+        "owner_act_sha256": "abababababababababababababababababababababababababababababababab",
+        "act": "logs.retention.shortened",
+        "direction": "narrowing",
+        "event_class": "all",
+        "retention": "days",
+        "retention_days": 30,
+        "reason_code": "owner_request"
+      },
+      "error": "rule_violation",
+      "field": "reason_code"
     }
   ]
 }
