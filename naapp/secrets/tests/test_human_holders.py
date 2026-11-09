@@ -237,3 +237,42 @@ async def test_prepared_authority_cannot_be_borrowed_by_another_tx_wrapper(enrol
         borrowed = TransactionManager(tx.connection, enrolled.db)
         assert not await service.check_session_target(borrowed, held)
         assert await service.check_session_target(tx, held)
+
+
+async def test_hold_serializes_withdrawal_without_locking_another_owner(enrolled):
+    await _apply(enrolled, "app-role.designate", BOB, "bob@example.com")
+    await _enrol(enrolled, "bob@example.com")
+    service = authority(enrolled)
+    target = await service.session_target(PublicScope())
+    writer_pid = asyncio.get_running_loop().create_future()
+
+    async def withdraw(principal, *, report_pid=False):
+        async with enrolled.db.transaction() as tx:
+            if report_pid:
+                writer_pid.set_result(await tx.fetch_value("SELECT pg_backend_pid()"))
+            await unassign(tx, principal, OWNER_ROLE)
+
+    writer = None
+    try:
+        async with enrolled.db.transaction() as tx:
+            held = await service.hold_session_target(tx, target)
+            holder_pid = await tx.fetch_value("SELECT pg_backend_pid()")
+            writer = asyncio.create_task(withdraw(ALICE, report_pid=True))
+            async with asyncio.timeout(2):
+                blocked_pid = await writer_pid
+                while holder_pid not in await tx.fetch_value(
+                    "SELECT pg_blocking_pids($1)", blocked_pid
+                ):
+                    await asyncio.sleep(0.01)
+            async with asyncio.timeout(1):
+                await withdraw(BOB)
+                assert await service.check_session_target(tx, held)
+            assert not writer.done()
+        async with asyncio.timeout(1):
+            await writer
+        with pytest.raises(HTTPException):
+            await service.session_target(PublicScope())
+    finally:
+        if writer is not None:
+            writer.cancel()
+            await asyncio.gather(writer, return_exceptions=True)
