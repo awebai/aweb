@@ -9,7 +9,9 @@ With it, a human finishes every protected naapp operation that `aw` starts:
 - confirming a frozen request;
 - entering a value or the 1Password service-account token;
 - receiving a runner's registration code;
-- signing in as a logs reader.
+- signing in as a logs reader;
+- endorsing a deployment identity
+  ([proposed](#endorsing-a-deployment-identity)).
 
 The default gesture is a passkey ceremony in a browser that `aw` opens on the
 app's human origin. Touch ID, Windows Hello, a phone or a password manager's
@@ -259,6 +261,221 @@ reader's holding. Logs issues the short-lived session bound to the ephemeral
 key, as L6 plans. The reader is a human-role holder, `logs.reader`, bound by
 its owner act. There is no second reader CLI.
 
+## Endorsing a deployment identity
+
+Status: **proposed** (aweb-acwd.11). Juan approved the direction on
+2026-11-09. Athena ruled the passkey binding (H4 reuse) and the host (the
+team server); neither is a guarantee change. The admission side, policy and
+the read that direct naapps use are in the deployment endorsement contract
+(aweb-acwd.10), whose section (d) this section meets.
+
+A human H endorses a deployment identity D by signing D's ID certificate
+([identity certificates](../id-certificates.md)). An ordinary signature
+proves only that something used H's key. A **protected endorsement** adds a
+fresh, user-verified passkey confirmation of that exact certificate request,
+made by a credential that H's team controller bound to H. Policy that
+requires protected endorsement accepts nothing less. A certificate that H's
+key issued without it, or that a session-only Cloud lane issued, stays an
+ordinary endorsement.
+
+### Three authorities, kept apart
+
+- **Personhood:** H's issuer-vouched ID kind `human` (the ID tree).
+- **Identity signing:** H's own key signs D's certificate, in `aw`. No
+  passkey becomes or replaces an Ed25519 key.
+- **Credential provenance:** the team controller's
+  [`human-role.designate`](human-role-holders.md#three-acts) act binds the
+  passkey H confirms with. H's key never binds a credential to H.
+
+None substitutes for another. The server's install-admin or operator access
+binds nothing and confirms nothing.
+
+### The host is the team server
+
+The ceremony runs on the team's aweb server, which every team already has, so
+endorsing an identity installs no app and needs no secrets or logs.
+
+- **Origin.** The server's human origin is the origin of `server_url` in the
+  controller-signed `aweb.team-server/1` record
+  ([team-server discovery](app-team-server-api.md#trust-chain-the-naapp-checks)).
+  It is the acts' `aud` and the passkeys' rp_id. Clients resolve it only from
+  that record, never from a caller, a response or a redirect. A changed origin
+  hostname orphans the bound passkeys (a new rp_id); rebinding is
+  `human-credential.replace`, and there is no migration path.
+- **The endorser role.** The server is a first-party human-role host with one
+  fixed declaration, shipped with the server and known to `aw`: `app_id`
+  `team-server`, role `endorser`, label "Deployment endorser", acts
+  `human-credential.replace`, `human-role.designate` and `human-role.revoke`,
+  and no notice contact. Its `installation_id` for a team is the UUIDv5 of
+  `aweb:team-server:` followed by the `team_id`, under the RFC 4122 URL
+  namespace. There is no manifest and no install.
+- **Verification.** The coordination server's owner-act vocabulary
+  ([acts and subjects](../owner-act.md#acts-and-subjects)) gains the three
+  human-role acts for that `app_id` and that `installation_id` only; an act
+  naming any other app or installation is refused with `owner_required`. They
+  arrive at `POST <origin>/.well-known/aweb-owner-act` and pass the
+  delivery stages of [owner-act delivery](../owner-act-delivery.md#delivery)
+  unchanged, including stage 3's membership and kind checks.
+- **One verifier.** The server runs naapp-lib's B2, B3, console sessions, the
+  [handoff](#the-handoff) and the delivery stages as a library. It writes no
+  second WebAuthn verifier and no second copy of stage 3.
+- **Hooks.** The server is not an app producer. It keeps the binding and
+  endorsement history in its own tables and emits no `post-governance-hook`.
+  Its handoff therefore offers the loopback only; the typed-code fallback,
+  which requires that event, refuses.
+- **Cost to everyone else.** An operator who never uses protected
+  endorsement configures nothing and runs nothing new: the migrations are
+  additive, there is no new required setting, and no startup check can fail.
+  The routes refuse until a controller binds an endorser.
+- **Price.** Binding is one owner act per endorser credential, made once.
+  Admission reads one endorsement row and its holding locally, with no AWID
+  call; a direct naapp adds only the read that deployment endorsement (c)
+  defines.
+- **Hosted teams** get the same shape through the aweb pin. Which origin Cloud
+  uses is a hosted decision, filed when this lands; it does not block this
+  contract.
+
+### Binding the endorser
+
+H's `aw` runs a `credential` handoff on the server's origin. The passkey it
+returns authorizes nothing. The team controller signs `human-role.designate`
+for (`team-server`, the team's installation, `endorser`, H) with its
+`credential_sha256`, after the two clients show the same fingerprint over a
+channel that H's custodian does not control. When the controller is H, one
+client runs the handoff and signs the act in one sitting, as
+[H4](human-role-holders.md#what-the-owners-client-shows-and-signs) says.
+
+### The endorsement
+
+1. **The request.** D exports its certificate request
+   (`aweb.id-certificate-request/1`, kind `agent`, parent H), and H's `aw`
+   receives it as for any child. When the endorsement must be protected, `aw`
+   does not sign yet.
+2. **Freezing it.** `aw` opens a `session` handoff for H's endorser holding
+   and posts the exact signed request file to `POST /endorsements` in that
+   session. The server checks the request's shape and key proof, that its
+   parent is H, that H holds a current endorser holding, and that D's
+   `subject_key` is D's current key. It then creates one B2 approval whose
+   covered request is exactly:
+   - `csr_sha256`, the SHA-256 of the request's signing bytes;
+   - D's `id`, `domain` and `subject_key`;
+   - H's `did:aw`;
+   - the team and the server's installation;
+   - `disclosure_version`, naming the disclosure text below.
+
+   Its only candidate is H's endorser holding. The response is the
+   endorsement id and the approval id.
+3. **Confirming it.** The approval page on the server shows D's ID, domain and
+   key fingerprint, H, the team, and the disclosure, verbatim: **"Endorsing
+   this identity endorses everything it spawns, recursively, until you
+   withdraw it."** H approves with an APPROVE assertion by the bound credential.
+   B3 verifies it and retains its proof (`aweb.passkey-evidence/1`); B2
+   records the decision.
+4. **Consuming it.** `aw` reads the endorsement in its session until it is
+   approved, then calls `POST /endorsements/{id}/consume`. In one transaction
+   the server checks that the approval is approved, unexpired and not yet
+   consumed, re-reads the holding under its lock, and records the consumption
+   with the holding it was made under. The answer is the covered request and
+   `approval_evidence_sha256`.
+5. **Signing.** `aw` signs D's certificate with H's key only if the consumed
+   covered request's `csr_sha256` equals the request it is about to sign. The
+   issuance log records the endorsement id.
+6. **Linking.** `aw` posts the issued certificate to
+   `POST /endorsements/{id}/certificate`. The server accepts it only if H's
+   current key signed it, and its `id`, `domain`, `parent` and `kind` equal
+   the request's. It records `certificate_sha256`, over the certificate's
+   signed bytes, once. The same certificate again returns the same record;
+   a different one refuses with `endorsement_certificate_conflict`. D then
+   registers the certificate in AWID as for any child.
+
+The endorsement row binds `csr_sha256`, D's id and key, H, the disclosure
+version, the approval id, `approval_evidence_sha256`, the holding it was
+consumed under, `certificate_sha256`, and its withdrawal state. The original
+proof and request bytes stay retained for audit. A row with no linked
+certificate endorses nothing.
+
+### Withdrawal
+
+H withdraws an endorsement with `POST /endorsements/{id}/withdraw` in a
+`session` handoff for H's endorser holding. Withdrawal narrows, so it needs
+no assertion beyond the session's sign-in. Signing in needs a current
+holding; when H has none or cannot sign in, the team controller ends D's
+access by revoking D's ancestry (deployment endorsement (e)). The row keeps its history and records `withdrawn_at`; a withdrawn row
+never becomes current again. Admission reads the withdrawal state at the
+freshness deployment endorsement (c) bounds.
+
+### What admission verifies
+
+Admission that requires protected endorsement checks D's registered
+certificate against a row whose `certificate_sha256` matches it, the row not
+withdrawn, and the current H-rooted ancestry (deployment endorsement (c), (d)). A direct
+naapp verifies the original artifacts, not the row's word:
+
+- the controller's `human-role.designate` act for the holding, under the team
+  key;
+- the retained assertion against that holding's `credential_sha256`, and its
+  commitment against `approval_evidence_sha256`;
+- the challenge's covered request against the row's `csr_sha256`, D and H.
+
+The proof is valid only against the holding that was current when it was
+consumed. Replacing or revoking that credential later does not withdraw the
+endorsement: endorsements stand until withdrawn explicitly (deployment
+endorsement (e)). The disclosure says so: replacing a lost or compromised
+credential does not withdraw what it endorsed, and H or the owner withdraws
+those endorsements.
+
+### What this guarantees, and what it does not
+
+This is Athena's statement (`9778950d`, section 3). No release note may claim
+more.
+
+Someone who holds only H's key cannot make a protected endorsement. Binding
+needs the controller's act, which is refused with `owner_required` when H's
+key signs it, and an assertion by a credential other than the current
+holding's does not verify. The binding is only as independent as the
+controller key's custody is from H's key and from the agents. Keep the
+controller key and H's key in different custody if the endorsement is to mean
+a human gesture.
+
+A protected endorsement does not hold against:
+
+1. one custodian holding both the controller key and H's key, or controlling
+   the owner's signing client: it can bind any authenticator;
+2. whoever controls H's client during the `credential` handoff: it can
+   substitute a credential and show the substitute's fingerprint, so the
+   comparison passes; the owner-is-H single sitting has the same exposure on
+   that machine;
+3. a fingerprint compared over a channel the custodian controls, such as aweb
+   mail, a notice, or a second key under the same custodian.
+
+It claims neither:
+
+4. authenticator attestation: a software authenticator bound by a legitimate
+   controller act counts;
+5. that two `did:aw` values are two people.
+
+The binding is trust on first use. A later compromise of H's authenticator is
+handled by replace or revoke, and is not detected.
+
+### Refusals and negatives
+
+Each is a vector row, for the server and for a direct naapp:
+
+| Case | Result |
+| --- | --- |
+| The confirmed request differs from the one `aw` signs (changed CSR) | `aw` refuses to sign; a certificate that does not match the request is refused at linking |
+| A second consumption of the approval (replay) | refused; one consumption per approval |
+| An APPROVE by anyone but H's endorser holding (wrong approver) | refused by B2's candidate check |
+| A consumption after the approval expired (stale proof) | refused |
+| A binding act signed by H's key | `owner_required` |
+| An assertion by a credential that is not the holding's | refused, and no row |
+| A certificate from a session-only Cloud lane or plain human-key issuance | no row; protected admission refuses |
+| An endorsement made before a `human-credential.replace` | still verifies |
+| A confirmation consumed after the replace, using the old credential | refused |
+| A withdrawn endorsement | admission denies; history kept |
+| An owner act naming any other app or installation at the server | `owner_required` |
+| The server's handoff in the typed-code fallback | refused |
+
 ## Optional: a security key from the terminal
 
 A human may instead hold a roaming CTAP2 security key with user verification
@@ -332,6 +549,16 @@ Each item is filed after review, and each is one reviewed change.
   operator types the code at the runner's existing terminal prompt), and a
   test that the private-stdin path still reads one line.
 - **L6:** the `session` handoff on logs' origin.
+- **Deployment endorsement (the server),** once this section is ACKed: the
+  `team-server` endorser declaration and owner-act vocabulary row; naapp-lib's
+  B2, B3, console sessions, handoff and delivery stages composed into the
+  server as a library, with additive migrations; the endorsement routes and
+  row; local credential audit with no hook production. Tests: every row of
+  [Refusals and negatives](#refusals-and-negatives), and an operator who
+  binds no endorser sees no change.
+- **Deployment endorsement (`aw`):** the protected path of child approval
+  (freeze, confirm, consume, sign only on a matching consumed request, link),
+  and resolving the server's origin only from the team-server record.
 - **The optional security key**, a separate item that blocks none of the
   above: the `aweb:` relying party and evidence rule
   in B3; CTAP2 creation and assertion in `aw`; a test that a redirect from
