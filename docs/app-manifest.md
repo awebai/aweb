@@ -572,6 +572,26 @@ unchanged. Its semantics and the delivery call are in
   `human-credential.replace`, `human-role.designate` and `human-role.revoke`,
   ascending by code point with no repeat. `notice_contact` is a boolean,
   `true` when designate and replace name a notice contact.
+- `session_actions`, optional, declares the human-origin actions `aw` drives
+  in a role holder's session; their semantics are in
+  [Session actions](design/human-confirmation-from-aw.md#session-actions-what-aw-drives).
+  Absent declares none; an empty array is refused. It has at most 64
+  entries, unique by `name` under the tool `name` rules. Each entry is a
+  version 2 tool object without `scopes`, `mutation` or
+  `invocation_contexts`, whose `path` is relative to `owner_acts.origin`,
+  plus:
+  - `role`, a declared `owner_acts.roles` name;
+  - `kind`: `read` with method `GET`, or `stage`, `draft` or `confirm` with
+    method `POST` and `body.mode` `json`;
+  - `protected: true` on a param, allowed only on an `in: body` param of a
+    `stage` action;
+  - `terminal_output`, allowed only on a `confirm` action: 1 to 16 JSON
+    pointers, each non-empty, whose segments are member names or `*`;
+  - `completion`, required on a `confirm` action and refused elsewhere:
+    `read`, naming a `read` action of the same role whose path parameters
+    are a subset of the confirm's; `ready` and `done`, one predicate each;
+    and `stop`, 1 to 8 predicates. A predicate is
+    `{"member": <name>, "in": [<1 to 16 JSON strings, booleans or integers>]}`.
 
 Every fault in `owner_acts` is `owner_acts_invalid`, except `owner_acts: null`,
 which is `manifest_invalid` like any null member. An absent `owner_acts`
