@@ -171,23 +171,13 @@ func runHumanConnect(cmd *cobra.Command) error {
 	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 	hostname, _ := os.Hostname()
-	body := connectRequest{Hostname: hostname, WorkspacePath: h.dir, HumanName: strings.TrimSpace(initHumanName)}
+	body := connectRequest{Hostname: hostname, WorkspacePath: h.dir, HumanName: resolveHumanNameValue(initHumanName, "human")}
 	resp, err := postConnectClient(ctx, c.Client, cert, body)
 	if err != nil {
 		return err
 	}
 	if resp.AgentType != "human" {
 		return usageError("selected identity did not verify as human at connect; check its ID enrollment")
-	}
-	if body.HumanName == "" {
-		body.HumanName = resolveHumanNameValue("", "human")
-		resp, err = postConnectClient(ctx, c.Client, cert, body)
-		if err != nil {
-			return err
-		}
-		if resp.AgentType != "human" {
-			return usageError("selected identity no longer verifies as human at connect")
-		}
 	}
 	m.AwebURL = url
 	state.ActiveTeam = m.TeamID

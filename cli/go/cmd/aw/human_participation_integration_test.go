@@ -104,6 +104,7 @@ func TestHumanParticipationFetchConnectMailAndManifest(t *testing.T) {
 	}
 	certHeader, _ := awid.EncodeTeamCertificateHeader(cert)
 	messages := 0
+	var connectNames []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, "/v1/") {
 			http.NotFound(w, r)
@@ -149,6 +150,11 @@ func TestHumanParticipationFetchConnectMailAndManifest(t *testing.T) {
 		}
 		switch r.URL.Path {
 		case "/v1/connect":
+			var request connectRequest
+			if err := json.Unmarshal(body, &request); err != nil {
+				t.Error(err)
+			}
+			connectNames = append(connectNames, request.HumanName)
 			json.NewEncoder(w).Encode(map[string]any{"agent_type": "human", "team_id": cert.Team, "alias": "alice"})
 		case "/v1/messages":
 			var m map[string]any
@@ -181,7 +187,7 @@ func TestHumanParticipationFetchConnectMailAndManifest(t *testing.T) {
 	t.Setenv("AWID_REGISTRY_URL", srv.URL)
 	h.record.RegistryURL = srv.URL
 	oldNamespace, oldTeam, oldCert, oldRegistry := teamFetchCertNamespace, teamFetchCertTeam, teamFetchCertID, teamFetchCertRegistry
-	oldURL, oldInitTeam := initURL, initTeam
+	oldURL, oldInitTeam, oldHumanName := initURL, initTeam, initHumanName
 	t.Cleanup(func() {
 		teamFetchCertNamespace = oldNamespace
 		teamFetchCertTeam = oldTeam
@@ -189,6 +195,7 @@ func TestHumanParticipationFetchConnectMailAndManifest(t *testing.T) {
 		teamFetchCertRegistry = oldRegistry
 		initURL = oldURL
 		initTeam = oldInitTeam
+		initHumanName = oldHumanName
 	})
 	teamFetchCertNamespace = "example.com"
 	teamFetchCertTeam = "demo"
@@ -202,11 +209,27 @@ func TestHumanParticipationFetchConnectMailAndManifest(t *testing.T) {
 	}
 	initURL = srv.URL
 	initTeam = cert.Team
-	if err := runHumanConnect(initCmd); err != nil {
-		t.Fatal(err)
-	}
-	if len(*prompts) != 3 {
-		t.Fatalf("connect prompts=%d", len(*prompts))
+	t.Setenv("AWEB_HUMAN", "Default Human")
+	for _, tc := range []struct{ name, value, want string }{
+		{"default name", "", "Default Human"},
+		{"explicit name", "  Chosen Human  ", "Chosen Human"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			initHumanName = tc.value
+			beforePrompts, beforeConnects := len(*prompts), len(connectNames)
+			if err := runHumanConnect(initCmd); err != nil {
+				t.Fatal(err)
+			}
+			if got := len(*prompts) - beforePrompts; got != 1 {
+				t.Fatalf("connect prompts=%d, want 1", got)
+			}
+			if got := len(connectNames) - beforeConnects; got != 1 {
+				t.Fatalf("connect requests=%d, want 1", got)
+			}
+			if got := connectNames[beforeConnects]; got != tc.want {
+				t.Fatalf("connect human_name=%q, want %q", got, tc.want)
+			}
+		})
 	}
 	c, _, err := h.client(cert.Team, "")
 	if err != nil {
