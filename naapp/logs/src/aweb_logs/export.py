@@ -15,6 +15,7 @@ from collections.abc import AsyncGenerator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, BinaryIO
 
+from aweb_naapp.hooks.envelope import MAX_ENVELOPE_BYTES
 from aweb_naapp.hooks.strictjson import (
     Refused,
     canonical,
@@ -50,8 +51,9 @@ EXPORT_TYPE = "aweb.logs-export"
 # beside its link and key evidence; this leaves room for those and refuses a
 # line no exporter writes before a verifier holds it whole.
 MAX_LINE_BYTES = 1 << 20
-# Events an export reads per database query.
-EXPORT_PAGE = 500
+# Events an export reads per database query: as many as keeps a page of the
+# largest envelopes within 16 MiB, since exports share the logs process.
+EXPORT_PAGE = (16 << 20) // MAX_ENVELOPE_BYTES
 _EVIDENCE_TEXT = ("kid", "did_key", "installation_id")
 _EVIDENCE_LISTS = ("purposes", "binding_ids")
 
