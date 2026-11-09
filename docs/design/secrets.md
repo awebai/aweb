@@ -799,7 +799,6 @@ requirement.
    needs it.
 5. **Proxies.** There are no proxy settings from the environment. Any egress
    proxy is a deploy-level allowlist (§15), never a request option.
-<!-- PENDING RULING D1: response bound; doc text unchanged until Juan rules -->
 6. **Bounds.** Connect timeout 5 s, total 30 s (per operation, overridable
    downwards), request body at most 1 MiB. A broker response defaults to 16 MiB. The owner
    may set `response_max_bytes` on an immutable destination or `response.max_bytes`
