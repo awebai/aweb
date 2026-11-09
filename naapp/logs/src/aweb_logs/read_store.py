@@ -236,15 +236,26 @@ _UNPROJECTED = (
 
 
 async def project(db: AsyncDatabaseManager | TransactionManager, team_id: str) -> None:
-    """Project the team's chain events that have no projection yet.
+    """Project the team's chain events that have no projection yet."""
+    while await project_batch(db, team_id):
+        pass
 
-    Called in the transaction that appends to the team's chain, under its
-    locked head, it projects the appended event with any earlier ones still
-    unprojected, and rolls back with the append."""
-    while True:
-        rows = await db.fetch_all(_UNPROJECTED, team_id, _PROJECTION_BATCH)
-        if not rows:
-            return
+
+async def project_batch(
+    db: AsyncDatabaseManager | TransactionManager,
+    team_id: str,
+    *,
+    limit: int = _PROJECTION_BATCH,
+) -> int:
+    """Project up to ``limit`` of the team's earliest unprojected chain events,
+    returning how many were projected.
+
+    The transaction appending to the team's chain calls this under its locked
+    head: it projects the appended event with any earlier ones still
+    unprojected and rolls back with the append, while one batch bounds the
+    work done holding that lock. Readers' catch-up projects whatever remains."""
+    rows = await db.fetch_all(_UNPROJECTED, team_id, limit)
+    if rows:
         await db.executemany(
             "INSERT INTO {{tables.read_events}} (team_id, chain_epoch, team_seq, purged, hook,"
             " event_id, event_type, mediation, occurred_at, result_status, trace_id,"
@@ -255,6 +266,7 @@ async def project(db: AsyncDatabaseManager | TransactionManager, team_id: str) -
             " ON CONFLICT (team_id, chain_epoch, team_seq) DO NOTHING",
             [_projection(team_id, row) for row in rows],
         )
+    return len(rows)
 
 
 def _projection(team_id: str, row: Mapping[str, Any]) -> tuple[Any, ...]:

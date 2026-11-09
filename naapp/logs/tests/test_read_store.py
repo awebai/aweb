@@ -571,3 +571,22 @@ async def test_a_filtered_read_reads_only_its_matching_events_past_its_cursor(
     assert await _read_events_rows_read(db, following) == 2
     newest = read_store._page(TEAM_ID, where, None, "DESC", 2)
     assert await _read_events_rows_read(db, newest) == 2
+
+
+async def test_one_projection_batch_projects_the_earliest_unprojected_events_only(
+    db: AsyncDatabaseManager,
+) -> None:
+    ids = [await _append(db, secret_use(seq=seq)) for seq in range(1, 6)]
+    await _unproject(db, after_seq=0)
+
+    async with db.transaction() as tx:
+        assert await read_store.project_batch(tx, TEAM_ID, limit=2) == 2
+
+    rows = await db.fetch_all(
+        "SELECT event_id FROM {{tables.read_events}} WHERE team_id = $1"
+        " ORDER BY chain_epoch, team_seq",
+        TEAM_ID,
+    )
+    assert [str(row["event_id"]) for row in rows] == ids[:2]
+    assert await _chain_rows_read_by_catch_up(db) == 3
+    assert [e["event_id"] for e in (await query(db, TEAM_ID, _filter())).events] == ids[::-1]
