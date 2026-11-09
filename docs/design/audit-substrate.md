@@ -968,8 +968,16 @@ Logs stores the verified signing bytes and signature as the authority, plus
 the chain fields of §B3 and the key evidence of §B2
 (`naapp/logs/src/aweb_logs/migrations/001_chain.sql`). It also stores these
 query projections, all derived from the envelope and never adding content it
-did not carry. **Open (aweb-acgh.16.22):** the projections and the `mediation`
-field below; main stores no projection columns.
+did not carry. **In flight (aweb-acgh.16.22):** `mediation` and the
+identifier and correlation projections are on main
+(`naapp/logs/src/aweb_logs/migrations/003_readers.sql` `read_events`,
+`read_store.py`): `event_id`, `event_type`, `occurred_at`, `result_status`,
+`trace_id`, the actor's `did_key` and `did_aw`, `app_id`, `operation_id`,
+`job_id`, `dispatch_id`, `approval_id`, `grant_id` and `secret_id`. Not on
+main: the actor's `alias` and `certificate_id`, `target_type` and
+`target_ref`, `authority_mode`, the request and payload digests,
+`signing_key_id`, `result_ref`, and the custody and principal provenance
+fields.
 
 - identifiers (`event_id`, `team_id`, `team_seq`, `trace_id`);
 - `event_type` (`hook`, `mutation_type` or the secrets `event_type`);
@@ -1020,8 +1028,8 @@ Not on main:
 - **Open (aweb-acgh.16.34):** delegated `verify` (`logs.verify.delegate`);
 - **Open (aweb-acgh.16.22, aweb-acgh.16.23):** on-demand checkpoints and
   export;
-- **Open (aweb-acgh.16.22):** the §B4 query projections and `mediation`
-  (§B8), and the D1 `link_out` surface.
+- **Open (aweb-acgh.16.22):** the §B4 projections that are not on main
+  (§B4), the §B8 viewer separation, and the D1 `link_out` surface.
 
 Agents emit and cannot read. Signatures cannot tell a hosted human member from
 an MCP agent: both are custodial members signed through the host (§1). So
