@@ -176,13 +176,14 @@ async def test_a_reader_filters_pages_and_tails(world: World):
         followed = await human.get("/v1/tail", params={"after": Cursor(1, 1).encode()})
         assert [e["event_type"] for e in followed.json()["events"]] == ["credential.enrolled"]
         assert followed.json()["next_cursor"] == head["next_cursor"]
-        for bad in (
+        bad_queries: tuple[list[tuple[str, str | int | float | bool | None]], ...] = (
             [("limit", "-1")],
             [("cursor", "nonsense")],
             [("after", "x")],
             [("hook", "a"), ("hook", "b")],
             [("after", head["next_cursor"])],
-        ):
+        )
+        for bad in bad_queries:
             response = await human.get("/v1/events", params=bad)
             assert (response.status_code, response.json()) == (400, {"detail": "invalid_filter"})
 

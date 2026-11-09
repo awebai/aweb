@@ -40,7 +40,7 @@ PATH = "/v1/reader-slots"
 CONTACT_SHA256 = hashlib.sha256(b"m@example.com").hexdigest()
 SLOT_LIMIT = 3
 
-READER_SLOT_TOOL = {
+READER_SLOT_TOOL: dict[str, Any] = {
     "name": "reader-slot",
     "description": "Issue a pending reader slot for the contact the owner will designate.",
     "method": "POST",
@@ -57,7 +57,7 @@ READER_SLOT_TOOL = {
     "body": {"mode": "json"},
     "invocation_contexts": ["agent"],
 }
-REMOVE_READER_TOOL = {
+REMOVE_READER_TOOL: dict[str, Any] = {
     "name": "remove-reader",
     "description": "Remove a reader of the team's log; never the last one.",
     "method": "POST",
