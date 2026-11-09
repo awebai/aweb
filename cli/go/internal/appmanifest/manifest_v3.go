@@ -119,10 +119,12 @@ func validHumanRoleActs(acts []string) bool {
 	return len(acts) > 0
 }
 
+// originHostname is the origin's hostname without a trailing DNS root dot,
+// so a fully qualified name compares equal to its relative spelling.
 func originHostname(origin string) string {
 	parsed, err := url.Parse(origin)
 	if err != nil {
 		return ""
 	}
-	return parsed.Hostname()
+	return strings.TrimRight(parsed.Hostname(), ".")
 }
