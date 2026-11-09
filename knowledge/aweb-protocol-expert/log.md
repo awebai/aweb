@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-09
+* **Harvest**: OKF proposal from seat aweb-protocol-expert-secrets-docs with one backing note, task aweb-acwd.11. The operator's approval of the direction and the review rulings are source-reported; the contract is proposed at eec0340db on a review branch, not on main. Reviewer names and message identifiers are omitted.
+* **Creation**: decision [protected endorsement is hosted by the team server](/aweb-protocol-expert/decisions/protected-endorsement-is-hosted-by-the-team-server.md), with the rejected hosts, the controller-only passkey binding and its stated residual. The proposal's separate lesson on the holder's own key is folded into it: its general rule is pending in an open harvest PR on the passkey binding gate.
+
 ## 2026-11-06
 * **Fix**: review of the db-access proposal on npm gitHead, PubSub release and stream checkouts: hosted specifics in [stream bodies leave the request connection scope](/aweb-protocol-expert/lessons/stream-bodies-leave-the-request-connection-scope.md) and [an npm tarball publish records no gitHead](/aweb-protocol-expert/lessons/npm-tarball-publish-records-no-githead.md) are stated generically or dropped, as the OSS and Cloud boundary requires.
 * **Update**: [SSE cleanup is cancelled on client disconnect](/aweb-protocol-expert/lessons/sse-cleanup-is-cancelled-on-disconnect.md) and [a PubSub release survives any cancellation](/aweb-protocol-expert/decisions/pubsub-release-survives-any-cancellation.md) link each other: the AnyIO shield covers Starlette's disconnect, not native task cancellation.
