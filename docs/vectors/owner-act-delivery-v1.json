@@ -14133,6 +14133,27 @@
           }
         ]
       }
+    },
+    {
+      "app_origin": "https://console.logs.example.com.",
+      "error": "owner_acts_invalid",
+      "name": "origin_shares_the_app_host_but_for_a_trailing_dot",
+      "owner_acts": {
+        "origin": "https://console.logs.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "description": "Reads the team's audit log in a passkey session on the console.",
+            "label": "Log reader",
+            "name": "logs.reader",
+            "notice_contact": false
+          }
+        ]
+      }
     }
   ],
   "name": "owner-act-delivery",

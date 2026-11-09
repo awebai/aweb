@@ -564,7 +564,8 @@ unchanged. Its semantics and the delivery call are in
 
 - `origin` is in owner-act/1's audience grammar (`https://`, a lowercase
   host, an optional port, nothing after it), and its hostname differs from
-  `app.origin`'s; a port does not separate them, because cookies ignore ports.
+  `app.origin`'s; a port does not separate them, because cookies ignore ports,
+  and neither does a trailing dot on either hostname.
 - `roles` has 1 to 16 entries, unique by `name`. `name` follows the
   designatable role grammar, begins with a letter and is at most 64 bytes, so
   that it fits owner-act/1's `role`; `label` and the optional

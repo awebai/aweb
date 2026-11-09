@@ -223,6 +223,12 @@ def manifest_cases() -> list[dict[str, Any]]:
         ),
         manifest_case("owner_acts_null", owner_acts=None, error="manifest_invalid"),
         *session_action_cases(),
+        manifest_case(
+            "origin_shares_the_app_host_but_for_a_trailing_dot",
+            owner_acts=logs,
+            app_origin="https://console.logs.example.com.",
+            error=invalid,
+        ),
     ]
 
 

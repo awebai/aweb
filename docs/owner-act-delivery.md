@@ -72,7 +72,8 @@ fixes its validation codes. An app with no owner-designated role omits it.
   host, an optional port, and no path, trailing slash, query, fragment or
   userinfo. Its hostname differs from `app.origin`'s. It is the `aud` of every
   act for this app, compared byte for byte, so a declaration that no signer
-  could put in `aud` is refused.
+  could put in `aud` is refused. A port or a trailing dot does not make two
+  hostnames differ.
 - `roles` has 1 to 16 entries, unique by `name`.
   - `name` follows the designatable role grammar (dot-separated lowercase
     segments, at least two, `[a-z0-9][a-z0-9_-]*` each), begins with a letter,
