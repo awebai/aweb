@@ -133,9 +133,12 @@ async def test_public_entry_reaches_sealed_ingress_and_fresh_passkey_activation(
     assert await db.fetch_value("SELECT active_version FROM onepassword_credentials") is None
     confirmed = await client.post(path + "/confirm", json={}, headers=headers)
     assert confirmed.status_code == 200
-    assert confirmed.json()["state"] == "applied"
+    assert confirmed.json()["revision"] == 1
     assert (
         await db.fetch_value("SELECT active_version FROM onepassword_credentials")
         == staged.json()["version"]
     )
     assert await db.fetch_value("SELECT state FROM change_sets") == "applied"
+    assert (await client.post(path + "/confirm", json={}, headers=headers)).status_code == 409
+    if value in confirmed.text:
+        raise AssertionError("entered backend credential appeared in confirmation response")
