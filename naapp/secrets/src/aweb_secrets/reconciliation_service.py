@@ -8,13 +8,12 @@ looks up targets or rearms an approval. Delivery is an explicit postcommit call.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import Literal, cast
 from uuid import uuid4
 
-from aweb_naapp.dispatch import InvalidTransition, State
+from aweb_naapp.dispatch import InvalidTransition, State, settlement_result
 from aweb_naapp.runtime.approvals import (
     ActionPolicy,
     Approval,
@@ -334,17 +333,13 @@ class ReconciliationControls:
         try:
             async with tx.transaction():
                 row = await tx.fetch_one(
-                    "SELECT state,result FROM {{tables.dispatches}} WHERE dispatch_id=$1",
+                    "SELECT state FROM {{tables.dispatches}} WHERE dispatch_id=$1",
                     control.original.dispatch_id,
                 )
                 if row is None:
                     raise UseAuditUnavailable()
                 if row["state"] != State.OUTCOME_UNKNOWN:
-                    stored = (
-                        json.loads(row["result"])
-                        if isinstance(row["result"], str)
-                        else row["result"]
-                    )
+                    stored = await settlement_result(tx, control.original.dispatch_id)
                     if row["state"] != receipt.state or stored != result:
                         raise ReconciliationRefused("reconciliation_conflict")
                     prior = await self._audit.approval_in(tx, approval_id)

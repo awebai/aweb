@@ -905,13 +905,17 @@ of operations is (`aweb_secrets.responses`):
    subject to steps 2 and 6.
 6. **Credential-shape detection, default deny.** The detector looks for JSON keys
    such as `access_token`, `refresh_token`, `id_token`, `client_secret`,
-   `password`, `private_key`, `secret`, `SecretAccessKey`, `SessionToken` and
-   `api_key` that carry non-empty string values. It also looks for high-confidence
+   `password`, `root_password`, `private_key`, `secret`, `SecretAccessKey`,
+   `SessionToken` and `api_key` that carry non-empty string values. A
+   provider-generated secret in a create reply, such as a new server's
+   `root_password`, is credential-shaped like any other. It also looks for high-confidence
    token patterns: AWS `AKIA`/`ASIA` key IDs paired with secret keys, PEM private
    key blocks, JWTs, and well-known vendor token prefixes. If either is present,
    the default disposition is **`withheld`** (`credential_shaped`).
 7. **Record.** secrets records the disposition, the response hash and the counts,
-   never the body.
+   never the body or the headers. The live response, after steps 1 to 6, goes
+   only to the request that made the dispatch; nothing stores it for later.
+   This applies to brokered responses; a runner job's output follows §11.2.
 
 A withheld result reaches the agent as
 `{"state": "result_withheld", "request_id", "request_ref", "code": <reason>,
@@ -1825,7 +1829,9 @@ The transitions are `aweb_naapp.dispatch.TRANSITIONS`.
 - **`dispatching`.** It is committed **before** the first byte is sent, or before
   the job assignment is released to the runner.
 - **`completed`.** It records the upstream status (2xx through 5xx), the
-  disposition (§7.6), the response hash and the counts. For an HTTP request
+  disposition (§7.6), the response hash and the counts, never the body of a
+  brokered response; a runner job's sanitized output is delivered as §11.2
+  says. For an HTTP request
   `completed` means "a response was received", not that the operation succeeded.
 - **`not_sent`.** This is for a DNS or egress-guard refusal, a connection refused,
   or a TLS handshake failure before the request was written. Under the same
@@ -1847,22 +1853,37 @@ The transitions are `aweb_naapp.dispatch.TRANSITIONS`.
 
 - **Client key.** The key is `(installation_id, principal, request_id)` with the
   canonical request hash. The same bytes return the existing receipt at its
-  current state, after rechecking current read permission. Different bytes
+  current state, after rechecking current read permission. A replay or status
+  read of a completed brokered use (§7) never sends again, and its receipt is
+  the persisted
+  value-free outcome metadata (the state, disposition, upstream status,
+  response hash, byte count and truncation flag, and redaction count), with
+  `body` and `headers` null. The response body reached only the original
+  request; a repeat cannot recover it. A runner job (§9) is different: it
+  completes after the request has returned, so its sanitized output is
+  delivered through status and replay, and the runner's private exact-byte
+  retry journal is unchanged. Changing run-output retention is a separate
+  decision. The paths that do send stay as specified: the approved
+  re-submission of the same `request_id` (§10.3) and the retry of a
+  `not_sent` attempt (§11.1). Different bytes
   return `409 idempotency_conflict`. The key store is the shared one (§3.1), with
   D1's semantics and a retention period set per app. secrets keeps keys for 30
   days. After that they return
   `410 idempotency_expired`; they never re-execute.
-- **Certificate renewal and no-send retrieval.** For an already-dispatched run,
+- **Certificate renewal and no-send retrieval.** For an already-dispatched use,
   a currently verified certificate for the same `(team_id, stable principal)`
-  may retrieve its existing status/projected result, subject to current read
+  may retrieve its existing status and outcome metadata, subject to current read
   permission, within the same installation ID and generation. The certificate
   ID or signing key need not equal the original request's. The stable-principal
   rule is §4.1: a reissued certificate with the same `member_did_aw` may carry a
-  new key; for a local identity, a new `did:key` is a different principal.
+  new key; for a local identity, a new `did:key` is a different principal. For
+  a brokered use, what it retrieves is the same value-free outcome metadata,
+  never a body; for a run, its delivered output as above.
   Authentication, current membership and installation-scope checks still fail
   closed. Another principal or installation gets no result; a superseded
   generation refuses with `generation_superseded`, including after reinstall.
-- This retrieval returns only the persisted no-send receipt/result. It cannot
+- This retrieval returns only the persisted no-send receipt: the outcome
+  metadata of a brokered use, or a run's delivered output. It cannot
   dispatch, retry a `not_sent` attempt, reconcile upstream, mint, release or
   reseal runner credentials, charge use rates, or consume/rearm an approval.
   Those actions retain their existing fresh-send authority and frozen-plan
@@ -1975,7 +1996,13 @@ A covering approver is not a manual resolver in this release. The console
 holds its current owner, session and installation authority in the original
 caller transaction; the settlement and audit use the same S3/B2 stores.
 There is one settlement per original reference, including when the automatic
-and owner paths race. Settlement reopens no credential, sends nothing, and
+and owner paths race. Each attempt's recorded outcome is write-once: a
+settlement is appended as its own record beside the original observation
+(`aweb_naapp.dispatch`), never written over it, and the database refuses an
+update to an outcome already written. Attempts stay separate (a `not_sent`
+attempt and its retry are distinct records), a late result never displaces
+`outcome_unknown` (§11.1), and a runner report is accepted atomically by its
+hash, once. Settlement reopens no credential, sends nothing, and
 rearms no approval. A repeated decision cannot replace the first outcome.
 
 The separate owner control ceremony has a durable, value-free B2 association
