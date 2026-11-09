@@ -340,9 +340,11 @@ members from the response it prints or returns as JSON, and keeps every
 other member, such as `runner_id` and `registration_required`. A value is
 never logged, traced or stored.
 
-**Completion of a confirm.** `completion.read` names a `read` action whose
-path parameters are a subset of the confirm's. A predicate names a top-level
-member of that read's response and the JSON values that satisfy it. `ready`
+**Completion of a confirm.** `completion.read` names a `read` action each of
+whose params names an input of the confirm, so `aw` builds the read from the
+confirm's own invocation and needs nothing more from the human. A predicate names a top-level
+member of that read's response and the JSON values that satisfy it, compared
+by JSON type and value: `true` never satisfies `1`. `ready`
 and `done` are one predicate each; `stop` is a list of predicates, any of
 which stops.
 
@@ -362,8 +364,11 @@ which stops.
    `confirm_already_applied`, its one-time output lost. Anything else reports
    the read's state.
 4. When the session has expired (`401 console_session_required`), `aw` opens
-   a fresh `session` handoff once and resumes from step 1, so a confirm whose
-   reply was lost is never sent twice.
+   a fresh `session` handoff once. If it has not yet sent the confirm, it
+   resumes from step 1. If it has, it resumes in step 3: it only reads and
+   reports, and never sends the confirm again, even when the read says
+   `ready`, because the first confirm may still be committing. An invocation
+   sends the confirm at most once.
 
 The app's own refusals pass through with their status and `detail`, such as
 `409 change_not_approved` or `403 owner_required`. `aw`'s own codes are
@@ -463,7 +468,10 @@ Each item is filed after review, and each is one reviewed change.
   `--no-browser`; `aw app human` driving the declared
   [session actions](#session-actions-what-aw-drives), with N4's terminal
   input and output, their exclusion from tracing, and a confirm's
-  completion and lost-reply rules.
+  completion and lost-reply rules. Tests include the sequence: confirm sent,
+  reply lost, `401` on the next read, fresh handoff, read still `ready`
+  while the first confirm commits; `aw` reports and never sends a second
+  confirm. Predicates compare by JSON type.
 - **secrets:** the `session_actions` declaration.
 - **The runner:** the registration runbook for the protected journey (the
   operator types the code at the runner's existing terminal prompt), and a

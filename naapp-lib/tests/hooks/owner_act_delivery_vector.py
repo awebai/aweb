@@ -458,6 +458,23 @@ def session_action_grammar_cases(case, read, completion) -> list[dict[str, Any]]
         params=[{"name": "installation_id", "in": "path"}, {"name": "change_id", "in": "body"}]
     )
     safe = 2**53 - 1
+    read_with_query = read_action(
+        **path_inputs("installation_id", "change_id", "revision"),
+    )
+    read_with_query["params"] = [
+        {"name": "installation_id", "in": "path"},
+        {"name": "change_id", "in": "path"},
+        {"name": "revision", "in": "query"},
+    ]
+    confirm_with_revision = confirm_action(
+        **path_inputs("installation_id", "change_id", "revision"),
+    )
+    confirm_with_revision["params"] = [
+        {"name": "installation_id", "in": "path"},
+        {"name": "change_id", "in": "path"},
+        {"name": "revision", "in": "body"},
+    ]
+    confirm = confirm_action()
     return [
         case("session_action_declares_auth", read_action(auth="none")),
         case("protected_false", stage_false),
@@ -491,6 +508,18 @@ def session_action_grammar_cases(case, read, completion) -> list[dict[str, Any]]
         case("predicate_values_repeat", read, predicate("state", ["applied", "applied"])),
         case("predicate_value_null", read, predicate("state", [None])),
         case("predicate_value_object", read, predicate("state", [{"state": "applied"}])),
+        case("predicate_value_array", read, predicate("state", [["applied"]])),
+        case("predicate_value_integral_float", read, predicate("n", [1.0])),
+        case("predicate_integer_past_the_negative_bound", read, predicate("n", [-(safe + 1)])),
+        case("predicate_true_and_one_are_distinct", read, predicate("n", [True, 1]), error=None),
+        case("predicate_false_and_zero_are_distinct", read, predicate("n", [False, 0]), error=None),
+        case("completion_read_needs_a_query_input_the_confirm_lacks", read_with_query, confirm),
+        case(
+            "completion_read_query_input_the_confirm_declares",
+            read_with_query,
+            confirm_with_revision,
+            error=None,
+        ),
     ]
 
 

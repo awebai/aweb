@@ -594,13 +594,15 @@ unchanged. Its semantics and the delivery call are in
     segment is empty, numeric or escaped (`~` is refused), and no pointer
     repeats;
   - `completion`, required on a `confirm` action and refused elsewhere:
-    `read`, naming a `read` action of the same role whose path parameters
-    are a subset of the confirm's; `ready` and `done`, one predicate each;
+    `read`, naming a `read` action of the same role each of whose params
+    names an input the confirm declares, so the read is built from the
+    confirm's invocation; `ready` and `done`, one predicate each;
     and `stop`, 1 to 8 predicates. A predicate is
     `{"member": <name>, "in": [<1 to 16 values>]}`, where `member` is a
     top-level member name in the field-name grammar and each value is a JSON
     string, a boolean or an integer in the safe range (±(2^53−1)), with no
-    repeat.
+    repeat. Values compare by JSON type and value, so `true` and `1` are
+    distinct, and a float, `1.0` included, is refused.
 
 Every fault in `owner_acts` is `owner_acts_invalid`, except `owner_acts: null`,
 which is `manifest_invalid` like any null member. An absent `owner_acts`
