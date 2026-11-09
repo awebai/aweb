@@ -223,7 +223,8 @@ func validateSessionAction(action SessionAction, declaredRoles map[string]bool) 
 		return fmt.Errorf("role %q is not declared in owner_acts.roles", action.Role)
 	}
 	// The rules apply to the values version 2 validation works with: the
-	// method trimmed and uppercased, a param's placement trimmed.
+	// method trimmed and uppercased, a param's placement trimmed, and the
+	// body mode trimmed and json when absent.
 	method := strings.ToUpper(strings.TrimSpace(action.Method))
 	switch action.Kind {
 	case SessionActionRead:
@@ -242,8 +243,8 @@ func validateSessionAction(action SessionAction, declaredRoles map[string]bool) 
 		if method != "POST" {
 			return fmt.Errorf("a %s action uses method POST", action.Kind)
 		}
-		if action.Body == nil || action.Body.Mode != "json" {
-			return fmt.Errorf("a %s action declares body.mode json", action.Kind)
+		if action.bodyMode() != "json" {
+			return fmt.Errorf("a %s action has body.mode json", action.Kind)
 		}
 	default:
 		return fmt.Errorf("unknown kind %q", action.Kind)
@@ -274,6 +275,18 @@ func validateSessionAction(action SessionAction, declaredRoles map[string]bool) 
 		return validateCompletionPredicates(*action.Completion)
 	}
 	return nil
+}
+
+// bodyMode is the body mode as version 2 validation reads it: trimmed, and
+// json when the body or its mode is absent.
+func (action SessionAction) bodyMode() string {
+	if action.Body == nil {
+		return "json"
+	}
+	if mode := strings.TrimSpace(action.Body.Mode); mode != "" {
+		return mode
+	}
+	return "json"
 }
 
 // tool is the action as a version 2 tool, for the route, schema and param

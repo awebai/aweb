@@ -126,6 +126,9 @@ func TestSessionActionsSeeTheValuesVersion2ValidationNormalizes(t *testing.T) {
 		action(actions, "confirm")["method"] = "post"
 		action(actions, "onepassword-token")["params"].([]any)[1].(map[string]any)["in"] = " body"
 		action(actions, "change-set")["params"].([]any)[0].(map[string]any)["in"] = "path "
+		// An absent body is mode json, as it is for any version 2 tool.
+		delete(action(actions, "onepassword-token"), "body")
+		action(actions, "confirm")["body"] = map[string]any{"mode": " json "}
 	})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
