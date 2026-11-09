@@ -42,15 +42,21 @@ replaced with a new offline-authority claim here.
    Establish who controls the human signer, namespace and team controllers,
    deployment identity key, and confirmation origin. None is inferred from
    who can write the deployment directory.
-2. Create an ordinary agent key and establish its registered stable ID through
-   existing identity lifecycle operations. If an address is allocated, obtain
-   namespace authority separately. ID registration and address allocation are
-   distinct operations; neither admits D to a team.
-3. Obtain H's protected confirmation of the exact proposed endorsement through
-   W2. Its disclosure includes: **endorsing this identity endorses everything
-   it spawns**, recursively. The human identity signer signs/issues or registers
-   the matching certificate only with the matching current confirmation.
-   Preserve the public proof and the authority binding described in (d).
+2. Create an ordinary agent key, derive its stable ID and establish its public
+   current-key registration through existing lifecycle operations. This is key
+   registration, **not ID-tree enrollment**: no intermediate namespace-parent
+   certificate is implied. If an address is allocated, obtain namespace
+   authority separately. Neither operation admits D to a team.
+3. Prepare D's first ID-certificate request with H as the intended identity
+   parent. Obtain H's protected confirmation of that exact request through W2,
+   including: **endorsing this identity endorses everything it spawns**,
+   recursively. H's identity signer issues the matching human-parent agent
+   certificate only with the matching current confirmation. D registers it at
+   the authoritative registry with its own subject-key proof and
+   `expected_head=null`. This is D's first ID-tree enrollment. Link the accepted
+   certificate revision to the retained proof as (d) requires; a failed or
+   pending registration confers no protected authority. If an ID-tree head
+   already exists, use the explicit reuse/re-parenting journey instead.
 4. Verify D's registered, current H-rooted ancestry. Obtain ordinary team
    membership and any permission needed to admit spawned members separately.
 5. The server/app authority selects protected admission for the intended
@@ -120,10 +126,10 @@ owner withdraws/changes the corresponding subtree grant or its required
 endorsement. A separately valid individual/role grant remains independent;
 none can bypass a server/app requirement that applies to the operation itself.
 
-### Secrets lane proposal: extend decision 46
+### Secrets candidate order and containment
 
-The following is lane input for review, not an ACK or a settled change to the
-secrets contract. Extend its existing candidate order with a third tier:
+Extend secrets decision 46 with a third tier, preserving its whole-candidate
+selection and charging rule. The contract remains subject to exact-SHA review:
 
 1. Grants to the requesting principal, in `grant_id` order.
 2. Grants to its roles, in `grant_id` order.
@@ -157,23 +163,25 @@ binding remains: editing an operation cannot silently widen a grant. Sensitive
 secrets still admit only named operations; subtree grants do not enable
 `open_request` for them.
 
-**Owner decisions still required:**
+For a subtree-admitted use, also charge a per-(D, secret) rate bucket in
+addition to the existing per-(requesting principal, secret) and per-secret
+buckets. A fresh worker does not get a fresh D bucket. This applies to the
+selected subtree grant, not an independently admitted individual/role grant.
+The app policy schema must freeze the bucket parameters and shared keying across
+subtree grants naming the same D and secret; it must not multiply D's budget by
+creating another grant ID.
 
-- **Rate keying.** Existing per-(requesting principal, secret) buckets give each
-  new worker a fresh principal bucket; only the per-secret bucket caps the swarm
-  today. The policy lane recommends an additional per-(D, secret) bucket charged
-  on subtree-admitted uses alongside existing buckets. This is a recommendation,
-  not an accepted new rate scope. Decide its budget ownership and behavior for
-  overlapping subtree grants before freezing.
-- **Four-eyes.** Existing `distinct_approver` compares the approver's linked
-  principal to the requesting principal. It does not exclude D's endorsing
-  human from approving the swarm's use. The policy lane recommends also comparing
-  that human on subtree-admitted uses. The decision must name the exact verified
-  endorser from (d), its relation to current ancestry, and what missing/changed
-  evidence means; do not infer a natural-person difference from distinct keys.
+When the selected subtree grant's existing `distinct_approver` condition is
+`required`, exclude both the requesting principal and D's verified endorsing
+human from eligible approvers. This is scoped to subtree-admitted uses under
+that condition, not a universal new four-eyes requirement. The endorser is the
+H established by the matched protected binding and current required ancestry
+in (d), not an arbitrary nearest-human label. Unknown or mismatched evidence
+cannot establish distinctness. Distinct DIDs do not prove distinct people.
 
-The secrets policy owner is taking these two recommendations to Juan. Neither
-is implemented or treated as approved by this draft.
+These rate, four-eyes and sensitive-secret requirements follow the coordinator's
+2026-11-09 disposition of the secrets lane input. Exact app subject/rate encoding
+and version remain to be frozen by the policy owner with the vectors.
 
 ## (c) Required endorsement is selected by the authority
 
@@ -190,10 +198,32 @@ The logical shared admission interface consumes:
 - current public ID-tree evidence for that subject and selected ancestor;
 - W2's matching protected-endorsement binding and retained proof.
 
-It returns an allow/refuse/unavailable decision and the specific matched
-ancestry, grant and endorsement dependencies for effect fencing and audit.
-These are logical inputs/outputs, not yet a public function signature. Consumers
-must preserve the existing public verifier's freshness and refusal semantics.
+After ordinary authentication and installation-ceiling checks, policy selects
+the requirement for the exact principal, tool, installation and resource
+operation. A typed internal `PreparedDeploymentAdmission` carries a successful
+result to the existing effect/dispatch fence. Its semantic fields are:
+
+| Field group | Bound values |
+| --- | --- |
+| Authenticated operation | Subject ID/key, team, app/installation generation where applicable, audience, canonical operation/target and covered request digest |
+| Policy | Authoritative requirement identity/revision; applicable resource grant identity/revision, or explicit absence for coordination without a resource grant |
+| Ancestry | Selected D ID/key, matched current certificate revision, verified subject-to-D relationship and required human H |
+| Protected endorsement | Authority origin, exact W2 binding/revision and retained-proof/holding references |
+| Fence dependencies | Original evidence acquisition/freshness information and mutable local dependency versions/expiry under their existing rules |
+
+This is trusted in-process output, not a request DTO, credential or new signed
+artifact. A caller cannot construct authority by supplying these fields.
+`ActionPolicy.__call__` currently returns `bool`; the existing `Authorization`
+has no endorsement dependencies. Its bool is not a substitute for this typed
+handoff. Concrete API placement remains for the runtime lane review.
+
+Acquire remote observations before transaction locks. At the existing effect or
+dispatch fence, match the same operation and recheck mutable local grant,
+installation and endorsement dependencies and their applicable expiry. A changed
+or withdrawn dependency blocks the effect; preparing again cannot restart its
+lifetime. Preserve the public ID verifier's original freshness rules, including
+its acquisition-time check; do not invent a new post-lock ancestry-age deadline
+or imply that a local lock serializes remote registry changes.
 
 Admission requires **all** independent checks. The subject must currently be D
 or in D's valid subtree; D must have the required current human ancestry; the
@@ -213,8 +243,16 @@ protected confirmation cannot select ordinary legacy admission for an operation
 with this requirement. Enrolled global omission continues to use the existing
 public reconstruction rule. A local subject lacking sufficient ancestry is
 refused. Unavailable authority is not proof of absence or successful legacy
-status. Definite denial and unavailable evidence remain distinct (403 versus
-503 at HTTP consumers); exact public error names remain to be frozen.
+status. Closed refusal mapping for this lane is:
+
+- `403 deployment_endorsement_required`: definitively absent, mismatched,
+  foreign, revoked or otherwise invalid required endorsement evidence.
+- `503 deployment_endorsement_unavailable`: required evidence/authority cannot
+  be established, including a failed or expired authoritative read.
+
+Existing authentication failures remain earlier, including their existing 401
+responses. No approval, dispatch or protected effect is created on these
+refusals. An unrelated operation retains its existing disposition.
 
 This opt-in authoritative lane changes no unrelated humanless or legacy team
 policy. Existing clients are not silently narrowed globally. Activation must
@@ -253,13 +291,93 @@ an unrelated assertion or borrowing another identity's confirmed CSR also
 refuses. Fresh confirmation and ancestry signing remain different functions;
 there is no passkey-to-Ed25519 conversion.
 
-**W2 decisions needed before ACK:** which existing component hosts the browser
-ceremony and checks issuer authority without circular bootstrap; which existing
-record owns the binding and which public API/evidence exposes it to independent
-consumers; how successful registration is linked atomically/idempotently; and
-what rotation, re-parenting and certificate refresh require. No proof is silently
-transferred across a changed target/key/parent. A permitted continuity rule must
-be explicit and tested, not inferred from a stable ID alone.
+### Binding authority and assurance
+
+H4 reuse is ruled. The ceremony host is the team server acting as a reserved
+first-party human-role host. It reuses B2/B3 and owner-act delivery as libraries;
+there is no second WebAuthn or stage-3 verifier. The current team controller
+binds H's exact credential with `human-role.designate` and the existing
+`human-credential.replace`/`human-role.revoke` lifecycle. A human-key, member,
+install-admin or ordinary session signature is not controller authority and
+cannot bind a credential. The credential handoff itself authorizes nothing.
+
+The controller-signed `aweb.team-server/1` record selects the human origin; the
+owner's client verifies that record and the shipped declaration. The act's
+`aud` is that origin and the browser RP ID derives from its hostname. Only the
+reserved app ID and fixed per-team installation binding declared by W2 are
+accepted; another app/installation gives `owner_required`. W2 fixes those
+literals, shared-library composition and additive migrations. Non-users of
+protected endorsement configure nothing and run no new required service or
+startup check. Hosted deployments use the same contract; their chosen origin is
+an operator decision, not an OSS dependency.
+
+The retained proof must identify the exact holding current when confirmation
+was consumed and retain its authoritative controller-act binding as well as the
+original assertion. Verifying a hash commitment or trusting an "approved" row
+alone is insufficient. A binding is made once per endorser credential; ordinary
+admission reads the local binding/holding history and performs no extra AWID
+lookup just for the holding. Public ancestry checks retain their own rules.
+
+The assurance has H4's existing limits:
+
+- A custodian holding H's identity key alone cannot bind a substitute credential.
+- A custodian holding both controller and H keys, or controlling the owner's
+  signing client, can bind any authenticator; shared custody adds no independent
+  protection. The owner = H single-sitting case retains this same client trust.
+- A compromised H client can substitute the credential and its displayed
+  fingerprint. Comparison protects the channel between clients, not either
+  compromised client. A channel controlled by the custodian (including aweb
+  mail, a notice or another key under that custodian) is not independent.
+- No authenticator attestation or proof that two DIDs are two people is claimed.
+  A software authenticator legitimately bound by the controller counts.
+
+Replacing or revoking an endorser credential stops its future confirmations;
+it does **not** withdraw endorsements already consumed under the formerly
+current holding. Existing endorsements stand until explicit withdrawal or loss
+of another required dependency. The customer disclosure must state this, and
+the old assertion must still verify against its historical binding. A later
+compromise of the authenticator is not automatically detected.
+
+### Candidate direct-consumer read
+
+Extend the existing app-to-team-server read path, not the installation `Grant`
+object. `TeamServerDirectory` verifies the controller-signed server record and
+current team authority; the existing app read credential machinery authenticates
+the app/team. The concrete proposal for review is a read-only
+`GET /v1/apps/self/deployment-endorsement` with signed query fields for
+`installation_id`, `generation`, `deployment_id` and `certificate_sha256`, using
+the existing `app-grant-read` purpose. This is an explicit additional authorized
+read, not a claim that today's own-grant endpoint already serves it.
+
+The server derives team/app from the credential, verifies the app's current
+installation/generation, and returns only that team's matching endorsement
+record and verification material. The response must bind those request fields,
+the server's origin, D's exact key/revision, H, CSR/disclosure commitment,
+protected binding identity/revision, retained original B3 proof and authoritative
+holding evidence. The consumer verifies both original assertion and credential
+binding using the shared verifiers, then checks current endorsement status.
+No caller URL, arbitrary approval authority or cross-team record is accepted.
+
+The hosting origin must equal the discovered team-server origin. Follow no
+redirects; key/record/origin changes invalidate cached observations. Reuse the
+existing bounded-freshness read machinery: at most 60 seconds from acquisition
+start, no expired fallback and no restarted lifetime. A definitive no-row or
+withdrawn answer gives `deployment_endorsement_required`; timeout, malformed or
+unavailable authority gives `deployment_endorsement_unavailable`. Cache entries
+bind the exact team/app/installation/generation, server authority, D and
+certificate revision, not just D's ID.
+
+A move requires a fresh endorsement at the new hosting origin; do not silently
+transfer another server's row. A changed origin hostname changes the RP ID and
+orphans bound passkeys; use `human-credential.replace`, not an invented passkey
+migration path. The existing endorsement/proof remains history.
+
+**Before ACK:** W2 must freeze the reserved app/installation and binding/proof
+payload identifiers, successful-registration linkage and withdrawal API. W1 and
+W2 jointly freeze the response bytes, authorization bounds and currentness
+checks above. No proof is silently transferred across a changed D key/parent or
+certificate revision; rotation/re-parenting/refresh continuity needs an explicit
+rule and vectors. The candidate read is not shipped behavior.
 
 ## (e) Withdrawal denies dependent access and keeps history
 
@@ -302,6 +420,11 @@ admission. These cases are an acceptance matrix, not a claim of tests run:
 | Valid human-rooted but foreign subtree | Refuse despite `nearest_human` |
 | Correct chain, absent protected binding; session-only Cloud or plain human-key issuance | Refuse protected admission |
 | Grant from a non-owner or confirmation from the wrong bound approver/issuer | Refuse |
+| H-key-signed credential binding without controller act | `owner_required`; no holding or endorsement row |
+| Assertion from a credential other than the current holding | Refuse; no endorsement row |
+| Consumed endorsement predates credential replacement | Verify against historical holding; remains until explicit withdrawal |
+| Old credential used for new confirmation after replacement | Refuse; no new row |
+| Required policy with client flag omitted or false | Requirement still applies |
 | Changed CSR, target key, parent, audience or recursive disclosure | Refuse mismatched proof |
 | Replay of consumed proof for another issuance or resource operation | Refuse; exact idempotent receipt replay grants no new effect |
 | Revoked D, withdrawn protected endorsement, withdrawn matching resource grant | Deny each dependent path; preserve history |
@@ -311,13 +434,19 @@ admission. These cases are an acceptance matrix, not a claim of tests run:
 | Ineligible subtree with no other candidate | Existing no-grant refusal; no D-specific disclosure |
 | All eligible candidates refuse | First candidate refusal in principal/role/subtree order |
 | Sensitive secret with subtree open request | Refuse; named operations only |
+| Newly spawned workers under the same D use one secret | Charge shared D bucket in addition to existing buckets |
+| Subtree grant requires distinct approver and candidate is D's endorser | Refuse that approver |
+| Same request under policy without distinct-approver requirement | No new universal four-eyes check |
+| Read asks another team/app/installation or supplies an approval URL | Refuse; no cross-authority lookup |
+| Server origin/key changes, or required response expires | No stale-cache or redirect fallback |
 | Withdraw subtree grant with an independent valid grant remaining | Evaluate independent permission under applicable operation policy |
 | Unrelated legacy/humanless operation outside the requirement | Existing disposition unchanged |
 
-The exact machine-readable vector location, semantic error names, grant
-candidate-order confirmation, rate/four-eyes decisions and protected-binding
-producer/consumer API are open interface
-items for this first draft. Their resolution, lane review by runtime and secrets
+Use one public decision corpus consumed by coordination and direct naapp
+admission. Every refusal case must assert unchanged approval/dispatch/effect
+state, not only its HTTP status. The exact machine-readable vector location,
+app grant encoding and protected-binding producer/consumer payload remain open
+interface items for this draft. Their resolution, lane review by runtime and secrets
 policy owners, and R + Athena ACK at one exact SHA are prerequisites to the
 implementation tasks.
 
