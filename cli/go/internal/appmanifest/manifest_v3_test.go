@@ -79,21 +79,23 @@ func TestManifestV3RefusesOwnerActsRolesOutsideTheirRules(t *testing.T) {
 		tooMany[i] = v3Role(fmt.Sprintf("logs.r%d", i))
 	}
 	for name, ownerActs := range map[string]string{
-		"no roles":                    v3OwnerActs(origin),
-		"seventeen roles":             v3OwnerActs(origin, tooMany...),
-		"a duplicate role":            v3OwnerActs(origin, v3Role("logs.reader"), v3Role("logs.reader")),
-		"a role name of 65 bytes":     v3OwnerActs(origin, v3Role("logs."+strings.Repeat("r", 60))),
-		"a leading digit":             v3OwnerActs(origin, v3Role("9logs.reader")),
-		"one segment":                 v3OwnerActs(origin, v3Role("reader")),
-		"an empty label":              v3OwnerActs(origin, `{"name":"logs.reader","label":"","acts":["human-role.designate"],"notice_contact":false}`),
-		"a control in the label":      v3OwnerActs(origin, `{"name":"logs.reader","label":"Log\u0007reader","acts":["human-role.designate"],"notice_contact":false}`),
-		"a bidi control in the label": v3OwnerActs(origin, `{"name":"logs.reader","label":"Log ‮reader","acts":["human-role.designate"],"notice_contact":false}`),
-		"an empty description":        v3OwnerActs(origin, `{"name":"logs.reader","label":"Log reader","description":"","acts":["human-role.designate"],"notice_contact":false}`),
-		"an unknown role member":      v3OwnerActs(origin, `{"name":"logs.reader","label":"Log reader","acts":["human-role.designate"],"notice_contact":false,"prepare_tool":"x"}`),
-		"an unknown member":           `{"origin":"https://console.logs.example.com","roles":[` + v3Role("logs.reader") + `],"extra":1}`,
-		"roles null":                  `{"origin":"https://console.logs.example.com","roles":null}`,
-		"no origin":                   `{"roles":[` + v3Role("logs.reader") + `]}`,
-		"not an object":               `[]`,
+		"no roles":                     v3OwnerActs(origin),
+		"seventeen roles":              v3OwnerActs(origin, tooMany...),
+		"a duplicate role":             v3OwnerActs(origin, v3Role("logs.reader"), v3Role("logs.reader")),
+		"a role name of 65 bytes":      v3OwnerActs(origin, v3Role("logs."+strings.Repeat("r", 60))),
+		"a leading digit":              v3OwnerActs(origin, v3Role("9logs.reader")),
+		"one segment":                  v3OwnerActs(origin, v3Role("reader")),
+		"an empty label":               v3OwnerActs(origin, `{"name":"logs.reader","label":"","acts":["human-role.designate"],"notice_contact":false}`),
+		"a control in the label":       v3OwnerActs(origin, `{"name":"logs.reader","label":"Log\u0007reader","acts":["human-role.designate"],"notice_contact":false}`),
+		"a bidi control in the label":  v3OwnerActs(origin, `{"name":"logs.reader","label":"Log ‮reader","acts":["human-role.designate"],"notice_contact":false}`),
+		"an empty description":         v3OwnerActs(origin, `{"name":"logs.reader","label":"Log reader","description":"","acts":["human-role.designate"],"notice_contact":false}`),
+		"an unknown role member":       v3OwnerActs(origin, `{"name":"logs.reader","label":"Log reader","acts":["human-role.designate"],"notice_contact":false,"prepare_tool":"x"}`),
+		"an unknown member":            `{"origin":"https://console.logs.example.com","roles":[` + v3Role("logs.reader") + `],"extra":1}`,
+		"a role key in another case":   v3OwnerActs(origin, `{"name":"logs.reader","Label":"Log reader","acts":["human-role.designate"],"notice_contact":false}`),
+		"a member key in another case": `{"Origin":"https://console.logs.example.com","roles":[` + v3Role("logs.reader") + `]}`,
+		"roles null":                   `{"origin":"https://console.logs.example.com","roles":null}`,
+		"no origin":                    `{"roles":[` + v3Role("logs.reader") + `]}`,
+		"not an object":                `[]`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Load(v3Manifest(3, ownerActs), nil)
