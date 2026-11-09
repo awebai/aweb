@@ -356,8 +356,11 @@ which stops.
 3. On a lost reply (no response, or a `5xx` with no JSON body), `aw` never
    calls confirm again. It reads the state: `done` reports
    `confirm_result_lost`, because the change applied and a one-time output
-   with it is not recovered; `ready` reports `confirm_not_applied`, and a
-   later run may confirm; anything else reports the read's state.
+   with it is not recovered; `ready` reports `confirm_not_applied`, meaning
+   not applied when read: a confirm still committing can land after that
+   read, and a later run's first read then reports it as
+   `confirm_already_applied`, its one-time output lost. Anything else reports
+   the read's state.
 4. When the session has expired (`401 console_session_required`), `aw` opens
    a fresh `session` handoff once and resumes from step 1, so a confirm whose
    reply was lost is never sent twice.
