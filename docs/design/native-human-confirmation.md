@@ -121,19 +121,24 @@ addition, the pending list:
    this session's approver is a candidate: approval id, kind and personal
    locator, and no terms. It is added beside the existing use, run, change and
    reconciliation approval routes. Email locators stay for contact roles.
-3. **View.** A `view` assertion returns the frozen bytes. `aw` renders them by
-   the console's rules (secrets §6.3, §10.4):
+3. **Read, decide and complete, by approval kind.** Each kind keeps its
+   existing routes on the human origin, under the same session:
+
+   | Kind | Read the terms | Decide | Complete |
+   | --- | --- | --- | --- |
+   | Use and run (`/use-approvals`, `/run-approvals`) | `view-options`, then `view` with a `view` assertion | `decision-options`, then `decide` with an `approve` or `reject` assertion | The requester re-submits the same `request_id`. Single-use admission stays at the target, and the dispatch result, or `outcome unknown`, is the requester's (secrets §10.3, §10.5, §11). |
+   | Change set (`/installations/{installation_id}/change-sets/{change_id}`) | `GET` in the owner session | `approval-options`, then `approve` with an `approve` assertion | The deciding owner, in the same session, calls `POST .../confirm`, which applies the change (`naapp/secrets/src/aweb_secrets/console_changes.py:390`, `:513`). Only this call releases a runner's registration code (N4). Its result is `applied`, a refusal, or unknown when the reply is lost. On unknown, `aw` reads the change set's state before any retry. |
+   | Reconciliation (`/reconciliation-approvals`) | `view-options`, then `view` | `decision-options`, then `decide` | As secrets §11.4 defines. |
+
+   For every kind, B3 verifies each assertion and retains its evidence, and B2
+   records the first decision. `aw` renders the terms by the console's rules
+   (secrets §6.3, §10.4):
    - from the frozen bytes;
    - a known action schema per type, so an unknown type refuses with
      `action_schema_unknown` and is never shown as free text;
    - every IDNA host as Unicode and as its A-label;
    - every widening element marked;
    - drafter text labelled untrusted.
-4. **Decide.** An `approve` or `reject` assertion goes to the existing decide
-   route. B3 verifies it and retains the evidence, and B2 records the first
-   decision.
-5. **Admit.** The requester re-submits the same `request_id`. Single-use
-   admission stays at the target (secrets §10.3, §10.5).
 
 With no supported authenticator, `aw` refuses locally with
 `authenticator_unsupported` and sends nothing. The request stays pending.

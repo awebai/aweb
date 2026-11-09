@@ -110,8 +110,8 @@ Stages 1 and 2 are unchanged. For an authenticated act, stage 3 checks:
 
 - the installation, admitted, whose team is the act's `team_id`;
 - the nonce, consumed in the effect's transaction;
-- `principal` holds a current certificate of that team, and its own
-  registered ID kind is `human` (H2). The kind is the subject's own, never the
+- for designate and replace only: `principal` holds a current certificate of
+  that team, and its own registered ID kind is `human` (H2). The kind is the subject's own, never the
   kind of its nearest human ancestor or a label. A registry that cannot answer
   refuses with `503 principal_status_unavailable`. Nothing takes effect, and
   the outcome depends only on the act. `aweb_naapp` lacks this wiring:
@@ -124,6 +124,12 @@ Stages 1 and 2 are unchanged. For an authenticated act, stage 3 checks:
   existing retention check (`naapp-lib/src/aweb_naapp/runtime/passkeys/proof.py:395-408`);
 - designate requires that (role, principal) has no current holding; replace
   and revoke require that it has one.
+
+Revoke checks no membership or kind. It targets the stored holding of
+(installation, role, principal), so a controller act can retire a holder whose
+membership has already ended. Its authority is the controller key, verified in
+stage 2, and it never reads the holder's identity status, so a registry that
+cannot answer about the holder does not delay it.
 
 A principal that is not a current member of the team refuses with
 `403 principal_not_member`, and one that is not of human kind with
