@@ -179,7 +179,10 @@ Completion is what each kind already defines:
 **N3: finding the request.** A human role has no approval email: its
 contact is notice-only ([H3](human-role-holders.md#rulings)). The console
 therefore lists the pending approvals for which the signed-in approver is a
-candidate: approval id, kind and the page to open, with no terms.
+candidate: approval id, kind and the page to open, with no terms. N3
+applies only to an app with B2 approvals. Logs has none
+(`naapp/logs/src/aweb_logs` uses no B2 approval), so its console exposes no
+pending list or link provider; its holder-scope `session` handoff stays.
 
 The existing pages open an approval only through the candidate's personal
 link token (`naapp-lib/src/aweb_naapp/runtime/approvals/service.py:467-504`),
@@ -309,8 +312,9 @@ Each item is filed after review, and each is one reviewed change.
   - an ineligible session is refused;
   - a link for a different request hash is refused;
   - a second issue revokes the first.
-- **Consoles (secrets, logs):** the `session` handoff and the N3 pending
-  list, opening each entry through a session-issued link.
+- **Consoles:** the `session` handoff for secrets and logs; for secrets, the
+  N3 pending list, opening each entry through a session-issued link. Logs has
+  no B2 approvals and gets no N3 entry.
 - **secrets change sets:** the confirm mark, set only by a draft in a
   key-bound session, and the browser's `confirm_in_aw` refusal. Tests, for a
   marked change set that creates a runner:
