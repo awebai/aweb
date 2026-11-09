@@ -45,7 +45,7 @@ from typing import Any, Protocol
 from awid.signing import canonical_json_bytes
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
-from webauthn import generate_authentication_options, generate_registration_options
+from webauthn import generate_authentication_options
 from webauthn.helpers import (
     base64url_to_bytes,
     bytes_to_base64url,
@@ -54,9 +54,7 @@ from webauthn.helpers import (
 )
 from webauthn.helpers.exceptions import WebAuthnException
 from webauthn.helpers.structs import (
-    AuthenticatorSelectionCriteria,
     PublicKeyCredentialDescriptor,
-    ResidentKeyRequirement,
     UserVerificationRequirement,
 )
 
@@ -95,6 +93,7 @@ from aweb_naapp.runtime.passkeys.proof import (
 from aweb_naapp.runtime.passkeys.rp import RelyingParty
 from aweb_naapp.runtime.passkeys.webauthn import (
     WebAuthnRefused,
+    registration_options,
     verify_assertion,
     verify_registration,
 )
@@ -1122,20 +1121,13 @@ class Passkeys:
             nonce,
             enrolment_id=enrolment["enrolment_id"],
         )
-        options = generate_registration_options(
-            rp_id=self.rp.rp_id,
-            rp_name=self.rp.name,
-            user_id=enrolment["subject"].encode("utf-8"),
-            user_name=enrolment["contact"],
-            user_display_name=enrolment["contact"],
+        return registration_options(
+            rp=self.rp,
+            subject=enrolment["subject"],
+            display_name=enrolment["contact"],
             challenge=challenge,
             timeout=int(self._challenge_ttl.total_seconds() * 1000),
-            authenticator_selection=AuthenticatorSelectionCriteria(
-                resident_key=ResidentKeyRequirement.PREFERRED,
-                user_verification=UserVerificationRequirement.REQUIRED,
-            ),
         )
-        return options_to_json_dict(options)
 
     async def complete_enrolment(
         self,
