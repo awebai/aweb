@@ -266,7 +266,9 @@ and its signature. An `event` is:
 
 This placement is normative. It puts every artefact right after the event it
 witnesses, so a verifier checks each epoch in one pass with state that does
-not grow with the epoch.
+not grow with the epoch. **Open (aweb-acgh.16.47):** the maximum length of a
+line, derived from the hook envelope's size bound, which both verifiers
+enforce before they read a line whole.
 
 A bundle is **malformed**, and is refused with the number of its first bad
 line, when a line is not a strict canonical JSON object, when the header is
@@ -328,7 +330,17 @@ The report is:
 
 **What a bundle proves, and what it does not.** A verified bundle proves that
 its events form the chains its checkpoints and receipts witness, up to its
-`last_checkpoint`. It cannot prove that it is complete: an exporter can drop
+`last_checkpoint`.
+
+`key_evidence` is logs' record, committed by no hash and no signature. For an
+event whose content is retained, the bundle proves only that
+`key_evidence.did_key` signed that content: the committed signature verifies
+under no other key. It does not prove that this key was the producer's
+declared key, nor any of `kid`, `purposes`, `installation_id`, `generation` or
+`binding_ids`, which an exporter can change undetected. For a purged event it
+proves nothing of `key_evidence`.
+
+A bundle cannot prove that it is complete: an exporter can drop
 the events after the last checkpoint, or whole trailing epochs, and the rest
 still verifies. Only an artefact held independently of the exporter proves the
 tail: give it as a witness, and a receipt or checkpoint past the bundle's end
