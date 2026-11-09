@@ -1,9 +1,10 @@
 """Current human admission, separate from app-owned role and B3 holdings."""
 
 import copy
-import time
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
+from time import monotonic_ns
 from typing import Any
 
 from awid.did import validate_stable_id
@@ -27,14 +28,22 @@ from aweb_naapp.runtime.team_auth import (
 class HumanMemberProof:
     """Trusted in-process output, never a request DTO or role authorization.
 
-    Consumers retain the membership proof's original freshness deadline across
-    their effect lock. Identity-chain evidence keeps the public verifier's own
-    acquisition-time rules. App holdings and exact B3 credentials remain separate.
+    The earliest original membership, binding or identity-chain deadline
+    survives all effect-lock waits. App holdings and exact B3 credentials
+    remain separate. Never serialize or persist monotonic evidence.
     """
 
     principal: str
     did_key: str
     membership: MembershipProof
+    checked_at: int
+    fresh_until: int
+
+    def require_fresh(self) -> None:
+        """Recheck the original remote deadline after local authority waits."""
+        now = monotonic_ns()
+        if not (self.checked_at <= now <= self.fresh_until and self.membership.is_fresh_at(now)):
+            raise _refused(503, "principal_status_unavailable")
 
 
 def _refused(status: int, code: str) -> HTTPException:
@@ -96,17 +105,39 @@ async def check_human_member(
             403 if exc.status_code == 403 else 503,
             "principal_not_member" if exc.status_code == 403 else "principal_status_unavailable",
         ) from None
+    binding_started = monotonic_ns()
     try:
         binding = await observe_identity_binding(registry, did_key=did_key, did_aw=principal)
     except IdentityObservationRefused as exc:
         if exc.code == "identity_binding_unavailable":
             raise _refused(503, "principal_status_unavailable") from None
         raise _refused(403, "principal_not_member") from None
+    kind_started = monotonic_ns()
     observation = await observe_identity_kind(registry, binding)
     if observation.result["outcome"] == "unavailable":
         raise _refused(503, "principal_status_unavailable")
     if not observation.is_human:
         raise _refused(403, "principal_not_human")
-    if not membership.is_fresh_at(time.monotonic_ns()):
+    age = observation.evidence_age_seconds
+    if (
+        not isinstance(age, (int, float))
+        or isinstance(age, bool)
+        or not math.isfinite(age)
+        or not 0 <= age <= 60
+    ):
+        # A legacy hand-constructed classification does not retain evidence age.
+        # It keeps its old classification, but cannot mint current effect proof.
         raise _refused(503, "principal_status_unavailable")
-    return HumanMemberProof(principal, did_key, membership)
+    proof = HumanMemberProof(
+        principal,
+        did_key,
+        membership,
+        binding_started,
+        min(
+            binding_started + 60_000_000_000,
+            kind_started + math.floor((60 - age) * 1_000_000_000),
+            membership.fresh_until,
+        ),
+    )
+    proof.require_fresh()
+    return proof
