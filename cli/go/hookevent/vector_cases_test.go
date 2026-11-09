@@ -286,7 +286,7 @@ func buildEnvelopeVector(t *testing.T) map[string]any {
 
 	return map[string]any{
 		"name":   "hook-event-envelope-v1",
-		"status": "proposed (aweb-acgh.16.2); frozen once reviewed",
+		"status": "frozen (aweb-acgh.16.2)",
 		"scheme": map[string]any{
 			"authority":      "docs/hook-events.md, Event envelope",
 			"signing_bytes":  "the ASCII prefix 'aweb.hook-event/1' and a newline, then the envelope's canonical JSON",
@@ -507,7 +507,7 @@ func buildDeliveryVector(t *testing.T) map[string]any {
 
 	return map[string]any{
 		"name":   "hook-delivery-credential-v1",
-		"status": "proposed (aweb-acgh.16.2); frozen once reviewed",
+		"status": "frozen (aweb-acgh.16.2)",
 		"scheme": map[string]any{
 			"authority":       "docs/hook-events.md, The delivery credential",
 			"authorization":   "AWEB-Hook DIDKey <did:key> <signature>, the signature over the canonical signed payload: exactly 86 characters of the standard base64 alphabet, no padding, zero trailing bits",

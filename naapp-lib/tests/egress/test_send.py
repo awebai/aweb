@@ -361,11 +361,11 @@ async def test_request_body_over_the_bound_sends_nothing(network: Network) -> No
 
 def test_the_default_response_bound_is_below_the_ceiling() -> None:
     assert Bounds().max_response_bytes == 4 * 1024 * 1024
-    assert Bounds(max_response_bytes=16 * 1024 * 1024).max_response_bytes == 16 * 1024 * 1024
+    assert Bounds(max_response_bytes=64 * 1024 * 1024).max_response_bytes == 64 * 1024 * 1024
 
 
 async def test_a_response_is_cut_at_the_ceiling(network: Network) -> None:
-    ceiling = 16 * 1024 * 1024
+    ceiling = 64 * 1024 * 1024
     egress = network.egress(bounds=Bounds(max_response_bytes=ceiling))
     response = await _send(network, "GET", f"/big?n={ceiling + 1}", egress=egress)
     assert response.truncated is True
@@ -378,7 +378,7 @@ def test_bounds_can_only_be_lowered() -> None:
         {"connect_timeout": 5.1},
         {"total_timeout": 30.1},
         {"max_request_bytes": 1024 * 1024 + 1},
-        {"max_response_bytes": 16 * 1024 * 1024 + 1},
+        {"max_response_bytes": 64 * 1024 * 1024 + 1},
         {"total_timeout": 0},
     ):
         with pytest.raises(ValueError):

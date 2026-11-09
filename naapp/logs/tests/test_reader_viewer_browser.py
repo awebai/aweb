@@ -57,46 +57,46 @@ async def browser() -> AsyncIterator[Browser]:
 async def service(world: World) -> AsyncIterator[str]:
     """logs' console origin as :class:`ReaderService` composes it, served on
     an ephemeral local port the browser can reach."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(("127.0.0.1", 0))
-    port = sock.getsockname()[1]
-    origin = f"http://localhost:{port}"
-    # The real verifier, for this ephemeral origin, before anyone enrols.
-    world.passkeys.rp = RelyingParty(origin=origin, name="Logs")
-    await apply_console_migrations(world.db)
-    reader_service = ReaderService(
-        db=world.db,
-        directory=world.directory,
-        fence=world.fence,
-        designations=world.designations,
-        passkeys=world.passkeys,
-        recorder=world.recorder,
-        sessions=ConsoleSessions(
-            world.db, passkeys=world.passkeys, scopes=world.directory.is_current_reader
-        ),
-        limiter=LoginLimiter(
-            world.db, client_identity=ClientIdentity(), limit=12, window=timedelta(minutes=1)
-        ),
-        chain_keys=frozenset({world.signer.did_key}),
-    )
-    human = FastAPI()
-    human.include_router(reader_service.console_router)
-    app = split_origins(
-        FastAPI(), human, agent_origin=f"http://127.0.0.1:{port}", human_origin=origin
-    )
-    server = uvicorn.Server(uvicorn.Config(app, log_level="warning", lifespan="off"))
-    task = asyncio.create_task(server.serve(sockets=[sock]))
-    try:
-        async with asyncio.timeout(10):
-            while not server.started:
-                if task.done():
-                    await task
-                await asyncio.sleep(0.01)
-        yield origin
-    finally:
-        server.should_exit = True
-        await asyncio.wait_for(task, 10)
-        sock.close()
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        origin = f"http://localhost:{port}"
+        # The real verifier, for this ephemeral origin, before anyone enrols.
+        world.passkeys.rp = RelyingParty(origin=origin, name="Logs")
+        await apply_console_migrations(world.db)
+        reader_service = ReaderService(
+            db=world.db,
+            directory=world.directory,
+            fence=world.fence,
+            designations=world.designations,
+            governance=world.governance,
+            passkeys=world.passkeys,
+            recorder=world.recorder,
+            sessions=ConsoleSessions(
+                world.db, passkeys=world.passkeys, scopes=world.directory.is_current_reader
+            ),
+            limiter=LoginLimiter(
+                world.db, client_identity=ClientIdentity(), limit=12, window=timedelta(minutes=1)
+            ),
+            chain_keys=frozenset({world.signer.did_key}),
+        )
+        human = FastAPI()
+        human.include_router(reader_service.console_router)
+        app = split_origins(
+            FastAPI(), human, agent_origin=f"http://127.0.0.1:{port}", human_origin=origin
+        )
+        server = uvicorn.Server(uvicorn.Config(app, log_level="warning", lifespan="off"))
+        task = asyncio.create_task(server.serve(sockets=[sock]))
+        try:
+            async with asyncio.timeout(10):
+                while not server.started:
+                    if task.done():
+                        await task
+                    await asyncio.sleep(0.01)
+            yield origin
+        finally:
+            server.should_exit = True
+            await asyncio.wait_for(task, 10)
 
 
 async def signed_in_page(world: World, context: BrowserContext, service: str) -> Page:

@@ -354,6 +354,7 @@ async def _compose(
         ),
         tokens=tokens,
         max_dispatch=timedelta(seconds=settings.broker_max_dispatch_seconds),
+        response_budget_bytes=settings.broker_response_budget_bytes,
         approval_authority=lambda principal, admission: UseDispatchAuthority(
             principal=principal, admission=admission, passkeys=passkeys
         ),

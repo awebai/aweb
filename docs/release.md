@@ -15,18 +15,28 @@ commit.
 | `pi-vX.Y.Z` | npm Pi extension |
 | `skills-vX.Y.Z` | npm skills package, unpinned marketplace source, and resumable hosted ZIP assets |
 | `a2a-gw-vX.Y.Z` | `ghcr.io/awebai/a2a-gateway` image |
+| `secrets-vX.Y.Z` | `ghcr.io/awebai/secrets` image |
+| `logs-vX.Y.Z` | `ghcr.io/awebai/logs` image |
+| `aweb-secrets-runner-vX.Y.Z` | PyPI `aweb-secrets-values`, then `aweb-secrets-runner`, at the same version |
 
 Manifest-backed tags must equal the version in their package manifest. A tag
 that publishes two packages (`aweb-naapp-v`) requires both manifests at the tag
 version, and `aweb-naapp-testing` requires exactly that `aweb-naapp`. CLI and
 A2A gateway versions are explicit in their tags.
 
+The [customer Secrets/Logs/runner procedure](../naapp/secrets/deploy/RELEASE.md)
+uses these same entry points and additionally requires the full Secrets gate.
+The runner and values manifests must have equal versions, and the runner must
+require exactly that values version. Neither image recipe nor these tag mappings
+alone qualifies a customer release or a target platform.
+
 ## Release candidates and the Cloud pair
 
 Python lanes also accept strict `X.Y.ZrcN` versions, with `N >= 1`:
 `server-v1.27.34rc1`, `awid-service-v0.5.32rc1`, and
-`aweb-naapp-v0.4.1rc1`, for example. The manifest versions, including
-`aweb-naapp-testing`, must equal the tag. The aw spelling is SemVer:
+`aweb-naapp-v0.4.1rc1`, or `aweb-secrets-runner-v0.1.0rc1`, for example.
+The manifest versions, including `aweb-naapp-testing` or the runner's lockstep
+values package, must equal the tag. The aw spelling is SemVer:
 `aw-v1.36.48-rc.1`. Other artifact lanes continue to accept final versions only.
 
 The coordinator publishes these RCs first. The Cloud candidate pins the exact

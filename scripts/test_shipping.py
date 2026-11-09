@@ -272,10 +272,14 @@ class PypiLaneContractTest(unittest.TestCase):
 
         for prefix, (_needs_awid, packages) in PUBLISH.PYPI_LANES.items():
             manifest = PUBLISH.MANIFESTS[prefix]
-            self.assertEqual(Path(manifest).parent.as_posix(), packages[0][1], prefix)
+            primary = Path(manifest).parent.as_posix()
+            self.assertIn(primary, [directory for _, directory in packages], prefix)
             self.assertEqual(CANDIDATE.MANIFESTS[prefix], manifest, prefix)
-            lockstep = [f"{directory}/pyproject.toml" for _, directory in packages[1:]]
+            lockstep = [f"{directory}/pyproject.toml" for _, directory in packages if directory != primary]
             self.assertEqual(CANDIDATE.LOCKSTEP.get(prefix, []), lockstep, prefix)
+            if prefix == "aweb-secrets-runner-v":
+                names = [package for package, _ in packages]
+                self.assertLess(names.index("aweb-secrets-values"), names.index("aweb-secrets-runner"))
             for package, directory in packages:
                 project = tomllib.loads((ROOT / directory / "pyproject.toml").read_text(encoding="utf-8"))["project"]
                 self.assertEqual(project["name"], package, prefix)
@@ -1089,6 +1093,143 @@ class ReleaseStampContractTest(unittest.TestCase):
             "FAIL: clean release build failed for darwin/amd64 aw", result.stderr
         )
         self.assertNotIn("no such file or directory", result.stderr.lower())
+
+
+class CustomerReleaseContractTest(unittest.TestCase):
+    """Customer lanes use the real tag/manifest/promotion boundary, without publishing."""
+
+    def repository(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        init_fixture_repo(root)
+        command(root, "git", "config", "user.name", "test")
+        command(root, "git", "config", "user.email", "test@example.com")
+        self.projects = {
+            "naapp/secrets": ("aweb-secrets", "0.1.0"),
+            "naapp/logs": ("aweb-logs", "0.1.0"),
+            "naapp/secrets/values": ("aweb-secrets-values", "0.1.0rc1"),
+            "naapp/secrets/runner": ("aweb-secrets-runner", "0.1.0rc1"),
+        }
+        for directory, (name, version) in self.projects.items():
+            path = root / directory
+            path.mkdir(parents=True, exist_ok=True)
+            dependencies = (
+                '["aweb-secrets-values==0.1.0rc1"]' if name == "aweb-secrets-runner" else "[]"
+            )
+            (path / "pyproject.toml").write_text(
+                f'[project]\nname = "{name}"\nversion = "{version}"\n'
+                f'dependencies = {dependencies}\n'
+            )
+        values = root / "naapp/secrets/values/src/aweb_secrets_values"
+        values.mkdir(parents=True)
+        (values / "__init__.py").write_text('CODEC_VERSION = 1\n')
+        command(root, "git", "add", ".")
+        command(root, "git", "commit", "-qm", "customer RC source")
+        return root
+
+    def test_customer_candidates_bind_each_image_and_runner_to_its_version(self):
+        root = self.repository()
+        source, versions = CANDIDATE.validate_tags(
+            root, ["secrets-v0.1.0", "logs-v0.1.0", "aweb-secrets-runner-v0.1.0rc1"]
+        )
+        self.assertEqual(source, command(root, "git", "rev-parse", "HEAD"))
+        self.assertEqual(versions, {
+            "secrets-v": "0.1.0", "logs-v": "0.1.0", "aweb-secrets-runner-v": "0.1.0rc1",
+        })
+
+    def test_customer_image_version_mismatch_refuses(self):
+        root = self.repository()
+        CANDIDATE.validate_tags(root, ["secrets-v0.1.0", "logs-v0.1.0"])
+        for tag in ("secrets-v0.1.1", "logs-v0.1.1"):
+            with self.subTest(tag=tag), self.assertRaises(CANDIDATE.CandidateRefusal):
+                CANDIDATE.validate_tags(root, [tag])
+
+    def test_runner_values_version_mismatch_refuses_candidate_and_publisher(self):
+        root = self.repository()
+        tag = "aweb-secrets-runner-v0.1.0rc1"
+        CANDIDATE.validate_tags(root, [tag])
+        values = root / "naapp/secrets/values/pyproject.toml"
+        values.write_text(values.read_text().replace('version = "0.1.0rc1"', 'version = "0.1.1rc1"'))
+        command(root, "git", "commit", "-qam", "mismatched values")
+        with self.assertRaises(CANDIDATE.CandidateRefusal):
+            CANDIDATE.validate_tags(root, [tag])
+        command(root, "git", "tag", "-a", tag, "-m", "candidate")
+        with self.assertRaises(PUBLISH.PublishRefusal):
+            PUBLISH.tag_identity(root, tag)
+
+    def test_customer_publisher_uses_tagged_source_not_later_manifests(self):
+        root = self.repository()
+        source = command(root, "git", "rev-parse", "HEAD")
+        tags = ("secrets-v0.1.0", "logs-v0.1.0", "aweb-secrets-runner-v0.1.0rc1")
+        for tag in tags:
+            command(root, "git", "tag", "-a", tag, "-m", "candidate")
+        for directory in self.projects:
+            manifest = root / directory / "pyproject.toml"
+            manifest.write_text(re.sub(r'version = "[^"]+"', 'version = "9.9.9"', manifest.read_text()))
+        command(root, "git", "commit", "-qam", "later unrelated release")
+        for tag in tags:
+            with self.subTest(tag=tag):
+                prefix, version, observed = PUBLISH.tag_identity(root, tag)
+                self.assertEqual((prefix, version), VERSIONS.tag_parts(tag))
+                self.assertEqual(observed, source)
+
+    def test_equal_versions_with_wrong_values_dependency_refuse(self):
+        root = self.repository()
+        tag = "aweb-secrets-runner-v0.1.0rc1"
+        CANDIDATE.validate_tags(root, [tag])
+        manifest = root / "naapp/secrets/runner/pyproject.toml"
+        manifest.write_text(manifest.read_text().replace(
+            'aweb-secrets-values==0.1.0rc1', 'aweb-secrets-values==0.0.9'
+        ))
+        command(root, "git", "commit", "-qam", "wrong dependency with equal package versions")
+        with self.assertRaises(CANDIDATE.CandidateRefusal):
+            CANDIDATE.validate_tags(root, [tag])
+        command(root, "git", "tag", "-a", tag, "-m", "bad dependency")
+        with self.assertRaises(PUBLISH.PublishRefusal):
+            PUBLISH.tag_identity(root, tag)
+
+    def test_runner_final_needs_prior_rc_and_keeps_values_source(self):
+        root = self.repository()
+        command(root, "git", "tag", "aweb-secrets-runner-v0.1.0rc1")
+        for directory in ("naapp/secrets/values", "naapp/secrets/runner"):
+            manifest = root / directory / "pyproject.toml"
+            manifest.write_text(manifest.read_text().replace("0.1.0rc1", "0.1.0"))
+        command(root, "git", "commit", "-qam", "version-only final")
+        tag = "aweb-secrets-runner-v0.1.0"
+        CANDIDATE.validate_tags(root, [tag])
+        values_source = root / "naapp/secrets/values/src/aweb_secrets_values/__init__.py"
+        values_source.write_text('CODEC_VERSION = 2\n')
+        command(root, "git", "commit", "-qam", "changed codec is not a version promotion")
+        with self.assertRaises(VERSIONS.VersionRefusal):
+            CANDIDATE.validate_tags(root, [tag])
+
+    def test_runner_final_without_rc_refuses(self):
+        root = self.repository()
+        CANDIDATE.validate_tags(root, ["aweb-secrets-runner-v0.1.0rc1"])
+        for directory in ("naapp/secrets/values", "naapp/secrets/runner"):
+            manifest = root / directory / "pyproject.toml"
+            manifest.write_text(manifest.read_text().replace("0.1.0rc1", "0.1.0"))
+        command(root, "git", "commit", "-qam", "unqualified final")
+        with self.assertRaises(CANDIDATE.CandidateRefusal):
+            CANDIDATE.validate_tags(root, ["aweb-secrets-runner-v0.1.0"])
+
+    def test_built_runner_requires_the_exact_values_release_and_toolkit_floor(self):
+        from email.parser import BytesParser
+        import tomllib
+
+        version = tomllib.loads((ROOT / "naapp/secrets/values/pyproject.toml").read_text())["project"]["version"]
+        with tempfile.TemporaryDirectory() as directory:
+            command(ROOT, "uv", "build", "--wheel", "--no-sources", "--out-dir", directory,
+                    "naapp/secrets/runner")
+            wheels = list(Path(directory).glob("*.whl"))
+            self.assertEqual(len(wheels), 1)
+            with zipfile.ZipFile(wheels[0]) as wheel:
+                names = [name for name in wheel.namelist() if name.endswith(".dist-info/METADATA")]
+                self.assertEqual(len(names), 1)
+                requirements = BytesParser().parsebytes(wheel.read(names[0])).get_all("Requires-Dist")
+            self.assertIn(f"aweb-secrets-values=={version}", requirements)
+            self.assertIn("aweb-naapp[pages]>=0.5.1", requirements)
 
 
 if __name__ == "__main__":

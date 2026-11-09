@@ -16,6 +16,7 @@ import httpx
 import pytest
 from aweb_naapp.console import CONSOLE_HEADERS
 from aweb_naapp.hooks.envelope import verify
+from aweb_naapp.hooks.owner_act import APP_ACTS, LOGS_ACTS
 from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations
 from aweb_naapp.hooks.producer import HookProducer, Registration, RegistrationView, ServerProducer
 from aweb_naapp.outbox import apply_outbox_migrations
@@ -32,6 +33,7 @@ from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
 from aweb_logs import MIGRATIONS_MODULE, MIGRATIONS_PATH
+from aweb_logs.governance import SELF_RECORDED_ACTS, LogsGovernance
 from aweb_logs.ledger import LogsSigner
 from aweb_logs.readers import ReaderDesignations, ReaderDirectory, ReaderRemovals
 
@@ -117,6 +119,7 @@ class World:
     grant: Grant
     fence: InstallationFence
     designations: ReaderDesignations = field(init=False)
+    governance: LogsGovernance = field(init=False)
     removals: ReaderRemovals = field(init=False)
     recorder: CredentialAudit = field(init=False)
     passkeys: Passkeys = field(init=False)
@@ -159,7 +162,7 @@ async def world_fixture(test_db_factory) -> AsyncIterator[World]:
         return governance_registration() if registered[0] else None
 
     async with running_registry(registry_db.config.get_dsn()) as registry:
-        owner = await team_owner(registry, team_id=TEAM_ID)
+        owner = await team_owner(registry, team_id=TEAM_ID, acts=APP_ACTS + LOGS_ACTS)
         state = World(db, owner, signer, directory, Inbox(), registered, installations.grant, fence)
         append_own = directory.appender(signer)
 
@@ -180,6 +183,7 @@ async def world_fixture(test_db_factory) -> AsyncIterator[World]:
             max_backlog_age=timedelta(minutes=5),
             migration_module="aweb_logs_credential_audit",
             after_enqueue=append,
+            ungated_acts=SELF_RECORDED_ACTS,
         )
         await state.recorder.migrate()
         state.passkeys = Passkeys(
@@ -199,6 +203,9 @@ async def world_fixture(test_db_factory) -> AsyncIterator[World]:
             verifier=owner.verifier,
             passkeys=state.passkeys,
             recorder=state.recorder,
+        )
+        state.governance = LogsGovernance(
+            db, fence=fence, verifier=owner.verifier, recorder=state.recorder, logs_origin=LOGS
         )
         state.removals = ReaderRemovals(
             directory, fence=fence, passkeys=state.passkeys, recorder=state.recorder

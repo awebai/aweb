@@ -26,7 +26,6 @@ import pytest
 from aweb.app_manifests import FetchedManifest
 from aweb.installations import install_verified_manifest_on
 from aweb_naapp.css import CSS_SHA256
-from aweb_naapp.egress import AddressPolicy, Egress
 from aweb_naapp.egress.send import EgressNotSent
 from aweb_naapp.email import EmailSettings
 from aweb_naapp.manifest import load_manifest
@@ -177,7 +176,7 @@ async def deployment(coordination, test_db_factory, tmp_path) -> AsyncIterator[D
             email=email_settings(smtp, tmp_path),
             awid_transport=coordination.registry.transport,
             team_server_transport=coordination.server.transport,
-            hook_egress=Egress(addresses=AddressPolicy(), resolver=Unresolved(), user_agent="logs"),
+            resolver=Unresolved(),
         )
         async with service.api_app.router.lifespan_context(service.api_app):
             async with (

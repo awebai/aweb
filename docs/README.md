@@ -181,14 +181,16 @@ presented as shipped.
 - [A2A interoperability](a2a.md) — shipped experimental CLI/gateway and
   self-hosted/BYOT bridge surface.
 - [Mutation hook seam](aw-hooks-sot.md) — shipped experimental in-process
-  `app.state.on_mutation` callback and exact current route call sites.
-- [aw-hooks: catalog, bindings and delivery](hook-events.md) — specified
-  experimental contract for owner-activated named hooks, not yet shipped.
-- [Owner act](owner-act.md) — specified experimental controller-signed artifact
-  for owner-only governance acts, not yet shipped.
+  `app.state.on_mutation` callback and its route call sites.
+- [aw-hooks: catalog, bindings and delivery](hook-events.md) — experimental
+  contract for owner-activated named hooks: the catalog, bindings, owner
+  activation and app producers ship; the core producer is open.
+- [Owner act](owner-act.md) — experimental controller-signed artifact for
+  owner-only governance acts: the server and naapps verify it; the `aw` commands
+  that sign it are open.
 - [Owner-act delivery](owner-act-delivery.md) — specified contract for how a
   client prepares and delivers an app owner act to the app's declared human
-  origin, not yet shipped.
+  origin; not shipped.
 - [App manifest](app-manifest.md) — current experimental manifest versions 1
   and 2, version 3 specified but not shipped, variant discovery, and the
   byte-identical CLI interpretation contract.

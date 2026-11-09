@@ -120,6 +120,7 @@ async def console(world: World) -> AsyncIterator[httpx.AsyncClient]:
         directory=world.directory,
         fence=world.fence,
         designations=world.designations,
+        governance=world.governance,
         passkeys=world.passkeys,
         recorder=world.recorder,
         sessions=ConsoleSessions(
