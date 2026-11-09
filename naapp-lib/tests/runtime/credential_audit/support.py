@@ -29,6 +29,7 @@ from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
 from aweb_naapp.hooks.envelope import verify
+from aweb_naapp.hooks.owner_act import APP_ACTS, LOGS_ACTS
 from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations
 from aweb_naapp.hooks.producer import HookProducer, Registration, RegistrationView, ServerProducer
 from aweb_naapp.outbox import apply_outbox_migrations
@@ -143,6 +144,11 @@ def registration_view() -> RegistrationView:
     )
 
 
+# The act this app records in its own chain atomically, and so may record
+# with no registered hook target (a logs legal hold).
+SELF_RECORDED_ACTS = frozenset({"logs.legal_hold.set"})
+
+
 @dataclass
 class World:
     db: AsyncDatabaseManager
@@ -202,7 +208,7 @@ async def world(test_db_factory) -> AsyncIterator[World]:
         return registration_view() if registered[0] else None
 
     async with running_registry(registry_db.config.get_dsn()) as registry:
-        owner = await team_owner(registry, team_id=TEAM_ID)
+        owner = await team_owner(registry, team_id=TEAM_ID, acts=APP_ACTS + LOGS_ACTS)
         inbox = Inbox()
         state = World(db, owner, fence, admitted, inbox, handed, fail, registered)
         state.recorder = CredentialAudit(
@@ -218,6 +224,7 @@ async def world(test_db_factory) -> AsyncIterator[World]:
             max_backlog_age=timedelta(minutes=5),
             migration_module="example_credential_audit",
             after_enqueue=after_enqueue,
+            ungated_acts=SELF_RECORDED_ACTS,
         )
         await state.recorder.migrate()
         state.passkeys = Passkeys(
@@ -286,3 +293,31 @@ async def enrol(world: World) -> SoftAuthenticator:
             token, device.create(await world.passkeys.enrolment_options(token)), fence=enrolment
         )
     return device
+
+
+def hold_subject(hold_id: str) -> dict[str, str]:
+    return {
+        "app_id": APP_ID,
+        "installation_id": INSTALLATION_ID,
+        "hold_id": hold_id,
+        "hold_scope": "all",
+        "reason_code": "litigation",
+    }
+
+
+async def record_app_act(world: World, act: str, subject: dict, payload: dict) -> UUID:
+    """The owner's act, consumed and recorded with ``payload`` in one effect transaction."""
+    signing, signature = world.owner.sign(act, subject)
+    prepared = await world.owner.verifier.prepare(signing, signature, team_id=TEAM_ID)
+    context = await world.recorder.prepare_owner_act(
+        world.admitted, signing=signing, signature=signature
+    )
+    with world.recorder.prepared(context):
+        async with world.db.transaction() as tx:
+            await world.fence.check(tx, world.admitted)
+            verified = await world.owner.consume(tx, prepared, subject)
+            event_id = await world.recorder.record_owner_act(
+                tx, verified, payload, occurred_at=datetime.now(UTC)
+            )
+            await world.fence.check(tx, world.admitted)
+    return event_id

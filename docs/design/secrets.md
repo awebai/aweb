@@ -108,8 +108,10 @@ deployment (§17).
   passkey on secrets' own origin (§6.3). Narrowing changes never need a passkey
   (§12).
 - **What a host or transport may do.** A hosted operator's MCP endpoint (D1 L2) signs team-auth
-  as a custodial member. It can therefore exercise exactly that member's grants
-  and nothing more. Listing a tool through L2 grants nothing (§4.5). No host or
+  as a custodial member. secrets authorizes each request it signs for exactly
+  that member's grants. The endpoint's operator holds the custody of every
+  custodial member's key, so its effective authority is the union of those
+  members' grants (T3). Listing a tool through L2 grants nothing (§4.5). No host or
   transport can approve, because approval is a passkey assertion made on
   secrets' origin. No host or transport ever receives a value.
 - **Signed artifacts and who verifies each.**
@@ -1071,7 +1073,7 @@ slug grammar and length, with a collision-checked random suffix; no upstream
 field chooses it. The source dispatch's uniqueness makes replay return the
 same child, without minting another or calling the issuer again.
 
-**The issuing grant remains a containment boundary.** Revoking a grant disables
+**The issuing grant remains a revocation unit.** Revoking a grant disables
 all child secrets whose issuing dispatch used that exact grant, and all of those
 children's descendants, in the **same transaction** as the revocation. Their
 pending and approved-but-unconsumed approvals are voided in that transaction.
@@ -2492,7 +2494,7 @@ Q8 decided that neither `--unsafe-inject` nor `result_handling: return` exists.
 
 | ID | Party | Trusted for | Not trusted for, and what it means |
 | --- | --- | --- | --- |
-| T1 | Requesting agent, including a prompt-injected one | nothing beyond its grants | It may use every grant it holds, within policy. secrets limits *what* it can do, not *why*. |
+| T1 | Requesting agent, including a prompt-injected one | nothing | secrets authorizes it for the grants of the member key it signs with, within policy, and limits *what* it can do, not *why*. Grants contain it only where its execution and signing keys are separated from other members' (for example, a separate OS user). Agents that share an OS user or can reach each other's keys are one trust boundary: a compromised one can use the grants of every member key it can reach. |
 | T2 | Model provider (MCP) | nothing | Responses enter its context. Hence projection, redaction and default-deny (§7.6). |
 | T3 | Custodial deployment and its L2 endpoint | custody of its custodial members' keys | It can sign as those members and so exercise their grants. It sees their parameters and responses in transit. It cannot read values, approve, widen policy or reach the console. **Consequence: an MCP agent's grants are only as strong as the operator's custody.** Grant MCP-used principals narrowly. secrets can require attested predicates (§4.6) only once the custodial deployment issues attestations; until then such a policy refuses. |
 | T4 | secrets service and its production operators | executing policy; transient plaintext | An operator able to run code as the service, with KMS decrypt, the local key file or the 1Password token, can read values. Reading the local key file and stored ciphertext bypasses app policy for every value sealed with it. Mitigations: a separate service account and agent-unreadable key material; KMS policy and independent logs when KMS is used; 1Password independent logs; Make-only operations (§15). Not zero-knowledge. |
@@ -2526,6 +2528,9 @@ all under T1–T13.
 - that redaction proves confidentiality;
 - that a passkey identifies a natural person;
 - that an MCP agent's use is distinguishable from the custodial host acting as that member;
+- that a grant confines an agent that can reach another member's signing key:
+  grants and roles bound authorization and attribution, and contain a
+  compromised agent only where keys and execution are separated;
 - that an upstream side effect is exactly-once;
 - that runner jobs are confidential from the runner host;
 - replay protection beyond `request_id` deduplication.
