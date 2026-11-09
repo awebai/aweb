@@ -162,7 +162,12 @@ Body, a JSON object with exactly these fields:
 - `credential`: the credential object above, with exactly its three fields,
   required for designate and replace and refused otherwise;
 - `notice_contact`: the notice contact, a nonempty string, required for
-  designate and replace of a role that declares one and refused otherwise.
+  designate and replace of a role that declares one and refused otherwise;
+- `certificate`: the principal's team certificate, a nonempty string in the
+  encoding team-auth's `X-AWID-Team-Certificate` uses, for designate and
+  replace, and refused for revoke. A designate or replace without one is
+  refused in stage 3 with `principal_not_member`
+  ([membership evidence](design/human-confirmation-from-aw.md#membership-evidence)).
 
 The route authenticates the act before any check that depends on the app's
 state, so no refusal before authentication can tell an anonymous caller
@@ -172,7 +177,8 @@ whether a holding or installation exists. It checks in three stages:
    parse, fields and subject shape; its audience against `owner_acts.origin`;
    its role, declared in `owner_acts`, and its act, in that role's `acts`;
    then whether the body carries `credential` and `notice_contact` exactly as
-   the act and the role's `notice_contact` require; then its lifetime and
+   the act and the role's `notice_contact` require, and no `certificate` for
+   revoke; then its lifetime and
    expiry. These need no read.
 2. **Authentication:** the current controller key of the act's `team_id`,
    read from the registry (cached at most 60 seconds), and the signature under
@@ -192,8 +198,12 @@ whether a holding or installation exists. It checks in three stages:
       of that team, and its own registered ID kind is `human`. The kind is the
       subject's own, never the kind of its nearest human ancestor or a label.
       These reads reuse the 60-second team-facts cache where it applies. The
-      certificate is the one the holder's `credential` handoff retained
-      ([membership evidence](design/human-confirmation-from-aw.md#membership-evidence));
+      certificate is the body's: it verifies under the team's current key,
+      names the act's `team_id` and `principal` and the principal's current
+      member key, and its status is published and not revoked
+      ([membership evidence](design/human-confirmation-from-aw.md#membership-evidence)).
+      An absent or failing certificate is `principal_not_member`. The app
+      retains a verified certificate with the holding;
    5. in the transaction that applies the effect, the act against the expected
       subject, and its nonce, consumed. The expected subject is the app's own
       `app_id`, the installation, the act's `role` and `principal` and, for
@@ -227,7 +237,7 @@ cooling-off period.
 | Status | `detail` | When |
 | --- | --- | --- |
 | 415 | `json_required` | The content type is not `application/json`. |
-| 400 | `request_invalid` | The body has a field outside the four above, `signing` is not base64, a credential field is not in its encoding, the bytes yield no act, installation id and role to look up, or, for a declared role and act, the body does not carry `credential` and `notice_contact` exactly as they require. |
+| 400 | `request_invalid` | The body has a field outside the five above, a `certificate` for revoke, `signing` is not base64, a credential field is not in its encoding, the bytes yield no act, installation id and role to look up, or, for a declared role and act, the body does not carry `credential` and `notice_contact` exactly as they require. |
 | 403 | `owner_required` | Every other fault of the act, its credential or its holding: any owner-act verification code, an undeclared role or act, a credential refused in stage 3, a holding in the wrong state, a credential or notice contact that does not match the act, a reused nonce. |
 | 503 | `team_key_unavailable` | Stage 2 cannot read the team's current key. Nothing took effect. |
 | as given | the installation's code | An authenticated act names an installation that is not admitted. |

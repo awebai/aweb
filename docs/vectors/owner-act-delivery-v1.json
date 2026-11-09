@@ -68,6 +68,7 @@
         "security_key": false
       },
       "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
         "credential": {
           "credential_id": "5HEgG-qqGJUZDF54grw1L9zK-4n0nfTukvJYQ29oRVg",
           "public_key": "pQECAyYgASFYINzIun4Ua2vr508DCRdHbjaO32_j0zva74_GHHMasEUQIlggHHnSxHAuYtd8D4YN4PIybjHLCIaWlN1EHrHjJamGOP0",
@@ -96,6 +97,7 @@
       },
       "state": {
         "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -149,6 +151,7 @@
         "security_key": false
       },
       "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
         "credential": {
           "credential_id": "4JfIjlyIKLJDVdeJfuog5cGToI0WmfjaCWe5vL-gMWE",
           "public_key": "pQECAyYgASFYIDdAr0MPhR2zWr8mK9uGw6vPhjJxlYYxSmvw55sMv-UzIlggxBAB4c3MR1h7N2F3EFw2_NVwwZ5Ul4Tm02OFXvSzzxs",
@@ -179,6 +182,7 @@
       },
       "state": {
         "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -232,6 +236,7 @@
         "security_key": false
       },
       "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
         "credential": {
           "credential_id": "eJg4nbM0_ny3_RdSMiCMLYDK1tIsEYylthffnU4AIhs",
           "public_key": "pQECAyYgASFYINyNjz-JfKlaXCzT_3TzhhLmrPvkfxuPhDTv167_qUiNIlgg0UZUFiogI8VQBpqVwL9DLrTo9vSEezgX9ePu3m3cgk8",
@@ -262,6 +267,7 @@
       },
       "state": {
         "holding": true,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -336,6 +342,7 @@
       },
       "state": {
         "holding": true,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -410,6 +417,7 @@
       },
       "state": {
         "holding": true,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "not_member"
       },
       "verifier": {
@@ -484,6 +492,7 @@
       },
       "state": {
         "holding": true,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "unavailable"
       },
       "verifier": {
@@ -537,6 +546,7 @@
         "security_key": true
       },
       "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
         "credential": {
           "credential_id": "lhBf_JXd4Q4eicxfAFbd8kiSVSYvwYZL-QkG-zcQi4E",
           "public_key": "pQECAyYgASFYICAhVoqqvQh7rtOZGyLDN285FQxDrTwkz2ZxbrTiAvRfIlggrgftPYCuG10l6z2XdJ7eI4vUuMVctbGAnhjX7hmvAkQ",
@@ -565,6 +575,7 @@
       },
       "state": {
         "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -618,6 +629,7 @@
         "security_key": false
       },
       "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
         "credential": {
           "credential_id": "lhBf_JXd4Q4eicxfAFbd8kiSVSYvwYZL-QkG-zcQi4E",
           "public_key": "pQECAyYgASFYICAhVoqqvQh7rtOZGyLDN285FQxDrTwkz2ZxbrTiAvRfIlggrgftPYCuG10l6z2XdJ7eI4vUuMVctbGAnhjX7hmvAkQ",
@@ -641,6 +653,7 @@
       },
       "state": {
         "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -694,6 +707,7 @@
         "security_key": false
       },
       "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
         "credential": {
           "credential_id": "5HEgG-qqGJUZDF54grw1L9zK-4n0nfTukvJYQ29oRVg",
           "public_key": "pQECAyYgASFYINzIun4Ua2vr508DCRdHbjaO32_j0zva74_GHHMasEUQIlggHHnSxHAuYtd8D4YN4PIybjHLCIaWlN1EHrHjJamGOP0",
@@ -717,6 +731,7 @@
       },
       "state": {
         "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -770,6 +785,7 @@
         "security_key": false
       },
       "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
         "credential": {
           "credential_id": "5HEgG-qqGJUZDF54grw1L9zK-4n0nfTukvJYQ29oRVg",
           "public_key": "pgECAyYgASFYINzIun4Ua2vr508DCRdHbjaO32_j0zva74_GHHMasEUQIlggHHnSxHAuYtd8D4YN4PIybjHLCIaWlN1EHrHjJamGOP0jWCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHy49TA",
@@ -793,6 +809,7 @@
       },
       "state": {
         "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -846,6 +863,7 @@
         "security_key": false
       },
       "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
         "credential": {
           "credential_id": "o1BgH__vJVj9aOO9DP0urufjIxFDJiposgVAuddMM6Y",
           "public_key": "pQECAyYgASFYIFrsInXQQprUJiQ3k00mnjqjh78Fyx38Bxjtwf6v2EeeIlgg8_uIcg7adLIEdgqyHp0wm83-_OEwN9OJnaN-jjdPh8E",
@@ -869,6 +887,7 @@
       },
       "state": {
         "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -922,6 +941,7 @@
         "security_key": false
       },
       "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
         "credential": {
           "credential_id": "4JfIjlyIKLJDVdeJfuog5cGToI0WmfjaCWe5vL-gMWE",
           "public_key": "pQECAyYgASFYIDdAr0MPhR2zWr8mK9uGw6vPhjJxlYYxSmvw55sMv-UzIlggxBAB4c3MR1h7N2F3EFw2_NVwwZ5Ul4Tm02OFXvSzzxs",
@@ -947,6 +967,7 @@
       },
       "state": {
         "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -1000,6 +1021,7 @@
         "security_key": false
       },
       "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
         "credential": {
           "credential_id": "5HEgG-qqGJUZDF54grw1L9zK-4n0nfTukvJYQ29oRVg",
           "public_key": "pQECAyYgASFYINzIun4Ua2vr508DCRdHbjaO32_j0zva74_GHHMasEUQIlggHHnSxHAuYtd8D4YN4PIybjHLCIaWlN1EHrHjJamGOP0",
@@ -1023,6 +1045,7 @@
       },
       "state": {
         "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "not_member"
       },
       "verifier": {
@@ -1076,6 +1099,7 @@
         "security_key": false
       },
       "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
         "credential": {
           "credential_id": "5HEgG-qqGJUZDF54grw1L9zK-4n0nfTukvJYQ29oRVg",
           "public_key": "pQECAyYgASFYINzIun4Ua2vr508DCRdHbjaO32_j0zva74_GHHMasEUQIlggHHnSxHAuYtd8D4YN4PIybjHLCIaWlN1EHrHjJamGOP0",
@@ -1099,6 +1123,7 @@
       },
       "state": {
         "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "not_human"
       },
       "verifier": {
@@ -1152,6 +1177,7 @@
         "security_key": false
       },
       "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
         "credential": {
           "credential_id": "5HEgG-qqGJUZDF54grw1L9zK-4n0nfTukvJYQ29oRVg",
           "public_key": "pQECAyYgASFYINzIun4Ua2vr508DCRdHbjaO32_j0zva74_GHHMasEUQIlggHHnSxHAuYtd8D4YN4PIybjHLCIaWlN1EHrHjJamGOP0",
@@ -1175,6 +1201,7 @@
       },
       "state": {
         "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "unavailable"
       },
       "verifier": {
@@ -1228,6 +1255,7 @@
         "security_key": false
       },
       "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
         "credential": {
           "credential_id": "5HEgG-qqGJUZDF54grw1L9zK-4n0nfTukvJYQ29oRVg",
           "public_key": "pQECAyYgASFYINzIun4Ua2vr508DCRdHbjaO32_j0zva74_GHHMasEUQIlggHHnSxHAuYtd8D4YN4PIybjHLCIaWlN1EHrHjJamGOP0",
@@ -1251,6 +1279,7 @@
       },
       "state": {
         "holding": true,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -1304,6 +1333,7 @@
         "security_key": false
       },
       "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
         "credential": {
           "credential_id": "eJg4nbM0_ny3_RdSMiCMLYDK1tIsEYylthffnU4AIhs",
           "public_key": "pQECAyYgASFYINyNjz-JfKlaXCzT_3TzhhLmrPvkfxuPhDTv167_qUiNIlgg0UZUFiogI8VQBpqVwL9DLrTo9vSEezgX9ePu3m3cgk8",
@@ -1329,6 +1359,7 @@
       },
       "state": {
         "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -1398,6 +1429,7 @@
       },
       "state": {
         "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -1462,6 +1494,7 @@
       },
       "state": {
         "holding": true,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -1515,6 +1548,7 @@
         "security_key": false
       },
       "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
         "credential": {
           "credential_id": "5HEgG-qqGJUZDF54grw1L9zK-4n0nfTukvJYQ29oRVg",
           "public_key": "pQECAyYgASFYINzIun4Ua2vr508DCRdHbjaO32_j0zva74_GHHMasEUQIlggHHnSxHAuYtd8D4YN4PIybjHLCIaWlN1EHrHjJamGOP0",
@@ -1538,6 +1572,7 @@
       },
       "state": {
         "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -1590,6 +1625,7 @@
         "security_key": false
       },
       "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
         "credential": {
           "credential_id": "eJg4nbM0_ny3_RdSMiCMLYDK1tIsEYylthffnU4AIhs",
           "public_key": "pQECAyYgASFYINyNjz-JfKlaXCzT_3TzhhLmrPvkfxuPhDTv167_qUiNIlgg0UZUFiogI8VQBpqVwL9DLrTo9vSEezgX9ePu3m3cgk8",
@@ -1615,6 +1651,7 @@
       },
       "state": {
         "holding": true,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -1668,6 +1705,7 @@
         "security_key": false
       },
       "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
         "credential": {
           "credential_id": "5HEgG-qqGJUZDF54grw1L9zK-4n0nfTukvJYQ29oRVg",
           "public_key": "pQECAyYgASFYINzIun4Ua2vr508DCRdHbjaO32_j0zva74_GHHMasEUQIlggHHnSxHAuYtd8D4YN4PIybjHLCIaWlN1EHrHjJamGOP0",
@@ -1691,6 +1729,7 @@
       },
       "state": {
         "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -1744,6 +1783,7 @@
         "security_key": false
       },
       "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
         "credential": {
           "credential_id": "5HEgG-qqGJUZDF54grw1L9zK-4n0nfTukvJYQ29oRVg",
           "public_key": "pQECAyYgASFYINzIun4Ua2vr508DCRdHbjaO32_j0zva74_GHHMasEUQIlggHHnSxHAuYtd8D4YN4PIybjHLCIaWlN1EHrHjJamGOP0",
@@ -1767,6 +1807,7 @@
       },
       "state": {
         "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -1820,6 +1861,7 @@
         "security_key": false
       },
       "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
         "credential": {
           "credential_id": "5HEgG-qqGJUZDF54grw1L9zK-4n0nfTukvJYQ29oRVg",
           "public_key": "pQECAyYgASFYINzIun4Ua2vr508DCRdHbjaO32_j0zva74_GHHMasEUQIlggHHnSxHAuYtd8D4YN4PIybjHLCIaWlN1EHrHjJamGOP0",
@@ -1843,6 +1885,7 @@
       },
       "state": {
         "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -1895,6 +1938,7 @@
         "security_key": false
       },
       "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
         "credential": {
           "credential_id": "5HEgG-qqGJUZDF54grw1L9zK-4n0nfTukvJYQ29oRVg",
           "public_key": "pQECAyYgASFYINzIun4Ua2vr508DCRdHbjaO32_j0zva74_GHHMasEUQIlggHHnSxHAuYtd8D4YN4PIybjHLCIaWlN1EHrHjJamGOP0",
@@ -1912,6 +1956,7 @@
       },
       "state": {
         "holding": true,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -1977,6 +2022,7 @@
       },
       "state": {
         "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -2030,6 +2076,7 @@
         "security_key": false
       },
       "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
         "credential": {
           "credential_id": "5HEgG-qqGJUZDF54grw1L9zK-4n0nfTukvJYQ29oRVg",
           "public_key": "pQECAyYgASFYINzIun4Ua2vr508DCRdHbjaO32_j0zva74_GHHMasEUQIlggHHnSxHAuYtd8D4YN4PIybjHLCIaWlN1EHrHjJamGOP0",
@@ -2048,6 +2095,7 @@
       },
       "state": {
         "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -2101,6 +2149,7 @@
         "security_key": false
       },
       "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
         "credential": {
           "credential_id": "4JfIjlyIKLJDVdeJfuog5cGToI0WmfjaCWe5vL-gMWE",
           "public_key": "pQECAyYgASFYIDdAr0MPhR2zWr8mK9uGw6vPhjJxlYYxSmvw55sMv-UzIlggxBAB4c3MR1h7N2F3EFw2_NVwwZ5Ul4Tm02OFXvSzzxs",
@@ -2118,6 +2167,7 @@
       },
       "state": {
         "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -2171,6 +2221,7 @@
         "security_key": false
       },
       "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
         "credential": {
           "credential_id": "5HEgG-qqGJUZDF54grw1L9zK-4n0nfTukvJYQ29oRVg=",
           "public_key": "pQECAyYgASFYINzIun4Ua2vr508DCRdHbjaO32_j0zva74_GHHMasEUQIlggHHnSxHAuYtd8D4YN4PIybjHLCIaWlN1EHrHjJamGOP0",
@@ -2188,6 +2239,7 @@
       },
       "state": {
         "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -2241,6 +2293,7 @@
         "security_key": false
       },
       "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
         "credential": {
           "credential_id": "5HEgG-qqGJUZDF54grw1L9zK-4n0nfTukvJYQ29oRVg",
           "public_key": "pQECAyYgASFYINzIun4Ua2vr508DCRdHbjaO32_j0zva74_GHHMasEUQIlggHHnSxHAuYtd8D4YN4PIybjHLCIaWlN1EHrHjJamGOP0",
@@ -2259,6 +2312,7 @@
       },
       "state": {
         "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -2330,6 +2384,7 @@
       },
       "state": {
         "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -2400,6 +2455,7 @@
       },
       "state": {
         "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -2453,6 +2509,7 @@
         "security_key": false
       },
       "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
         "credential": {
           "credential_id": "5HEgG-qqGJUZDF54grw1L9zK-4n0nfTukvJYQ29oRVg",
           "public_key": "pQECAyYgASFYINzIun4Ua2vr508DCRdHbjaO32_j0zva74_GHHMasEUQIlggHHnSxHAuYtd8D4YN4PIybjHLCIaWlN1EHrHjJamGOP0",
@@ -2476,6 +2533,7 @@
       },
       "state": {
         "holding": true,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -2529,6 +2587,7 @@
         "security_key": false
       },
       "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
         "credential": {
           "credential_id": "5HEgG-qqGJUZDF54grw1L9zK-4n0nfTukvJYQ29oRVg",
           "public_key": "pQECAyYgASFYINzIun4Ua2vr508DCRdHbjaO32_j0zva74_GHHMasEUQIlggHHnSxHAuYtd8D4YN4PIybjHLCIaWlN1EHrHjJamGOP0",
@@ -2552,6 +2611,7 @@
       },
       "state": {
         "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -2605,6 +2665,7 @@
         "security_key": false
       },
       "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
         "credential": {
           "credential_id": "5HEgG-qqGJUZDF54grw1L9zK-4n0nfTukvJYQ29oRVg",
           "public_key": "pQECAyYgASFYINzIun4Ua2vr508DCRdHbjaO32_j0zva74_GHHMasEUQIlggHHnSxHAuYtd8D4YN4PIybjHLCIaWlN1EHrHjJamGOP0",
@@ -2628,6 +2689,85 @@
       },
       "state": {
         "holding": true,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
+        "principal_status": "member_human"
+      },
+      "verifier": {
+        "acts": [
+          "human-credential.replace",
+          "human-role.designate",
+          "human-role.revoke"
+        ],
+        "audience": "https://console.logs.example.com",
+        "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "nonce_used": false,
+        "now": "2026-11-07T12:01:00Z",
+        "registry": "unavailable",
+        "team_id": "demo:example.com"
+      },
+      "verifier_code": null
+    },
+    {
+      "act": {
+        "act": "human-role.designate",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T12:05:00Z",
+        "issued_at": "2026-11-07T12:00:00Z",
+        "nonce": "02020202020202020202020202020202",
+        "subject": {
+          "app_id": "logs",
+          "credential_sha256": "cdf7ffddb3b656733a9441d3067f070efa723e0d26a8690453588822abb11af7",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+          "role": "logs.reader"
+        },
+        "team_id": "demo:example.com",
+        "team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "type": "aweb.owner-act",
+        "v": 1
+      },
+      "app": {
+        "app_id": "logs",
+        "owner_acts_origin": "https://console.logs.example.com",
+        "role": {
+          "acts": [
+            "human-credential.replace",
+            "human-role.designate",
+            "human-role.revoke"
+          ],
+          "description": "Reads the team's audit log in a passkey session on the console.",
+          "label": "Log reader",
+          "name": "logs.reader",
+          "notice_contact": false
+        },
+        "security_key": false
+      },
+      "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
+        "credential": {
+          "credential_id": "5HEgG-qqGJUZDF54grw1L9zK-4n0nfTukvJYQ29oRVg",
+          "public_key": "pQECAyYgASFYINzIun4Ua2vr508DCRdHbjaO32_j0zva74_GHHMasEUQIlggHHnSxHAuYtd8D4YN4PIybjHLCIaWlN1EHrHjJamGOP0",
+          "rp_id": "console.logs.example.com"
+        },
+        "signature": "l5wIv/SVHmj/hJDKSK7srxXjhXOSB/QaYNxAk5ssbBHa+LtFhxKdhN8qaHztm2ELOVMX3gKpFOUu/bzSLA9YAQ",
+        "signing": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imh1bWFuLXJvbGUuZGVzaWduYXRlIiwiYXVkIjoiaHR0cHM6Ly9jb25zb2xlLmxvZ3MuZXhhbXBsZS5jb20iLCJleHBpcmVzX2F0IjoiMjAyNi0xMS0wN1QxMjowNTowMFoiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm5vbmNlIjoiMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIiLCJzdWJqZWN0Ijp7ImFwcF9pZCI6ImxvZ3MiLCJjcmVkZW50aWFsX3NoYTI1NiI6ImNkZjdmZmRkYjNiNjU2NzMzYTk0NDFkMzA2N2YwNzBlZmE3MjNlMGQyNmE4NjkwNDUzNTg4ODIyYWJiMTFhZjciLCJpbnN0YWxsYXRpb25faWQiOiIxYjRlMjhiYS0yZmExLTRkM2ItYTNmNS1lZjE5YjVhNzYzM2IiLCJwcmluY2lwYWwiOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwicm9sZSI6ImxvZ3MucmVhZGVyIn0sInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9rZXlfZGlkIjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0eXBlIjoiYXdlYi5vd25lci1hY3QiLCJ2IjoxfQ=="
+      },
+      "expected_subject": {
+        "app_id": "logs",
+        "credential_sha256": "cdf7ffddb3b656733a9441d3067f070efa723e0d26a8690453588822abb11af7",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+        "role": "logs.reader"
+      },
+      "name": "forged_signature_without_a_holding_registry_unavailable",
+      "result": {
+        "detail": "team_key_unavailable",
+        "response": null,
+        "status": 503
+      },
+      "state": {
+        "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -2686,7 +2826,7 @@
           "public_key": "pQECAyYgASFYINzIun4Ua2vr508DCRdHbjaO32_j0zva74_GHHMasEUQIlggHHnSxHAuYtd8D4YN4PIybjHLCIaWlN1EHrHjJamGOP0",
           "rp_id": "console.logs.example.com"
         },
-        "signature": "l5wIv/SVHmj/hJDKSK7srxXjhXOSB/QaYNxAk5ssbBHa+LtFhxKdhN8qaHztm2ELOVMX3gKpFOUu/bzSLA9YAQ",
+        "signature": "hKeybl4kklbuQctIJJ7RnC3wwHiNoYy8Dg9EoAjGz0rf8rxw4OBpO3OFQVnmul0EcG+WfrUG4rQYsWHlp3xiDw",
         "signing": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imh1bWFuLXJvbGUuZGVzaWduYXRlIiwiYXVkIjoiaHR0cHM6Ly9jb25zb2xlLmxvZ3MuZXhhbXBsZS5jb20iLCJleHBpcmVzX2F0IjoiMjAyNi0xMS0wN1QxMjowNTowMFoiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm5vbmNlIjoiMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIiLCJzdWJqZWN0Ijp7ImFwcF9pZCI6ImxvZ3MiLCJjcmVkZW50aWFsX3NoYTI1NiI6ImNkZjdmZmRkYjNiNjU2NzMzYTk0NDFkMzA2N2YwNzBlZmE3MjNlMGQyNmE4NjkwNDUzNTg4ODIyYWJiMTFhZjciLCJpbnN0YWxsYXRpb25faWQiOiIxYjRlMjhiYS0yZmExLTRkM2ItYTNmNS1lZjE5YjVhNzYzM2IiLCJwcmluY2lwYWwiOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwicm9sZSI6ImxvZ3MucmVhZGVyIn0sInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9rZXlfZGlkIjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0eXBlIjoiYXdlYi5vd25lci1hY3QiLCJ2IjoxfQ=="
       },
       "expected_subject": {
@@ -2696,14 +2836,15 @@
         "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
         "role": "logs.reader"
       },
-      "name": "forged_signature_without_a_holding_registry_unavailable",
+      "name": "designate_without_a_certificate",
       "result": {
-        "detail": "team_key_unavailable",
+        "detail": "principal_not_member",
         "response": null,
-        "status": 503
+        "status": 403
       },
       "state": {
         "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
         "principal_status": "member_human"
       },
       "verifier": {
@@ -2716,7 +2857,385 @@
         "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
         "nonce_used": false,
         "now": "2026-11-07T12:01:00Z",
-        "registry": "unavailable",
+        "registry": "available",
+        "team_id": "demo:example.com"
+      },
+      "verifier_code": null
+    },
+    {
+      "act": {
+        "act": "human-role.revoke",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T12:05:00Z",
+        "issued_at": "2026-11-07T12:00:00Z",
+        "nonce": "02020202020202020202020202020202",
+        "subject": {
+          "app_id": "logs",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+          "role": "logs.reader"
+        },
+        "team_id": "demo:example.com",
+        "team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "type": "aweb.owner-act",
+        "v": 1
+      },
+      "app": {
+        "app_id": "logs",
+        "owner_acts_origin": "https://console.logs.example.com",
+        "role": {
+          "acts": [
+            "human-credential.replace",
+            "human-role.designate",
+            "human-role.revoke"
+          ],
+          "description": "Reads the team's audit log in a passkey session on the console.",
+          "label": "Log reader",
+          "name": "logs.reader",
+          "notice_contact": false
+        },
+        "security_key": false
+      },
+      "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
+        "signature": "usjAMj/V3Be9RCzeODtWJZXjBx1Mq4PTvu/qBDls27dlEqHPR84/dyz35hjKa3fgRB8igTqHZP0il0MaHW0pBw",
+        "signing": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imh1bWFuLXJvbGUucmV2b2tlIiwiYXVkIjoiaHR0cHM6Ly9jb25zb2xlLmxvZ3MuZXhhbXBsZS5jb20iLCJleHBpcmVzX2F0IjoiMjAyNi0xMS0wN1QxMjowNTowMFoiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm5vbmNlIjoiMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIiLCJzdWJqZWN0Ijp7ImFwcF9pZCI6ImxvZ3MiLCJpbnN0YWxsYXRpb25faWQiOiIxYjRlMjhiYS0yZmExLTRkM2ItYTNmNS1lZjE5YjVhNzYzM2IiLCJwcmluY2lwYWwiOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwicm9sZSI6ImxvZ3MucmVhZGVyIn0sInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9rZXlfZGlkIjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0eXBlIjoiYXdlYi5vd25lci1hY3QiLCJ2IjoxfQ=="
+      },
+      "expected_subject": null,
+      "name": "revoke_carrying_a_certificate",
+      "result": {
+        "detail": "request_invalid",
+        "response": null,
+        "status": 400
+      },
+      "state": {
+        "holding": true,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
+        "principal_status": "member_human"
+      },
+      "verifier": {
+        "acts": [
+          "human-credential.replace",
+          "human-role.designate",
+          "human-role.revoke"
+        ],
+        "audience": "https://console.logs.example.com",
+        "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "nonce_used": false,
+        "now": "2026-11-07T12:01:00Z",
+        "registry": "available",
+        "team_id": "demo:example.com"
+      },
+      "verifier_code": null
+    },
+    {
+      "act": {
+        "act": "human-role.designate",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T12:05:00Z",
+        "issued_at": "2026-11-07T12:00:00Z",
+        "nonce": "02020202020202020202020202020202",
+        "subject": {
+          "app_id": "logs",
+          "credential_sha256": "cdf7ffddb3b656733a9441d3067f070efa723e0d26a8690453588822abb11af7",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+          "role": "logs.reader"
+        },
+        "team_id": "demo:example.com",
+        "team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "type": "aweb.owner-act",
+        "v": 1
+      },
+      "app": {
+        "app_id": "logs",
+        "owner_acts_origin": "https://console.logs.example.com",
+        "role": {
+          "acts": [
+            "human-credential.replace",
+            "human-role.designate",
+            "human-role.revoke"
+          ],
+          "description": "Reads the team's audit log in a passkey session on the console.",
+          "label": "Log reader",
+          "name": "logs.reader",
+          "notice_contact": false
+        },
+        "security_key": false
+      },
+      "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6M0FnNU1yOW40V1pjOHBMZDZTa1V0OEplIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6Im9abEN3NGdjRzNvcDl2aHQ2a0VEUzFLUnBXUGhPNDBua1VKeWEzNGRobTNzeUs2L2pNQzFvU25uUmFyeHBucDY0d3dFa2FJeWdRemphcEVoeExrUkRRIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
+        "credential": {
+          "credential_id": "5HEgG-qqGJUZDF54grw1L9zK-4n0nfTukvJYQ29oRVg",
+          "public_key": "pQECAyYgASFYINzIun4Ua2vr508DCRdHbjaO32_j0zva74_GHHMasEUQIlggHHnSxHAuYtd8D4YN4PIybjHLCIaWlN1EHrHjJamGOP0",
+          "rp_id": "console.logs.example.com"
+        },
+        "signature": "hKeybl4kklbuQctIJJ7RnC3wwHiNoYy8Dg9EoAjGz0rf8rxw4OBpO3OFQVnmul0EcG+WfrUG4rQYsWHlp3xiDw",
+        "signing": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imh1bWFuLXJvbGUuZGVzaWduYXRlIiwiYXVkIjoiaHR0cHM6Ly9jb25zb2xlLmxvZ3MuZXhhbXBsZS5jb20iLCJleHBpcmVzX2F0IjoiMjAyNi0xMS0wN1QxMjowNTowMFoiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm5vbmNlIjoiMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIiLCJzdWJqZWN0Ijp7ImFwcF9pZCI6ImxvZ3MiLCJjcmVkZW50aWFsX3NoYTI1NiI6ImNkZjdmZmRkYjNiNjU2NzMzYTk0NDFkMzA2N2YwNzBlZmE3MjNlMGQyNmE4NjkwNDUzNTg4ODIyYWJiMTFhZjciLCJpbnN0YWxsYXRpb25faWQiOiIxYjRlMjhiYS0yZmExLTRkM2ItYTNmNS1lZjE5YjVhNzYzM2IiLCJwcmluY2lwYWwiOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwicm9sZSI6ImxvZ3MucmVhZGVyIn0sInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9rZXlfZGlkIjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0eXBlIjoiYXdlYi5vd25lci1hY3QiLCJ2IjoxfQ=="
+      },
+      "expected_subject": {
+        "app_id": "logs",
+        "credential_sha256": "cdf7ffddb3b656733a9441d3067f070efa723e0d26a8690453588822abb11af7",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+        "role": "logs.reader"
+      },
+      "name": "certificate_of_another_principal",
+      "result": {
+        "detail": "principal_not_member",
+        "response": null,
+        "status": 403
+      },
+      "state": {
+        "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
+        "principal_status": "member_human"
+      },
+      "verifier": {
+        "acts": [
+          "human-credential.replace",
+          "human-role.designate",
+          "human-role.revoke"
+        ],
+        "audience": "https://console.logs.example.com",
+        "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "nonce_used": false,
+        "now": "2026-11-07T12:01:00Z",
+        "registry": "available",
+        "team_id": "demo:example.com"
+      },
+      "verifier_code": null
+    },
+    {
+      "act": {
+        "act": "human-role.designate",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T12:05:00Z",
+        "issued_at": "2026-11-07T12:00:00Z",
+        "nonce": "02020202020202020202020202020202",
+        "subject": {
+          "app_id": "logs",
+          "credential_sha256": "cdf7ffddb3b656733a9441d3067f070efa723e0d26a8690453588822abb11af7",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+          "role": "logs.reader"
+        },
+        "team_id": "demo:example.com",
+        "team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "type": "aweb.owner-act",
+        "v": 1
+      },
+      "app": {
+        "app_id": "logs",
+        "owner_acts_origin": "https://console.logs.example.com",
+        "role": {
+          "acts": [
+            "human-credential.replace",
+            "human-role.designate",
+            "human-role.revoke"
+          ],
+          "description": "Reads the team's audit log in a passkey session on the console.",
+          "label": "Log reader",
+          "name": "logs.reader",
+          "notice_contact": false
+        },
+        "security_key": false
+      },
+      "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlA2VDBBVU9nUHo5SVRpa0pBSDBEWk8rQURlUlNJbjlSL0FWcjFNSEEzaXB0Q0NYUXpMN1J5MFVCS2JvZ1N4SE15TU5DVTFKUHFwZjNzc0JsQmVqVUN3IiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoib3RoZXI6ZXhhbXBsZS5jb20iLCJ2ZXJzaW9uIjoxfQ==",
+        "credential": {
+          "credential_id": "5HEgG-qqGJUZDF54grw1L9zK-4n0nfTukvJYQ29oRVg",
+          "public_key": "pQECAyYgASFYINzIun4Ua2vr508DCRdHbjaO32_j0zva74_GHHMasEUQIlggHHnSxHAuYtd8D4YN4PIybjHLCIaWlN1EHrHjJamGOP0",
+          "rp_id": "console.logs.example.com"
+        },
+        "signature": "hKeybl4kklbuQctIJJ7RnC3wwHiNoYy8Dg9EoAjGz0rf8rxw4OBpO3OFQVnmul0EcG+WfrUG4rQYsWHlp3xiDw",
+        "signing": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imh1bWFuLXJvbGUuZGVzaWduYXRlIiwiYXVkIjoiaHR0cHM6Ly9jb25zb2xlLmxvZ3MuZXhhbXBsZS5jb20iLCJleHBpcmVzX2F0IjoiMjAyNi0xMS0wN1QxMjowNTowMFoiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm5vbmNlIjoiMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIiLCJzdWJqZWN0Ijp7ImFwcF9pZCI6ImxvZ3MiLCJjcmVkZW50aWFsX3NoYTI1NiI6ImNkZjdmZmRkYjNiNjU2NzMzYTk0NDFkMzA2N2YwNzBlZmE3MjNlMGQyNmE4NjkwNDUzNTg4ODIyYWJiMTFhZjciLCJpbnN0YWxsYXRpb25faWQiOiIxYjRlMjhiYS0yZmExLTRkM2ItYTNmNS1lZjE5YjVhNzYzM2IiLCJwcmluY2lwYWwiOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwicm9sZSI6ImxvZ3MucmVhZGVyIn0sInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9rZXlfZGlkIjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0eXBlIjoiYXdlYi5vd25lci1hY3QiLCJ2IjoxfQ=="
+      },
+      "expected_subject": {
+        "app_id": "logs",
+        "credential_sha256": "cdf7ffddb3b656733a9441d3067f070efa723e0d26a8690453588822abb11af7",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+        "role": "logs.reader"
+      },
+      "name": "certificate_of_another_team",
+      "result": {
+        "detail": "principal_not_member",
+        "response": null,
+        "status": 403
+      },
+      "state": {
+        "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
+        "principal_status": "member_human"
+      },
+      "verifier": {
+        "acts": [
+          "human-credential.replace",
+          "human-role.designate",
+          "human-role.revoke"
+        ],
+        "audience": "https://console.logs.example.com",
+        "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "nonce_used": false,
+        "now": "2026-11-07T12:01:00Z",
+        "registry": "available",
+        "team_id": "demo:example.com"
+      },
+      "verifier_code": null
+    },
+    {
+      "act": {
+        "act": "human-role.designate",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T12:05:00Z",
+        "issued_at": "2026-11-07T12:00:00Z",
+        "nonce": "02020202020202020202020202020202",
+        "subject": {
+          "app_id": "logs",
+          "credential_sha256": "cdf7ffddb3b656733a9441d3067f070efa723e0d26a8690453588822abb11af7",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+          "role": "logs.reader"
+        },
+        "team_id": "demo:example.com",
+        "team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "type": "aweb.owner-act",
+        "v": 1
+      },
+      "app": {
+        "app_id": "logs",
+        "owner_acts_origin": "https://console.logs.example.com",
+        "role": {
+          "acts": [
+            "human-credential.replace",
+            "human-role.designate",
+            "human-role.revoke"
+          ],
+          "description": "Reads the team's audit log in a passkey session on the console.",
+          "label": "Log reader",
+          "name": "logs.reader",
+          "notice_contact": false
+        },
+        "security_key": false
+      },
+      "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6InRubEQyR3o4UkwxWFpyWjRRZDdmbkVTQmg4OTVXdVhlQUNoeDJVMnBHZExHcCtNMTNaVDh5bXRTQ3pkNy91ME10amQrcGtqRTdaV3JDcFFKNXhjRkNRIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rcjlYVkpIZ3I4b3M5NkZMNVVVcmtkUzIyNm5mTTNSdUFNc3F4S2sxQko4TjIiLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
+        "credential": {
+          "credential_id": "5HEgG-qqGJUZDF54grw1L9zK-4n0nfTukvJYQ29oRVg",
+          "public_key": "pQECAyYgASFYINzIun4Ua2vr508DCRdHbjaO32_j0zva74_GHHMasEUQIlggHHnSxHAuYtd8D4YN4PIybjHLCIaWlN1EHrHjJamGOP0",
+          "rp_id": "console.logs.example.com"
+        },
+        "signature": "hKeybl4kklbuQctIJJ7RnC3wwHiNoYy8Dg9EoAjGz0rf8rxw4OBpO3OFQVnmul0EcG+WfrUG4rQYsWHlp3xiDw",
+        "signing": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imh1bWFuLXJvbGUuZGVzaWduYXRlIiwiYXVkIjoiaHR0cHM6Ly9jb25zb2xlLmxvZ3MuZXhhbXBsZS5jb20iLCJleHBpcmVzX2F0IjoiMjAyNi0xMS0wN1QxMjowNTowMFoiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm5vbmNlIjoiMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIiLCJzdWJqZWN0Ijp7ImFwcF9pZCI6ImxvZ3MiLCJjcmVkZW50aWFsX3NoYTI1NiI6ImNkZjdmZmRkYjNiNjU2NzMzYTk0NDFkMzA2N2YwNzBlZmE3MjNlMGQyNmE4NjkwNDUzNTg4ODIyYWJiMTFhZjciLCJpbnN0YWxsYXRpb25faWQiOiIxYjRlMjhiYS0yZmExLTRkM2ItYTNmNS1lZjE5YjVhNzYzM2IiLCJwcmluY2lwYWwiOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwicm9sZSI6ImxvZ3MucmVhZGVyIn0sInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9rZXlfZGlkIjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0eXBlIjoiYXdlYi5vd25lci1hY3QiLCJ2IjoxfQ=="
+      },
+      "expected_subject": {
+        "app_id": "logs",
+        "credential_sha256": "cdf7ffddb3b656733a9441d3067f070efa723e0d26a8690453588822abb11af7",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+        "role": "logs.reader"
+      },
+      "name": "certificate_signed_by_a_rotated_team_key",
+      "result": {
+        "detail": "principal_not_member",
+        "response": null,
+        "status": 403
+      },
+      "state": {
+        "holding": false,
+        "principal_key": "did:key:z6MkocqLjybwDNHX5Y8ZkTyP7cQm2oRRep5PSnSRXfSzMKR6",
+        "principal_status": "member_human"
+      },
+      "verifier": {
+        "acts": [
+          "human-credential.replace",
+          "human-role.designate",
+          "human-role.revoke"
+        ],
+        "audience": "https://console.logs.example.com",
+        "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "nonce_used": false,
+        "now": "2026-11-07T12:01:00Z",
+        "registry": "available",
+        "team_id": "demo:example.com"
+      },
+      "verifier_code": null
+    },
+    {
+      "act": {
+        "act": "human-role.designate",
+        "aud": "https://console.logs.example.com",
+        "expires_at": "2026-11-07T12:05:00Z",
+        "issued_at": "2026-11-07T12:00:00Z",
+        "nonce": "02020202020202020202020202020202",
+        "subject": {
+          "app_id": "logs",
+          "credential_sha256": "cdf7ffddb3b656733a9441d3067f070efa723e0d26a8690453588822abb11af7",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+          "role": "logs.reader"
+        },
+        "team_id": "demo:example.com",
+        "team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "type": "aweb.owner-act",
+        "v": 1
+      },
+      "app": {
+        "app_id": "logs",
+        "owner_acts_origin": "https://console.logs.example.com",
+        "role": {
+          "acts": [
+            "human-credential.replace",
+            "human-role.designate",
+            "human-role.revoke"
+          ],
+          "description": "Reads the team's audit log in a passkey session on the console.",
+          "label": "Log reader",
+          "name": "logs.reader",
+          "notice_contact": false
+        },
+        "security_key": false
+      },
+      "body": {
+        "certificate": "eyJhbGlhcyI6ImhvbGRlciIsImNlcnRpZmljYXRlX2lkIjoiNmY5NjE5ZmYtOGI4Ni00MDExLWI0MmQtMDBjMDRmYzk2NGZmIiwiaWRlbnRpdHlfc2NvcGUiOiJnbG9iYWwiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm1lbWJlcl9kaWRfYXciOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwibWVtYmVyX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWtvY3FManlid0ROSFg1WThaa1R5UDdjUW0yb1JSZXA1UFNuU1JYZlN6TUtSNiIsInNpZ25hdHVyZSI6IlR5eS9zZWhKekkwWlM3Y01mdklwcjkwVlp6VVpTUGVnTzBWa2IzTTFLL2trNmZtZmJwRmlpVHVvVEtTNU5QcUtlNmxwKzVkNEVvc1FnQ05KMUhSakRnIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInZlcnNpb24iOjF9",
+        "credential": {
+          "credential_id": "5HEgG-qqGJUZDF54grw1L9zK-4n0nfTukvJYQ29oRVg",
+          "public_key": "pQECAyYgASFYINzIun4Ua2vr508DCRdHbjaO32_j0zva74_GHHMasEUQIlggHHnSxHAuYtd8D4YN4PIybjHLCIaWlN1EHrHjJamGOP0",
+          "rp_id": "console.logs.example.com"
+        },
+        "signature": "hKeybl4kklbuQctIJJ7RnC3wwHiNoYy8Dg9EoAjGz0rf8rxw4OBpO3OFQVnmul0EcG+WfrUG4rQYsWHlp3xiDw",
+        "signing": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imh1bWFuLXJvbGUuZGVzaWduYXRlIiwiYXVkIjoiaHR0cHM6Ly9jb25zb2xlLmxvZ3MuZXhhbXBsZS5jb20iLCJleHBpcmVzX2F0IjoiMjAyNi0xMS0wN1QxMjowNTowMFoiLCJpc3N1ZWRfYXQiOiIyMDI2LTExLTA3VDEyOjAwOjAwWiIsIm5vbmNlIjoiMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIwMjAyMDIiLCJzdWJqZWN0Ijp7ImFwcF9pZCI6ImxvZ3MiLCJjcmVkZW50aWFsX3NoYTI1NiI6ImNkZjdmZmRkYjNiNjU2NzMzYTk0NDFkMzA2N2YwNzBlZmE3MjNlMGQyNmE4NjkwNDUzNTg4ODIyYWJiMTFhZjciLCJpbnN0YWxsYXRpb25faWQiOiIxYjRlMjhiYS0yZmExLTRkM2ItYTNmNS1lZjE5YjVhNzYzM2IiLCJwcmluY2lwYWwiOiJkaWQ6YXc6MlpmNExxOG0zVlliOW5LYzVSalRzN0hkIiwicm9sZSI6ImxvZ3MucmVhZGVyIn0sInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9rZXlfZGlkIjoiZGlkOmtleTp6Nk1rdjRmaHVKTmVwZ2dUTFE0THRZU3NpWUZheWpvdkxqMWZwS01lcWU5c3MyR3ciLCJ0eXBlIjoiYXdlYi5vd25lci1hY3QiLCJ2IjoxfQ=="
+      },
+      "expected_subject": {
+        "app_id": "logs",
+        "credential_sha256": "cdf7ffddb3b656733a9441d3067f070efa723e0d26a8690453588822abb11af7",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+        "role": "logs.reader"
+      },
+      "name": "certificate_for_a_rotated_member_key",
+      "result": {
+        "detail": "principal_not_member",
+        "response": null,
+        "status": 403
+      },
+      "state": {
+        "holding": false,
+        "principal_key": "did:key:z6Mkr9XVJHgr8os96FL5UUrkdS226nfM3RuAMsqxKk1BJ8N2",
+        "principal_status": "member_human"
+      },
+      "verifier": {
+        "acts": [
+          "human-credential.replace",
+          "human-role.designate",
+          "human-role.revoke"
+        ],
+        "audience": "https://console.logs.example.com",
+        "current_team_key_did": "did:key:z6Mkv4fhuJNepggTLQ4LtYSsiYFayjovLj1fpKMeqe9ss2Gw",
+        "nonce_used": false,
+        "now": "2026-11-07T12:01:00Z",
+        "registry": "available",
         "team_id": "demo:example.com"
       },
       "verifier_code": null
@@ -14301,7 +14820,7 @@
   "scheme": {
     "authority": "docs/owner-act-delivery.md",
     "credential": "credential_cases: credential_sha256 is the lowercase hex SHA-256 of 'aweb.human-credential/1' and a newline, then the credential's canonical JSON; fingerprint is its first 16 hex characters in groups of four",
-    "delivery": "delivery_cases: a delivery body to the app's human origin; app is the app's declaration and whether it enables the optional security key; state is whether (installation, role, principal) has a current holding and what the registry reports for the principal (member_human, not_member, not_human, unavailable); expected_subject is the subject the app builds, null when the body is refused before it; verifier_code is the owner-act/1 refusal behind a 403, or null when the act verifies; result is the HTTP status, detail and response",
+    "delivery": "delivery_cases: a delivery body to the app's human origin; app is the app's declaration and whether it enables the optional security key; state is whether (installation, role, principal) has a current holding, what the registry reports for the body's certificate and the principal's kind (member_human, not_member, not_human, unavailable), and the principal's current member key; a designate or replace body carries the holder's team certificate as team-auth's X-AWID-Team-Certificate carries it, which must verify under verifier.current_team_key_did and name the act's team_id, its principal and that member key; expected_subject is the subject the app builds, null when the body is refused before it; verifier_code is the owner-act/1 refusal behind a 403, or null when the act verifies; result is the HTTP status, detail and response",
     "manifest": "manifest_cases: a version 3 manifest's owner_acts; error is the manifest refusal code, or null when it is valid",
     "registry": "delivery_cases' verifier.registry says whether stage 2 can read the team key; the forged_signature cases pair a present and an absent holding under each, and the pair's results are equal",
     "role": "role_cases pin the declared role name, which is the act's role, against the owner-act/1 signer: a leading letter, at most 64 bytes",

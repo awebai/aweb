@@ -153,20 +153,33 @@ or verifies it on its own. The certificate is evidence, never authority by
 itself. Passkey, owner-act and session authority stay as they are, and each
 must still pass on its own.
 
-- **Presented.** `aw` signs `POST <origin>/handoffs` with
-  [team-auth v2](../team-auth-envelope-v2.md) as the holder, so the request
-  carries the holder's existing team certificate, which team-auth verifies as
-  for any request. An unsigned handoff request is refused.
-- **Retained.** The app keeps the exact certificate bytes with the handoff's
-  result. For `credential`, it keeps them with the registered credential
-  until the handoff expires or an act binds that credential, and then with
-  the holding. For `session`, it keeps them with the session, for at most the
-  session's lifetime. Retaining them extends no session, approval or holding,
-  and resets no freshness.
+- **Presented.** The holder's existing team certificate is presented in
+  two places, in the encoding team-auth's `X-AWID-Team-Certificate` uses:
+  - At designation and replacement, it travels in the
+    [delivery body](../owner-act-delivery.md#delivery) next to `credential`.
+    The holder's `aw` exports it with the public credential, and the owner's
+    client passes it through. A team certificate is a public statement signed
+    by the team key, so it needs no proof of who carried it. The owner's
+    signature still covers the credential and the binding.
+  - At a `session` handoff, `aw` signs `POST <origin>/handoffs` with
+    [team-auth v2](../team-auth-envelope-v2.md) as the holder, so the request
+    carries the certificate, which team-auth verifies as for any request. An
+    unsigned handoff request is refused.
+
+  A `credential` handoff is also signed this way, which keeps its
+  rate-limit identity, but the app retains nothing from it: no state is kept
+  for a credential that no act has bound yet.
+- **Retained.** The app keeps the exact certificate bytes of a verified
+  designation or replacement with the holding. It keeps those of a `session`
+  handoff with the session, for at most the session's lifetime. Retaining
+  them extends no session, approval or holding, and resets no freshness.
 - **Bound.** The certificate's `team_id` is the installation's team and its
   `member_did_aw` is the holding's principal. A `session` handoff whose login
-  is for a holding of another principal refuses, and nothing changes. A
-  certificate retained for one holding or session is never used for another.
+  is for a holding of another principal refuses, and nothing changes.
+  Retained evidence is never borrowed from one holding or session for
+  another. The same public certificate may still be presented on its own for
+  each of the human's holdings and sessions in that team, and passes each
+  binding there.
 - **Checked at each use:** at designation and replacement (delivery stage
   3), and at each login and each approval. Each check covers:
   - the certificate's signature under the team's current key;
@@ -176,9 +189,9 @@ must still pass on its own.
   - the principal's own registered ID kind `human`.
 
   Each read keeps its existing freshness bound of at most 60 seconds and
-  fails closed. A designate or replace uses the certificate retained with the
-  credential that its `credential_sha256` names. A browser login that `aw`
-  did not start presents no certificate, so it uses the holding's.
+  fails closed. A designate or replace uses the certificate in its body. A
+  `session` handoff uses the certificate it presents. A browser login that
+  `aw` did not start presents none, so it uses the holding's.
 - **Outcomes.** A revoked certificate, a wrong team, principal or key, a
   signature the current team key does not verify, or no usable certificate
   retained gives `403 principal_not_member`. A kind other than `human` gives
@@ -194,7 +207,9 @@ must still pass on its own.
   current. Either way, the retained certificate fails at its next use. The
   holder refreshes it with a `session` handoff that presents the reissued
   certificate. That certificate, once verified, replaces the holding's
-  retained one only when its team and principal equal the holding's. Nothing
+  retained one only when its team and principal equal the holding's, and only
+  when the handoff's login succeeds; a failed assertion changes nothing. A
+  stale holding certificate therefore never blocks this refresh. Nothing
   rewrites a certificate, rebinds the passkey, or treats the same
   certificate id as current.
 - **Compatibility.** An AWID row with no stored certificate blob is not
@@ -516,7 +531,8 @@ Each item is filed after review, and each is one reviewed change.
     signature each get the same `401 console_session_required`;
   - membership evidence: a certificate for another principal, team or key, a
     revoked certificate, one signed under a rotated team key, and none
-    retained each refuse with `403 principal_not_member`; unreadable status
+    presented or retained each refuse with `403 principal_not_member`; a
+    `credential` handoff leaves no state; unreadable status
     gives `503 principal_status_unavailable`; a refreshed certificate
     presented in a session for another holding refuses and changes nothing;
     retaining a certificate does not extend a session; a valid certificate

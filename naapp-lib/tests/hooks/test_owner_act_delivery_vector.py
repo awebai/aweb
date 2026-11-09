@@ -14,6 +14,11 @@ from typing import Any
 
 import cbor2
 import pytest
+from awid.team_certificate import (
+    TeamCertificateError,
+    decode_team_certificate,
+    verify_team_certificate_signature,
+)
 
 from aweb_naapp.hooks.owner_act import HUMAN_ROLE_ACTS, Refused, owner_act_signing_bytes
 from aweb_naapp.hooks.owner_act import _verify_owner_act as verify_owner_act
@@ -130,6 +135,11 @@ def test_an_accepted_delivery_binds_what_the_body_carries(case) -> None:
         return
     assert case["state"]["principal_status"] == "member_human"
     assert subject["credential_sha256"] == _credential_sha256(body["credential"])
+    certificate = decode_team_certificate(body["certificate"])
+    verify_team_certificate_signature(certificate, case["verifier"]["current_team_key_did"])
+    assert certificate["team_id"] == case["act"]["team_id"]
+    assert certificate["member_did_aw"] == subject["principal"]
+    assert certificate["member_did_key"] == case["state"]["principal_key"]
     if case["app"]["role"]["notice_contact"]:
         notice = hashlib.sha256(body["notice_contact"].encode("utf-8")).hexdigest()
         assert subject["notice_contact_sha256"] == notice
@@ -183,3 +193,47 @@ def test_url_safe_unpadded_signing_is_not_standard_base64() -> None:
     )
     with pytest.raises(binascii.Error):
         base64.b64decode(case["body"]["signing"], validate=True)
+
+
+def _case(name: str) -> dict[str, Any]:
+    return next(c for c in VECTOR["delivery_cases"] if c["name"] == name)
+
+
+def test_a_designation_without_a_certificate_is_not_a_member() -> None:
+    case = _case("designate_without_a_certificate")
+    assert "certificate" not in case["body"] and "credential" in case["body"]
+    assert case["result"] == {"status": 403, "detail": "principal_not_member", "response": None}
+
+
+def test_a_revoke_carrying_a_certificate_is_an_invalid_request() -> None:
+    case = _case("revoke_carrying_a_certificate")
+    assert case["act"]["act"] == "human-role.revoke" and "certificate" in case["body"]
+    assert case["result"]["status"] == 400 and case["result"]["detail"] == "request_invalid"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "certificate_of_another_principal",
+        "certificate_of_another_team",
+        "certificate_signed_by_a_rotated_team_key",
+        "certificate_for_a_rotated_member_key",
+    ],
+)
+def test_a_certificate_that_fails_its_check_is_not_a_member(name) -> None:
+    case = _case(name)
+    assert case["result"] == {"status": 403, "detail": "principal_not_member", "response": None}
+    certificate = decode_team_certificate(case["body"]["certificate"])
+    principal = case["act"]["subject"]["principal"]
+    try:
+        verify_team_certificate_signature(certificate, case["verifier"]["current_team_key_did"])
+        verified = True
+    except TeamCertificateError:
+        verified = False
+    passes = (
+        verified
+        and certificate["team_id"] == case["act"]["team_id"]
+        and certificate["member_did_aw"] == principal
+        and certificate["member_did_key"] == case["state"]["principal_key"]
+    )
+    assert not passes
