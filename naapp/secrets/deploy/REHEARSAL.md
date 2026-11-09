@@ -47,9 +47,9 @@ host as an implicit fallback.
 
 Where Desktop manages the selected CLI, the OATS owner must confirm before
 installation that Desktop0.69.12's accepted range includes that aw version.
-The headless worker/server uses CLI/SSH and needs no Desktop; human keychain
-operations stay on the operator's own machine. If it does not,
-the owner supplies a compatible Desktop/CLI pair. Never upgrade the CLI alone.
+If it does not, the owner supplies a compatible Desktop/CLI pair. Never upgrade
+the CLI alone. The headless worker/server uses CLI/SSH and needs no Desktop;
+human keychain operations stay on the operator's own machine.
 Keep the published OATS agent baseline and integrated candidate explicitly
 separate. A side-by-side candidate is usable only with an owner-confirmed
 selection that does not change the Desktop-managed runtime. Record exact
@@ -224,8 +224,10 @@ the reviewed Linux exec chain/config/state and exact no-argument sudoers rule
 from SUPERVISOR.md inside the VM only; this is not an install on Juan's host.
 Other agents do not install it. The operator is the existing onboarding VM lead,
 oats.aweb.ai/oats-operator-expert-onboarding-vm-campaign. Root supplies the artifact,
-SHA256 manifest, exact commands and expected outputs directly, copying secrets,
-servers and oats-expert-juan; actual outputs return to root. Source preparation
+SHA256 manifest, exact commands and expected outputs to oats-expert-juan,
+copying secrets and servers. That owner relays them unchanged to the local-team
+VM lead and relays its recorded outputs back to root. Direct cross-team mail to
+that local identity has no route; no team or identity changes are made. Source preparation
 needs no BYOT member authority, but follow the VM owner's host -> BYOT -> runner
 execution order. Real approval and registration remain required. The Linux install/worker boundary must be qualified;
 existing macOS installed evidence is not Linux execution evidence. After real
@@ -234,8 +236,9 @@ registration doctor must pass before run. Root stages a Linux x64 interpreter/im
 creates a locked system aweb-runner account; records its UID and tester's UID
 rather than copying macOS499; protects root-owned ancestors/code, runner-owned
 0700 state and0600 config; validates the included sudoers rule with visudo and
-sudo -l. Retain sudo -l run as tester and tester's complete group membership
-(id -Gn). A demonstrated driver/runner boundary requires that tester can invoke
+sudo -n -l. Retain sudo -n -l run as tester and tester's complete group membership
+(id -Gn). A password-required refusal from sudo -n -l is recorded as such, not
+bypassed or treated as a policy inventory. A demonstrated driver/runner boundary requires that tester can invoke
 only the exact no-argument supervisor rule and cannot regain broader privilege
 through general sudo or Docker/host administration. Ubuntu cloud defaults may
 grant both. If either is reachable, mark driver-to-runner isolation NOT
@@ -335,7 +338,7 @@ cat /etc/os-release
 id -u
 id -g
 id -Gn
-sudo -l
+sudo -n -l
 free -b
 df -B1 /
 findmnt -no FSTYPE,OPTIONS /dev/shm
