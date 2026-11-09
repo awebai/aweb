@@ -600,7 +600,8 @@ unchanged. Its semantics and the delivery call are in
     `{"member": <name>, "in": [<1 to 16 values>]}`, where `member` is a
     top-level member name in the field-name grammar and each value is a JSON
     string, a boolean or an integer in the safe range (±(2^53−1)), with no
-    repeat.
+    repeat. Values compare by JSON type and value, so `true` and `1` are
+    distinct, and a float, `1.0` included, is refused.
 
 Every fault in `owner_acts` is `owner_acts_invalid`, except `owner_acts: null`,
 which is `manifest_invalid` like any null member. An absent `owner_acts`

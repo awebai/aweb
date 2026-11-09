@@ -342,7 +342,8 @@ never logged, traced or stored.
 
 **Completion of a confirm.** `completion.read` names a `read` action whose
 path parameters are a subset of the confirm's. A predicate names a top-level
-member of that read's response and the JSON values that satisfy it. `ready`
+member of that read's response and the JSON values that satisfy it, compared
+by JSON type and value: `true` never satisfies `1`. `ready`
 and `done` are one predicate each; `stop` is a list of predicates, any of
 which stops.
 

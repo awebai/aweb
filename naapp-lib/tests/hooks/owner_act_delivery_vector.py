@@ -491,6 +491,11 @@ def session_action_grammar_cases(case, read, completion) -> list[dict[str, Any]]
         case("predicate_values_repeat", read, predicate("state", ["applied", "applied"])),
         case("predicate_value_null", read, predicate("state", [None])),
         case("predicate_value_object", read, predicate("state", [{"state": "applied"}])),
+        case("predicate_value_array", read, predicate("state", [["applied"]])),
+        case("predicate_value_integral_float", read, predicate("n", [1.0])),
+        case("predicate_integer_past_the_negative_bound", read, predicate("n", [-(safe + 1)])),
+        case("predicate_true_and_one_are_distinct", read, predicate("n", [True, 1]), error=None),
+        case("predicate_false_and_zero_are_distinct", read, predicate("n", [False, 0]), error=None),
     ]
 
 
