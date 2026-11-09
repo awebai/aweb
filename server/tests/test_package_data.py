@@ -57,7 +57,7 @@ def test_server_distributions_ship_reserved_app_ids_without_vector_copies(tmp_pa
     with zipfile.ZipFile(wheels[0]) as wheel:
         names = wheel.namelist()
         assert "aweb/data/reserved-app-ids-v1.json" in names
-        for attachment_path in ("inbound_modes.py", "attachments.py", "attachment_service.py", "migrations/aweb/022_message_attachments.sql", "audit.py", "migrations/aweb/023_operator_audit.sql", "migrations/aweb/033_typed_chat_participants.sql", "identity_binding.py", "migrations/aweb/034_agent_identity_binding.sql", "migrations/aweb/037_contacts_only.sql", "migrations/aweb/041_native_send_ingress.sql"):
+        for attachment_path in ("inbound_modes.py", "attachments.py", "attachment_service.py", "migrations/aweb/022_message_attachments.sql", "audit.py", "migrations/aweb/023_operator_audit.sql", "migrations/aweb/033_typed_chat_participants.sql", "identity_binding.py", "migrations/aweb/034_agent_identity_binding.sql", "migrations/aweb/037_contacts_only.sql", "migrations/aweb/041_native_send_ingress.sql", "human_kind.py", "human_kind_revalidation.py", "migrations/aweb/047_verified_human_kind.sql"):
             assert f"aweb/{attachment_path}" in names
         assert not any("/docs/vectors/" in name or name.startswith("docs/vectors/") for name in names)
 
@@ -66,7 +66,7 @@ def test_server_distributions_ship_reserved_app_ids_without_vector_copies(tmp_pa
     with tarfile.open(sdists[0]) as sdist:
         names = sdist.getnames()
         assert any(name.endswith("/src/aweb/data/reserved-app-ids-v1.json") for name in names)
-        for attachment_path in ("inbound_modes.py", "attachments.py", "attachment_service.py", "migrations/aweb/022_message_attachments.sql", "audit.py", "migrations/aweb/023_operator_audit.sql", "migrations/aweb/033_typed_chat_participants.sql", "identity_binding.py", "migrations/aweb/034_agent_identity_binding.sql", "migrations/aweb/037_contacts_only.sql", "migrations/aweb/041_native_send_ingress.sql"):
+        for attachment_path in ("inbound_modes.py", "attachments.py", "attachment_service.py", "migrations/aweb/022_message_attachments.sql", "audit.py", "migrations/aweb/023_operator_audit.sql", "migrations/aweb/033_typed_chat_participants.sql", "identity_binding.py", "migrations/aweb/034_agent_identity_binding.sql", "migrations/aweb/037_contacts_only.sql", "migrations/aweb/041_native_send_ingress.sql", "human_kind.py", "human_kind_revalidation.py", "migrations/aweb/047_verified_human_kind.sql"):
             assert any(name.endswith(f"/src/aweb/{attachment_path}") for name in names)
         assert not any("/docs/vectors/" in name for name in names)
 
@@ -145,6 +145,7 @@ def test_canonical_chain_starts_with_reset_baseline_then_forward_migrations():
         "044_room_post_notices.sql",
         "045_canonical_participant_dids.sql",
         "046_local_human_succession.sql",
+        "047_verified_human_kind.sql",
     ]
 
 

@@ -35,7 +35,7 @@ async def mail_server(aweb_cloud_db, monkeypatch):
                                 did_aw="did:aw:pilot", address="acme.com/pilot")
     human = await _insert_agent(db, team_id=team, alias="human", did_key=human_did,
                                 did_aw="did:aw:human", address=None)
-    await db.execute("UPDATE {{tables.agents}} SET agent_type='human' WHERE agent_id=$1", UUID(human))
+    await db.execute("UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE agent_id=$1", UUID(human))
     await db.execute(
         """INSERT INTO {{tables.workspaces}}
            (workspace_id, team_id, agent_id, alias, workspace_type)

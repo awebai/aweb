@@ -30,7 +30,7 @@ async def test_cli_can_start_mail_beside_an_empty_human_binding_conversation(pri
             "UPDATE {{tables.agents}} SET did_aw=$1,address=$2,identity_scope='global' WHERE agent_id=$3",
             stable[name], address, actor.id,
         )
-    await env.db.execute("UPDATE {{tables.agents}} SET agent_type='human' WHERE agent_id=$1", env.actors["bob"].id)
+    await env.db.execute("UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE agent_id=$1", env.actors["bob"].id)
     # A channel binding creates this empty pair before either participant sends.
     # Its routing DIDs and actor IDs are valid; both participant addresses are NULL.
     empty = await create_conversation(

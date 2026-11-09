@@ -64,7 +64,7 @@ async def test_addressless_global_sender_verified(privacy_app, tmp_path, global_
         )
         identities[name] = dict(address=address, did=actor.did, stable_id=stable_id, team_id=TEAM,
                                 signing_key=actor.sk, private_key=private, encryption_key=assertion)
-    await env.db.execute("UPDATE {{tables.agents}} SET agent_type = 'human' WHERE agent_id = $1", env.actors["alice"].id)
+    await env.db.execute("UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE agent_id = $1", env.actors["alice"].id)
     human, agent = identities["alice"], identities["bob"]
     peer = identities["carol"]
     peer_body = json.dumps(peer["encryption_key"]).encode()

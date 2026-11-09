@@ -40,7 +40,7 @@ async def _send(sender, target, kind, *, encrypted=False, continuation=None):
 
 async def _human(actor):
     await actor.node.db.execute(
-        "UPDATE {{tables.agents}} SET agent_type='human' WHERE agent_id=$1", actor.id
+        "UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE agent_id=$1", actor.id
     )
 
 
@@ -123,6 +123,8 @@ async def test_plaintext_mail_continues_after_human_succession(
     historical = await _messages(node, first.cid)
     queued = _submission(agent, old, "mail", continuation=str(first.cid))
     await _retire(old)
+    # Legacy predecessor provenance is intentionally not current human evidence.
+    await node.db.execute("UPDATE {{tables.agents}} SET human_verified_key=NULL WHERE agent_id=$1", old.id)
     async with node.db.transaction() as tx:
         result = await succeed_local_human_participant_on(
             tx, predecessor_did=old.stable or old.did, successor_did=successor.stable

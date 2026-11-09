@@ -42,7 +42,7 @@ async def test_cli_first_contact_human_alias_with_signed_key(
         await env.db.execute("DELETE FROM {{tables.messages}}")
         actor = env.actors["alice"]
         await env.db.execute(
-            "UPDATE {{tables.agents}} SET agent_type='human' WHERE agent_id=$1",
+            "UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE agent_id=$1",
             actor.id,
         )
         private, public = generate_x25519_keypair()

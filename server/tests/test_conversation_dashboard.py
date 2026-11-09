@@ -29,7 +29,7 @@ async def human_messages(privacy_app):
     human = env.actors["bob"]
     stable = await register_global_identity(env, human)
     await env.db.execute(
-        "UPDATE {{tables.agents}} SET did_aw=$1,identity_scope='global',agent_type='human' WHERE agent_id=$2",
+        "UPDATE {{tables.agents}} SET did_aw=$1,identity_scope='global',agent_type='human',human_verified_key=did_key WHERE agent_id=$2",
         stable, human.id,
     )
     env.human_did = stable
