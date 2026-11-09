@@ -421,6 +421,13 @@ refuses a longer host name, so no previously accepted payload a producer emits
 is refused. The catalog's `max_length` key and its accept/refuse cases at 253
 and 254 characters carry it ([hook events](hook-events.md#payloads)).
 
+A third adds logs' own governance acts, `logs.retention.shortened`,
+`logs.retention.lengthened`, `logs.erased`, `logs.legal_hold.set` and
+`logs.legal_hold.released`, with their fields (aweb-acgh.16.23): no logs
+installation is deployed, and no other act may carry the new fields, so no
+previously accepted payload is refused
+([hook events](hook-events.md#post-governance-hook)).
+
 This delta updates the public catalog and its byte-identical packaged copy,
 adds positive and single-fault payload cases for the new act and exact core
 range lists, and preserves

@@ -282,7 +282,7 @@ direction, and a consumer refuses an event whose `direction` differs:
 
 | Widening | Narrowing |
 | --- | --- |
-| `role.designated`, `credential.enrolled`, `credential.recovered`, `grant.created`, `grant.changed`, `resource.created`, `resource.changed`, `resource.version_added`, `resource.enabled`, `policy.changed`, `runner.registered`, `installation.enabled` | `role.revoked`, `credential.revoked`, `grant.revoked`, `resource.disabled`, `resource.replaced`, `resource.version_observed`, `runner.deregistered`, `installation.disabled`, `hook_delivery.cancelled` |
+| `role.designated`, `credential.enrolled`, `credential.recovered`, `grant.created`, `grant.changed`, `resource.created`, `resource.changed`, `resource.version_added`, `resource.enabled`, `policy.changed`, `runner.registered`, `installation.enabled`, `logs.retention.lengthened`, `logs.legal_hold.set` | `role.revoked`, `credential.revoked`, `grant.revoked`, `resource.disabled`, `resource.replaced`, `resource.version_observed`, `runner.deregistered`, `installation.disabled`, `hook_delivery.cancelled`, `logs.retention.shortened`, `logs.erased`, `logs.legal_hold.released` |
 
 `grant.changed` is widening whatever the change, so a change that only narrows
 a grant is still gated. A producer that must contain without waiting uses
@@ -327,6 +327,28 @@ inserted body or a secret-value version. The actual admitted approval,
 system actor, widening gate and atomic transition/enqueue remain mandatory;
 the receipt grants no execution or historical-fallback authority. See the
 [job consumer mapping](design/secrets.md#115-operational-record-and-the-post-secret-use-hook-outbox).
+
+**Logs' own acts.** Logs records the owner's retention, erasure and legal-hold
+acts (audit-substrate §B6) as `logs.*` acts, each with `authority`
+`owner_act` and none of the other acts' fields:
+
+- `logs.retention.shortened` and `logs.retention.lengthened` carry
+  `event_class` (`all` or a hook) and `retention` (`keep`, or `days` with
+  `retention_days`, 1 to 36500). The producer compares the new setting with
+  the class's current one, `keep` being the longest and a first setting being
+  measured from `keep`: shorter is `shortened`, which is never `keep`;
+  anything else is `lengthened`.
+- `logs.erased` carries `erase_scope`, `erased_count`, `reason_code` and either
+  `actor_ref` (scope `actor`) or `chain_epoch`, `team_seq_first` and
+  `team_seq_last` (scope `range`), the owner act's own scopes.
+- `logs.legal_hold.set` carries `hold_id`, `hold_scope` (`all`, or `actor`
+  with `actor_ref`) and `reason_code`; `logs.legal_hold.released` carries
+  `hold_id` only.
+
+Keeping content readable longer widens exposure, so lengthening and setting a
+hold are widening; shortening, erasing and releasing a hold are narrowing.
+These acts and fields were added to v1 in place under decision 93's
+pre-deployment exception (aweb-acgh.16.23); no logs installation is deployed.
 
 `authority` is how the act was authorized:
 
