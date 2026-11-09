@@ -237,7 +237,7 @@ async def append_on(
         tx, event.team_id, _Head(link.chain_epoch, link.team_seq, event_hash, head.logs_origin)
     )
     # Readers read the event once it commits, with no catch-up on their path.
-    await read_store.project(tx, event.team_id)
+    await read_store.project_batch(tx, event.team_id)
     return Appended(receipt=receipt, duplicate=False)
 
 

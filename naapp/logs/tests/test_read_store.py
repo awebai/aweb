@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 from aweb_naapp.hooks import envelope as hook_envelope
+from aweb_naapp.hooks.catalog import packaged_catalog
 from awid.did import stable_id_from_public_key
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
@@ -468,6 +469,28 @@ async def test_an_appended_event_is_readable_with_no_catch_up(
         "SELECT event_id FROM {{tables.read_events}} WHERE team_id = $1", TEAM_ID
     )
     assert [str(row["event_id"]) for row in rows] == [appended]
+
+
+def test_every_hook_of_the_packaged_catalog_has_its_event_type_field() -> None:
+    # Ingest projects every event it appends; a hook without one would refuse it.
+    assert set(read_store._EVENT_TYPE_FIELD) == set(packaged_catalog().hooks)
+
+
+async def test_an_append_projects_at_most_one_batch_of_a_backlog(
+    db: AsyncDatabaseManager,
+) -> None:
+    # The append holds the team's head; a backlog beyond one batch is the read path's.
+    backlog = read_store._PROJECTION_BATCH + 1
+    for seq in range(1, backlog + 1):
+        await _append(db, secret_use(seq=seq))
+    await _unproject(db, after_seq=0)
+
+    await _append(db, secret_use(seq=backlog + 1))
+    projected = await db.fetch_value(
+        "SELECT count(*) FROM {{tables.read_events}} WHERE team_id = $1", TEAM_ID
+    )
+    assert projected == read_store._PROJECTION_BATCH
+    assert await _chain_rows_read_by_catch_up(db) == 2
 
 
 async def test_projecting_in_the_appending_transaction_leaves_nothing_to_catch_up(
