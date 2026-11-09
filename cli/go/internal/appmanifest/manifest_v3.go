@@ -50,9 +50,22 @@ func parseOwnerActs(raw json.RawMessage, appOrigin string) (*OwnerActs, error) {
 	if raw == nil {
 		return nil, nil
 	}
-	var ownerActs OwnerActs
-	if err := decodeStrictObject(raw, &ownerActs, "owner_acts"); err != nil {
+	// Each level is decoded on its own, because the strict decoder matches
+	// keys exactly only at the level it is given.
+	var document struct {
+		Origin string            `json:"origin"`
+		Roles  []json.RawMessage `json:"roles"`
+	}
+	if err := decodeStrictObject(raw, &document, "owner_acts"); err != nil {
 		return nil, codedf(CodeOwnerActsInvalid, "%v", err)
+	}
+	ownerActs := OwnerActs{Origin: document.Origin}
+	for _, item := range document.Roles {
+		var role OwnerActRole
+		if err := decodeStrictObject(item, &role, "owner_acts.roles[]"); err != nil {
+			return nil, codedf(CodeOwnerActsInvalid, "%v", err)
+		}
+		ownerActs.Roles = append(ownerActs.Roles, role)
 	}
 	if !awid.ValidOwnerActAudience(ownerActs.Origin) {
 		return nil, codedf(CodeOwnerActsInvalid, "owner_acts origin %q must be https with a lowercase host, an optional port and nothing after it", ownerActs.Origin)
