@@ -148,13 +148,17 @@ is needed.
   current human member ([Use](human-role-holders.md#use)), from the session's
   retained certificate ([Membership evidence](#membership-evidence)), and
   refuses with `403 principal_not_member`, `403 principal_not_human` or
-  `503 principal_status_unavailable`. When the session's holding is no longer
-  current, the app refuses with `403 role_not_held`. That covers a revoked
-  holding and one superseded by a `human-credential.replace` whose cooling-off
-  has ended; a replace still in its cooling-off leaves the holding current. A
-  `session` handoff requested for a scope in which the signing principal holds
-  no current holding refuses the same way. `role_not_held` is final: no new
-  handoff restores a holding, so `aw` never renews on it.
+  `503 principal_status_unavailable`. When the session's holding has been
+  revoked, the app refuses with `403 role_not_held`, and a `session` handoff
+  requested for a scope in which the signing principal holds no current
+  holding refuses the same way. `role_not_held` is final: no new handoff
+  restores a holding, so `aw` never renews on it. When the session's login
+  credential is superseded by a `human-credential.replace` whose cooling-off
+  has ended, the principal still holds the role, so the app refuses with
+  `401 console_session_required` instead: the one renewal asks for a login
+  with the bound credential, which the holder of the new passkey passes and
+  anyone with only the old one fails. A replace still in its cooling-off
+  leaves the session's credential current.
 
 ### Membership evidence
 
