@@ -540,9 +540,10 @@ those two. An unrecognized purpose is shown to the admin and grants nothing. A v
 
 ## Manifest version 3
 
-Status: **specified, not shipped**; it awaits Juan's ruling with
-[owner-act delivery](owner-act-delivery.md) (aweb-acgh.16.38). No consumer
-supports it yet, and no app publishes it.
+Status: **specified, not shipped**, with
+[owner-act delivery](owner-act-delivery.md) (aweb-acgh.16.38) and the
+[human-role holders](design/human-role-holders.md) design that Juan ruled. No
+consumer supports it, and no app publishes it.
 
 Version 3 is version 2 with one more optional member, `owner_acts`: the app's
 human origin and the roles only a team owner act designates. Every other field

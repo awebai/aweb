@@ -1,8 +1,11 @@
 # Owner-act delivery for app acts
 
 Status: **specified, not shipped**. Owner: the aweb OSS hooks lane
-(aweb-acgh.16.38). Its design choices await Juan's ruling at design review
-(see [Summary for Juan](#summary-for-juan)). This document is the source of
+(aweb-acgh.16.38). Juan ruled the
+[human-role holders](design/human-role-holders.md) design: a role held by a
+team's human uses the human-role acts, with no prepare and no enrolment
+contact, and that design's follow-ups change this document. Manifest version 3
+and the delivery route below serve both. This document is the source of
 truth for how a client delivers an app owner act (`app-role.designate`,
 `app-role.revoke` and `app-credential.recover`, defined in
 [the owner-act contract](owner-act.md)) to the naapp that verifies it, with no
@@ -17,7 +20,7 @@ contract adds what that one leaves to the transport:
 - how the inputs that are not in the act (the contact, the principal) travel;
 - the one delivery route, and its refusals.
 
-## Summary for Juan
+## Design choices
 
 | Choice | Taken | Rejected, and why |
 | --- | --- | --- |
@@ -316,7 +319,8 @@ its 72-hour cooling-off period. **logs.** logs' reader role declares
 
 ## Work this contract creates
 
-Filed after Juan rules on the design. Each item is one reviewed change.
+Filed with the [human-role holders follow-ups](design/human-role-holders.md#work-this-changes),
+which drop the prepare items for human roles. Each item is one reviewed change.
 
 - **Go manifest interpreter** (`cli/go/internal/appmanifest`): version 3 and
   `owner_acts`, against the version 3 vectors.
