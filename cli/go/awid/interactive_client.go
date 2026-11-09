@@ -1,7 +1,6 @@
 package awid
 
 import (
-	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
@@ -53,11 +52,11 @@ func checkedInteractiveSignature(did string, sign InteractiveSigner, payload []b
 	if err != nil {
 		return "", err
 	}
-	pub, err := ExtractPublicKey(did)
+	_, err = ExtractPublicKey(did)
 	if err != nil {
 		return "", err
 	}
-	if got != did || !ed25519.Verify(pub, payload, sig) {
+	if got != did || idStrictVerify(did, sig, func() ([]byte, error) { return payload, nil }) != nil {
 		return "", fmt.Errorf("interactive signature does not match selected identity")
 	}
 	return base64.RawStdEncoding.EncodeToString(sig), nil

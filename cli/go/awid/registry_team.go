@@ -363,7 +363,7 @@ func (c *RegistryClient) FetchTeamCertificate(
 	}
 	did := ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
 	return c.FetchTeamCertificateWithSigner(ctx, registryURL, domain, name, certificateID, did, func(payload []byte, _ string) (string, []byte, error) {
-		return did, ed25519.Sign(signingKey, payload), nil
+		return KeySigner(signingKey)(payload)
 	})
 }
 
