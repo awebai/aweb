@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Self-custodial humans can select their OS-keychain identity with `aw --human
+  <did:aw> --human-domain <domain>` to fetch a controller-issued team certificate,
+  connect, send/read/reply to plaintext mail, and make ordinary team-auth naapp
+  requests. Every signature prompts; no unlocked session or delegated signer is
+  created. Human participation refuses chat and stays separate from agent homes.
+  See [interactive human participation](docs/id-certificates.md#interactive-human-participation-from-the-cli).
+
 - Human classification now comes only from the subject's own verified ID kind,
   never a client `agent_type=human` claim. Migration 047 adds an unstamped nullable
   marker. **Deployment order:** apply 047 before the code deploy (additive, old
