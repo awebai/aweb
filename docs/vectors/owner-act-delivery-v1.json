@@ -5080,6 +5080,5445 @@
           }
         ]
       }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": null,
+      "name": "session_actions_64",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-00",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-01",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-02",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-03",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-04",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-05",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-06",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-07",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-08",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-09",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-10",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-11",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-12",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-13",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-14",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-15",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-16",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-17",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-18",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-19",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-20",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-21",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-22",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-23",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-24",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-25",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-26",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-27",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-28",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-29",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-30",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-31",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-32",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-33",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-34",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-35",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-36",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-37",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-38",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-39",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-40",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-41",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-42",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-43",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-44",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-45",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-46",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-47",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-48",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-49",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-50",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-51",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-52",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-53",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-54",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-55",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-56",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-57",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-58",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-59",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-60",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-61",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-62",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-63",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": "owner_acts_invalid",
+      "name": "session_actions_65",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-00",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-01",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-02",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-03",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-04",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-05",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-06",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-07",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-08",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-09",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-10",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-11",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-12",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-13",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-14",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-15",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-16",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-17",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-18",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-19",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-20",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-21",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-22",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-23",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-24",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-25",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-26",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-27",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-28",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-29",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-30",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-31",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-32",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-33",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-34",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-35",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-36",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-37",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-38",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-39",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-40",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-41",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-42",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-43",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-44",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-45",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-46",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-47",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-48",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-49",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-50",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-51",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-52",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-53",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-54",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-55",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-56",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-57",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-58",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-59",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-60",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-61",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-62",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-63",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set-64",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": "owner_acts_invalid",
+      "name": "terminal_output_empty",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "body": {
+              "mode": "json"
+            },
+            "completion": {
+              "done": {
+                "in": [
+                  "applied"
+                ],
+                "member": "state"
+              },
+              "read": "change-set",
+              "ready": {
+                "in": [
+                  true
+                ],
+                "member": "can_confirm"
+              },
+              "stop": [
+                {
+                  "in": [
+                    "cancelled",
+                    "expired"
+                  ],
+                  "member": "state"
+                },
+                {
+                  "in": [
+                    "rejected",
+                    "revoked",
+                    "expired"
+                  ],
+                  "member": "approval_state"
+                }
+              ]
+            },
+            "description": "Confirm an approved change set; runner codes go to the terminal.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "confirm",
+            "method": "POST",
+            "name": "confirm",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}/confirm",
+            "role": "secrets.owner",
+            "terminal_output": []
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": null,
+      "name": "terminal_output_16",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "body": {
+              "mode": "json"
+            },
+            "completion": {
+              "done": {
+                "in": [
+                  "applied"
+                ],
+                "member": "state"
+              },
+              "read": "change-set",
+              "ready": {
+                "in": [
+                  true
+                ],
+                "member": "can_confirm"
+              },
+              "stop": [
+                {
+                  "in": [
+                    "cancelled",
+                    "expired"
+                  ],
+                  "member": "state"
+                },
+                {
+                  "in": [
+                    "rejected",
+                    "revoked",
+                    "expired"
+                  ],
+                  "member": "approval_state"
+                }
+              ]
+            },
+            "description": "Confirm an approved change set; runner codes go to the terminal.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "confirm",
+            "method": "POST",
+            "name": "confirm",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}/confirm",
+            "role": "secrets.owner",
+            "terminal_output": [
+              "/runner_registrations/*/field_00",
+              "/runner_registrations/*/field_01",
+              "/runner_registrations/*/field_02",
+              "/runner_registrations/*/field_03",
+              "/runner_registrations/*/field_04",
+              "/runner_registrations/*/field_05",
+              "/runner_registrations/*/field_06",
+              "/runner_registrations/*/field_07",
+              "/runner_registrations/*/field_08",
+              "/runner_registrations/*/field_09",
+              "/runner_registrations/*/field_10",
+              "/runner_registrations/*/field_11",
+              "/runner_registrations/*/field_12",
+              "/runner_registrations/*/field_13",
+              "/runner_registrations/*/field_14",
+              "/runner_registrations/*/field_15"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": "owner_acts_invalid",
+      "name": "terminal_output_17",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "body": {
+              "mode": "json"
+            },
+            "completion": {
+              "done": {
+                "in": [
+                  "applied"
+                ],
+                "member": "state"
+              },
+              "read": "change-set",
+              "ready": {
+                "in": [
+                  true
+                ],
+                "member": "can_confirm"
+              },
+              "stop": [
+                {
+                  "in": [
+                    "cancelled",
+                    "expired"
+                  ],
+                  "member": "state"
+                },
+                {
+                  "in": [
+                    "rejected",
+                    "revoked",
+                    "expired"
+                  ],
+                  "member": "approval_state"
+                }
+              ]
+            },
+            "description": "Confirm an approved change set; runner codes go to the terminal.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "confirm",
+            "method": "POST",
+            "name": "confirm",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}/confirm",
+            "role": "secrets.owner",
+            "terminal_output": [
+              "/runner_registrations/*/field_00",
+              "/runner_registrations/*/field_01",
+              "/runner_registrations/*/field_02",
+              "/runner_registrations/*/field_03",
+              "/runner_registrations/*/field_04",
+              "/runner_registrations/*/field_05",
+              "/runner_registrations/*/field_06",
+              "/runner_registrations/*/field_07",
+              "/runner_registrations/*/field_08",
+              "/runner_registrations/*/field_09",
+              "/runner_registrations/*/field_10",
+              "/runner_registrations/*/field_11",
+              "/runner_registrations/*/field_12",
+              "/runner_registrations/*/field_13",
+              "/runner_registrations/*/field_14",
+              "/runner_registrations/*/field_15",
+              "/runner_registrations/*/field_16"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": null,
+      "name": "completion_stop_8",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "body": {
+              "mode": "json"
+            },
+            "completion": {
+              "done": {
+                "in": [
+                  "applied"
+                ],
+                "member": "state"
+              },
+              "read": "change-set",
+              "ready": {
+                "in": [
+                  true
+                ],
+                "member": "can_confirm"
+              },
+              "stop": [
+                {
+                  "in": [
+                    "cancelled"
+                  ],
+                  "member": "state_0"
+                },
+                {
+                  "in": [
+                    "cancelled"
+                  ],
+                  "member": "state_1"
+                },
+                {
+                  "in": [
+                    "cancelled"
+                  ],
+                  "member": "state_2"
+                },
+                {
+                  "in": [
+                    "cancelled"
+                  ],
+                  "member": "state_3"
+                },
+                {
+                  "in": [
+                    "cancelled"
+                  ],
+                  "member": "state_4"
+                },
+                {
+                  "in": [
+                    "cancelled"
+                  ],
+                  "member": "state_5"
+                },
+                {
+                  "in": [
+                    "cancelled"
+                  ],
+                  "member": "state_6"
+                },
+                {
+                  "in": [
+                    "cancelled"
+                  ],
+                  "member": "state_7"
+                }
+              ]
+            },
+            "description": "Confirm an approved change set; runner codes go to the terminal.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "confirm",
+            "method": "POST",
+            "name": "confirm",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}/confirm",
+            "role": "secrets.owner",
+            "terminal_output": [
+              "/runner_registrations/*/registration_code"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": "owner_acts_invalid",
+      "name": "completion_stop_9",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "body": {
+              "mode": "json"
+            },
+            "completion": {
+              "done": {
+                "in": [
+                  "applied"
+                ],
+                "member": "state"
+              },
+              "read": "change-set",
+              "ready": {
+                "in": [
+                  true
+                ],
+                "member": "can_confirm"
+              },
+              "stop": [
+                {
+                  "in": [
+                    "cancelled"
+                  ],
+                  "member": "state_0"
+                },
+                {
+                  "in": [
+                    "cancelled"
+                  ],
+                  "member": "state_1"
+                },
+                {
+                  "in": [
+                    "cancelled"
+                  ],
+                  "member": "state_2"
+                },
+                {
+                  "in": [
+                    "cancelled"
+                  ],
+                  "member": "state_3"
+                },
+                {
+                  "in": [
+                    "cancelled"
+                  ],
+                  "member": "state_4"
+                },
+                {
+                  "in": [
+                    "cancelled"
+                  ],
+                  "member": "state_5"
+                },
+                {
+                  "in": [
+                    "cancelled"
+                  ],
+                  "member": "state_6"
+                },
+                {
+                  "in": [
+                    "cancelled"
+                  ],
+                  "member": "state_7"
+                },
+                {
+                  "in": [
+                    "cancelled"
+                  ],
+                  "member": "state_8"
+                }
+              ]
+            },
+            "description": "Confirm an approved change set; runner codes go to the terminal.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "confirm",
+            "method": "POST",
+            "name": "confirm",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}/confirm",
+            "role": "secrets.owner",
+            "terminal_output": [
+              "/runner_registrations/*/registration_code"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": null,
+      "name": "completion_predicate_of_16_values",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "body": {
+              "mode": "json"
+            },
+            "completion": {
+              "done": {
+                "in": [
+                  0,
+                  1,
+                  2,
+                  3,
+                  4,
+                  5,
+                  6,
+                  7,
+                  8,
+                  9,
+                  10,
+                  11,
+                  12,
+                  13,
+                  14,
+                  15
+                ],
+                "member": "state"
+              },
+              "read": "change-set",
+              "ready": {
+                "in": [
+                  true
+                ],
+                "member": "can_confirm"
+              },
+              "stop": [
+                {
+                  "in": [
+                    "cancelled",
+                    "expired"
+                  ],
+                  "member": "state"
+                },
+                {
+                  "in": [
+                    "rejected",
+                    "revoked",
+                    "expired"
+                  ],
+                  "member": "approval_state"
+                }
+              ]
+            },
+            "description": "Confirm an approved change set; runner codes go to the terminal.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "confirm",
+            "method": "POST",
+            "name": "confirm",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}/confirm",
+            "role": "secrets.owner",
+            "terminal_output": [
+              "/runner_registrations/*/registration_code"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": "owner_acts_invalid",
+      "name": "completion_predicate_of_17_values",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "body": {
+              "mode": "json"
+            },
+            "completion": {
+              "done": {
+                "in": [
+                  0,
+                  1,
+                  2,
+                  3,
+                  4,
+                  5,
+                  6,
+                  7,
+                  8,
+                  9,
+                  10,
+                  11,
+                  12,
+                  13,
+                  14,
+                  15,
+                  16
+                ],
+                "member": "state"
+              },
+              "read": "change-set",
+              "ready": {
+                "in": [
+                  true
+                ],
+                "member": "can_confirm"
+              },
+              "stop": [
+                {
+                  "in": [
+                    "cancelled",
+                    "expired"
+                  ],
+                  "member": "state"
+                },
+                {
+                  "in": [
+                    "rejected",
+                    "revoked",
+                    "expired"
+                  ],
+                  "member": "approval_state"
+                }
+              ]
+            },
+            "description": "Confirm an approved change set; runner codes go to the terminal.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "confirm",
+            "method": "POST",
+            "name": "confirm",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}/confirm",
+            "role": "secrets.owner",
+            "terminal_output": [
+              "/runner_registrations/*/registration_code"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": "owner_acts_invalid",
+      "name": "completion_predicate_of_no_values",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": "Read a change set in the owner's session.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "read",
+            "method": "GET",
+            "name": "change-set",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}",
+            "role": "secrets.owner"
+          },
+          {
+            "body": {
+              "mode": "json"
+            },
+            "completion": {
+              "done": {
+                "in": [],
+                "member": "state"
+              },
+              "read": "change-set",
+              "ready": {
+                "in": [
+                  true
+                ],
+                "member": "can_confirm"
+              },
+              "stop": [
+                {
+                  "in": [
+                    "cancelled",
+                    "expired"
+                  ],
+                  "member": "state"
+                },
+                {
+                  "in": [
+                    "rejected",
+                    "revoked",
+                    "expired"
+                  ],
+                  "member": "approval_state"
+                }
+              ]
+            },
+            "description": "Confirm an approved change set; runner codes go to the terminal.",
+            "input_schema": {
+              "properties": {
+                "change_id": {
+                  "type": "string"
+                },
+                "installation_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "change_id"
+              ],
+              "type": "object"
+            },
+            "kind": "confirm",
+            "method": "POST",
+            "name": "confirm",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "path",
+                "name": "change_id"
+              }
+            ],
+            "path": "/installations/{installation_id}/change-sets/{change_id}/confirm",
+            "role": "secrets.owner",
+            "terminal_output": [
+              "/runner_registrations/*/registration_code"
+            ]
+          }
+        ]
+      }
     }
   ],
   "name": "owner-act-delivery",

@@ -386,6 +386,56 @@ def session_action_cases() -> list[dict[str, Any]]:
                 completion={**completion, "ready": {"member": "can_confirm", "in": [1.5]}}
             ),
         ),
+        *session_action_bound_cases(case, read, completion),
+    ]
+
+
+def session_action_bound_cases(case, read, completion) -> list[dict[str, Any]]:
+    """Each stated bound at its limit, which is valid, and one past it."""
+
+    def reads(count: int) -> list[dict[str, Any]]:
+        return [read_action(name=f"change-set-{i:02d}") for i in range(count)]
+
+    def pointers(count: int) -> list[str]:
+        return [f"/runner_registrations/*/field_{i:02d}" for i in range(count)]
+
+    def stops(count: int) -> list[dict[str, Any]]:
+        return [{"member": f"state_{i}", "in": ["cancelled"]} for i in range(count)]
+
+    def values(count: int) -> dict[str, Any]:
+        return {"member": "state", "in": list(range(count))}
+
+    return [
+        case("session_actions_64", *reads(64), error=None),
+        case("session_actions_65", *reads(65)),
+        case("terminal_output_empty", read, confirm_action(terminal_output=[])),
+        case("terminal_output_16", read, confirm_action(terminal_output=pointers(16)), error=None),
+        case("terminal_output_17", read, confirm_action(terminal_output=pointers(17))),
+        case(
+            "completion_stop_8",
+            read,
+            confirm_action(completion={**completion, "stop": stops(8)}),
+            error=None,
+        ),
+        case(
+            "completion_stop_9", read, confirm_action(completion={**completion, "stop": stops(9)})
+        ),
+        case(
+            "completion_predicate_of_16_values",
+            read,
+            confirm_action(completion={**completion, "done": values(16)}),
+            error=None,
+        ),
+        case(
+            "completion_predicate_of_17_values",
+            read,
+            confirm_action(completion={**completion, "done": values(17)}),
+        ),
+        case(
+            "completion_predicate_of_no_values",
+            read,
+            confirm_action(completion={**completion, "done": values(0)}),
+        ),
     ]
 
 
