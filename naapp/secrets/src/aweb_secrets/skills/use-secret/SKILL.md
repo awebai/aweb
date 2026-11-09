@@ -19,8 +19,8 @@ use their configured origin and manifest app id as the command namespace.
    operation/params. Named headers must be allowed by the operation. Do not mix
    the two forms. For a pinned runner job, use
    `aw secrets run --job JOB_ID --request_id YOUR_REQUEST_ID --runner RUNNER_ID --params '{}'`.
-   An optional `--secret CHILD_REF` selects an ordinary child for the job's
-   unique durable slot; omit it to keep the job's fixed selectors.
+   The first release uses the job's fixed durable credential slots. Omit
+   `--secret`; ordinary-child selection is guarded with `job_not_allowed`.
    Never invent arbitrary shell commands or pass credential values.
 3. Read the response's `state`, even when the command succeeds. The released
    generic CLI exits 0 for HTTP success and 1 for HTTP errors; a zero exit does

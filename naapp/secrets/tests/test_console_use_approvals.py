@@ -18,6 +18,7 @@ from aweb_secrets.console_use_approvals import (
     console_run_approvals_router,
     console_use_approvals_router,
 )
+from tests.console_home import no_banner
 from tests.console_use_world import audit_for, mint
 from tests.test_change_sets import ORIGIN, TEAM, world  # noqa: F401
 from tests.test_console import API
@@ -51,7 +52,7 @@ async def application(uses, *, origin=ORIGIN, agent_origin=API, registration_vie
     )
     app = FastAPI()
     app.include_router(owner_console_router(console))
-    app.include_router(console_ui_router(sessions=console.sessions))
+    app.include_router(console_ui_router(sessions=console.sessions, banner=no_banner))
     from aweb_secrets.use_audit import UseApprovalAudit
 
     # Read-only legacy run fixtures have no audit association. Decisions on
@@ -207,9 +208,21 @@ async def test_run_view_uses_immutable_slot_plan_after_b2_authentication(uses):
         assert job["frozen_plan"] == plan.body
         assert job["credential_delivery"] == "durable"
         assert (await uses.approvals.get(approval_id)).consumed_operation_id is None
+        # This component has no original-run audit binding. A genuine fresh
+        # decision proof must still roll back instead of using governance audit.
+        options = await human.post(
+            "/run-approvals/decision-options",
+            json={"token": token, "decision": "approve"},
+            headers=headers,
+        )
+        assert options.status_code == 200
         refused = await human.post(
             "/run-approvals/decide",
-            json={"token": token, "decision": "approve", "assertion": {}},
+            json={
+                "token": token,
+                "decision": "approve",
+                "assertion": uses.world.devices["finance@acme.com"].get(options.json()),
+            },
             headers=headers,
         )
         assert refused.status_code == 503

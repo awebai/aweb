@@ -342,48 +342,14 @@ class HookProducer:
         _event_time(now)
         if occurred_at > now + OCCURRED_AT_SKEW:
             raise Refused("invalid_value", "occurred_at is in the future")
-        eligible = self._gate(hook, team_id, occurred_at, now, view)
-        rows = await tx.fetch_all(
-            """
-            WITH eligible AS (
-                SELECT * FROM unnest($1::text[], $2::timestamptz[])
-                    AS r(binding_id, active_from)
-            )
-            SELECT r.binding_id, LEAST(
-                (
-                    SELECT e.created_at FROM {{tables.outbox_deliveries}} d
-                    JOIN {{tables.outbox_events}} e ON e.event_id = d.event_id
-                    WHERE d.target_id = r.binding_id
-                      AND d.state NOT IN ('delivered', 'duplicate')
-                      AND e.channel = $3 AND e.team_id = $4 AND e.kind = $5
-                      AND r.active_from <= e.occurred_at
-                    ORDER BY e.created_at LIMIT 1
-                ), (
-                    SELECT e.created_at FROM {{tables.outbox_events}} e
-                    WHERE e.materialized_at IS NULL
-                      AND e.channel = $3 AND e.team_id = $4 AND e.kind = $5
-                      AND r.active_from <= e.occurred_at
-                    ORDER BY e.created_at LIMIT 1
-                )
-            ) AS oldest_outstanding_at
-            FROM eligible r
-            """,
-            [r.binding_id for r in eligible],
-            [r.active_from for r in eligible],
-            HOOKS_CHANNEL,
-            team_id,
-            hook,
-        )
+        eligible = owed_registrations(hook, team_id, occurred_at, now, view)
+        backlog = await hook_backlog(tx, team_id=team_id, hook=hook, registrations=eligible)
         # The query may wait behind a table lock. Both the registration view
         # and the oldest owed event must still be current when this returns.
         now = self._clock()
         _event_time(now)
-        self._gate(hook, team_id, occurred_at, now, view)
-        if not any(
-            row["oldest_outstanding_at"] is None
-            or row["oldest_outstanding_at"] >= now - max_backlog_age
-            for row in rows
-        ):
+        owed_registrations(hook, team_id, occurred_at, now, view)
+        if not any(target.is_current(now, max_backlog_age) for target in backlog):
             raise Refused("audit_delivery_stalled", "no eligible audit target is current")
 
     async def _enqueue(
@@ -406,7 +372,7 @@ class HookProducer:
         if occurred_at > now + OCCURRED_AT_SKEW:
             raise Refused("invalid_value", "occurred_at is in the future")
         if critical and gate:
-            self._gate(hook, team_id, occurred_at, now, view)
+            owed_registrations(hook, team_id, occurred_at, now, view)
         event_id = mint_event_id()
         occurred = _event_time(occurred_at)
         envelope = {
@@ -447,24 +413,96 @@ class HookProducer:
         )
         return event_id
 
-    @staticmethod
-    def _gate(
-        hook: str,
-        team_id: str,
-        occurred_at: datetime,
-        now: datetime,
-        view: RegistrationView | None,
-    ) -> tuple[Registration, ...]:
-        if view is None:
-            raise Refused("audit_target_unavailable", f"no registration view for {hook}")
-        if view.team_id != team_id or view.hook != hook:
-            raise Refused("audit_target_unavailable", f"the view is not {team_id}'s {hook}")
-        if not view.is_fresh(now):
-            raise Refused("audit_target_unavailable", f"the {hook} view is stale")
-        owed = view.owed(occurred_at)
-        if not owed:
-            raise Refused("audit_target_unavailable", f"no registration is owed this {hook} event")
-        return owed
+
+def owed_registrations(
+    hook: str,
+    team_id: str,
+    occurred_at: datetime,
+    now: datetime,
+    view: RegistrationView | None,
+) -> tuple[Registration, ...]:
+    """The registrations owed an event of ``hook`` occurring at ``occurred_at``,
+    from a fresh view of ``team_id``'s own; refused audit_target_unavailable
+    when there is none."""
+    if view is None:
+        raise Refused("audit_target_unavailable", f"no registration view for {hook}")
+    if view.team_id != team_id or view.hook != hook:
+        raise Refused("audit_target_unavailable", f"the view is not {team_id}'s {hook}")
+    if not view.is_fresh(now):
+        raise Refused("audit_target_unavailable", f"the {hook} view is stale")
+    owed = view.owed(occurred_at)
+    if not owed:
+        raise Refused("audit_target_unavailable", f"no registration is owed this {hook} event")
+    return owed
+
+
+@dataclass(frozen=True)
+class Backlog:
+    """One owed registration and the creation time of the oldest event it has
+    not acknowledged, or None when it is owed nothing."""
+
+    registration: Registration
+    oldest_owed_at: datetime | None
+
+    def is_current(self, now: datetime, max_age: timedelta) -> bool:
+        """True while this target's backlog is no older than ``max_age``."""
+        return self.oldest_owed_at is None or self.oldest_owed_at >= now - max_age
+
+
+async def hook_backlog(
+    tx: TransactionManager,
+    *,
+    team_id: str,
+    hook: str,
+    registrations: Sequence[Registration],
+) -> tuple[Backlog, ...]:
+    """Each registration's backlog on this team's ``hook`` channel, in order.
+
+    Every owed event counts until this target has acknowledged it, including
+    unmaterialized events and terminal failures. Age starts at the local
+    outbox's ``created_at``; a registration is owed only events that occurred
+    from its ``active_from``. The admission gate decides from this reader, and
+    owner views explain the gate with it.
+    """
+    rows = await tx.fetch_all(
+        """
+        WITH eligible AS (
+            SELECT * FROM unnest($1::text[], $2::timestamptz[])
+                AS r(binding_id, active_from)
+        )
+        SELECT r.binding_id, LEAST(
+            (
+                SELECT e.created_at FROM {{tables.outbox_deliveries}} d
+                JOIN {{tables.outbox_events}} e ON e.event_id = d.event_id
+                WHERE d.target_id = r.binding_id
+                  AND d.state NOT IN ('delivered', 'duplicate')
+                  AND e.channel = $3 AND e.team_id = $4 AND e.kind = $5
+                  AND r.active_from <= e.occurred_at
+                ORDER BY e.created_at LIMIT 1
+            ), (
+                SELECT e.created_at FROM {{tables.outbox_events}} e
+                WHERE e.materialized_at IS NULL
+                  AND e.channel = $3 AND e.team_id = $4 AND e.kind = $5
+                  AND r.active_from <= e.occurred_at
+                ORDER BY e.created_at LIMIT 1
+            )
+        ) AS oldest_outstanding_at
+        FROM eligible r
+        """,
+        [r.binding_id for r in registrations],
+        [r.active_from for r in registrations],
+        HOOKS_CHANNEL,
+        team_id,
+        hook,
+    )
+    oldest = {row["binding_id"]: row["oldest_outstanding_at"] for row in rows}
+    return tuple(Backlog(r, oldest[r.binding_id]) for r in registrations)
+
+
+class HookProducerFactory(Protocol):
+    """The app's producer for one installation generation of itself."""
+
+    def __call__(self, *, installation_id: str, generation: int) -> HookProducer: ...
 
 
 def hook_targets(

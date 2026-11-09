@@ -35,6 +35,7 @@ from aweb_naapp.runtime.approvals import (
     Decision,
 )
 from aweb_naapp.runtime.approvals.request import RequestNotCanonical, request_sha256
+from aweb_naapp.runtime.credential_audit import GovernanceUnavailable
 from aweb_naapp.runtime.installation import AdmittedInstallation, InstallationRefused
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
@@ -49,7 +50,6 @@ from aweb_secrets.change_sets import (
 )
 from aweb_secrets.console import OwnerConsole, _body, _require_json, _text
 from aweb_secrets.console_results import confirmation_receipt, owner_confirmation_result
-from aweb_secrets.credential_audit import GovernanceUnavailable
 from aweb_secrets.custody import SealContext
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
 from aweb_secrets.revisions import config_revision

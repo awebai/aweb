@@ -34,7 +34,7 @@ async def addressed_human(privacy_app, tmp_path):
             "UPDATE {{tables.agents}} SET did_aw=$1,address=$2,identity_scope='global',did_aw_verified_key=did_key WHERE agent_id=$3",
             stable[name], address, actor.id,
         )
-    await env.db.execute("UPDATE {{tables.agents}} SET agent_type='human' WHERE agent_id=$1", env.actors['alice'].id)
+    await env.db.execute("UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE agent_id=$1", env.actors['alice'].id)
     partner_team, partner_actor = f"partner-{uuid4().hex[:12]}:partner.test", uuid4()
     await env.db.execute(
         "INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) VALUES ($1,'partner.test','partner',$2)", partner_team, env.team_did,

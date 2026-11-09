@@ -18,7 +18,7 @@ async def test_retired_identity_continuation_refuses_new_alias_mail_reaches_repl
     assert first.status_code == 200, first.text
     cid = first.json()['conversation_id']
     await env.db.execute("UPDATE {{tables.agents}} SET deleted_at=NOW(),alias='retired-bob' WHERE agent_id=$1", env.actors['bob'].id)
-    await env.db.execute("UPDATE {{tables.agents}} SET alias='bob',agent_type='human' WHERE agent_id=$1", env.actors['carol'].id)
+    await env.db.execute("UPDATE {{tables.agents}} SET alias='bob',agent_type='human',human_verified_key=did_key WHERE agent_id=$1", env.actors['carol'].id)
     replacement = env.actors['carol']
     stable = await register_global_identity(env, replacement)
     resolution = await env.app.state.awid_registry_client.resolve_key_fresh(stable)

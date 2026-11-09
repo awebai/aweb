@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 import asyncpg
-from aweb_naapp.console import ConsoleRoute, ConsoleSession
+from aweb_naapp.console import ConsoleRoute, ConsoleSession, session_is_current
 from aweb_naapp.dispatch import State
 from aweb_naapp.roles import hold_role
 from aweb_naapp.runtime.approvals import (
@@ -23,8 +23,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 
 from aweb_secrets.console import OwnerConsole, _body, _require_json, _text
+from aweb_secrets.console_changes import _errors
 from aweb_secrets.console_reconciliation.authority import ConsoleReconciliationFence
-from aweb_secrets.console_ui import _login_redirect, _page, console_page
+from aweb_secrets.console_ui import _login_redirect, _page, console_page, recovery_page
 from aweb_secrets.console_use_approvals import _decision, _proof
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
 from aweb_secrets.reconciliation_policy import (
@@ -86,19 +87,10 @@ class ConsoleReconciliation:
 
     async def _end(self, tx, current, admitted):
         # Read the exact persisted session again without acquiring B3 locks.
-        row = await tx.fetch_one(
-            "SELECT scope,subject,evidence_ref,expires_at,closed_at"
-            " FROM {{tables.console_sessions}} WHERE token_sha256=$1",
-            current.token_sha256,
-        )
-        if (
-            row is None
-            or row["closed_at"] is not None
-            or (row["scope"], row["subject"], row["evidence_ref"], row["expires_at"])
-            != (current.scope, current.subject, current.evidence_ref, current.expires_at)
-        ):
+        if not await session_is_current(tx, current, hold=False):
             raise HTTPException(401, "console_session_required")
         await self.console.fence.check(tx, admitted)
+        # No awaited work follows this final sample of the session deadline.
         if current.expires_at <= datetime.now(UTC):
             raise HTTPException(401, "console_session_required")
 
@@ -332,6 +324,21 @@ def _assets():
     )
 
 
+def _read_refusal(error: HTTPException) -> Response:
+    if error.status_code == 401:
+        return _login_redirect(error)
+    return recovery_page(
+        error,
+        message=(
+            "Settlement record not found."
+            if error.status_code == 404
+            else "Settlement could not be loaded."
+        ),
+        action_href="/activity",
+        action_label="View activity",
+    )
+
+
 def console_reconciliation_router(*, services: ConsoleReconciliation) -> APIRouter:
     """Human app only, alongside the shared S4 shell and custody entry router."""
     router = APIRouter(route_class=ConsoleRoute)
@@ -340,10 +347,10 @@ def console_reconciliation_router(*, services: ConsoleReconciliation) -> APIRout
     async def record_page(reconcile_ref: str, request: Request):
         try:
             current = await services.console.sessions.current(request)
+            async with _errors(services.console, current), _refusals():
+                view = await services.record(current, reconcile_ref)
         except HTTPException as refused:
-            return _login_redirect(refused)
-        async with _refusals():
-            view = await services.record(current, reconcile_ref)
+            return _read_refusal(refused)
         body = "<h1>Resolve an uncertain outcome</h1>" + _facts(view.original)
         body += f"<p>Recorded state: {escape(view.state.value)}</p>"
         body += _repeat_notice(view.state, view.repeat_state)
@@ -382,10 +389,10 @@ def console_reconciliation_router(*, services: ConsoleReconciliation) -> APIRout
     async def control_page(approval_id: str, request: Request):
         try:
             current = await services.console.sessions.current(request)
+            async with _errors(services.console, current), _refusals():
+                status = await services.status(current, approval_id)
         except HTTPException as refused:
-            return _login_redirect(refused)
-        async with _refusals():
-            status = await services.status(current, approval_id)
+            return _read_refusal(refused)
         body = "<h1>Settlement status</h1>" + _facts(
             status.control.original, outcome=status.control.outcome
         )

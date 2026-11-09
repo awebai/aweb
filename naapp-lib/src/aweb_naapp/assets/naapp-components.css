@@ -25,6 +25,19 @@
 /* Public cards follow the shared sans heading voice; monospace is for identifiers. */
 .card h3 { font-family: var(--font-sans); }
 
+/* Forms: shared controls for human console surfaces. */
+.form { display: grid; gap: var(--s3); max-width: 42rem; }
+.form fieldset { min-width: 0; margin: 0; }
+.form label, .form legend { color: var(--ink); font-weight: 600; }
+.form legend { padding-inline: var(--s1); }
+.form :is(input, select, textarea) {
+  box-sizing: border-box; width: 100%; min-width: 0; font: inherit;
+  padding: var(--s2); border: 1px solid var(--muted); border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--ink);
+}
+.form textarea { resize: vertical; }
+.form button { justify-self: start; white-space: normal; }
+
 /* Numbered instructions: one sequence with optional copyable commands. */
 .gs-steps { list-style: none; margin: var(--s5) 0 0; padding: 0; display: grid; gap: var(--s5); }
 .gs-step { display: grid; grid-template-columns: auto 1fr; gap: var(--s3); align-items: start; }

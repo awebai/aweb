@@ -57,7 +57,7 @@
   --ink-strong: #17191c;   /* max-contrast primary-action hover */
 
   --ok: #15803d;   --ok-soft: rgba(21,128,61,0.12);
-  --wait: #b45309; --wait-soft: rgba(180,83,9,0.13);
+  --wait: #92400e; --wait-soft: rgba(180,83,9,0.13);
   --run: #1d4ed8;  --run-soft: rgba(29,78,216,0.11);
   --stop: #b91c1c; --stop-soft: rgba(185,28,28,0.11);
 
@@ -88,7 +88,7 @@
   --ink-strong: #ffffff;
 
   --ok: #5fcf86;   --ok-soft: rgba(95,207,134,0.16);
-  --wait: #e0a544; --wait-soft: rgba(224,165,68,0.16);
+  --wait: #efb967; --wait-soft: rgba(224,165,68,0.16);
   --run: #7aa0ff;  --run-soft: rgba(122,160,255,0.16);
   --stop: #f06d6d; --stop-soft: rgba(240,109,109,0.16);
 
@@ -117,7 +117,7 @@
     --accent-soft: rgba(165,181,255,0.10);
     --ink-strong: #ffffff;
     --ok: #5fcf86;   --ok-soft: rgba(95,207,134,0.16);
-    --wait: #e0a544; --wait-soft: rgba(224,165,68,0.16);
+    --wait: #efb967; --wait-soft: rgba(224,165,68,0.16);
     --run: #7aa0ff;  --run-soft: rgba(122,160,255,0.16);
     --stop: #f06d6d; --stop-soft: rgba(240,109,109,0.16);
     --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
@@ -880,6 +880,19 @@ img { max-width: 100%; display: block; }
 
 /* Public cards follow the shared sans heading voice; monospace is for identifiers. */
 .card h3 { font-family: var(--font-sans); }
+
+/* Forms: shared controls for human console surfaces. */
+.form { display: grid; gap: var(--s3); max-width: 42rem; }
+.form fieldset { min-width: 0; margin: 0; }
+.form label, .form legend { color: var(--ink); font-weight: 600; }
+.form legend { padding-inline: var(--s1); }
+.form :is(input, select, textarea) {
+  box-sizing: border-box; width: 100%; min-width: 0; font: inherit;
+  padding: var(--s2); border: 1px solid var(--muted); border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--ink);
+}
+.form textarea { resize: vertical; }
+.form button { justify-self: start; white-space: normal; }
 
 /* Numbered instructions: one sequence with optional copyable commands. */
 .gs-steps { list-style: none; margin: var(--s5) 0 0; padding: 0; display: grid; gap: var(--s5); }

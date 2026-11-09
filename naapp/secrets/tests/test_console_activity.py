@@ -19,6 +19,7 @@ from aweb_secrets.console import OwnerConsole, owner_console_router
 from aweb_secrets.console_activity import ConsoleActivity, console_activity_router
 from aweb_secrets.console_ui import console_ui_router
 from aweb_secrets.use_context import UseCommitments, apply_use_context_migrations
+from tests.console_home import no_banner
 from tests.test_broker_audit import source
 from tests.test_change_sets import ALICE, ORIGIN, TEAM, enrol_owner
 from tests.test_change_sets import world as _world
@@ -50,7 +51,7 @@ async def application(w, *, origin=ORIGIN, agent_origin=API):
     )
     app = FastAPI()
     app.include_router(owner_console_router(console))
-    app.include_router(console_ui_router(sessions=console.sessions))
+    app.include_router(console_ui_router(sessions=console.sessions, banner=no_banner))
     app.include_router(
         console_activity_router(services=ConsoleActivity(console=console, reads=ActivityReads()))
     )

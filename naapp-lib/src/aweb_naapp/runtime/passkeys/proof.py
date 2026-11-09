@@ -129,6 +129,37 @@ class ProofContextResolver(Protocol):
         ...
 
 
+async def installation_context(
+    tx: TransactionManager, *, app_id: str, team_id: str, installation_id: str
+) -> PasskeyInstallationContext:
+    """The context of the installation an app's scope binding names, read from
+    the shared F6 record: it must be ``app_id``'s active, fresh and unretired
+    installation of ``team_id``. A plain read in the caller's transaction, with
+    no locks and no network; anything else raises ProofContextUnavailable."""
+    row = await tx.fetch_one(
+        """
+        SELECT f.app_id, f.team_id, f.installation_id, f.generation
+        FROM {{tables.installation_fences}} f
+        WHERE f.app_id=$1 AND f.team_id=$2 AND f.installation_id=$3
+            AND f.active_installation_id=$3
+            AND f.state='active' AND f.fresh_until>clock_timestamp()
+            AND NOT EXISTS (
+                SELECT 1 FROM {{tables.retired_installation_fences}} r
+                WHERE r.app_id=f.app_id AND r.team_id=f.team_id
+                    AND r.installation_id=f.installation_id
+            )
+        """,
+        app_id,
+        team_id,
+        installation_id,
+    )
+    if row is None:
+        raise ProofContextUnavailable()
+    return PasskeyInstallationContext(
+        row["app_id"], row["team_id"], row["installation_id"], row["generation"]
+    )
+
+
 def _instant(value: Any) -> datetime:
     if isinstance(value, datetime):
         result = value

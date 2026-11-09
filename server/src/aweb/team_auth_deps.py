@@ -290,6 +290,7 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
         fresh=fresh,
     )
     await authenticate_id_chain(request, binding)
+    cert_info["identity_kind"] = getattr(request.state, "identity_kind", None)
     cert_info["identity_binding"] = binding
     cert_info["identity_binding_fresh"] = binding.fresh_observation
     cert_info["verified_member_did_aw"] = binding.did_aw

@@ -23,20 +23,23 @@ from aweb_naapp.console import (
     LoginLimiter,
     console_assets_router,
     console_login_router,
+    credential_router,
 )
+from aweb_naapp.console import exact_body as _body
+from aweb_naapp.console import require_json as _require_json
+from aweb_naapp.console import text_field as _text
 from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier
 from aweb_naapp.hooks.strictjson import Refused
 from aweb_naapp.roles import PrincipalKey, assign, hold_role
+from aweb_naapp.runtime.credential_audit import GovernanceUnavailable
 from aweb_naapp.runtime.installation import (
     AdmittedInstallation,
     InstallationFence,
     InstallationRefused,
 )
 from aweb_naapp.runtime.passkeys import (
-    ContactChangeRefused,
     Designation,
     DesignationRefused,
-    EnrolmentRefused,
     Passkeys,
     contact_sha256,
 )
@@ -45,12 +48,11 @@ from pgdbm import AsyncDatabaseManager
 
 from aweb_secrets.change import ChangeRefused
 from aweb_secrets.change_policy import keep_four_eyes_owners
-from aweb_secrets.credential_audit import GovernanceUnavailable
 from aweb_secrets.owners import OWNER_ROLE, OwnerDirectory, OwnerRequired, owner_scope, record_owner
 from aweb_secrets.principal import is_principal
 
 if TYPE_CHECKING:
-    from aweb_secrets.credential_audit import CredentialAudit
+    from aweb_naapp.runtime.credential_audit import CredentialAudit
 
 
 class InstallationLookup(Protocol):
@@ -59,30 +61,6 @@ class InstallationLookup(Protocol):
     ) -> AdmittedInstallation:
         """Refresh authoritative G1/F6; team_id is an untrusted lookup hint."""
         ...
-
-
-async def _require_json(request: Request) -> None:
-    if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
-        media_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
-        if media_type != "application/json":
-            raise HTTPException(status_code=415, detail="json_required")
-
-
-async def _body(request: Request, fields: set[str]) -> dict[str, Any]:
-    try:
-        body = await request.json()
-    except ValueError:
-        raise HTTPException(status_code=400, detail="request_invalid") from None
-    if not isinstance(body, dict) or set(body) != fields:
-        raise HTTPException(status_code=400, detail="request_invalid")
-    return body
-
-
-def _text(body: dict[str, Any], field: str) -> str:
-    value = body.get(field)
-    if not isinstance(value, str) or not value:
-        raise HTTPException(status_code=400, detail="request_invalid")
-    return value
 
 
 class OwnerConsole:
@@ -205,6 +183,9 @@ def owner_console_router(services: OwnerConsole, *, prefix: str = "") -> APIRout
     router.include_router(
         console_login_router(sessions=services.sessions, limiter=services.limiter)
     )
+    router.include_router(
+        credential_router(passkeys=services.passkeys, recorder=services.credential_audit)
+    )
 
     @router.get("/session")
     async def session(
@@ -252,49 +233,5 @@ def owner_console_router(services: OwnerConsole, *, prefix: str = "") -> APIRout
             raise HTTPException(status_code=403, detail="owner_required") from None
         await services.passkeys.deliver(designation)
         return {"scope": scope, "effective_at": designation.effective_at.isoformat()}
-
-    @router.post("/enrolment/options", dependencies=[Depends(_require_json)])
-    async def enrolment_options(request: Request) -> dict[str, Any]:
-        body = await _body(request, {"link_token"})
-        try:
-            return dict(await services.passkeys.enrolment_options(_text(body, "link_token")))
-        except EnrolmentRefused:
-            raise HTTPException(status_code=403, detail="enrolment_refused") from None
-
-    @router.post("/enrolment", dependencies=[Depends(_require_json)])
-    async def enrolment(request: Request) -> dict[str, str]:
-        body = await _body(request, {"link_token", "credential"})
-        if not isinstance(body["credential"], dict):
-            raise HTTPException(status_code=400, detail="request_invalid")
-        try:
-            token = _text(body, "link_token")
-            prepared = await services.credential_audit.prepare_enrolment(token)
-            with services.credential_audit.prepared(prepared):
-                approver = await services.passkeys.complete_enrolment(
-                    token, body["credential"], fence=prepared
-                )
-        except EnrolmentRefused:
-            raise HTTPException(status_code=403, detail="enrolment_refused") from None
-        except GovernanceUnavailable as refused:
-            raise HTTPException(503, refused.code) from None
-        except Refused as refused:
-            raise HTTPException(503, refused.code) from None
-        return {"scope": approver.scope}
-
-    @router.post("/contact-proof", dependencies=[Depends(_require_json)])
-    async def contact_proof(request: Request) -> dict[str, str]:
-        body = await _body(request, {"proof_token"})
-        try:
-            token = _text(body, "proof_token")
-            prepared = await services.credential_audit.prepare_contact_proof(token)
-            with services.credential_audit.prepared(prepared):
-                effective_at = await services.passkeys.prove_contact(token, fence=prepared)
-        except ContactChangeRefused:
-            raise HTTPException(status_code=403, detail="contact_proof_refused") from None
-        except GovernanceUnavailable as refused:
-            raise HTTPException(503, refused.code) from None
-        except Refused as refused:
-            raise HTTPException(503, refused.code) from None
-        return {"effective_at": effective_at.isoformat()}
 
     return router

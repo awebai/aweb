@@ -23,7 +23,7 @@ async def request(env, path, payload):
 @pytest.mark.parametrize('selector', ['alias', 'did', 'address', 'group'])
 async def test_authoritative_team_human_refuses_new_chat_without_effects(privacy_app, selector):
     env = privacy_app
-    await env.db.execute("UPDATE {{tables.agents}} SET agent_type='human' WHERE agent_id=$1", env.actors['bob'].id)
+    await env.db.execute("UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE agent_id=$1", env.actors['bob'].id)
     target = {
         'alias': {'to_aliases': ['bob']},
         'did': {'to_dids': [env.actors['bob'].did]},
@@ -49,7 +49,7 @@ async def test_existing_human_session_refuses_next_send_and_wait_changes(privacy
     started = await request(env, '/v1/chat/sessions', {'to_aliases': ['bob'], 'message': 'agent control'})
     assert started.status_code == 200, started.text
     cid = started.json()['session_id']
-    await env.db.execute("UPDATE {{tables.agents}} SET agent_type='human' WHERE agent_id=$1", env.actors['bob'].id)
+    await env.db.execute("UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE agent_id=$1", env.actors['bob'].id)
     before = list(env.dispatched)
     response = await request(env, f'/v1/chat/sessions/{cid}/messages', {'body': 'refuse', **control})
     assert response.status_code == 422, response.text
@@ -69,7 +69,7 @@ async def test_mcp_human_chat_refusal_precedes_custody_and_send(mail_server, con
         started = await env.mcp_call('send_chat', message='agent control', plaintext=True, **arguments)
         assert 'error' not in started, started
         arguments = {'conversation_id': started['session_id'], 'hang_on': True}
-        await env.db.execute("UPDATE {{tables.agents}} SET agent_type='human' WHERE agent_id=$1", UUID(env.human))
+        await env.db.execute("UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE agent_id=$1", UUID(env.human))
     before = len(env.custody.payloads)
     refused = await env.mcp_call('send_chat', message='must refuse', plaintext=True, **arguments)
     assert refused.get('reason') == 'recipient_human_mail_only', refused
@@ -141,7 +141,7 @@ async def test_federated_ingress_cannot_send_chat_to_authoritative_human(aweb_cl
     db = aweb_cloud_db.aweb_db
     envelope = _envelope(kind='chat')
     recipient, token = await _seed_recipient_and_authority(db, envelope)
-    await db.execute("UPDATE {{tables.agents}} SET agent_type='human' WHERE agent_id=$1", recipient['agent_id'])
+    await db.execute("UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE agent_id=$1", recipient['agent_id'])
     with pytest.raises(HumanChatRefused) as refused:
         await deliver_federated_phase_b(_DB(db), envelope=envelope, signature='test', recipient=recipient, authority_token=token)
     assert refused.value.reason == 'recipient_human_mail_only'
@@ -160,7 +160,7 @@ async def test_group_refusal_names_only_authoritative_humans_in_stable_order(pri
             'to_aliases': ['carol', 'bob'], 'message': 'agent control',
         })
         assert started.status_code == 200, started.text
-    await env.db.execute("UPDATE {{tables.agents}} SET agent_type='human' WHERE alias IN ('bob','carol')")
+    await env.db.execute("UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE alias IN ('bob','carol')")
     if existing:
         response = await request(env, '/v1/chat/sessions/' + started.json()['session_id'] + '/messages', {'body': 'no', 'hang_on': True})
     else:
@@ -174,7 +174,7 @@ async def test_group_refusal_names_only_authoritative_humans_in_stable_order(pri
 async def test_refusal_names_exclude_agent_and_unknown_members(privacy_app):
     from aweb.messaging.chat_policy import HumanChatRefused, require_agent_chat
     env = privacy_app
-    await env.db.execute("UPDATE {{tables.agents}} SET agent_type='human' WHERE alias='bob'")
+    await env.db.execute("UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE alias='bob'")
     rows = [dict(did_key=env.actors['carol'].did, alias='carol'),
             dict(did_key='did:key:unknown', alias='unknown'),
             dict(did_key=env.actors['bob'].did, alias='bob'),
@@ -182,3 +182,21 @@ async def test_refusal_names_exclude_agent_and_unknown_members(privacy_app):
     with pytest.raises(HumanChatRefused) as refused:
         await require_agent_chat(env.infra, rows)
     assert refused.value.body()['recipients'] == ['bob']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('stamp_before_accept', [False, True])
+async def test_native_legacy_label_grants_no_human_chat_treatment(native_send, stamp_before_accept):
+    from aweb.messaging.chat_policy import HumanChatRefused
+    from test_human_channels_native_send import complete
+
+    env = native_send
+    await env['db'].execute('UPDATE {{tables.agents}} SET human_verified_key=NULL WHERE agent_id=$1', UUID(env['b']))
+    prepared = await env['prepared']('chat')
+    if stamp_before_accept:
+        await env['db'].execute('UPDATE {{tables.agents}} SET human_verified_key=did_key WHERE agent_id=$1', UUID(env['b']))
+        with pytest.raises(HumanChatRefused):
+            await complete(env, prepared)
+    else:
+        await complete(env, prepared)
+    assert await env['db'].fetch_val('SELECT count(*) FROM {{tables.chat_messages}}') == (0 if stamp_before_accept else 1)

@@ -184,6 +184,78 @@ chainless local key is not re-parenting. Explicit registered enrollment may
 keep its private key and acquire a stable ID, without guessing its past. Local
 descendants do not silently change their parent ID when that conversion occurs.
 
+### Team-row human classification
+
+A team member is treated as human only from its **own** verified subject kind:
+`identity_valid=true` and `kind=human`. Neither a human ancestor, a team
+certificate, account ownership, custody, nor `agent_type=human` in a client
+payload supplies that evidence. This identity-path correction was approved by
+Juan on 2026-11-08 (aweb-acwb).
+
+The server projects verified kind at connect. A verified human gets
+`agent_type=human` and `human_verified_key` equal to the verified subject key.
+Otherwise a claimed human runtime type becomes `agent`; other runtime labels
+remain metadata. Current human consumers require both the human type and an
+exact non-null key marker. Agent roster and dashboard display filters still
+exclude raw human labels, so unverifiable legacy members are not presented as
+agents. This display exclusion grants no human capability; their effective kind
+is unknown. The connect response returns the effective
+`agent_type`; the CLI uses it for local state and human-only name defaults.
+The marker establishes classification only, never membership, custody or live
+request authority. Existing authentication, revocation and admission checks
+still apply. A changed subject key cannot inherit an old marker.
+
+Migration adds the nullable marker without stamping old labels. Before enabling
+the new policy, an operator revalidates existing human-labelled members through
+the public verifier and reports before/after counts by human, agent, revoked,
+unregistered, unavailable and invalid evidence, separately for active/retired
+rows. Only verified human subjects with unchanged row key/ID are stamped.
+Unverifiable active members remain explicitly unresolved and unstamped; release
+requires the operator's disposition rather than a silent change in treatment.
+No identity, certificate or membership is minted by revalidation.
+
+The shared operator command is `aweb revalidate-human-kind`: it reports only
+JSON counts and makes no database writes by default. `--apply` stamps live
+verified humans with a compare-and-set on row ID, key, stable ID and human label;
+retirement or a changed identity prevents the write. Retired rows are verified
+for the report only. Other outcomes never write or clear a marker. Counts include
+before/after active and retired totals and verified markers, each group's
+human/agent/revoked/unregistered/unavailable/invalid outcomes, stamps and lost
+compare-and-sets. Exit 1 means unresolved active outcomes or a lost compare-and-set;
+operators must compare this with their explicitly approved inventory, even if
+some unresolved rows are accepted. Exit 0 does not replace that comparison.
+
+The command uses `AWEB_DATABASE_URL` (`DATABASE_URL` fallback),
+`AWEB_REDIS_URL` (`REDIS_URL` fallback), `AWID_REGISTRY_URL` and
+`AWID_SERVICE_TOKEN`; `--schema` defaults to `aweb`. It never creates schema,
+extensions or migrations. Redis may cache public verifier evidence as in normal
+request verification. Hosted deployments invoke this same command against their
+canonical aweb schema, without a separate revalidation implementation.
+
+Release order is mandatory:
+
+1. Apply migration 047 **before** deploying the new application code. It is
+   additive and leaves old code unaffected.
+2. From the new package in an operator environment, run
+   `aweb revalidate-human-kind --apply` against that database.
+3. Compare before/after counts and all outcome buckets with the approved inventory;
+   resolve unexpected active outcomes and compare-and-set failures.
+4. Deploy the new code only after the operator's go.
+
+Quiesce human member creation/reconnects during the revalidation-to-deploy window
+or repeat revalidation and reconcile changes before enabling the policy. If the
+deployment cannot apply migration ahead of code, use a maintenance window from
+migration through revalidation, count approval and application startup; do not
+serve the new policy between those steps. A verified human reconnecting without
+verifiable ID-chain evidence is rewritten to `agent` with no human marker, per the
+ruling. Omitting a chain header still permits registered evidence discovery by
+the public verifier; it is absence of verified evidence that removes the marker.
+
+Raw legacy labels may identify only the **predecessor** in owner-checked retired
+mail succession, contact transfer and pre-cutover alias retirement. They do not
+make any row a current human; the live/new destination must satisfy the verified
+predicate. This preserves history without asserting identity-kind evidence.
+
 ## 3. Registration, heads, rotation and revocation
 
 Human and global IDs are valid in this tree only after AWID registration.
