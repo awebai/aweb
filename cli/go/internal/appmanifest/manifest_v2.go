@@ -1481,11 +1481,11 @@ func (r *Resolved) CheckInvocationContext(toolName string, attestation *Attestat
 	return nil
 }
 
-// CheckAnswerPayload refuses a version 2 request body that carries an answer
+// CheckAnswerPayload refuses a version 2 or later request body that carries an answer
 // member, top-level or in a top-level object member, for any tool except a
 // surface answer_tool. Answers reach an app only through that tool.
 func (r *Resolved) CheckAnswerPayload(toolName string, body any) error {
-	if r.ManifestVersion != 2 || answerTools(r.Manifest.Surfaces)[strings.TrimSpace(toolName)] {
+	if r.ManifestVersion < 2 || answerTools(r.Manifest.Surfaces)[strings.TrimSpace(toolName)] {
 		return nil
 	}
 	object, ok := body.(map[string]any)

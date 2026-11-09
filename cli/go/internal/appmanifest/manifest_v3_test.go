@@ -53,15 +53,16 @@ func TestManifestV3WithoutOwnerActsDeclaresNoOwnerRole(t *testing.T) {
 
 func TestManifestV3RefusesAnOwnerActsOriginOutsideTheAudienceGrammar(t *testing.T) {
 	for name, origin := range map[string]string{
-		"the app's host":           "https://logs.example.com",
-		"the app's host on a port": "https://logs.example.com:8443",
-		"a path":                   "https://console.logs.example.com/console",
-		"a trailing slash":         "https://console.logs.example.com/",
-		"http":                     "http://console.logs.example.com",
-		"an upper-case host":       "https://Console.logs.example.com",
-		"a query":                  "https://console.logs.example.com?x=1",
-		"userinfo":                 "https://u@console.logs.example.com",
-		"empty":                    "",
+		"the app's host":                  "https://logs.example.com",
+		"the app's host, fully qualified": "https://logs.example.com.",
+		"the app's host on a port":        "https://logs.example.com:8443",
+		"a path":                          "https://console.logs.example.com/console",
+		"a trailing slash":                "https://console.logs.example.com/",
+		"http":                            "http://console.logs.example.com",
+		"an upper-case host":              "https://Console.logs.example.com",
+		"a query":                         "https://console.logs.example.com?x=1",
+		"userinfo":                        "https://u@console.logs.example.com",
+		"empty":                           "",
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Load(v3Manifest(3, v3OwnerActs(origin, v3Role("logs.reader"))), nil)
@@ -184,5 +185,14 @@ func TestACatalogServingVersions2And3ResolvesToVersion3(t *testing.T) {
 	variant, err = SelectVariant("https://logs.example.com", []int{1, 2}, fetch)
 	if err != nil || variant.ManifestVersion != 2 {
 		t.Fatalf("a version 2 client: %#v, %v", variant, err)
+	}
+}
+
+func TestOwnerActsOriginIsSeparatedFromAFullyQualifiedAppHost(t *testing.T) {
+	doc := `{"manifest_version":3,"app":{"id":"logs","version":"1.0.0","origin":"https://console.logs.example.com."},"tools":[],"owner_acts":` +
+		v3OwnerActs("https://console.logs.example.com", v3Role("logs.reader")) + `}`
+	_, err := Load([]byte(doc), nil)
+	if code := ErrorCode(err); code != CodeOwnerActsInvalid {
+		t.Fatalf("code %q, err %v", code, err)
 	}
 }
