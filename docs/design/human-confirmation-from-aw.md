@@ -342,7 +342,15 @@ endorsing an identity installs no app and needs no secrets or logs.
 - **Hooks.** The server is not an app producer. It keeps the binding and
   endorsement history in its own tables and emits no `post-governance-hook`.
   Its handoff therefore offers the loopback only; the typed-code fallback,
-  which requires that event, refuses.
+  which requires that event, refuses with `409 fallback_unavailable`.
+- **One origin for both roles.** The server has no separate app origin and
+  human origin: its API and its human pages share the record's origin. It
+  accepts team-auth on its API paths, including `POST /handoffs`, and applies
+  the human origin's refusal (`403 team_auth_refused` for `Authorization`,
+  `X-AWEB-*` or `X-AWID-*`) to its handoff page, result, console and
+  endorsement paths. The console session cookie is `Secure`, `HttpOnly` and
+  `SameSite=Strict`, and the API authenticates by team-auth headers and
+  ignores cookies, so the two credentials never stand in for each other.
 - **Cost to everyone else.** An operator who never uses protected
   endorsement configures nothing and runs nothing new: the migrations are
   additive, there is no new required setting, and no startup check can fail.
@@ -524,7 +532,8 @@ Each is a vector row, for the server and for a direct naapp:
 | The same D and key after an unrelated refresh of ancestry evidence | admits |
 | The team server's origin changed after the endorsement | the row still verifies; a new confirmation needs the replaced credential |
 | An owner act naming any other app or installation at the server | `owner_required` |
-| The server's handoff in the typed-code fallback | refused |
+| The server's handoff in the typed-code fallback | `409 fallback_unavailable` |
+| A team-auth header on the server's handoff page, result, console or endorsement paths | `403 team_auth_refused` |
 
 ## Optional: a security key from the terminal
 
