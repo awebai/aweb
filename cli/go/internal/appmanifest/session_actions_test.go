@@ -170,3 +170,67 @@ func TestSessionActionsResolveIntoOwnerActs(t *testing.T) {
 		t.Fatalf("protected param %#v", p)
 	}
 }
+
+// Inherited version 2 tool fields keep version 2's handling of null: a null
+// field reads as absent. The fields session actions add stay strict.
+func TestSessionActionsKeepVersion2NullHandlingOfInheritedFields(t *testing.T) {
+	for name, edit := range map[string]func(map[string]any, []any){
+		"a null description": func(o map[string]any, actions []any) {
+			action(actions, "change-set")["description"] = nil
+		},
+		"a stage body with a null mode": func(o map[string]any, actions []any) {
+			action(actions, "onepassword-token")["body"] = map[string]any{"mode": nil}
+		},
+		"a stage with a null body": func(o map[string]any, actions []any) {
+			action(actions, "onepassword-token")["body"] = nil
+		},
+		"a read with null params and a null input_schema": func(o map[string]any, actions []any) {
+			read := action(actions, "change-set")
+			read["path"] = "/change-sets"
+			read["params"] = nil
+			read["input_schema"] = nil
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := sessionActionCaseLoad(t, edit); err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+		})
+	}
+}
+
+func TestSessionActionsRefuseNullInTheFieldsTheyAdd(t *testing.T) {
+	for name, edit := range map[string]func(map[string]any, []any){
+		"a read with a null body": func(o map[string]any, actions []any) {
+			action(actions, "change-set")["body"] = nil
+		},
+		"a null protected": func(o map[string]any, actions []any) {
+			action(actions, "onepassword-token")["params"].([]any)[1].(map[string]any)["protected"] = nil
+		},
+		"a null terminal_output": func(o map[string]any, actions []any) {
+			action(actions, "confirm")["terminal_output"] = nil
+		},
+		"a null completion": func(o map[string]any, actions []any) {
+			action(actions, "confirm")["completion"] = nil
+		},
+		"a null completion on a read": func(o map[string]any, actions []any) {
+			action(actions, "change-set")["completion"] = nil
+		},
+		"a null kind": func(o map[string]any, actions []any) {
+			action(actions, "change-set")["kind"] = nil
+		},
+		"a null role": func(o map[string]any, actions []any) {
+			action(actions, "change-set")["role"] = nil
+		},
+		"a null description key in another case": func(o map[string]any, actions []any) {
+			action(actions, "change-set")["Description"] = nil
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := sessionActionCaseLoad(t, edit)
+			if code := ErrorCode(err); code != CodeOwnerActsInvalid {
+				t.Fatalf("code %q, err %v", code, err)
+			}
+		})
+	}
+}

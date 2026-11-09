@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"regexp"
 	"strings"
 )
@@ -47,6 +48,9 @@ type SessionAction struct {
 	Body           *Body                `json:"body,omitempty"`
 	TerminalOutput []string             `json:"terminal_output,omitempty"`
 	Completion     *Completion          `json:"completion,omitempty"`
+	// bodyDeclared is whether the action names a body member, even null,
+	// which a read refuses by presence.
+	bodyDeclared bool
 }
 
 // SessionActionParam is a tool param that a stage action may mark
@@ -136,7 +140,8 @@ func decodeSessionAction(raw json.RawMessage) (SessionAction, error) {
 		TerminalOutput []string          `json:"terminal_output,omitempty"`
 		Completion     json.RawMessage   `json:"completion,omitempty"`
 	}
-	if err := decodeStrictObject(raw, &decoded, "session_actions[]"); err != nil {
+	present, err := decodeExactObject(raw, &decoded, "session_actions[]", "kind", "role", "terminal_output", "completion")
+	if err != nil {
 		return SessionAction{}, err
 	}
 	action := SessionAction{
@@ -149,19 +154,24 @@ func decodeSessionAction(raw json.RawMessage) (SessionAction, error) {
 	}
 	for _, item := range decoded.Params {
 		var param SessionActionParam
-		if err := decodeStrictObject(item, &param, "session_actions[].params[]"); err != nil {
+		if isJSONNull(item) {
+			action.Params = append(action.Params, param)
+			continue
+		}
+		if _, err := decodeExactObject(item, &param, "session_actions[].params[]", "protected"); err != nil {
 			return SessionAction{}, err
 		}
 		action.Params = append(action.Params, param)
 	}
-	if decoded.Body != nil {
+	action.bodyDeclared = present["body"]
+	if decoded.Body != nil && !isJSONNull(decoded.Body) {
 		var body Body
-		if err := decodeStrictObject(decoded.Body, &body, "session_actions[].body"); err != nil {
+		if _, err := decodeExactObject(decoded.Body, &body, "session_actions[].body"); err != nil {
 			return SessionAction{}, err
 		}
 		action.Body = &body
 	}
-	if decoded.Completion != nil {
+	if present["completion"] {
 		completion, err := decodeCompletion(decoded.Completion)
 		if err != nil {
 			return SessionAction{}, err
@@ -169,6 +179,37 @@ func decodeSessionAction(raw json.RawMessage) (SessionAction, error) {
 		action.Completion = completion
 	}
 	return action, nil
+}
+
+// decodeExactObject decodes an object whose keys must match exactly. A
+// member that is null reads as absent, as version 2 decodes a tool, except
+// the members named strict, which may not be null. It returns which members
+// were present.
+func decodeExactObject(data []byte, v any, what string, strict ...string) (map[string]bool, error) {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return nil, fmt.Errorf("%s must be an object", what)
+	}
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &members); err != nil {
+		return nil, err
+	}
+	for _, name := range strict {
+		if value, ok := members[name]; ok && isJSONNull(value) {
+			return nil, fmt.Errorf("%s.%s must not be null", what, name)
+		}
+	}
+	if err := checkExactKeys(members, reflect.TypeOf(v), what); err != nil {
+		return nil, err
+	}
+	if err := DecodeSingleJSONStrict(trimmed, v); err != nil {
+		return nil, fmt.Errorf("%s: %w", what, err)
+	}
+	present := map[string]bool{}
+	for name := range members {
+		present[name] = true
+	}
+	return present, nil
 }
 
 func decodeCompletion(raw json.RawMessage) (*Completion, error) {
@@ -233,7 +274,7 @@ func validateSessionAction(action SessionAction, declaredRoles map[string]bool) 
 		if method != "GET" {
 			return fmt.Errorf("a read action uses method GET")
 		}
-		if action.Body != nil {
+		if action.bodyDeclared {
 			return fmt.Errorf("a read action has no body")
 		}
 		for _, param := range action.Params {
