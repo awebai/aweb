@@ -17,19 +17,20 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID, uuid4
 
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
 from webauthn.helpers import base64url_to_bytes
 
+from aweb_naapp.hooks.owner_act import VerifiedOwnerAct
 from aweb_naapp.hooks.producer import HookProducerFactory, RegistrationView
 from aweb_naapp.runtime.approvals import Approval, ApprovalState, Assurance
 from aweb_naapp.runtime.audit import AuditEvent, AuditKind
@@ -257,7 +258,13 @@ class CredentialAudit:
         migration_module: str,
         approvals: ApprovalGovernance | None = None,
         after_enqueue: Callable[[TransactionManager, UUID], Awaitable[None]] | None = None,
+        ungated_acts: frozenset[str] = frozenset(),
     ) -> None:
+        if ungated_acts and after_enqueue is None:
+            raise ValueError(
+                "an act recorded with no registered target must be written to the app's"
+                " own record in the transaction that enqueued it"
+            )
         if (
             not app_id
             or app_id != fence.app_id
@@ -274,6 +281,8 @@ class CredentialAudit:
         self._role_of, self._approvals = role_of, approvals
         self._view, self._max_backlog_age = registration_view, max_backlog_age
         self._migration_module, self._after_enqueue = migration_module, after_enqueue
+        # Fixed in the app's reviewed code, never configuration (ruling ed36580d).
+        self._ungated_acts = ungated_acts
         self._prepared: ContextVar[
             _OwnerActContext
             | _ApprovalContext
@@ -380,6 +389,48 @@ class CredentialAudit:
             raise GovernanceUnavailable()
         return _OwnerActContext(
             self, admitted, await self._view(admitted.team_id), signing, signature
+        )
+
+    async def record_owner_act(
+        self,
+        tx: TransactionManager,
+        act: VerifiedOwnerAct,
+        payload: Mapping[str, Any],
+        *,
+        occurred_at: datetime,
+    ) -> UUID:
+        """Record the governance event of one of the app's own owner acts in the
+        effect's transaction ``tx``, under the act prepared by
+        :meth:`prepare_owner_act` and consumed in ``tx``. ``payload`` is the
+        event's act fields; the recorder adds the owner-act authority and the
+        act's digest. A widening act needs a current registered target unless
+        the app exempts it."""
+        context = self._prepared.get()
+        if not isinstance(context, _OwnerActContext) or context.owner is not self:
+            raise GovernanceUnavailable()
+        digest = hashlib.sha256(context.signing).hexdigest()
+        consumed = await tx.fetch_one(
+            "SELECT nonce FROM {{tables.owner_act_nonces}} WHERE scope=$1 AND team_id=$2 AND act_sha256=$3",
+            self._owner_act_scope,
+            context.admitted.team_id,
+            digest,
+        )
+        if (
+            consumed is None
+            or consumed["nonce"] != act.nonce
+            or act.team_id != context.admitted.team_id
+            or act.transaction_id != await tx.fetch_value("SELECT txid_current()")
+            or {"authority", "owner_act_sha256"} & set(payload)
+        ):
+            raise GovernanceUnavailable()
+        actor = {"authority_mode": "owner_act", "did_key": act.fields["team_key_did"], "attestations": []}
+        return await self._enqueue(
+            tx,
+            context.admitted,
+            {**payload, "authority": "owner_act", "owner_act_sha256": digest},
+            actor,
+            occurred_at,
+            context.view,
         )
 
     async def prepare_enrolment(self, token: str) -> PreparedEnrolment:
@@ -921,6 +972,17 @@ class CredentialAudit:
             producer.producer.generation,
         ) != (admitted.app_id, admitted.installation_id, admitted.generation):
             raise GovernanceUnavailable()
+        if payload["act"] in self._ungated_acts:
+            event_id = await producer.enqueue_self_recorded(
+                tx,
+                team_id=admitted.team_id,
+                payload=payload,
+                actor=actor,
+                occurred_at=occurred_at,
+                signed_trace_id=signed_trace_id,
+            )
+            await self._after_enqueue(tx, event_id)
+            return event_id
         if payload["direction"] == "widening":
             await producer.require_admission(
                 tx,
