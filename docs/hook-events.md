@@ -79,11 +79,19 @@ Every hook's payload is a **flat allowlist**:
 - a JSON object whose values are strings, integers, booleans or lists of
   strings, with no nested objects, floats or nulls;
 - each field has a type with a pattern and bounds, or an enum; a list has
-  bounds and unique items;
+  bounds and unique items. A string type whose pattern does not bound its
+  length also gives `max_length`: `host` allows at most 253 characters, the
+  DNS name limit;
 - an unknown field is refused, so a producer cannot leak data through an extra
   field;
 - conditional rules say which fields an event of a given kind needs or must not
   carry.
+
+The `host` bound was added to v1 in place, under decision 93's
+pre-deployment exception (coordinator ruling for aweb-acgh.16.47): no secrets
+or logs installation is deployed, and the secrets broker already refuses a
+host name over 253 characters (`naapp-lib/src/aweb_naapp/egress/urls.py`), so
+the bound refuses nothing a producer emits.
 
 Values are references, identifiers, enums, digests and bounded integers. A
 payload never carries a secret value, a message body, a subject, a preview, a
@@ -274,7 +282,7 @@ direction, and a consumer refuses an event whose `direction` differs:
 
 | Widening | Narrowing |
 | --- | --- |
-| `role.designated`, `credential.enrolled`, `credential.recovered`, `grant.created`, `grant.changed`, `resource.created`, `resource.changed`, `resource.version_added`, `resource.enabled`, `policy.changed`, `runner.registered`, `installation.enabled` | `role.revoked`, `credential.revoked`, `grant.revoked`, `resource.disabled`, `resource.replaced`, `resource.version_observed`, `runner.deregistered`, `installation.disabled`, `hook_delivery.cancelled` |
+| `role.designated`, `credential.enrolled`, `credential.recovered`, `grant.created`, `grant.changed`, `resource.created`, `resource.changed`, `resource.version_added`, `resource.enabled`, `policy.changed`, `runner.registered`, `installation.enabled`, `logs.retention.lengthened`, `logs.legal_hold.set` | `role.revoked`, `credential.revoked`, `grant.revoked`, `resource.disabled`, `resource.replaced`, `resource.version_observed`, `runner.deregistered`, `installation.disabled`, `hook_delivery.cancelled`, `logs.retention.shortened`, `logs.erased`, `logs.legal_hold.released` |
 
 `grant.changed` is widening whatever the change, so a change that only narrows
 a grant is still gated. A producer that must contain without waiting uses
@@ -319,6 +327,28 @@ inserted body or a secret-value version. The actual admitted approval,
 system actor, widening gate and atomic transition/enqueue remain mandatory;
 the receipt grants no execution or historical-fallback authority. See the
 [job consumer mapping](design/secrets.md#115-operational-record-and-the-post-secret-use-hook-outbox).
+
+**Logs' own acts.** Logs records the owner's retention, erasure and legal-hold
+acts (audit-substrate §B6) as `logs.*` acts, each with `authority`
+`owner_act` and none of the other acts' fields:
+
+- `logs.retention.shortened` and `logs.retention.lengthened` carry
+  `event_class` (`all` or a hook) and `retention` (`keep`, or `days` with
+  `retention_days`, 1 to 36500). The producer compares the new setting with
+  the class's current one, `keep` being the longest and a first setting being
+  measured from `keep`: shorter is `shortened`, which is never `keep`;
+  anything else is `lengthened`.
+- `logs.erased` carries `erase_scope`, `erased_count`, `reason_code` and either
+  `actor_ref` (scope `actor`) or `chain_epoch`, `team_seq_first` and
+  `team_seq_last` (scope `range`), the owner act's own scopes.
+- `logs.legal_hold.set` carries `hold_id`, `hold_scope` (`all`, or `actor`
+  with `actor_ref`) and `reason_code`; `logs.legal_hold.released` carries
+  `hold_id` only.
+
+Keeping content readable longer widens exposure, so lengthening and setting a
+hold are widening; shortening, erasing and releasing a hold are narrowing.
+These acts and fields were added to v1 in place under decision 93's
+pre-deployment exception (aweb-acgh.16.23); no logs installation is deployed.
 
 `authority` is how the act was authorized:
 
@@ -931,6 +961,7 @@ self-hosted operator allows them; a hosted deployment always refuses them.
 | --- | --- |
 | 2xx with `{event_id, disposition: "appended" \| "duplicate", receipt?}` | `delivered` or `duplicate`. The producer keeps the receipt, and at least the highest receipt per team and binding. |
 | `409 event_conflict` (same id, different bytes) | `conflict`: never retried, surfaced as a fault. |
+| `413 request_too_large` (a body over the receiver's bound) | `rejected` at once and surfaced, never retried: no retry makes the same bytes smaller. A producer that keeps the envelope bound never meets it. |
 | A schema or authorization refusal | Retried with bounded backoff, in case a registry view is stale, then `rejected` and surfaced. |
 | A network error or 5xx | Retried with capped exponential backoff and never dropped. After the operator's disclosed delivery horizon it is `stalled` and surfaced to the owner. |
 | The binding is no longer active when the producer sends | Ordinary delivery is `cancelled`, with its reason. The durably authorized terminal obligation retries independently; inactive state never cancels it. |
@@ -1147,27 +1178,33 @@ describe.
   spelling, with `fired_at` never earlier.
 - `result_status` is `success`, `denied`, `failed` or `outcome_unknown`.
 - `payload` is the catalog payload for the hook.
+- The signing bytes, prefix included, are at most 262,144 bytes (256 KiB). A
+  producer never builds a larger event: it refuses one before it spends a
+  sequence number or enters an outbox. The catalog's largest possible event,
+  computed from its bounds, is under 46 KB.
 
 **Verification** requires the team the verifier expects; without one it
 refuses (`verifier_misconfigured`). It then checks, in this order, and reports
 the first fault:
 
-1. the prefix (`wrong_prefix`);
-2. a strict parse (`duplicate_key`, `float_value`, `null_value`,
+1. the size of the signing bytes (`envelope_too_large`), before they are
+   read;
+2. the prefix (`wrong_prefix`);
+3. a strict parse (`duplicate_key`, `float_value`, `null_value`,
    `string_not_ascii`, `too_deep`, `invalid_json`);
-3. canonical bytes (`not_canonical`);
-4. the envelope's fields, top down (`unknown_field`, `missing_field`,
+4. canonical bytes (`not_canonical`);
+5. the envelope's fields, top down (`unknown_field`, `missing_field`,
    `invalid_value`), with the catalog (`unknown_catalog`) and the hook
    (`unknown_hook`);
-5. a flat payload of strings, integers, booleans and lists of strings
+6. a flat payload of strings, integers, booleans and lists of strings
    (`invalid_value`);
-6. a producer kind the hook allows (`producer_not_allowed`), so a member can
+7. a producer kind the hook allows (`producer_not_allowed`), so a member can
    never sign a server hook;
-7. for a client event, an actor equal to its signer (`actor_not_signer`), so
+8. for a client event, an actor equal to its signer (`actor_not_signer`), so
    one member cannot file events as another;
-8. the team the verifier expects (`team_mismatch`);
-9. the signature's spelling (`signature_encoding`), then the signature
-   (`bad_signature`).
+9. the team the verifier expects (`team_mismatch`);
+10. the signature's spelling (`signature_encoding`), then the signature
+    (`bad_signature`).
 
 The catalog reader then checks the payload against its hook's allowlist (see
 [Payloads](#payloads)).
@@ -1235,25 +1272,29 @@ registry, for a client's certificate) and its clock. Without an origin or a
 binding it refuses (`verifier_misconfigured`), as it does for a client delivery
 without the team key. It checks, in this order:
 
-1. the `AWEB-Hook DIDKey` scheme (`wrong_scheme`), so an app-event or
+1. the body is at most 524,288 bytes (512 KiB), read no further than that
+   (`request_too_large`, answered 413). An event of the largest size an
+   envelope may have fits well within it, so a producer never meets this
+   refusal, and a delivery it refuses is never retried;
+2. the `AWEB-Hook DIDKey` scheme (`wrong_scheme`), so an app-event or
    `hook-resolve` credential is refused at a hook target;
-2. the signed payload is strict base64url and strict canonical JSON, and its
+3. the signed payload is strict base64url and strict canonical JSON, and its
    signature is spelled exactly (`signature_encoding`) and verifies under the
    header's `did:key` (`bad_signature`);
-3. `auth` is `hook-delivery` (`wrong_auth`);
-4. the payload's fields, its `did_key` is the header's (`signer_mismatch`), and
+4. `auth` is `hook-delivery` (`wrong_auth`);
+5. the payload's fields, its `did_key` is the header's (`signer_mismatch`), and
    its `team_id` is well formed (`invalid_value`);
-5. `aud` is the target's own origin (`audience_mismatch`);
-6. method and path are the request's (`request_mismatch`);
-7. `body_sha256` matches the body (`body_mismatch`);
-8. the timestamp is within 300 seconds of the target's clock
+6. `aud` is the target's own origin (`audience_mismatch`);
+7. method and path are the request's (`request_mismatch`);
+8. `body_sha256` matches the body (`body_mismatch`);
+9. the timestamp is within 300 seconds of the target's clock
    (`timestamp_outside_window`);
-9. `binding_id` is the target's own binding (`binding_mismatch`);
-10. the body carries a valid envelope of the credential's team, through the
+10. `binding_id` is the target's own binding (`binding_mismatch`);
+11. the body carries a valid envelope of the credential's team, through the
     envelope checks above;
-11. the envelope's `event_id` (`event_mismatch`), and its producer, `kid` and
+12. the envelope's `event_id` (`event_mismatch`), and its producer, `kid` and
     `did_key`, are the credential's (`producer_mismatch`);
-12. for a client producer, the team certificate is present
+13. for a client producer, the team certificate is present
     (`certificate_missing`), names the event's team, producer key and
     certificate id (`certificate_mismatch`), and is signed by the team's current
     key (`certificate_invalid`).

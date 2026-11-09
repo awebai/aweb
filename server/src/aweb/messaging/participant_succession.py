@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
+from aweb.human_kind import is_verified_human
 from aweb.service_errors import ConflictError, ValidationError
 
 
@@ -131,7 +132,7 @@ async def succeed_local_human_participant_on(
     if (
         not successors
         or any(
-            r["agent_type"] != "human"
+            not is_verified_human(r)
             or r.get("did_aw_verified_key") != r.get("did_key")
             or not str(r.get("did_key") or "").startswith("did:key:")
             or r.get("did_key") == old_key

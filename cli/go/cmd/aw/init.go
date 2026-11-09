@@ -132,8 +132,8 @@ func init() {
 	initCmd.Flags().BoolVar(&initSetupHooks, "setup-hooks", false, "Enable Claude Code chat-only polling after tool calls (explicit fallback; no mail or idle wake-ups)")
 	initCmd.Flags().BoolVar(&initRemoveNotifyHook, "remove-notify-hook", false, "Remove only the exact aw notify PostToolUse hook from current directory and repository root settings, with backups (standalone local action)")
 	initCmd.Flags().BoolVar(&initSetupChannel, "setup-channel", false, "Set up Claude Code aweb-channel plugin for real-time coordination")
-	initCmd.Flags().StringVar(&initHumanName, "human-name", "", "Human name (default: AWEB_HUMAN or $USER)")
-	initCmd.Flags().StringVar(&initAgentType, "agent-type", "", "Runtime type (default: AWEB_AGENT_TYPE or agent)")
+	initCmd.Flags().StringVar(&initHumanName, "human-name", "", "Human name (agents: explicit only; humans: AWEB_HUMAN or $USER)")
+	initCmd.Flags().StringVar(&initAgentType, "agent-type", "", "Runtime label (default: AWEB_AGENT_TYPE or agent; human kind is verified by the server)")
 	initCmd.Flags().BoolVar(&initWriteContext, "write-context", true, "Ensure .aw/context exists in the current directory")
 	initCmd.Flags().BoolVar(&initPrintExports, "print-exports", false, "Print shell export lines after JSON output")
 	addWorkspaceRoleFlags(initCmd, &initRole, "Workspace role name (must match a role in the active team roles bundle)")
@@ -468,7 +468,7 @@ func acceptInitInviteAndConnect(cmd *cobra.Command, workingDir, token, preferred
 	}
 	result, err := initCertificateConnectWithOptions(workingDir, awebURL, certificateConnectOptions{
 		Role:      resolveRequestedRole(strings.TrimSpace(initRole)),
-		HumanName: resolveHumanNameValue(strings.TrimSpace(initHumanName)),
+		HumanName: resolveHumanNameValue(initHumanName, resolveAgentType()),
 		AgentType: resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
 	})
 	if err != nil {
@@ -530,6 +530,9 @@ func filepathAbs(path string) (string, error) {
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
+	if activeHuman != nil {
+		return runHumanConnect(cmd)
+	}
 	if cmd.Flags().Changed("org") && !initWorkspaceTeam {
 		return usageError("--org requires --workspace-team")
 	}
@@ -607,7 +610,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			Name:         resolveInitGlobalName(initGlobal),
 			Alias:        requestedAlias,
 			Role:         resolveRequestedRole(strings.TrimSpace(initRole)),
-			HumanName:    resolveHumanNameValue(strings.TrimSpace(initHumanName)),
+			HumanName:    resolveHumanNameValue(initHumanName, resolveAgentType()),
 			AgentType:    resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
 			Global:       initGlobal,
 			InboundMode:  canonicalInitInboundModeForWire(initInboundMode),
@@ -643,7 +646,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 				return err
 			}
 			result, err := initCertificateConnectWithOptions(wd, serviceURLs.AwebURL, certificateConnectOptions{
-				Role: resolveRequestedRole(strings.TrimSpace(initRole)),
+				Role:      resolveRequestedRole(strings.TrimSpace(initRole)),
+				HumanName: strings.TrimSpace(initHumanName),
+				AgentType: resolveAgentType(),
 			})
 			if err != nil {
 				return err
@@ -695,7 +700,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 				Alias:       resolveAliasValue(resolveInitLocalName()),
 				TeamName:    strings.TrimSpace(initTeam),
 				Role:        resolveRequestedRole(strings.TrimSpace(initRole)),
-				HumanName:   resolveHumanNameValue(strings.TrimSpace(initHumanName)),
+				HumanName:   resolveHumanNameValue(initHumanName, resolveAgentType()),
 				AgentType:   resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
 			})
 			if err != nil {
@@ -746,7 +751,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 				return resolveAliasValue(resolveInitLocalName())
 			}(),
 			Name:               resolveInitGlobalName(initGlobal),
-			HumanName:          resolveHumanNameValue(strings.TrimSpace(initHumanName)),
+			HumanName:          resolveHumanNameValue(initHumanName, resolveAgentType()),
 			AgentType:          resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
 			Role:               resolveRequestedRole(strings.TrimSpace(initRole)),
 			Global:             initGlobal,
@@ -986,12 +991,10 @@ var channelPiPathLines = []string{
 	"sender's verification shown.",
 }
 
-func resolveHumanName() string {
-	return resolveHumanNameValue(strings.TrimSpace(initHumanName))
-}
-
-func resolveHumanNameValue(value string) string {
-	if v := strings.TrimSpace(value); v != "" {
+// Only human identities inherit a display name from the environment. An agent
+// name must be supplied explicitly; a machine login does not identify its human.
+func resolveHumanNameValue(value, agentType string) string {
+	if v := strings.TrimSpace(value); v != "" || agentType != "human" {
 		return v
 	}
 	if v := strings.TrimSpace(os.Getenv("AWEB_HUMAN")); v != "" {
@@ -1010,14 +1013,16 @@ func resolveAgentType() string {
 	return resolveAgentTypeValue(strings.TrimSpace(initAgentType))
 }
 
+// Runtime hints never establish identity kind. The server verifies human kind.
 func resolveAgentTypeValue(value string) string {
-	if v := strings.TrimSpace(value); v != "" {
-		return v
+	v := strings.TrimSpace(value)
+	if v == "" {
+		v = strings.TrimSpace(os.Getenv("AWEB_AGENT_TYPE"))
 	}
-	if v := strings.TrimSpace(os.Getenv("AWEB_AGENT_TYPE")); v != "" {
-		return v
+	if v == "" || v == "human" {
+		return "agent"
 	}
-	return "agent"
+	return v
 }
 
 func resolveInitLocalName() string {

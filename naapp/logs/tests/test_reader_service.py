@@ -1,5 +1,6 @@
-"""logs' reader service composed on a real runtime: a real coordination server
-and AWID, real PostgreSQL, a real TLS SMTP server and a software passkey.
+"""logs' readers on the app as production composes it (``create_app``): a real
+coordination server and AWID, real PostgreSQL, a real TLS SMTP server and a
+software passkey.
 
 A member granted ``logs.readers`` asks for a reader slot, the team owner
 designates a contact for it, the reader enrols from the link it receives by
@@ -27,23 +28,18 @@ from aweb.installations import install_verified_manifest_on
 from aweb_naapp.css import CSS_SHA256
 from aweb_naapp.egress import AddressPolicy, Egress
 from aweb_naapp.egress.send import EgressNotSent
-from aweb_naapp.email import EmailSettings, Mailer
+from aweb_naapp.email import EmailSettings
 from aweb_naapp.manifest import load_manifest
-from aweb_naapp.runtime.app import NaappRuntime
-from aweb_naapp.runtime.origins import split_origins
 from aweb_naapp.runtime.passkeys import contact_sha256
-from aweb_naapp.runtime.passkeys.email import PasskeyEmailDelivery
 from aweb_naapp_testing import Member
 from aweb_naapp_testing.owner_acts import AUDIENCE, TeamOwner
 from aweb_naapp_testing.smtp import SmtpServer
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN
-from fastapi import FastAPI
 
-from aweb_logs import MIGRATIONS_MODULE, MIGRATIONS_PATH
-from aweb_logs.app import chain_signer
+from aweb_logs.app import create_app
 from aweb_logs.config import LogsSettings
-from aweb_logs.reader_service import ReaderService, reader_service
+from aweb_logs.readers import ReaderDirectory
 
 from .deployment import TEST_APP_ID, served_manifest, template, write_key_file
 from .reader_world import act_body
@@ -99,24 +95,11 @@ class Deployment:
     member: Member
     owner: TeamOwner
     installation_id: str
-    service: ReaderService
+    directory: ReaderDirectory
     smtp: SmtpServer
     agent: httpx.AsyncClient
     console: httpx.AsyncClient
     looked_up: list[str]
-
-
-def manifest_template() -> dict[str, Any]:
-    manifest = template()
-    manifest["app_keys"] += [
-        {"kid": "logs-grants", "purposes": ["app-grant-read"]},
-        {"kid": "logs-governance", "purposes": ["hook-event"]},
-    ]
-    manifest["tools"] += [READER_SLOT_TOOL, REMOVE_READER_TOOL]
-    manifest["hooks"]["productions"] = [
-        {"catalog": {"id": "aweb.hooks", "version": 1}, "hook": "post-governance-hook", "reads": []}
-    ]
-    return manifest
 
 
 async def install(server_db, team_id: str, data: bytes) -> dict:
@@ -144,27 +127,21 @@ async def install(server_db, team_id: str, data: bytes) -> dict:
     return installation
 
 
-def mailer(smtp: SmtpServer, directory: Path) -> Mailer:
+def email_settings(smtp: SmtpServer, directory: Path) -> EmailSettings:
     password = directory / "smtp-password"
     password.write_text(smtp.password)
     password.chmod(0o600)
-    return Mailer(
-        EmailSettings.from_env(
-            "LOGS_",
-            environ={
-                "LOGS_EMAIL_SMTP_HOST": "localhost",
-                "LOGS_EMAIL_SMTP_PORT": str(smtp.port),
-                "LOGS_EMAIL_USERNAME": smtp.username,
-                "LOGS_EMAIL_PASSWORD_FILE": str(password),
-                "LOGS_EMAIL_FROM": "noreply@logs.example.com",
-                "LOGS_EMAIL_CA_FILE": str(smtp.ca_file),
-            },
-        )
+    return EmailSettings.from_env(
+        "LOGS_",
+        environ={
+            "LOGS_EMAIL_SMTP_HOST": "localhost",
+            "LOGS_EMAIL_SMTP_PORT": str(smtp.port),
+            "LOGS_EMAIL_USERNAME": smtp.username,
+            "LOGS_EMAIL_PASSWORD_FILE": str(password),
+            "LOGS_EMAIL_FROM": "noreply@logs.example.com",
+            "LOGS_EMAIL_CA_FILE": str(smtp.ca_file),
+        },
     )
-
-
-async def admit_members(request: Any, principal: Any, tool: Any) -> bool:
-    return True
 
 
 @pytest.fixture
@@ -174,17 +151,14 @@ async def deployment(coordination, test_db_factory, tmp_path) -> AsyncIterator[D
     await coordination.publish_server(member)
     await coordination.connect(member)
     db = await test_db_factory.create_db(suffix="logs_reader_service")
-    manifest = manifest_template()
     key_files = {
         entry["kid"]: write_key_file(tmp_path / f"key-{index}")
-        for index, entry in enumerate(manifest["app_keys"])
+        for index, entry in enumerate(template()["app_keys"])
     }
-    manifest_path = tmp_path / "aweb-app.json"
-    manifest_path.write_text(json.dumps(manifest))
     installation = await install(
         coordination.server.db.get_manager("aweb"),
         member.team_id,
-        served_manifest(key_files, origin=ORIGIN, manifest=manifest),
+        served_manifest(key_files, origin=ORIGIN),
     )
     settings = LogsSettings(
         _env_file=None,
@@ -192,45 +166,26 @@ async def deployment(coordination, test_db_factory, tmp_path) -> AsyncIterator[D
         db_schema=db.schema or "public",
         app_id=TEST_APP_ID,
         public_origin=ORIGIN,
+        console_origin=CONSOLE,
         awid_registry_url=REGISTRY_URL,
         awid_service_token=SERVICE_TOKEN,
         app_key_files=key_files,
     )
-    runtime = NaappRuntime(
-        settings,
-        module_name=MIGRATIONS_MODULE,
-        migrations_path=MIGRATIONS_PATH,
-        manifest_path=manifest_path,
-        awid_transport=coordination.registry.transport,
-        team_server_transport=coordination.server.transport,
-        hook_egress=Egress(addresses=AddressPolicy(), resolver=Unresolved(), user_agent="logs"),
-    )
-    api, console = FastAPI(), FastAPI()
     with blocked_dns() as looked_up, SmtpServer(tmp_path / "smtp") as smtp:
-        async with runtime.lifespan(api):
-            service = await reader_service(
-                runtime,
-                signer=chain_signer(settings, runtime.manifest),
-                console_origin=CONSOLE,
-                delivery=PasskeyEmailDelivery(
-                    mailer=mailer(smtp, tmp_path),
-                    console_origin=CONSOLE,
-                    product="Logs",
-                    link_text="Open Logs",
-                ),
-                backlog_age=timedelta(minutes=5),
-            )
-            api.include_router(
-                service.agent_router(
-                    runtime.authorized(grants=runtime.installation_grants(), policy=admit_members)
-                )
-            )
-            console.include_router(service.console_router)
-            app = split_origins(api, console, agent_origin=ORIGIN, human_origin=CONSOLE)
+        service = create_app(
+            settings,
+            email=email_settings(smtp, tmp_path),
+            awid_transport=coordination.registry.transport,
+            team_server_transport=coordination.server.transport,
+            hook_egress=Egress(addresses=AddressPolicy(), resolver=Unresolved(), user_agent="logs"),
+        )
+        async with service.api_app.router.lifespan_context(service.api_app):
             async with (
-                httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=ORIGIN) as agent,
                 httpx.AsyncClient(
-                    transport=httpx.ASGITransport(app=app), base_url=CONSOLE
+                    transport=httpx.ASGITransport(app=service), base_url=ORIGIN
+                ) as agent,
+                httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=service), base_url=CONSOLE
                 ) as human,
             ):
                 yield Deployment(
@@ -241,7 +196,7 @@ async def deployment(coordination, test_db_factory, tmp_path) -> AsyncIterator[D
                         team_id=member.team_id,
                     ),
                     installation_id=installation["installation_id"],
-                    service=service,
+                    directory=ReaderDirectory(db),
                     smtp=smtp,
                     agent=agent,
                     console=human,
@@ -401,7 +356,7 @@ async def test_a_member_removes_a_reader_but_never_the_last(deployment: Deployme
     response = await member_post(deployment, path, {"scope": removed})
     assert response.status_code == 200, response.text
     assert response.json() == {"scope": removed}
-    current = await deployment.service.directory.current_readers(
+    current = await deployment.directory.current_readers(
         installation_id=deployment.installation_id, team_id=deployment.member.team_id
     )
     assert [reader.scope for reader in current] == [kept]

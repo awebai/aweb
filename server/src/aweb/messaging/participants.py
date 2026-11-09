@@ -6,6 +6,8 @@ actor, never a newly invented global address or membership in another team.
 
 from __future__ import annotations
 
+from aweb.human_kind import is_verified_human
+
 from aweb.identity_auth_deps import _enforce_current_membership
 
 
@@ -25,7 +27,7 @@ async def messaging_participants_by_aliases(
                   CASE WHEN did_aw_verified_key=did_key THEN address END AS address,
                   (NULLIF(did_aw,'') IS NOT NULL) AS has_global_claim,
                   did_aw AS policy_did_aw,
-                  inbound_mode, status, deleted_at, agent_type, certificate_id,
+                  inbound_mode, status, deleted_at, agent_type, human_verified_key, certificate_id,
                   identity_scope
            FROM {{tables.agents}}
            WHERE team_id=$1 AND alias=ANY($2::text[]) AND deleted_at IS NULL""",
@@ -35,7 +37,7 @@ async def messaging_participants_by_aliases(
     result = []
     for row in rows:
         row = dict(row)
-        if row.get("agent_type") == "human":
+        if is_verified_human(row):
             if team_id != selected_team_id or row.get("status") != "active":
                 continue
             if not row.get("did_key"):

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.human_kind import agent_listing_predicate_sql, effective_agent_type
+
 import json
 from datetime import datetime, timezone
 from typing import Literal, Optional
@@ -374,9 +376,9 @@ async def list_agents(
     aweb_db = db.get_manager("aweb")
 
     rows = await aweb_db.fetch_all(
-        """
+        f"""
         SELECT a.agent_id, a.alias, a.did_key, projected.did_aw, projected.address,
-               a.human_name, a.agent_type, a.role, a.identity_scope,
+               a.human_name, a.agent_type, a.human_verified_key, a.role, a.identity_scope,
                a.inbound_mode, a.status,
                e.encryption_key_id,
                e.encryption_public_key,
@@ -395,7 +397,7 @@ async def list_agents(
                ctx.workspace_path,
                ctx.ws_role,
                ctx.repo
-        FROM {{tables.agents}} a
+        FROM {{{{tables.agents}}}} a
         CROSS JOIN LATERAL (
             SELECT CASE WHEN a.did_aw_verified_key = a.did_key THEN a.did_aw END AS did_aw,
                    CASE WHEN a.did_aw_verified_key = a.did_key THEN a.address END AS address
@@ -405,7 +407,7 @@ async def list_agents(
                    identity_did, identity_stable_id, assertion_custody, created_at_text,
                    not_before_text, expires_at_text,
                    previous_encryption_key_id, assertion_signature
-            FROM {{tables.agent_encryption_keys}}
+            FROM {{{{tables.agent_encryption_keys}}}}
             WHERE agent_id = a.agent_id
               AND team_id = a.team_id
               AND identity_did = a.did_key
@@ -428,14 +430,14 @@ async def list_agents(
                    w.workspace_path,
                    w.role AS ws_role,
                    r.canonical_origin AS repo
-            FROM {{tables.workspaces}} w
-            LEFT JOIN {{tables.repos}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
+            FROM {{{{tables.workspaces}}}} w
+            LEFT JOIN {{{{tables.repos}}}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
             WHERE w.team_id = a.team_id AND w.agent_id = a.agent_id AND w.deleted_at IS NULL
             ORDER BY w.last_seen_at DESC NULLS LAST, w.created_at DESC, w.workspace_id
             LIMIT 1
         ) ctx ON TRUE
         WHERE a.team_id = $1 AND a.deleted_at IS NULL
-          AND COALESCE(a.agent_type, 'agent') != 'human'
+          AND {agent_listing_predicate_sql("a")}
         ORDER BY a.alias
         """,
         identity.team_id,
@@ -484,7 +486,7 @@ async def list_agents(
                 did_aw=r.get("did_aw"),
                 address=r.get("address"),
                 human_name=r.get("human_name") or None,
-                agent_type=r.get("agent_type") or None,
+                agent_type=effective_agent_type(r),
                 workspace_type=(ctx.get("workspace_type") if ctx else None),
                 role=role,
                 role_name=role,

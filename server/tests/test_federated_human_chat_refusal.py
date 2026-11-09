@@ -114,12 +114,13 @@ async def test_remote_human_refusal_keeps_typed_body_through_source(two_receiver
             response = await client.post(path, content=body, headers={'Content-Type': 'application/json',
                 **_signed_identity_headers(alice_key, alice_key_did, 'did:aw:alice', body)})
         return {'http_status': response.status_code, **response.json()}
-    # Same real path reaches an agent before it reaches an authoritative human.
+    # A legacy human label alone cannot trigger human federation treatment.
+    await receiver_db.execute("UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=NULL WHERE did_aw='did:aw:bob'")
     control = await send(str(uuid4()))
     assert 'error' not in control and control.get('http_status', 200) == 200, control
     cid = control['session_id']
     assert await receiver_db.fetch_val('SELECT count(*) FROM {{tables.chat_messages}}') == 1
-    await receiver_db.execute("UPDATE {{tables.agents}} SET agent_type='human' WHERE did_aw='did:aw:bob'")
+    await receiver_db.execute("UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE did_aw='did:aw:bob'")
     refused = await send(cid if existing else str(uuid4()), continuation=existing)
     assert refused.get('http_status', 422) == 422, refused
     assert refused.get('reason') == 'recipient_human_mail_only', refused

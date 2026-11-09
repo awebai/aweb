@@ -136,9 +136,13 @@ refused otherwise.
 - **`app-role.revoke`**: `app_id`, `installation_id`, `role` and
   `subject_ref`, the existing holder.
 
-`role` is the app's role scope, a token such as `logs.reader`,
-`secrets.owner` or `secrets.approver.<policy>`. It is the same value the
-`post-governance-hook` `role` field carries.
+`role` is the holder's role token: the app-local role name, a dot and a
+suffix the app chooses, such as `logs.reader.` followed by 32 hex characters
+or `secrets.owner.` followed by 40. It is the B3 scope the holder enrols
+under. The `post-governance-hook` `role` field carries the role, the token's
+name prefix (`logs.reader`, `secrets.owner`), not the token. The app issues
+the token, and the act is delivered to the app's declared human origin
+([owner-act delivery](owner-act-delivery.md)).
 - **`logs.retention.set`**: `app_id`, `installation_id`, `event_class` (`all`
   or one hook) and `retention` (`keep`, or `days` with `retention_days` from 1
   to 36500).

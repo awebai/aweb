@@ -8,7 +8,7 @@ ceremony updates B3 credentials in its own transaction.
 
 from datetime import UTC, datetime
 
-from aweb_naapp.console import ConsoleSession
+from aweb_naapp.console import ConsoleSession, session_is_current
 from aweb_naapp.roles import PrincipalKey, has_role, hold_role
 from aweb_naapp.runtime.installation import AdmittedInstallation
 from aweb_naapp.runtime.passkeys import PreparedCurrentApprovers
@@ -45,24 +45,7 @@ class ConsoleReconciliationFence:
         return self._current.expires_at
 
     async def _session(self, tx: TransactionManager, *, lock: bool = False) -> None:
-        row = await tx.fetch_one(
-            "SELECT scope,subject,evidence_ref,expires_at,closed_at"
-            " FROM {{tables.console_sessions}} WHERE token_sha256=$1"
-            + (" FOR SHARE" if lock else ""),
-            self._current.token_sha256,
-        )
-        if (
-            row is None
-            or row["closed_at"] is not None
-            or (row["scope"], row["subject"], row["evidence_ref"], row["expires_at"])
-            != (
-                self.owner_scope,
-                self.owner_subject,
-                self._current.evidence_ref,
-                self.expires_at,
-            )
-            or self.expires_at <= datetime.now(UTC)
-        ):
+        if not await session_is_current(tx, self._current, hold=lock):
             raise HTTPException(401, "console_session_required")
 
     async def prepare(self, tx: TransactionManager) -> PreparedCurrentApprovers:

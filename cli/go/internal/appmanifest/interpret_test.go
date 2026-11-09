@@ -340,3 +340,12 @@ func TestSafePathParamValue(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateReservesHumanPrincipalSelectors(t *testing.T) {
+	for _, name := range []string{"human", "human-domain"} {
+		m := Manifest{ManifestVersion: 1, App: App{ID: "secrets", Version: "1.0.0", Origin: "https://app.example"}, Tools: []Tool{{Name: "request", Method: "POST", Path: "/v1/request", InputSchema: map[string]any{"type": "object", "properties": map[string]any{name: map[string]any{"type": "string"}}}, Params: []Param{{Name: name, In: "body"}}, Body: Body{Mode: "json"}}}}
+		if err := Validate(m, nil); err == nil || !strings.Contains(err.Error(), "reserved") {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+}

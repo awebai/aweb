@@ -59,6 +59,7 @@ from aweb_naapp.outbox import (
     RetryPolicy,
     StoredEvent,
     Target,
+    Unacceptable,
     apply_outbox_migrations,
     drain,
     outbox_status,
@@ -293,6 +294,12 @@ async def test_an_authorization_or_schema_rejection_is_permanent(db, target, sta
     views = Views(target.view())
     target.replies = [(status, {"error": "no"})]
     assert isinstance(await deliver_once(db, target, views), Permanent)
+
+
+async def test_a_body_the_target_finds_too_large_is_never_retried(db, target) -> None:
+    views = Views(target.view())
+    target.replies = [(413, {"detail": {"code": "request_too_large"}})]
+    assert await deliver_once(db, target, views) == Unacceptable("http_413")
 
 
 @pytest.mark.parametrize("status", [408, 429, 500, 502, 503])

@@ -78,7 +78,8 @@
     },
     "host": {
       "kind": "string",
-      "pattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$|^\\[[0-9a-f:.]{2,45}\\]$|^[0-9]{1,3}(\\.[0-9]{1,3}){3}$"
+      "pattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$|^\\[[0-9a-f:.]{2,45}\\]$|^[0-9]{1,3}(\\.[0-9]{1,3}){3}$",
+      "max_length": 253
     },
     "http_method": {
       "kind": "string",
@@ -147,6 +148,11 @@
     "sequence_range": {
       "kind": "string",
       "pattern": "^[1-9][0-9]{0,15}:[1-9][0-9]{0,15}$"
+    },
+    "retention_days": {
+      "kind": "integer",
+      "min": 1,
+      "max": 36500
     }
   },
   "hooks": {
@@ -609,7 +615,12 @@
             "runner.deregistered",
             "installation.disabled",
             "installation.enabled",
-            "hook_delivery.cancelled"
+            "hook_delivery.cancelled",
+            "logs.retention.shortened",
+            "logs.retention.lengthened",
+            "logs.erased",
+            "logs.legal_hold.set",
+            "logs.legal_hold.released"
           ],
           "required": true
         },
@@ -697,6 +708,66 @@
         "cancelled_count": {
           "type": "sequence",
           "required": false
+        },
+        "event_class": {
+          "enum": [
+            "all",
+            "post-secret-use-hook",
+            "post-governance-hook",
+            "post-manifest-command-hook",
+            "post-mutation-hook",
+            "post-command-hook"
+          ],
+          "required": false
+        },
+        "retention": {
+          "enum": [
+            "keep",
+            "days"
+          ],
+          "required": false
+        },
+        "retention_days": {
+          "type": "retention_days",
+          "required": false
+        },
+        "erase_scope": {
+          "enum": [
+            "actor",
+            "range"
+          ],
+          "required": false
+        },
+        "actor_ref": {
+          "type": "ref",
+          "required": false
+        },
+        "chain_epoch": {
+          "type": "sequence",
+          "required": false
+        },
+        "team_seq_first": {
+          "type": "sequence",
+          "required": false
+        },
+        "team_seq_last": {
+          "type": "sequence",
+          "required": false
+        },
+        "erased_count": {
+          "type": "count",
+          "required": false
+        },
+        "hold_id": {
+          "type": "ref",
+          "required": false
+        },
+        "hold_scope": {
+          "enum": [
+            "all",
+            "actor"
+          ],
+          "required": false
         }
       },
       "rules": [
@@ -748,7 +819,18 @@
             "owner_act_sha256",
             "approval_evidence_sha256",
             "approval_id",
-            "policy_digest"
+            "policy_digest",
+            "event_class",
+            "retention",
+            "retention_days",
+            "erase_scope",
+            "actor_ref",
+            "chain_epoch",
+            "team_seq_first",
+            "team_seq_last",
+            "erased_count",
+            "hold_id",
+            "hold_scope"
           ],
           "require_equals": {
             "authority": "outbox_state",
@@ -797,7 +879,18 @@
             "source_hook",
             "source_seq_first",
             "source_seq_last",
-            "cancelled_count"
+            "cancelled_count",
+            "event_class",
+            "retention",
+            "retention_days",
+            "erase_scope",
+            "actor_ref",
+            "chain_epoch",
+            "team_seq_first",
+            "team_seq_last",
+            "erased_count",
+            "hold_id",
+            "hold_scope"
           ]
         },
         {
@@ -820,7 +913,18 @@
             "owner_act_sha256",
             "approval_evidence_sha256",
             "approval_id",
-            "policy_digest"
+            "policy_digest",
+            "event_class",
+            "retention",
+            "retention_days",
+            "erase_scope",
+            "actor_ref",
+            "chain_epoch",
+            "team_seq_first",
+            "team_seq_last",
+            "erased_count",
+            "hold_id",
+            "hold_scope"
           ],
           "require_equals": {
             "authority": "backend_observation",
@@ -898,6 +1002,215 @@
               "passkey_session"
             ]
           }
+        },
+        {
+          "when": {
+            "field": "act",
+            "in": [
+              "logs.retention.shortened",
+              "logs.retention.lengthened",
+              "logs.erased",
+              "logs.legal_hold.set",
+              "logs.legal_hold.released"
+            ]
+          },
+          "forbid": [
+            "role",
+            "resource_type",
+            "subject_ref",
+            "resource_ref",
+            "before_ref",
+            "after_ref",
+            "approval_evidence_sha256",
+            "approval_id",
+            "policy_digest",
+            "source_binding_id",
+            "source_hook",
+            "source_seq_first",
+            "source_seq_last",
+            "cancelled_count"
+          ],
+          "require_equals": {
+            "authority": "owner_act"
+          }
+        },
+        {
+          "when": {
+            "field": "act",
+            "in": [
+              "logs.retention.shortened",
+              "logs.retention.lengthened"
+            ]
+          },
+          "require": [
+            "event_class",
+            "retention"
+          ],
+          "forbid": [
+            "erase_scope",
+            "actor_ref",
+            "chain_epoch",
+            "team_seq_first",
+            "team_seq_last",
+            "erased_count",
+            "hold_id",
+            "hold_scope",
+            "reason_code"
+          ]
+        },
+        {
+          "when": {
+            "field": "act",
+            "in": [
+              "logs.retention.shortened"
+            ]
+          },
+          "require_equals": {
+            "retention": "days"
+          }
+        },
+        {
+          "when": {
+            "field": "retention",
+            "in": [
+              "days"
+            ]
+          },
+          "require": [
+            "retention_days"
+          ]
+        },
+        {
+          "when": {
+            "field": "retention",
+            "in": [
+              "keep"
+            ]
+          },
+          "forbid": [
+            "retention_days"
+          ]
+        },
+        {
+          "when": {
+            "field": "act",
+            "in": [
+              "logs.erased"
+            ]
+          },
+          "require": [
+            "erase_scope",
+            "erased_count",
+            "reason_code"
+          ],
+          "forbid": [
+            "event_class",
+            "retention",
+            "retention_days",
+            "hold_id",
+            "hold_scope"
+          ]
+        },
+        {
+          "when": {
+            "field": "erase_scope",
+            "in": [
+              "actor"
+            ]
+          },
+          "require": [
+            "actor_ref"
+          ],
+          "forbid": [
+            "chain_epoch",
+            "team_seq_first",
+            "team_seq_last"
+          ]
+        },
+        {
+          "when": {
+            "field": "erase_scope",
+            "in": [
+              "range"
+            ]
+          },
+          "require": [
+            "chain_epoch",
+            "team_seq_first",
+            "team_seq_last"
+          ],
+          "forbid": [
+            "actor_ref"
+          ]
+        },
+        {
+          "when": {
+            "field": "act",
+            "in": [
+              "logs.legal_hold.set"
+            ]
+          },
+          "require": [
+            "hold_id",
+            "hold_scope",
+            "reason_code"
+          ],
+          "forbid": [
+            "event_class",
+            "retention",
+            "retention_days",
+            "erase_scope",
+            "chain_epoch",
+            "team_seq_first",
+            "team_seq_last",
+            "erased_count"
+          ]
+        },
+        {
+          "when": {
+            "field": "hold_scope",
+            "in": [
+              "actor"
+            ]
+          },
+          "require": [
+            "actor_ref"
+          ]
+        },
+        {
+          "when": {
+            "field": "hold_scope",
+            "in": [
+              "all"
+            ]
+          },
+          "forbid": [
+            "actor_ref"
+          ]
+        },
+        {
+          "when": {
+            "field": "act",
+            "in": [
+              "logs.legal_hold.released"
+            ]
+          },
+          "require": [
+            "hold_id"
+          ],
+          "forbid": [
+            "event_class",
+            "retention",
+            "retention_days",
+            "erase_scope",
+            "actor_ref",
+            "chain_epoch",
+            "team_seq_first",
+            "team_seq_last",
+            "erased_count",
+            "hold_scope",
+            "reason_code"
+          ]
         }
       ],
       "act_directions": {
@@ -921,7 +1234,12 @@
         "installation.enabled": "widening",
         "resource.version_observed": "narrowing",
         "hook_delivery.cancelled": "narrowing",
-        "resource.changed": "widening"
+        "resource.changed": "widening",
+        "logs.retention.shortened": "narrowing",
+        "logs.retention.lengthened": "widening",
+        "logs.erased": "narrowing",
+        "logs.legal_hold.set": "widening",
+        "logs.legal_hold.released": "narrowing"
       }
     },
     "post-manifest-command-hook": {
@@ -1789,6 +2107,20 @@
       }
     },
     {
+      "name": "secret_use_target_host_at_the_dns_name_limit",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "refused",
+        "op_kind": "broker",
+        "refusal_code": "grant_missing",
+        "target_method": "POST",
+        "target_host": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "target_port": 443,
+        "target_path_template": "/v1/charges",
+        "request_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+      }
+    },
+    {
       "name": "secret_use_completed_returned",
       "hook": "post-secret-use-hook",
       "payload": {
@@ -2636,6 +2968,85 @@
         "redaction_count": 0,
         "dispatch_id": "dsp_01",
         "request_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+      }
+    },
+    {
+      "name": "logs_retention_shortened",
+      "hook": "post-governance-hook",
+      "payload": {
+        "authority": "owner_act",
+        "owner_act_sha256": "abababababababababababababababababababababababababababababababab",
+        "act": "logs.retention.shortened",
+        "direction": "narrowing",
+        "event_class": "all",
+        "retention": "days",
+        "retention_days": 30
+      }
+    },
+    {
+      "name": "logs_retention_lengthened_to_keep",
+      "hook": "post-governance-hook",
+      "payload": {
+        "authority": "owner_act",
+        "owner_act_sha256": "abababababababababababababababababababababababababababababababab",
+        "act": "logs.retention.lengthened",
+        "direction": "widening",
+        "event_class": "post-secret-use-hook",
+        "retention": "keep"
+      }
+    },
+    {
+      "name": "logs_erased_range",
+      "hook": "post-governance-hook",
+      "payload": {
+        "authority": "owner_act",
+        "owner_act_sha256": "abababababababababababababababababababababababababababababababab",
+        "act": "logs.erased",
+        "direction": "narrowing",
+        "erase_scope": "range",
+        "chain_epoch": 1,
+        "team_seq_first": 4,
+        "team_seq_last": 9,
+        "erased_count": 6,
+        "reason_code": "owner_request"
+      }
+    },
+    {
+      "name": "logs_erased_actor",
+      "hook": "post-governance-hook",
+      "payload": {
+        "authority": "owner_act",
+        "owner_act_sha256": "abababababababababababababababababababababababababababababababab",
+        "act": "logs.erased",
+        "direction": "narrowing",
+        "erase_scope": "actor",
+        "actor_ref": "did:key:z6MkActor",
+        "erased_count": 12,
+        "reason_code": "data_subject_request"
+      }
+    },
+    {
+      "name": "logs_legal_hold_set",
+      "hook": "post-governance-hook",
+      "payload": {
+        "authority": "owner_act",
+        "owner_act_sha256": "abababababababababababababababababababababababababababababababab",
+        "act": "logs.legal_hold.set",
+        "direction": "widening",
+        "hold_id": "hold:case-1",
+        "hold_scope": "all",
+        "reason_code": "litigation"
+      }
+    },
+    {
+      "name": "logs_legal_hold_released",
+      "hook": "post-governance-hook",
+      "payload": {
+        "authority": "owner_act",
+        "owner_act_sha256": "abababababababababababababababababababababababababababababababab",
+        "act": "logs.legal_hold.released",
+        "direction": "narrowing",
+        "hold_id": "hold:case-1"
       }
     }
   ],
@@ -4122,6 +4533,144 @@
       },
       "error": "invalid_value",
       "field": "use_ref"
+    },
+    {
+      "name": "secret_use_target_host_over_the_dns_name_limit",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "refused",
+        "op_kind": "broker",
+        "refusal_code": "grant_missing",
+        "target_method": "POST",
+        "target_host": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "target_port": 443,
+        "target_path_template": "/v1/charges",
+        "request_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+      },
+      "error": "invalid_value",
+      "field": "target_host"
+    },
+    {
+      "name": "logs_retention_shortened_to_keep",
+      "hook": "post-governance-hook",
+      "payload": {
+        "authority": "owner_act",
+        "owner_act_sha256": "abababababababababababababababababababababababababababababababab",
+        "act": "logs.retention.shortened",
+        "direction": "narrowing",
+        "event_class": "all",
+        "retention": "keep"
+      },
+      "error": "rule_violation",
+      "field": "retention"
+    },
+    {
+      "name": "logs_retention_days_without_days",
+      "hook": "post-governance-hook",
+      "payload": {
+        "authority": "owner_act",
+        "owner_act_sha256": "abababababababababababababababababababababababababababababababab",
+        "act": "logs.retention.lengthened",
+        "direction": "widening",
+        "event_class": "all",
+        "retention": "days"
+      },
+      "error": "rule_violation",
+      "field": "retention_days"
+    },
+    {
+      "name": "logs_retention_over_the_bound",
+      "hook": "post-governance-hook",
+      "payload": {
+        "authority": "owner_act",
+        "owner_act_sha256": "abababababababababababababababababababababababababababababababab",
+        "act": "logs.retention.shortened",
+        "direction": "narrowing",
+        "event_class": "all",
+        "retention": "days",
+        "retention_days": 36501
+      },
+      "error": "invalid_value",
+      "field": "retention_days"
+    },
+    {
+      "name": "logs_erased_range_without_its_end",
+      "hook": "post-governance-hook",
+      "payload": {
+        "authority": "owner_act",
+        "owner_act_sha256": "abababababababababababababababababababababababababababababababab",
+        "act": "logs.erased",
+        "direction": "narrowing",
+        "erase_scope": "range",
+        "chain_epoch": 1,
+        "team_seq_first": 4,
+        "erased_count": 1,
+        "reason_code": "owner_request"
+      },
+      "error": "rule_violation",
+      "field": "team_seq_last"
+    },
+    {
+      "name": "logs_legal_hold_set_as_narrowing",
+      "hook": "post-governance-hook",
+      "payload": {
+        "authority": "owner_act",
+        "owner_act_sha256": "abababababababababababababababababababababababababababababababab",
+        "act": "logs.legal_hold.set",
+        "direction": "narrowing",
+        "hold_id": "hold:case-1",
+        "hold_scope": "all",
+        "reason_code": "litigation"
+      },
+      "error": "direction_mismatch",
+      "field": "direction"
+    },
+    {
+      "name": "logs_act_without_owner_act_authority",
+      "hook": "post-governance-hook",
+      "payload": {
+        "authority": "team_cert",
+        "owner_act_sha256": "abababababababababababababababababababababababababababababababab",
+        "act": "logs.erased",
+        "direction": "narrowing",
+        "erase_scope": "actor",
+        "actor_ref": "a",
+        "erased_count": 1,
+        "reason_code": "r"
+      },
+      "error": "rule_violation",
+      "field": "authority"
+    },
+    {
+      "name": "role_designated_carrying_a_hold",
+      "hook": "post-governance-hook",
+      "payload": {
+        "authority": "owner_act",
+        "owner_act_sha256": "abababababababababababababababababababababababababababababababab",
+        "act": "role.designated",
+        "direction": "widening",
+        "role": "r",
+        "subject_ref": "s",
+        "hold_id": "hold:case-1"
+      },
+      "error": "rule_violation",
+      "field": "hold_id"
+    },
+    {
+      "name": "logs_retention_carrying_a_reason",
+      "hook": "post-governance-hook",
+      "payload": {
+        "authority": "owner_act",
+        "owner_act_sha256": "abababababababababababababababababababababababababababababababab",
+        "act": "logs.retention.shortened",
+        "direction": "narrowing",
+        "event_class": "all",
+        "retention": "days",
+        "retention_days": 30,
+        "reason_code": "owner_request"
+      },
+      "error": "rule_violation",
+      "field": "reason_code"
     }
   ]
 }

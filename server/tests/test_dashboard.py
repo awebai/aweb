@@ -401,6 +401,9 @@ async def test_list_agents_excludes_human_typed_action_attribution_rows(aweb_clo
         """,
         human_attribution_id,
     )
+    await aweb_cloud_db.aweb_db.execute(
+        "UPDATE {{tables.agents}} SET human_verified_key=did_key WHERE agent_id=$1", human_attribution_id,
+    )
     token = _make_jwt(["backend:acme.com"])
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

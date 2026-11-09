@@ -6,6 +6,8 @@ All endpoints are read-only.
 
 from __future__ import annotations
 
+from aweb.human_kind import agent_listing_predicate_sql, effective_agent_type
+
 import asyncio
 import json
 import logging
@@ -363,20 +365,20 @@ async def list_team_agents(
     aweb_db = db.get_manager("aweb")
 
     rows = await aweb_db.fetch_all(
-        """
-        SELECT a.agent_id, a.alias, a.did_key, a.human_name, CASE WHEN a.did_aw_verified_key = a.did_key THEN a.address END AS address, a.agent_type,
+        f"""
+        SELECT a.agent_id, a.alias, a.did_key, a.human_name, CASE WHEN a.did_aw_verified_key = a.did_key THEN a.address END AS address, a.agent_type, a.human_verified_key,
                a.role, a.status, a.identity_scope, a.created_at,
                w.last_seen_at, w.workspace_path
-        FROM {{tables.agents}} a
+        FROM {{{{tables.agents}}}} a
         LEFT JOIN LATERAL (
             SELECT last_seen_at, workspace_path
-            FROM {{tables.workspaces}}
+            FROM {{{{tables.workspaces}}}}
             WHERE agent_id = a.agent_id AND team_id = a.team_id AND deleted_at IS NULL
             ORDER BY last_seen_at DESC NULLS LAST, updated_at DESC NULLS LAST, created_at DESC
             LIMIT 1
         ) w ON TRUE
         WHERE a.team_id = $1 AND a.deleted_at IS NULL
-          AND COALESCE(a.agent_type, 'agent') != 'human'
+          AND {agent_listing_predicate_sql("a")}
         ORDER BY a.alias
         """,
         team_id,
@@ -399,7 +401,7 @@ async def list_team_agents(
                 did_key=r["did_key"],
                 human_name=r["human_name"],
                 address=r.get("address"),
-                agent_type=r["agent_type"],
+                agent_type=effective_agent_type(r),
                 role=r["role"],
                 status=r["status"],
                 identity_scope=r["identity_scope"],
@@ -443,12 +445,12 @@ async def get_team_agent(
     aweb_db = db.get_manager("aweb")
 
     row = await aweb_db.fetch_one(
-        """
+        f"""
         SELECT agent_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, role, status, identity_scope,
-               human_name, agent_type, created_at
-        FROM {{tables.agents}}
+               human_name, agent_type, human_verified_key, created_at
+        FROM {{{{tables.agents}}}}
         WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
-          AND COALESCE(agent_type, 'agent') != 'human'
+          AND {agent_listing_predicate_sql()}
         """,
         team_id,
         alias,
@@ -475,7 +477,7 @@ async def get_team_agent(
         status=row["status"],
         identity_scope=row["identity_scope"],
         human_name=row["human_name"],
-        agent_type=row["agent_type"],
+        agent_type=effective_agent_type(row),
         created_at=row["created_at"].isoformat(),
         health=health[str(row["agent_id"])],
     ).model_dump()

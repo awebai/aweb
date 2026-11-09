@@ -7,6 +7,8 @@ Managed membership/export/federation remain separately negotiated capabilities.
 
 from __future__ import annotations
 
+from aweb.human_kind import is_verified_human
+
 import hashlib
 import json
 import logging
@@ -134,7 +136,7 @@ class NativeMessagingService:
                       did_aw_verified_key, identity_scope,
                       (NULLIF(did_aw,'') IS NOT NULL) AS has_global_claim,
                       did_aw AS policy_did_aw,
-                      status, deleted_at, certificate_id, agent_type, inbound_mode
+                      status, deleted_at, certificate_id, agent_type, human_verified_key, inbound_mode
                FROM {{tables.agents}}
                WHERE deleted_at IS NULL
                  AND ($1::uuid IS NULL OR agent_id=$1)
@@ -247,7 +249,7 @@ class NativeMessagingService:
             principal=target_ref["did"], team_id=auth.team_id
         )
         if (
-            recipient.get("agent_type") == "human"
+            is_verified_human(recipient)
             and recipient["team_id"] != auth.team_id
         ):
             raise ContractError("forbidden", "human selected team")
@@ -699,7 +701,7 @@ class NativeMessagingUnitOfWork:
         by_id = {str(row["agent_id"]): verified_projection(row) for row in rows}
         if value["kind"] == "chat":
             current_recipient = by_id.get(str(retained.recipient["agent_id"]))
-            if current_recipient and current_recipient.get("agent_type") == "human":
+            if current_recipient and is_verified_human(current_recipient):
                 raise HumanChatRefused(recipient_label(current_recipient))
         for old in (retained.author, retained.recipient):
             row = by_id.get(str(old["agent_id"]))
@@ -717,6 +719,7 @@ class NativeMessagingUnitOfWork:
                     "team_id",
                     "certificate_id",
                     "agent_type",
+                    "human_verified_key",
                     "alias",
                     "address",
                     "did_aw_verified_key",

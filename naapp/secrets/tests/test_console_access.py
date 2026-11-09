@@ -749,7 +749,12 @@ async def test_access_changed_while_loading_is_a_page_offering_a_fresh_load(acce
     assert DB_AGENT.did_aw not in response.text and ORDERS_DB.ref not in response.text
 
 
-async def test_a_session_ending_during_the_read_goes_to_sign_in_with_its_cookie_cleared(access):
+# An unknown secret is refused only after the owner hold, so a session that
+# ended while the view waited never learns whether a secret ref exists.
+@pytest.mark.parametrize("path", ["/access", "/access/secrets/unknown-secret"])
+async def test_a_session_ending_during_the_read_goes_to_sign_in_with_its_cookie_cleared(
+    access, path
+):
     db = access.world.db
     async with clients(access) as (human, _):
         await sign_in(access.world, human, owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did))
@@ -773,7 +778,7 @@ async def test_a_session_ending_during_the_read_goes_to_sign_in_with_its_cookie_
                 OWNER_ROLE,
             ),
         )
-        view = asyncio.create_task(human.get("/access"))
+        view = asyncio.create_task(human.get(path))
         try:
             assert await view_waits_on_owner_role(db), "the view did not reach the owner role hold"
             assert datetime.now(UTC) < deadline, "the view reached the hold after the session ended"
@@ -788,8 +793,9 @@ async def test_a_session_ending_during_the_read_goes_to_sign_in_with_its_cookie_
             await asyncio.gather(lock, view, return_exceptions=True)
         response = view.result()
         kept = COOKIE_NAME in human.cookies
-        replayed = await human.get("/access", headers={"cookie": f"{COOKIE_NAME}={old}"})
-    assert response.status_code == 303 and response.headers["location"] == "/login"
+        replayed = await human.get(path, headers={"cookie": f"{COOKIE_NAME}={old}"})
+    assert response.status_code == 303, response.status_code
+    assert response.headers["location"] == "/login"
     for name, value in CONSOLE_HEADERS.items():
         assert response.headers[name] == value
     # The session cookie itself is deleted, in the response and in the browser's jar.

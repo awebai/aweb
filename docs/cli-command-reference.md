@@ -26,6 +26,8 @@ to refresh it.
 
 - `--debug Log background errors to stderr`
 - `-h, --help help for aw`
+- `--human string Sign interactively as this locally enrolled human did:aw`
+- `--human-domain string Namespace of the selected human ID`
 - `--identity-home string Use this absolute credential directory (contains signing.key or grant.yaml; usually <workspace>/.aw, not its parent)`
 - `--json Output as JSON`
 - `--server-name string Override the server host or name for this command`
@@ -136,7 +138,7 @@ Init and upgrades never remove them implicitly.
 
 Flags:
 - `--admission-team-id string Add an agent through host human admission for this explicit team ID`
-- `--agent-type string Runtime type (default: AWEB_AGENT_TYPE or agent)`
+- `--agent-type string Runtime label (default: AWEB_AGENT_TYPE or agent; human kind is verified by the server)`
 - `--aweb-url string Base URL for the aweb server used by aw init (overrides AWEB_URL)`
 - `--awid-registry string Base URL for the awid registry used by aw init (overrides AWID_REGISTRY_URL)`
 - `--byod Use a domain you control instead of hosted aweb.ai onboarding`
@@ -145,7 +147,7 @@ Flags:
 - `--expect-account string Expected hosted account ID for workspace-team or admission init`
 - `--global Create an addressed self-custodial global identity instead of the default local workspace`
 - `-h, --help help for init`
-- `--human-name string Human name (default: AWEB_HUMAN or $USER)`
+- `--human-name string Human name (agents: explicit only; humans: AWEB_HUMAN or $USER)`
 - `--inbound-mode string Inbound delivery mode for a global identity (open|team-and-contacts|contacts-only). Only valid with --global.`
 - `--inject-docs Inject aw coordination instructions into CLAUDE.md and AGENTS.md`
 - `--join-from string Add an agent to a team by minting one invite from this existing workspace or identity home`

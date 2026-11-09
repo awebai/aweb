@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID
 
-from aweb_naapp.console import ConsoleSession
+from aweb_naapp.console import ConsoleSession, session_is_current
 from aweb_naapp.idempotency import IdempotencyConflict, IdempotencyExpired, claim
 from aweb_naapp.roles import PrincipalKey, hold_role, principal_key, unassign
 from aweb_naapp.runtime.approvals import Approvals
@@ -440,20 +440,7 @@ class Containment:
         # F6, application authority and exact LOGIN credential precede this
         # session lock. Logout only updates the session row. Holding it makes
         # logout serialize with the effect, while a completed logout is seen.
-        row = await tx.fetch_one(
-            "SELECT scope,subject,evidence_ref,expires_at,closed_at FROM {{tables.console_sessions}}"
-            " WHERE token_sha256=$1 FOR SHARE",
-            session.token_sha256,
-        )
-        # Check the live clock AFTER any row-lock wait, and bind every field
-        # back to the exact token S4 authenticated, never another live session.
-        if (
-            row is None
-            or row["closed_at"] is not None
-            or (row["scope"], row["subject"], row["evidence_ref"], row["expires_at"])
-            != (session.scope, session.subject, session.evidence_ref, session.expires_at)
-            or row["expires_at"] <= datetime.now(UTC)
-        ):
+        if not await session_is_current(tx, session, hold=True):
             raise ContainmentRefused("console_session_required", 401)
 
     @staticmethod

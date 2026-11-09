@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.human_kind import human_predicate_sql
+
 from aweb.human_channels.contract import ContractError
 from aweb.human_channels.participants import require_native_participant_input
 from aweb.service_errors import ValidationError
@@ -126,11 +128,11 @@ async def get_agent_by_id(db, *, agent_id: str, team_id: str | None = None) -> d
 async def get_agent_by_alias(db, *, team_id: str, alias: str) -> dict[str, Any] | None:
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
-        """
+        f"""
         SELECT agent_id, team_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw, inbound_mode, deleted_at
-        FROM {{tables.agents}}
+        FROM {{{{tables.agents}}}}
         WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
-          AND COALESCE(agent_type, 'agent') != 'human'
+          AND NOT {human_predicate_sql()}
         """,
         team_id,
         alias,
@@ -143,11 +145,11 @@ async def get_agents_by_aliases(db, *, team_id: str, aliases: list[str]) -> list
         return []
     aweb_db = db.get_manager("aweb")
     rows = await aweb_db.fetch_all(
-        """
+        f"""
         SELECT agent_id, team_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw, inbound_mode, deleted_at
-        FROM {{tables.agents}}
+        FROM {{{{tables.agents}}}}
         WHERE team_id = $1 AND alias = ANY($2::text[]) AND deleted_at IS NULL
-          AND COALESCE(agent_type, 'agent') != 'human'
+          AND NOT {human_predicate_sql()}
         """,
         team_id,
         aliases,

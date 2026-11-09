@@ -33,14 +33,16 @@ type idRequestOutput struct {
 }
 
 type localSigningIdentity struct {
-	DIDKey         string
-	StableID       string
-	SigningKey     ed25519.PrivateKey
-	SigningKeyPath string
-	WorkingDir     string
-	IdentityHome   string
-	TeamID         string
-	Custody        string
+	InteractiveSigner awid.InteractiveSigner
+	IDChain           map[string]any
+	DIDKey            string
+	StableID          string
+	SigningKey        ed25519.PrivateKey
+	SigningKeyPath    string
+	WorkingDir        string
+	IdentityHome      string
+	TeamID            string
+	Custody           string
 }
 
 var (
@@ -120,7 +122,7 @@ func runIDRequest(cmd *cobra.Command, args []string) error {
 		return usageError("invalid url %q", targetURL)
 	}
 
-	identity, err := resolveLocalSigningIdentity()
+	identity, err := resolveParticipationRequestIdentity()
 	if err != nil {
 		return err
 	}
@@ -192,7 +194,7 @@ func signIDRequestHeaders(headers http.Header, method string, parsedURL *url.URL
 	if headers == nil {
 		return fmt.Errorf("headers are required")
 	}
-	if identity == nil || len(identity.SigningKey) != ed25519.PrivateKeySize {
+	if identity == nil || (len(identity.SigningKey) != ed25519.PrivateKeySize && identity.InteractiveSigner == nil) {
 		return fmt.Errorf("local signing identity is required")
 	}
 	claim, value := "did_aw", strings.TrimSpace(identity.StableID)
@@ -213,7 +215,24 @@ func signIDRequestHeaders(headers http.Header, method string, parsedURL *url.URL
 		}
 		headers.Del("X-AWID-Team-Certificate")
 	}
-	didKey, signature, canonical, err := awid.SignRequestCredential(identity.SigningKey, method, parsedURL, claim, value, timestamp, bodyBytes, signPayload)
+	var didKey, signature, canonical string
+	var err error
+	if identity.InteractiveSigner != nil {
+		if !teamAuth {
+			return usageError("human requests require --team-auth")
+		}
+		didKey = identity.DIDKey
+		signature, canonical, err = awid.SignRequestCredentialWithSigner(didKey, identity.InteractiveSigner, method, parsedURL, claim, value, timestamp, bodyBytes, signPayload, method+" "+parsedURL.String())
+		if err == nil {
+			var header string
+			header, err = awid.EncodeIDChainHeader(identity.IDChain)
+			if err == nil {
+				headers.Set("X-AWID-ID-Chain", header)
+			}
+		}
+	} else {
+		didKey, signature, canonical, err = awid.SignRequestCredential(identity.SigningKey, method, parsedURL, claim, value, timestamp, bodyBytes, signPayload)
+	}
 	if err != nil {
 		return err
 	}
