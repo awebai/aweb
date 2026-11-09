@@ -153,6 +153,7 @@ def _configuration(body: dict[str, Any], *, secret_id: str, owner: str) -> list[
         "header_allow": [],
         "network": "public",
         "cidr": None,
+        "response_max_bytes": body["max_bytes"],
     }
     try:
         DestinationRecord.from_after(

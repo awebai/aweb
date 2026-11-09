@@ -248,7 +248,7 @@ class BrokerFence:
         if stored.record.kind == "oauth2-client-credentials":
             token_destination = self._destination(
                 destinations, "POST", stored.record.kind_params["token_endpoint"]
-            )
+            ).destination
         self._call = PreparedBrokerCall(
             stored,
             SecretVersion(
