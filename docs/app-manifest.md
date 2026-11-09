@@ -586,7 +586,8 @@ unchanged. Its semantics and the delivery call are in
     method `POST` and `body.mode` `json`. These rules apply to the values
     after version 2's tool validation normalizes them: `method` trimmed and
     uppercased, `in` and `body.mode` trimmed, and an absent `body` read as
-    `json`;
+    `json`. Action names compare trimmed, as version 2 compares tool names,
+    both for uniqueness and where `completion.read` names an action;
   - `protected: true` on a param, allowed only on an `in: body` param of a
     `stage` action; `true` is its only value, and an unprotected param omits
     it;
