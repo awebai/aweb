@@ -315,7 +315,18 @@ endorsing an identity installs no app and needs no secrets or logs.
   `human-credential.replace`, `human-role.designate` and `human-role.revoke`,
   and no notice contact. Its `installation_id` for a team is the UUIDv5 of
   `aweb:team-server:` followed by the `team_id`, under the RFC 4122 URL
-  namespace. There is no manifest and no install.
+  namespace. Its generation is 1. There is no manifest and no install.
+- **Ceremony bindings.** B3's scope for H's endorser holding is
+  `team-server.endorser.` followed by the first 40 hexadecimal characters
+  of SHA-256 over the UTF-8 of `installation_id`, `team_id` and H's `did:aw`,
+  joined by LF, as secrets derives an owner's scope. B3's subject is H's
+  `did:aw`, and `candidate_subject_type` stays `app_local`. The B2 policy is
+  `team-server.endorse-deployment`, version 1: passkey assurance, a
+  ten-minute lifetime, H's endorser scope as its only approver scope, and
+  requester approval allowed, because H both requests and confirms the
+  endorsement. The protection is the fresh user-verified assertion by the
+  controller-bound credential, not a second approver. The covered request
+  travels in B2's existing `aweb.approval-request/1` wrapper.
 - **Verification.** The coordination server's owner-act vocabulary
   ([acts and subjects](../owner-act.md#acts-and-subjects)) gains the three
   human-role acts for that `app_id` and that `installation_id` only; an act
@@ -387,14 +398,14 @@ client runs the handoff and signs the act in one sitting, as
    unexpired and not yet consumed, and that its assertion was made by the
    current holding's credential; then it records the consumption with that
    holding. A consume that waited on a concurrent `human-credential.replace`
-   refuses; it never records the new holding. The answer is the covered request and
-   `approval_evidence_sha256`.
+   refuses; it never records the new holding. The answer is the covered
+   request and `approval_evidence_sha256`.
 5. **Signing.** `aw` signs D's certificate with H's key only if the consumed
    covered request's `csr_sha256` equals the request it is about to sign. The
    issuance log records the endorsement id.
 6. **Linking.** `aw` posts the issued certificate to
-   `POST /endorsements/{id}/certificate`, in H's endorser session. The server accepts it only if H's
-   current key signed it, and its `id`, `domain`, `parent` and `kind` equal
+   `POST /endorsements/{id}/certificate`, in H's endorser session. The
+   server accepts it only if H's current key signed it, and its `id`, `domain`, `parent` and `kind` equal
    the request's. It records `certificate_sha256`, over the certificate's
    signed bytes, once. The same certificate again returns the same record;
    a different one refuses with `endorsement_certificate_conflict`. D then
@@ -416,9 +427,11 @@ one of the identities
 [allowed to revoke it](../id-certificates.md#revocation-authority-and-cascade):
 H, as D's current parent, with H's own key; D itself; or the namespace root.
 Team authority is not ID authority: the team controller cannot revoke D's
-ancestry. Within the team, the controller contains D by revoking D's team
-membership. The row keeps its history and records `withdrawn_at`; a withdrawn row
-never becomes current again. Admission reads the withdrawal state at the
+ancestry. The team controller can contain access in that team by revoking
+the membership certificates of D and each affected descendant; this does not
+revoke their ID ancestry or authority in other teams. The row keeps its
+history and records `withdrawn_at`; a withdrawn row never becomes current
+again. Admission reads the withdrawal state at the
 freshness deployment endorsement (c) bounds.
 
 ### What admission verifies
@@ -437,8 +450,8 @@ row matches the new certificate. `resign` does not apply: it is for `did:key`
 children, and the covered request names a registered D. An unrelated refresh
 of D's ancestry evidence, with the same D, key and certificate, changes
 nothing.
- A direct
-naapp verifies the original artifacts, not the row's word:
+
+A direct naapp verifies the original artifacts, not the row's word:
 
 - the controller act that bound the credential current at consumption,
   under the team key: the holding's `human-role.designate`, or the
