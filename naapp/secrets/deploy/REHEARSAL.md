@@ -33,7 +33,7 @@ those are not available from a macOS build.
 
 On the fresh host, retain `cat /etc/os-release`, `uname -srm`, `getconf
 GNU_LIBC_VERSION`, `node --version`, `tmux -V`, `git --version`, `uv --version`,
-`docker version`, selected `aw version`, OATS version and harness versions.
+`sudo docker version` as VM operator, selected `aw version`, OATS version and harness versions.
 Record source SHA, lock identities and generated image IDs without environment
 contents, keys, login links or raw I/O. The exact fresh-host receipt remains
 unfilled until execution on the allocated VM; the shared development host is
@@ -196,8 +196,16 @@ configuration and its exact image IDs/private reference mounts after Logs.8
 hands back its recipe. Until then, installing Docker is executable preparation;
 starting an invented full-stack compose file is not. Existing Secrets CLI
 container recipe and its isolated package_lab proof remain component paths.
+On fh1, tester uses sudo for every positive Docker build/run/pull/info/stats/
+inspect/compose command, including commands imported from the Secrets recipe.
+Do not grant direct socket access to tester or oatsagent to make an unprivileged
+recipe command work. The queued package_lab probe runs in the existing ARM64
+Docker Desktop development environment; it is not a drop-in fh1 command and
+must not be launched through sudo (it intentionally refuses a root driver).
+Oatsagent's negative socket/command probes remain unprivileged; operator sudo
+is never added to those probes.
 The eventual receipt must name the actual Compose file and source SHA/checksum;
-`docker compose config` may contain private environment values and is not evidence.
+`sudo docker compose config` may contain private environment values and is not evidence.
 
 ### Service configuration and start order
 
@@ -237,7 +245,7 @@ The eventual receipt must name the actual Compose file and source SHA/checksum;
    implicit broker CA/switch reuse. Hosted HO5's separate hold is unaffected.
    Equivalent Logs inputs/preflight are acwd.9, not current landed behavior.
 6. Build Secrets from the pinned checkout, following its existing Dockerfile:
-   `docker build --build-arg SOURCE_COMMIT=<full-checkout-SHA> -f
+   `sudo docker build --build-arg SOURCE_COMMIT=<full-checkout-SHA> -f
    naapp/secrets/Dockerfile -t <run-local-image> .` Record image ID/revision;
    do not push it. Use the recipe's non-root, read-only container and key mount
    behind verified TLS. Logs currently launches `uvicorn aweb_logs.app:serve
@@ -426,7 +434,7 @@ sudo -n -l
 free -b
 df -B1 /
 findmnt -no FSTYPE,OPTIONS /dev/shm
-docker info --format '{{.Architecture}} {{.Driver}} {{.DockerRootDir}}'
+sudo docker info --format '{{.Architecture}} {{.Driver}} {{.DockerRootDir}}'
 unshare --user --map-root-user true
 ```
 
@@ -434,8 +442,9 @@ Use the returned Docker root directory for its disk-capacity check. Record
 failed/unavailable probes as such. User namespaces are needed by the later OCI
 workload, not by the first fixed exec job; a failure excludes OCI qualification
 rather than silently enabling namespaces. During each owned smoke run, use
-`docker stats --no-stream --format '{{.Name}} {{.MemUsage}} {{.CPUPerc}}'
-<owned-container-ids>` and inspect only those image IDs' Size/Os/Architecture.
+`sudo docker stats --no-stream --format '{{.Name}} {{.MemUsage}} {{.CPUPerc}}'
+<owned-container-ids>` and use operator `sudo docker image inspect` with an
+explicit Size/Os/Architecture format for only those image IDs.
 Do not include other users' containers or configuration in evidence.
 
 First sequence is Secrets+Logs+PG/Redis and the fixed TLS CLI; Oracle is
