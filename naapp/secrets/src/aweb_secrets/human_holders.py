@@ -8,9 +8,11 @@ The concrete shared handoff DTO/factory remains its owner's integration seam.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
+from weakref import ReferenceType, ref
 
 from aweb_naapp.roles import PrincipalKey, hold_role
 from aweb_naapp.runtime.installation import (
@@ -81,6 +83,19 @@ class PreparedOwnerHolding:
     _tx: TransactionManager = field(repr=False)
     _fence: InstallationDispatchFence = field(repr=False)
     _approvers: PreparedCurrentApprovers = field(repr=False)
+    _pairs: tuple[tuple[str, str], ...] = field(repr=False)
+    _issued_as: ReferenceType[PreparedOwnerHolding] | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+
+    @property
+    def approvers(self) -> PreparedCurrentApprovers:
+        """The canonical complete union for downstream consumers in this tx."""
+        return self._approvers
+
+    @property
+    def approver_pairs(self) -> tuple[tuple[str, str], ...]:
+        return self._pairs
 
 
 def _refused() -> HTTPException:
@@ -169,16 +184,31 @@ class OwnerHoldingAuthority:
     async def hold_session_target(
         self,
         tx: TransactionManager,
-        target: OwnerSessionTarget,
+        target: OwnerSessionTarget | PreparedOwnerHolding,
         *,
-        approvers: PreparedCurrentApprovers | None = None,
+        approver_pairs: Sequence[tuple[str, str]],
     ) -> PreparedOwnerHolding:
-        """Prepare before B2/S3/session locks, after caller-specific app prelocks.
+        """Retain F6 -> complete app/role prelocks -> owner -> B3 -> B2/S3/session.
 
-        Callers with a complete prepared B3 union pass it through; it is checked
-        in the identical tx and no new B3 locks are acquired. Never call this
-        across a fresh Approvals.decide ceremony or as a late check.
+        A caller with additional app/target-role prelocks takes the same F6
+        first, before those prelocks. This method reuses that fence hold and
+        prepares the complete trusted pair union once, after its owner hold.
+        The pairs must include this holding's exact B3 pair. No older B3 guard
+        is accepted: its lifetime could predate these local holds.
+
+        Repeated preparation passes the returned holding and its pair list;
+        that path only checks it and returns the identical object. Downstream
+        consumers reuse its canonical B3 union, never reacquiring it after
+        B2/S3/session locks. Never retain it across a fresh Approvals.decide.
         """
+        if isinstance(target, PreparedOwnerHolding):
+            pairs = self._pair_union(target.target, approver_pairs)
+            if pairs != target._pairs or not await self.check_session_target(tx, target):
+                raise _refused()
+            return target
+        if not isinstance(target, OwnerSessionTarget):
+            raise _refused()
+        pairs = self._pair_union(target, approver_pairs)
         fence = self._console.fence.for_installation(target.admitted)
         await fence.prepare(tx)
         await fence.check(tx, target)
@@ -187,20 +217,44 @@ class OwnerHoldingAuthority:
             raise _refused()
         if await self._role_stamp(tx, target) != target._role_assigned_at:
             raise _refused()
-        if approvers is None:
-            approvers = await self._console.passkeys.prepare_current_approvers(
-                tx, [(target.b3_scope, target.subject)]
-            )
-        held = PreparedOwnerHolding(target, self, tx, fence, approvers)
+        approvers = await self._console.passkeys.prepare_current_approvers(tx, pairs)
+        held = PreparedOwnerHolding(target, self, tx, fence, approvers, pairs)
+        # A reconstructed dataclass must not turn copied guard fields into a
+        # freshly issued app handle. This is in-process identity, not a store.
+        object.__setattr__(held, "_issued_as", ref(held))
         if not await self.check_session_target(tx, held):
             raise _refused()
         return held
+
+    @staticmethod
+    def _pair_union(
+        target: OwnerSessionTarget, pairs: Sequence[tuple[str, str]]
+    ) -> tuple[tuple[str, str], ...]:
+        if not isinstance(pairs, Sequence) or isinstance(pairs, (str, bytes)):
+            raise _refused()
+        if any(
+            not isinstance(pair, (tuple, list))
+            or len(pair) != 2
+            or any(not isinstance(value, str) or not value for value in pair)
+            for pair in pairs
+        ):
+            raise _refused()
+        normalized = tuple(sorted({(pair[0], pair[1]) for pair in pairs}))
+        if (target.b3_scope, target.subject) not in normalized:
+            raise _refused()
+        return normalized
 
     async def check_session_target(
         self, tx: TransactionManager, held: PreparedOwnerHolding
     ) -> bool:
         """SQL reads only, using held authority; no refresh, row lock or rearm."""
-        if held._authority is not self or held._tx is not tx:
+        if (
+            not isinstance(held, PreparedOwnerHolding)
+            or held._issued_as is None
+            or held._issued_as() is not held
+            or held._authority is not self
+            or held._tx is not tx
+        ):
             return False
         target = held.target
         if not await self._console.passkeys.check_current_approver(
