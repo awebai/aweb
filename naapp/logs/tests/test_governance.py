@@ -6,6 +6,7 @@ widening act still needs one. Real PostgreSQL, a real AWID registry."""
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -283,3 +284,60 @@ async def test_an_owner_act_records_only_the_event_acts_it_permits(world: World)
     async with world.db.transaction() as tx:
         with pytest.raises(GovernanceRefused):
             await world.governance._record(tx, erase, {"act": "logs.legal_hold.set"})
+
+
+async def test_lengthening_a_hooks_inherited_retention_needs_a_target(world: World):
+    await set_retention(world, "all", 30)
+    world.registered[0] = False
+    with pytest.raises(Refused) as refused:
+        await set_retention(world, "post-secret-use-hook", 90)
+    assert refused.value.code == "audit_target_unavailable"
+    world.registered[0] = True
+    await set_retention(world, "post-secret-use-hook", 90)
+    assert [entry["act"] for entry in await governance(world)] == [
+        "logs.retention.shortened",
+        "logs.retention.lengthened",
+    ]
+
+
+async def test_an_erasure_counts_what_it_purged_while_retention_runs(world: World):
+    for seq in (1, 2):
+        await appended(world, secret_use(seq=seq), age=timedelta(days=45))
+    await set_retention(world, "all", 30)
+    recording = asyncio.Event()
+    proceed = asyncio.Event()
+
+    async def held_while_recording() -> None:
+        recording.set()
+        await proceed.wait()
+
+    world.before_append = held_while_recording
+    range_ = {"erase_scope": "range", "chain_epoch": 1, "team_seq_first": 1, "team_seq_last": 2}
+    erasing = asyncio.create_task(erase(world, **range_))
+    await recording.wait()
+    retained = await apply_retention(world.db, now=NOW, logs_origin=LOGS)
+    proceed.set()
+    erased = await erasing
+    assert (erased, retained) == (2, 0)
+    record = await world.db.fetch_value(
+        "SELECT event_id FROM {{tables.chain_events}} WHERE team_id = $1"
+        " AND hook = 'post-governance-hook' ORDER BY team_seq DESC LIMIT 1",
+        TEAM_ID,
+    )
+    named = await world.db.fetch_value(
+        "SELECT count(*) FROM {{tables.chain_events}} WHERE team_id = $1 AND purge_act = $2",
+        TEAM_ID,
+        f"logs.erase:{record}",
+    )
+    assert ((await governance(world))[-1]["erased_count"], named) == (2, 2)
+
+
+@pytest.mark.parametrize("actor_ref", ["did:aw:", "did:key:not-a-key", "did:aw:0OIl"])
+async def test_an_actor_is_a_whole_valid_did(world: World, actor_ref: str):
+    await appended(world, secret_use(seq=1), age=timedelta(days=1))
+    with pytest.raises(GovernanceRefused):
+        await erase(world, erase_scope="actor", actor_ref=actor_ref)
+    with pytest.raises(GovernanceRefused):
+        await hold(world, "hold-1", actor_ref=actor_ref)
+    assert await count(world, "owner_act_nonces") == 0
+    assert await governance(world) == []

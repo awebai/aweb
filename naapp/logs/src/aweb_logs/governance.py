@@ -28,11 +28,19 @@ from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier
 from aweb_naapp.hooks.strictjson import Refused
 from aweb_naapp.runtime.credential_audit import CredentialAudit
 from aweb_naapp.runtime.installation import InstallationFence
+from awid.did import validate_did, validate_stable_id
 from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
 from aweb_logs import read_store
-from aweb_logs.retention import GOVERNANCE_HOOK, HELD, lock_holds, purge, set_retention
+from aweb_logs.retention import (
+    ALL_EVENTS,
+    GOVERNANCE_HOOK,
+    HELD,
+    lock_holds,
+    purge,
+    set_retention,
+)
 
 # Fixed in reviewed code, never configuration: adding an act is a reviewed change.
 SELF_RECORDED_ACTS = frozenset({"logs.legal_hold.set"})
@@ -45,7 +53,6 @@ _EVENT_ACTS = {
     "logs.legal-hold.set": frozenset({"logs.legal_hold.set"}),
     "logs.legal-hold.release": frozenset({"logs.legal_hold.released"}),
 }
-_ACTOR_PREFIXES = ("did:aw:", "did:key:")
 
 
 # The unpurged events an erasure names, each with whether a hold holds it: a
@@ -54,15 +61,19 @@ _ACTOR_PREFIXES = ("did:aw:", "did:key:")
 # erased.
 _ERASABLE = "SELECT e.chain_epoch, e.team_seq, " + HELD + " AS held FROM {{tables.chain_events}} e"
 _NOT_OWN = " AND NOT (e.hook = $2 AND e.producer_origin = $3)"
+# The covered events are locked, in position order as catch-up and purges lock,
+# before they are counted: the count recorded is what this erasure purges, and
+# a retention pass skips them meanwhile.
+_LOCKED = " ORDER BY e.chain_epoch, e.team_seq FOR UPDATE OF e"
 _RANGE_ERASED = (
     _ERASABLE + " WHERE e.team_id = $1 AND e.chain_epoch = $4 AND e.team_seq BETWEEN $5 AND $6"
-    " AND e.purge_act IS NULL" + _NOT_OWN + " ORDER BY e.chain_epoch, e.team_seq"
+    " AND e.purge_act IS NULL" + _NOT_OWN + _LOCKED
 )
 _ACTOR_ERASED = (
     _ERASABLE + " JOIN {{tables.read_events}} r ON r.team_id = e.team_id"
     " AND r.chain_epoch = e.chain_epoch AND r.team_seq = e.team_seq"
     " WHERE e.team_id = $1 AND (r.actor_did_aw = $4 OR r.actor_did_key = $4)"
-    " AND e.purge_act IS NULL" + _NOT_OWN + " ORDER BY e.chain_epoch, e.team_seq"
+    " AND e.purge_act IS NULL" + _NOT_OWN + _LOCKED
 )
 
 
@@ -108,13 +119,22 @@ class LogsGovernance:
         days = retention_days if retention == "days" else None
 
         async def effect(tx: TransactionManager, act: VerifiedOwnerAct) -> str:
-            before = await tx.fetch_one(
-                "SELECT retention_days FROM {{tables.retention_settings}}"
-                " WHERE team_id = $1 AND event_class = $2 FOR UPDATE",
-                team_id,
-                event_class,
+            # One change to a team's retention at a time, compared with what the
+            # class has now: its own setting, else the team's "all", else keep.
+            await tx.execute(
+                "SELECT pg_advisory_xact_lock(hashtext($1))", f"logs.retention:{team_id}"
             )
-            kept = None if before is None else before["retention_days"]
+            settings = {
+                row["event_class"]: row["retention_days"]
+                for row in await tx.fetch_all(
+                    "SELECT event_class, retention_days FROM {{tables.retention_settings}}"
+                    " WHERE team_id = $1 AND event_class IN ($2, $3)",
+                    team_id,
+                    event_class,
+                    ALL_EVENTS,
+                )
+            }
+            kept = settings[event_class] if event_class in settings else settings.get(ALL_EVENTS)
             shortened = days is not None and (kept is None or days < kept)
             event_id = await self._record(
                 tx,
@@ -300,5 +320,14 @@ class LogsGovernance:
 
 
 def _require_actor(actor_ref: str | None) -> None:
-    if actor_ref is None or not actor_ref.startswith(_ACTOR_PREFIXES):
-        raise GovernanceRefused("an actor is named by its did:aw or did:key")
+    """An actor is named by exactly one whole, valid did:key or did:aw."""
+    if actor_ref is not None:
+        if actor_ref.startswith("did:key:") and validate_did(actor_ref):
+            return
+        if actor_ref.startswith("did:aw:"):
+            try:
+                if validate_stable_id(actor_ref) == actor_ref:
+                    return
+            except ValueError:
+                pass
+    raise GovernanceRefused("an actor is named by its did:aw or did:key")
