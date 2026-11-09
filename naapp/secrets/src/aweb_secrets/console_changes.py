@@ -256,7 +256,14 @@ class ConsoleChanges:
     async def dispatch(self, token: str) -> dict[str, str]:
         """Select a typed page from real associations; the locator grants no authority."""
         linked = await self.approvals.open_link(token)
-        approval = linked.approval
+        return await self.approval_destination(linked.approval)
+
+    async def approval_destination(self, approval: Approval) -> dict[str, str]:
+        """Resolve a B2 approval to its checked app page without accessing a link.
+
+        The caller admits the candidate; this read grants no session, link or
+        decision authority and returns no protected terms.
+        """
         async with self.console.db.transaction() as tx:
             await tx.execute("SET TRANSACTION READ ONLY")
             rows = await tx.fetch_all(

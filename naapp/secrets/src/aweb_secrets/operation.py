@@ -30,6 +30,7 @@ from awid.signing import canonical_json_bytes
 from aweb_secrets.destination import DestinationInvalid, parse_destination_scope
 from aweb_secrets.grant import GRANT_TEMPLATE_ID
 from aweb_secrets.policy import DIGEST, IDENTIFIER
+from aweb_secrets.response_limits import DEFAULT_RESPONSE_BYTES, MAX_RESPONSE_BYTES
 from aweb_secrets.secret import KINDS, SECRET_ID, SecretInvalid, validate_kind_params
 
 DIGEST_PREFIX = b"aweb.secrets.operation/1\n"
@@ -61,7 +62,6 @@ PLACEMENTS = ("path", "query", "body")
 SIDE_EFFECTS = ("none", "reversible", "irreversible")
 RESULT_HANDLINGS = ("deny", "withhold", "store_as_secret")
 MAX_TIMEOUT_S = 30
-MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 
 # The fixed character classes a string parameter may be limited to.
 CHARSETS: Mapping[str, re.Pattern[str]] = {
@@ -97,9 +97,12 @@ def _require(condition: bool, message: str) -> None:
         raise OperationInvalid(message)
 
 
-def _exact(value: Any, keys: frozenset[str], what: str) -> Mapping[str, Any]:
+def _exact(
+    value: Any, keys: frozenset[str], what: str, *, optional: frozenset[str] = frozenset()
+) -> Mapping[str, Any]:
     _require(
-        isinstance(value, Mapping) and set(value) == keys, f"{what} needs exactly {sorted(keys)}"
+        isinstance(value, Mapping) and keys <= set(value) <= keys | optional,
+        f"{what} needs {sorted(keys)} and only known optional fields",
     )
     return value
 
@@ -214,7 +217,12 @@ def _header_name_open(name: str) -> bool:
 
 
 def _check_response(response: Any) -> None:
-    response = _exact(response, frozenset({"projection", "max_bytes", "content_types"}), "response")
+    response = _exact(
+        response,
+        frozenset({"projection", "content_types"}),
+        "response",
+        optional=frozenset({"max_bytes"}),
+    )
     projection = response["projection"]
     _require(
         projection is None
@@ -226,10 +234,10 @@ def _check_response(response: Any) -> None:
         ),
         "the projection is null or distinct JSON pointers",
     )
-    max_bytes = response["max_bytes"]
+    max_bytes = response.get("max_bytes", DEFAULT_RESPONSE_BYTES)
     _require(
         type(max_bytes) is int and 1 <= max_bytes <= MAX_RESPONSE_BYTES,
-        "response.max_bytes is 1 byte to 16 MiB",
+        "response.max_bytes is 1 byte to 64 MiB",
     )
     content_types = response["content_types"]
     _require(

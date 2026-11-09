@@ -1,10 +1,11 @@
 # aw-hooks: catalog, bindings and delivery
 
-Status: **specified experimental public contract, not yet shipped**. Owner: the
-aweb OSS hooks lane (aweb-acgh.16). This document is the source of truth for the
+Status: **experimental public contract**. Owner: the aweb OSS hooks lane
+(aweb-acgh.16). Anything unmarked is on main; a part that is not carries its
+release status and task id. This document is the source of truth for the
 `aweb.hooks` catalog, version 1, for owner-activated hook bindings, and for how
 a producer signs and delivers hook events. Its machine-readable authority is
-four existing vectors and one proposed evidence vector:
+five vectors:
 
 - `docs/vectors/hook-catalog-v1.json`: the hooks, their payload allowlists and
   rules, with positive and negative cases;
@@ -13,8 +14,8 @@ four existing vectors and one proposed evidence vector:
 - `docs/vectors/hook-event-envelope-v1.json`: the signed event envelope;
 - `docs/vectors/hook-delivery-credential-v1.json`: the request credential that
   carries an event to a target.
-- `docs/vectors/passkey-evidence-v1.json`: proposed evidence bytes, pending
-  decision-84 proof contract below; producer activation waits for R+A/helper.
+- `docs/vectors/passkey-evidence-v1.json`: the passkey evidence commitment
+  bytes of [the decision 84 proof contract](#passkey-evidence-commitments-and-console-actors).
 
 The strict catalog reader is `aweb_naapp.hooks.catalog`
 (`naapp-lib/src/aweb_naapp/hooks/catalog.py`). The envelope and credential
@@ -56,8 +57,8 @@ agent-reported, never as mediated fact.
 | `post-secret-use-hook` | server | an app with an active production | per action/decision (below) | Every brokered use of a secret: refusal, approval request and decision, admission, the durable dispatch intent, the result, and an unknown outcome and its reconciliation. |
 | `post-governance-hook` | server | an app with an active production | widening acts only | App-side governance: roles, credentials, grants, resources, policy, runners and the installation-wide switch. The catalog fixes each act as widening or narrowing. |
 | `post-manifest-command-hook` | server | an app with an active production, for its own tools | never | Every admitted mutation tool call and every attributable refusal. Reads fire only for tools the production lists in `reads`. |
-| `post-mutation-hook` | server | the core server | never | The core mutations listed under [`post-mutation-hook`](#post-mutation-hook). |
-| `post-command-hook` | client | `aw`, signed by the member | never | The local effects of an `aw` command (see [`post-command-hook`](#post-command-hook)). |
+| `post-mutation-hook` | server | the core server | never | The core mutations listed under [`post-mutation-hook`](#post-mutation-hook). **Open (aweb-acgh.16.11):** the core producer. |
+| `post-command-hook` | client | `aw`, signed by the member | never | The local effects of an `aw` command (see [`post-command-hook`](#post-command-hook)). **Open (aweb-acgh.16.17):** `aw` emission. |
 
 **One effect, one hook.** A more specific hook takes its effects away from the
 generic one. A tool call whose effect is a secret use fires only
@@ -68,7 +69,8 @@ catalog records this in `precedence`.
 **Versioning.** A binding names `(catalog id, catalog version, hook)`. Any change
 to a payload, an addition included, is a new catalog version. A binding that
 names an unknown catalog id, version or hook cannot be activated, and a consumer
-refuses its events. Decision 93 permits the explicitly reviewed pre-deployment
+refuses its events. **Open (aweb-acgh.16.35):** the activation refusal (see
+[Bindings](#bindings)). Decision 93 permits the explicitly reviewed pre-deployment
 re-freeze documented in [the terminal amendment](hook-terminal-delivery.md#deliberate-catalog-re-freeze-and-implementation-evidence); it is not a general versioning exception.
 Blocking `pre-*` hooks do not exist in version 1.
 
@@ -193,20 +195,15 @@ retrospective mapping. Catalog syntax cannot prove producer assignment,
 response association or privacy: producer canary/rollback/replay tests and the
 real delivery/ingest/read journey must establish them.
 
-This optional addition is an in-place catalog v1 re-freeze under decision 93,
-authorized by coordinator receipt `bdccd8ec-8472-4e49-8115-7ad1f232a823`
-(2026-10-26). The coordinator reports no Secrets deployment, HO6 still open,
-no deployed hosted Logs or hook producer (X4/X5), and no other first-party
-post-secret-use receiver. This is scoped coordinator evidence, not an
-independent inventory of third-party deployments. Published
-`aweb-naapp 0.5.1rc1` at release source `a7d00e89a` lacks `use_ref`: a third-party
-receiver using that catalog refuses the field until upgraded. The next RC
-must package the updated reader/catalog before new producer emission.
-The landing owner must re-check the ruling: if Secrets or Logs has real
-traffic, a stable (non-RC) aweb-naapp with catalog v1 ships, or a third-party
-post-secret-use receiver in use is reported before landing, stop this
-re-freeze and use a new catalog version. Preserve all prior cases and the
-existing signed event/delivery vector bytes.
+This optional addition is an in-place catalog v1 change, by Juan's ruling on
+`use_ref` in catalog v1. Stable `aweb-naapp` releases publish catalog v1
+without the field; the ruling accepts that compatibility break instead of a
+new catalog version. A receiver
+whose packaged catalog v1 lacks the field refuses events that carry it and must
+upgrade before receiving them; `CHANGELOG.md` lists the affected releases.
+Events without the field remain valid. Updated readers and catalogs are
+published before new emission. The change adds catalog cases only; all prior
+cases and the signed event and delivery vector bytes are unchanged.
 
 **Request and parameter commitments (decision 73).** These two optional
 fields retain their historical names and 64-character lowercase hexadecimal
@@ -268,11 +265,10 @@ no-use-event treatment; their installation/tool authority is not proven.
 
 **In-place re-freeze.** Decision 73 records that no deployed producer or
 consumer uses `post-secret-use-hook`, and there are no deployed pending uses.
-The catalog stays at version 1: its public file, package copy, transition
-fixtures and consumer expectations change together in this stack. S13 builds
-directly on this re-frozen shape; there is no parallel catalog or cutover.
-Kit, ingest and resolution support and owner activation are still prerequisites
-to emitting real events. Once a consumer is deployed, the normal versioning
+The catalog stays at version 1: its public file and package copy are
+byte-identical, and transition fixtures and consumer expectations match them.
+S13 emits this shape (`naapp/secrets/src/aweb_secrets/broker_audit.py`); there
+is no parallel catalog or cutover. Once a consumer is deployed, the normal versioning
 rule applies to subsequent payload changes.
 
 ### `post-governance-hook`
@@ -308,13 +304,9 @@ The metadata revision and signed event enqueue are one gated transaction.
 Ship the reader's distinct-state validation with the paired public/packaged
 catalog before a producer or receiver activates this act.
 
-This act is an in-place v1 addition under decision 93, applying the same dated,
-scoped pre-deployment evidence and stop/version-bump trigger in the
+This act is an in-place v1 addition under decision 93, on the same
+pre-deployment conditions as the
 [terminal amendment](hook-terminal-delivery.md#deliberate-catalog-re-freeze-and-implementation-evidence).
-Coordinator applicability/encoding ruling:
-`17b3d3be-5a5c-4940-bc89-aa7d3e890db7` (2026-10-24); semantic fit:
-`e67ffe8b-1b24-48aa-958a-09a126432753`. These rulings do not broaden that
-inventory into independent evidence about third-party deployments.
 
 For a job resource, `resource.created` records first creation;
 `resource.version_added` records a newly admitted revision of its CURRENT
@@ -365,7 +357,9 @@ pre-deployment exception (aweb-acgh.16.23); no logs installation is deployed.
   it. The [cancellation evidence contract](hook-terminal-delivery.md#each-app-producers-cancellation-evidence)
   fixes its source binding/hook/count/contiguous-sequence fields, system actor,
   arithmetic and per-producer attribution. It is narrowing and never authorizes
-  delivery to the ended binding.
+  delivery to the ended binding. **After the first release (aweb-acgh.16.30,
+  aweb-acgh.16.32):** producers emit `hook_delivery.cancelled`; the catalog
+  defines it.
 
 **Contact-bound credential completions.** A designated contact's one-use TOFU
 enrolment, or proof of an already-authorized pending contact, completes the
@@ -378,7 +372,7 @@ verified `contact_change` assertion for the holder's own contact change.
 For a pending contact, also bind the candidate's opaque
 resource reference, state and effective time. Keep the signed artifact, its
 original proof/context and commitment in restricted storage; an actor string,
-evidence locator or lookup of today's designation is not that association.
+evidence locator or lookup of the current designation is not that association.
 
 The completion receipt uses the original `authority: owner_act` and
 `owner_act_sha256`, or `authority: passkey_session` and the original
@@ -413,9 +407,9 @@ verification that no deployed hook producer or consumer exists. The artifact
 and deployment findings are recorded in the freeze commit. Published parser
 or envelope libraries alone do not establish a deployed producer or consumer.
 Once such a deployment exists, a payload addition requires the next ordered
-catalog version with explicit consumer updates. The decision-93 receipt is
-`0c3beb68-15c7-49d2-9799-4d45ff95ed07` (2026-10-21). The shared contract's
-R+A and updated receiver support precede producer emission.
+catalog version with explicit consumer updates. Secrets emits
+`resource.version_observed`
+(`naapp/secrets/src/aweb_secrets/onepassword_reconciliation.py`).
 
 For a 1Password-backed secret, the grant authorizes the immutable vault, item
 and field reference. The vault is the owner's value-ingress and rotation path.
@@ -495,18 +489,15 @@ failure path emits a successful version transition.
 This additive catalog delta preserves all existing accepted payloads. Producers
 must use the reviewed shared codec and update the receiving catalog support
 before emitting the new act/code; an older consumer refuses unknown entries.
-It does not authorize producer-local hook actions. M1/M2/S13 implementation
-still needs its own reviewed activation, lock, CAS, rollback, cache and delivery
-proofs. The ruling is recorded in secrets mail
-`80c8580f-66ab-4f68-b9cf-7c20ff6dd9f7` (decision 92, 2026-10-21; custody's
-receipt `2f7026a2-6a1b-4f98-b19e-fc834dea13d8`).
+It does not authorize producer-local hook actions.
 
 ### Passkey evidence commitments and console actors
 
-**Decision 84, aweb-acgh.39; proposed for R+A.** Juan ruled that the proof is
-kept: secrets §10.4's promise of later checking with the approver's public key
-stays intact. This replaces the held summary-HMAC proposal at `90a3443b3`.
-S13/S14 wait for the reviewed shared B3 helper; they build no local serializer.
+**Decision 84.** The proof is kept: secrets §10.4's promise of later checking
+with the approver's public key stays intact. B3 implements it in
+`naapp-lib/src/aweb_naapp/runtime/passkeys/proof.py` (`RetainedPasskeyProof`,
+`passkey_evidence_commitment`). S13/S14 use that shared helper; they build no
+local serializer.
 
 `approval_evidence_sha256`, in both governance and secret-use hooks, is
 **SHA-256 of the retained proof and frozen verification context**, encoded as
@@ -530,9 +521,9 @@ with the credential-counter CAS and evidence insertion:
   authorization. A session or approval refers to that association, not a
   caller's later headers, live policy, new key or recomputed request.
 
-These are new retained proof fields, not fields claimed to exist in today's
-summary-only `PasskeyEvidence`. Scope, original challenge state and B2 covered
-bytes must be threaded into B3's verification seam. Existing credential-ID
+These fields form `RetainedPasskeyProof`, a record separate from the
+summary-only `PasskeyEvidence`. B3's verification seam carries scope, original
+challenge state and B2 covered bytes into it. Existing credential-ID
 lookup and summary data may remain restricted store columns. Neither is a
 substitute for the proof. No raw proof, subject, scope, key, credential ID,
 locator or counter is added to a hook payload. The raw authenticator data
@@ -625,7 +616,7 @@ JSON, hex spelling, re-encoded COSE key or parsed/re-serialized client data.
 An export/vector uses strict lowercase hex for those bytes and verifies every
 length. Missing proof/sidecar, malformed encodings, inconsistent bindings and
 unverified assertions are refused, never replaced by a summary/hash fallback.
-B3 provides the sole canonical helper after R+A. The existing request/params
+`passkey_evidence_commitment` is the sole canonical helper. The existing request/params
 HMAC helpers and their key rules are unchanged.
 
 **Why unkeyed (§A2).** Decision 84 treats the verified assertion and frozen
@@ -648,8 +639,8 @@ replacement/revocation never rewrite them or substitute a current public key.
 The historical public key remains with the retained proof. A new installation
 or generation requires a new authorization, not relabeling old evidence.
 Retention, deletion, backup erasure and disclosure follow the app's data
-lifecycle. An ordered migration adds proof storage; no existing migration is
-edited. A legacy summary without proof cannot be upgraded into proof or used
+lifecycle. Proof storage is its own ordered migration
+(`runtime/passkeys/migrations/003_retained_proof.sql`). A legacy summary without proof cannot be upgraded into proof or used
 as a summary-HMAC fallback. After lifecycle deletion the hook/chain commitment
 may remain, but the deleted proof is unavailable and later proof retrieval is
 not promised. A retained/exported proof verifies without any live service or
@@ -674,7 +665,7 @@ context, a reviewer performs these checks without accepting B3's verdict:
    other required authenticator checks; verify the signature over exact
    `authenticator_data || SHA-256(client_data_json)` under that trusted key.
    Check the signed counter against the frozen before/after values using B3's
-   existing rule (strict increase unless both are zero), not today's counter.
+   existing rule (strict increase unless both are zero), not the live counter.
 4. Independently rebuild all framed commitment bytes, hash them and compare
    to the signed hook field. A substituted assertion/context/key fails this
    binding even if its signature happens to verify. Keep the exact original
@@ -699,7 +690,7 @@ or the authorizing B3 subject into `approver_id`, as an evidence-disclosure
 shortcut. No envelope actor mode or field is added.
 
 Narrowing actions remain ungated on audit target/delivery availability. The
-new proof convention changes no containment authorization or audit gate.
+proof convention changes no containment authorization or audit gate.
 The conformance vector is [passkey evidence v1](vectors/passkey-evidence-v1.json).
 
 ### `post-manifest-command-hook`
@@ -801,6 +792,10 @@ no `result_ref`.
 
 ### `post-mutation-hook`
 
+**Open (aweb-acgh.16.11):** the core server's producer, which signs and
+enqueues these events in the mutation transaction. The catalog, its reader and
+the server's binding registry are on main; no core code emits this hook.
+
 Every event has `mutation_type` and `target_ref`, and optional `before_ref` and
 `after_ref`. Each mutation type adds its own fields:
 
@@ -837,6 +832,9 @@ The catalog lists them under `excluded_core_events`.
 
 ### `post-command-hook`
 
+**Open (aweb-acgh.16.17):** `aw` emits no client events. The catalog and the
+envelope library (`cli/go/hookevent`) are on main.
+
 `command` is the canonical command path, such as `aw id rotate-key`. `flags`
 lists flag names only, never values. `exit_status` is the command's exit status.
 `command_class` names one class, and `local_effects` lists effects of that class
@@ -852,14 +850,16 @@ only:
 A command with both local and server effects produces one client event for its
 local effects, and the server produces one event per server effect. The two
 share the command's `trace_id` and are not duplicates. Reads fire nothing.
+**Open (aweb-acgh.16.16):** `aw` minting and propagating the command's
+`trace_id`.
 
 ## Bindings
 
 An app declares hook bindings in its manifest v2 `hooks` slot:
 `registrations` bind one of its tools, declared with
 `invocation_contexts: ["hook"]`, as a target; `productions` name the hooks it may
-emit, with optional `reads`. Version 2 of the manifest is defined by D1's manifest
-contract. A binding is a child of the team's install record, keyed by the
+emit, with optional `reads`. Version 2 of the manifest is defined in
+[the app manifest](app-manifest.md#manifest-version-2). A binding is a child of the team's install record, keyed by the
 installation and its generation.
 
 | State | Meaning |
@@ -878,7 +878,9 @@ installation and its generation.
   it; signing only for the organization owner after a fresh step-up is the
   signing deployment's obligation. Activation
   compares the act's subject, including the manifest digest the owner's client
-  fetched, with the stored pending row.
+  fetched, with the stored pending row. **Open (aweb-acgh.16.18):** `aw`
+  commands that sign owner acts; the Go library `cli/go/awid/owneract.go`
+  builds them.
   Ordinary activation remains valid without a `hook-terminal-receipt` key.
   Under the [terminal contract](hook-terminal-delivery.md), that optional
   pinned-manifest purpose authorizes only the target's signed completion
@@ -887,19 +889,30 @@ installation and its generation.
   A registration for `post-mutation-hook` also follows the separate
   [core-signer readiness rule](hook-signer-unavailable.md#authority-and-failure-policy):
   no currently valid core signer gives `409 core_hook_producer_unconfigured`
-  without consuming the nonce or activating the row.
+  without consuming the nonce or activating the row. **Open (aweb-acgh.16.36):**
+  server activation (`server/src/aweb/hook_bindings.py`) does not check signer
+  readiness.
 - **A new generation supersedes.** Every binding of the old generation becomes
   `superseded`, and the new generation's bindings start `pending`. Activation is
   never inherited, however similar the new bytes are.
 - **Unknown catalogs stay pending.** Activating a binding whose catalog id,
   version or hook is unknown is refused with `unknown_catalog`.
+  **Open (aweb-acgh.16.35):** server activation (`server/src/aweb/hook_bindings.py`)
+  does not check the catalog; consumers refuse the events of an unknown
+  catalog.
 - **The `active_from` pad.** Activation sets `active_from` to the activation
   time plus 60 seconds, which is the resolution freshness bound. Every producer
   has refreshed by then. An event is owed to an `active` registration only when
   `active_from` is at or before the event's `occurred_at`, so a new target is
   never fed history.
 
-**Revocation** is the exfiltration remedy:
+**Revocation** is the exfiltration remedy. It takes effect immediately: a
+revoked binding leaves the team's registration view, and a producer whose fresh
+view lacks it cancels each delivery to it with reason `binding_revoked`
+(`naapp-lib/src/aweb_naapp/hooks/transport.py`). **After the first release
+(aweb-acgh.16.30, aweb-acgh.16.32):** the terminal record, tombstones,
+cancellation records and receiver seal below, which explain each gap a
+revocation leaves. Without them, `verify` reports such a gap as unexplained.
 
 1. A previously active registration is owed one final `hook_binding.revoked`,
    whatever its original hook, through the separately authenticated
@@ -921,8 +934,9 @@ installation and its generation.
 
 Producers stop delivering within the freshness bound, so the revoked target may
 receive redacted activity for up to 60 seconds after revocation. Owner-facing
-copy says so. A committed receiver seal refuses further ordinary delivery even
-from a still-fresh cached view. Uninstall and generation supersession apply the
+copy says so. **After the first release (aweb-acgh.16.32):** a committed
+receiver seal refuses further ordinary delivery even from a still-fresh cached
+view. Uninstall and generation supersession apply the
 terminal rule to each previously active registration; new-generation activation
 is never inherited. Revocation never waits for a receiver acknowledgement.
 
@@ -950,6 +964,7 @@ to that binding and event (see [The delivery credential](#the-delivery-credentia
 Only the final lifecycle record uses the distinct `hook-terminal-delivery`
 credential and wrapper specified by [the terminal amendment](hook-terminal-delivery.md);
 ordinary v1 signer equality, body shape and active admission are unchanged.
+**After the first release (aweb-acgh.16.32):** the terminal credential.
 Egress takes
 the destination only from the activated binding. It uses HTTPS only and follows
 no redirects. Private and internal destinations are refused unless a
@@ -964,7 +979,7 @@ self-hosted operator allows them; a hosted deployment always refuses them.
 | `413 request_too_large` (a body over the receiver's bound) | `rejected` at once and surfaced, never retried: no retry makes the same bytes smaller. A producer that keeps the envelope bound never meets it. |
 | A schema or authorization refusal | Retried with bounded backoff, in case a registry view is stale, then `rejected` and surfaced. |
 | A network error or 5xx | Retried with capped exponential backoff and never dropped. After the operator's disclosed delivery horizon it is `stalled` and surfaced to the owner. |
-| The binding is no longer active when the producer sends | Ordinary delivery is `cancelled`, with its reason. The durably authorized terminal obligation retries independently; inactive state never cancels it. |
+| The binding is no longer active when the producer sends | Ordinary delivery is `cancelled`, with its reason. The durably authorized terminal obligation retries independently; inactive state never cancels it. **After the first release (aweb-acgh.16.32):** the terminal obligation. |
 
 Delivery is at least once. Consumers deduplicate on `(team_id, event_id)`.
 
@@ -1048,15 +1063,10 @@ reconciliation, never silently resent. No record is represented as delivered
 until it is acknowledged. These events still count in an eligible target's
 backlog, and eligibility never becomes retroactive.
 
-The v1 metadata/vector re-freeze is deliberate under decision 93:
-coordinator applicability ruling `e93f7f7f-c437-40ea-8d9a-8b360dbe5ed3`
-uses the dated, scoped first-party deployment evidence and third-party
-limitation in [the terminal contract](hook-terminal-delivery.md#deliberate-catalog-re-freeze-and-implementation-evidence)
-(`c00d8528-4b9d-457e-8c53-e2e3e8d2f0cb`,
-`e09dce11-f2dc-4baa-8a3b-3fdcbb9790ed`). This is not a fresh universal
-inventory of secret-use consumers. A discovered deployed v1 consumer stops
-this re-freeze and requires the next version and Juan's decision. No accepted
-payload, enum, envelope/signature format or existing signed vector changes.
+The v1 metadata/vector re-freeze is deliberate under decision 93, on the
+first-party deployment evidence and third-party limitation in
+[the terminal contract](hook-terminal-delivery.md#deliberate-catalog-re-freeze-and-implementation-evidence).
+No accepted payload, enum, envelope/signature format or existing signed vector changes.
 Both public/packaged catalogs and their strict reader change together; an
 older strict reader cannot load the new metadata. Producer and receiver
 package publication/deployment must include that reader/catalog pair before
@@ -1094,7 +1104,9 @@ must not wait. Revocation can still race the drain, so an audit-critical event
 whose deliveries all end `cancelled` or `rejected` is a **surfaced fault**: the
 owner learns that an effect happened with no surviving audit record.
 
-`post-mutation-hook` is not audit-critical. With a valid core signer, core
+`post-mutation-hook` is not audit-critical. **Open (aweb-acgh.16.11):** the
+core producer and missing-production reservation this paragraph describes.
+With a valid core signer, core
 signs/enqueues its owed event in the mutation's transaction whenever its fresh
 view shows an eligible active registration. It never requires a target before
 a mutation. If the signer is unavailable, the mutation and a typed local
@@ -1175,6 +1187,8 @@ describe.
   [missing-production rule](hook-signer-unavailable.md); no signed event is
   emitted for that number, so authenticated later evidence can expose a gap.
   Other producers' ordinary gap-free enqueue semantics are unchanged.
+  **Open (aweb-acgh.16.11):** the core signer's missing-production
+  reservation.
 - `actor` always carries `authority_mode` (`team_cert`, `identity_grant`,
   `app_key`, `link_capability`, `owner_act` or `system`) and `attestations`.
   - Every authority but `system` names the actor's `did_key`, and may add
@@ -1258,7 +1272,7 @@ The signed payload is:
   "auth": "hook-delivery",
   "aud": "https://logs.example.com",
   "method": "POST",
-  "path": "/hooks/ingest",
+  "path": "/v1/hooks/ingest",
   "body_sha256": "<hex SHA-256 of the body>",
   "team_id": "demo:example.com",
   "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
@@ -1314,8 +1328,9 @@ without the team key. It checks, in this order:
 
 The ordinary target then checks that the binding is its own active registration,
 and that an app producer holds an active production for the hook (aweb-acgh.7).
-It also checks the durable per-binding seal in its append transaction. The
+Ordinary admission is active-only. **After the first release
+(aweb-acgh.16.32):** the target also checks the durable per-binding seal in its
+append transaction, and the
 [terminal credential](hook-terminal-delivery.md#separate-terminal-request-credential)
-has a separate exact verifier dispatch and permits only the capsule-bound core
-revocation event. It never weakens this v1 verifier. Until that amendment and
-its shared implementation are accepted, active-only admission remains in force.
+has a separate exact verifier dispatch that permits only the capsule-bound core
+revocation event. It never weakens this v1 verifier.

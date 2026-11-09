@@ -39,6 +39,7 @@ from aweb_naapp.hooks.strictjson import (
 __all__ = [
     "APP_ACTS",
     "CORE_ACTS",
+    "HUMAN_ROLE_ACTS",
     "LOGS_ACTS",
     "PREFIX",
     "Refused",
@@ -54,6 +55,10 @@ CLOCK_SKEW = timedelta(seconds=60)
 # Each verifier accepts only its own closed vocabulary.
 CORE_ACTS = ("hook-binding.activate", "hook-binding.revoke")
 APP_ACTS = ("app-role.designate", "app-role.revoke", "app-credential.recover")
+# They bind an owner-designated role to a team's human member and that
+# member's credential. An app accepts them once it serves them on the
+# owner-act delivery route.
+HUMAN_ROLE_ACTS = ("human-credential.replace", "human-role.designate", "human-role.revoke")
 LOGS_ACTS = ("logs.retention.set", "logs.erase", "logs.legal-hold.set", "logs.legal-hold.release")
 
 _TIME = "%Y-%m-%dT%H:%M:%SZ"
@@ -62,6 +67,7 @@ _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 _TEAM_ID = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}:[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?")
 _ORIGIN = re.compile(r"https://[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?(:[0-9]{1,5})?")
 _DID_KEY = re.compile(r"did:key:z[1-9A-HJ-NP-Za-km-z]{40,60}")
+_DID_AW = re.compile(r"did:aw:[1-9A-HJ-NP-Za-km-z]{20,32}")
 _NONCE = re.compile(r"[0-9a-f]{32}")
 _TIME_SHAPE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
 _APP_ID = re.compile(r"[a-z][a-z0-9-]{0,62}")
@@ -188,12 +194,31 @@ _REVOCATION = _Subject(
     fields=_app_fields(role=_string(_TOKEN), subject_ref=_string(_REF)),
     required=("app_id", "installation_id", "role", "subject_ref"),
 )
+# A member principal holding a role with a credential, named by its hash; a
+# role that declares a notice contact also names that contact's hash.
+_HUMAN_HOLDING = _Subject(
+    fields=_app_fields(
+        role=_string(_TOKEN),
+        principal=_string(_DID_AW),
+        credential_sha256=_string(_SHA256),
+        notice_contact_sha256=_string(_SHA256),
+    ),
+    required=("app_id", "installation_id", "role", "principal", "credential_sha256"),
+)
+# The holding of a role by a member principal.
+_HUMAN_REVOCATION = _Subject(
+    fields=_app_fields(role=_string(_TOKEN), principal=_string(_DID_AW)),
+    required=("app_id", "installation_id", "role", "principal"),
+)
 _SUBJECTS: dict[str, _Subject] = {
     "hook-binding.activate": _BINDING,
     "hook-binding.revoke": _BINDING,
     "app-role.designate": _ENROLMENT,
     "app-role.revoke": _REVOCATION,
     "app-credential.recover": _ENROLMENT,
+    "human-role.designate": _HUMAN_HOLDING,
+    "human-credential.replace": _HUMAN_HOLDING,
+    "human-role.revoke": _HUMAN_REVOCATION,
     "logs.retention.set": _Subject(
         fields=_app_fields(
             event_class=_string(_EVENT_CLASS),

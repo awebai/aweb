@@ -1,12 +1,14 @@
 # The logs chain: commitments, event hashes, receipts and checkpoints
 
-Status: **specified experimental public contract, not yet shipped**. Owner: the
-aweb OSS hooks lane (aweb-acgh.16.21). This document is the source of truth for
-the bytes logs commits to and signs. Its vector is
-`docs/vectors/logs-chain-v1.json`. The Python implementation in
-`naapp/logs/src/aweb_logs/chain.py` and `verify.py` regenerates it byte for
-byte. The Go verifier in `cli/go/logschain`, on which `aw logs verify` is to be
-built, passes it. The design and its rationale are in
+Status: **experimental public contract**. Owner: the aweb OSS hooks lane
+(aweb-acgh.16.21). Anything unmarked is on main; a part that is not carries its
+release status and task id. This document is the source of truth for the bytes
+logs commits to and signs. Its vector is `docs/vectors/logs-chain-v1.json`. The
+Python implementation in `naapp/logs/src/aweb_logs/chain.py` and `verify.py`
+regenerates it byte for byte, and `naapp/logs/src/aweb_logs/ledger.py` stores
+the chain. The Go verifier in `cli/go/logschain` passes it. **In flight
+(aweb-acgh.16.24):** `aw logs`; the Go verifier is on main, and no `aw`
+command uses it. The design and its rationale are in
 [the audit substrate design](design/audit-substrate.md), §B3 and §B6.
 
 ## What the chain proves, and what it does not
@@ -83,7 +85,9 @@ The link fields are the event's **skeleton**. Retention and erasure purge the
 content (signing bytes, signature and salt) and every projection, index and
 cache derived from it. They keep the skeleton, so the chain still verifies
 across a purged event. Deleting the salt makes the commitment unlinkable to
-guessed content.
+guessed content. **Open (aweb-acgh.16.23):** the retention and erasure acts
+that purge content; the chain schema records a purge act and `verify` handles
+a purged event.
 
 ## Signed artefacts
 
@@ -127,8 +131,9 @@ JSON. `team_seq` and `event_hash` are the chain head it witnesses. A checkpoint
 of an empty epoch has `team_seq` 0 and the epoch's `genesis_hash`.
 `previous_checkpoint_sha256` is the SHA-256 of the signing bytes of the
 epoch's previous checkpoint; the first checkpoint of an epoch has none. Logs
-issues checkpoints periodically while events arrive and on demand, and the
-owner can export them.
+issues checkpoints periodically while events arrive
+(`naapp/logs/src/aweb_logs/app.py`, `run_checkpoints`). **Open (aweb-acgh.16.22,
+aweb-acgh.16.23):** checkpoints on demand and the owner's export of them.
 
 The receipt and checkpoint prefixes are unique to logs, so neither verifies as
 any other signed aweb object, and no other object verifies as either.
@@ -213,11 +218,12 @@ required sequence and are excluded from this calculation.
 older stored events), invalid retained content or purged content. An uncertain
 observation suppresses hole inference for its producer identity, or its
 hook/origin when the producer identity is no longer available. No lifecycle
-history is fabricated from today's resolver view. An empty observed-hole list
+history is fabricated from the resolver's present view. An empty observed-hole list
 proves neither an unobserved prefix nor trailing delivery completeness. Missing
 integers alone do not prove that every integer was owed to this interval, or
-establish a loss cause. Terminal cancellation coverage still needs the paired
-terminal implementation; ordinary admission remains active-only.
+establish a loss cause. Ordinary admission is active-only. **After the first
+release (aweb-acgh.16.30, aweb-acgh.16.32):** terminal cancellation coverage,
+which explains a gap left by a revoked binding.
 
 ## Exporting a team's log: `aweb.logs-export/1`
 
