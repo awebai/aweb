@@ -88,7 +88,8 @@ What this recipe enforces, and what it leaves to the host:
 - **No key custody service.** Logs reads its keys from files; there is no KMS
   mode. The keys are as protected as the host's file permissions and backups.
 - **Agents on the host.** Agents that run on this host as UID 10001, or as
-  root, or that can impersonate a principal that can, share the service's
+  root, or in the docker group (which is root-equivalent), or that can
+  impersonate a principal that can, share the service's
   trust boundary: they can sign as logs and rewrite the database. Running Logs
   on a host that agents do not reach is the deployment's choice; this recipe
   does not demonstrate it.
