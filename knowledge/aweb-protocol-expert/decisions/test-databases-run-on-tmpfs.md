@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Test databases run on tmpfs
-description: Intermittent PostgreSQL stalls in the test suite are fixed by putting every test database on tmpfs, never by raising a timeout or skipping; the mount must be verified, not assumed. Accepted, not yet landed.
+description: Intermittent PostgreSQL stalls in the test suite are fixed by putting every test database on tmpfs, never by raising a timeout or skipping; the mount must be verified, not assumed. Implemented in the shared candidate test launcher.
 tags: [decision, testing, postgresql, flaky-tests, infrastructure]
 timestamp: 2026-10-21
 ---
@@ -12,9 +12,13 @@ past an unexplained intermittent failure... fix it without raising the
 timeout." The approval: test databases that stall for seconds on host I/O are
 the defect, and tmpfs removes it.
 
-**Status:** accepted direction, not landed; confirmed by the coordinator on
-2026-10-25. On main, only some end-to-end compose files use tmpfs, and the
-shared test launcher still starts PostgreSQL on disk.
+**Status** (verified 2026-11-09 at aweb main cfdc06255e2a): the shared
+candidate test launcher implements this decision since commit 027e97b5. Its
+PostgreSQL data and WAL sit on a bounded tmpfs with swap disabled, and the
+launcher refuses to run the suite unless the SQL-reported data directory and
+the resolved WAL directory are on tmpfs and swap is off. Other test PostgreSQL
+launchers, such as end-to-end compose files, have not been audited against
+this decision.
 
 # Evidence
 
@@ -50,4 +54,7 @@ Harvested 2026-10-25 from seat `aweb-protocol-expert-chat-session-fix` (notes
 `synthetic-load-is-not-the-failing-workload.md`,
 `diagnostics-can-disturb-storage-measurements.md`, `aciq-time-window.md`;
 coordinator a0d0120b; reply 145a45c9), with status and A/B figures confirmed
-by the OSS coordinator in f8d89364.
+by the OSS coordinator in f8d89364. Status updated 2026-11-09 from an OKF
+proposal from aweb-protocol-expert/aweb-protocol-expert-human-kind;
+notes/tmpfs-launcher-landed-status.md. Landing source-reported by the OSS
+coordinator, verified against main by the harvester.
