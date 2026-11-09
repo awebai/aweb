@@ -54,8 +54,8 @@ deployment" (§2, §B4, §A9).
   hash chain with signed checkpoints and signed receipts. Only the owner and
   owner-designated humans with passkeys can read the log. It has no edit or delete API, and
   retention and erasure purge content while the chain still verifies.
-  **Open (aweb-acgh.16.22, aweb-acgh.16.23):** the owner-gated reads, and
-  retention and erasure; ingest and the chain are on main.
+  Ingest and the chain are on main. **In flight (aweb-acgh.16.22):** the
+  owner-gated reads (§B5). **Open (aweb-acgh.16.23):** retention and erasure.
 - **Self-hosting means activating a different logs installation as the target.**
 
 ## 1. Starting point on main
@@ -851,8 +851,8 @@ manifest v2 and registered key. Its tools and their contexts:
 | Tool | Contexts | Authority |
 | --- | --- | --- |
 | `ingest` | `hook` only | Hook delivery (§B2) |
-| `query`, `tail`, `verify`, `checkpoint`, `export` | `surface` on logs' own origin; CLI for owner acts | Owner or designated reader (§B5). **Open (aweb-acgh.16.22, aweb-acgh.16.23).** |
-| `readers`, `retention`, `erase` | owner acts | Owner only. **Open (aweb-acgh.16.22, aweb-acgh.16.23).** |
+| `query`, `tail`, `verify`, `checkpoint`, `export` | `surface` on logs' own origin; CLI for owner acts | Owner or designated reader (§B5). **In flight (aweb-acgh.16.22):** session-gated `query`, `tail` and `verify` are on main (§B5). **Open (aweb-acgh.16.22, aweb-acgh.16.23):** on-demand `checkpoint` and `export`. |
+| `readers`, `retention`, `erase` | owner acts | Owner only. Reader designation and revocation are on main (§B5). **Open (aweb-acgh.16.23):** `retention` and `erase`. |
 
 The manifest on main (`naapp/logs/src/aweb_logs/aweb-app.json`) declares only
 `ingest`. Its manifest registers `ingest` on all five v1 hooks (`post-secret-use-hook`, `post-governance-hook`, `post-manifest-command-hook`, `post-mutation-hook`, `post-command-hook`). Omitting `post-governance-hook` would make every widening governance act refuse (§A7). It never subscribes to
@@ -1001,7 +1001,27 @@ Two fields carry the honesty of the record:
 
 ### B5. Owner-gated reads
 
-**Open (aweb-acgh.16.22):** this section; main has no read path.
+**In flight (aweb-acgh.16.22).** On main (`naapp/logs/src/aweb_logs/readers.py`,
+`reader_service.py`, `read_routes.py`):
+
+- the reader directory: random `logs.reader.<hex>` slots from
+  `POST /v1/reader-slots`, with an expired-slot sweep;
+- designation and revocation by owner act on the console origin;
+- passkey enrolment and login from B3, and console sessions;
+- session-gated `GET /v1/events`, `GET /v1/tail` and `GET`/`POST /v1/verify`;
+- the console shell;
+- `POST /v1/reader-removals`, with last-reader protection
+  (`last_reader_protected`).
+
+Not on main:
+
+- **In flight (aweb-acwd.2):** the production mount of these routes in
+  `create_app`, and the reader-slot and remove-reader manifest tools;
+- **Open (aweb-acgh.16.34):** delegated `verify` (`logs.verify.delegate`);
+- **Open (aweb-acgh.16.22, aweb-acgh.16.23):** on-demand checkpoints and
+  export;
+- **Open (aweb-acgh.16.22):** the §B4 query projections and `mediation`
+  (§B8), and the D1 `link_out` surface.
 
 Agents emit and cannot read. Signatures cannot tell a hosted human member from
 an MCP agent: both are custodial members signed through the host (§1). So

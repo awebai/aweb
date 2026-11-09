@@ -380,7 +380,7 @@ Paths below abbreviate `naapp-lib/src/aweb_naapp/` as `aweb_naapp/` and
 - **Where:** `aweb_secrets/containment.py`, `containment_routes.py`
   (`/v1/containment`), the console containment router.
 - **Review:** R+A.
-- **Open (aweb-acgh.18.48):** removing one member from a role as a narrowing
+- Removing one member from a role (`remove-role-member`) is a narrowing
   action, which release step 5 uses.
 - **Open (aweb-acgh.18.15), acceptance owed:** each action takes effect at
   admission and at the fence; a revocation committed before the fence stops the
@@ -575,7 +575,7 @@ Paths below abbreviate `naapp-lib/src/aweb_naapp/` as `aweb_naapp/` and
 | aweb-acgh.18.45 | B3: caller-transaction fence `prepare`/`check` | Built |
 | aweb-acgh.18.46 | B3: `PasskeyEffectFence` on `change_contact` and `cancel_pending_contact` | In flight: the `fence` parameter is on both in `aweb_naapp/runtime/passkeys/service.py`; no root caller passes it |
 | aweb-acgh.18.47 | S3: once-linked continuation for the §11.4 repeat | Built: `aweb_naapp/dispatch/migrations/002_continuations.sql`; its secrets caller is S13 |
-| aweb-acgh.18.48 | Containment: remove one member from a role | Open |
+| aweb-acgh.18.48 | Containment: remove one member from a role | Built |
 | aweb-acgh.18.49 | Shared chrome without Berkeley Mono; toolkit tokens | Built |
 | aweb-acgh.18.50 | Runner accepts a root-owned 0640 config, so a job cannot widen its own pins | Built |
 | aweb-acgh.18.51 | Egress denies the deployment's own addresses: a setting wired into composition (§7.3) | Open |
