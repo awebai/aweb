@@ -185,13 +185,7 @@ async def query(
     limit = _limit(limit)
     start = Cursor.decode(before) if before is not None else None
     await project(db, team_id)
-    conditions, arguments = _conditions(team_id, where)
-    if start is not None:
-        arguments += [start.chain_epoch, start.team_seq]
-        conditions.append(
-            f"(r.chain_epoch, r.team_seq) < (${len(arguments) - 1}, ${len(arguments)})"
-        )
-    rows = await _rows(db, conditions, arguments, "DESC", limit + 1)
+    rows = await db.fetch_all(*_page(team_id, where, start, "DESC", limit + 1))
     more = len(rows) > limit
     rows = rows[:limit]
     next_cursor = _position(rows[-1]).encode() if more else None
@@ -218,10 +212,7 @@ async def tail(
         return Page([], position.encode())
     start = Cursor.decode(after)
     await project(db, team_id)
-    conditions, arguments = _conditions(team_id, where)
-    arguments += [start.chain_epoch, start.team_seq]
-    conditions.append(f"(r.chain_epoch, r.team_seq) > (${len(arguments) - 1}, ${len(arguments)})")
-    rows = await _rows(db, conditions, arguments, "ASC", limit)
+    rows = await db.fetch_all(*_page(team_id, where, start, "ASC", limit))
     position = _position(rows[-1]) if rows else start
     return Page([_event(row) for row in rows], position.encode())
 
@@ -331,11 +322,21 @@ def _conditions(team_id: str, where: EventFilter) -> tuple[list[str], list[Any]]
     return conditions, arguments
 
 
-async def _rows(
-    db: AsyncDatabaseManager, conditions: list[str], arguments: list[Any], order: str, limit: int
-) -> list[dict[str, Any]]:
-    arguments = [*arguments, limit]
-    return await db.fetch_all(
+def _page(
+    team_id: str, where: EventFilter, start: Cursor | None, order: str, limit: int
+) -> tuple[Any, ...]:
+    """The statement and arguments reading up to ``limit`` of the team's events
+    matching ``where`` in position ``order``, strictly past ``start`` in that
+    order when it is given."""
+    conditions, arguments = _conditions(team_id, where)
+    if start is not None:
+        arguments += [start.chain_epoch, start.team_seq]
+        past = "<" if order == "DESC" else ">"
+        conditions.append(
+            f"(r.chain_epoch, r.team_seq) {past} (${len(arguments) - 1}, ${len(arguments)})"
+        )
+    arguments.append(limit)
+    return (
         "SELECT e.chain_epoch, e.team_seq, e.event_hash, e.received_at, e.hook,"
         " e.producer_origin, e.signing_bytes, e.purge_act"
         " FROM {{tables.read_events}} r JOIN {{tables.chain_events}} e"
