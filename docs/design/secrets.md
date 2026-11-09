@@ -801,10 +801,30 @@ requirement.
    needs it.
 5. **Proxies.** There are no proxy settings from the environment. Any egress
    proxy is a deploy-level allowlist (§15), never a request option.
-<!-- PENDING RULING D1: response bound; doc text unchanged until Juan rules -->
 6. **Bounds.** Connect timeout 5 s, total 30 s (per operation, overridable
-   downwards), request body at most 1 MiB, response at most 4 MiB. Both bounds are
-   reduced by policy.
+   downwards), request body at most 1 MiB. A broker response defaults to 16 MiB. The owner
+   may set `response_max_bytes` on an immutable destination or `response.max_bytes`
+   on an immutable operation, from 1 byte to a hard ceiling of 64 MiB. An omitted
+   limit uses 16 MiB; signed definition bytes are never rewritten to insert it.
+   The effective response bound is the minimum of the destination, operation
+   (when named), and policy `result.max_bytes` bounds (also defaulting to 16 MiB).
+   Increasing a limit requires a new owner-confirmed definition and moving its
+   grants. Lowering uses a policy bound or a replacement definition with immediate
+   removal or revocation of the old authority; that removal is narrowing. There
+   is no in-place definition edit. Credential-shape scanning and marked truncation
+   remain as in §7.6. Both request and response bounds are reduced by policy.
+
+   The production broker also reserves each final effective response bound from
+   an in-process budget before committing dispatch or sending any upstream
+   request. `SECRETS_BROKER_RESPONSE_BUDGET_BYTES` defaults to 256 MiB per process
+   and must be at least the 64 MiB response ceiling, checked at startup;
+   an operator sizes it for the container, allowing for JSON parsing and other
+   process memory as well as raw response bytes. Reservation never waits for
+   capacity. Exhaustion returns retryable HTTP 503 `capacity_unavailable` with
+   `Retry-After: 1`, leaving the original request and any unconsumed approval
+   available for exact resubmission. The reservation is held through response
+   processing and released on success, failure, or cancellation. This byte
+   budget bounds concurrently reserved responses, not the process's entire heap.
 
 "Internal" means internal to the secrets deployment's network. Whether such a
 destination is possible at all is an **operator deploy setting**,

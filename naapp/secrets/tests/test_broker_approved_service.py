@@ -12,6 +12,7 @@ from aweb_naapp.hooks.commitment import CommitmentKey, Purpose, RequestBytes
 from aweb_naapp.hooks.producer import HookProducer, ServerProducer
 from aweb_naapp.runtime.approvals import (
     Approvals,
+    ApprovalState,
     Assurance,
     Decision,
     DispatchOutcome,
@@ -52,6 +53,7 @@ async def setup(
     max_dispatch=timedelta(seconds=30),
     sweep_margin=timedelta(seconds=5),
     availability=None,
+    response_budget_bytes=None,
 ):
     if owner:
         await install(uses, approvers=[f"owner:{ALICE.principal_did}"])
@@ -168,6 +170,11 @@ async def setup(
         ),
         use_audit=audit,
         clock=uses.clock,
+        **(
+            {}
+            if response_budget_bytes is None
+            else {"response_budget_bytes": response_budget_bytes}
+        ),
     )
     body = json.dumps(
         {
@@ -185,16 +192,26 @@ async def setup(
 
 
 @pytest.mark.parametrize(
-    "decision,owner",
-    [(Decision.APPROVE, False), (Decision.REJECT, False), (Decision.APPROVE, True)],
+    "decision,owner,capacity_blocked",
+    [
+        (Decision.APPROVE, False, False),
+        (Decision.REJECT, False, False),
+        (Decision.APPROVE, True, False),
+        (Decision.APPROVE, False, True),
+    ],
 )
 async def test_actual_broker_pending_decision_resubmission_and_stored_replay(
-    uses, tmp_path, decision, owner
+    uses, tmp_path, decision, owner, capacity_blocked
 ):
     async with running_upstream(tmp_path) as upstream:
         availability = [True]
         service, audit, view, submission = await setup(
-            uses, tmp_path, upstream, owner=owner, availability=availability
+            uses,
+            tmp_path,
+            upstream,
+            owner=owner,
+            availability=availability,
+            response_budget_bytes=1 if capacity_blocked else None,
         )
         pending = await service.submit(secret=SECRET["ref"], submission=submission)
         assert pending.status == 202 and pending.body["state"] == "awaiting_approval"
@@ -218,6 +235,25 @@ async def test_actual_broker_pending_decision_resubmission_and_stored_replay(
         if decision is Decision.REJECT:
             availability[0] = False
         result = await service.submit(secret=SECRET["ref"], submission=submission)
+        if capacity_blocked:
+            assert result.status == 503 and result.body["code"] == "capacity_unavailable"
+            approval = await uses.approvals.get(approval_id)
+            assert approval.state is ApprovalState.APPROVED
+            assert approval.consumed_operation_id is None
+            assert upstream.paths == []
+            assert (
+                await uses.world.db.fetch_value("SELECT state FROM {{tables.dispatches}}")
+                == "awaiting_approval"
+            )
+            assert [
+                e["payload"]["action"]
+                for e in await envelopes(uses.world.db)
+                if e["hook"] == "post-secret-use-hook"
+            ] == [
+                "approval_requested",
+                "approval_decided",
+            ]
+            return
         if decision is Decision.APPROVE:
             assert result.status == 200 and result.body["state"] == "completed", (
                 result.status,
