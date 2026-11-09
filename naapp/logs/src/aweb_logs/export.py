@@ -424,8 +424,10 @@ def _event(value: Any, number: int) -> StoredEvent:
         value, number, {"link", "event_hash", "key_evidence"}, {"content", "purge_act"}
     )
     link_fields = _object(stored["link"], number, set(Link.__dataclass_fields__), set())
-    if type(link_fields["team_seq"]) is not int:
-        raise BundleMalformed(number, "team_seq")
+    for name, value in link_fields.items():
+        expected = int if name in ("chain_epoch", "team_seq") else str
+        if type(value) is not expected:
+            raise BundleMalformed(number, f"link {name}")
     evidence = _object(
         stored["key_evidence"],
         number,

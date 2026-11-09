@@ -418,6 +418,16 @@ def malformed_cases() -> list[MalformedCase]:
             3,
         ),
         MalformedCase(
+            "link_epoch_that_is_not_an_integer",
+            _replace(2, _set_link(lines[2], "chain_epoch", True))(lines),
+            3,
+        ),
+        MalformedCase(
+            "link_hook_that_is_not_a_string",
+            _replace(2, _set_link(lines[2], "hook", 7))(lines),
+            3,
+        ),
+        MalformedCase(
             "event_without_key_evidence",
             _replace(2, _drop_field(lines[2], "event", "key_evidence"))(lines),
             3,
@@ -436,4 +446,10 @@ def _set_field(line: bytes, record: str, name: str, value: Any) -> bytes:
     changed[record][name] = value
     if record == "event" and name == "purge_act":
         del changed[record]["content"]
+    return (json.dumps(changed, separators=(",", ":"), sort_keys=True) + "\n").encode()
+
+
+def _set_link(line: bytes, name: str, value: Any) -> bytes:
+    changed = json.loads(line)
+    changed["event"]["link"][name] = value
     return (json.dumps(changed, separators=(",", ":"), sort_keys=True) + "\n").encode()

@@ -484,8 +484,16 @@ func bundleEvent(value map[string]any, number int) (StoredEvent, error) {
 	if err != nil {
 		return StoredEvent{}, err
 	}
-	if _, ok := link["team_seq"].(int64); !ok {
-		return StoredEvent{}, &BundleMalformed{number, "team_seq"}
+	for name, value := range link {
+		var ok bool
+		if name == "chain_epoch" || name == "team_seq" {
+			_, ok = value.(int64)
+		} else {
+			_, ok = value.(string)
+		}
+		if !ok {
+			return StoredEvent{}, &BundleMalformed{number, "link " + name}
+		}
 	}
 	evidence, err := fieldsOf(stored["key_evidence"], number,
 		[]string{"kid", "did_key", "purposes"}, []string{"installation_id", "generation", "binding_ids"})
