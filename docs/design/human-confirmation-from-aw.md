@@ -133,8 +133,14 @@ redirects. The app rate-limits handoffs as it rate-limits login.
   ([Authentication](../aweb-sot.md#authentication): `aud`, `method`, `path`,
   `body_sha256`, `timestamp`), with the session id in place of `team_id` and
   a random `nonce`. The app refuses a timestamp outside the 300-second window
-  and a nonce already seen in that session. Each request re-checks that the principal is a current human member
-  ([Use](human-role-holders.md#use)).
+  and a nonce already seen in that session. Every session refusal (a session
+  that is unknown, closed or expired, a signature that does not verify, a
+  timestamp outside the window, a nonce already seen) is
+  `401 console_session_required`, the console's existing code, and it does
+  not say which check failed. Each request re-checks that the principal is a
+  current human member ([Use](human-role-holders.md#use)), and refuses with
+  `403 principal_not_member`, `403 principal_not_human` or
+  `503 principal_status_unavailable`.
 
 ## Confirming a frozen request
 
@@ -363,9 +369,9 @@ which stops.
    read, and a later run's first read then reports it as
    `confirm_already_applied`, its one-time output lost. Anything else reports
    the read's state.
-4. When the session has expired (`401 console_session_required`), `aw` opens
-   a fresh `session` handoff once. If it has not yet sent the confirm, it
-   resumes from step 1. If it has, it resumes in step 3: it only reads and
+4. When the app refuses the session (`401 console_session_required`), `aw`
+   opens a fresh `session` handoff once, and reports a second refusal. If it
+   has not yet sent the confirm, it resumes from step 1. If it has, it resumes in step 3: it only reads and
    reports, and never sends the confirm again, even when the read says
    `ready`, because the first confirm may still be committing. An invocation
    sends the confirm at most once.
@@ -442,7 +448,8 @@ Each item is filed after review, and each is one reviewed change.
   human-kind check at use. Tests:
   - a handoff registering a non-loopback redirect URI is refused;
   - a result requested without the loopback code is refused;
-  - a replayed session request is refused.
+  - a replayed session request, an expired session and a request with a bad
+    signature each get the same `401 console_session_required`.
 - **B2 (`aweb_naapp`):** the session-issued link, with tests:
   - a non-candidate session is refused;
   - an ineligible session is refused;
