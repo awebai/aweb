@@ -414,6 +414,13 @@ self-host unreleased public source; that residual is explicit in the ruling.
 If a deployed v1 consumer is found, stop this re-freeze and use the next catalog
 version with Juan's decision. No previously accepted payload is removed.
 
+A second in-place re-freeze bounds the `host` type at 253 characters
+(aweb-acgh.16.47, coordinator ruling `5c4aa58d-e412-4213-aa88-412cf247e569`): no
+secrets or logs installation is deployed, and the secrets broker already
+refuses a longer host name, so no previously accepted payload a producer emits
+is refused. The catalog's `max_length` key and its accept/refuse cases at 253
+and 254 characters carry it ([hook events](hook-events.md#payloads)).
+
 This delta updates the public catalog and its byte-identical packaged copy,
 adds positive and single-fault payload cases for the new act and exact core
 range lists, and preserves
