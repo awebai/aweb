@@ -299,10 +299,11 @@ func TestClientPayloadsSatisfyTheCatalog(t *testing.T) {
 	}
 	var catalog struct {
 		Types map[string]struct {
-			Kind    string `json:"kind"`
-			Pattern string `json:"pattern"`
-			Min     int64  `json:"min"`
-			Max     int64  `json:"max"`
+			Kind      string `json:"kind"`
+			Pattern   string `json:"pattern"`
+			MaxLength int    `json:"max_length"`
+			Min       int64  `json:"min"`
+			Max       int64  `json:"max"`
 		} `json:"types"`
 		Hooks map[string]struct {
 			Fields         map[string]fieldSpec `json:"fields"`
@@ -316,7 +317,7 @@ func TestClientPayloadsSatisfyTheCatalog(t *testing.T) {
 		switch spec.Kind {
 		case "string":
 			s, ok := value.(string)
-			return ok && regexp.MustCompile(spec.Pattern).MatchString(s)
+			return ok && (spec.MaxLength == 0 || len(s) <= spec.MaxLength) && regexp.MustCompile(spec.Pattern).MatchString(s)
 		case "integer":
 			n, ok := value.(int64)
 			return ok && n >= spec.Min && n <= spec.Max

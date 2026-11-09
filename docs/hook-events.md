@@ -79,11 +79,19 @@ Every hook's payload is a **flat allowlist**:
 - a JSON object whose values are strings, integers, booleans or lists of
   strings, with no nested objects, floats or nulls;
 - each field has a type with a pattern and bounds, or an enum; a list has
-  bounds and unique items;
+  bounds and unique items. A string type whose pattern does not bound its
+  length also gives `max_length`: `host` allows at most 253 characters, the
+  DNS name limit;
 - an unknown field is refused, so a producer cannot leak data through an extra
   field;
 - conditional rules say which fields an event of a given kind needs or must not
   carry.
+
+The `host` bound was added to v1 in place, under decision 93's
+pre-deployment exception (coordinator ruling for aweb-acgh.16.47): no secrets
+or logs installation is deployed, and the secrets broker already refuses a
+host name over 253 characters (`naapp-lib/src/aweb_naapp/egress/urls.py`), so
+the bound refuses nothing a producer emits.
 
 Values are references, identifiers, enums, digests and bounded integers. A
 payload never carries a secret value, a message body, a subject, a preview, a

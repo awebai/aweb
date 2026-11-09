@@ -78,7 +78,8 @@
     },
     "host": {
       "kind": "string",
-      "pattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$|^\\[[0-9a-f:.]{2,45}\\]$|^[0-9]{1,3}(\\.[0-9]{1,3}){3}$"
+      "pattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$|^\\[[0-9a-f:.]{2,45}\\]$|^[0-9]{1,3}(\\.[0-9]{1,3}){3}$",
+      "max_length": 253
     },
     "http_method": {
       "kind": "string",
@@ -1783,6 +1784,20 @@
         "refusal_code": "grant_missing",
         "target_method": "POST",
         "target_host": "api.example.com",
+        "target_port": 443,
+        "target_path_template": "/v1/charges",
+        "request_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+      }
+    },
+    {
+      "name": "secret_use_target_host_at_the_dns_name_limit",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "refused",
+        "op_kind": "broker",
+        "refusal_code": "grant_missing",
+        "target_method": "POST",
+        "target_host": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "target_port": 443,
         "target_path_template": "/v1/charges",
         "request_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
@@ -4122,6 +4137,22 @@
       },
       "error": "invalid_value",
       "field": "use_ref"
+    },
+    {
+      "name": "secret_use_target_host_over_the_dns_name_limit",
+      "hook": "post-secret-use-hook",
+      "payload": {
+        "action": "refused",
+        "op_kind": "broker",
+        "refusal_code": "grant_missing",
+        "target_method": "POST",
+        "target_host": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "target_port": 443,
+        "target_path_template": "/v1/charges",
+        "request_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+      },
+      "error": "invalid_value",
+      "field": "target_host"
     }
   ]
 }
