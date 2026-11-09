@@ -484,7 +484,13 @@ func bundleEvent(value map[string]any, number int) (StoredEvent, error) {
 	if err != nil {
 		return StoredEvent{}, err
 	}
-	for name, value := range link {
+	names := make([]string, 0, len(link))
+	for name := range link {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		value := link[name]
 		var ok bool
 		if name == "chain_epoch" || name == "team_seq" {
 			_, ok = value.(int64)
