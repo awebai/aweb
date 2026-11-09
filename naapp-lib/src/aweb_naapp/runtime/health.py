@@ -7,6 +7,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -54,7 +55,11 @@ async def _run(name: str, check: HealthCheck) -> CheckResult:
 
 
 def mount_health(
-    app: FastAPI, settings: NaappSettings, checks: Mapping[str, HealthCheck] | None = None
+    app: FastAPI,
+    settings: NaappSettings,
+    checks: Mapping[str, HealthCheck] | None = None,
+    *,
+    labels: Mapping[str, StrEnum] | None = None,
 ) -> None:
     """Serve the app's id and build identity, plus Render's deployment identity
     when the platform injects one.
@@ -63,6 +68,10 @@ def mount_health(
     app from starting rather than being served. The non-Render build commit is
     read from the app's own ``<env_prefix>GIT_SHA``.
 
+    Optional ``labels`` are static, declared ``StrEnum`` members, copied at
+    mounting and reported on all three routes independently of check results.
+    They never accept free-form text or environment mappings.
+
     ``checks`` are the app's dependencies, reported by name on ``/health`` and
     ``/ready``: ``/ready`` serves only whether each passed, ``/health`` also
     its detail. They run at most once per ``HEALTH_CHECK_CACHE_SECONDS``:
@@ -70,12 +79,21 @@ def mount_health(
     result until it expires. ``/ready`` answers 503 when any of them fails;
     ``/health`` reports the same and always answers 200; ``/live`` runs none.
     """
+    # Static deployment identity is distinct from check details. Restrict it
+    # to declared enums so free-form errors/credentials cannot become labels.
+    if labels is not None and any(
+        not isinstance(name, str) or not isinstance(value, StrEnum)
+        for name, value in labels.items()
+    ):
+        raise TypeError("health labels must map names to StrEnum members")
     fallback_sha_env = f"{settings.model_config.get('env_prefix', '')}GIT_SHA"
     payload: dict[str, object] = {
         "status": "ok",
         "service": settings.app_id,
         "build": resolve_build_identity(fallback_sha_env),
     }
+    if labels:
+        payload["labels"] = {name: value.value for name, value in labels.items()}
     deployment = resolve_render_deployment_identity()
     if deployment is not None:
         payload["deployment"] = deployment

@@ -1,4 +1,4 @@
-"""Key providers: a local key file for local runs, and AWS KMS for hosted deployments."""
+"""Key-encryption-key providers: protected local key files and AWS KMS."""
 
 from __future__ import annotations
 

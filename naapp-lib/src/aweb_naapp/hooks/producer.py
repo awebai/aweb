@@ -38,7 +38,7 @@ from pgdbm.core import TransactionManager
 
 from aweb_naapp.hooks.catalog import Catalog, packaged_catalog
 from aweb_naapp.hooks.envelope import CATALOG_ID, CATALOG_VERSION, sign, signing_bytes
-from aweb_naapp.hooks.strictjson import Refused
+from aweb_naapp.hooks.strictjson import MAX_SAFE_INTEGER, Refused
 from aweb_naapp.outbox import OutboxEvent, StoredEvent, Target, enqueue, mint_event_id
 from aweb_naapp.outbox import next_sequence as _next_sequence
 
@@ -383,7 +383,8 @@ class HookProducer:
             "event_id": str(event_id),
             "trace": _trace(signed_trace_id),
             "team_id": team_id,
-            "producer": self.producer.fields(1),
+            # The widest seq, so the size check below also holds for the real one.
+            "producer": self.producer.fields(MAX_SAFE_INTEGER),
             "actor": dict(actor),
             "occurred_at": occurred,
             "fired_at": max(occurred, _event_time(now)),

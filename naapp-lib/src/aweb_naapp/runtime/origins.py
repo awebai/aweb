@@ -22,6 +22,7 @@ import json
 from collections.abc import Iterable
 from urllib.parse import urlsplit
 
+from fastapi import FastAPI
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 _DEFAULT_PORTS = {"http": 80, "https": 443}
@@ -119,3 +120,21 @@ def split_origins(
             await _refuse(send, 421, "unknown_origin", "This service does not serve that host")
 
     return app
+
+
+class OriginApps:
+    """One service on two origins, served as the one ASGI app :func:`split_origins`
+    makes of them. It keeps each origin's app: ``api_app``, the agent app whose
+    lifespan is the service's, and ``console_app``, the human app."""
+
+    def __init__(
+        self, api_app: FastAPI, console_app: FastAPI, *, agent_origin: str, human_origin: str
+    ) -> None:
+        self.api_app = api_app
+        self.console_app = console_app
+        self._asgi = split_origins(
+            api_app, console_app, agent_origin=agent_origin, human_origin=human_origin
+        )
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        await self._asgi(scope, receive, send)

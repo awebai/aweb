@@ -17,17 +17,27 @@ in [the logs chain](../../docs/logs-chain.md).
 logs reads its settings from `LOGS_`-prefixed environment variables:
 
 - `LOGS_DATABASE_URL` and `LOGS_PUBLIC_ORIGIN`;
+- `LOGS_CONSOLE_ORIGIN`, the plain `https` origin where designated readers enrol,
+  sign in and read. It must be on a host of its own, not `LOGS_PUBLIC_ORIGIN`'s:
+  readers' passkeys are bound to its hostname;
+- `LOGS_EMAIL_SMTP_HOST`, `LOGS_EMAIL_SMTP_PORT`, `LOGS_EMAIL_TLS` (`starttls`,
+  the default, or `implicit`), `LOGS_EMAIL_USERNAME`, `LOGS_EMAIL_PASSWORD_FILE`
+  (the password is read only from this file), `LOGS_EMAIL_FROM` and, for a
+  private CA, `LOGS_EMAIL_CA_FILE`. logs mails each designated reader its
+  enrolment link;
 - `LOGS_AWID_REGISTRY_URL` and, for private team facts, `LOGS_AWID_SERVICE_TOKEN`;
 - `LOGS_APP_ID`, the deployment's own app id. The hosted id `logs` is refused at
   any other origin a team can reach. Keep it for the deployment's lifetime:
   changing it orphans every team's installation;
 - `LOGS_APP_KEY_FILES`, a JSON object from each kid the committed manifest
-  declares (`logs-chain`, `logs-resolve`) to the path of that kid's key file.
+  declares (`logs-chain`, `logs-resolve`, `logs-grants`, `logs-governance`) to
+  the path of that kid's key file.
 
 The committed manifest is a template: logs serves it with its app id, origin and
 each kid's did:key derived from these key files, and does not start without a
 key for every declared kid or with a key file for any other. The `logs-chain`
-key signs receipts and checkpoints.
+key signs receipts and checkpoints, `logs-grants` reads the team's installation
+grant and `logs-governance` signs the governance events of logs' readers.
 
 ## Running
 
@@ -36,7 +46,9 @@ uvicorn aweb_logs.app:serve --factory
 docker build -f naapp/logs/Dockerfile .   # from the repository root
 ```
 
-The image takes the same environment; mount the key files, never build them in.
+The image takes the same environment; mount the key files and the mail password
+file, never build them in. One process serves both origins, each answered only
+on its own `Host`, so it can listen on one socket or on one per origin.
 
 While logs runs, each team whose chain has new events gets a signed checkpoint
 every `LOGS_CHECKPOINT_INTERVAL_SECONDS` (default 300); an idle team gets none.

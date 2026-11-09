@@ -32,11 +32,27 @@ def test_the_template_commits_no_keys() -> None:
     assert all(set(entry) == {"kid", "purposes"} for entry in template()["app_keys"])
 
 
-def test_ingest_is_logs_only_tool_and_takes_hook_deliveries_only(tmp_path: Path) -> None:
+def test_ingest_is_logs_only_hook_tool(tmp_path: Path) -> None:
     manifest = _filled(tmp_path)
     assert manifest.manifest_version == 2
     assert manifest.hook_tools == ("ingest",)
-    assert manifest.agent_tools == () and manifest.surface_tools == ()
+    assert manifest.surface_tools == ()
+
+
+def test_members_granted_readers_ask_for_a_reader_slot_and_remove_a_reader(
+    tmp_path: Path,
+) -> None:
+    manifest = _filled(tmp_path)
+    assert set(manifest.agent_tools) == {"reader-slot", "remove-reader"}
+    routes = {
+        (tool["name"], tool["method"], tool["path"], tuple(tool["scopes"]), tool["mutation"])
+        for tool in template()["tools"]
+        if tool["name"] in manifest.agent_tools
+    }
+    assert routes == {
+        ("reader-slot", "POST", "/v1/reader-slots", ("logs.readers",), True),
+        ("remove-reader", "POST", "/v1/reader-removals", ("logs.readers",), True),
+    }
 
 
 def test_ingest_is_registered_on_every_hook_of_the_catalog(tmp_path: Path) -> None:
@@ -47,7 +63,15 @@ def test_ingest_is_registered_on_every_hook_of_the_catalog(tmp_path: Path) -> No
         for reg in hooks["registrations"]
     }
     assert registered == {(CATALOG.id, CATALOG.version, hook, "ingest") for hook in CATALOG.hooks}
-    assert hooks["productions"] == []
+
+
+def test_logs_produces_only_its_readers_governance_events(tmp_path: Path) -> None:
+    hooks = _filled(tmp_path).hooks
+    assert hooks is not None
+    assert [
+        (production["catalog_id"], production["catalog_version"], production["hook"])
+        for production in hooks["productions"]
+    ] == [(CATALOG.id, CATALOG.version, "post-governance-hook")]
 
 
 def test_logs_subscribes_to_no_app_events(tmp_path: Path) -> None:
@@ -68,6 +92,19 @@ def test_logs_declares_its_signing_and_resolution_keys_by_purpose(tmp_path: Path
     )
 
 
+def test_installation_grants_and_governance_events_have_keys_of_their_own(
+    tmp_path: Path,
+) -> None:
+    manifest = _filled(tmp_path)
+    grants = set(manifest.app_keys_for("app-grant-read"))
+    governance = set(manifest.app_keys_for("hook-event"))
+    assert len(grants) == 1 and len(governance) == 1
+    others = set(manifest.app_keys_for(RECEIPT_PURPOSE)) | set(
+        manifest.app_keys_for("hook-resolve")
+    )
+    assert not grants & governance and not (grants | governance) & others
+
+
 def test_kids_and_purposes_come_from_the_file_and_keys_from_configuration(
     tmp_path: Path,
 ) -> None:
@@ -77,12 +114,13 @@ def test_kids_and_purposes_come_from_the_file_and_keys_from_configuration(
         _env_file=None,
         database_url="postgresql://localhost/logs",
         public_origin=ORIGIN,
+        console_origin="https://console.logs.example.test",
         app_key_files=key_files,
     )
     manifest = load_manifest(served_manifest(key_files, origin=ORIGIN))
 
     assert {kid: list(purposes) for kid, _, purposes in manifest.app_keys} == template_keys
-    for purpose in (RECEIPT_PURPOSE, CHECKPOINT_PURPOSE, "hook-resolve"):
+    for purpose in (RECEIPT_PURPOSE, CHECKPOINT_PURPOSE, "hook-resolve", "app-grant-read", "hook-event"):
         key = load_app_key(settings, manifest, purpose)
         assert purpose in template_keys[key.kid]
         assert key.did_key == did_key_of(key_files[key.kid])

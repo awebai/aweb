@@ -50,6 +50,56 @@ customer's custom-domain controller key stays with that customer's controller;
 Cloud does not take custody of it. The customer signs the first human from the
 CLI; a custodial deployment can hold subsequent human keys.
 
+### Interactive human participation from the CLI
+
+After `aw id human init` and controller-authorized team membership, select the
+human explicitly with `--human <did:aw> --human-domain <identity-domain>`.
+These selectors use that human's OS-keychain signer and public records in
+`~/.awid/humans/<identity-domain>/<id>/`; they neither select nor modify an
+agent workspace. An explicit or inherited `--identity-home`/`AWEB_IDENTITY_HOME`
+conflicts with human selection. The identity domain may differ from the team's
+namespace; membership remains independently controller-authorized.
+
+For example, with a certificate already issued by the team controller:
+
+```sh
+aw --human did:aw:… --human-domain example.com id team fetch-cert \
+  --namespace example.com --team engineering --cert-id <certificate-id>
+aw --human did:aw:… --human-domain example.com init \
+  --team engineering:example.com --url https://coordination.example.com
+aw --human did:aw:… --human-domain example.com mail send \
+  --to colleague --subject "Review" --body-file message.txt
+aw --human did:aw:… --human-domain example.com mail inbox
+aw --human did:aw:… --human-domain example.com mail show --message-id <message-id>
+aw --human did:aw:… --human-domain example.com mail reply <message-id> --body-file reply.txt
+aw --human did:aw:… --human-domain example.com secrets request <tool arguments>
+```
+
+`init --team` selects an installed full team ID for this human's connection;
+mail's `--team` can select another installed membership. Ordinary
+`id request --team-auth` and installed manifest tools use the human's active
+team certificate. The naapp still decides permissions: this does not approve
+secret use, increase permissions, or replace a controller-signed owner act.
+Manifest parameters named `human` or `human-domain` are reserved for CLI
+identity selection and refused at installation.
+
+Every signature prompts at the controlling terminal and wipes the decrypted
+key afterwards. A send needs both a mail-envelope signature and request
+signature; lookups, reads, acknowledgments and retries can require additional
+prompts. Prompts are numbered within the command. Mail send prompts identify
+the recipient, subject and body hash; a reply's preliminary read identifies the
+source message and proposed body's hash, then its send identifies the resolved
+recipient and subject. Prompting is a custody safeguard, not a remotely
+verifiable assertion of a fresh human gesture. Known agent-runtime markers
+and a missing controlling terminal refuse this path.
+
+This initial path supports plaintext mail, not human encryption-key custody.
+Encrypted sends or replies refuse when that custody is unavailable; there is
+no silent plaintext fallback. Chat, arbitrary `id sign`, blueprint publication
+and executable plugins do not accept this participation selector. Existing
+human issuance commands keep their separate, explicit authority checks. No
+unlocked session, background signer or delegated credential is created.
+
 ## 2. Certificate and exact bytes
 
 Every field is required. Unknown fields, duplicate JSON keys, floats, invalid

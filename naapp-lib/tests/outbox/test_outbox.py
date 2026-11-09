@@ -25,6 +25,7 @@ from aweb_naapp.outbox import (
     RetryPolicy,
     StoredEvent,
     Target,
+    Unacceptable,
     UndeliveredEvent,
     UndeliveredFaults,
     acknowledge_dead_letters,
@@ -331,6 +332,17 @@ async def test_permanent_failures_are_rejected_only_after_the_bounded_attempts(d
         states.append((await _states(db))["a"])
         await _make_due(db)
     assert states == ["pending", "pending", "rejected"]
+
+
+async def test_a_delivery_the_target_can_never_accept_is_rejected_at_once(db) -> None:
+    policy = RetryPolicy(stalled_after=timedelta(hours=1), rejected_after_attempts=3)
+    async with db.transaction() as tx:
+        await enqueue(tx, _event())
+    transport = Scripted({"a": Unacceptable("http_413")})
+    await drain(
+        db, channel="default", resolver=Targets([Target("a")]), transport=transport, policy=policy
+    )
+    assert (await _states(db))["a"] == "rejected"
 
 
 async def test_a_conflict_is_terminal_at_once(db) -> None:

@@ -2821,6 +2821,9 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 }
 
 func runTeamFetchCert(cmd *cobra.Command, args []string) error {
+	if activeHuman != nil {
+		return runHumanFetchCert(cmd)
+	}
 	team := strings.ToLower(strings.TrimSpace(teamFetchCertTeam))
 	domain := awconfig.NormalizeDomain(teamFetchCertNamespace)
 	certificateID := strings.TrimSpace(teamFetchCertID)

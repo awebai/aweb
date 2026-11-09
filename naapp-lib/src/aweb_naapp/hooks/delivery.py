@@ -49,6 +49,11 @@ AUTH_SCHEME = "AWEB-Hook DIDKey "
 SIGNED_PAYLOAD_HEADER = "X-AWEB-Signed-Payload"
 CERTIFICATE_HEADER = "X-AWID-Team-Certificate"
 REPLAY_WINDOW = timedelta(seconds=300)
+# The largest delivery body a receiver reads: an event of MAX_ENVELOPE_BYTES
+# as base64url, with its signature and frame, fits well within it. A receiver
+# refuses a larger body before reading it whole (aweb_naapp.runtime
+# .manifest_hooks.bounded_body) and answers 413 request_too_large.
+MAX_DELIVERY_BYTES = 512 * 1024
 
 _DELIVERY_TIME = "%Y-%m-%dT%H:%M:%SZ"
 _PAYLOAD_FIELDS = (
@@ -163,6 +168,8 @@ def verify_delivery(
     event, or raise the first refusal."""
     if not options.audience or not options.binding_id:
         raise Refused("verifier_misconfigured", "an audience and a binding are required")
+    if len(body) > MAX_DELIVERY_BYTES:
+        raise Refused("request_too_large", f"{len(body)} bytes, at most {MAX_DELIVERY_BYTES}")
     _utc(options.now, "the receiver's clock")
     authorization = _header(headers, "Authorization")
     if not authorization.startswith(AUTH_SCHEME):

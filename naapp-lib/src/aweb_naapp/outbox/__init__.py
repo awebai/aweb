@@ -103,6 +103,14 @@ class Permanent:
 
 
 @dataclass(frozen=True)
+class Unacceptable:
+    """The target can never accept this delivery, such as a body larger than
+    it reads: the delivery is rejected at once, never retried."""
+
+    error_class: str
+
+
+@dataclass(frozen=True)
 class Conflict:
     pass
 
@@ -112,7 +120,7 @@ class Cancelled:
     reason: str
 
 
-Outcome = Acked | Retryable | Permanent | Conflict | Cancelled
+Outcome = Acked | Retryable | Permanent | Unacceptable | Conflict | Cancelled
 
 # The event's targets, or None when they cannot be resolved now. It runs inside
 # the drain's transaction, so it must bound its own network calls; the drain
@@ -464,7 +472,9 @@ async def _record(
         )
     else:
         attempts = row["attempts"] + 1
-        if isinstance(outcome, Permanent) and attempts >= policy.rejected_after_attempts:
+        if isinstance(outcome, Unacceptable) or (
+            isinstance(outcome, Permanent) and attempts >= policy.rejected_after_attempts
+        ):
             state = "rejected"
         elif row["past_horizon"]:
             state = "stalled"

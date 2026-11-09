@@ -369,7 +369,8 @@ Deferred consistently; capture so they aren't lost. None block v1.
 ## Compatibility and change control
 
 `manifest_version: 1` is frozen for the fields and mapping rules above.
-Version 2 is defined by its section above and its vectors. Additive
+Version 2 is defined by its section below and its vectors; version 3, specified
+but not shipped, by its section below and `docs/vectors/owner-act-delivery-v1.json`. Additive
 application releases use `app.version`; a breaking interpretation change needs
 a new `manifest_version` and new conformance fixtures. Streaming responses,
 multipart bodies, float canonicalization, and output selectors remain outside
@@ -536,6 +537,54 @@ key declaring `logs-receipt` and `logs-checkpoint` ([the logs
 chain](logs-chain.md)); only logs and the verifiers of its artefacts consume
 those two. An unrecognized purpose is shown to the admin and grants nothing. A v1 `event_emitters` entry reads as an
 `app-event` key only.
+
+## Manifest version 3
+
+Status: **specified, not shipped**, with
+[owner-act delivery](owner-act-delivery.md) (aweb-acgh.16.38) and the
+[human-role holders](design/human-role-holders.md) design that Juan ruled. No
+consumer supports it, and no app publishes it.
+
+Version 3 is version 2 with one more optional member, `owner_acts`: the app's
+human origin and the roles only a team owner act designates. Every other field
+and rule is version 2's, unchanged. Its semantics, the prepare and delivery
+calls, and the role tokens are in [owner-act delivery](owner-act-delivery.md).
+
+```json
+"owner_acts": {
+  "origin": "https://console.logs.example",
+  "roles": [
+    {"name": "logs.reader", "label": "Log reader",
+     "acts": ["app-credential.recover", "app-role.designate", "app-role.revoke"],
+     "principal": "refused", "prepare_tool": "owner-act-prepare"}
+  ]
+}
+```
+
+- `origin` is in owner-act/1's audience grammar (`https://`, a lowercase
+  host, an optional port, nothing after it), and its hostname differs from
+  `app.origin`'s; a port does not separate them, because cookies ignore ports.
+- `roles` has 1 to 16 entries, unique by `name`. `name` follows the
+  designatable role grammar, begins with a letter and is at most 23 bytes, so
+  that its token fits owner-act/1's; `label` and the optional
+  `description` follow the `roles` rules above. `acts` is a nonempty set of
+  `app-role.designate`, `app-role.revoke` and `app-credential.recover`,
+  ascending by code point with no repeat. `principal` is `required` or
+  `refused`.
+- `prepare_tool` names a tool of this manifest with method `POST`,
+  `invocation_contexts` exactly `["agent"]`, `body.mode` `json`, and params
+  exactly `act`, `role`, `contact_sha256`, `principal` and `holder`, each
+  `in: body`.
+
+Every fault in `owner_acts` is `owner_acts_invalid`, except `owner_acts: null`,
+which is `manifest_invalid` like any null member. An absent `owner_acts`
+declares no owner-designated role. `owner_acts` in a version 2 manifest is an
+unknown field, refused as version 2 refuses any.
+
+An app publishes version 3 as a catalog variant beside version 2. Released
+clients, which support version 2 at most, select version 2 and never see
+`owner_acts`. The rollout and its re-pin cost are in
+[owner-act delivery](owner-act-delivery.md#rollout-of-manifest-version-3).
 
 ## Variant discovery
 
