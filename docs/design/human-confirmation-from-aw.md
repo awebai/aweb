@@ -303,11 +303,12 @@ endorsing an identity installs no app and needs no secrets or logs.
   that record, never from a caller, a response or a redirect. A changed origin
   hostname orphans the bound passkeys (a new rp_id); rebinding is
   `human-credential.replace`, and there is no migration path.
-  When the team server's origin changes, its existing endorsement rows stay
-  valid, because their retained assertions verify under their recorded rp_id;
-  new confirmations need a credential rebound with `human-credential.replace`. A
-  move to a different team server carries no rows, and endorsements there are
-  made afresh.
+  When the same team server changes its origin, existing endorsements remain
+  valid as history-backed rows whose retained assertions verify under their
+  recorded rp_id; new confirmations require credentials bound to the new
+  rp_id. A move to another team server requires a fresh endorsement. An
+  origin update is the same server only when the controller re-signs its
+  `aweb.team-server/1` record; a URL alone establishes no continuity.
 - **The endorser role.** The server is a first-party human-role host with one
   fixed declaration, shipped with the server and known to `aw`: `app_id`
   `team-server`, role `endorser`, label "Deployment endorser", acts
@@ -499,7 +500,8 @@ Each is a vector row, for the server and for a direct naapp:
 | D's key rotated after the endorsement | admission refuses; D is re-endorsed |
 | D re-parented after the endorsement | admission refuses; no row matches |
 | The same D and key after an unrelated refresh of ancestry evidence | admits |
-| The team server's origin changed after the endorsement | the row still verifies; a new confirmation needs the replaced credential |
+| The same team server's origin changed after the endorsement | the row still verifies; a new confirmation needs a credential bound to the new rp_id |
+| D's endorsement presented after a move to another team server | refused; a fresh endorsement is needed |
 | An owner act naming any other app or installation at the server | `owner_required` |
 | The server's handoff in the typed-code fallback | refused |
 
