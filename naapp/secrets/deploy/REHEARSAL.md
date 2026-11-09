@@ -1,6 +1,6 @@
 # Ordered BYOT source-candidate rehearsal and preflight: rows 3–6
 
-Status: revision 2, preparation for review, 2026-11-09. This is one ordered run, using the
+Status: revision 3, preparation for review, 2026-11-09. This is one ordered run, using the
 existing S19/acwd.5 profile and acwd.7 operations matrix. It adds no harness.
 An operator stops at a missing prerequisite and records that row as blocked;
 a later independent check may proceed only if it does not manufacture the
@@ -16,7 +16,7 @@ Neither receipt replaces the full Secrets/M9 gate.
 
 | Input | Current exact source or handoff | Limit |
 | --- | --- | --- |
-| OATS host target | Ubuntu 24.04 LTS noble server cloud image amd64 (Canonical noble-server-cloudimg-amd64.img), QEMU/KVM on polaris; OATS/VM owners, receipt7b3d32b9 via secrets a5036c6d | Fresh base per run; 4vCPU/4GiB RAM/30GiB thin overlay; tester account, forwarded SSH port. Checksum verification dated2026-11-03 is owner-reported; retain actual image checksum/kernel/disk/RAM observations at execution. BYOT fresh-run remains unqualified. |
+| OATS host target | Ubuntu 24.04.5 LTS noble server cloud image amd64, kernel6.8.0-147-generic (Canonical noble-server-cloudimg-amd64.img), QEMU/KVM on polaris; OATS/VM owners, receipt7b3d32b9 via secrets a5036c6d | fh1, fresh base per run;4vCPU/4GiB/30GiB thin overlay. Base SHA25604e8f2461a16a44e78a370284471f29616cdd9baf1893df25807b71f985b6c94; cloud serial20261017, VM-owner receipt10cfc702. tester is operator, not the agent account. BYOT fresh-run remains unqualified. |
 | Host tooling | Published OATS CLI/Desktop 0.69.12, oats.aweb v1.38.0; Node 22+, git, tmux; record installed harness versions | OATS does not pin harness versions. Human logins are separate steps. Windows and resident/global custody are outside this baseline. |
 | OATS-managed agent CLI | Published aw 1.36.56, the OATS owner's baseline | Confirm the selected Desktop accepts this exact CLI before installation; keep its runtime selection separate from the integrated candidate below. |
 | Integrated human/Secrets candidate client and coordination server | aw 1.36.57-rc.1 / server 1.27.49rc1 (RC); aweb main9a54c7392429bd98bc6be58b991458d9da921e9c is the pinned main-only alternative | Human-kind row2 artifact89bf111d splits released subsetA from RC/main subsetB; real authority inputs are still unsupplied. Confirm Desktop/CLI compatibility and explicit binary selection with the OATS owner; do not replace the managed CLI globally. This is source-candidate, never final-release qualification. |
@@ -132,7 +132,16 @@ behind a KMS label. A selected-mode canary failure is failure evidence, not
 successful backend use. Never count local-key execution as KMS qualification.
 The native lab does not require 1Password; full release acceptance still does.
 
-OATS agents share their deployment OS user and reachable keys: one trust
+The fh1 arrangement is operator tester (observed UID/GID1000, sudo), agents
+under a separate oatsagent account (stage1b in progress, actual UID/groups and
+denials pending), and aweb-runner (own UID, installation pending). OATS owner
+641e40e8 selected and owns rebuilding its host setup under oatsagent; root does
+not move registered homes. The old tester stage1 remains recorded as
+"agents root-equivalent" and cannot qualify runner isolation. Harness login
+for oatsagent uses its native flow; never copy another account's login cache.
+A pre-supplied test login excludes real login/reauth from coverage.
+
+OATS agents sharing oatsagent and reachable keys are still one trust
 boundary. Per-principal permissions attribute and prevent mistakes but do not
 isolate a compromised agent. Secrets' image UID10001 and read-only key mount
 require actual host isolation; an agent with Docker/host administration can
@@ -144,6 +153,53 @@ cross-principal attempts and output restrictions; do not infer isolation from
 identity-home variables or normal API refusal.
 
 ## 4. Install and start the two service roots (acceptance row3)
+
+### Operator container prerequisites
+
+fh1's first read-only preflight found no Docker. Tester installs the Ubuntu
+archive packages [docker.io](https://packages.ubuntu.com/noble/docker.io) and
+[docker-compose-v2](https://packages.ubuntu.com/noble/docker-compose-v2), using
+its signed noble/noble-updates/noble-security sources, not a curl installer.
+The operator records apt source/candidate versions and installs those exact
+candidates; this is a source-candidate infrastructure receipt, not a pinned
+service-image qualification. No command below is run by oatsagent.
+
+```sh
+sudo apt-get update
+LC_ALL=C apt-cache policy docker.io docker-compose-v2
+docker_pkg_version=$(LC_ALL=C apt-cache policy docker.io | awk '/Candidate:/ {print $2}')
+compose_pkg_version=$(LC_ALL=C apt-cache policy docker-compose-v2 | awk '/Candidate:/ {print $2}')
+test -n "$docker_pkg_version" && test "$docker_pkg_version" != '(none)'
+test -n "$compose_pkg_version" && test "$compose_pkg_version" != '(none)'
+sudo apt-get install -y --no-install-recommends "docker.io=$docker_pkg_version" "docker-compose-v2=$compose_pkg_version"
+sudo systemctl enable --now docker
+dpkg-query -W -f='${Package} ${Version} ${Architecture}\n' docker.io docker-compose-v2 containerd runc
+sudo docker version
+sudo docker compose version
+sudo docker info --format '{{.OSType}}/{{.Architecture}} {{.Driver}} {{.DockerRootDir}}'
+```
+
+If a candidate is unavailable, stop and return the package/source status. Keep
+Docker rootful and operator-controlled. Do not add oatsagent to docker or sudo
+groups, change socket ownership, copy operator credentials, or relax AppArmor.
+The packaged services and PG/Redis containers are launched by tester; agents
+use the HTTP interfaces, not the Docker socket. Record all transitive installed
+runtime versions. This Docker distribution unit is not a runner service manager;
+the runner continues to use its existing S19 control pipe.
+
+Service start list: PostgreSQL16, Redis7, customer AWID/coordination at row2's
+selected cohort, Secrets main9a54 source image, Logs' reviewed acwd.8 image,
+verified TLS/SMTP and the fixed TLS receiver. Only use disposable app-owned
+state. The named operator Compose configuration is a required installation
+artifact, not yet produced/qualified at this baseline: root/S19 owns that
+configuration and its exact image IDs/private reference mounts after Logs.8
+hands back its recipe. Until then, installing Docker is executable preparation;
+starting an invented full-stack compose file is not. Existing Secrets CLI
+container recipe and its isolated package_lab proof remain component paths.
+The eventual receipt must name the actual Compose file and source SHA/checksum;
+`docker compose config` may contain private environment values and is not evidence.
+
+### Service configuration and start order
 
 1. Freeze each stable app ID and four HTTPS origins before installation:
    Secrets API and console; Logs API and console. Keep console hosts distinct
@@ -233,18 +289,31 @@ execution order. Real approval and registration remain required. The Linux insta
 existing macOS installed evidence is not Linux execution evidence. After real
 registration doctor must pass before run. Root stages a Linux x64 interpreter/import/native closure under the existing
 /opt/aweb-secrets-e2e prefix, with unchanged supervisor/launcher. The operator
-creates a locked system aweb-runner account; records its UID and tester's UID
+creates a locked system aweb-runner account; records its UID, oatsagent's UID
+and tester's UID
 rather than copying macOS499; protects root-owned ancestors/code, runner-owned
 0700 state and0600 config; validates the included sudoers rule with visudo and
-sudo -n -l. Retain sudo -n -l run as tester and tester's complete group membership
-(id -Gn). A password-required refusal from sudo -n -l is recorded as such, not
-bypassed or treated as a policy inventory. A demonstrated driver/runner boundary requires that tester can invoke
+sudo -n -l. Retain sudo -n -l and id -Gn for all three accounts, especially oatsagent.
+Tester's broad operator sudo is recorded separately; it cannot stand in for
+the agent's restricted policy. A password-required refusal from sudo -n -l is recorded as such, not
+bypassed or treated as a policy inventory. A demonstrated agent/runner boundary requires that oatsagent can invoke
 only the exact no-argument supervisor rule and cannot regain broader privilege
 through general sudo or Docker/host administration. Ubuntu cloud defaults may
-grant both. If either is reachable, mark driver-to-runner isolation NOT
+grant both. If either is reachable by oatsagent, mark driver-to-runner isolation NOT
 DEMONSTRATED; INT/grace-kill/doctor/job observations can be recorded as lifecycle
 mechanics only. Do not silently change group/sudo policy or claim containment
-from differing UIDs. Any missing isolation remains with the VM/host operator.
+from differing UIDs. A mechanics-only run cannot substitute for the required
+runner-isolation acceptance. Any missing isolation remains with the VM/host operator.
+Before claiming the boundary, demonstrate from oatsagent: sudo -n to root
+refuses; group membership excludes docker and access to the Docker socket
+refuses; reads of existing operator keys and runner keys/state refuse; and an
+unrestricted operator command cannot be invoked. Verify the target private
+object exists from its owner context before recording a read denial, so an
+absent file is not isolation evidence. Never retain contents. The only allowed
+privileged invocation is the reviewed exact no-argument runner supervisor
+rule. Keep controller keys off the worker VM. Record expected versus observed
+denials and the final exact restricted sudo policy, not just account creation.
+
 Exact artifact/install commands and their review remain an S19 gap.
 The existing S19 control pipe owns lifecycle; no systemd unit is added for this
 rehearsal. Keep the same identity/journal/locks across restart. Prove INT via the actual sudo PID, and grace kill via a
@@ -320,6 +389,21 @@ is private state, not the acceptance record.
 
 ## 8. Capacity preflight, executed preparation and next steps
 
+VM-owner receipt10cfc702, read-only under tester: Ubuntu24.04.5 x86_64,
+kernel6.8.0-147-generic; tester UID/GID1000, groups tester, sudo `(ALL)
+NOPASSWD: ALL` with use_pty. RAM total4105371648bytes, available3407704064bytes
+(about3.17GiB), no swap. Root ext4 size30083776512bytes,
+available26992939008bytes. /dev/shm is tmpfs rw,nosuid,nodev. Docker was absent.
+Unprivileged unshare failed exit1; AppArmor restriction remains1. These are
+owner-reported observations, not root's own execution. Stage1b oatsagent
+readiness and its exact UID/groups/sudo/denial evidence are still pending.
+
+Fit the first stack within the measured available3407704064bytes with operating
+headroom, not a rounded3.4GiB assumption. Re-measure after installing the runtime
+and starting the OATS harness. A resize needs an actual measured shortfall or a
+supported sequencing change, routed through the existing VM owner; no capacity
+pass is recorded here.
+
 Before starting workloads on the 4GiB/30GiB VM, record df -B1, free -b and
 Docker's root filesystem capacity; inspect exact image IDs/platforms/sizes and
 run-owned container RAM/CPU during the smoke test. Account for unpacked images,
@@ -327,8 +411,8 @@ shared-layer deduplication, build scratch/cache, database volumes, runner Python
 closure, host/OATS/harness memory and free operating headroom. A cold image size
 is not a runtime RAM measurement; thin overlay capacity is not free space.
 Read-only capability probes must establish Docker access, /dev/shm/tmpfs and
-user-namespace availability as applicable. Container administration is reachable
-privileged authority in the tester/agent boundary, not worker isolation.
+user-namespace availability as applicable. Container administration is privileged authority retained by tester. Its
+absence from oatsagent must be demonstrated, not inferred from an account name.
 Do not alter the VM's kernel settings or limits to make a probe pass silently.
 On the VM, the operator records these bounded probes (no environment dump):
 
@@ -361,8 +445,8 @@ and do not justify co-locating the Oracle stack on this4GiB VM. Cached ARM64
 image measurements on the development host: postgres:16-alpine388377970bytes,
 redis:7-alpine58221010bytes, CoreDNS1.11.3 81818859bytes. These are ARM64 image
 sizes only, not x64 footprints or total runtime memory. Secrets image, Logs
-image, runner closure, actual x64 measurements and VM free capacity remain
-unmeasured. Capacity fit is therefore pending, not a pass. If the first stack
+image, runner closure and actual x64 workload measurements remain unmeasured; VM
+free-capacity observations above are dated and must be refreshed. Capacity fit is therefore pending, not a pass. If the first stack
 does not fit, return measured shortfall and minimum justified capacity or a
 sequencing change through secrets/servers to the existing VM owner; do not
 resize or silently switch architecture.
