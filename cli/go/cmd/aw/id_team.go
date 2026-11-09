@@ -474,9 +474,10 @@ var teamAddMemberCmd = &cobra.Command{
 }
 
 var teamFetchCertCmd = &cobra.Command{
-	Use:   "fetch-cert",
-	Short: "Protocol/admin bridge: fetch and install an approved team certificate",
-	RunE:  runTeamFetchCert,
+	Annotations: map[string]string{identityKeyOnlyTargetAnnotation: "true"},
+	Use:         "fetch-cert",
+	Short:       "Protocol/admin bridge: fetch and install an approved team certificate",
+	RunE:        runTeamFetchCert,
 }
 
 var teamRemoveMemberCmd = &cobra.Command{
