@@ -151,8 +151,6 @@ async def db(test_db_factory):
     return await test_db_factory.create_db(suffix="logs_reader_routes")
 
 
-
-
 @asynccontextmanager
 async def running(
     db, registry: Registry, tmp_path: Path, *, scopes: frozenset[str]
