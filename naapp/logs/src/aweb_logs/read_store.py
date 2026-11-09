@@ -300,7 +300,10 @@ def _conditions(team_id: str, where: EventFilter) -> tuple[list[str], list[Any]]
     if where.needs_content():
         conditions.append("NOT r.purged AND e.signing_bytes IS NOT NULL")
     if where.actor is not None:
-        add("(r.actor_did_key = ? OR r.actor_did_aw = ?)", where.actor)
+        # An actor filter is a did:key or a did:aw, and only that form's column
+        # can hold it, so the read uses that column's ordered index.
+        column = "actor_did_key" if where.actor.startswith("did:key:") else "actor_did_aw"
+        add(f"r.{column} = ?", where.actor)
     if where.event_id is not None:
         add("r.event_id = ?::uuid", where.event_id)
     if where.occurred_from is not None:

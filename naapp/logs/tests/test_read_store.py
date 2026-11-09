@@ -12,12 +12,13 @@ from typing import Any
 
 import pytest
 from aweb_naapp.hooks import envelope as hook_envelope
+from awid.did import stable_id_from_public_key
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
 from aweb_logs import MIGRATIONS_MODULE, MIGRATIONS_PATH, read_store
 from aweb_logs.ledger import LogsSigner, append, append_on, open_next_epoch
-from aweb_logs.read_store import Cursor, EventFilter, InvalidRead, query, tail
+from aweb_logs.read_store import REFERENCES, Cursor, EventFilter, InvalidRead, query, tail
 
 from .fixtures import (
     CORE_ORIGIN,
@@ -38,6 +39,7 @@ OTHER_TEAM = "other:example.com"
 START = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
 AGENT = did_key(MEMBER_SEED)
 OTHER_AGENT = did_key(SigningKey(bytes(range(200, 232))).encode())
+AGENT_AW = stable_id_from_public_key(bytes(SigningKey(MEMBER_SEED).verify_key))
 
 _SECRET_USE: dict[str, Any] = {
     "v": 1,
@@ -68,6 +70,7 @@ def secret_use(
     trace_id: str = "0af7651916cd43dd8448eb211c80319c",
     occurred_at: str = "2026-10-20T12:00:01.000Z",
     result_status: str = "success",
+    actor_aw: str | None = None,
     **payload: Any,
 ) -> tuple[bytes, str]:
     event = copy.deepcopy(_SECRET_USE)
@@ -85,6 +88,8 @@ def secret_use(
         "certificate_id": "c_41",
         "did_key": actor,
     }
+    if actor_aw is not None:
+        event["actor"]["did_aw"] = actor_aw
     body: dict[str, Any] = {"action": action, "op_kind": "run_job"}
     if action == "completed":
         body |= {"disposition": "withheld", "undeclared_credential": False}
@@ -493,3 +498,59 @@ async def test_a_projection_rolls_back_with_its_append(db: AsyncDatabaseManager)
             await read_store.project(tx, TEAM_ID)
             raise RuntimeError("the effect failed")
     assert (await query(db, TEAM_ID, _filter())).events == []
+
+
+# For each exact-identifier filter: the event fields that match it, the fields
+# that miss it, and the filter value.
+_POLLED = {
+    "trace_id": ({"trace_id": "1" * 32}, {"trace_id": "2" * 32}, "1" * 32),
+    **{name: ({name: "wanted"}, {name: "other"}, "wanted") for name in REFERENCES},
+    "actor did:key": ({"actor": AGENT}, {"actor": OTHER_AGENT}, AGENT),
+    "actor did:aw": ({"actor_aw": AGENT_AW}, {}, AGENT_AW),
+}
+
+
+async def _read_events_rows_read(db: AsyncDatabaseManager, statement: tuple[Any, ...]) -> int:
+    """The read_events rows a read page's statement reads, from its executed
+    plan, with index scans forced as in the catch-up measure."""
+    sql, *arguments = statement
+    await db.execute("ANALYZE {{tables.read_events}}")
+    await db.execute("ANALYZE {{tables.chain_events}}")
+    async with db.transaction() as tx:
+        await tx.execute("SET LOCAL enable_seqscan = off")
+        plan = await tx.fetch_value("EXPLAIN (ANALYZE, FORMAT JSON) " + sql, *arguments)
+
+    def read(node: dict[str, Any]) -> int:
+        rows = 0
+        if node.get("Relation Name", "").endswith("read_events"):
+            removed = node.get("Rows Removed by Filter", 0) + node.get(
+                "Rows Removed by Index Recheck", 0
+            )
+            rows += (node["Actual Rows"] + removed) * node["Actual Loops"]
+        return rows + sum(read(child) for child in node.get("Plans", []))
+
+    document = json.loads(plan) if isinstance(plan, str) else plan
+    return read(document[0]["Plan"])
+
+
+@pytest.mark.parametrize("name", list(_POLLED))
+async def test_a_filtered_read_reads_only_its_matching_events_past_its_cursor(
+    db: AsyncDatabaseManager, name: str
+) -> None:
+    match, miss, value = _POLLED[name]
+    where = _filter(**{name.split(" ")[0]: value})
+    seq = iter(range(1, 1000))
+    for _ in range(40):
+        await _append(db, secret_use(seq=next(seq), **match))
+    start = await tail(db, TEAM_ID, where)
+    for _ in range(160):
+        await _append(db, secret_use(seq=next(seq), **miss))
+    for _ in range(2):
+        await _append(db, secret_use(seq=next(seq), **match))
+    await query(db, TEAM_ID, where)
+    cursor = Cursor.decode(start.next_cursor or "")
+
+    following = read_store._page(TEAM_ID, where, cursor, "ASC", 50)
+    assert await _read_events_rows_read(db, following) == 2
+    newest = read_store._page(TEAM_ID, where, None, "DESC", 2)
+    assert await _read_events_rows_read(db, newest) == 2
