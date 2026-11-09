@@ -5,66 +5,20 @@ current human kind. Acquire observations before opening a projection transaction
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 import logging
-from types import MappingProxyType
-from typing import Any, Mapping
+from collections.abc import Mapping
 
-from awid.id_certificates import IDCertificateError, status_request, verify_id_chain
-from aweb.identity_binding import IdentityBinding
+from awid.identity_observation import (
+    IdentityKindObservation as IdentityKindObservation,
+)
+from awid.identity_observation import (
+    observe_identity_kind as observe_identity_kind,
+)
+from awid.identity_observation import (
+    unverified_kind as unverified_kind,
+)
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class IdentityKindObservation:
-    """Trusted in-process verifier output, not a request DTO or credential."""
-    did_key: str
-    did_aw: str
-    result: Mapping[str, Any]
-
-    @property
-    def is_human(self) -> bool:
-        return self.result['identity_valid'] is True and self.result['kind'] == 'human'
-
-
-def unverified_kind(reason: str) -> dict[str, Any]:
-    unavailable = reason in ('evidence_unavailable', 'status_expired')
-    return {'outcome': 'unavailable' if unavailable else 'unknown', 'human_id': None,
-            'identity_valid': None if unavailable or reason == 'unregistered_identity' else False,
-            'kind': None, 'reason': reason}
-
-
-async def observe_identity_kind(registry_client, binding: IdentityBinding, bundle=None) -> IdentityKindObservation:
-    """Verify the exact bound subject using the public verifier and cached evidence.
-
-    Original authentication and fresh global identity binding belong to the
-    caller. Unknown/unavailable/invalid results are returned for its existing
-    disposition policy; none can establish human kind. No registry fallback or
-    team/address inference is performed here.
-    """
-    subject = {'id': binding.did_aw or binding.did_key, 'did_key': binding.did_key}
-    try:
-        enrollment = binding.id_tree
-        if binding.did_aw and enrollment is None:
-            result = unverified_kind('evidence_unavailable')
-        elif binding.did_aw and not enrollment.enrolled and bundle is None:
-            result = unverified_kind('unregistered_identity')
-        else:
-            domain = enrollment.domain if binding.did_aw and enrollment.enrolled else None
-            plan = status_request(bundle, subject, domain=domain)
-            evidence = None
-            if plan is not None:
-                cached_evidence = getattr(registry_client, 'id_chain_evidence', None)
-                if callable(cached_evidence):
-                    try:
-                        evidence = await cached_evidence(bundle, subject, domain=plan['domain'])
-                    except Exception:
-                        logger.warning('ID-tree cached evidence failed', exc_info=True)
-            result = verify_id_chain(bundle, subject=subject, evidence=evidence, domain=domain)
-    except IDCertificateError as exc:
-        result = unverified_kind(exc.code)
-    return IdentityKindObservation(binding.did_key, binding.did_aw, MappingProxyType(result))
 
 
 def is_verified_human(row: Mapping) -> bool:
