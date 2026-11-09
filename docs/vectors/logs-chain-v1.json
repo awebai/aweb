@@ -2331,5 +2331,5 @@
     "event_hash": "SHA-256 of 'aweb.logs-chain/1\\n' and the canonical link {chain_epoch, team_id, team_seq, prev_event_hash, received_at, hook, producer_origin, content_commitment}",
     "genesis": "SHA-256 of 'aweb.logs-genesis/1\\n' and the canonical genesis; every epoch after the first carries previous_checkpoint_sha256"
   },
-  "status": "proposed (aweb-acgh.16.21); frozen once reviewed"
+  "status": "frozen (aweb-acgh.16.21)"
 }
