@@ -40,5 +40,6 @@ USER logs
 
 EXPOSE 8765
 # Configured by its LOGS_ environment (LOGS_DATABASE_URL, LOGS_PUBLIC_ORIGIN,
-# LOGS_APP_ID, LOGS_APP_KEY_FILES); the key files are mounted, never built in.
+# LOGS_CONSOLE_ORIGIN, LOGS_APP_ID, LOGS_APP_KEY_FILES, LOGS_EMAIL_*); the key
+# files and the mail password file are mounted, never built in.
 CMD ["sh", "-c", "/app/.venv/bin/uvicorn aweb_logs.app:serve --factory --host 0.0.0.0 --port ${PORT:-8765}"]
