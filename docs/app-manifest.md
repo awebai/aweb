@@ -588,7 +588,11 @@ unchanged. Its semantics and the delivery call are in
     after version 2's tool validation normalizes them: `method` trimmed and
     uppercased, `in` and `body.mode` trimmed, and an absent `body` read as
     `json`. Action names compare trimmed, as version 2 compares tool names,
-    both for uniqueness and where `completion.read` names an action;
+    both for uniqueness and where `completion.read` names an action. The
+    fields inherited from the tool object are decoded exactly as version 2
+    decodes them, null included (a null `description` or `body.mode` is
+    accepted where version 2 accepts it); the session-action members `role`,
+    `kind`, `protected`, `terminal_output` and `completion` never take null;
   - `protected: true` on a param, allowed only on an `in: body` param of a
     `stage` action; `true` is its only value, and an unprotected param omits
     it;
