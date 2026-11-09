@@ -893,6 +893,7 @@ of operations is (`aweb_secrets.responses`):
 7. **Record.** secrets records the disposition, the response hash and the counts,
    never the body or the headers. The live response, after steps 1 to 6, goes
    only to the request that made the dispatch; nothing stores it for later.
+   This applies to brokered responses; a runner job's output follows §11.2.
 
 A withheld result reaches the agent as
 `{"state": "result_withheld", "request_id", "request_ref", "code": <reason>,
@@ -1829,11 +1830,15 @@ The transitions are `aweb_naapp.dispatch.TRANSITIONS`.
 - **Client key.** The key is `(installation_id, principal, request_id)` with the
   canonical request hash. The same bytes return the existing receipt at its
   current state, after rechecking current read permission, and never send
-  again. For a completed use, that receipt is the persisted value-free outcome
-  metadata (the state, disposition, upstream status, response hash, byte count
-  and truncation flag, and redaction count), with `body` and `headers` null.
-  The response body reached only the original request; a repeat cannot
-  recover it. Different bytes
+  again. For a completed brokered use (§7), that receipt is the persisted
+  value-free outcome metadata (the state, disposition, upstream status,
+  response hash, byte count and truncation flag, and redaction count), with
+  `body` and `headers` null. The response body reached only the original
+  request; a repeat cannot recover it. A runner job (§9) is different: it
+  completes after the request has returned, so its sanitized output is
+  delivered through status and replay, and the runner's private exact-byte
+  retry journal is unchanged. Changing run-output retention is a separate
+  decision. Different bytes
   return `409 idempotency_conflict`. The key store is the shared one (§3.1), with
   D1's semantics and a retention period set per app. secrets keeps keys for 30
   days. After that they return
@@ -1844,8 +1849,9 @@ The transitions are `aweb_naapp.dispatch.TRANSITIONS`.
   permission, within the same installation ID and generation. The certificate
   ID or signing key need not equal the original request's. The stable-principal
   rule is §4.1: a reissued certificate with the same `member_did_aw` may carry a
-  new key; for a local identity, a new `did:key` is a different principal. What
-  it retrieves is the same value-free outcome metadata, never a body.
+  new key; for a local identity, a new `did:key` is a different principal. For
+  a brokered use, what it retrieves is the same value-free outcome metadata,
+  never a body; for a run, its delivered output as above.
   Authentication, current membership and installation-scope checks still fail
   closed. Another principal or installation gets no result; a superseded
   generation refuses with `generation_superseded`, including after reinstall.
@@ -1966,7 +1972,10 @@ There is one settlement per original reference, including when the automatic
 and owner paths race. Each attempt's recorded outcome is write-once: a
 settlement is appended as its own record beside the original observation
 (`aweb_naapp.dispatch`), never written over it, and the database refuses an
-update to an outcome already written. Settlement reopens no credential, sends nothing, and
+update to an outcome already written. Attempts stay separate (a `not_sent`
+attempt and its retry are distinct records), a late result never displaces
+`outcome_unknown` (§11.1), and a runner report is accepted atomically by its
+hash, once. Settlement reopens no credential, sends nothing, and
 rearms no approval. A repeated decision cannot replace the first outcome.
 
 The separate owner control ceremony has a durable, value-free B2 association
