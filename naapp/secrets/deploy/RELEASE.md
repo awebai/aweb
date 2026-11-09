@@ -43,9 +43,9 @@ do not establish compatibility.
    retain clean, landed-source, immutable-tag and complete candidate-gate requirements.
 2. `scripts/publish_release.py` uses the two OCI mappings with repository-root
    build contexts, `naapp/secrets/Dockerfile` and `naapp/logs/Dockerfile`, the
-   required full `SOURCE_COMMIT`, and version/revision OCI labels. The workflows
-   follow `.github/workflows/awid-image-release.yml` and call the same publisher
-   used without GitHub Actions.
+   required full `SOURCE_COMMIT`, and version/revision OCI labels. The shared
+   `.github/workflows/awid-image-release.yml` handles AWID, Secrets and Logs tags
+   and calls the same publisher used without GitHub Actions.
 3. The publisher reuses staged OCI inspection, exact immutable-tag adoption/refusal and
    post-publication digest verification. Keep registry publication usable
    without GitHub. Record the published digest; customers deploy by digest.
