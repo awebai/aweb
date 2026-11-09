@@ -2554,9 +2554,13 @@ Requirements specific to secrets:
    registration as `service_kid`; it is not in `app_keys`. Hook signing keys
    are separate `app_keys` kids, each with its purposes (`secrets.hook-event-1`,
    `secrets.hook-delivery-1`, and so on). Every key is read from a 64-hex key
-   file. **Open (aweb-acgh.18.20):** each key is a KMS asymmetric key if the
-   provider supports Ed25519 signing; otherwise it is generated at deploy,
-   sealed under the selected native provider and unsealed at start.
+   file. **Open (aweb-acgh.18.20):** when KMS is used, each key is a KMS
+   asymmetric key if KMS supports Ed25519 signing; otherwise it is generated at
+   deploy, sealed under KMS and unsealed at start. In `local_key_file` mode,
+   protected key files are the final form: sealing a signing key under the
+   custody key file would add nothing, because whoever can read the sealed key
+   and the custody key file has the signing key, the same boundary as a
+   protected key file (T4).
 3. **Two origins.** The agent API origin accepts only team-auth and the runner
    protocol, and serves no cookies.
    - **RP ID.** The WebAuthn RP ID is the **exact console host**. It is never a
