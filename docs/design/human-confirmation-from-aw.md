@@ -68,7 +68,8 @@ for native apps:
    `127.0.0.1:<random port>`, and makes a random verifier. It calls
    `POST <origin>/handoffs` with its purpose, the public key, that loopback
    redirect URI, the verifier's SHA-256 and, for a session, the holder's
-   scope. The app accepts only a redirect URI of the form
+   scope, signed with team-auth v2 as the holder
+   ([Membership evidence](#membership-evidence)). The app accepts only a redirect URI of the form
    `http://127.0.0.1:<port>/<path>` or `http://[::1]:<port>/<path>`, a
    literal loopback address; `localhost` and every other URI are refused
    (RFC 8252 §8.3). It answers a handoff id and a ten-minute expiry. The
@@ -138,9 +139,72 @@ redirects. The app rate-limits handoffs as it rate-limits login.
   timestamp outside the window, a nonce already seen) is
   `401 console_session_required`, the console's existing code, and it does
   not say which check failed. Each request re-checks that the principal is a
-  current human member ([Use](human-role-holders.md#use)), and refuses with
-  `403 principal_not_member`, `403 principal_not_human` or
+  current human member ([Use](human-role-holders.md#use)), from the session's
+  retained certificate ([Membership evidence](#membership-evidence)), and
+  refuses with `403 principal_not_member`, `403 principal_not_human` or
   `503 principal_status_unavailable`.
+
+### Membership evidence
+
+An app learns that a holder is a current human member of its team from the
+holder's own signed team certificate, not from a registry read of the team's
+members. `aweb_naapp` owns this evidence once, for every app: no app stores
+or verifies it on its own. The certificate is evidence, never authority by
+itself. Passkey, owner-act and session authority stay as they are, and each
+must still pass on its own.
+
+- **Presented.** `aw` signs `POST <origin>/handoffs` with
+  [team-auth v2](../team-auth-envelope-v2.md) as the holder, so the request
+  carries the holder's existing team certificate, which team-auth verifies as
+  for any request. An unsigned handoff request is refused.
+- **Retained.** The app keeps the exact certificate bytes with the handoff's
+  result. For `credential`, it keeps them with the registered credential
+  until the handoff expires or an act binds that credential, and then with
+  the holding. For `session`, it keeps them with the session, for at most the
+  session's lifetime. Retaining them extends no session, approval or holding,
+  and resets no freshness.
+- **Bound.** The certificate's `team_id` is the installation's team and its
+  `member_did_aw` is the holding's principal. A `session` handoff whose login
+  is for a holding of another principal refuses, and nothing changes. A
+  certificate retained for one holding or session is never used for another.
+- **Checked at each use:** at designation and replacement (delivery stage
+  3), and at each login and each approval. Each check covers:
+  - the certificate's signature under the team's current key;
+  - its `member_did_key` against the principal's current key;
+  - its publication and revocation, through AWID's anonymous certificate
+    status;
+  - the principal's own registered ID kind `human`.
+
+  Each read keeps its existing freshness bound of at most 60 seconds and
+  fails closed. A designate or replace uses the certificate retained with the
+  credential that its `credential_sha256` names. A browser login that `aw`
+  did not start presents no certificate, so it uses the holding's.
+- **Outcomes.** A revoked certificate, a wrong team, principal or key, a
+  signature the current team key does not verify, or no usable certificate
+  retained gives `403 principal_not_member`. A kind other than `human` gives
+  `403 principal_not_human`. Neither starts a session or changes a holding.
+  Status that cannot be read gives `503 principal_status_unavailable`, never
+  "not human". "No usable certificate" means that none was presented and
+  retained, as for a holding or session made before this contract. The
+  holder then runs a fresh handoff, which presents a current one. No caller
+  flag, certificate id or matching metadata stands in for verifying the
+  bytes.
+- **Refresh.** After a team-key rotation, the old signature no longer
+  verifies. After a member-key rotation, `member_did_key` is no longer
+  current. Either way, the retained certificate fails at its next use. The
+  holder refreshes it with a `session` handoff that presents the reissued
+  certificate. That certificate, once verified, replaces the holding's
+  retained one only when its team and principal equal the holding's. Nothing
+  rewrites a certificate, rebinds the passkey, or treats the same
+  certificate id as current.
+- **Compatibility.** An AWID row with no stored certificate blob is not
+  refused for that reason, because the presented bytes are what the
+  unchanged verifier and status contract check. The app never fetches member
+  certificates from AWID and never builds one from metadata. A holder with
+  none gets one through the existing membership path. Ordinary team-auth
+  verification is unchanged.
+- **No other authority.** No app holds a registry-wide token, and no use
+  needs a human unlock beyond what each operation already requires.
 
 ## Confirming a frozen request
 
@@ -449,7 +513,15 @@ Each item is filed after review, and each is one reviewed change.
   - a handoff registering a non-loopback redirect URI is refused;
   - a result requested without the loopback code is refused;
   - a replayed session request, an expired session and a request with a bad
-    signature each get the same `401 console_session_required`.
+    signature each get the same `401 console_session_required`;
+  - membership evidence: a certificate for another principal, team or key, a
+    revoked certificate, one signed under a rotated team key, and none
+    retained each refuse with `403 principal_not_member`; unreadable status
+    gives `503 principal_status_unavailable`; a refreshed certificate
+    presented in a session for another holding refuses and changes nothing;
+    retaining a certificate does not extend a session; a valid certificate
+    whose AWID row has no stored blob passes; ordinary team-auth requests are
+    unchanged.
 - **B2 (`aweb_naapp`):** the session-issued link, with tests:
   - a non-candidate session is refused;
   - an ineligible session is refused;

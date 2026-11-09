@@ -191,7 +191,9 @@ whether a holding or installation exists. It checks in three stages:
    4. for designate and replace, the principal: it holds a current certificate
       of that team, and its own registered ID kind is `human`. The kind is the
       subject's own, never the kind of its nearest human ancestor or a label.
-      These reads reuse the 60-second team-facts cache where it applies;
+      These reads reuse the 60-second team-facts cache where it applies. The
+      certificate is the one the holder's `credential` handoff retained
+      ([membership evidence](design/human-confirmation-from-aw.md#membership-evidence));
    5. in the transaction that applies the effect, the act against the expected
       subject, and its nonce, consumed. The expected subject is the app's own
       `app_id`, the installation, the act's `role` and `principal` and, for

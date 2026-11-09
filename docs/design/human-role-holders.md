@@ -122,7 +122,9 @@ Stages 1 and 2 are unchanged. For an authenticated act, stage 3 checks:
 - the installation, admitted, whose team is the act's `team_id`;
 - the nonce, consumed in the effect's transaction;
 - for designate and replace only: `principal` holds a current certificate of
-  that team, and its own registered ID kind is `human` (H2). The kind is the subject's own, never the
+  that team, shown by the certificate its `credential` handoff retained
+  ([membership evidence](human-confirmation-from-aw.md#membership-evidence)),
+  and its own registered ID kind is `human` (H2). The kind is the subject's own, never the
   kind of its nearest human ancestor or a label. A registry that cannot answer
   refuses with `503 principal_status_unavailable`. Nothing takes effect, and
   the outcome depends only on the act. `aweb_naapp` lacks this wiring:
