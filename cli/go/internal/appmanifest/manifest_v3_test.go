@@ -82,7 +82,7 @@ func TestManifestV3RefusesOwnerActsRolesOutsideTheirRules(t *testing.T) {
 		"no roles":                    v3OwnerActs(origin),
 		"seventeen roles":             v3OwnerActs(origin, tooMany...),
 		"a duplicate role":            v3OwnerActs(origin, v3Role("logs.reader"), v3Role("logs.reader")),
-		"a role name of 24 bytes":     v3OwnerActs(origin, v3Role("logs.readerxxxxxxxxxxxxx")),
+		"a role name of 65 bytes":     v3OwnerActs(origin, v3Role("logs."+strings.Repeat("r", 60))),
 		"a leading digit":             v3OwnerActs(origin, v3Role("9logs.reader")),
 		"one segment":                 v3OwnerActs(origin, v3Role("reader")),
 		"an empty label":              v3OwnerActs(origin, `{"name":"logs.reader","label":"","acts":["human-role.designate"],"notice_contact":false}`),
@@ -112,7 +112,7 @@ func TestManifestV3AcceptsTheNeighboursOfEachRefusedRole(t *testing.T) {
 	}
 	for name, ownerActs := range map[string]string{
 		"sixteen roles":           v3OwnerActs(origin, sixteen...),
-		"a role name of 23 bytes": v3OwnerActs(origin, v3Role("logs.readerxxxxxxxxxxxx")),
+		"a role name of 64 bytes": v3OwnerActs(origin, v3Role("logs."+strings.Repeat("r", 59))),
 		"two roles":               v3OwnerActs(origin, v3Role("logs.reader"), v3Role("logs.auditor")),
 		"a description":           v3OwnerActs(origin, `{"name":"logs.reader","label":"Log reader","description":"Reads the audit log.","acts":["human-role.designate"],"notice_contact":false}`),
 		"a different host":        v3OwnerActs("https://console.example.net", v3Role("logs.reader")),
