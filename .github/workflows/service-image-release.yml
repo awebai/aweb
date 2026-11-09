@@ -1,15 +1,15 @@
-name: Publish AWID image
+name: Publish service image
 
 on:
   push:
-    tags: ["awid-v*"]
+    tags: ["awid-v*", "secrets-v*", "logs-v*"]
 
 permissions:
   contents: read
   packages: write
 
 concurrency:
-  group: awid-image-${{ github.ref }}
+  group: image-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:

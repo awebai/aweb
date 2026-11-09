@@ -14,9 +14,9 @@ SEMVER = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
 PYTHON_VERSION = rf"{SEMVER}(?:rc[1-9][0-9]*)?"
 NPM_VERSION = rf"{SEMVER}(?:-rc\.[1-9][0-9]*)?"
 TAG_PATTERN = re.compile(
-    rf"^(?:(server-v|awid-service-v|aweb-naapp-v)({PYTHON_VERSION})"
+    rf"^(?:(server-v|awid-service-v|aweb-naapp-v|aweb-secrets-runner-v)({PYTHON_VERSION})"
     rf"|(aw-v)({NPM_VERSION})"
-    rf"|(awid-v|channel-v|pi-v|skills-v|a2a-gw-v)({SEMVER}))$"
+    rf"|(awid-v|channel-v|pi-v|skills-v|a2a-gw-v|secrets-v|logs-v)({SEMVER}))$"
 )
 
 
@@ -29,6 +29,7 @@ PROMOTION_TREES = {
     "awid-service-v": "awid",
     "aweb-naapp-v": "naapp-lib",
     "aw-v": "cli/go",
+    "aweb-secrets-runner-v": ("naapp/secrets/runner", "naapp/secrets/values"),
 }
 COMMON_BUILD_INPUTS = {"scripts/publish_release.py", ".gitignore", ".gitattributes"}
 PYTHON_BUILD_INPUTS = {"pyproject.toml", "uv.toml", "uv.lock", ".python-version",
@@ -39,8 +40,9 @@ GO_BUILD_INPUTS = {"go.work", "go.work.sum", ".github/workflows/aw-release.yml",
 
 def _promotion_input(prefix: str, path: str) -> bool:
     tree = PROMOTION_TREES[prefix]
+    trees = (tree,) if isinstance(tree, str) else tree
     config = GO_BUILD_INPUTS if prefix == "aw-v" else PYTHON_BUILD_INPUTS
-    return path == tree or path.startswith(tree + "/") or path in COMMON_BUILD_INPUTS | config
+    return any(path == item or path.startswith(item + "/") for item in trees) or path in COMMON_BUILD_INPUTS | config
 
 
 class VersionRefusal(RuntimeError):
@@ -89,6 +91,20 @@ def _name(name: str) -> str:
 def _read(root: Path, revision: str, path: str) -> dict:
     raw = _git(root, "show", f"{revision}:{path}")
     return tomllib.loads(raw) if path.endswith(".toml") or path.endswith("uv.lock") else json.loads(raw)
+
+
+def require_runner_values(root: Path, revision: str) -> None:
+    """The two published packages are lockstep, including the runner dependency."""
+    runner = _read(root, revision, "naapp/secrets/runner/pyproject.toml")["project"]
+    values = _read(root, revision, "naapp/secrets/values/pyproject.toml")["project"]
+    dependencies = runner.get("dependencies", [])
+    if not isinstance(dependencies, list) or not all(isinstance(item, str) for item in dependencies):
+        raise VersionRefusal("runner dependencies are invalid")
+    selected = [item for item in dependencies if re.match(
+        r"(?i)^aweb[-_.]secrets[-_.]values(?=[\s\[<>=!~;@]|$)", item.strip()
+    )]
+    if selected != [f"aweb-secrets-values=={values['version']}"]:
+        raise VersionRefusal("runner must require the exact lockstep values version")
 
 
 def _manifest(path: str) -> bool:
@@ -277,6 +293,7 @@ def require_final_promotion(root: Path, tag: str, final_commit: str) -> str | No
         normalized = _normalize_manifest(old, path, promotions) if _manifest(path) else _normalize_lock(old, new, path, promotions)
         if normalized != new:
             raise VersionRefusal(f"{path}: changes beyond version promotion or exact promoted pins or floors")
+    gate = "Secrets" if prefix == "aweb-secrets-runner-v" else "Cloud"
     print(f"Package source identity ({PROMOTION_TREES[prefix]}) matches {rc_tag} plus version promotion only; "
-          "the coordinator must separately verify the Cloud green receipt for that exact RC before final tagging.")
+          f"the coordinator must separately verify the {gate} green receipt for that exact RC before final tagging.")
     return rc_tag
