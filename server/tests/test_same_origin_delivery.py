@@ -822,6 +822,21 @@ async def test_stored_continuation_routes(same_origin, foreign_receiver, kind, a
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("incarnation", ["first", "second"])
+async def test_same_registry_origin_preserves_foreign_http_chat_continuation(
+    same_origin, foreign_receiver, incarnation, caplog,
+):
+    # Exercise the train's exact foreign-http-chat path in fresh databases at
+    # one registry origin. Reusing disposable addresses made the second first
+    # send resolve the previous recipient, warn on its missing DID, then refuse
+    # the correctly signed new target with 422 before any foreign ingress.
+    await test_stored_continuation_routes(
+        same_origin, foreign_receiver, kind="chat", api="http", route="foreign",
+    )
+    assert "Chat recipient kind unavailable" not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_chat_refresh_to_changed_foreign_origin_still_delivers(same_origin, foreign_receiver):
     env = same_origin.env
     response, first = await same_origin.send("chat", "global")
