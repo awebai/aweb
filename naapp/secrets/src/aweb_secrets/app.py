@@ -148,7 +148,7 @@ def create_app(
     )
 
     console = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
-    mount_health(console, settings, checks=checks)
+    mount_health(console, settings, checks=checks, labels=health_labels)
 
     @asynccontextmanager
     async def lifespan(api: FastAPI):

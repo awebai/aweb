@@ -67,13 +67,13 @@ async def test_failed_kms_health_keeps_the_selected_custody_mode(
             service = create_service(configured, awid_transport=registry.transport)
             async with service.api_app.router.lifespan_context(service.api_app):
                 async with httpx.AsyncClient(transport=httpx.ASGITransport(service)) as client:
-                    health = await client.get(API + "/health")
-                    assert health.json()["labels"]["custody_mode"] == "kms"
-                    assert health.json()["checks"]["kms"]["ok"] is False
-                    ready = await client.get(API + "/ready")
-                    assert ready.status_code == 503
-                    assert ready.json()["labels"]["custody_mode"] == "kms"
-                    assert ready.json()["checks"]["kms"]["ok"] is False
+                    for origin in (API, CONSOLE):
+                        for path in ("/health", "/ready", "/live"):
+                            response = await client.get(origin + path)
+                            assert response.status_code == (503 if path == "/ready" else 200)
+                            assert response.json()["labels"]["custody_mode"] == "kms"
+                            if path != "/live":
+                                assert response.json()["checks"]["kms"]["ok"] is False
                     assert attempts > 0
     finally:
         server.close()
@@ -143,13 +143,13 @@ async def test_production_startup_prepares_every_store_before_serving_and_cleans
                     assert (await client.get(API + "/v1/secrets")).status_code == 401
                     home = await client.get(CONSOLE + "/")
                     assert home.status_code == 303 and home.headers["location"] == "/login"
-                    health = await client.get(API + "/health")
-                    assert health.status_code == 200
-                    assert health.json()["checks"]["kms"]["ok"]
-                    assert health.json()["labels"]["custody_mode"] == "local_key_file"
-                    ready = await client.get(API + "/ready")
-                    assert ready.status_code == 200
-                    assert ready.json()["labels"]["custody_mode"] == "local_key_file"
+                    for origin in (API, CONSOLE):
+                        for path in ("/health", "/ready", "/live"):
+                            response = await client.get(origin + path)
+                            assert response.status_code == 200
+                            assert response.json()["labels"]["custody_mode"] == "local_key_file"
+                            if path != "/live":
+                                assert response.json()["checks"]["kms"]["ok"]
             assert service.runtime.connected_db() is None
             async with httpx.AsyncClient(transport=httpx.ASGITransport(service)) as client:
                 assert (await client.get(CONSOLE + "/enrolment")).status_code == 404
