@@ -1,14 +1,17 @@
 # secrets: credential use without credential holding
 
-Status: **design accepted, aweb-acgh.2 (epic aweb-acgh).** The D1 lead's fit
-check, an independent review and Athena passed it. The secrets coordinator
-decided the open questions under Juan's delegation (2026-10-19); §18 records
-each decision. This is a design, not a claim that any interface here ships.
-Nothing in it exists yet, history included. The build plan is
-[secrets-build-plan.md](secrets-build-plan.md).
+Status: **design accepted, aweb-acgh.2 (epic aweb-acgh).** This document is the
+secrets design, together with what main implements. Anything unmarked is on
+main. Everything else carries a bold lead-in: **Open (task):** decided and
+planned, not on main; **In flight (task):** partly on main, with what is and is
+not; **After the first release (task):** decided and deliberately parked;
+**Pending ruling (Dn):** awaiting Juan. §18 records the decisions; numbered
+decisions are cited inline as "decision N" where they change the text. The
+build plan is [secrets-build-plan.md](secrets-build-plan.md).
 
 The app lives in `aweb/naapp/secrets` (aweb-aauv), and its source is public. It
-builds on the generic naapp layer proposed by D1 without forking it. It also
+builds on the generic naapp layer of D1 ([agent-pages.md](agent-pages.md))
+without forking it. It also
 builds on the shared `aweb_naapp` runtime: B1, the verifier (aweb-acgh.3), and
 B2+B3, the approval primitive with WebAuthn (aweb-acgh.4). §3.1 marks every
 component as shared or app-local, and §17 names the dependencies.
@@ -22,6 +25,18 @@ operates. secrets checks the caller's verified team identity, its grant and the
 policy, and gets a human passkey approval where the policy requires one. It then
 injects or signs with the credential on its own side of the boundary, returns a
 redacted and bounded result, and records each step through `post-secret-use-hook`.
+
+The first release is static credentials used through the broker, and durable
+delivery to a runner job. Derived and short-lived issuance (`store_as_secret`,
+STS and OAuth minting, runner `short_lived` delivery, ordinary-child runs) is
+designed here but comes after the first release (aweb-acgh.41, decision 95).
+The build plan lists, by task, what the first release still needs. The
+largest pieces are the deploy (§15), the end-to-end suite and its real
+environment (§16), the tools that are declared but not served and the dashboard
+surface (§13), the automatic repeat and owner settlement of uncertain calls
+(§11.4), run-approval decisions in the console (§10), and role-member removal
+and runner-deregistration effects (§12). Usage reporting comes after the first
+release (§17).
 
 Custody sits behind one backend interface with two implementations at launch: a
 native envelope-encrypted store, and 1Password through a service account narrowly
@@ -40,25 +55,22 @@ Dispatch is a durable state machine. secrets records the intent and its audit
 outbox rows in one transaction before any network send. If it cannot enqueue, it
 refuses. An uncertain send becomes `outcome_unknown`, which blocks a retry of the
 same operation until it is reconciled. Containment works from day one: revoke a
-grant, revoke approvals, disable a secret or the whole installation, replace a
-value, and deregister a runner.
+grant, revoke approvals, revoke an approver's passkey or contact, disable a
+secret or the whole installation, and deregister a runner. Replacing a value is
+a console change set (§6.2).
 
 The defensible claim is narrow, and §14 states it. Each brokered use was admitted
 for one verified principal and one bounded action, and it leaves an auditable
 record, within the trust boundaries listed there. The design does not promise
 that nothing derived from a credential can ever end up with an agent.
 
-§18 records the decisions taken on the open questions.
+§18 records the decisions.
 
 ## 1. Sources, baseline and governing model
 
-Source baseline **A = aweb origin/main b423415a92bf**. Every `A path:line` refers
-to that commit.
-
-D1 baseline **D1 = origin/agents/aweb-protocol-expert-pages-design 8ef61170a70f**
-(the branch was rebuilt as one commit; earlier D1 SHAs are no longer on it).
-It covers `docs/design/agent-pages.md` and `docs/design/agent-pages/contracts.md`.
-It is a draft that Juan has not approved.
+Repository citations are paths on main, by file and section or symbol. D1 is
+the generic naapp design in `docs/design/agent-pages.md` and
+`docs/design/agent-pages/contracts.md`.
 
 Juan's private specs are cited by name and section and never quoted: the secrets
 SOT (with §14 read as amendments), the hooks SOT, the audit-logs SOT, and the
@@ -67,26 +79,27 @@ one generic architecture, built once in shared code. Anything this design needs
 from a hosted operator is stated as a generic requirement on a custodial
 deployment (§17).
 
-| Fact at A | Evidence |
+| Fact | Evidence |
 | --- | --- |
-| Team-auth v2 binds one HTTP request (aud, method, raw path and query, body hash, team, timestamp) to a member certificate. The relying app applies its own policy. | `A docs/team-auth-envelope-v2.md:3`–`:6`, `:40`–`:61` |
-| Team-auth v2 does not prevent replay: a byte-identical request replays within the 5-minute skew window. | `A docs/team-auth-envelope-v2.md:95`–`:105` |
-| A relying app with no operator token checks certificate status anonymously at AWID. The cache lasts at most 60 s and fails closed. | `A docs/team-auth-envelope-v2.md:63`–`:71` |
-| The certificate carries `member_did_key`, plus `member_did_aw` and `member_address` for global identities; `did:aw` is empty for local identities. | `A docs/awid-sot.md:545`–`:563`, `:658`–`:659`; `A naapp/folio/src/folio/auth.py:304`–`:367` |
-| Team-auth proves neither custody mode nor an OAuth human principal. Custodial members act through the hosted operator's signing. | `A docs/product-authority-sot.md:114`–`:130` |
-| Manifest v1 is frozen and strict; unknown fields and versions are rejected. | `A docs/app-manifest.md:46`–`:49`, `:281`–`:291`; `A cli/go/internal/appmanifest/interpret.go:39`, `:53`, `:196` |
-| The registry records the app, its digest pin and per-team granted scopes. | `A docs/app-registry.md:1`–`:11`, `:95`–`:133` |
-| App emit keys are app-owned Ed25519 `did:key`s declared in the manifest, and are the only shipped app credential. | `A docs/app-manifest.md:151`–`:177` |
-| The only shipped hook seam is the in-process `on_mutation` callback. Named hooks, a registry and `trace_id` do not exist. | `A docs/aw-hooks-sot.md:9`–`:19`, `:42`–`:50` |
-| Library's production operations are Make-only against a pinned topology allowlist, and health reports the full commit. | `A naapp/library/Makefile` (prod-* targets), `A naapp/library/docs/production-operations.md:1`–`:60`, `A naapp/library/ops/render-production.json`, `A naapp/library/src/library/build_identity.py:20`–`:95` |
+| Team-auth v2 binds one HTTP request (aud, method, raw path and query, body hash, team, timestamp) to a member certificate. The relying app applies its own policy. | `docs/team-auth-envelope-v2.md`, status line and "Verification" |
+| Team-auth v2 does not prevent replay: a byte-identical request replays within the 5-minute skew window. | `docs/team-auth-envelope-v2.md`, "Replay" |
+| A relying app with no operator token checks certificate status anonymously at AWID. The cache lasts at most 60 s and fails closed. | `docs/team-auth-envelope-v2.md`, "Verification" |
+| The certificate carries `member_did_key`, plus `member_did_aw` and `member_address` for global identities; `did:aw` is empty for local identities. | `docs/awid-sot.md`, "Teams" (certificate fields) |
+| Team-auth proves neither custody mode nor an OAuth human principal. Custodial members act through the hosted operator's signing. | `docs/product-authority-sot.md`, "Identity custody" |
+| Manifests are strict; unknown fields and versions are rejected. Manifest v2 adds invocation contexts, the hooks slot and app keys with purposes. | `docs/app-manifest.md`, "Security invariants" and "Manifest version 2"; `cli/go/internal/appmanifest/interpret.go` |
+| The registry records the app, its digest pin and per-team granted scopes. | `docs/app-registry.md` |
+| App keys are app-owned Ed25519 `did:key`s declared in the manifest, each for the purposes it declares. | `docs/app-manifest.md`, "App keys" |
+| Named hooks, owner-activated bindings and signed hook events with `trace_id` are the hook contract. Core's in-process `on_mutation` callback is a separate seam. | `docs/hook-events.md`; `docs/aw-hooks-sot.md` |
+| Library's production operations are Make-only against a pinned topology allowlist, and health reports the full commit. | `naapp/library/Makefile` (prod-* targets), `naapp/library/docs/production-operations.md`, `naapp/library/ops/render-production.json`, `naapp/library/src/library/build_identity.py` |
 
 **The authority model, stated before the mechanisms.**
 
 - **Custody.** A credential value lives in a custody backend: the native
   envelope-encrypted store, or the customer's 1Password vault. The secrets
-  process is the only component that unseals a value, and only for one dispatch (§5). For runner
-  jobs the value, or preferably a short-lived derivative, is sealed to one
-  registered runner for one job (§9).
+  process is the only component that unseals a value, and only for one dispatch
+  (§5). For runner jobs the value is sealed to one registered runner for one job
+  (§9). Sealing a short-lived derivative instead comes after the first release
+  (aweb-acgh.41, decision 95; §9.5).
 - **Who authorizes.** AWID establishes the current team authority and the member
   certificate. secrets' own tables decide everything else: app-local roles,
   grants, policy and approver designations, keyed to the member's stable
@@ -127,7 +140,7 @@ things together:
 - a signed, hash-chained record kept in the user's own logs app.
 
 1Password's own credential mediation can be integrated as a further backend kind
-(§5.5, open question Q3).
+(§5.5). It is not at launch (Q3).
 
 ## 3. Components
 
@@ -172,9 +185,8 @@ flowchart LR
 This follows Juan's direction: no runtime code is repeated across naapps. Shared
 pieces live in the library `aweb_naapp` (`naapp-lib/`). The table applies Q16: a component becomes shared once a second consumer exists. Rows
 marked "app-local, under Q16" move to `aweb_naapp` when a second consumer
-appears. Q16 is decided this way (§18). Pieces marked
-*proposed* are not yet in any `aweb_naapp` task. They go to the secrets coordinator for assignment, and their
-runtime dependencies sit behind an extra, following B1's packaging seam.
+appears. Shared pieces' runtime dependencies sit behind an extra, following B1's
+packaging seam.
 
 | Component | Placement | Why |
 | --- | --- | --- |
@@ -182,22 +194,25 @@ runtime dependencies sit behind an extra, following B1's packaging seam.
 | Server discovery, purpose-split app auth, grant status, hook-target resolution | `aweb_naapp` client of aweb-acgh.7 | It is the generic app-to-team-server API. |
 | Approval primitive; WebAuthn verifier, designation, enrolment, recovery | `aweb_naapp`: B2+B3, aweb-acgh.4 | Pages and secrets both approve. |
 | App-emit and hook-event signing; producer outbox with same-transaction enqueue; delivery client | `aweb_naapp`: B4, aweb-acgh.6, and the hooks design | Every hook producer needs them. secrets supplies only its payload and its enqueue points. |
-| DB bootstrap, settings, health with build identity, manifest serving, docs surface, usage reporting client | `aweb_naapp`: B4, aweb-acgh.6; D1 C5 | These are the common runtime of every naapp. |
-| Canonical JSON and domain-separated Ed25519 signing helpers | `aweb_naapp` | B2, the hooks design and secrets' runner protocol all sign typed payloads. |
-| Console session for an app-origin human page: passkey login, short `__Host-` cookie, CSRF | `aweb_naapp`, *proposed* | Any naapp with human pages on its own origin needs it, pages' approval page included. B3 verifies assertions but does not hold a session. |
-| Idempotency-key store: request hash, `409` on conflict, `410` on expiry | `aweb_naapp`, *proposed* | D1 §3 states the same rule for pages. |
-| External-effect dispatch state machine: intent, fence, `dispatching`, `completed`, `not_sent`, `outcome_unknown`, reconcile before retry | `aweb_naapp`, *proposed* | D1's A2 enforcing adapter needs identical semantics (D1 §4). |
-| Egress guard: canonical URL, destination matching, DNS and address policy, pinned connection, redirects off, header policy, bounds | `aweb_naapp`, *proposed* | Any naapp calling an external API with its own credential needs it: pages' A2 adapter, and a Linear naapp. |
-| Auth-scheme injectors: bearer, basic, header, query, OAuth2 client credentials with a token cache, SigV4 | app-local, under Q16 | No second consumer exists yet, and secrets' custody argument (below) says another naapp needing a customer credential should use secrets. They move to `aweb_naapp` when a second consumer appears. |
-| Response handling: header filter, JSON-pointer projection, known-value redaction, credential-shape detector, log redactor | app-local, under Q16 | Only secrets returns upstream responses to agents. Hook payload redaction is structural, through the strict allowlists, so it does not need this. They move to `aweb_naapp` when a second consumer appears. |
-| Envelope sealing with bound context and a KMS or local key-file provider | app-local, under Q16 | No second consumer is committed yet. Other naapps could seal their own operational credentials this way, and it moves to `aweb_naapp` when one does. |
-| Rate-limit buckets and time windows | app-local, under Q16 | D1's safety throttles are a candidate second consumer but are not yet committed to this component. They move to `aweb_naapp` when that consumer is confirmed. |
-| Role assignments keyed by stable principal | `aweb_naapp`, *proposed* | Pages resolves role targets the same way (D1 §4). secrets only names its roles. |
-| Principal-attestation verifier (§4.6) | `aweb_naapp`, when the contract exists | Any relying app could require it. |
+| DB bootstrap, settings, health with build identity, manifest serving, docs surface | `aweb_naapp`: B4, aweb-acgh.6; D1 C5 | These are the common runtime of every naapp. |
+| Usage reporting client | `aweb_naapp`: `aweb_naapp.runtime.usage` | **After the first release (aweb-acgh.18.19):** secrets does not report usage in the first release (decision 88). |
+| Canonical JSON and domain-separated Ed25519 signing helpers | `awid.signing` (`canonical_json_bytes`) and `aweb_naapp`; strict JSON parsing from `aweb_naapp.hooks.strictjson` | B2, the hooks design and secrets' runner protocol all sign typed payloads. |
+| Console session for an app-origin human page: passkey login, short `__Host-` cookie, CSRF | `aweb_naapp.console` | Any naapp with human pages on its own origin needs it, pages' approval page included. B3 verifies assertions but does not hold a session. |
+| Idempotency-key store: request hash, `409` on conflict, `410` on expiry | `aweb_naapp.idempotency` | D1 §3 states the same rule for pages. |
+| External-effect dispatch state machine: intent, fence, `dispatching`, `completed`, `not_sent`, `outcome_unknown`, reconcile before retry | `aweb_naapp.dispatch` | D1's A2 enforcing adapter needs identical semantics (D1 §4). |
+| Egress guard: canonical URL, destination matching, DNS and address policy, pinned connection, redirects off, header policy, bounds | `aweb_naapp.egress` | Any naapp calling an external API with its own credential needs it: pages' A2 adapter, and a Linear naapp. |
+| Auth-scheme injectors: bearer, basic, header, query, OAuth2 client credentials with a token cache, SigV4 | app-local, under Q16 | No second consumer exists, and secrets' custody argument (below) says another naapp needing a customer credential should use secrets. They move to `aweb_naapp` when a second consumer appears. |
+| Response handling: header filter, JSON-pointer projection, log redactor | app-local, under Q16 | Only secrets returns upstream responses to agents. Hook payload redaction is structural, through the strict allowlists, so it does not need this. They move to `aweb_naapp` when a second consumer appears. |
+| Known-value redaction and the credential-shape detector | `aweb_secrets_values` (`naapp/secrets/values`), shared by the app and the runner | Both the broker and the runner redact and detect with the same code (§7.6, §9.6). |
+| Envelope sealing with bound context and a KMS or local key-file provider | app-local, under Q16 (`aweb_secrets.custody`) | No second consumer exists. Other naapps could seal their own operational credentials this way, and it moves to `aweb_naapp` when one does. |
+| Rate-limit buckets and time windows | `aweb_naapp.ratelimit` | Shared under decision 58: Postgres token buckets taken in the caller's transaction. secrets admission and the console login limiter both use them. |
+| Role assignments keyed by stable principal | `aweb_naapp.roles` | Pages resolves role targets the same way (D1 §4). secrets only names its roles. |
+| Principal-attestation verifier (§4.6) | `aweb_naapp.runtime.attestation`, under [principal-attestation.md](../principal-attestation.md) | Any relying app could require it. |
 | Secret, version, destination, operation, grant and policy records and their evaluation | app-local | They are secrets' domain model. They call the shared pieces above and contain no generic mechanism. |
-| Custody backend interface and the 1Password adapter | app-local | Concentrating customer-credential custody in one app is itself the security property. Another naapp that needs a customer credential should use secrets, not open a vault itself. Native envelope sealing underneath follows Q16. |
+| Custody backend interface and the 1Password adapter | app-local | Concentrating customer-credential custody in one app is itself the security property. Another naapp that needs a customer credential should use secrets, not open a vault itself. The sealing underneath is app-local too (row above). |
 | Token-issuing result handling and derived secrets (§8.3) | app-local | They depend on secrets' custody and grants. |
-| Runner protocol, runner binary, HPKE credential delivery, job definitions | app-local | Only secrets releases credentials to user-run executors, and no second consumer is in view. They are built on the shared signing helpers, and would be extracted when a second naapp needs remote execution. |
+| Runner protocol, runner binary, job definitions | app-local | Only secrets releases credentials to user-run executors, and no second consumer is in view. They are built on the shared signing helpers, and would be extracted when a second naapp needs remote execution. |
+| HPKE sealing (RFC 9180) and the scoped nonce store | `aweb_naapp.crypto` and `aweb_naapp.nonces` | Shared under decision 81; the runner credential delivery (§9.3) uses it. |
 | Console page content: value ingress, change confirmation, rendering of secrets' approval payloads | app-local, on the shared console session and chrome | The content is secrets-specific; the mechanism is shared. |
 | `post-secret-use-hook` payload fields and enqueue points; the `aweb.secrets.use-approval/1` and `aweb.secrets.change/1` payload types | app-local | These are secrets' contracts carried by shared mechanisms. |
 
@@ -214,7 +229,8 @@ Every agent-API request is verified in this order, and every step fails closed.
    it expires. secrets uses B1 as it is and does not re-specify it.
 2. **Installation status and scope.** B1's scope enforcement checks the tool's
    declared scope against the installed grant. Grant status comes from the
-   generic app-to-team-server API (aweb-acgh.7) and D1's admission fence. The
+   generic app-to-team-server API (aweb-acgh.7) and the installation admission
+   fence (`aweb_naapp.runtime.installation`). The
    admitted generation is recorded on the intent. A request made under a grant
    from an installation generation that a later one has superseded is refused
    with `generation_superseded`, here and again at the fence (§11.3). B1's resource/action policy hook is where
@@ -226,17 +242,20 @@ Every agent-API request is verified in this order, and every step fails closed.
    - **What the key rests on.** `member_did_aw` is a binding asserted by the team
      controller. The team signature covers the whole certificate, and the
      controller is the membership authority. That is sound for grants inside
-     that team (A `docs/awid-sot.md:97`–`:100`, `:650`–`:672`). B1 surfaces it
+     that team (`docs/awid-sot.md`, "Teams"). B1 surfaces it
      from the verified certificate.
-   - **What it does not prove.** It does not prove that the `did:key` is the
-     did:aw's current registry key. That check is D1's proposed current-key
-     profile (B1b), which is out of B1's scope. Nothing here calls the principal
-     registry-verified, and a policy that requires that assurance refuses until
-     B1b lands.
+   - **What it does not prove.** The binding alone does not prove that the
+     `did:key` is the did:aw's current registry key. B1's current-key profile
+     (B1b, `did_aw_profile` in `aweb_naapp.runtime.team_auth`) checks that at
+     the registry. Its default, `require`, which secrets runs with, refuses a
+     request whose did:aw is unregistered or has another current key, and
+     refuses with 503 when the registry cannot answer. Members without a
+     `member_did_aw` are never looked up.
    - **Rotation.** A key rotation keeps the principal's grants only through a
      reissued certificate under the same `member_did_aw`. Until the old
-     certificate is revoked, both keys act as the same principal. A new local
-     key is a new principal.
+     certificate is revoked, both certificates name the same principal; under
+     the `require` profile only the did:aw's current registry key is admitted.
+     A new local key is a new principal.
 4. **Replay.** Every mutating body carries a client `request_id`, covered by
    `body_sha256`. secrets deduplicates `(installation_id, principal, request_id)`
    (§11.2). A replayed envelope inside the skew window therefore returns the
@@ -249,11 +268,24 @@ Every agent-API request is verified in this order, and every step fails closed.
 Roles are secrets' own data. They are not the core role system and not data on
 the page (secrets SOT §12). The roles are:
 
-- **owner.** Owners manage secrets, destinations, operations, jobs, runners,
-  grants, roles and approvers. Every widening change by an owner needs that
-  owner's passkey (§6.3).
-- **user roles.** These are owner-defined names, such as `deployers`, that grants
-  can target.
+- **owner.** The role `secrets.owner`. Owners manage secrets, destinations,
+  operations, jobs, runners, grants, roles and approvers. Every widening change
+  by an owner needs that owner's passkey (§6.3). Each owner has its own B3
+  scope, `secrets.owner.` followed by the first 40 lowercase hex characters of
+  SHA-256 of `installation_id`, `team_id` and the owner's principal DID, joined
+  by newlines (decisions 33 and 40-CORRECTED-2). Approver scopes use the same
+  rule with `secrets.approver.` and the approver ref. Bootstrap takes the team
+  from the installation record, never from the request. Designation requires
+  the `secrets.owner` role, and an owner or approver is current only while its
+  passkey is current **and** it holds the role (decision 34). Revoking the role
+  ends the B3 designation; a re-granted role enrols again.
+- **user roles.** These are owner-defined names of the form
+  `secrets.role.<name>` (decision 35), such as `secrets.role.deployers`, that
+  grants can target.
+
+Uninstalling purges the installation's role assignments, so a reinstall starts
+with no owner and needs a fresh owner bootstrap (decision 48). The installation
+fence runs `aweb_naapp.roles.purge_team` when it retires an installation.
 
 Approvers are not a DID role. An approver is an app-local person record with a
 registered contact and enrolled passkeys, optionally linked to a member principal
@@ -261,12 +293,14 @@ registered contact and enrolled passkeys, optionally linked to a member principa
 
 ### 4.3 Grants
 
-A grant is:
+A grant is the record `grant/1`:
 
 ```
-(secret_id, subject: principal | user_role, capability: use | run,
- allowed operations: [operation_id@digest] | open_request,
- policy_id)
+{v, grant_id, secret_id,
+ subject: principal | secrets.owner | secrets.role.<name>,
+ capability: use | run,
+ operations: [{operation_id, digest}], open_request: bool,
+ jobs: [{job_id, digest}], policy_digest}
 ```
 
 The rules:
@@ -278,6 +312,12 @@ The rules:
 - **A `sensitive` secret** admits only named operations (§8).
 - **Grants bind operation digests.** Editing an operation produces a new digest,
   so existing grants do not silently widen. The owner re-grants with a passkey.
+- **Several matching grants (decision 46).** Admission tries grants to the
+  principal first, then grants to its roles, each in `grant_id` order. The first
+  that admits is used, and only its policy's buckets are charged. When none
+  admits, the first candidate's refusal is returned.
+- **An unconfirmed secret** (no active version) refuses with `secret_disabled`
+  (decision 46).
 
 ### 4.4 Policy
 
@@ -287,14 +327,15 @@ audit event carries its digest. It holds the following fields:
 | Field | Meaning |
 | --- | --- |
 | `approval` | `none` or `per_use`. The secret's `approve_only` flag forces `per_use`, whatever the grant says. |
-| `approvers` | entries are a plain `approver_ref` (slug grammar) or the explicitly tagged `owner:<principal_did>`; validation refuses every other form. Quorum 1 at launch (§10). |
-| `approval_ttl_s` | the approval's `expires_at` in B2: the request must be decided and consumed before it. Recommended 900 s. |
+| `approvers` | entries are a plain `approver_ref` (slug grammar) or the explicitly tagged `owner:<principal_did>`; validation refuses every other form. `per_use` needs at least one. Quorum 1 at launch (§10). |
+| `approval_ttl_s` | the approval's `expires_at` in B2: the request must be decided and consumed before it. An integer from 1 to 86400 s; recommended 900 s. |
 | `rate` | token buckets per (principal, secret) and per secret, e.g. 30/hour. Counters update atomically in the admission transaction. |
 | `windows` | allowed weekday and hour ranges in an owner-set IANA time zone. |
 | `operations` | the operation allow-list (named operation IDs with digests). |
 | `open_request` | boolean. Never true for `sensitive` secrets. |
-| `result` | the result-handling defaults and bounds (§7.6). |
-| `requires_attestation` | optional custody or principal predicates (§4.6). |
+| `request` | `{max_bytes}`: the request body bound, 1 B to 1 MiB (§7.3). |
+| `result` | `{max_bytes}`: the response bound (§7.3, §7.6). |
+| `requires_attestation` | `null`, or a non-empty set of predicates over the attestation (§4.6). |
 | `distinct_approver` | `required` or `not_required`. When required, the approver's linked principal must differ from the requesting principal: a four-eyes rule between humans (§10.2, Q7). |
 
 Policy is evaluated at admission and again at the dispatch fence (§11.3). Rate
@@ -322,9 +363,9 @@ distinction enforced needs the attestation of §4.6.
 ### 4.6 Custody and principal attestation contract
 
 Team-auth v2 tells secrets *which member signed*. It does not tell secrets who
-holds that key, or which human, if any, initiated the call (A
-`docs/product-authority-sot.md:114`–`:130`). This design proposes a generic,
-optional companion artifact, `aweb.principal-attestation/1`:
+holds that key, or which human, if any, initiated the call
+(`docs/product-authority-sot.md`, "Identity custody"). secrets consumes a
+generic, optional companion artifact, `aweb.principal-attestation/1`:
 
 - **Issuer.** The custodian that signed the request: the custodial deployment,
   for its custodial members and for its L2 endpoint.
@@ -347,9 +388,10 @@ What this artifact can and cannot prove:
 
 - It proves positive custodial facts that the registered custodian asserts.
 - It can never prove self-custody. A member's key can be copied, and the absence
-  of an attestation is not proof. Policy therefore expresses predicates such as
-  `custodial_via: X`, `channel != mcp_l2` or `human_principal present`, never
-  "is self-custodial".
+  of an attestation is not proof. Policy therefore expresses only these
+  predicates: `custodial_via: <custodian>`, `channels: [...]` (an allow-list
+  over `mcp_l2`, `dashboard` and `api`) and `human_principal: true`. It never
+  expresses "is self-custodial".
 - An unknown issuer, an expired artifact or a binding mismatch makes a policy
   that requires the attestation refuse.
 
@@ -366,24 +408,33 @@ which adds the controller-signed custody and custodian records this section
 describes, and the verifier is `aweb_naapp.runtime.attestation`.
 
 **Until custodial deployments issue the artifact, any policy with
-`requires_attestation` refuses every request without one.** Owners can configure the field now, and
-it is honestly inert. The artifact is a launch requirement (Q5, decided).
+`requires_attestation` refuses every request without one.** Owners can configure
+the field, and until then it is honestly inert. The artifact is a launch
+requirement (Q5, decided).
+
 
 ## 5. Custody backends
 
 ### 5.1 Interface
 
+The interface is split by authority, so that only the paths that need a value
+hold an opener (`aweb_secrets.custody`):
+
 ```text
-CustodyBackend
-  kind                                  "native" | "onepassword"
-  bind(secret_id, config)  -> backend_ref     # native: allocate; 1P: validate vault/item/field reference
-  ingest(backend_ref, value) -> version_ref   # native only; console-only caller (§6)
-  open(version_ref) -> Plaintext              # one dispatch, under the version's bound context
-  describe(backend_ref) -> {version_ref, updated_at, state}   # never the value
-  disable(backend_ref)                        # refuse open() from now on
-  destroy(version_ref)                        # native: delete from the live store; 1P: forget reference only
-  health() -> ok | degraded(reason)
+SecretSealer.ingest(tx, installation, team, secret, value) -> version
+                                            # native only; console-only caller (§6)
+SecretOpener.open(context) -> Plaintext     # native: one dispatch, under the version's bound context
+OnePasswordOpener / UseSecretOpener         # 1Password: observe(context), check_observation(...),
+                                            # open(context) -> Plaintext
+Custody.describe(...)                       # version, state; never the value
+Custody.disable(...) / Custody.enable(...)  # refuse every open and ingest / restore on a confirmed re-enable
+Custody.destroy(tx, context)                # native: delete from the live store; 1P: forget reference only
+Custody.stage_backend_credential / stage_onepassword_reference / stage_onepassword_observation
+Custody.health() -> Health
 ```
+
+`Plaintext` is an opaque wrapper that never shows its value in a repr, string or
+log; `reveal()` is the only accessor.
 
 The backend wire values are exactly `native` and `onepassword`, matching the
 frozen use-approval vectors.
@@ -396,7 +447,8 @@ How a value is handled once opened:
 - **Wiping.** Python cannot guarantee that memory is wiped. The implementation
   uses bytes-like buffers, avoids string interning and drops references
   promptly. It does not claim zeroization.
-- **Crash dumps.** Core dumps are disabled in the deploy (§15).
+- **Crash dumps.** **Open (aweb-acgh.18.20):** core dumps are disabled in the
+  deploy (§15).
 - **Errors and phase.** Before `dispatching`, unavailable/deleted/unresolved
   backend references refuse with `custody_unavailable`; an invalid 1Password
   value shape uses `secret_value_invalid`, and an observed version mismatch
@@ -477,7 +529,11 @@ with a pre-send failure recorded as `not_sent`. See
   launch it does not cache values across dispatches. There is no read cache
   at launch (Q4, decided). 1Password's own activity
   log is a second, independent record of every read.
-- **Ingress and replacement (decision 92).** Both happen in the vault. An
+- **Ingress and replacement (decision 92).** Both happen in the vault.
+  **Open (aweb-acgh.18.54):** the observation reconciler
+  (`aweb_secrets.onepassword_reconciliation`) and its event are on main, but
+  production does not compose it into the broker, so on main a changed item
+  version refuses the use and activates nothing. An
   observation and immutable-kind/placement validation run outside all database
   transactions and authority locks. A separate reconciliation transaction before
   the S3 fence takes the complete installation/forest/grant/B2 prelocks and
@@ -513,9 +569,7 @@ with a pre-send failure recorded as `not_sent`. See
 
 The exact shared authority, payload and recording rules are in
 [observed backend versions](../hook-events.md#observed-backend-versions-decision-92).
-M1 emission waits for updated receiver catalog support and production activation;
-a landed catalog/library alone does not establish a deployed compatible receiver.
-Use the shared codec, never a producer-local event or serializer.
+Emission uses the shared codec, never a producer-local event or serializer.
 
 ### 5.4 What the broker sees, when, and for how long
 
@@ -523,7 +577,8 @@ Use the shared codec, never a producer-local event or serializer.
 | --- | --- | --- | --- |
 | native | ciphertext and wrapped data key; metadata | during one `open()` for one dispatch: the brokered call, OAuth token exchange, SigV4 signing, or HPKE sealing to a runner | KMS custodian with decrypt rights, or anyone who can read the local key file and stored ciphertext; a production operator able to run code as the service (trust boundary T4) |
 | onepassword | vault, item and field reference; the sealed service-account token | the same window, after an SDK read | the 1Password account's members and admins; the vault provider; holders of the service-account token |
-| derived (OAuth access token, STS session) | sealed in the native store with its TTL, or in memory until expiry | per dispatch | as native |
+| OAuth access token | in process memory until its TTL minus 60 s (`ProcessTokenCache`) | per dispatch | as native |
+| derived (STS session, `store_as_secret` child) | **After the first release (aweb-acgh.41):** sealed in the native store with its expiry (§8.4) | per dispatch | as native |
 
 ### 5.5 Delegated vault mediation (option)
 
@@ -574,24 +629,52 @@ secret was a manifest tool.
 4. **Confirm the change.** Steps 2 and 3 form one change set. The owner confirms
    it with a second passkey assertion over the canonical change (§6.3) before it
    becomes active.
-5. **Record it.** secrets records a `secret.created` or `secret.version_added`
-   event through the hook (§11.5).
+5. **Record it.** secrets records a `resource.created` or
+   `resource.version_added` governance act, with `resource_type: secret`, on
+   `post-governance-hook` (§11.5).
 
-**Replacement** follows the same steps on an existing secret. The new version
-activates atomically, and the previous version is destroyed in the same
-transaction (§12).
+The change set is a draft until confirmed. A member-drafted change set mints one
+B2 approval with every current owner as a candidate, and drafting is
+rate-limited per drafter. A console draft's only candidate is the drafting
+owner, who confirms it (decision 54). Change-set four eyes is a separate
+installation setting, `change_set_policy`: `distinct_approver` is
+`not_required` by default. Narrowing it to `required` is direct from an owner
+console session and needs at least two enrolled owners; relaxing it is a
+widening change set (decision 61). A change set lives at most 7 days (decision
+38). Console validation errors return only the location and type of each
+problem, never the submitted input (decision 72).
+
+**Replacement** follows the same steps on an existing secret (decision 82). The
+new version activates atomically, and the previous version is destroyed in the
+same transaction. The confirm calls containment's replacement consequences in
+that transaction: version-bound approvals are voided, and cached tokens and
+derived children are disabled (§12). After the first seal, a secret's kind,
+backend and value-placing `kind_params` are fixed: the token endpoint, client
+authentication method, header name and prefix, query parameter, and SigV4
+region and service. Changing them is refused at draft and at confirm; the path
+is a new secret. The OAuth `scope` stays editable (decisions 65 and 65b).
 
 ### 6.3 Widening changes need owner passkey confirmation
 
 The following are *widening* changes:
 
 - creating a secret, or adding a value;
+- making a secret less restricted: `sensitive` to `standard`, turning
+  `approve_only` off, or adding an OAuth scope (decision 65);
 - adding or broadening a destination;
 - defining or editing an operation, job or runner;
 - granting, or assigning a role;
+- creating or changing a grant template;
 - designating an approver or changing an approver's contact;
 - re-enabling anything that was disabled;
-- changing a policy towards less restriction.
+- changing a policy towards less restriction, including relaxing change-set
+  four eyes.
+
+An owner can change an approver's contact through an owner-confirmed change set
+(decision 62). The approver can cancel the pending change with their own
+passkey, and the cancel wins. The 24 h delay and notices to both contacts
+apply, and the last owner's own contact stays protected
+(`last_owner_protected`).
 
 A widening change is a frozen canonical change set (`aweb.secrets.change/1`). It
 is approved through B2/B3 with minimum assurance `passkey`, and an owner is the
@@ -617,32 +700,41 @@ a hosted operator's custody of an owner member.
 
 ### 7.1 Request
 
+The secret is named in the path, `POST /v1/secrets/{secret}/requests`, and the
+body is:
+
 ```json
 {
   "request_id": "01JB…",
-  "secret_ref": "stripe-test",
-  "operation": {"id": "create-refund", "params": {"charge": "ch_123", "amount_minor": 500}},
-  "reason": "untrusted free text shown to an approver",
-  "trace_id": "optional, per the hooks contract"
+  "operation": "create-refund",
+  "params": {"charge": "ch_123", "amount_minor": 500},
+  "headers": ["Accept: application/json"],
+  "reason": "untrusted free text shown to an approver"
 }
 ```
 
-An open request replaces `operation` with
-`{"method","url","headers":{…},"body_b64"|"body_json"}`. That is permitted only
-under §4.3.
+An open request replaces `operation` and `params` with `method` (`GET`,
+`POST`, `PUT`, `PATCH` or `DELETE`), `url` and `data` (a string or a JSON
+object). That is permitted only under §4.3. `headers` is an ordered list of
+`"Name: value"` strings in both forms. The caller supplies `request_id`; the
+tool never generates one. `trace_id` is not a body field: it comes from the
+team-auth signed payload (`aweb_secrets.use_routes`).
 
 ### 7.2 Canonical destinations and matching
 
-A destination entry is
-`{scheme:"https", host, port, path, methods, query_rules, header_allow, network}`.
-Matching is exact on a canonical form. secrets canonicalizes the request URL
-itself and refuses anything ambiguous instead of guessing.
+A destination entry is the record `destination/1`:
+`{v, destination_id, secret_id, scheme:"https", host, port, path, methods,
+query_rules, header_allow, network, cidr}`. Every field is present, and methods
+and header names are sorted and distinct. Matching is exact on a canonical
+form. secrets canonicalizes the request URL itself and refuses anything
+ambiguous instead of guessing.
 
 - **Scheme.** `https` only. `http`, other schemes, userinfo (`user@`) and
   fragments are refused.
 - **Host.** IDNA2008 is mapped to lowercase A-labels, and a trailing dot is
-  refused. An IP literal is refused unless the destination entry is that exact
-  IP and has `network: internal` (§7.3). A wildcard is allowed only as a single
+  refused. An IP literal is refused unless the destination has
+  `network: internal` and the literal lies inside its `cidr` (§7.3); an
+  internal destination always names a `cidr`. A wildcard is allowed only as a single
   leftmost label over a domain the owner controls (`*.api.example.com`). It
   never matches the bare parent domain and never matches more than one label.
   It is never allowed on a public suffix, as listed by the full Public Suffix
@@ -663,7 +755,8 @@ itself and refuses anything ambiguous instead of guessing.
   unknown methods are always refused.
 - **Query.** It is re-encoded in canonical form. `query_rules` can require,
   forbid or constrain named parameters. Duplicate keys are refused unless
-  declared.
+  declared. A `+` or `=` inside a query value is refused, because servers
+  disagree on how to read it.
 
 The canonical URL is what is matched, dispatched, approved and recorded, so all
 four always agree.
@@ -687,12 +780,18 @@ requirement.
    - documentation and benchmarking ranges (`198.18/15`), and `240/4`;
    - IPv4-mapped or IPv4-compatible IPv6, NAT64 `64:ff9b::/96`, 6to4 and Teredo
      forms that embed a denied IPv4 address;
-   - the deployment's own egress and metadata addresses.
+   - the deployment's own egress and metadata addresses. Cloud metadata
+     addresses fall in the link-local and ULA ranges above. **Open
+     (aweb-acgh.18.51):** the address policy supports a deployment deny list, but
+     secrets has no setting that supplies one.
 3. **Pinned connection.** secrets connects to one validated address that it
    chose, and sends SNI and `Host` as the canonical hostname. It verifies the TLS
    certificate against the hostname with the system trust store; there is no
-   option to skip verification. Re-resolving between the check and the connect
-   is impossible by construction, so DNS rebinding cannot swap the target.
+   option to skip verification. `SECRETS_EGRESS_CA_FILE` adds trust anchors for
+   test and self-hosted deployments; production leaves it unset. It widens the
+   trust set and never turns verification off. Re-resolving between the check
+   and the connect is impossible by construction, so DNS rebinding cannot swap
+   the target.
 4. **Redirects.** Redirects are **disabled**. A 3xx response is returned through
    response handling (§7.6) as a response. `Location` is treated as untrusted
    output and redacted like any body. Following redirects with revalidation at
@@ -700,6 +799,7 @@ requirement.
    needs it.
 5. **Proxies.** There are no proxy settings from the environment. Any egress
    proxy is a deploy-level allowlist (§15), never a request option.
+<!-- PENDING RULING D1: response bound; doc text unchanged until Juan rules -->
 6. **Bounds.** Connect timeout 5 s, total 30 s (per operation, overridable
    downwards), request body at most 1 MiB. A broker response defaults to 16 MiB. The owner
    may set `response_max_bytes` on an immutable destination or `response.max_bytes`
@@ -756,7 +856,8 @@ A customer's private services belong behind a runner (§9).
   rejected (`header_not_allowed`) using the same detectors as §7.6. This stops an
   agent from smuggling its own credential through a scope that injects a
   different one.
-- **Header set by the broker.** The broker sets `User-Agent: aweb-secrets/<version>`.
+- **Headers set by the broker.** The broker sets `User-Agent: aweb-secrets`,
+  `Accept-Encoding: identity` and `Connection: close`.
 
 ### 7.5 Auth schemes
 
@@ -768,45 +869,56 @@ The scheme is executed server-side, so the raw value never leaves secrets
 | `bearer` | `Authorization: Bearer <v>` | |
 | `basic` | `Authorization: Basic base64(user:pass)` | The composite and its base64 are both added to the redaction set. |
 | `header` | `<owner-set name>: <owner-set prefix><v>` | The name is fixed in secret metadata, never chosen by the agent. |
-| `query` | `<owner-set param>=<v>` | Recorded URLs replace the value with `[REDACTED]`. Upstream logs will hold it; the console warns. |
-| `oauth2-client-credentials` | The broker exchanges client credentials at the owner-set token endpoint, then injects `Bearer <access_token>`. | The token endpoint passes the same egress guard and is an internal step of the dispatch. The access token is cached sealed with its TTL minus 60 s, never returned, and added to the redaction set. The scope string is owner-set. |
+| `query` | `<owner-set param>=<v>` | Recorded URLs replace the value with `[REDACTED]`. Upstream logs will hold it. **Open (aweb-acgh.18.11):** the console warns. |
+| `oauth2-client-credentials` | The broker exchanges client credentials at the owner-set token endpoint, then injects `Bearer <access_token>`. | The token endpoint passes the same egress guard and is an internal step of the dispatch. The access token is cached in process memory with its TTL minus 60 s, never returned, and added to the redaction set. The scope string is owner-set. |
 | `aws-sigv4` | The broker signs the final canonical request (after header filtering) with SigV4, including `x-amz-date` and `x-amz-content-sha256`. | Region and service are owner-set per secret and never agent-chosen. `X-Amz-Target`, which selects the operation for AWS JSON APIs, is allowed only when a named operation fixes it. STS is token-issuing (§8.3). |
 
-`oauth2-refresh` and `mtls-client-cert` are in the secrets SOT §3. The
-recommended launch set is the six kinds above. mTLS is proposed for later, and
-refresh tokens are not in the launch set. This design
-keeps the interface able to carry both, and lists their timing as Q9.
+`oauth2-refresh` and `mtls-client-cert` are in the secrets SOT §3. The launch
+set is the six kinds above. mTLS and refresh tokens come later through the
+existing interface (Q9).
 
 ### 7.6 Response handling and default deny on credential-shaped results
 
 Responses reach the agent, and through L2 the model provider's context. The order
-of operations is:
+of operations is (`aweb_secrets.responses`):
 
-1. **Bound.** The response is cut at its size and time limits. Truncation is
-   reported, never silent.
-2. **Filter headers.** Only `Content-Type`, `Content-Length`, `ETag`,
+1. **Withhold what cannot be inspected.** A body with a `Content-Encoding` other
+   than `identity` is withheld (`content_encoded`): the broker asks for
+   identity and never decompresses. A named operation's response whose media
+   type is not one the operation declares is withheld
+   (`content_type_not_allowed`).
+2. **Known-value redaction.** Every value opened or derived in this dispatch is
+   replaced with `[REDACTED:<secret_ref>]` across the whole body as received.
+   That covers the raw value; its base64, base64url, hex and percent-encoded
+   forms; the Basic composite; and the OAuth access token. Matches are counted.
+3. **Bound.** The response is cut at its size and time limits. Truncation is
+   reported, never silent. The tail of a cut body is redacted so it never ends
+   in part of a value.
+4. **Filter headers.** Only `Content-Type`, `Content-Length`, `ETag`,
    `Last-Modified`, `Retry-After`, `X-RateLimit-*`, request-ID headers and
-   `Location` pass. `Location` is then redacted as in step 4. `Set-Cookie` and
-   every other header are dropped.
-3. **Project.** A named operation may declare a response projection, which is a
-   list of JSON pointers to return; everything else is dropped. Projection is
-   **required** for `sensitive` secrets and is the strong control. Open requests
-   return the whole body, subject to steps 4 and 5.
-4. **Known-value redaction.** Every value opened or derived in this dispatch is
-   replaced with `[REDACTED:<secret_ref>]`. That covers the raw value; its
-   base64, base64url, hex and percent-encoded forms; the Basic composite; and
-   the OAuth access token. Matches are counted.
-5. **Credential-shape detection, default deny.** The detector looks for JSON keys
+   `Location` pass, redacted. `Set-Cookie` and every other header are dropped.
+5. **Project.** A named operation may declare a response projection, which is a
+   list of JSON pointers to return; everything else is dropped, and the kept
+   values are redacted again. Projection is **required** for `sensitive`
+   secrets and is the strong control. Open requests return the whole body,
+   subject to steps 2 and 6.
+6. **Credential-shape detection, default deny.** The detector looks for JSON keys
    such as `access_token`, `refresh_token`, `id_token`, `client_secret`,
    `password`, `private_key`, `secret`, `SecretAccessKey`, `SessionToken` and
    `api_key` that carry non-empty string values. It also looks for high-confidence
    token patterns: AWS `AKIA`/`ASIA` key IDs paired with secret keys, PEM private
    key blocks, JWTs, and well-known vendor token prefixes. If either is present,
-   the default disposition is **`withheld`**. The agent receives status, filtered
-   headers, `result_withheld: credential_shaped` and the redaction count, but no
-   body.
-6. **Record.** secrets records the disposition, the response hash and the counts,
+   the default disposition is **`withheld`** (`credential_shaped`).
+7. **Record.** secrets records the disposition, the response hash and the counts,
    never the body.
+
+A withheld result reaches the agent as
+`{"state": "result_withheld", "request_id", "request_ref", "code": <reason>,
+"result": {"status", "headers", "body": null, "truncated", "upstream_bytes",
+"redaction_count"}}`, where the reason is `credential_shaped`,
+`content_encoded` or `content_type_not_allowed` (`aweb_secrets.tool_results`,
+`aweb_secrets.member_types.broker_result_reply`). The state is independent of
+the HTTP status.
 
 `withheld` means the upstream effect already happened. The audit event says so,
 and the owner sees it in the console.
@@ -824,17 +936,19 @@ once confirmed, and it is addressed by `operation_id@sha256(canonical template)`
 It holds:
 
 ```text
-operation_id, secret_id, method,
+v, operation_id, secret_id, method: GET | POST | PUT | PATCH | DELETE,
 url: fixed host/port, path template with typed {params},
 params: typed schema per param (D1's bounded JSON Schema subset: enum, integer ranges,
         bounded strings with fixed character classes, no free regex), placement path|query|body,
-body: fixed JSON template with param slots | schema-validated body subset,
-headers: fixed values and allowed agent headers,
-response: projection (JSON pointers), max bytes, content types,
+body: fixed JSON template whose body params fill {"$param": name} slots,
+headers: {fixed: values, allowed: agent header names},
+response: {projection: JSON pointers | null, max_bytes, content_types},
 side_effect: none | reversible | irreversible,
-token_issuing: bool, result_handling (§8.3),
+token_issuing: bool, result_handling: deny | withhold | store_as_secret (§8.3),
+store_as_secret: object | null (§8.4),
 idempotency: {header: "Idempotency-Key"} | none,
 reconcile: optional status-lookup operation_id (manual settlement in the first release),
+timeout_s: integer 1..30,
 outcome_unknown_retry: optional {delay_s: integer 1..60, upstream_honours_idempotency_key: bool} | null
 ```
 
@@ -850,12 +964,13 @@ credential, as well as where it can be sent.
   renderable action (§10.4).
 - **Open requests** are allowed only for `standard` secrets whose grant allows
   them. They are always recorded with their canonical method, URL and body hash.
-- The console tells owners that host scope alone does not stop destructive calls
-  or credential creation. That is the secrets SOT §14 point, and the reason
-  sensitive secrets require named operations.
+- **Open (aweb-acgh.18.11):** the console tells owners that host scope alone
+  does not stop destructive calls or credential creation. That is the secrets
+  SOT §14 point, and the reason sensitive secrets require named operations.
 
 Narrow upstream permissions are the owner's responsibility. secrets cannot verify
-them. The console asks for them, and the defensible claim does not depend on them.
+them. **Open (aweb-acgh.18.11):** the console asks for them. The defensible claim
+does not depend on them.
 
 ### 8.3 Token-issuing operations
 
@@ -867,7 +982,7 @@ declare `token_issuing: true` and one `result_handling`:
 | --- | --- |
 | `deny` (default) | The operation is refused before dispatch. |
 | `withhold` | The operation must declare a nonempty response projection; validation refuses its absence (`operation_invalid`, decision 64). secrets dispatches, then applies projection, redaction and credential-shape checks (§7.6). |
-| `store_as_secret` | One issuance creates one native-custody child secret, with fixed child destinations, kind parameters, a grant from pinned template terms and a bounded expiry (§8.4). The agent receives `{derived_ref, expires_at}`, never the value. |
+| `store_as_secret` | **After the first release (aweb-acgh.41):** validation refuses it with `store_as_secret_unavailable`. One issuance creates one native-custody child secret, with fixed child destinations, kind parameters, a grant from pinned template terms and a bounded expiry (§8.4). The agent receives `{derived_ref, expires_at}`, never the value. |
 | `return` | **Does not exist (Q8, decided).** Returning the credential is a value release, like `--unsafe-inject`, and `store_as_secret` plus runner `short_lived` delivery covers the use cases. |
 
 When detection (§7.6) finds credential-shaped content in an operation that did not
@@ -878,6 +993,15 @@ flag to tell the owner to fix the template.
 
 ### 8.4 Derived-secret creation and use
 
+**After the first release (aweb-acgh.41, decision 95).** Issuance is refused:
+operation validation rejects `result_handling: store_as_secret` with
+`store_as_secret_unavailable`. On main are the lineage table and its immutable
+trigger, the ancestry API (`ancestry_ids`, `lock_ancestry`, `check_ancestry` in
+`aweb_secrets.derived_lineage`), child admission with inherited ancestor rate
+charges, nearest-current operation resolution, and the capture and expiry
+helpers (`aweb_secrets.derived_capture`). Nothing outside tests captures a
+response or records a child, and there is no expired-child sweeper.
+
 This is the `store_as_secret` contract (decision 71), implementing the controlled
 result handling required by secrets SOT §14. It adds no value-ingress tool.
 
@@ -885,11 +1009,9 @@ result handling required by secrets SOT §14. It adds no value-ingress tool.
 `derived_kind`, `kind_params`, `capture`, `destinations`, `grant_template`,
 `grant_template_digest`, and exactly one of `expires_at` or `expires_in`.
 The issuer operation's digest covers every field. Its owner passkey confirmation
-shows the child authority as well as the issuance request. The existing
-`store_as_secret_unavailable` guard is lifted only when the record, resolver and
-expiry paths implement this contract; other operation/1 forms keep their
-existing shape. The operation/1 and change/1 vectors are regenerated together
-under deliberate review, not hand-merged.
+shows the child authority as well as the issuance request. Other operation/1
+forms keep their existing shape. The operation/1 and change/1 vectors are
+regenerated together under deliberate review, not hand-merged.
 
 - `derived_kind` and `kind_params` follow secret/1's auth-scheme validation.
   OAuth access tokens become `bearer` children; they do not become OAuth client
@@ -970,17 +1092,22 @@ are rechecked at approval admission as well as request time; withdrawing
 coverage or revoking the approver voids affected unconsumed child approvals.
 An empty eligible set still refuses immediately with `no_eligible_approver`.
 
-**One lock order for capture and containment.** After the existing installation
-fence, creation, use and every cascade lock the stored secret ancestry from root
-to leaf; multiple sibling paths use ascending `secret_id`. They then lock the
-relevant grants in ascending `grant_id`, including the issuing grant. Re-read
-liveness, parent version and expiry only after those locks. Insertion takes the
+**One lock order for capture and containment (decisions 43, 77 and 78).** The
+order is: the installation fence, then the role hold, then the stored secret
+ancestry from root to leaf (`FOR UPDATE`; multiple sibling paths use ascending
+`secret_id`), then the grant union in ascending `grant_id`, including the
+issuing grant, then covering approver rows `FOR SHARE`, then B2 approval locks,
+then writes. The fence is first everywhere: the shared dispatch fence protocol
+takes every lock in `prepare(tx)` before the dispatch's own locks, and
+`check(tx)` takes none. The read of approver candidates uses `ancestry_ids`
+without locks. Containment locks the ancestry before it selects descendants.
+Re-read liveness, parent version and expiry only after those locks. Insertion takes the
 same locks on the prospective parent's complete ancestry before creating its
 child. A cascade therefore cannot miss an insertion: either capture commits
 first and the cascade disables it, or capture sees the revoked/disabled ancestor
 and commits no usable child. Re-enable cannot undo the descendant's own disabled
 state. Existing configuration-revision and approval locks keep their relative
-order; S11 and S8 use this same lineage order at both recording and revocation.
+order; recording and revocation use this same lineage order.
 
 **Rate limits do not reset at derivation.** Child admission charges its own
 policy's buckets **and** the rate buckets pinned by every ancestor issuance's
@@ -1003,7 +1130,8 @@ not expiry values supplied by the requester:
   `2**53 - 1`, never a boolean, string or float. Compute upstream expiry from the issuance dispatch's
   **persisted start time**, not response receipt, replay or reconciliation time.
   Neither a retry nor a status request restarts the lifetime.
-- The deployment's `derived_secret_max_ttl_s` is a positive finite integer,
+- The deployment's `derived_max_ttl_s` (`SECRETS_DERIVED_MAX_TTL_S`) is a positive finite integer,
+
   **3600 s by default** (decision 71). Effective expiry is the earliest of
   upstream expiry, persisted dispatch start plus this cap, and every ancestor's
   expiry. Store that deadline once; later cap increases cannot extend it. Any
@@ -1071,10 +1199,12 @@ definitions** with validated parameters. It never runs a command an agent suppli
    one-time registration code. It is valid for 10 minutes, single use, and stored
    only as a hash. It is shown only on the console, never through any agent tool.
 2. **Register.** On the host, the user runs
-   `aweb-secrets-runner register --origin <secrets origin> --code <code>`. The
-   runner generates an Ed25519 signing key and an X25519 encryption key locally.
+   `aweb-secrets-runner register --origin <secrets origin> --state-dir <dir>`
+   (and `--ca-file` for a private trust anchor). The runner reads the code from
+   a terminal prompt, or as one line on standard input, never from an argument.
+   It generates an Ed25519 signing key and an X25519 encryption key locally.
    It sends both public keys (as `did:key` and a raw X25519 key) with the code.
-   It receives `runner_id` and pins secrets' service signing key.
+   It receives `runner_id` and pins secrets' runner service key as `service_kid`.
 3. **No identity of its own.** The runner is an app-local principal, not an AWID
    identity. It needs no team membership and holds no team certificate.
 4. **Rotation.** The runner re-registers with a new code. Deregistration (§12) is
@@ -1129,6 +1259,8 @@ for a single-field kind. It never names a future random child ref. The field
 families, whole-mapping custody codec and missing-field/NUL refusals are fixed
 in [runner protocol §4.4](../secrets-runner-protocol.md#44-explicit-environment-fields).
 
+- **After the first release (aweb-acgh.41.1):** a slot that is not `durable`,
+  or that has a `mint`, is refused with `job_not_allowed` before admission.
 - For `short_lived`, `secret_ref` names the **parent** and `mint` is exactly
   `{operation_id, digest, params}`. The operation must resolve for that parent
   under §8.4's CURRENT operation rule and be token-issuing with
@@ -1231,10 +1363,10 @@ These rules select explicit OCI runtime `process.args`, `process.env` and
 `process.cwd` rather than composing image defaults. The upstream
 [OCI runtime process contract](https://github.com/opencontainers/runtime-spec/blob/main/config.md#process)
 and [OCI image defaults](https://github.com/opencontainers/image-spec/blob/main/config.md#properties)
-are distinct. This clarification adds no job/1 or runner-wire field. S15a/M7
-must enforce the OCI executable invariant at definition and local preparation,
-show the effective command/environment names at confirmation, and prove with a
-real runtime that conflicting image defaults do not run or appear, undeclared
+are distinct. This rule adds no job/1 or runner-wire field. Job definition and
+local preparation must enforce the OCI executable invariant, confirmation must
+show the effective command and environment names, and a real-runtime test must
+prove that conflicting image defaults do not run or appear, undeclared
 environment names are absent, declared values reach only their intended process,
 and success/failure/timeout cleanup leaves no credential-bearing persistent
 runtime state. Existing signed assignment, redaction and no-rerun rules apply.
@@ -1259,9 +1391,16 @@ The documented requirement is a dedicated OS user or container per runner. Agent
 running as the same user can defeat any runner. That is boundary T8, stated
 honestly rather than detected.
 
-### 9.5 Short-lived scoped credentials are preferred
+### 9.5 Short-lived scoped credentials
 
-`delivery: short_lived` is the default where a minting recipe exists for the kind:
+**After the first release (aweb-acgh.41.1, decision 95).** The first release
+delivers only `durable` slots, each the job's own fixed secret. A `short_lived`
+slot, a slot with a `mint`, and a run that selects an ordinary derived child are
+refused with `job_not_allowed` before admission, approval or release. There is
+no run-binding storage on main. The design below is the parked contract.
+
+In this design, `delivery: short_lived` is the default where a minting
+recipe exists for the kind:
 
 - **AWS.** STS `AssumeRole`, with an owner-set role, a session policy and a
   duration of 15 minutes or less. The runner receives a session triple.
@@ -1359,8 +1498,9 @@ independently enforcing its local job pin. Values are HPKE-sealed only to the
 selected runner. Both the internal mint and the run have their own operational
 and hook records; the mint's receipt retains the real `derived_grant_id`.
 
-**Ordinary derived children outside a run.** These remain supported (decision
-80): a child issued through an ordinary broker request has no run binding and
+**Ordinary derived children outside a run.** **After the first release
+(aweb-acgh.41.1).** Under decision 80, a child issued through an ordinary
+broker request has no run binding and
 needs its **own** explicit `run` grant/template pin for any job. Such a grant
 does not inherit the parent's permission. A durable-delivery job slot may name
 that child directly, or its fixed ancestor when the requested child's recorded
@@ -1418,24 +1558,22 @@ The approved CURRENT job digest and frozen plan bind its unique ordinal. The
 approval view shows the fixed slot label, actual child ref and lineage. This
 adds no field to use-approval/1 or to the signed runner assignment.
 
-**Manifest and conformance update.** Before enabling this selector, add the
-optional `secret` body parameter and string schema to the run tool in
-`naapp/secrets/src/aweb_secrets/manifest.py`, and regenerate its committed
-`aweb-app.json`; required arguments remain `job`, `runner`, `request_id`.
-The manifest's canonical-file test and CLI/gateway rendering must cover both
-absence and `--secret <child-ref>`. Run-preparation cases cover the refusal
-matrix above, exact-child plus ancestor ambiguity, a unique ancestor match,
-fixed other slots, and changed/removed selectors on replay. Extend
-`naapp/secrets/vectors/use-approval-v1.json` through B2 with a durable ordinary
-child case and a changed-child binding failure, preserving existing cases and
-the field set; freeze its slot plan alongside the run-preparation cases.
-`docs/vectors/secrets-runner-protocol-v1.json` keeps its existing wire shape.
-These are implementation obligations for the shared run preparation and S15a
-path: ordinary-child substitution and job enablement stay guarded until this
-delta is accepted and those paths, manifest and cases are implemented/reviewed.
+**Manifest and conformance update.** The run tool in
+`naapp/secrets/src/aweb_secrets/manifest.py` and its committed `aweb-app.json`
+carry the optional `secret` body parameter as a string; required arguments
+remain `job`, `runner`, `request_id`. The run service validates the selector
+and refuses any selected child with `job_not_allowed` before admission.
+**After the first release (aweb-acgh.41.1):** run-preparation cases cover the
+refusal matrix above, exact-child plus ancestor ambiguity, a unique ancestor
+match, fixed other slots, and changed/removed selectors on replay;
+`naapp/secrets/vectors/use-approval-v1.json` gains, through B2, a durable
+ordinary child case and a changed-child binding failure, preserving existing
+cases and the field set. `docs/vectors/secrets-runner-protocol-v1.json` keeps
+its existing wire shape.
 
-`delivery: durable` sends the durable value. It needs a passkey-confirmed
-per-job flag, and the console and events label it as reduced protection.
+`delivery: durable` sends the durable value. It needs the passkey-confirmed
+per-job flag `allow_durable`. The console labels durable delivery as reduced
+protection; no hook event or catalog field carries a delivery label.
 
 Either way the claim is the same: a smaller blast radius, not confidentiality. The
 job's process has the credential (secrets SOT §4).
@@ -1457,10 +1595,10 @@ output follows §7.6.
 
 ### 10.1 The primitive
 
-secrets builds on the shared approval primitive (B2) and WebAuthn verifier (B3)
-in `aweb_naapp`, under construction as aweb-acgh.4 against the record the D1 lead
-merged into D1 C2/C4. This design does not re-specify them. B2 and B3 already
-provide the following:
+secrets builds on the shared approval primitive (B2,
+`aweb_naapp.runtime.approvals`) and WebAuthn verifier (B3,
+`aweb_naapp.runtime.passkeys`), aweb-acgh.4, as D1 C2/C4 define them. This
+design does not re-specify them. B2 and B3 provide the following:
 
 - the frozen canonical request and its `request_sha256`;
 - single-use admission by atomic compare-and-set;
@@ -1479,9 +1617,9 @@ secrets supplies these:
 | B2 record field | secrets' value |
 | --- | --- |
 | immutable request ref | the stored frozen `aweb.secrets.use-approval/1` bytes (§10.4), or `aweb.secrets.change/1` for a widening change (§6.3) |
-| `policy_ref`/version | for a use, `secrets.use\|<installation_id>\|<team_id>\|<grant_id>\|<policy_digest>`, version 1 (§4.4; decision 63) |
+| `policy_ref`/version | for a use, `secrets.use\|<installation_id>\|<team_id>\|<grant_id>\|<policy_digest>`, version 1 (§4.4; decision 63). For a run slot, `secrets.run\|<installation_id>\|<team_id>\|<grant_id>\|<policy_digest>\|<template_id>\|<template_digest>\|<child_policy_digest>`, with `-` in the last three places when the slot has no mint |
 | `requested_by` | the verified principal (§4.1) |
-| `approver_subject`/type | the approver ID; the approver type is passkey, which every secrets action policy declares as its minimum assurance |
+| approver set (`approver_scopes`, frozen `candidates`, `decided_by`) | decision 53: the policy names the eligible approvers' B3 scopes. B2 freezes the candidate set at mint, re-checks each candidate at decide time and records one compare-and-set decision in `decided_by`. Any one candidate decides (quorum 1), and any reject is final. An empty set refuses with `no_eligible_approver`. Every secrets action policy declares passkey as its minimum assurance |
 | presentation kind/ref | the secrets console approval page; `task_answer_ref` is unused unless Q13 adds a task presentation |
 | `expires_at` | `approval_ttl_s` from the policy |
 | `consumed_operation_id` | the `dispatch_id` (§11) |
@@ -1497,11 +1635,13 @@ the joint recommendation, **the link is only a locator**. The authority is a B3
 passkey assertion bound to the request hash. That replaces the bearer-link model,
 which proves only possession.
 
-**Two requirements for B2 from secrets**, sent to aweb-acgh.4:
+**Two requirements for B2 from secrets**, both met by B2:
 
 - **(a)** Admission must run inside the caller's database transaction, so that
   the compare-and-set, secrets' intent row and its outbox rows commit or fail
-  together (§10.5).
+  together (§10.5). Minting likewise takes the caller's transaction: the
+  request, approval, candidates and audit commit with it, and link deliveries
+  are returned for the caller to send after commit (decision 57).
 - **(b)** It must offer `revoke_many(connection, approval_ids, reason)` for
   containment (§12). secrets selects the IDs with its own predicate (a grant, a
   secret or a version) in the same transaction, and B2 never interprets app
@@ -1512,17 +1652,17 @@ which proves only possession.
 Under the primitive's states, an approved approval goes to `consumed`, `expired`
 or `revoked`, and a revocation before dispatch wins. A `not_sent` transport
 retry under the same `dispatch_id` (§11.1) is a retry of the one admitted
-operation. It does not consume again, and it needs no new approval. D1 has
-adopted this outcome vocabulary.
+operation. It does not consume again, and it needs no new approval. D1 uses the
+same outcome vocabulary.
 
 ### 10.2 What secrets adds to designation, enrolment and recovery
 
-- **Who designates.** An owner, through a widening change confirmed by passkey
-  (§6.3). An approver record covers chosen secrets or groups, and may link to a
-  member principal.
+- **Who designates.** An owner, holding the `secrets.owner` role, through a
+  widening change confirmed by passkey (§6.3; decisions 33 and 34). An approver
+  record covers chosen secrets or groups, and may link to a member principal.
 - **Bootstrap and re-designation need the team owner act, not install
-  authority.** Install authority can belong to any certified member today, and
-  so possibly to an agent. Designating the first owner-approver, and
+  authority.** Install authority can belong to any certified member, and so
+  possibly to an agent. Designating the first owner-approver, and
   re-designating owners after a lockout, therefore take the team owner act
   `aweb.owner-act/1` defined by the hooks design (aweb-acgh.1, audit-substrate
   §A3): a statement signed by the current AWID team key, single-use and
@@ -1547,8 +1687,13 @@ adopted this outcome vocabulary.
   During it, `approve_only` uses and widening changes are frozen, and every
   owner and approver contact recorded before the lockout is notified. A contact
   change takes effect after 24 h and is notified to both the old and the new
-  contact. These rules are generic and proposed for B3 (aweb-acgh.4), because
-  pages' passkey approvals face the same takeover path.
+  contact. These rules are generic B3 rules, with 72 h and 24 h as floors
+  (`aweb_naapp.runtime.passkeys`), because pages' passkey approvals face the
+  same takeover path.
+- **Retirement without an owner act (decision 82).** Narrowing through
+  team-auth (§12) retires a B3 designation, or revokes one passkey, in the
+  caller's transaction under the app's authorization, without an owner act or
+  passkey. Retirement sends no notice to the retired contact (decision 52).
 - **Self-approval** follows the policy in §4.4 (Q7). Here is what the rule can
   and cannot protect. A passkey assertion already proves that a human with an
   enrolled authenticator decided, not the agent. A distinct-approver rule adds
@@ -1577,7 +1722,7 @@ sequenceDiagram
   H->>C: approve: B3 passkey assertion bound to request_sha256
   C->>S: B3 verifies; B2 records the decision; outbox(approval.decided)
   Ag->>S: status(approval_ref)
-  S-->>Ag: {state: approved, next: re-submit request_id}
+  S-->>Ag: {state: approved, next: resubmit}
   Ag->>S: re-submit same request_id
   S->>S: B2 admission CAS + intent row + outbox, in one transaction
   S->>U: dispatch (§11)
@@ -1585,7 +1730,7 @@ sequenceDiagram
 ```
 
 `secrets.status` only reports the decision; it never admits or dispatches. An
-approved status is `{state: "approved", next: "re-submit request_id"}`. Only
+approved status is `{state: "approved", next: "resubmit"}`. Only
 re-submitting `secrets.request` or `secrets.run` with the same `request_id` can
 admit the frozen request and dispatch it. Re-submission is idempotent. A consumed
 approval cannot authorize another dispatch. A denial or expiry is final for that
@@ -1659,17 +1804,23 @@ back. B2's concurrency guarantee then yields exactly one dispatch per approval.
 received ─┬─> refused (terminal)
           ├─> awaiting_approval ─┬─> approval_denied | approval_expired | cancelled (terminal)
           │                      └─> admitted
-          └─> admitted ──> dispatching ─┬─> completed            (definite upstream response or job exit)
-                                        ├─> not_sent             (definite: failed before any request byte left)
-                                        └─> outcome_unknown ──> reconciled_completed | reconciled_failed
-                                                               | reconciled_unknown (owner-closed)
+          └─> admitted ──┬─> refused | cancelled (terminal)
+                         └─> dispatching ─┬─> completed     (definite upstream response or job exit)
+                                          ├─> not_sent      (definite: failed before any request byte left)
+                                          │     └─> dispatching | refused | cancelled
+                                          └─> outcome_unknown ──> reconciled_completed | reconciled_failed
+                                                                 | reconciled_unknown (owner-closed)
 ```
+
+The transitions are `aweb_naapp.dispatch.TRANSITIONS`.
 
 - **`admitted`.** The approval is consumed (if any), the rate counters are
   charged, and the intent row and outbox rows are committed together. This is the
   durable intent. A runner preparation or final-fence failure may close it as
   `refused` before dispatching; it does not undo approval consumption or turn
-  into a sent/unknown attempt. S13 owns cleanup if a crash leaves it admitted.
+  into a sent/unknown attempt. A revoked approval closes an admitted run as
+  `cancelled`. **Open (aweb-acgh.18.14):** cleanup of an intent that a crash
+  leaves `admitted`.
 - **`dispatching`.** It is committed **before** the first byte is sent, or before
   the job assignment is released to the runner.
 - **`completed`.** It records the upstream status (2xx through 5xx), the
@@ -1734,7 +1885,12 @@ same transaction:
 - runner registration;
 - whether the approval has been revoked.
 
-An installation generation that has changed since admission means the request
+The installation fence comes first, everywhere (decision 43). The shared fence
+protocol (`aweb_naapp.dispatch`) calls `prepare(tx)`, which takes every fence
+lock, before the dispatch's own locks, and `check(tx)` under them takes none.
+
+An installation generation
+ that has changed since admission means the request
 was admitted under a superseded generation, so the fence refuses it with
 `generation_superseded`, as admission does (§4.1). `installation_disabled` is
 for an installation that is inactive or uninstalled.
@@ -1749,7 +1905,11 @@ original persisted association; it is the same locator as `request_ref`.
 Status remains a read under current authorization. Possessing or reading the
 locator never authorizes a send, a settlement or approval consumption.
 
-**One explicitly safe automatic repeat.** An operation may opt in with the
+**One explicitly safe automatic repeat.** **In flight (aweb-acgh.18.14):**
+operation validation of `outcome_unknown_retry` and the shared continuation
+primitive (`Dispatches.continue_dispatch` in `aweb_naapp.dispatch`) are on
+main; no secrets code calls it, so no automatic repeat happens. The rule
+is Juan's ruling on §11.4 safe repeat. An operation may opt in with the
 optional `outcome_unknown_retry` object:
 
 ```json
@@ -1799,7 +1959,11 @@ original call did; it leaves the original for manual settlement. The one-repeat
 budget is never replenished. This automatic path applies to broker operations,
 not runner jobs or open requests without explicit operation terms.
 
-**Owner settlement.** Everything else, including a template declaring a
+**Owner settlement.** **In flight (aweb-acgh.18.14):** the settlement service
+and console page (`aweb_secrets.reconciliation_service`,
+`aweb_secrets.console_reconciliation`) are on main; the production composition
+does not mount them, so an `outcome_unknown` stays unsettled. Everything else,
+including a template declaring a
 `reconcile` lookup, uses the console manual path in the first release. There is
 no generic lookup dispatch: its input mapping and result interpretation are
 out of scope. An owner settles the original association with a **fresh passkey
@@ -1862,7 +2026,9 @@ SOT §2), reached through the hook.
   and B2 containment cancellation), `completed`, `not_sent`,
   `outcome_unknown` and `reconciled` record decisions/consequences without
   target/backlog gating, through the shared `enqueue_lifecycle` seam or
-  ordinary catalog-classified `enqueue`. `refused` keeps `enqueue_refusal`.
+  ordinary catalog-classified `enqueue`. `refused` keeps `enqueue_refusal`:
+  a refused event is recorded durably, exempt only from the availability gate,
+  and owed to the targets active at `occurred_at` (decision 94).
   All retain catalog/envelope/key checks and local transaction atomicity.
   The actor stays the original requester, with the frozen use scope/trace.
   Recording never authorizes child/grant creation (including
@@ -1887,13 +2053,14 @@ SOT §2), reached through the hook.
   registration is current, meaning its oldest undelivered event is older than
   a threshold (recommended 1 h, Q11). A stalled secondary target, such as a
   self-hosted copy during a migration, does not block use while another active
-  registration is current. It is surfaced to owners on the console. This keeps
+  registration is current. It is surfaced to owners on the console (**Open
+  (aweb-acgh.18.11.6)**). This keeps
   "every use is recorded" true in practice, not only eventually.
 - **Cancelled or rejected deliveries are a fault.** An audit-critical event can
   end with every delivery cancelled (for example, its target was revoked between
   commit and drain) or rejected. secrets records that as a fault in its
-  operational record and surfaces it to owners. It is never treated as
-  delivered.
+  operational record and surfaces it to owners (**Open
+  (aweb-acgh.18.11.6)**). It is never treated as delivered.
 
 The drainer delivers at least once. As the hooks design specifies, `event_id` is
 minted once inside the effecting transaction and stored with the outbox row, and
@@ -1901,10 +2068,11 @@ retries never re-mint it. The hooks seat owns delivery, retry, the signature
 envelope and target registration.
 
 **Schema.** The hooks design owns the `post-secret-use-hook` schema: one action
-enum, one flat allowlisted payload and the `refusal_code` enum. They are defined
-in aweb-acgh.1, `docs/design/audit-substrate.md` §A2 (at hooks head 1b40a1d44, or
-as merged), and recorded in the hook catalog vector that H1 freezes.
-This design cites that schema and does not define its own. The actor comes from
+enum, one flat allowlisted payload and the `refusal_code` enum. The source of
+truth is [`post-secret-use-hook`](../hook-events.md#post-secret-use-hook) in
+`docs/hook-events.md`, with `docs/vectors/hook-catalog-v1.json`; "§A2" below
+means that schema. This design cites that schema and does not define its own.
+The actor comes from
 the common envelope. secrets' part is deciding which transition emits which
 action:
 
@@ -1922,11 +2090,10 @@ action:
 | `reconciled_*` | `reconciled` |
 
 `naapp/secrets/vectors/hook-actions-v1.json` freezes the transition and governance
-mapping as data, including the accepted decision-92 observation row and example.
-Both shared catalog copies already include its exclusive authority and refusal
-cases. M1/S13 consume those accepted fixtures and add their implementation, CAS,
-rollback, cache and delivery proofs. Updated receiver support and production
-activation still precede emission; the shared row/catalog re-freeze is complete.
+mapping as data, including the decision-92 observation row and example. Both
+shared catalog copies (`docs/vectors/hook-catalog-v1.json` and
+`naapp-lib/src/aweb_naapp/hooks/catalog-v1.json`) include its exclusive
+authority and refusal cases.
 
 secrets fills every field of the §A2 allowlist that applies to the event. The
 list below highlights fields with secrets-specific rules and is not exhaustive:
@@ -1947,8 +2114,8 @@ the `secret_*`, `request_sha256`/`params_sha256`, `approval_*`, `dispatch_*` and
   counter CAS/evidence insertion. The exact B2 covered-request sidecar stays
   restricted and is bound through its existing hash in the signed challenge;
   raw covered-request bytes do not enter the outer public-hash input.
-  S13/S14 use B3's sole canonical helper after its implementation review, with
-  no local serializer, reconstructed proof or summary-HMAC fallback.
+  secrets uses B3's sole canonical helper, with no local serializer,
+  reconstructed proof or summary-HMAC fallback.
   Persist the commitment and its immutable evidence/authorization association
   once; retries and rotation reuse them. Only the commitment is published,
   never raw proof, key, credential ID, authorizing subject, scope or locator.
@@ -1961,34 +2128,33 @@ the `secret_*`, `request_sha256`/`params_sha256`, `approval_*`, `dispatch_*` and
   the surviving commitment cannot reconstruct the proof. Service timestamps,
   prior-counter history and authority/consumption state remain audit-state
   claims rather than additional authenticator-signed facts.
-- **Child creation.** The issuance's `completed` event with disposition
+- **Child creation.** **After the first release (aweb-acgh.41):** no issuance
+  emits this. The issuance's `completed` event with disposition
   `stored_as_secret` is the signed creation receipt. `grant_id` remains the
   issuing grant; `derived_secret_id` names the new child and `derived_grant_id`
   names its fresh grant. It shares the recording transaction with those rows
   (§8.4), so no child is exposed without its enqueued creation receipt. The
   hook-contract owner puts `derived_grant_id` in the re-frozen post-secret-use
-  shape (decision 73 delta): both derived refs are required together for this
-  disposition and forbidden elsewhere. This is an in-place schema/vector
-  re-freeze: no deployed producer or consumer uses this hook, so there is no
-  parallel catalog version. Until that shape is accepted, the kit, ingest and
-  resolution support it, and an owner activates the production,
-  `store_as_secret` cannot emit or activate; secrets does not add private fields
-  to an existing envelope.
+  shape (decision 73): both derived refs are required together for this
+  disposition and forbidden elsewhere. Both catalog copies carry it, in place in
+  catalog v1 (decision 93). secrets does not add private fields to an existing
+  envelope.
 - **`returned_hmac`.** This is an HMAC, keyed by secrets, over the bytes returned
   to the agent. It is absent when the result is withheld. secrets' keyed HMAC of
   the raw response fills `upstream_response_hmac`.
-- **`refusal_code`.** It takes values from the §A2 enum. secrets proposed every
-  code there, and each one is a refusal this design defines.
+- **`refusal_code`.** It takes values from the §A2 enum. Each code there is a
+  refusal this design defines.
   `no_eligible_approver` means no covering, policy-listed approver exists at
   request time (§4.4). `approval_consumed` means the approval was already
   consumed under another dispatch; an idempotent replay of the same dispatch
-  returns its existing state. Both codes are in the v1 catalog and secrets
-  hook-actions table before any producer emits them.
+  returns its existing state. Both codes are in the v1 catalog and secrets'
+  hook-actions table.
 - **`disposition`.** It takes `returned`, `withheld` or `stored_as_secret`
-  (§A2 at hooks head 31206a4d). There is no value for a returned credential,
-  because `return` does not exist (Q8).
+  (§A2). There is no value for a returned credential, because `return` does
+  not exist (Q8).
 
-**Governance acts** go on the generic `post-governance-hook` (audit-substrate §A2).
+**Governance acts** go on the generic
+[`post-governance-hook`](../hook-events.md#post-governance-hook).
 The catalog fixes its act enum and fixes each act's direction:
 
 | secrets act | hook `act` |
@@ -2121,7 +2287,10 @@ secrets fills `authority` with one of:
 - `team_cert`, for narrowing acts through the agent API;
 - `backend_observation`, exclusively for `resource.version_observed` (§5.3);
 - `outbox_state`, exclusively for the shared kit's producer-local
-  `hook_delivery.cancelled` accounting under the
+  `hook_delivery.cancelled` accounting. **After the first release
+  (aweb-acgh.16.32):** no producer emits it; at the first release a hook
+  target's revocation takes effect immediately, without per-gap explanation.
+  It follows the
   [terminal contract](../hook-terminal-delivery.md#each-app-producers-cancellation-evidence).
   It uses the system actor and only this producer's persisted cancellation
   facts. It authorizes no human governance act and no change to secrets' grants
@@ -2166,6 +2335,17 @@ Every containment action **narrows** authority. It can therefore be done:
 - by an owner or approver through the console;
 - for an approval request, by its approver.
 
+Who may do what (decision 83): owners narrow anything in the installation. An
+approver narrows only what its current coverage includes, with descendants,
+plus its own passkey and contact. The kill switch and runner deregistration are
+owner-only. Through the agent API a member who is not an owner may only revoke
+approvals it is assigned to decide.
+
+Value replacement is not a containment action: it adds a value, so it is the
+§6.2 console change set under an owner passkey. Its consequences are
+containment's and commit in the confirm transaction (decision 82); the row
+below lists them.
+
 Narrowing must never wait on a ceremony, and never on logs. Each action is
 recorded as a `post-governance-hook` event. It is never refused for audit
 availability, only for a failed local commit (§11.5).
@@ -2177,12 +2357,14 @@ availability, only for a failed local commit (§11.5).
 | **Revoke approvals** | A pending or approved-but-unconsumed approval moves to `revoked`. The consume CAS fails. There is no bearer token to chase, because the link was never authority. |
 | **Disable a secret** | New admissions, the fence and runner credential release all refuse. Pending approvals are voided, and the cached OAuth tokens and derived secrets are disabled. For 1Password, the console also links to revoking the service account. Re-enabling is widening, so it needs a passkey. |
 | **Disable the installation** (kill switch) | Every secret is disabled at once, through one flag checked at admission and at the fence. |
-| **Replace a value** (§6.2) | The new version activates. The old version is destroyed in the live database in the same transaction (backups per §15, item 5). Version-bound approvals are voided. All descendants are disabled locally and their pending approvals voided (§8.4); derived and cached credentials are also revoked where the upstream allows it. STS sessions cannot be revoked one by one, so the console guides the owner to the IAM "revoke older sessions" action. Upstream rotation remains the owner's act. |
-| **Deregister a runner** | The key is invalidated, unclaimed assignments are cancelled, and claimed ones go to `outcome_unknown`. |
-| **Revoke an approver passkey or contact** | That approver's pending decisions are voided. If no approver can decide anymore, `approve_only` uses refuse. Through team-auth, revoking the last owner's passkey or contact is refused (`last_owner_protected`, §10.2). |
+| **Replace a value** (§6.2; console change set, not a `contain` action) | The new version activates. The old version is destroyed in the live database in the same transaction (backups per §15, item 5). Version-bound approvals are voided. All descendants are disabled locally and their pending approvals voided (§8.4); derived and cached credentials are also revoked where the upstream allows it. STS sessions cannot be revoked one by one, so the console guides the owner to the IAM "revoke older sessions" action. Upstream rotation remains the owner's act. |
+| **Deregister a runner** | The key and any unused registration code are invalidated at once. **Open (aweb-acgh.18.15):** unclaimed assignments are cancelled, and claimed ones go to `outcome_unknown`, in the same transaction. |
+| **Revoke an approver passkey or contact** (`revoke-approver`) | That approver's pending decisions are voided. If no approver can decide anymore, `approve_only` uses refuse. Through team-auth, revoking the last owner's passkey or contact is refused (`last_owner_protected`, §10.2). |
 
-Installation uninstall (D1 §5) fences all normal calls. Deletion of secrets data
-follows D1's lifecycle jobs, with every native version destroyed as §5.2 describes.
+Installation uninstall (D1 §5) fences all normal calls, and purges the
+installation's role assignments, so a reinstall starts with a fresh owner
+bootstrap (decision 48). Deletion of secrets data follows D1's lifecycle jobs,
+with every native version destroyed as §5.2 describes.
 
 ## 13. Manifest v2 tool surface
 
@@ -2197,10 +2379,10 @@ The manifest is v2 (D1 C3). Every tool is signed with team-auth. Nothing is
 | `secrets.list` | agent, surface | `secrets:read` | any member with a grant; owners see all | refs, kinds, sensitivity, destination summary, approval requirement; **never values** |
 | `secrets.describe` | agent, surface | `secrets:read` | as above | one ref's operations (with parameter schemas) and jobs available to the caller |
 | `secrets.request` | agent, surface | `secrets:use` | a grant | a brokered named operation or open request (§7). Returns the result, or `awaiting_approval` with an `approval_ref` |
-| `secrets.run` | agent, surface | `secrets:run` | a grant | a runner job (§9); optional `secret` selects an ordinary child for the unique durable slot (§9.5) |
+| `secrets.run` | agent, surface | `secrets:run` | a grant | a runner job (§9); optional `secret` selects an ordinary child for the unique durable slot (§9.5; after the first release, aweb-acgh.41.1, it is refused with `job_not_allowed`) |
 | `secrets.status` | agent, surface | `secrets:read` | the requester; owners | state of a `request_id`, `approval_ref` or `reconcile_ref`; never a link, admission or dispatch. Approved: re-submit the same `request_id` (§10.3) |
 | `secrets.cancel` | agent, surface | `secrets:use` | the requester | cancel the caller's own request while it is still before `admitted` |
-| `secrets.contain` | agent, surface | `secrets:admin` | owner (approver for its own approvals) | revoke a grant, remove one agent from a user role (owner-only), revoke approvals, disable a secret or the installation, deregister a runner (§12) |
+| `secrets.contain` | agent, surface | `secrets:admin` | owner (approver for its own approvals) | `revoke-grant`, `revoke-approvals`, `disable-secret`, `disable-installation`, `deregister-runner`, `revoke-approver` with an optional `credential_id`, and `remove-role-member` with a `principal` (owner-only) (§12) |
 | `secrets.propose-change` | surface | `secrets:admin` | owner | draft a widening change: secret metadata, destination, operation, job, grant, role or approver. It is inert until passkey confirmation on the console (§6.3) |
 | `secrets.activity` | surface | `secrets:read` | owner | operational record view: requests, approvals, dispatch states, `outcome_unknown` queue |
 
@@ -2215,37 +2397,43 @@ Authority always comes from secrets' role, grant and passkey checks. That is why
 
 ### 13.2 How it looks to users
 
-- **aw users.** The generic dispatcher renders the tools as `aw secrets list`,
-  `aw secrets describe stripe-test`, and
-  `aw secrets request stripe-test --op create-refund --param charge=ch_123 --param amount_minor=500`.
+- **aw users.** The generic dispatcher renders the tools with manifest field
+  names as flags (`naapp/secrets/docs/tool-surface.md`, "Generic aw flags"):
+  `aw secrets list`, `aw secrets describe --secret stripe-test`, and
+  `aw secrets request --secret stripe-test --request_id refund-1 --operation create-refund --params '{"charge":"ch_123","amount_minor":500}'`.
   For an open request it renders the typed body parameters as flags, for example
-  `aw secrets request github-ci --method POST --url https://api.github.com/repos/o/r/dispatches --data '{…}'`.
+  `aw secrets request --secret github-ci --request_id dispatch-1 --method POST --url https://api.github.com/repos/o/r/dispatches --data '{…}'`.
   A curl-like positional form would be a generic CLI feature; it is not part of
   the manifest contract.
-  It also renders `aw secrets run deploy-staging --runner home-1 --param env=staging`,
-  `aw secrets status <request_id>` and `aw secrets contain revoke-grant <grant_id>`.
-  The CLI generates `request_id` once per invocation and reuses it on transport
-  retries. After polling approval status, it re-submits the original request
-  with that same `request_id` to dispatch. Exit codes distinguish
-  `awaiting_approval`, `refused`,
-  `outcome_unknown` and `result_withheld`. `--param` binding follows the manifest
-  `params` mapping. Open requests need no manifest change. `method` (a string
-  enum), `url`, `headers` (an array) and `data` (a string or an object) are
-  `in: body` parameters with typed coercion (A `docs/app-manifest.md:121`–`:150`,
-  `:189`–`:205`). Binary data uses base64. The manifest's relative-path rule
-  protects secrets' own endpoint, not the URL argument. SSRF control for the URL
-  stays at the egress guard (§7.3).
+  It also renders `aw secrets run --job deploy-staging --runner home-1 --request_id deploy-1 --params '{"env":"staging"}'`,
+  `aw secrets status --ref <request_ref>` and
+  `aw secrets contain --request_id c-1 --action revoke-grant --target <grant_id>`.
+  The caller supplies `request_id`; the tool never generates one. `status` only
+  reports (decision 63). After an approval, the caller re-submits the original
+  request with the same `request_id` and unchanged body; only that dispatches.
+  There is no automatic request ID, polling or resubmission (decision 86). The
+  CLI prints the response and exits 0 for HTTP status below 400 and 1
+  otherwise; the caller reads the structured `state`, because approval waiting,
+  unknown outcomes and withheld results are not completed work. **After the first release (aweb-acgh.18.53):**
+  distinct exit codes come from a generic manifest outcome-to-exit mapping in
+  `aw`, with no secrets-specific CLI code (decision 86). Open requests need no
+  manifest change. `method` (a string enum), `url`, `headers` (an array) and
+  `data` (a string or an object) are `in: body` parameters with typed coercion
+  (`docs/app-manifest.md`, "Tool object" and "Verb → HTTP mapping"). Binary data
+  uses base64. The manifest's relative-path rule protects secrets' own
+  endpoint, not the URL argument. SSRF control for the URL stays at the egress
+  guard (§7.3).
 - **MCP users (L2).** The same tools appear as `secrets_list`,
   `secrets_request`, and so on, with the same parameter schemas. A pending
   approval returns `approval_ref` and a message that a designated human has been
-  notified. The model polls `secrets_status`, then re-submits `secrets_request`
+  notified. The model checks `secrets_status`, then re-submits `secrets_request`
   (or `secrets_run`) with the same `request_id` after approval. It cannot see or
   act on the approval. Responses are already projected and redacted for the model
   provider's context.
-- **Dashboard surface.** This is an `aweb.page/1` surface with read-only views
-  (`list`, `activity`), containment buttons, `propose-change` forms, and a
-  link-out to the console for confirmation and value ingress. The link-out widget
-  is a D1 dependency (§17).
+- **Dashboard surface.** **Open (aweb-acgh.18.18):** an `aweb.page/1` surface
+  with read-only views (`list`, `activity`), containment buttons,
+  `propose-change` forms, and a `link_out` to the console for confirmation and
+  value ingress (§17).
 
 ### 13.3 `aw do` and a generic alias
 
@@ -2263,10 +2451,11 @@ clear) and to revisit it if users ask (Q12).
 Injecting a value into a process the agent chooses is a value read under another
 name (secrets SOT §1). Offering it through an agent-context tool would contradict
 "no get-value, ever". Offering it to MCP agents would put the value into the
-model provider's context and into the hosting operator in transit. Legacy local tools have two
-better paths:
+model provider's context and into the hosting operator in transit. Legacy local
+tools use a pinned runner job with `delivery: durable` (§9.5). **After the
+first release (aweb-acgh.41, decision 95)** they gain two narrower paths:
 
-- a pinned runner job with `delivery: short_lived` (§9.5);
+- a pinned runner job with `delivery: short_lived` (§9.5; aweb-acgh.41.1);
 - a `store_as_secret` derived credential used through the broker.
 
 Q8 decided that neither `--unsafe-inject` nor `result_handling: return` exists.
@@ -2279,7 +2468,7 @@ Q8 decided that neither `--unsafe-inject` nor `result_handling: return` exists.
 | --- | --- | --- | --- |
 | T1 | Requesting agent, including a prompt-injected one | nothing beyond its grants | It may use every grant it holds, within policy. secrets limits *what* it can do, not *why*. |
 | T2 | Model provider (MCP) | nothing | Responses enter its context. Hence projection, redaction and default-deny (§7.6). |
-| T3 | Custodial deployment and its L2 endpoint | custody of its custodial members' keys | It can sign as those members and so exercise their grants. It sees their parameters and responses in transit. It cannot read values, approve, widen policy or reach the console. **Consequence: an MCP agent's grants are only as strong as the operator's custody.** Grant MCP-used principals narrowly. Until §4.6 exists, secrets cannot require "not via the custodial host". |
+| T3 | Custodial deployment and its L2 endpoint | custody of its custodial members' keys | It can sign as those members and so exercise their grants. It sees their parameters and responses in transit. It cannot read values, approve, widen policy or reach the console. **Consequence: an MCP agent's grants are only as strong as the operator's custody.** Grant MCP-used principals narrowly. secrets can require attested predicates (§4.6) only once the custodial deployment issues attestations; until then such a policy refuses. |
 | T4 | secrets service and its production operators | executing policy; transient plaintext | An operator able to run code as the service, with KMS decrypt, the local key file or the 1Password token, can read values. Reading the local key file and stored ciphertext bypasses app policy for every value sealed with it. Mitigations: a separate service account and agent-unreadable key material; KMS policy and independent logs when KMS is used; 1Password independent logs; Make-only operations (§15). Not zero-knowledge. |
 | T5 | KMS provider, when configured | key custody | as for any KMS user |
 | T6 | 1Password | custody for that backend | the vault's own model |
@@ -2321,10 +2510,10 @@ credential (secrets SOT §8, item 5).
 
 ## 15. Deploy
 
-secrets follows Library's pattern (A `naapp/library`):
+secrets follows Library's pattern (`naapp/library`):
 
 - **Service layout.** Its own service, database (pgdbm, its own schema, ordered
-  migrations only) and Dockerfile.
+  migrations only) and Dockerfile. **Open (aweb-acgh.18.20):** the Dockerfile.
 - **Health.** The health endpoint reports build identity, including the full
   40-character commit, as Library's `build_identity.py` does. It also reports
   dependency status: DB, the selected custody provider (a cached result of an
@@ -2333,12 +2522,13 @@ secrets follows Library's pattern (A `naapp/library`):
   `local_key_file`, without exposing key material, even when the canary fails.
   The mode identifies the selected provider; it is not proof of a successful
   provider operation.
-- **Ops manifest.** `ops/render-production.json`, or the hosting provider's
-  equivalent, pins the topology fail-closed.
-- **Production operations** are Make-only (`prod-status`, `prod-deploy`,
-  `prod-wait`, `prod-verify`, `prod-rollback`, `prod-public-identity`), backed by
-  checked-in scripts with tests. The app's production-operations document
-  describes them, along with the release record Library requires.
+- **Ops manifest.** **Open (aweb-acgh.18.20):** `ops/render-production.json`,
+  or the hosting provider's equivalent, pins the topology fail-closed.
+- **Production operations.** **Open (aweb-acgh.18.20):** Make-only
+  (`prod-status`, `prod-deploy`, `prod-wait`, `prod-verify`, `prod-rollback`,
+  `prod-public-identity`), backed by checked-in scripts with tests. The app's
+  production-operations document describes them, along with the release record
+  Library requires.
 
 Requirements specific to secrets:
 
@@ -2354,11 +2544,15 @@ Requirements specific to secrets:
    through workload identity where the platform supports it. Otherwise it uses a
    narrowly scoped static credential held only in the platform's secret store,
    which is a T4 element.
-2. **Service signing key.** Keys that sign hook provenance and runner
-   assignments are generated at deploy and held in protected service key files,
-   or sealed under the selected native provider and unsealed at start. A KMS
-   asymmetric key is an option when KMS is used and supports Ed25519 signing.
-   Their public keys are published in the manifest's registered app keys.
+2. **Service signing keys.** Each purpose has its own key, and the service
+   refuses to start if any two key files hold the same material. The runner
+   assignment key (`runner_service_key_file`) is pinned by each runner at
+   registration as `service_kid`; it is not in `app_keys`. Hook signing keys
+   are separate `app_keys` kids, each with its purposes (`secrets.hook-event-1`,
+   `secrets.hook-delivery-1`, and so on). Every key is read from a 64-hex key
+   file. **Open (aweb-acgh.18.20):** each key is a KMS asymmetric key if the
+   provider supports Ed25519 signing; otherwise it is generated at deploy,
+   sealed under the selected native provider and unsealed at start.
 3. **Two origins.** The agent API origin accepts only team-auth and the runner
    protocol, and serves no cookies.
    - **RP ID.** The WebAuthn RP ID is the **exact console host**. It is never a
@@ -2369,22 +2563,31 @@ Requirements specific to secrets:
      attribute.
    - **Headers.** The console serves strict CSP, `frame-ancestors 'none'`, `Referrer-Policy: no-referrer`
    and `Cache-Control: no-store`, and accepts no team-auth.
-4. **Hardening.** Core dumps off. Request and response bodies are never logged.
-   The log redactor is shared with §7.6. An egress allowlist proxy is used where
-   the platform allows one, as defence in depth (Q2).
+4. **Hardening.** **Open (aweb-acgh.18.20):** core dumps off. Request and
+   response bodies are never logged. The log redactor is shared with §7.6. An
+   egress allowlist proxy is used where the platform allows one, as defence in
+   depth (Q2).
 5. **Backups.** Backups hold ciphertext and wrapped data keys only. The
    key-encryption key still decrypts a wrapped data key restored from a backup,
    so a destroyed version stays recoverable from backups until they expire. The
    design states that honestly instead of claiming immediate shredding. Two
-   controls apply. secrets keeps a tombstone list of destroyed versions outside
+   controls apply. **Open (aweb-acgh.18.20):** secrets keeps a tombstone list of destroyed versions outside
    restorable content and reapplies it before a restored database serves, as D1
    §3 does for deletions. Backup expiry is bounded by the operator policy that
    D1 §3 proposes. Destruction is complete when the last backup holding the
    version expires, and the replacement receipt says when that will be.
 6. **Email.** Approver notifications and enrolment need a transactional email
-   provider. It is a dependency, and its credential is sealed like any other.
+   provider (SMTP). It is a dependency, and its password is read from a file,
+   like the service's other private material.
 
 ## 16. Tests
+
+**In flight (aweb-acgh.18.21, aweb-acgh.18.22):** the release E2E harness is
+in `naapp/secrets/e2e`. The first release is accepted on Juan's six-step
+journey (`naapp/secrets/e2e/RELEASE.md`, M9) and the launch checklist (S21 in
+the build plan). **After the first release (aweb-acgh.18.22):** the full scope below
+(decision 85); its STS, `store_as_secret` and derived-secret rows follow
+those features (aweb-acgh.41).
 
 **E2E exercises real user paths with no mocks.** That means:
 
@@ -2440,22 +2643,23 @@ Each harness states whether it was shown to fail for the fault it targets.
 
 The design is one generic naapp architecture serving pages and secrets. §3.1
 places every component. This table lists what secrets needs from contracts that
-others own. The D1 lead's fit review (against D1 8ef61170) confirmed the D1
-rows.
+others own.
 
 | Need | Owner | Notes |
 | --- | --- | --- |
-| Team-auth v2 verifier with scope enforcement and a resource/action policy hook | B1, aweb-acgh.3 | §4.1. secrets uses B1 as specified. It needs the certificate's `member_did_aw` field in the principal output, so that grants follow the stable identity. It does not need the did:aw current-key profile. |
+| Team-auth v2 verifier with scope enforcement and a resource/action policy hook | B1, aweb-acgh.3 | §4.1. secrets uses B1 as specified. It needs the certificate's `member_did_aw` field in the principal output, so that grants follow the stable identity. It runs with B1b's default `require` current-key profile. |
+
 | Grant status, admission fence, hook-target resolution | aweb-acgh.7; D1 F5/F6 | §4.1 step 2; §11.5 "no registered target". |
-| Approval primitive and WebAuthn | B2+B3, aweb-acgh.4 | §10. Requirements (a) and (b) in §10.1, plus the owner-lockout protection in §10.2. Decision 84 adds restricted proof/context retention and B3's sole canonical commitment helper (§11.5), implemented/reviewed before S13/S14 use it. |
+| Approval primitive and WebAuthn | B2+B3, aweb-acgh.4 | §10. Requirements (a) and (b) in §10.1, plus the owner-lockout protection in §10.2. Decision 84 adds restricted proof/context retention and B3's sole canonical commitment helper (§11.5). |
 | Team owner act `aweb.owner-act/1` and its verifier | hooks design (aweb-acgh.1); `aweb_naapp` | §10.2: bootstrap and re-designation. |
-| `post-governance-hook`; `post-secret-use-hook` schema, action enum and `refusal_code` enum | hooks design (aweb-acgh.1, §A2) | §11.5. secrets cites the schema. The hooks seat has taken secrets' additions; the `refusal_code` list in §11.5 goes into its catalog vector. |
+| `post-governance-hook`; `post-secret-use-hook` schema, action enum and `refusal_code` enum | hooks design (aweb-acgh.1); `docs/hook-events.md` | §11.5. secrets cites the schema. The catalog vector carries the `refusal_code` list in §11.5. |
 | Manifest v2 with `invocation_contexts`, the `hooks` slot (`productions`) and `app_keys` with purposes | D1 C3 (in D1 §5) | §13 and §11.5. Open requests already fit as typed body parameters. |
-| `link_out` widget restricted to the installed app's pinned origin | D1 C1/R1, a *proposed* vocabulary addition that needs Juan's acceptance | §6.1. It shows the normalized domain, opens a new top-level context with no opener or referrer, and carries no token in the URL. |
+| `link_out` widget restricted to the installed app's pinned origin | D1 C1/R1; in the page vocabulary (`docs/page-format.md`, §6 `link_out`) | §6.1. It shows the normalized domain, opens a new top-level context with no opener or referrer, and carries no token in the URL. |
 | Hook envelope, catalog, provenance purpose, producer outbox, delivery | hooks seat; B4 for the shared code | §11.5. secrets owns its payload fields and its enqueue points. |
-| Usage reporting `aweb.usage/1` | D1 C5 | secrets reports `uses_admitted`, `dispatches`, `approvals_requested` and `job_runs` under the same rules. |
-| The *proposed* `aweb_naapp` components in §3.1 | secrets coordinator to assign | Under Q16 (decided): the egress guard, dispatch state machine, idempotency store, console session and role assignments keyed by stable principal, each with pages as its second consumer (D1's A2 adapter, approval pages, and role-target resolution in D1 §4). |
-| Principal attestation (§4.6) | generic AWID/OSS work, with the custodial deployment as issuer | Q5. Policy that requires it refuses until it exists. |
+| Usage reporting `aweb.usage/1` | D1 C5 | **After the first release (aweb-acgh.18.19, decision 88):** secrets reports `uses_admitted`, `dispatches`, `approvals_requested` and `job_runs` under the same rules. |
+| The shared `aweb_naapp` components in §3.1 | `aweb_naapp` (`naapp-lib/`) | Under Q16: the egress guard, dispatch state machine, idempotency store, console session and role assignments keyed by stable principal are built there, each with pages as its second consumer (D1's A2 adapter, approval pages, and role-target resolution in D1 §4). Rate buckets are shared under decision 58 and HPKE under decision 81. |
+| Principal attestation (§4.6) | generic AWID/OSS work ([principal-attestation.md](../principal-attestation.md), `aweb_naapp.runtime.attestation`), with the custodial deployment as issuer | Q5. Policy that requires it refuses every request without an attestation from a registered custodian. |
+
 
 **Requirements on a hosted operator or custodial deployment.** These are stated
 generically. Any deployment that hosts custodial members, an L2 endpoint or a
@@ -2481,53 +2685,232 @@ secrets-local or generic.
 
 ## 18. Decisions
 
-The secrets coordinator decided these on 2026-10-19 under Juan's delegation.
-Each follows the recommendation the authors and reviewers agreed, except where
-it says otherwise. Juan can revisit any of them.
+The secrets coordinator takes these decisions under Juan's delegation. Juan's
+own rulings say so. Juan can revisit any of them. Other documents and the code
+cite the lane's decision record by number ("decision N"); §18.2 lists the
+record's decisions that shape this design under those numbers. The Q numbers in
+§18.1 are this design's own open questions, with the record's number beside
+each where one exists.
 
-1. **Q1. Positioning and custody.** Both backends at launch: the native
-   envelope-encrypted store and 1Password. The native store also seals the
-   1Password token. D2 (Juan, 2026-11-09) permits local key-file custody in
+### 18.1 Questions answered at acceptance
+
+1. **Q1. Positioning and custody (decision 13).** Both backends at launch: the
+   native envelope-encrypted store and 1Password. The native store also seals
+   the 1Password token. D2 (Juan, 2026-11-09) permits local key-file custody in
    production, with KMS recommended rather than required (§5.2, §15).
-2. **Q2. KMS provider, hosting and egress controls.** Not decided. These are
-   deployment facts for the operator, and the build plan treats them as an
-   input to the deploy and native-custody tasks.
-3. **Q3. Delegated vault mediation.** Not at launch. The interface keeps room
-   for it (§5.5).
-4. **Q4. 1Password read caching.** None at launch, as recommended.
-5. **Q5. Principal attestation.** A launch requirement. Policy that requires it
-   refuses until it ships (§4.6).
-6. **Q6. Launch auth schemes.** bearer, basic, header, query, OAuth2 client
-   credentials and SigV4. Named operations are required for `sensitive` and
+2. **Q2. KMS provider, hosting and egress controls.** When KMS is used, the
+   provider is AWS KMS (HO5, aweb-acgh.14). Hosting and the deployment's egress controls are
+   operator facts, recorded in HO5.
+3. **Q3. Delegated vault mediation (decision 13).** Not at launch. The
+   interface keeps room for it (§5.5).
+4. **Q4. 1Password read caching.** None at launch.
+5. **Q5. Principal attestation (decision 2).** A launch requirement. Policy
+   that requires it refuses until it is issued (§4.6). Hosted issuance (HO2)
+   gates the launch.
+6. **Q6. Launch auth schemes (decisions 14 and 36).** bearer, basic, header,
+   query, OAuth2 client credentials and SigV4. The secret's kind is its auth
+   scheme, a closed v1 set. Named operations are required for `sensitive` and
    `approve_only` secrets.
-7. **Q7. Distinct approver.** `not_required` by default. Owners may require
-   four eyes per policy.
-8. **Q8. `--unsafe-inject` and `result_handling: return`.** Neither exists.
-9. **Q9. `oauth2-refresh` and mTLS.** Later, through the existing interface.
-10. **Q10. Passkey authenticator policy.** Any authenticator with user
-    verification.
-11. **Q11. Audit fail-closed rules.** As recommended: refuse unless a registry
-    view no older than 60 s holds an active registration with `active_from` at
-    or before the event, and refuse when no active registration is current
-    (1 h threshold). Owners cannot turn this off.
-12. **Q12. Generic `cli_aliases`.** Not at launch, as recommended.
-13. **Q13. Approval notification channel.** Email at launch. Approvals as tasks
-    may come later through the existing seam.
-14. **Q14. Approval TTL and lockout timings.** The approval TTL is a policy
-    parameter, 15 min by default. The 24 h contact-change delay and the 72 h
-    re-designation cooling-off are floors: app or owner policy may lengthen
+7. **Q7. Distinct approver (decision 7).** `not_required` by default. Owners
+   may require four eyes per policy.
+8. **Q8. `--unsafe-inject` and `result_handling: return` (decision 4).**
+   Neither exists.
+9. **Q9. `oauth2-refresh` and mTLS (decision 14).** Later, through the
+   existing interface.
+10. **Q10. Passkey authenticator policy (decision 8).** Any authenticator with
+    user verification.
+11. **Q11. Audit fail-closed rules.** Refuse unless a registry view no older
+    than 60 s holds an active registration with `active_from` at or before the
+    event, and refuse when no active registration is current (1 h threshold).
+    Owners cannot turn this off (decision 11).
+12. **Q12. Generic `cli_aliases`.** Not at launch.
+13. **Q13. Approval notification channel (decision 15).** Email at launch.
+    Approvals as tasks may come later through the existing seam.
+14. **Q14. Approval TTL and lockout timings (decision 8).** The approval TTL is
+    a policy parameter, 15 min by default. The 24 h contact-change delay and the
+    72 h re-designation cooling-off are floors: app or owner policy may lengthen
     them, never shorten them, and only deploy configuration sets the floor.
-15. **Q15. Launch order.** The hook contract lands first. aw-hooks, logs and
-    secrets then build in parallel. secrets does not launch until logs ingests
-    real events end to end. One runner job end to end is part of launch.
-16. **Q16. Shared components.** A component becomes shared once a second
-    consumer uses it. Shared now: the egress guard, the dispatch state machine,
-    the idempotency store, the console session and role assignments.
-    App-local for now: the auth-scheme injectors, native sealing, rate buckets and
-    the credential-shape detector.
+15. **Q15. Launch order (decision 11).** The hook contract lands first.
+    aw-hooks, logs and secrets then build in parallel. secrets does not launch
+    until logs ingests real events end to end. One runner job end to end is part
+    of launch.
+16. **Q16. Shared components (decisions 12 and 58).** A component becomes
+    shared once a second consumer uses it. Shared: the egress guard, the
+    dispatch state machine, the idempotency store, the console session, role
+    assignments and the rate-limit buckets (`aweb_naapp.ratelimit`). App-local:
+    the auth-scheme injectors, native sealing and the credential-shape detector.
 
-The `link_out` widget (§17) is supported from the secrets side. Accepting it
-into the page vocabulary is D1's decision.
+### 18.2 Decisions from the lane's record
+
+**First-release scope**
+
+- **Decision 85, 87 and 88 (Juan).** The first release is a customer release
+  with the production quality bar, shown first to 1Password employees, with
+  the runner included, real audit ingestion into logs, and a landing page at
+  `secrets.aweb.ai`. Its acceptance is Juan's six-step journey
+  (`naapp/secrets/e2e/RELEASE.md`). Usage reporting (§17) comes after the first
+  release.
+- **Decision 95 (Juan).** Derived and short-lived issuance (§8.3
+  `store_as_secret`, §8.4, the §9.5 `short_lived` delivery and STS and OAuth
+  minting) comes after the first release, under aweb-acgh.41. The first release
+  brokers requests and releases durable job slots only.
+- **First-release run boundary (coordinator).** A run releases only the job's
+  own durable slots. Ordinary-child selection and `short_lived` delivery come
+  after the first release (aweb-acgh.41.1).
+- **Decision 17.** `link_out` is supported from the secrets side; the page
+  vocabulary accepts it (`docs/page-format.md`).
+
+**Identity, owners and approvers**
+
+- **Decision 27.** Role and scope names use `.`: `secrets.owner`,
+  `secrets.approver.<policy>`, and owner-defined roles `secrets.role.<name>`
+  (decision 35). App manifest tool scopes keep the `<app>:<verb>` form.
+- **Decisions 33 and 40.** Each owner has their own B3 scope:
+  `secrets.owner.` followed by the first 40 lowercase hex characters of
+  `sha256(installation_id + "\n" + team_id + "\n" + principal_did)`. Approver
+  scopes use the same rule with `secrets.approver.` and the approver reference.
+  Bootstrap takes the team from the installation record, never from the
+  request. Console login validates the scope with the `secrets.owner` role, and
+  every console write re-checks the role. A reinstall means owners enroll
+  again.
+- **Decision 34.** Revoking an owner or approver role ends the B3 designation
+  through an owner-gated `retire(scope, owner_act)`. A re-granted role enrolls
+  again. An approver is current when its passkey is current and it holds the
+  role.
+- **Decision 41.** B3's designate and retire take the caller's transaction.
+  Owner scopes accept only a verified owner act consumed in that transaction.
+  Approver scopes also accept a current owner's B2-decided approval over the
+  confirming change set (§10.2).
+- **Decision 48.** Uninstall purges the app's role assignments with the
+  installation's data, so a reinstall starts with a fresh owner bootstrap. The
+  purge runs on a confirmed uninstalled observation or on the fence's first
+  admit of a new installation id, whichever comes first (decision 48b).
+- **Decision 52.** B3 retirement sends no notice to the retired contact; it is
+  audited with the team key as actor. Recovery keeps its notices.
+- **Decision 53.** B2 records an approver set: the policy names
+  `approver_scopes`, the candidates are frozen at mint, `decided_by` names the
+  deciding candidate, an empty set refuses `no_eligible_approver`, any reject is
+  final, and the quorum is 1. Candidates come only from the approver directory
+  and are re-checked at decide; challenges are bound per candidate (decision
+  53b).
+- **Decision 62.** An approver's contact changes through an owner-confirmed
+  change set (B3 `change_contact_by_owner`) or is cancelled under the
+  approver's own passkey (`cancel_pending_contact`); the cancel wins. Only the
+  last owner's own contact is protected (`last_owner_protected`). It changes the
+  contact only, never enrolment, keeps the 24 h floor and both notices, and
+  does not stack.
+- **Decision 82.** Value replacement is a §6 console change set confirmed with
+  a passkey. Containment owns its consequences (void approvals, disable tokens
+  and derived children) as a hook called from the confirmation. B3 supports
+  app-authorized team-auth retirement and single-passkey revocation in the
+  caller's transaction.
+- **Decision 83.** In the console, owners narrow anything in the installation.
+  Approvers narrow only what their current coverage includes, with
+  descendants, plus their own credential and contact. The kill switch and
+  runner deregistration are owner-only.
+- **Decision 84 (Juan).** B3 retains the WebAuthn assertion, its context and
+  the public key, so an approval stays independently checkable after rotation
+  (§10.4).
+
+**Change sets and policy**
+
+- **Decision 30.** `use-approval/1` carries no `approval_id`; the binding is
+  the B2 record.
+- **Decision 38.** A change set lives at most 7 days and is confirmed only for
+  the same installation, generation and team (`change_wrong_installation`).
+- **Decision 39.** `change/1` has a `grant_template` kind (create, update).
+- **Decision 54.** A member-drafted change set mints one B2 approval with
+  every current owner as a candidate, with a per-drafter draft-rate limit. A
+  console draft's only candidate is the drafting owner. One `config_revisions`
+  counter per installation is bumped by applied changes and by every narrowing
+  act.
+- **Decision 61.** Change-set four eyes is separate from use-approval
+  `distinct_approver`, which stays a field of the grant policy. It is the
+  singleton `change_set_policy` kind (update only). Narrowing it comes from an
+  owner console session; widening it comes only from a confirmed change set
+  pinned to its revision. The setting in force at confirmation governs the
+  change set that removes it. Narrowing to `required` is refused unless at
+  least two owners are enrolled, and so is an owner revocation that would leave
+  fewer than two while it is required.
+- **Decision 65.** After a value is sealed, the secret's kind and backend are
+  fixed; the path to change them is a new secret. Changing sensitivity or
+  `approve_only` is allowed, and downgrading either is a widening (§6.3). The
+  value-placing kind parameters are fixed too (decision 65b).
+- **Decision 92.** A changed value at the same immutable 1Password reference
+  becomes the new current version for later fresh admissions, with no new
+  owner passkey, if it validates against the fixed shape. The observing
+  attempt refuses `secret_version_changed`. Version-bound approvals and caches
+  are voided atomically, and the audit event is narrowing. A deleted or
+  unresolved reference refuses. A changed reference or backend-token epoch is
+  never silently adopted.
+
+**Admission, dispatch and approvals**
+
+- **Decision 37.** The installation fence is bounded, not atomic: a server-side
+  change is seen within its maximum age plus one refresh (at most 65 s).
+  Immediate stop is local containment (§12).
+- **Decisions 43, 59 and 78.** Lock order: the installation fence first, then
+  the role hold, then ancestry root to leaf, then the grant union ascending,
+  then covering approver rows, then B2 approval locks, then writes. The fence
+  protocol is `prepare(tx)` before the dispatch locks and `check(tx)` under
+  them.
+- **Decision 46.** Among several matching grants, direct grants are tried
+  before role grants, each by `grant_id`. The first that admits is used and
+  only its policy is charged; when none admits, the first candidate's refusal
+  is returned. An unconfirmed secret refuses `secret_disabled`.
+- **Decision 57.** B2 mint writes in the caller's transaction, and approval
+  links are sent after commit.
+- **Decision 63.** Use-approval candidates are the covering approvers named by
+  the policy; owners count only when listed. `policy_ref` is
+  `secrets.use|inst|team|grant_id|policy_digest`. `status` only reports, and a
+  re-submission dispatches.
+- **Decision 68.** An approval expires at the earlier of its own expiry and the
+  frozen request's `expires_at`.
+- **Juan's ruling on reconciliation.** One explicitly safe automatic repeat
+  (§11.4). Everything else is settled by the owner with a fresh passkey
+  approval.
+
+**Egress, operations and results**
+
+- **Decision 22.** The egress wildcard ban covers the whole public suffix list,
+  private section included.
+- **Decision 47.** Injected headers are declared, each once, and never logged.
+  The guard always sends `Accept-Encoding: identity`.
+- **Decision 49.** The egress module's hard ceiling is 16 MiB; each caller sets
+  its bounds below it.
+- **Decision 64.** An operation that withholds results declares a projection.
+- **Decisions 71 and 75.** A derived secret's local-use cap defaults to 3600 s,
+  configurable, clamped to upstream and ancestor expiry. A derived `aws-sigv4`
+  capture requires a session token.
+- **Decision 72.** Console validation responses give location and type, never
+  the submitted input.
+- **Decision 80.** A derived grant template that names a run job refuses
+  `job_unavailable`; the job registry belongs to the runner protocol.
+- **Decision 81.** HPKE and the scoped nonce store are shared in `aweb_naapp`.
+- **Decision 86.** `aw` keeps the generic exit codes 0 and 1. Distinct exit
+  codes come after the first release (aweb-acgh.18.53), from a generic
+  manifest outcome-to-exit mapping in `aw`, with no
+  secrets-specific CLI code (§13.2).
+- **Egress trust anchors (coordinator).** `SECRETS_EGRESS_CA_FILE` is a trust
+  anchor for tests and self-hosting; production leaves it unset.
+- **Durable delivery label (coordinator).** The console labels durable delivery
+  as reduced protection; no hook event carries the label.
+
+**Audit**
+
+- **Decision 25.** `resource.replaced` is narrowing; its authority is
+  `passkey_session` or `owner_act`, never `team_cert`.
+- **Decisions 29 and 35.** `dispatch_in_flight` and `generation_superseded` are
+  distinct refusal codes. `installation_inactive` maps to
+  `installation_disabled` in audit events.
+- **Decision 73.** `request_sha256` and `params_sha256` in
+  `post-secret-use-hook` are producer-keyed HMACs.
+- **Decision 93.** The decision-92 catalog additions are an in-place catalog
+  v1 re-freeze, and Juan's ruling keeps `use_ref` in catalog v1 too.
+  Versioning applies from the first deployment.
+- **Decision 94.** The hook kit records refused events durably, exempt only
+  from the availability gate, owed to the targets active when the event
+  occurred.
 
 Later, through the existing interfaces: HSM custody, multi-party approval
 (quorum above 1), automated rotation, a runner fleet, mTLS and `oauth2-refresh`.

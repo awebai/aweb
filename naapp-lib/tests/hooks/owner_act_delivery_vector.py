@@ -3,23 +3,24 @@
 
 Every signed delivery case is built with ``owner_act_signing_bytes`` and a
 synthetic team key, so the vector's bytes and signatures come from the same
-code a signer uses. The manifest, prepare and client-check cases are the
+code a signer uses. The manifest, credential and delivery outcomes are the
 contract's expectations, written out case by case.
 """
 
 from __future__ import annotations
 
 import base64
-import copy
 import hashlib
 import json
 from typing import Any
 
+import cbor2
 from awid.did import did_from_public_key
+from cryptography.hazmat.primitives.asymmetric import ec
 from nacl.signing import SigningKey
 
-from aweb_naapp.hooks.owner_act import owner_act_signing_bytes
-from aweb_naapp.hooks.strictjson import encode_signature
+from aweb_naapp.hooks.owner_act import HUMAN_ROLE_ACTS, owner_act_signing_bytes
+from aweb_naapp.hooks.strictjson import canonical, encode_signature
 
 TEAM_SEED = bytes(range(0x21, 0x41))
 ADMIN_SEED = bytes(range(0x41, 0x61))
@@ -30,41 +31,66 @@ SECRETS_ORIGIN = "https://secrets.example.com"
 SECRETS_CONSOLE = "https://console.secrets.example.com"
 INSTALLATION = "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b"
 SECRETS_INSTALLATION = "2c5f39cb-3fb2-4e4c-b4f6-f02ac6b8744c"
-READER_TOKEN = "logs.reader.00112233445566778899aabbccddeeff"
-OWNER_TOKEN = "secrets.owner.0123456789abcdef0123456789abcdef01234567"
 PRINCIPAL = "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd"
-HOLDER_REF = "b3:subject:7f3e9a1c"
-CONTACT = "reader@example.com"
+NOTICE_CONTACT = "owner@example.com"
 OTHER_CONTACT = "someone-else@example.com"
-OWNER_CONTACT = "owner@example.com"
 ISSUED = "2026-11-07T12:00:00Z"
 EXPIRES = "2026-11-07T12:05:00Z"
 NOW = "2026-11-07T12:01:00Z"
-APP_ACTS = ["app-credential.recover", "app-role.designate", "app-role.revoke"]
-PREPARE_PARAMS = ["act", "role", "contact_sha256", "principal", "holder"]
-LONGEST_NAME = "logs.readers-of-records"  # 23 bytes: with a dot and 40 hex, 64
+REPLACEMENT_EFFECTIVE = "2026-11-10T12:01:00Z"  # the 72-hour cooling-off period
+ACTS = sorted(HUMAN_ROLE_ACTS)
+CREDENTIAL_PREFIX = b"aweb.human-credential/1\n"
+LONGEST_NAME = "logs." + "r" * 59  # 64 bytes, owner-act/1's role bound
 
 
 def sha256_hex(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
 def did_key(seed: bytes) -> str:
     return did_from_public_key(bytes(SigningKey(seed).verify_key))
 
 
-def prepare_tool(**changes: Any) -> dict[str, Any]:
-    tool: dict[str, Any] = {
-        "name": "owner-act-prepare",
-        "method": "POST",
-        "path": "/v1/owner-act-subjects",
-        "invocation_contexts": ["agent"],
-        "body": {"mode": "json"},
-        "params": [{"in": "body", "name": name} for name in PREPARE_PARAMS],
-        "scopes": ["logs.readers"],
+def cose_key(scalar: int, *, with_private: bool = False) -> bytes:
+    """A COSE EC2 P-256 key, as an authenticator registers it."""
+    private = ec.derive_private_key(scalar, ec.SECP256R1())
+    numbers = private.public_key().public_numbers()
+    key: dict[int, Any] = {
+        1: 2,
+        3: -7,
+        -1: 1,
+        -2: numbers.x.to_bytes(32, "big"),
+        -3: numbers.y.to_bytes(32, "big"),
     }
-    tool.update(changes)
-    return tool
+    if with_private:
+        key[-4] = private.private_numbers().private_value.to_bytes(32, "big")
+    return cbor2.dumps(key, canonical=True)
+
+
+def credential(rp_id: str, *, scalar: int = 0x1F2E3D4C, with_private: bool = False) -> dict:
+    return {
+        "credential_id": b64url(hashlib.sha256(f"credential {scalar}".encode()).digest()),
+        "public_key": b64url(cose_key(scalar, with_private=with_private)),
+        "rp_id": rp_id,
+    }
+
+
+def credential_sha256(value: dict[str, Any]) -> str:
+    return hashlib.sha256(CREDENTIAL_PREFIX + canonical(value)).hexdigest()
+
+
+def fingerprint(digest: str) -> str:
+    return " ".join(digest[i : i + 4] for i in range(0, 16, 4))
+
+
+READER_CREDENTIAL = credential("console.logs.example.com")
+OWNER_CREDENTIAL = credential("console.secrets.example.com", scalar=0x5A6B7C8D)
+REPLACEMENT_CREDENTIAL = credential("console.secrets.example.com", scalar=0x0A0B0C0D)
+SECURITY_KEY_CREDENTIAL = credential("aweb:", scalar=0x11223344)
 
 
 def reader_role(**changes: Any) -> dict[str, Any]:
@@ -72,9 +98,8 @@ def reader_role(**changes: Any) -> dict[str, Any]:
         "name": "logs.reader",
         "label": "Log reader",
         "description": "Reads the team's audit log in a passkey session on the console.",
-        "acts": list(APP_ACTS),
-        "principal": "refused",
-        "prepare_tool": "owner-act-prepare",
+        "acts": list(ACTS),
+        "notice_contact": False,
     }
     role.update(changes)
     return role
@@ -84,329 +109,139 @@ def owner_role(**changes: Any) -> dict[str, Any]:
     role: dict[str, Any] = {
         "name": "secrets.owner",
         "label": "Secrets owner",
-        "acts": list(APP_ACTS),
-        "principal": "required",
-        "prepare_tool": "owner-act-prepare",
+        "acts": list(ACTS),
+        "notice_contact": True,
     }
     role.update(changes)
     return role
 
 
+def without(mapping: dict[str, Any], key: str) -> dict[str, Any]:
+    return {k: v for k, v in mapping.items() if k != key}
+
+
 def manifest_case(
-    name: str,
-    *,
-    owner_acts: Any,
-    tools: list[dict[str, Any]] | None = None,
-    app_origin: str = APP_ORIGIN,
-    error: str | None = None,
+    name: str, *, owner_acts: Any, app_origin: str = APP_ORIGIN, error: str | None = None
 ) -> dict[str, Any]:
-    return {
-        "name": name,
-        "app_origin": app_origin,
-        "tools": [prepare_tool()] if tools is None else tools,
-        "owner_acts": owner_acts,
-        "error": error,
-    }
+    return {"name": name, "app_origin": app_origin, "owner_acts": owner_acts, "error": error}
 
 
 def manifest_cases() -> list[dict[str, Any]]:
     logs = {"origin": CONSOLE_ORIGIN, "roles": [reader_role()]}
-    secrets_tool = prepare_tool(scopes=["secrets:owner-act"])
     secrets = {"origin": SECRETS_CONSOLE, "roles": [owner_role()]}
 
     def with_roles(*roles: dict[str, Any]) -> dict[str, Any]:
         return {"origin": CONSOLE_ORIGIN, "roles": list(roles)}
 
+    def origin(value: str) -> dict[str, Any]:
+        return {"origin": value, "roles": [reader_role()]}
+
+    invalid = "owner_acts_invalid"
     return [
         manifest_case("logs_reader", owner_acts=logs),
+        manifest_case("secrets_owner", owner_acts=secrets, app_origin=SECRETS_ORIGIN),
         manifest_case(
-            "secrets_owner", owner_acts=secrets, tools=[secrets_tool], app_origin=SECRETS_ORIGIN
+            "origin_shares_the_app_host", owner_acts=origin(APP_ORIGIN + ":8443"), error=invalid
         ),
         manifest_case(
-            "origin_shares_the_app_host",
-            owner_acts={"origin": "https://logs.example.com:8443", "roles": [reader_role()]},
-            error="owner_acts_invalid",
+            "origin_with_a_path", owner_acts=origin(CONSOLE_ORIGIN + "/console"), error=invalid
         ),
         manifest_case(
-            "origin_with_a_path",
-            owner_acts={"origin": CONSOLE_ORIGIN + "/console", "roles": [reader_role()]},
-            error="owner_acts_invalid",
-        ),
-        manifest_case(
-            "origin_with_a_trailing_slash",
-            owner_acts={"origin": CONSOLE_ORIGIN + "/", "roles": [reader_role()]},
-            error="owner_acts_invalid",
+            "origin_with_a_trailing_slash", owner_acts=origin(CONSOLE_ORIGIN + "/"), error=invalid
         ),
         manifest_case(
             "origin_over_http",
-            owner_acts={"origin": "http://console.logs.example.com", "roles": [reader_role()]},
-            error="owner_acts_invalid",
+            owner_acts=origin("http://console.logs.example.com"),
+            error=invalid,
         ),
         manifest_case(
             "origin_with_an_upper_case_host",
-            owner_acts={"origin": "https://Console.logs.example.com", "roles": [reader_role()]},
-            error="owner_acts_invalid",
+            owner_acts=origin("https://Console.logs.example.com"),
+            error=invalid,
         ),
-        manifest_case("no_roles", owner_acts=with_roles(), error="owner_acts_invalid"),
+        manifest_case("no_roles", owner_acts=with_roles(), error=invalid),
         manifest_case(
-            "duplicate_role",
-            owner_acts=with_roles(reader_role(), reader_role()),
-            error="owner_acts_invalid",
+            "duplicate_role", owner_acts=with_roles(reader_role(), reader_role()), error=invalid
         ),
         manifest_case(
-            "role_name_of_23_bytes",
-            owner_acts=with_roles(reader_role(name=LONGEST_NAME)),
+            "role_name_of_64_bytes", owner_acts=with_roles(reader_role(name=LONGEST_NAME))
         ),
         manifest_case(
-            "role_name_of_24_bytes",
+            "role_name_of_65_bytes",
             owner_acts=with_roles(reader_role(name=LONGEST_NAME + "s")),
-            error="owner_acts_invalid",
+            error=invalid,
         ),
         manifest_case(
             "role_name_with_a_leading_digit",
             owner_acts=with_roles(reader_role(name="1logs.reader")),
-            error="owner_acts_invalid",
+            error=invalid,
         ),
         manifest_case(
             "role_name_of_one_segment",
             owner_acts=with_roles(reader_role(name="reader")),
-            error="owner_acts_invalid",
+            error=invalid,
+        ),
+        manifest_case(
+            "a_subset_of_the_acts",
+            owner_acts=with_roles(reader_role(acts=["human-role.designate", "human-role.revoke"])),
         ),
         manifest_case(
             "acts_out_of_order",
-            owner_acts=with_roles(
-                reader_role(acts=["app-role.designate", "app-credential.recover"])
-            ),
-            error="owner_acts_invalid",
+            owner_acts=with_roles(reader_role(acts=["human-role.revoke", "human-role.designate"])),
+            error=invalid,
+        ),
+        manifest_case("no_acts", owner_acts=with_roles(reader_role(acts=[])), error=invalid),
+        manifest_case(
+            "a_contact_act",
+            owner_acts=with_roles(reader_role(acts=["app-role.designate"])),
+            error=invalid,
         ),
         manifest_case(
             "act_outside_the_app_vocabulary",
             owner_acts=with_roles(reader_role(acts=["hook-binding.activate"])),
-            error="owner_acts_invalid",
+            error=invalid,
         ),
         manifest_case(
-            "principal_neither_required_nor_refused",
-            owner_acts=with_roles(reader_role(principal="optional")),
-            error="owner_acts_invalid",
+            "no_notice_contact_member",
+            owner_acts=with_roles(without(reader_role(), "notice_contact")),
+            error=invalid,
         ),
         manifest_case(
-            "prepare_tool_not_declared",
-            owner_acts=with_roles(reader_role(prepare_tool="reader-slot")),
-            error="owner_acts_invalid",
+            "notice_contact_not_a_boolean",
+            owner_acts=with_roles(reader_role(notice_contact="false")),
+            error=invalid,
         ),
         manifest_case(
-            "prepare_tool_also_a_surface_tool",
-            owner_acts=logs,
-            tools=[prepare_tool(invocation_contexts=["agent", "surface"])],
-            error="owner_acts_invalid",
+            "a_principal_member",
+            owner_acts=with_roles(reader_role(principal="required")),
+            error=invalid,
         ),
         manifest_case(
-            "prepare_tool_is_a_get",
-            owner_acts=logs,
-            tools=[prepare_tool(method="GET")],
-            error="owner_acts_invalid",
-        ),
-        manifest_case(
-            "prepare_tool_params_differ",
-            owner_acts=logs,
-            tools=[
-                prepare_tool(
-                    params=[{"in": "body", "name": name} for name in ["act", "role", "contact"]]
-                )
-            ],
-            error="owner_acts_invalid",
+            "a_prepare_tool_member",
+            owner_acts=with_roles(reader_role(prepare_tool="owner-act-prepare")),
+            error=invalid,
         ),
         manifest_case("owner_acts_null", owner_acts=None, error="manifest_invalid"),
     ]
 
 
-def prepare_case(
-    name: str, role: dict[str, Any], body: dict[str, Any], error: str | None = None
-) -> dict[str, Any]:
-    return {"name": name, "role": role, "body": body, "error": error}
-
-
-def prepare_cases() -> list[dict[str, Any]]:
-    reader = reader_role()
-    owner = owner_role()
-    designate = {
-        "act": "app-role.designate",
-        "role": "logs.reader",
-        "contact_sha256": sha256_hex(CONTACT),
-    }
-    owner_designate = {
-        "act": "app-role.designate",
-        "role": "secrets.owner",
-        "contact_sha256": sha256_hex(OWNER_CONTACT),
-        "principal": PRINCIPAL,
-    }
-    revoke = {"act": "app-role.revoke", "role": "logs.reader", "holder": READER_TOKEN}
-    return [
-        prepare_case("designate_a_reader", reader, designate),
-        prepare_case(
-            "recover_a_reader",
-            reader,
-            {**designate, "act": "app-credential.recover", "holder": READER_TOKEN},
-        ),
-        prepare_case("revoke_a_reader", reader, revoke),
-        prepare_case("designate_an_owner", owner, owner_designate),
-        prepare_case(
-            "recover_an_owner", owner, {**owner_designate, "act": "app-credential.recover"}
-        ),
-        prepare_case(
-            "revoke_an_owner",
-            owner,
-            {"act": "app-role.revoke", "role": "secrets.owner", "principal": PRINCIPAL},
-        ),
-        prepare_case(
-            "contact_on_revoke",
-            reader,
-            {**revoke, "contact_sha256": sha256_hex(CONTACT)},
-            "request_invalid",
-        ),
-        prepare_case(
-            "principal_for_a_role_that_refuses_one",
-            reader,
-            {**designate, "principal": PRINCIPAL},
-            "request_invalid",
-        ),
-        prepare_case(
-            "no_principal_for_a_role_that_requires_one",
-            owner,
-            {k: v for k, v in owner_designate.items() if k != "principal"},
-            "request_invalid",
-        ),
-        prepare_case(
-            "holder_on_designate", reader, {**designate, "holder": READER_TOKEN}, "request_invalid"
-        ),
-        prepare_case(
-            "holder_for_a_principal_role",
-            owner,
-            {"act": "app-role.revoke", "role": "secrets.owner", "holder": OWNER_TOKEN},
-            "request_invalid",
-        ),
-        prepare_case(
-            "act_not_declared_for_the_role",
-            reader_role(acts=["app-role.designate"]),
-            revoke,
-            "request_invalid",
-        ),
-        prepare_case(
-            "role_not_declared", reader, {**designate, "role": "logs.writer"}, "request_invalid"
-        ),
-        prepare_case("null_field", reader, {**designate, "principal": None}, "request_invalid"),
-        prepare_case(
-            "contact_hash_in_upper_case",
-            reader,
-            {**designate, "contact_sha256": sha256_hex(CONTACT).upper()},
-            "request_invalid",
-        ),
-    ]
-
-
-def client_case(
-    name: str,
-    response: dict[str, Any],
-    *,
-    request: dict[str, Any] | None = None,
-    error: str | None = None,
-) -> dict[str, Any]:
-    return {
-        "name": name,
-        "declared": {
-            "app_id": "logs",
-            "owner_acts_origin": CONSOLE_ORIGIN,
-            "role": reader_role(),
-        },
-        "installation_id": INSTALLATION,
-        "typed_contact": CONTACT,
-        "request": request
-        or {
-            "act": "app-role.designate",
-            "role": "logs.reader",
-            "contact_sha256": sha256_hex(CONTACT),
-        },
-        "response": response,
-        "error": error,
-    }
-
-
-def client_cases() -> list[dict[str, Any]]:
-    good = {
-        "act": "app-role.designate",
-        "aud": CONSOLE_ORIGIN,
-        "subject": {
-            "app_id": "logs",
-            "installation_id": INSTALLATION,
-            "role": READER_TOKEN,
-            "contact_sha256": sha256_hex(CONTACT),
-        },
-        "expires_at": "2026-11-07T13:00:00Z",
-    }
-
-    def changed(path: str, value: Any) -> dict[str, Any]:
-        response = copy.deepcopy(good)
-        target = response
-        *parents, leaf = path.split(".")
-        for parent in parents:
-            target = target[parent]
-        target[leaf] = value
-        return response
-
-    revoke_request = {"act": "app-role.revoke", "role": "logs.reader", "holder": READER_TOKEN}
-    revoke = {
-        "act": "app-role.revoke",
-        "aud": CONSOLE_ORIGIN,
-        "subject": {
-            "app_id": "logs",
-            "installation_id": INSTALLATION,
-            "role": READER_TOKEN,
-            "subject_ref": HOLDER_REF,
-        },
-        "expires_at": "2026-11-07T13:00:00Z",
-    }
-    other_holder = copy.deepcopy(revoke)
-    other_holder["subject"]["role"] = "logs.reader.ffeeddccbbaa99887766554433221100"
-    return [
-        client_case("accepted", good),
-        client_case("revoke_accepted", revoke, request=revoke_request),
-        client_case(
-            "aud_is_the_agent_origin", changed("aud", APP_ORIGIN), error="prepare_mismatch"
-        ),
-        client_case(
-            "another_act", changed("act", "app-credential.recover"), error="prepare_mismatch"
-        ),
-        client_case("another_app", changed("subject.app_id", "secrets"), error="prepare_mismatch"),
-        client_case(
-            "another_installation",
-            changed("subject.installation_id", SECRETS_INSTALLATION),
-            error="prepare_mismatch",
-        ),
-        client_case(
-            "token_of_another_role", changed("subject.role", OWNER_TOKEN), error="prepare_mismatch"
-        ),
-        client_case(
-            "token_suffix_of_31_hex",
-            changed("subject.role", READER_TOKEN[:-1]),
-            error="prepare_mismatch",
-        ),
-        client_case(
-            "contact_hash_of_another_contact",
-            changed("subject.contact_sha256", sha256_hex(OTHER_CONTACT)),
-            error="prepare_mismatch",
-        ),
-        client_case(
-            "designation_naming_a_subject",
-            changed("subject.subject_ref", HOLDER_REF),
-            error="prepare_mismatch",
-        ),
-        client_case(
-            "revoke_of_another_holder",
-            other_holder,
-            request=revoke_request,
-            error="prepare_mismatch",
-        ),
-    ]
+def credential_cases() -> list[dict[str, Any]]:
+    cases = []
+    for name, value in (
+        ("browser_passkey", READER_CREDENTIAL),
+        ("browser_passkey_of_another_origin", OWNER_CREDENTIAL),
+        ("security_key", SECURITY_KEY_CREDENTIAL),
+    ):
+        digest = credential_sha256(value)
+        cases.append(
+            {
+                "name": name,
+                "credential": value,
+                "credential_sha256": digest,
+                "fingerprint": fingerprint(digest),
+            }
+        )
+    return cases
 
 
 def signed(act: dict[str, Any], seed: bytes) -> tuple[str, str]:
@@ -430,12 +265,51 @@ def owner_act(name: str, aud: str, subject: dict[str, Any], *, seed: bytes = TEA
     }
 
 
+def holding(
+    app_id: str,
+    installation_id: str,
+    role: str,
+    value: dict[str, Any] | None = None,
+    notice_contact: str | None = None,
+) -> dict[str, Any]:
+    """The subject of an act: with a credential for designate and replace, and
+    a notice contact's hash when the role declares one."""
+    subject: dict[str, Any] = {
+        "app_id": app_id,
+        "installation_id": installation_id,
+        "role": role,
+        "principal": PRINCIPAL,
+    }
+    if value is not None:
+        subject["credential_sha256"] = credential_sha256(value)
+    if notice_contact is not None:
+        subject["notice_contact_sha256"] = sha256_hex(notice_contact)
+    return subject
+
+
+def expected_subject(act: dict[str, Any], body: dict[str, Any]) -> dict[str, Any] | None:
+    """The subject the app builds from its own installation, the act's role and
+    principal, and the body's credential and notice contact; None for an act
+    outside the human-role acts, which names no principal."""
+    if act["act"] not in ACTS:
+        return None
+    subject = act["subject"]
+    return holding(
+        subject["app_id"],
+        subject["installation_id"],
+        subject["role"],
+        body.get("credential"),
+        body.get("notice_contact"),
+    )
+
+
 def delivery_case(
     name: str,
     *,
     act: dict[str, Any],
-    row: dict[str, Any] | None,
-    contact: str | None,
+    role: dict[str, Any],
+    credential_value: dict[str, Any] | None = None,
+    notice_contact: str | None = None,
     status: int,
     detail: str | None = None,
     response: dict[str, Any] | None = None,
@@ -443,167 +317,354 @@ def delivery_case(
     seed: bytes = TEAM_SEED,
     nonce_used: bool = False,
     registry: str = "available",
+    principal_status: str = "member_human",
+    holding_current: bool | None = None,
+    security_key: bool = False,
     body: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     signing, signature = signed(act, seed)
     if body is None:
         body = {"signing": signing, "signature": signature}
-        if contact is not None:
-            body["contact"] = contact
+        if credential_value is not None:
+            body["credential"] = credential_value
+        if notice_contact is not None:
+            body["notice_contact"] = notice_contact
+    if holding_current is None:
+        holding_current = act["act"] != "human-role.designate"
+    app_id = act["subject"]["app_id"]
     return {
         "name": name,
+        "app": {
+            "app_id": app_id,
+            "owner_acts_origin": CONSOLE_ORIGIN if app_id == "logs" else SECRETS_CONSOLE,
+            "role": role,
+            "security_key": security_key,
+        },
         "verifier": {
             "team_id": TEAM_ID,
             "current_team_key_did": did_key(TEAM_SEED),
-            "audience": CONSOLE_ORIGIN if act["subject"]["app_id"] == "logs" else SECRETS_CONSOLE,
-            "acts": APP_ACTS,
+            "audience": CONSOLE_ORIGIN if app_id == "logs" else SECRETS_CONSOLE,
+            "acts": ACTS,
             "now": NOW,
             "nonce_used": nonce_used,
             "registry": registry,
         },
-        "row": row,
+        "state": {"holding": holding_current, "principal_status": principal_status},
         "act": act,
         "body": body,
+        "expected_subject": expected_subject(act, body) if status != 400 else None,
         "verifier_code": verifier_code,
         "result": {"status": status, "detail": detail, "response": response},
     }
 
 
+def accepted(act: dict[str, Any], effective_at: str = NOW) -> dict[str, Any]:
+    return {
+        "act": act["act"],
+        "role": act["subject"]["role"],
+        "principal": act["subject"]["principal"],
+        "effective_at": effective_at,
+    }
+
+
 def delivery_cases() -> list[dict[str, Any]]:
-    reader = {
-        "app_id": "logs",
-        "installation_id": INSTALLATION,
-        "role": READER_TOKEN,
-        "contact_sha256": sha256_hex(CONTACT),
-    }
-    holder = {
-        "app_id": "logs",
-        "installation_id": INSTALLATION,
-        "role": READER_TOKEN,
-        "subject_ref": HOLDER_REF,
-    }
-    owner = {
-        "app_id": "secrets",
-        "installation_id": SECRETS_INSTALLATION,
-        "role": OWNER_TOKEN,
-        "contact_sha256": sha256_hex(OWNER_CONTACT),
-    }
-    designate = owner_act("app-role.designate", CONSOLE_ORIGIN, reader)
-    revoke = owner_act("app-role.revoke", CONSOLE_ORIGIN, holder)
-    recover = owner_act("app-credential.recover", SECRETS_CONSOLE, owner)
+    reader, owner = reader_role(), owner_role()
+    reader_subject = holding("logs", INSTALLATION, "logs.reader", READER_CREDENTIAL)
+    owner_subject = holding(
+        "secrets", SECRETS_INSTALLATION, "secrets.owner", OWNER_CREDENTIAL, NOTICE_CONTACT
+    )
+    designate = owner_act("human-role.designate", CONSOLE_ORIGIN, reader_subject)
+    designate_owner = owner_act("human-role.designate", SECRETS_CONSOLE, owner_subject)
+    replace = owner_act(
+        "human-credential.replace",
+        SECRETS_CONSOLE,
+        holding(
+            "secrets",
+            SECRETS_INSTALLATION,
+            "secrets.owner",
+            REPLACEMENT_CREDENTIAL,
+            NOTICE_CONTACT,
+        ),
+    )
+    revoke = owner_act(
+        "human-role.revoke", CONSOLE_ORIGIN, holding("logs", INSTALLATION, "logs.reader")
+    )
+    security_key = owner_act(
+        "human-role.designate",
+        CONSOLE_ORIGIN,
+        holding("logs", INSTALLATION, "logs.reader", SECURITY_KEY_CREDENTIAL),
+    )
+    other_host = credential("logs.example.com")
+    with_private = credential("console.logs.example.com", with_private=True)
+    padded = {**READER_CREDENTIAL, "credential_id": READER_CREDENTIAL["credential_id"] + "="}
     designate_signing, designate_signature = signed(designate, TEAM_SEED)
+    contact_act = owner_act(
+        "app-role.designate",
+        CONSOLE_ORIGIN,
+        {
+            "app_id": "logs",
+            "installation_id": INSTALLATION,
+            "role": "logs.reader.00112233445566778899aabbccddeeff",
+            "contact_sha256": sha256_hex(NOTICE_CONTACT),
+        },
+    )
+    refused = {"status": 403, "detail": "owner_required"}
     return [
         delivery_case(
             "designate_a_reader",
             act=designate,
-            row=reader,
-            contact=CONTACT,
+            role=reader,
+            credential_value=READER_CREDENTIAL,
             status=200,
-            response={"act": "app-role.designate", "role": READER_TOKEN, "effective_at": NOW},
+            response=accepted(designate),
         ),
         delivery_case(
-            "revoke_a_reader",
+            "designate_an_owner_with_a_notice_contact",
+            act=designate_owner,
+            role=owner,
+            credential_value=OWNER_CREDENTIAL,
+            notice_contact=NOTICE_CONTACT,
+            status=200,
+            response=accepted(designate_owner),
+        ),
+        delivery_case(
+            "replace_an_owner_credential_after_the_cooling_off_period",
+            act=replace,
+            role=owner,
+            credential_value=REPLACEMENT_CREDENTIAL,
+            notice_contact=NOTICE_CONTACT,
+            status=200,
+            response=accepted(replace, REPLACEMENT_EFFECTIVE),
+        ),
+        delivery_case(
+            "revoke_a_reader", act=revoke, role=reader, status=200, response=accepted(revoke)
+        ),
+        delivery_case(
+            "revoke_a_former_member",
             act=revoke,
-            row=holder,
-            contact=None,
+            role=reader,
+            principal_status="not_member",
             status=200,
-            response={"act": "app-role.revoke", "role": READER_TOKEN, "effective_at": NOW},
+            response=accepted(revoke),
         ),
         delivery_case(
-            "recover_an_owner_after_the_cooling_off_period",
-            act=recover,
-            row=owner,
-            contact=OWNER_CONTACT,
+            "revoke_while_the_principal_status_is_unavailable",
+            act=revoke,
+            role=reader,
+            principal_status="unavailable",
             status=200,
-            response={
-                "act": "app-credential.recover",
-                "role": OWNER_TOKEN,
-                "effective_at": "2026-11-10T12:01:00Z",
-            },
+            response=accepted(revoke),
+        ),
+        delivery_case(
+            "security_key_where_the_app_enables_it",
+            act=security_key,
+            role=reader,
+            credential_value=SECURITY_KEY_CREDENTIAL,
+            security_key=True,
+            status=200,
+            response=accepted(security_key),
+        ),
+        delivery_case(
+            "security_key_where_the_app_does_not_enable_it",
+            act=security_key,
+            role=reader,
+            credential_value=SECURITY_KEY_CREDENTIAL,
+            **refused,
+        ),
+        delivery_case(
+            "credential_for_the_agent_host",
+            act=owner_act(
+                "human-role.designate",
+                CONSOLE_ORIGIN,
+                holding("logs", INSTALLATION, "logs.reader", other_host),
+            ),
+            role=reader,
+            credential_value=other_host,
+            **refused,
+        ),
+        delivery_case(
+            "credential_with_a_private_key_parameter",
+            act=owner_act(
+                "human-role.designate",
+                CONSOLE_ORIGIN,
+                holding("logs", INSTALLATION, "logs.reader", with_private),
+            ),
+            role=reader,
+            credential_value=with_private,
+            **refused,
+        ),
+        delivery_case(
+            "credential_that_does_not_match_the_act",
+            act=designate,
+            role=reader,
+            credential_value=credential("console.logs.example.com", scalar=0x99),
+            verifier_code="subject_mismatch",
+            **refused,
+        ),
+        delivery_case(
+            "notice_contact_that_does_not_match_the_act",
+            act=designate_owner,
+            role=owner,
+            credential_value=OWNER_CREDENTIAL,
+            notice_contact=OTHER_CONTACT,
+            verifier_code="subject_mismatch",
+            **refused,
+        ),
+        delivery_case(
+            "principal_not_a_member",
+            act=designate,
+            role=reader,
+            credential_value=READER_CREDENTIAL,
+            principal_status="not_member",
+            status=403,
+            detail="principal_not_member",
+        ),
+        delivery_case(
+            "principal_not_human",
+            act=designate,
+            role=reader,
+            credential_value=READER_CREDENTIAL,
+            principal_status="not_human",
+            status=403,
+            detail="principal_not_human",
+        ),
+        delivery_case(
+            "principal_status_unavailable",
+            act=designate,
+            role=reader,
+            credential_value=READER_CREDENTIAL,
+            principal_status="unavailable",
+            status=503,
+            detail="principal_status_unavailable",
+        ),
+        delivery_case(
+            "designate_a_current_holder",
+            act=designate,
+            role=reader,
+            credential_value=READER_CREDENTIAL,
+            holding_current=True,
+            **refused,
+        ),
+        delivery_case(
+            "replace_without_a_holding",
+            act=replace,
+            role=owner,
+            credential_value=REPLACEMENT_CREDENTIAL,
+            notice_contact=NOTICE_CONTACT,
+            holding_current=False,
+            **refused,
+        ),
+        delivery_case(
+            "revoke_without_a_holding",
+            act=revoke,
+            role=reader,
+            holding_current=False,
+            **refused,
+        ),
+        delivery_case(
+            "a_contact_act",
+            act=contact_act,
+            role=reader,
+            verifier_code="act_not_allowed",
+            **refused,
+        ),
+        delivery_case(
+            "role_not_declared",
+            act=designate,
+            role=reader_role(name="logs.auditor"),
+            credential_value=READER_CREDENTIAL,
+            **refused,
+        ),
+        delivery_case(
+            "act_not_declared_for_the_role",
+            act=replace,
+            role=owner_role(acts=["human-role.designate", "human-role.revoke"]),
+            credential_value=REPLACEMENT_CREDENTIAL,
+            notice_contact=NOTICE_CONTACT,
+            **refused,
         ),
         delivery_case(
             "aud_is_the_agent_origin",
-            act=owner_act("app-role.designate", APP_ORIGIN, reader),
-            row=reader,
-            contact=CONTACT,
-            status=403,
-            detail="owner_required",
+            act=owner_act("human-role.designate", APP_ORIGIN, reader_subject),
+            role=reader,
+            credential_value=READER_CREDENTIAL,
             verifier_code="audience_mismatch",
+            **refused,
         ),
         delivery_case(
             "signed_by_an_admin_key",
-            act=owner_act("app-role.designate", CONSOLE_ORIGIN, reader, seed=ADMIN_SEED),
+            act=owner_act("human-role.designate", CONSOLE_ORIGIN, reader_subject, seed=ADMIN_SEED),
             seed=ADMIN_SEED,
-            row=reader,
-            contact=CONTACT,
-            status=403,
-            detail="owner_required",
+            role=reader,
+            credential_value=READER_CREDENTIAL,
             verifier_code="owner_required",
+            **refused,
         ),
         delivery_case(
             "nonce_already_used",
             act=designate,
-            row=reader,
-            contact=CONTACT,
+            role=reader,
+            credential_value=READER_CREDENTIAL,
             nonce_used=True,
-            status=403,
-            detail="owner_required",
             verifier_code="nonce_reused",
+            **refused,
         ),
         delivery_case(
-            "row_for_another_contact",
-            act=owner_act(
-                "app-role.designate",
-                CONSOLE_ORIGIN,
-                {**reader, "contact_sha256": sha256_hex(OTHER_CONTACT)},
-            ),
-            row=reader,
-            contact=CONTACT,
-            status=403,
-            detail="owner_required",
-            verifier_code="subject_mismatch",
-        ),
-        delivery_case(
-            "contact_that_does_not_match_the_row",
-            act=designate,
-            row=reader,
-            contact=OTHER_CONTACT,
-            status=403,
-            detail="owner_required",
-        ),
-        delivery_case(
-            "no_pending_row",
-            act=designate,
-            row=None,
-            contact=CONTACT,
-            status=403,
-            detail="owner_required",
-        ),
-        delivery_case(
-            "contact_on_revoke",
+            "credential_on_revoke",
             act=revoke,
-            row=holder,
-            contact=CONTACT,
+            role=reader,
+            credential_value=READER_CREDENTIAL,
             status=400,
             detail="request_invalid",
         ),
         delivery_case(
-            "no_contact_on_designate",
+            "no_credential_on_designate",
             act=designate,
-            row=reader,
-            contact=None,
+            role=reader,
+            status=400,
+            detail="request_invalid",
+        ),
+        delivery_case(
+            "notice_contact_for_a_role_that_declares_none",
+            act=designate,
+            role=reader,
+            credential_value=READER_CREDENTIAL,
+            notice_contact=NOTICE_CONTACT,
+            status=400,
+            detail="request_invalid",
+        ),
+        delivery_case(
+            "no_notice_contact_for_a_role_that_declares_one",
+            act=designate_owner,
+            role=owner,
+            credential_value=OWNER_CREDENTIAL,
+            status=400,
+            detail="request_invalid",
+        ),
+        delivery_case(
+            "credential_id_with_padding",
+            act=designate,
+            role=reader,
+            credential_value=padded,
+            status=400,
+            detail="request_invalid",
+        ),
+        delivery_case(
+            "credential_with_another_field",
+            act=designate,
+            role=reader,
+            credential_value={**READER_CREDENTIAL, "transports": "usb"},
             status=400,
             detail="request_invalid",
         ),
         delivery_case(
             "a_field_outside_the_body",
             act=designate,
-            row=reader,
-            contact=CONTACT,
+            role=reader,
             body={
                 "signing": designate_signing,
                 "signature": designate_signature,
-                "contact": CONTACT,
+                "credential": READER_CREDENTIAL,
                 "team_id": TEAM_ID,
             },
             status=400,
@@ -612,14 +673,11 @@ def delivery_cases() -> list[dict[str, Any]]:
         delivery_case(
             "signing_in_url_safe_base64_without_padding",
             act=designate,
-            row=reader,
-            contact=CONTACT,
+            role=reader,
             body={
-                "signing": base64.urlsafe_b64encode(owner_act_signing_bytes(designate))
-                .decode("ascii")
-                .rstrip("="),
+                "signing": b64url(owner_act_signing_bytes(designate)),
                 "signature": designate_signature,
-                "contact": CONTACT,
+                "credential": READER_CREDENTIAL,
             },
             status=400,
             detail="request_invalid",
@@ -628,24 +686,25 @@ def delivery_cases() -> list[dict[str, Any]]:
     ]
 
 
-def forged_signature_pairs(act: dict[str, Any], row: dict[str, Any]) -> list[dict[str, Any]]:
+def forged_signature_pairs(act: dict[str, Any], role: dict[str, Any]) -> list[dict[str, Any]]:
     """An act claiming the team key but signed by another key, with and
-    without the app's row, with the registry readable and not: the row never
-    changes the answer."""
+    without a current holding, with the registry readable and not: the holding
+    never changes the answer."""
     cases = []
     for registry, status, detail, code in (
         ("available", 403, "owner_required", "bad_signature"),
         ("unavailable", 503, "team_key_unavailable", None),
     ):
-        for label, present in (("with_a_row", row), ("without_a_row", None)):
+        for label, current in (("with_a_holding", True), ("without_a_holding", False)):
             cases.append(
                 delivery_case(
                     f"forged_signature_{label}_registry_{registry}",
                     act=act,
                     seed=ADMIN_SEED,
-                    row=present,
-                    contact=CONTACT,
+                    role=role,
+                    credential_value=READER_CREDENTIAL,
                     registry=registry,
+                    holding_current=current,
                     status=status,
                     detail=detail,
                     verifier_code=code,
@@ -654,14 +713,13 @@ def forged_signature_pairs(act: dict[str, Any], row: dict[str, Any]) -> list[dic
     return cases
 
 
-def token_cases() -> list[dict[str, Any]]:
-    hex40 = "0123456789abcdef0123456789abcdef01234567"
+def role_cases() -> list[dict[str, Any]]:
     return [
-        {"name": "reader_token", "token": READER_TOKEN, "valid": True},
-        {"name": "owner_token", "token": OWNER_TOKEN, "valid": True},
-        {"name": "longest_name_and_suffix", "token": f"{LONGEST_NAME}.{hex40}", "valid": True},
-        {"name": "name_one_byte_too_long", "token": f"{LONGEST_NAME}s.{hex40}", "valid": False},
-        {"name": "leading_digit", "token": f"1logs.reader.{hex40}", "valid": False},
+        {"name": "reader", "role": "logs.reader", "valid": True},
+        {"name": "owner", "role": "secrets.owner", "valid": True},
+        {"name": "longest_name", "role": LONGEST_NAME, "valid": True},
+        {"name": "name_one_byte_too_long", "role": LONGEST_NAME + "s", "valid": False},
+        {"name": "leading_digit", "role": "1logs.reader", "valid": False},
     ]
 
 
@@ -669,22 +727,20 @@ def build_vector() -> dict[str, Any]:
     return {
         "name": "owner-act-delivery",
         "version": 1,
-        "status": "specified (aweb-acgh.16.38); not shipped",
+        "status": "specified (aweb-acgh.16.38, aweb-acwd.4.1); not shipped",
         "scheme": {
             "authority": "docs/owner-act-delivery.md",
-            "manifest": "manifest_cases: a version 3 manifest's owner_acts with the tools it names; error is the manifest refusal code, or null when it is valid",
-            "prepare": "prepare_cases: the app's reading of a prepare body against the declared role; error is the 400 detail, or null when it records or reads a row",
-            "client": "client_cases: the client's checks of a prepare response before it shows the owner anything; error is the local refusal code, or null when it may sign",
-            "delivery": "delivery_cases: a delivery body against the app's own row (null when it has none); verifier_code is the owner-act/1 refusal behind a 403, or null when the act verifies; result is the HTTP status, detail and response",
+            "manifest": "manifest_cases: a version 3 manifest's owner_acts; error is the manifest refusal code, or null when it is valid",
+            "credential": "credential_cases: credential_sha256 is the lowercase hex SHA-256 of 'aweb.human-credential/1' and a newline, then the credential's canonical JSON; fingerprint is its first 16 hex characters in groups of four",
+            "delivery": "delivery_cases: a delivery body to the app's human origin; app is the app's declaration and whether it enables the optional security key; state is whether (installation, role, principal) has a current holding and what the registry reports for the principal (member_human, not_member, not_human, unavailable); expected_subject is the subject the app builds, null when the body is refused before it; verifier_code is the owner-act/1 refusal behind a 403, or null when the act verifies; result is the HTTP status, detail and response",
             "signing": "standard base64 with padding of the owner-act/1 signing bytes",
-            "role_token": "the declared role name (a leading letter, at most 23 bytes), a dot, and 32 to 40 lowercase hex characters; token_cases pin the bound against the owner-act/1 signer",
-            "registry": "delivery_cases' verifier.registry says whether stage 2 can read the team key; the forged_signature cases pair a present and an absent row under each, and the pair's results are equal",
+            "role": "role_cases pin the declared role name, which is the act's role, against the owner-act/1 signer: a leading letter, at most 64 bytes",
+            "registry": "delivery_cases' verifier.registry says whether stage 2 can read the team key; the forged_signature cases pair a present and an absent holding under each, and the pair's results are equal",
         },
         "manifest_cases": manifest_cases(),
-        "prepare_cases": prepare_cases(),
-        "client_cases": client_cases(),
+        "credential_cases": credential_cases(),
         "delivery_cases": delivery_cases(),
-        "token_cases": token_cases(),
+        "role_cases": role_cases(),
     }
 
 
