@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 from fastapi import Request, Response
-from starlette.responses import StreamingResponse
+from upstream.app import _ResetResponse
 
 from tests.harness import running_upstream
 from tests.test_admission import POLICY_BODY, SECRET
@@ -99,14 +99,7 @@ async def test_response_capacity_is_released_after_success_failure_and_cancellat
             entered.set()
             await release.wait()
             if exit_path == "stream_failure":
-
-                async def broken():
-                    yield b'{"ok":'
-                    # Flush a real partial response before breaking the stream.
-                    await asyncio.sleep(0.05)
-                    raise RuntimeError("fixture response stream interrupted")
-
-                return StreamingResponse(broken(), media_type="application/json")
+                return _ResetResponse()
             return Response(b'{"ok":true}', media_type="application/json")
 
         service = await setup(db, fence, tmp_path, upstream, response_budget_bytes=LIMIT)
@@ -139,3 +132,35 @@ async def test_response_capacity_is_released_after_success_failure_and_cancellat
             if not sender.done():
                 sender.cancel()
             await asyncio.gather(sender, return_exceptions=True)
+
+
+@pytest.mark.parametrize("maximum", [None, 131072, 0, -1])
+async def test_response_budget_environment_is_validated_by_the_actual_root(
+    test_db_factory, registry, tmp_path, monkeypatch, maximum
+):
+    from aweb_naapp_testing.smtp import SmtpServer
+
+    from aweb_secrets.composition import create_service
+    from aweb_secrets.config import ServiceSettings
+    from tests.test_composition import settings
+
+    monkeypatch.delenv("SECRETS_BROKER_RESPONSE_BUDGET_BYTES", raising=False)
+    database = await test_db_factory.create_db(suffix="response_budget_config")
+    with SmtpServer(tmp_path / "smtp") as smtp:
+        data = settings(database, tmp_path, smtp).model_dump(
+            exclude={"broker_response_budget_bytes"}
+        )
+        if maximum is not None:
+            monkeypatch.setenv("SECRETS_BROKER_RESPONSE_BUDGET_BYTES", str(maximum))
+        if maximum is not None and maximum <= 0:
+            with pytest.raises(ValueError):
+                ServiceSettings(_env_file=None, **data)
+            return
+        configured = ServiceSettings(_env_file=None, **data)
+        assert configured.broker_response_budget_bytes == (
+            256 * 1024 * 1024 if maximum is None else maximum
+        )
+        service = create_service(configured, awid_transport=registry.transport)
+        async with service.api_app.router.lifespan_context(service.api_app):
+            assert service.runtime.db() is not None
+        assert service.runtime.connected_db() is None
