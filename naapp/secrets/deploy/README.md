@@ -93,7 +93,9 @@ mandatory floor. DNS failure or any refused answer stops startup. Delivery
 re-resolves and checks again, so a later DNS change does not bypass the guard.
 
 `SECRETS_HOOK_CA_FILE` is optional, including for public delivery; it adds trust
-anchors while keeping certificate verification. Broker `SECRETS_EGRESS_CA_FILE`
+anchors while keeping certificate verification. This trust applies to **all
+hook deliveries**, including public origins outside the internal allowlist;
+choose a CA authorized for that scope. Broker `SECRETS_EGRESS_CA_FILE`
 and `SECRETS_INTERNAL_DESTINATIONS` are independent and never implicitly reused.
 Unlisted origins retain public-only behavior; a registration cannot choose a
 new internal origin or widen the operator set.
