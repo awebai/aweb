@@ -229,6 +229,28 @@ def manifest_cases() -> list[dict[str, Any]]:
             app_origin="https://console.logs.example.com.",
             error=invalid,
         ),
+        *v2_null_parity_cases(),
+    ]
+
+
+def v2_null_parity_cases() -> list[dict[str, Any]]:
+    """Fields a session action inherits from the v2 tool object keep v2's
+    handling of null."""
+
+    def secrets(action: dict[str, Any]) -> dict[str, Any]:
+        return {"origin": SECRETS_CONSOLE, "roles": [owner_role()], "session_actions": [action]}
+
+    return [
+        manifest_case(
+            "session_action_description_null",
+            owner_acts=secrets(read_action(description=None)),
+            app_origin=SECRETS_ORIGIN,
+        ),
+        manifest_case(
+            "stage_action_body_mode_null",
+            owner_acts=secrets(stage_action(body={"mode": None})),
+            app_origin=SECRETS_ORIGIN,
+        ),
     ]
 
 
