@@ -28,6 +28,10 @@ checks. Scope promotion to both runner and values source/build trees, manifests,
 locks and their shared build inputs. Only the allowed version/dependency changes
 may differ from the selected RC. The proposed image lanes follow today's
 final-version OCI lanes; this proposal does not add an OCI prerelease policy.
+Following the existing Python RC convention, publish the values RC to PyPI
+before qualifying the runner RC installed from registry dependencies, then
+publish the runner RC through the same lane. Do not introduce a private index.
+Final promotion and customer publication still require the full Secrets gate.
 Each component may have its own version. A release record binds the compatible
 component versions and their exact source SHAs; matching version numbers alone
 do not establish compatibility.
@@ -84,9 +88,9 @@ and component source have landed:
    allowed by the existing RC promotion checks. The qualification includes
    actual packaged service images and the runner installed in a clean
    environment using registry dependencies, not repository editable sources.
-   Create the release tags through the existing candidate entry point. Keep
-   the release inside the existing 45-minute tag-to-live budget; qualification
-   precedes tagging, rather than starting a full journey inside that window.
+   Create the release tags through the existing candidate entry point. The
+   release owner's operating target is 45 minutes from tag to live; qualification
+   precedes final tagging, rather than starting a full journey inside that window.
 5. The release owner publishes the selected immutable tags/artifacts through
    the existing lane. Read back remote versions/digests/checksums and verify
    them using the existing publisher's verification. Do not replace an existing
