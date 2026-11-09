@@ -223,6 +223,15 @@ async def tail(
 # reads only the events not yet projected. Projection leaves no gaps below that
 # position: appends serialize on the team's locked chain head, so positions
 # commit in order, and each batch of projections inserts atomically.
+_INSERT_PROJECTION = (
+    "INSERT INTO {{tables.read_events}} (team_id, chain_epoch, team_seq, purged, hook,"
+    " event_id, event_type, mediation, occurred_at, result_status, trace_id,"
+    " actor_did_key, actor_did_aw, app_id, operation_id, job_id, dispatch_id,"
+    " approval_id, grant_id, secret_id)"
+    " VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,"
+    " $17, $18, $19, $20)"
+    " ON CONFLICT (team_id, chain_epoch, team_seq) DO NOTHING"
+)
 _UNPROJECTED = (
     "SELECT e.chain_epoch, e.team_seq, e.hook, e.signing_bytes"
     " FROM {{tables.chain_events}} e"
@@ -232,6 +241,9 @@ _UNPROJECTED = (
     "   COALESCE((SELECT r.team_seq FROM {{tables.read_events}} r WHERE r.team_id = $1"
     "     ORDER BY r.chain_epoch DESC, r.team_seq DESC LIMIT 1), 0))"
     " ORDER BY e.chain_epoch, e.team_seq LIMIT $2"
+    # A purge of the same events waits for this projection, and this one for
+    # a purge, so no projection keeps content that a purge removed.
+    " FOR SHARE OF e"
 )
 
 
@@ -256,17 +268,38 @@ async def project_batch(
     work done holding that lock. Readers' catch-up projects whatever remains."""
     rows = await db.fetch_all(_UNPROJECTED, team_id, limit)
     if rows:
-        await db.executemany(
-            "INSERT INTO {{tables.read_events}} (team_id, chain_epoch, team_seq, purged, hook,"
-            " event_id, event_type, mediation, occurred_at, result_status, trace_id,"
-            " actor_did_key, actor_did_aw, app_id, operation_id, job_id, dispatch_id,"
-            " approval_id, grant_id, secret_id)"
-            " VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,"
-            " $17, $18, $19, $20)"
-            " ON CONFLICT (team_id, chain_epoch, team_seq) DO NOTHING",
-            [_projection(team_id, row) for row in rows],
-        )
+        await db.executemany(_INSERT_PROJECTION, [_projection(team_id, row) for row in rows])
     return len(rows)
+
+
+async def reproject(
+    tx: TransactionManager, team_id: str, positions: Sequence[tuple[int, int]]
+) -> None:
+    """Project these positions again from the chain's current rows, as after a
+    purge. A position not yet projected is left to catch-up, which never skips
+    a position below the highest projected one."""
+    if not positions:
+        return
+    epochs, seqs = [epoch for epoch, _ in positions], [seq for _, seq in positions]
+    removed = await tx.fetch_all(
+        "DELETE FROM {{tables.read_events}} WHERE team_id = $1"
+        " AND (chain_epoch, team_seq) IN (SELECT * FROM unnest($2::int[], $3::bigint[]))"
+        " RETURNING chain_epoch, team_seq",
+        team_id,
+        epochs,
+        seqs,
+    )
+    if not removed:
+        return
+    rows = await tx.fetch_all(
+        "SELECT e.chain_epoch, e.team_seq, e.hook, e.signing_bytes FROM {{tables.chain_events}} e"
+        " WHERE e.team_id = $1"
+        " AND (e.chain_epoch, e.team_seq) IN (SELECT * FROM unnest($2::int[], $3::bigint[]))",
+        team_id,
+        [row["chain_epoch"] for row in removed],
+        [row["team_seq"] for row in removed],
+    )
+    await tx.executemany(_INSERT_PROJECTION, [_projection(team_id, row) for row in rows])
 
 
 def _projection(team_id: str, row: Mapping[str, Any]) -> tuple[Any, ...]:
