@@ -280,7 +280,7 @@ confirmed issuance (including local installation pending), and unresolved
 outcome. Retain the same ID and signed content and reconcile/replay that exact
 operation without another charge. Do not silently retry under a new ID or
 report an unresolved team as an uncharged failure. This applies the existing
-[BYOT uncertainty rule](../byot-onboarding-contract.md#team-creation) to this
+[BYOT uncertainty rule](../byot-onboarding-contract.md#creating-another-hosted-team) to this
 operation; exact receipt field names are a freeze obligation.
 
 The total counts **successful certificate issuances**, not live workers.
@@ -473,8 +473,17 @@ No extra service or new cache is justified. Registration must be online and
 fails closed when the authority is unavailable; a lost write reply is reconciled
 as an uncertain outcome, not presumed to have failed before commit.
 
-Price: inherited membership currentness costs the same AWID status-read count
-as v1: **one read per leaf per original 60-second window**, not one per edge.
+Price: inherited membership currentness requires **one effective-status read
+per leaf per usable original observation window**, never one per edge. The
+window is configurable and at most 60 seconds, bounded by earlier dependency
+expiry; cache hits do not restart it. Read-count parity applies only to the
+existing token-free naapp per-certificate status path. The service-token path
+instead caches team facts and shares a refresh across members
+(`naapp-lib/src/aweb_naapp/runtime/team_auth.py:260-278,311-336,393-400`). Moving
+that baseline to per-leaf reads increases request cardinality with active
+members. The rollout inventory must measure incremental traffic for those
+team-shared and other consumer baselines; there is no universal v1 cost-parity
+claim and no new caching mechanism proposed here.
 The shared verifier adds local Ed25519 verification of bounded evidence: one
 controller authorization, one direct-root certificate and one per admission
 edge (at most six at the four-edge format bound, three at initial depth 1).
