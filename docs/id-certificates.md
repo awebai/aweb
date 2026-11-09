@@ -50,6 +50,56 @@ customer's custom-domain controller key stays with that customer's controller;
 Cloud does not take custody of it. The customer signs the first human from the
 CLI; a custodial deployment can hold subsequent human keys.
 
+### Interactive human participation from the CLI
+
+After `aw id human init` and controller-authorized team membership, select the
+human explicitly with `--human <did:aw> --human-domain <identity-domain>`.
+These selectors use that human's OS-keychain signer and public records in
+`~/.awid/humans/<identity-domain>/<id>/`; they neither select nor modify an
+agent workspace. An explicit or inherited `--identity-home`/`AWEB_IDENTITY_HOME`
+conflicts with human selection. The identity domain may differ from the team's
+namespace; membership remains independently controller-authorized.
+
+For example, with a certificate already issued by the team controller:
+
+```sh
+aw --human did:aw:… --human-domain example.com id team fetch-cert \
+  --namespace example.com --team engineering --cert-id <certificate-id>
+aw --human did:aw:… --human-domain example.com init \
+  --team engineering:example.com --url https://coordination.example.com
+aw --human did:aw:… --human-domain example.com mail send \
+  --to colleague --subject "Review" --body-file message.txt
+aw --human did:aw:… --human-domain example.com mail inbox
+aw --human did:aw:… --human-domain example.com mail show --message-id <message-id>
+aw --human did:aw:… --human-domain example.com mail reply <message-id> --body-file reply.txt
+aw --human did:aw:… --human-domain example.com secrets request <tool arguments>
+```
+
+`init --team` selects an installed full team ID for this human's connection;
+mail's `--team` can select another installed membership. Ordinary
+`id request --team-auth` and installed manifest tools use the human's active
+team certificate. The naapp still decides permissions: this does not approve
+secret use, increase permissions, or replace a controller-signed owner act.
+Manifest parameters named `human` or `human-domain` are reserved for CLI
+identity selection and refused at installation.
+
+Every signature prompts at the controlling terminal and wipes the decrypted
+key afterwards. A send needs both a mail-envelope signature and request
+signature; lookups, reads, acknowledgments and retries can require additional
+prompts. Prompts are numbered within the command. Mail send prompts identify
+the recipient, subject and body hash; a reply's preliminary read identifies the
+source message and proposed body's hash, then its send identifies the resolved
+recipient and subject. Prompting is a custody safeguard, not a remotely
+verifiable assertion of a fresh human gesture. Known agent-runtime markers
+and a missing controlling terminal refuse this path.
+
+This initial path supports plaintext mail, not human encryption-key custody.
+Encrypted sends or replies refuse when that custody is unavailable; there is
+no silent plaintext fallback. Chat, arbitrary `id sign`, blueprint publication
+and executable plugins do not accept this participation selector. Existing
+human issuance commands keep their separate, explicit authority checks. No
+unlocked session, background signer or delegated credential is created.
+
 ## 2. Certificate and exact bytes
 
 Every field is required. Unknown fields, duplicate JSON keys, floats, invalid
@@ -183,6 +233,78 @@ replaces the old local membership. Initial certification of a previously
 chainless local key is not re-parenting. Explicit registered enrollment may
 keep its private key and acquire a stable ID, without guessing its past. Local
 descendants do not silently change their parent ID when that conversion occurs.
+
+### Team-row human classification
+
+A team member is treated as human only from its **own** verified subject kind:
+`identity_valid=true` and `kind=human`. Neither a human ancestor, a team
+certificate, account ownership, custody, nor `agent_type=human` in a client
+payload supplies that evidence. This identity-path correction was approved by
+Juan on 2026-11-08 (aweb-acwb).
+
+The server projects verified kind at connect. A verified human gets
+`agent_type=human` and `human_verified_key` equal to the verified subject key.
+Otherwise a claimed human runtime type becomes `agent`; other runtime labels
+remain metadata. Current human consumers require both the human type and an
+exact non-null key marker. Agent roster and dashboard display filters still
+exclude raw human labels, so unverifiable legacy members are not presented as
+agents. This display exclusion grants no human capability; their effective kind
+is unknown. The connect response returns the effective
+`agent_type`; the CLI uses it for local state and human-only name defaults.
+The marker establishes classification only, never membership, custody or live
+request authority. Existing authentication, revocation and admission checks
+still apply. A changed subject key cannot inherit an old marker.
+
+Migration adds the nullable marker without stamping old labels. Before enabling
+the new policy, an operator revalidates existing human-labelled members through
+the public verifier and reports before/after counts by human, agent, revoked,
+unregistered, unavailable and invalid evidence, separately for active/retired
+rows. Only verified human subjects with unchanged row key/ID are stamped.
+Unverifiable active members remain explicitly unresolved and unstamped; release
+requires the operator's disposition rather than a silent change in treatment.
+No identity, certificate or membership is minted by revalidation.
+
+The shared operator command is `aweb revalidate-human-kind`: it reports only
+JSON counts and makes no database writes by default. `--apply` stamps live
+verified humans with a compare-and-set on row ID, key, stable ID and human label;
+retirement or a changed identity prevents the write. Retired rows are verified
+for the report only. Other outcomes never write or clear a marker. Counts include
+before/after active and retired totals and verified markers, each group's
+human/agent/revoked/unregistered/unavailable/invalid outcomes, stamps and lost
+compare-and-sets. Exit 1 means unresolved active outcomes or a lost compare-and-set;
+operators must compare this with their explicitly approved inventory, even if
+some unresolved rows are accepted. Exit 0 does not replace that comparison.
+
+The command uses `AWEB_DATABASE_URL` (`DATABASE_URL` fallback),
+`AWEB_REDIS_URL` (`REDIS_URL` fallback), `AWID_REGISTRY_URL` and
+`AWID_SERVICE_TOKEN`; `--schema` defaults to `aweb`. It never creates schema,
+extensions or migrations. Redis may cache public verifier evidence as in normal
+request verification. Hosted deployments invoke this same command against their
+canonical aweb schema, without a separate revalidation implementation.
+
+Release order is mandatory:
+
+1. Apply migration 047 **before** deploying the new application code. It is
+   additive and leaves old code unaffected.
+2. From the new package in an operator environment, run
+   `aweb revalidate-human-kind --apply` against that database.
+3. Compare before/after counts and all outcome buckets with the approved inventory;
+   resolve unexpected active outcomes and compare-and-set failures.
+4. Deploy the new code only after the operator's go.
+
+Quiesce human member creation/reconnects during the revalidation-to-deploy window
+or repeat revalidation and reconcile changes before enabling the policy. If the
+deployment cannot apply migration ahead of code, use a maintenance window from
+migration through revalidation, count approval and application startup; do not
+serve the new policy between those steps. A verified human reconnecting without
+verifiable ID-chain evidence is rewritten to `agent` with no human marker, per the
+ruling. Omitting a chain header still permits registered evidence discovery by
+the public verifier; it is absence of verified evidence that removes the marker.
+
+Raw legacy labels may identify only the **predecessor** in owner-checked retired
+mail succession, contact transfer and pre-cutover alias retirement. They do not
+make any row a current human; the live/new destination must satisfy the verified
+predicate. This preserves history without asserting identity-kind evidence.
 
 ## 3. Registration, heads, rotation and revocation
 

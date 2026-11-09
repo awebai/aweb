@@ -34,6 +34,9 @@ var rootCmd = &cobra.Command{
 	Short: "aweb CLI",
 	Long:  "aweb CLI\n\nSet AW_NO_UPDATE_CHECK=1 to disable automatic update checks.",
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		if humanSelectionRequested() {
+			return prepareHumanParticipation(cmd)
+		}
 		// Explicit Claude settings cleanup uses cwd only; no credential selection,
 		// assertion renewal or update checks are needed for this local action.
 		if isIdentityHomeNeutralCommand(cmd) || (cmd == initCmd && initRemoveNotifyHook) {
@@ -173,6 +176,8 @@ func init() {
 	rootCmd.SetCompletionCommandGroupID(groupUtility)
 
 	rootCmd.PersistentFlags().StringVar(&serverFlag, "server-name", "", "Override the server host or name for this command")
+	rootCmd.PersistentFlags().StringVar(&humanFlag, "human", "", "Sign interactively as this locally enrolled human did:aw")
+	rootCmd.PersistentFlags().StringVar(&humanDomainFlag, "human-domain", "", "Namespace of the selected human ID")
 	rootCmd.PersistentFlags().StringVar(&identityHomeFlag, "identity-home", "", "Use this absolute credential directory (contains signing.key or grant.yaml; usually <workspace>/.aw, not its parent)")
 	rootCmd.PersistentFlags().BoolVar(&debugFlag, "debug", false, "Log background errors to stderr")
 	rootCmd.PersistentFlags().BoolVar(&traceFlag, "trace", false, "Trace redacted HTTP requests and responses to stderr")
@@ -378,7 +383,7 @@ func identityHomeForPluginDispatch(args []string) string {
 			explicit = strings.TrimSpace(args[i+1])
 			i++
 			continue
-		case arg == "--server-name" && i+1 < len(args):
+		case (arg == "--server-name" || arg == "--human" || arg == "--human-domain") && i+1 < len(args):
 			// Skip its value so a server named after a command is not mistaken
 			// for one.
 			i++

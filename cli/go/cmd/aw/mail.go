@@ -69,6 +69,9 @@ func mailRecipientTargetApplied(req *awid.SendMessageRequest) bool {
 }
 
 func resolveMailMessagingClientSelection() (*aweb.Client, *awconfig.Selection, error) {
+	if activeHuman != nil {
+		return activeHuman.client(teamFlag, "")
+	}
 	if strings.TrimSpace(teamFlag) != "" {
 		return resolveClientSelection()
 	}
@@ -138,6 +141,7 @@ var mailSendCmd = &cobra.Command{
 			return err
 		}
 		recipientLabel := targetValue
+		setHumanMailOperation(targetValue, mailSendSubject, body)
 
 		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
@@ -163,7 +167,11 @@ var mailSendCmd = &cobra.Command{
 				return err
 			}
 		case "alias":
-			c, sel, err = resolveClientSelectionForAliasTarget(ctx, targetValue)
+			if activeHuman != nil {
+				c, sel, err = activeHuman.client(teamFlag, "")
+			} else {
+				c, sel, err = resolveClientSelectionForAliasTarget(ctx, targetValue)
+			}
 			if err != nil {
 				return err
 			}
@@ -255,7 +263,7 @@ var mailSendCmd = &cobra.Command{
 			Subject:        mailSendSubject,
 			Body:           mailSendBody,
 		})
-		appendInteractionLogForCWD(&InteractionEntry{
+		appendMailInteractionLog(&InteractionEntry{
 			Timestamp:      time.Now().UTC().Format(time.RFC3339),
 			Kind:           interactionKindMailOut,
 			MessageID:      resp.MessageID,
@@ -309,6 +317,7 @@ var mailReplyCmd = &cobra.Command{
 			return err
 		}
 		messageID := strings.TrimSpace(args[0])
+		setHumanMailOperation("reply source "+messageID, "read source to determine reply subject", body)
 
 		// Source reads and reply preparation share the configured API budget;
 		// a hidden shorter deadline must not defeat AWEB_HTTP_TIMEOUT.
@@ -413,7 +422,7 @@ var mailReplyCmd = &cobra.Command{
 			Subject:        subject,
 			Body:           body,
 		})
-		appendInteractionLogForCWD(&InteractionEntry{
+		appendMailInteractionLog(&InteractionEntry{
 			Timestamp:      time.Now().UTC().Format(time.RFC3339),
 			Kind:           interactionKindMailOut,
 			MessageID:      resp.MessageID,
@@ -518,6 +527,12 @@ func configureClientE2EEForRead(cmd *cobra.Command, ctx context.Context, c *aweb
 }
 
 func configureClientE2EE(ctx context.Context, c *aweb.Client, sel *awconfig.Selection, required bool) error {
+	if activeHuman != nil && sel != nil && sel.IdentityHome == activeHuman.dir {
+		if required {
+			return usageError("human E2E key custody is not supported by this client; refusing encrypted mail")
+		}
+		return &e2eeDecryptionUnavailableError{statePath: activeHuman.dir, reason: "human E2E key custody is not supported by this client"}
+	}
 	if c == nil || c.Client == nil || sel == nil {
 		return usageError("E2E messaging requires an initialized self-custodial workspace")
 	}
@@ -728,7 +743,14 @@ var mailInboxCmd = &cobra.Command{
 		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 
-		c, sel, err := resolveClientSelection()
+		var c *aweb.Client
+		var sel *awconfig.Selection
+		var err error
+		if activeHuman != nil {
+			c, sel, err = activeHuman.client(teamFlag, "")
+		} else {
+			c, sel, err = resolveClientSelection()
+		}
 		if err != nil {
 			return err
 		}
@@ -800,7 +822,7 @@ var mailInboxCmd = &cobra.Command{
 				SigningKeyID:   msg.SigningKeyID,
 				Verification:   string(msg.VerificationStatus),
 			})
-			appendInteractionLogForCWD(&InteractionEntry{
+			appendMailInteractionLog(&InteractionEntry{
 				Timestamp:      msg.CreatedAt,
 				Kind:           interactionKindMailIn,
 				MessageID:      msg.MessageID,
@@ -1130,4 +1152,13 @@ func threadsWithoutSelf(resp *awid.ConversationsResponse, sel *awconfig.Selectio
 		view.Conversations[i] = thread
 	}
 	return &view
+}
+
+// Human participation is independent of the current agent workspace. Its
+// communication log is already keyed by human identity; do not add its mail to
+// the agent runtime's interaction log used by aw run.
+func appendMailInteractionLog(entry *InteractionEntry) {
+	if activeHuman == nil {
+		appendInteractionLogForCWD(entry)
+	}
 }

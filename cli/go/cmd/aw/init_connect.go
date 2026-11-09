@@ -38,6 +38,7 @@ type connectOutput struct {
 
 // connectResponse is the server response from POST /v1/connect.
 type connectResponse struct {
+	AgentType   string `json:"agent_type"`
 	TeamID      string `json:"team_id"`
 	Alias       string `json:"alias"`
 	AgentID     string `json:"agent_id"`
@@ -113,7 +114,7 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 		Hostname:      hostname,
 		WorkspacePath: bindingWorkspacePath,
 		Role:          strings.TrimSpace(opts.Role),
-		HumanName:     resolveHumanNameValue(strings.TrimSpace(opts.HumanName)),
+		HumanName:     resolveHumanNameValue(opts.HumanName, resolveAgentTypeValue(opts.AgentType)),
 		AgentType:     resolveAgentTypeValue(strings.TrimSpace(opts.AgentType)),
 	}
 
@@ -123,6 +124,17 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 	resp, err := postConnect(ctx, awebURL, signingKey, cert, reqBody)
 	if err != nil {
 		return connectOutput{}, err
+	}
+
+	// Only the server's verified subject kind enables environment name defaults.
+	// Initial requests contain explicit names only. Reconnect once to publish a
+	// human default after the server has established that this identity is human.
+	if resp.AgentType == "human" && reqBody.HumanName == "" {
+		reqBody.HumanName = resolveHumanNameValue("", "human")
+		resp, err = postConnect(ctx, awebURL, signingKey, cert, reqBody)
+		if err != nil {
+			return connectOutput{}, err
+		}
 	}
 
 	workspacePath, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "workspace.yaml")
@@ -166,7 +178,10 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 		workspaceState.CanonicalOrigin = ""
 	}
 	workspaceState.HumanName = reqBody.HumanName
-	workspaceState.AgentType = reqBody.AgentType
+	workspaceState.AgentType = resolveAgentTypeValue(reqBody.AgentType)
+	if resp.AgentType != "" {
+		workspaceState.AgentType = resp.AgentType
+	}
 	workspaceState.Hostname = hostname
 	workspaceState.WorkspacePath = bindingWorkspacePath
 	workspaceState.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
@@ -259,6 +274,10 @@ func postConnect(ctx context.Context, awebURL string, signingKey ed25519.Private
 	if err != nil {
 		return nil, err
 	}
+	return postConnectClient(ctx, client, cert, body)
+}
+
+func postConnectClient(ctx context.Context, client *awid.Client, cert *awid.TeamCertificate, body connectRequest) (*connectResponse, error) {
 	client.SetHTTPClient(&http.Client{Timeout: 30 * time.Second, Transport: awid.NewAPITransport()})
 	resp, err := client.DoRaw(ctx, http.MethodPost, "/v1/connect", "application/json", body)
 	if err != nil {

@@ -280,6 +280,47 @@ def verify_identity_bindings_command(
         raise typer.Exit(1)
 
 
+@app.command("revalidate-human-kind")
+def revalidate_human_kind_command(
+    apply: bool = typer.Option(False, "--apply", help="Stamp live verified humans; default reports without database writes"),
+    schema: str = typer.Option("aweb", "--schema", help="Existing canonical agents schema; migration 047 must be applied"),
+) -> None:
+    """Report historical human kinds. Exit 1 if active rows remain unresolved."""
+    from awid.db_config import build_database_config
+    from awid.registry import CachedRegistryClient
+    from pgdbm import AsyncDatabaseManager
+    from redis.asyncio import Redis
+    from .connection_scope import DatabaseManager
+    from .human_kind_revalidation import revalidate_human_kind
+
+    if not schema.isascii() or not schema.isidentifier():
+        raise typer.BadParameter("Schema must be an SQL identifier", param_hint="--schema")
+
+    async def run():
+        settings = get_settings()
+        # Do not initialize DatabaseInfra: that path creates schema/extensions.
+        # This command never migrates, including in its read-only default mode.
+        pool = await AsyncDatabaseManager.create_shared_pool(build_database_config(
+            connection_string=settings.database_url,
+            uses_transaction_pooler=settings.database_uses_transaction_pooler,
+            statement_cache_size=settings.database_statement_cache_size,
+        ))
+        redis = Redis.from_url(settings.redis_url)
+        registry = CachedRegistryClient(registry_url=settings.awid_registry_url,
+            redis_client=redis, service_token=settings.awid_service_token)
+        try:
+            return await revalidate_human_kind(DatabaseManager(pool=pool, schema=schema), registry, apply=apply)
+        finally:
+            await registry.aclose()
+            await redis.aclose()
+            await pool.close()
+
+    report = asyncio.run(run())
+    typer.echo(json.dumps(report, sort_keys=True))
+    if report['unresolved_active']:
+        raise typer.Exit(1)
+
+
 @app.command("verify-pending-app-installations")
 def verify_pending_app_installations_command(
     team_id: str | None = typer.Option(None, "--team-id", help="Verify only this team's pending installations"),

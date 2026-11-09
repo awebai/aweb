@@ -24,6 +24,8 @@ import (
 
 func TestInitUsesGuidedOnboardingInTTY(t *testing.T) {
 	resetInitHostFlagsForTest(t)
+	t.Setenv("AWEB_HUMAN", "Environment Human")
+	t.Setenv("USER", "machine-user")
 	// Cannot use t.Parallel() — needs cwd and globals.
 
 	oldWizard := guidedOnboardingWizard
@@ -89,6 +91,9 @@ func TestInitUsesGuidedOnboardingInTTY(t *testing.T) {
 	}
 	if captured.BaseURL != "https://app.aweb.ai" {
 		t.Fatalf("base_url=%q", captured.BaseURL)
+	}
+	if captured.HumanName != "" {
+		t.Fatalf("agent human_name=%q, want empty", captured.HumanName)
 	}
 	if captured.Role != "reviewer" {
 		t.Fatalf("role=%q", captured.Role)

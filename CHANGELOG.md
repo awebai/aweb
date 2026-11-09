@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+- Self-custodial humans can select their OS-keychain identity with `aw --human
+  <did:aw> --human-domain <domain>` to fetch a controller-issued team certificate,
+  connect, send/read/reply to plaintext mail, and make ordinary team-auth naapp
+  requests. Every signature prompts; no unlocked session or delegated signer is
+  created. Human participation refuses chat and stays separate from agent homes.
+  See [interactive human participation](docs/id-certificates.md#interactive-human-participation-from-the-cli).
+
+- Human classification now comes only from the subject's own verified ID kind,
+  never a client `agent_type=human` claim. Migration 047 adds an unstamped nullable
+  marker. **Deployment order:** apply 047 before the code deploy (additive, old
+  code unaffected); run the new package's `aweb revalidate-human-kind --apply`;
+  compare before/after active/retired outcome counts with the approved inventory;
+  then deploy after operator approval. The command is read-only by default,
+  stamps only live verified humans with compare-and-set protection, and exits 1
+  for unresolved active rows or changed identities. Hosted and standalone
+  operators run the same command. If ahead-of-code migration is impossible,
+  reserve a maintenance window from migration through revalidation/count
+  approval and startup. Quiesce human projection writes or reconcile changes
+  before enabling the policy. See [the cutover contract](docs/id-certificates.md#team-row-human-classification).
+  A verified human reconnecting without verifiable ID-chain evidence is rewritten
+  to agent with no marker; a missing header alone does not prevent the public
+  verifier from discovering registered evidence. Old unstamped human labels stay
+  hidden from agent displays and grant no human capabilities; owner-checked
+  predecessor history recovery remains supported.
+
 - **Breaking compatibility:** hook catalog v1 `post-secret-use-hook` gains
   optional opaque `use_ref` after the `aweb-naapp 0.5.0` release, for the public
   request/refusal-to-audit join. Receivers using the published catalogs in

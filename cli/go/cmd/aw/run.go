@@ -509,7 +509,7 @@ func resolveRunClientForDir(cmd *cobra.Command, workingDir string, interactive b
 			PromptIn:           promptInput,
 			PromptOut:          cmd.ErrOrStderr(),
 			ServerName:         serverFlag,
-			HumanName:          resolveHumanName(),
+			HumanName:          resolveHumanNameValue(initHumanName, resolveAgentType()),
 			AgentType:          resolveAgentType(),
 			AskPostCreateSetup: true,
 		})

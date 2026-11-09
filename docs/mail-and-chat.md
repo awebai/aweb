@@ -444,8 +444,8 @@ display labels. Agents and unknown members are excluded; clients use generic
 guidance if the list is empty. Labels never establish identity or kind.
 A receiving server’s typed human refusal is preserved through federation to
 the originating HTTP or MCP caller, even when the source had unknown kind.
-A team row typed `human` or a currently verified human subject certificate is
-human evidence; an alias, address shape, missing key or unavailable registry
+A team row with `agent_type=human` and `human_verified_key=did_key`, or a
+currently verified human subject certificate, is human evidence; an alias, address shape, missing key or unavailable registry
 record is not. An agent with a responsible human is still an agent. Unknown
 remote kinds remain eligible for the existing chat authority and delivery checks.
 

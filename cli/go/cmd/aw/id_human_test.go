@@ -40,7 +40,13 @@ func runHumanInitBinary(t *testing.T, terminal bool, env []string, args ...strin
 	home := t.TempDir()
 	cmd := exec.CommandContext(ctx, bin, append([]string{"id", "human", "init"}, args...)...)
 	cmd.Dir = t.TempDir()
-	cmd.Env = append(os.Environ(), append([]string{"HOME=" + home, "USERPROFILE=" + home, "AW_NO_UPDATE_CHECK=1", "OATS_INSTANCE_HOME=", "OATS_INSTANCE="}, env...)...)
+	baseEnv := []string{"HOME=" + home, "USERPROFILE=" + home, "AW_NO_UPDATE_CHECK=1"}
+	// Isolate the terminal boundary from the harness launching this test. Tests
+	// of runtime refusal add their chosen marker back through env below.
+	for _, marker := range agentRuntimeMarkers {
+		baseEnv = append(baseEnv, marker+"=")
+	}
+	cmd.Env = append(os.Environ(), append(baseEnv, env...)...)
 	var output bytes.Buffer
 	var err error
 	if terminal {

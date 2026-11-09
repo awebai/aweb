@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.human_kind import is_verified_human
+
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -28,7 +30,7 @@ async def _require_live_mail_participant(
 ) -> None:
     did = participant["did"]
     rows = await db.get_manager("aweb").fetch_all(
-        """SELECT agent_id, agent_type, alias, team_id, deleted_at FROM {{tables.agents}}
+        """SELECT agent_id, agent_type, human_verified_key, did_key, alias, team_id, deleted_at FROM {{tables.agents}}
            WHERE COALESCE(CASE WHEN did_aw_verified_key=did_key THEN NULLIF(did_aw,'') END, did_key)=$1
            ORDER BY team_id, agent_id""",
         did,
@@ -40,7 +42,7 @@ async def _require_live_mail_participant(
             # Chat retains its existing handling of retired agents. Only a
             # retired human needs the mail-directed refusal; use that human's
             # projection, never the authenticated sender's team.
-            humans = [row for row in rows if row["agent_type"] == "human"]
+            humans = [row for row in rows if is_verified_human(row)]
             if not humans:
                 return
             human = next(

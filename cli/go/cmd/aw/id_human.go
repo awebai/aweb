@@ -102,7 +102,7 @@ func runIDHumanInit(cmd *cobra.Command, args []string) error {
 // agentRuntimeMarkers are environment variables an agent runtime sets for
 // the processes it runs. Finding one refuses a human-only command; their
 // absence proves nothing, and a terminal is still required.
-var agentRuntimeMarkers = []string{"OATS_INSTANCE_HOME", "OATS_INSTANCE"}
+var agentRuntimeMarkers = []string{"OATS_INSTANCE_HOME", "OATS_INSTANCE", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CODEX_THREAD_ID"}
 
 // humanAtTerminal refuses a human-only command that no human can answer:
 // one without a controlling terminal, or one run inside an agent runtime.

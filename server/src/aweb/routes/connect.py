@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from awid.team_ids import parse_team_id
 from aweb.coordination.routes.repos import canonicalize_git_url
 from aweb.deps import get_db
+from aweb.human_kind import IdentityKindObservation
 from aweb.inbound_modes import effective_inbound_mode
 from aweb.service_errors import ServiceError
 from aweb.identity_scope import normalize_identity_scope
@@ -42,6 +43,7 @@ class ConnectRequest(BaseModel):
 
 
 class ConnectResponse(BaseModel):
+    agent_type: str = "agent"
     team_id: str
     alias: str
     agent_id: str
@@ -98,6 +100,7 @@ async def _ensure_agent(
     agent_type: str,
     role: str,
     certificate_id: str,
+    human_verified_key: str | None,
 ) -> str:
     """Find or create the agent row. Returns agent_id as string.
 
@@ -123,7 +126,7 @@ async def _ensure_agent(
             """
             UPDATE {{tables.agents}}
             SET did_aw = $1, address = $2, identity_scope = $3, human_name = $4,
-                agent_type = $5, role = $6, status = 'active', certificate_id = $8, did_aw_verified_key = $9
+                agent_type = $5, role = $6, status = 'active', certificate_id = $8, did_aw_verified_key = $9, human_verified_key = $10
             WHERE agent_id = $7
             """,
             did_aw or None,
@@ -135,6 +138,7 @@ async def _ensure_agent(
             existing_agent["agent_id"],
             (certificate_id or "").strip() or None,
             did_key if did_aw else None,
+            human_verified_key,
         )
         return str(existing_agent["agent_id"])
 
@@ -163,8 +167,8 @@ async def _ensure_agent(
                 INSERT INTO {{tables.agents}}
                     (agent_id, team_id, did_key, did_aw, address,
                      alias, identity_scope, human_name, agent_type, role, inbound_mode,
-                     certificate_id, did_aw_verified_key)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $13, $11, $12)
+                     certificate_id, did_aw_verified_key, human_verified_key)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $13, $11, $12, $14)
                 ON CONFLICT (team_id, did_key) WHERE deleted_at IS NULL DO NOTHING
                 """,
                 agent_id,
@@ -180,6 +184,7 @@ async def _ensure_agent(
                 (certificate_id or "").strip() or None,
                 did_key if did_aw else None,
                 inbound_mode,
+                human_verified_key,
             )
     except (QueryError, asyncpg.exceptions.UniqueViolationError) as exc:
         if isinstance(exc, QueryError) and not isinstance(exc.__cause__, asyncpg.exceptions.UniqueViolationError):
@@ -203,7 +208,7 @@ async def _ensure_agent(
                 """
                 UPDATE {{tables.agents}}
                 SET did_aw = $1, address = $2, identity_scope = $3, human_name = $4,
-                    agent_type = $5, role = $6, status = 'active', certificate_id = $8, did_aw_verified_key = $9
+                    agent_type = $5, role = $6, status = 'active', certificate_id = $8, did_aw_verified_key = $9, human_verified_key = $10
                 WHERE agent_id = $7
                 """,
                 did_aw or None,
@@ -215,6 +220,7 @@ async def _ensure_agent(
                 existing_agent["agent_id"],
                 (certificate_id or "").strip() or None,
                 did_key if did_aw else None,
+                human_verified_key,
             )
             return str(existing_agent["agent_id"])
         existing_alias = await db.fetch_one(
@@ -389,6 +395,7 @@ async def connect_agent(
     human_name: str,
     agent_type: str,
     identity_binding: IdentityBinding | None = None,
+    identity_kind: IdentityKindObservation | None = None,
 ) -> dict[str, Any]:
     """Auto-provision team + agent + workspace from certificate info.
 
@@ -404,7 +411,8 @@ async def connect_agent(
         repo_origin: Git remote URL (empty if none).
         role: Agent role.
         human_name: Agent display name.
-        agent_type: Agent type (agent, etc).
+        agent_type: Non-authoritative runtime label; a human claim alone is ignored.
+        identity_kind: Exact-subject observation from the public ID-chain verifier.
 
     Returns:
         Dict with team_id, alias, agent_id, workspace_id, role.
@@ -429,6 +437,14 @@ async def connect_agent(
     did_aw = identity_binding.did_aw if identity_binding is not None else ""
     address = identity_binding.address if identity_binding is not None else ""
 
+    if identity_kind is not None and (
+        not isinstance(identity_kind, IdentityKindObservation)
+        or identity_kind.did_key != did_key or identity_kind.did_aw != did_aw
+    ):
+        raise ValueError("identity_kind_mismatch")
+    human_verified_key = did_key if identity_kind is not None and identity_kind.is_human else None
+    agent_type = "human" if human_verified_key else ("agent" if agent_type == "human" else agent_type)
+
     async with db.transaction() as tx:
         await _ensure_team(tx, team_id, team_did_key)
 
@@ -444,6 +460,7 @@ async def connect_agent(
             agent_type=agent_type,
             role=role,
             certificate_id=cert_info.get("certificate_id", ""),
+            human_verified_key=human_verified_key,
         )
 
         if identity_binding is not None:
@@ -465,6 +482,7 @@ async def connect_agent(
 
     return {
         "team_id": team_id,
+        "agent_type": agent_type,
         "alias": alias,
         "agent_id": agent_id,
         "workspace_id": workspace_id,
@@ -498,6 +516,7 @@ async def connect_endpoint(
             db=aweb_db,
             cert_info=cert_info,
             identity_binding=cert_info.get("identity_binding"),
+            identity_kind=cert_info.get("identity_kind"),
             team_did_key=team_did_key,
             hostname=payload.hostname,
             workspace_path=payload.workspace_path,
@@ -509,8 +528,8 @@ async def connect_endpoint(
     except AliasConflictError as exc:
         raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
     except ValueError as exc:
-        if str(exc) == "identity_binding_mismatch":
-            raise HTTPException(status_code=403, detail="identity_binding_mismatch") from exc
+        if str(exc) in ("identity_binding_mismatch", "identity_kind_mismatch"):
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         raise
     except ServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
