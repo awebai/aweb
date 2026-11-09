@@ -338,6 +338,7 @@ async def test_the_console_origin_serves_logs_pages_and_the_shell_assets_only_th
         "/console-bootstrap/bootstrap.js",
         "/console-bootstrap/style.css",
         "/logs-viewer/follow.js",
+        "/logs-viewer/filters.js",
         f"/css/aweb.{CSS_SHA256[:12]}.css",
     ):
         assert (await deployment.console.get(path)).status_code == 200, path

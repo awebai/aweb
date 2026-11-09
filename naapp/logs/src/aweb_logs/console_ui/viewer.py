@@ -20,12 +20,14 @@ delivery, which is unsigned and never a proof of completeness.
 """
 
 import json
+import re
+from datetime import UTC, datetime, timedelta
 from html import escape
 from importlib.resources import files
 from typing import Any
 from urllib.parse import urlencode
 
-from aweb_naapp.console import ConsoleRoute
+from aweb_naapp.console import ConsoleRoute, ConsoleSession
 from aweb_naapp.console.browser import ConsoleShell, login_redirect
 from aweb_naapp.hooks import envelope as hook_envelope
 from aweb_naapp.hooks.producer import VIEW_MAX_AGE
@@ -70,7 +72,21 @@ _TEXT_FILTERS = (
     ("occurred_from", "Occurred from"),
     ("occurred_to", "Occurred to"),
 )
+_SELECT_FILTERS: tuple[tuple[str, str, tuple[str, ...], dict[str, str]], ...] = (
+    ("mediation", "Recorded by", MEDIATIONS, _MEDIATION_LABELS),
+    ("result_status", "Result", RESULT_STATUSES, _RESULT_LABELS),
+    ("hook", "Hook", tuple(hook_envelope.HOOKS), {}),
+)
+_FORM_FIELDS = {name: label for name, label, *_ in _SELECT_FILTERS} | dict(_TEXT_FILTERS)
+_DATE_FIELDS = ("occurred_from", "occurred_to")
+_DATE_HELP = "In UTC: a day, as 2026-11-09, or a moment, as 2026-11-09T14:30:00Z."
+_DATE_ERROR = "This is not a day or a moment written as shown."
+# A UTC day, or a moment to the minute, second or fraction, with an optional Z.
+_UTC_WRITTEN = re.compile(
+    r"(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,6}))?)?)?Z?"
+)
 _FOLLOW_INTERVAL_MS = 2000
+_SCRIPTS = ("follow", "filters")
 
 _NAV = (
     '<nav class="viewer-nav" aria-label="Log">'
@@ -214,35 +230,59 @@ def _events_list(events: list[dict[str, Any]], **data: str) -> str:
     return f'<ol class="events"{attributes}>{items}</ol>'
 
 
-def _select(
-    name: str, label: str, options: tuple[str, ...], labels: dict[str, str], chosen: str | None
-) -> str:
-    rendered = ['<option value="">Any</option>'] + [
-        f'<option value="{_attr(option)}"{" selected" if option == chosen else ""}>'
-        f"{escape(labels.get(option, option))}</option>"
-        for option in options
-    ]
-    return (
-        f'<label for="filter-{name}">{escape(label)}</label>'
-        f'<select id="filter-{name}" name="{name}">{"".join(rendered)}</select>'
+def _described(name: str, errors: dict[str, str]) -> tuple[str, str]:
+    """The attributes tying a filter's control to its format help and to the
+    reason its value was refused, and those notes."""
+    notes = []
+    if name in _DATE_FIELDS:
+        notes.append((f"filter-{name}-help", "field-help", _DATE_HELP))
+    if name in errors:
+        notes.append((f"filter-{name}-error", "field-error", errors[name]))
+    attributes = ""
+    if notes:
+        attributes += f' aria-describedby="{" ".join(ident for ident, _, _ in notes)}"'
+    if name in errors:
+        attributes += ' aria-invalid="true"'
+    rendered = "".join(
+        f'<p id="{ident}" class="{kind}">{escape(text)}</p>' for ident, kind, text in notes
     )
+    return attributes, rendered
 
 
-def _filters(where: EventFilter, raw: dict[str, str], *, action: str, limit: str | None) -> str:
-    fields = [
-        _select("mediation", "Recorded by", MEDIATIONS, _MEDIATION_LABELS, where.mediation),
-        _select("result_status", "Result", RESULT_STATUSES, _RESULT_LABELS, where.result_status),
-        _select("hook", "Hook", tuple(hook_envelope.HOOKS), {}, where.hook),
-    ]
-    for name, label in _TEXT_FILTERS:
+def _filters(
+    raw: dict[str, str],
+    *,
+    action: str,
+    limit: str | None,
+    errors: dict[str, str] | None = None,
+) -> str:
+    """The filter form, holding the values the reader submitted; ``errors``
+    names each field whose value was refused."""
+    errors = errors or {}
+    fields = []
+    for name, label, options, labels in _SELECT_FILTERS:
+        attributes, notes = _described(name, errors)
+        chosen = raw.get(name)
+        rendered = ['<option value="">Any</option>'] + [
+            f'<option value="{_attr(option)}"{" selected" if option == chosen else ""}>'
+            f"{escape(labels.get(option, option))}</option>"
+            for option in options
+        ]
         fields.append(
-            f'<label for="filter-{name}">{escape(label)}</label>'
+            f'<div class="filter-field"><label for="filter-{name}">{escape(label)}</label>'
+            f'<select id="filter-{name}" name="{name}"{attributes}>{"".join(rendered)}</select>'
+            f"{notes}</div>"
+        )
+    for name, label in _TEXT_FILTERS:
+        attributes, notes = _described(name, errors)
+        fields.append(
+            f'<div class="filter-field"><label for="filter-{name}">{escape(label)}</label>'
             f'<input id="filter-{name}" name="{name}" value="{_attr(raw.get(name, ""))}"'
-            ' autocomplete="off" spellcheck="false">'
+            f' autocomplete="off" spellcheck="false"{attributes}>{notes}</div>'
         )
     if limit is not None:
         fields.append(f'<input type="hidden" name="limit" value="{_attr(limit)}">')
-    active = any(value for name, value in raw.items())
+    active = bool(errors) or any(value for name, value in raw.items())
     return (
         f'<form id="filters" method="get" action="{_attr(action)}">'
         f"<details{' open' if active else ''}><summary>Filter</summary>"
@@ -258,6 +298,65 @@ def _chain_epoch(value: str) -> int:
     if not (value.isascii() and value.isdigit() and len(value) <= 10) or value != str(int(value)):
         raise HTTPException(status_code=400, detail=InvalidRead.code)
     return int(value)
+
+
+class UnusableFilters(Exception):
+    """Filter values from the form that cannot be used, each with the reason
+    shown beside its field."""
+
+    def __init__(self, errors: dict[str, str]) -> None:
+        super().__init__(sorted(errors))
+        self.errors = errors
+
+
+def _utc(written: str, *, end: bool) -> str | None:
+    """The canonical instant a reader wrote as a UTC day or moment; a day alone
+    is its first instant, or its last when it ``end``s a range."""
+    match = _UTC_WRITTEN.fullmatch(written) if written.isascii() else None
+    if match is None:
+        return None
+    year, month, day, hour, minute, second, fraction = match.groups()
+    try:
+        moment = datetime(
+            int(year),
+            int(month),
+            int(day),
+            int(hour or 0),
+            int(minute or 0),
+            int(second or 0),
+            int((fraction or "0").ljust(6, "0")),
+            tzinfo=UTC,
+        )
+        if hour is None and end:
+            moment += timedelta(days=1, milliseconds=-1)
+    except (ValueError, OverflowError):
+        return None
+    return moment.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def _usable(items: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """``items`` with each date written in its canonical form, or
+    :class:`UnusableFilters` naming every form field whose value cannot be used.
+    Names and paging the form does not offer are left to :func:`read_query`."""
+    usable: list[tuple[str, str]] = []
+    errors: dict[str, str] = {}
+    for name, value in items:
+        if name in _DATE_FIELDS:
+            canonical = _utc(value, end=name == "occurred_to")
+            if canonical is None:
+                errors[name] = _DATE_ERROR
+                continue
+            value = canonical
+        elif name in _FORM_FIELDS:
+            try:
+                EventFilter.from_query({name: value})
+            except InvalidRead:
+                errors[name] = f"No {_FORM_FIELDS[name].lower()} can have this value."
+                continue
+        usable.append((name, value))
+    if errors:
+        raise UnusableFilters(errors)
+    return usable
 
 
 def _filled(request: Request) -> list[tuple[str, str]]:
@@ -294,11 +393,45 @@ class Viewer:
             action_label="Show all events",
         )
 
+    def refused_form(
+        self,
+        session: ConsoleSession,
+        title: str,
+        raw: dict[str, str],
+        refused: UnusableFilters,
+        *,
+        action: str,
+        limit: str | None,
+    ) -> Response:
+        """The page's filter form again, as the reader submitted it, with each
+        refused field marked and the first focused; nothing is read."""
+        body = (
+            f'<div class="heading"><h1>{escape(title)}</h1>{_NAV}</div>{_RECORDING}'
+            + _filters(raw, action=action, limit=limit, errors=refused.errors)
+            # Runs after the shell's console.js has shown the content, so focus can land.
+            + '<script src="/logs-viewer/filters.js" defer></script>'
+        )
+        response = self.shell.console_page(title=title, body_html=body, session=session)
+        response.status_code = 400
+        return response
+
     async def events(self, request: Request) -> Response:
         try:
             session, reader = await self.reads.session(request)
             items = _filled(request)
-            where, paging = read_query(items, allowed=("limit", "cursor"))
+            raw = {name: value for name, value in items if name not in ("limit", "cursor")}
+            try:
+                usable = _usable(items)
+            except UnusableFilters as refused:
+                return self.refused_form(
+                    session,
+                    "Events",
+                    raw,
+                    refused,
+                    action="/events",
+                    limit=dict(items).get("limit"),
+                )
+            where, paging = read_query(usable, allowed=("limit", "cursor"))
             page = await read_page(
                 query(
                     self.reads.db,
@@ -310,7 +443,6 @@ class Viewer:
             )
         except HTTPException as error:
             return self.refused(error)
-        raw = {name: value for name, value in items if name not in ("limit", "cursor")}
         kept = raw | ({"limit": paging["limit"]} if "limit" in paging else {})
         older = (
             f'<a id="older" class="pager" href="/events{_attr(_query_string(kept | {"cursor": page.next_cursor}))}">Older events</a>'
@@ -322,7 +454,7 @@ class Viewer:
         )
         body = (
             f'<div class="heading"><h1>Events</h1>{_NAV}</div>{_RECORDING}'
-            + _filters(where, raw, action="/events", limit=paging.get("limit"))
+            + _filters(raw, action="/events", limit=paging.get("limit"))
             + f'<p class="follow-link"><a href="/follow{_attr(_query_string(raw))}">Follow new events</a></p>'
             + listing
             + older
@@ -333,7 +465,13 @@ class Viewer:
         try:
             session, reader = await self.reads.session(request)
             items = _filled(request)
-            where, _ = read_query(items, allowed=())
+            try:
+                usable = _usable(items)
+            except UnusableFilters as refused:
+                return self.refused_form(
+                    session, "Follow", dict(items), refused, action="/follow", limit=None
+                )
+            where, _ = read_query(usable, allowed=())
             head = await read_page(tail(self.reads.db, reader.team_id, where))
         except HTTPException as error:
             return self.refused(error)
@@ -341,8 +479,8 @@ class Viewer:
         source = "/follow/events" + _query_string(raw)
         body = (
             f'<div class="heading"><h1>Follow</h1>{_NAV}</div>{_RECORDING}'
-            + _filters(where, raw, action="/follow", limit=None)
-            + f'<div id="follow" data-after="{_attr(head.next_cursor)}" data-source="{_attr(source)}"'
+            + _filters(raw, action="/follow", limit=None)
+            + f'<div id="follow" data-state="live" data-after="{_attr(head.next_cursor)}" data-source="{_attr(source)}"'
             f' data-interval="{_FOLLOW_INTERVAL_MS}">'
             '<p id="follow-status" role="status" aria-live="polite">'
             "Waiting for new events…</p>"
@@ -357,7 +495,11 @@ class Viewer:
 
     async def follow_events(self, request: Request) -> Response:
         _, reader = await self.reads.session(request)
-        where, paging = read_query(_filled(request), allowed=("after",))
+        try:
+            usable = _usable(_filled(request))
+        except UnusableFilters:
+            raise HTTPException(status_code=400, detail=InvalidRead.code) from None
+        where, paging = read_query(usable, allowed=("after",))
         if "after" not in paging:
             raise HTTPException(status_code=400, detail=InvalidRead.code)
         page = await read_page(
@@ -512,10 +654,12 @@ def viewer_router(shell: ConsoleShell, reads: ReaderReads) -> APIRouter:
         "/integrity", viewer.integrity, methods=["GET"], response_class=HTMLResponse
     )
 
-    @router.get("/logs-viewer/follow.js")
-    async def script() -> Response:
+    @router.get("/logs-viewer/{name}.js")
+    async def script(name: str) -> Response:
+        if name not in _SCRIPTS:
+            raise HTTPException(status_code=404)
         return Response(
-            files(__package__).joinpath("follow.js").read_text(), media_type="text/javascript"
+            files(__package__).joinpath(f"{name}.js").read_text(), media_type="text/javascript"
         )
 
     return router

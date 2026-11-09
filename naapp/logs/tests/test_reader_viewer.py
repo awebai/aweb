@@ -363,3 +363,68 @@ async def test_a_value_recorded_in_an_event_is_shown_as_text(world: World):
     page = Html(response.text)
     assert page.all("img") == []
     assert sum(HOSTILE in element["text"] for element in page.elements) >= 3
+
+
+async def test_a_reader_filters_by_a_utc_day_or_moment_written_as_people_write_it(world: World):
+    async with console(world) as human:
+        await signed_in(world, human)
+        core = await recorded(world, "core")  # 2026-10-20T12:00:00.412Z
+        app = await recorded(world, "app")  # 2026-10-20T12:00:01.000Z
+        client = await recorded(world, "client")  # 2026-10-20T12:00:02.000Z
+        day = Html(
+            (
+                await human.get(
+                    "/events", params={"occurred_from": "2026-10-20", "occurred_to": "2026-10-20"}
+                )
+            ).text
+        )
+        moment = Html(
+            (
+                await human.get(
+                    "/events",
+                    params={
+                        "occurred_from": "2026-10-20T12:00:01Z",
+                        "occurred_to": "2026-10-20 12:00:01",
+                    },
+                )
+            ).text
+        )
+        before = Html((await human.get("/events", params={"occurred_to": "2026-10-19"})).text)
+    assert [event["data-event-id"] for event in events_of(day)] == [client, app, core]
+    assert [event["data-event-id"] for event in events_of(moment)] == [app]
+    assert events_of(before) == []
+    for name in ("occurred_from", "occurred_to"):
+        field = day.first("input", id=f"filter-{name}")
+        described = field["aria-describedby"].split()
+        assert described and all(day.all(id=ident) for ident in described)
+
+
+async def test_a_value_that_cannot_be_used_is_marked_on_the_form_with_the_rest_kept(world: World):
+    async with console(world) as human:
+        await signed_in(world, human)
+        await recorded(world, "client")
+        responses = {
+            path: await human.get(
+                path,
+                params={
+                    "event_type": "task.updated",
+                    "occurred_from": "yesterday",
+                    "mediation": "client",
+                },
+            )
+            for path in ("/events", "/follow")
+        }
+    for path, response in responses.items():
+        assert response.status_code == 400, path
+        assert console_headed(response), path
+        page = Html(response.text)
+        assert events_of(page) == [], path
+        assert page.all(id="follow") == [], path
+        refused = page.first("input", id="filter-occurred_from")
+        assert refused["value"] == "yesterday", path
+        assert refused["aria-invalid"] == "true", path
+        assert all(page.all(id=ident) for ident in refused["aria-describedby"].split()), path
+        kept = page.first("input", id="filter-event_type")
+        assert kept["value"] == "task.updated", path
+        assert "aria-invalid" not in kept, path
+        assert "selected" in page.first("option", value="client"), path

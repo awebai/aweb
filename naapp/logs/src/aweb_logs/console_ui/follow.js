@@ -8,10 +8,20 @@
   const interval = Number(follow.dataset.interval);
   const source = new URL(follow.dataset.source, location.origin);
   let after = follow.dataset.after;
+  const waiting = status.textContent;
   let received = 0;
 
+  // The feed's state, live, retrying or stopped, on #follow and in words in
+  // the status region; a reconnected feed says again what it has shown.
+  const show = (state, words) => {
+    follow.dataset.state = state;
+    status.textContent = words;
+  };
+  const live = () =>
+    show("live", received > 0 ? `${received} new ${received === 1 ? "event" : "events"}.` : waiting);
+
   const stop = (id) => {
-    status.textContent = "";
+    show("stopped", "");
     document.getElementById(id).hidden = false;
   };
 
@@ -33,6 +43,7 @@
       response = await fetch(source, { credentials: "same-origin" });
       if (response.ok) body = await response.text();
     } catch {
+      show("retrying", "Cannot reach the server. Retrying…");
       setTimeout(poll, interval);
       return;
     }
@@ -45,7 +56,7 @@
       list.append(document.adoptNode(item));
       received += 1;
     }
-    if (received > 0) status.textContent = `${received} new ${received === 1 ? "event" : "events"}.`;
+    live();
     setTimeout(poll, page.more ? 0 : interval);
   };
 

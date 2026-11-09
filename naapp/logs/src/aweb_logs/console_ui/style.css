@@ -21,9 +21,14 @@ a:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outlin
 .home-links span { color: var(--muted); }
 .reading-guide, #filters details { margin: var(--s3) 0; padding: var(--s2) var(--s3); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
 .reading-guide summary, #filters summary { cursor: pointer; font-weight: 600; }
-.filter-fields { display: grid; grid-template-columns: 1fr; gap: var(--s1) var(--s3); margin-top: var(--s3); }
-@media (min-width: 720px) { .filter-fields { grid-template-columns: max-content 1fr max-content 1fr; align-items: center; } }
-.filter-fields input, .filter-fields select { min-width: 0; width: 100%; font: inherit; padding: var(--s1) var(--s2); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--bg); color: var(--ink); }
+.filter-fields { display: grid; grid-template-columns: 1fr; gap: var(--s3); margin-top: var(--s3); }
+@media (min-width: 720px) { .filter-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.filter-field { display: grid; gap: var(--s1); align-content: start; min-width: 0; }
+.filter-fields input, .filter-fields select { min-width: 0; width: 100%; font: inherit; padding: var(--s1) var(--s2); border: 1px solid var(--muted); border-radius: var(--radius-sm); background: var(--bg); color: var(--ink); }
+.filter-fields [aria-invalid="true"] { border: 2px solid var(--stop); }
+.field-help, .field-error { margin: 0; font-size: var(--step--1); }
+.field-help { color: var(--muted); }
+.field-error { color: var(--stop); font-weight: 600; }
 .filter-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s3); margin-top: var(--s3); }
 .events { list-style: none; padding: 0; margin: var(--s3) 0; display: grid; gap: var(--s3); }
 .event { padding: var(--s3); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); min-width: 0; }
@@ -53,5 +58,5 @@ a:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outlin
 .integrity-observed { border: 1px dashed var(--line-strong); }
 .integrity li { overflow-wrap: anywhere; }
 .verdict { font-weight: 700; }
-.verdict-ok { color: var(--ok); }
+.verdict-ok { color: var(--ink); }
 .verdict-bad { color: var(--stop); }

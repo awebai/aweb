@@ -167,6 +167,11 @@ async def test_a_reader_reads_filters_follows_and_checks_its_log_in_a_browser(
         await expect(reported).to_be_visible()
         assert await fits(page)
 
+        await page.goto(service + "/events?" + urlencode({"occurred_from": "yesterday"}))
+        await expect(page.locator("#filter-occurred_from")).to_be_focused()
+        assert await fits(page)
+        await page.screenshot(path=tmp_path / f"refused-{width}.png", full_page=True)
+
         await page.goto(service + "/follow")
         await expect(page.locator("#follow-status")).to_be_visible()
         followed = await recorded(world, "client")
@@ -267,3 +272,89 @@ async def test_follow_stops_on_a_response_that_is_not_a_list_of_events(
         await expect(page.locator("#follow-failed")).to_be_visible(timeout=10_000)
         await expect(page.locator("#followed > *")).to_have_count(0)
         await expect(page.locator("#injected")).to_have_count(0)
+
+
+async def test_follow_shows_it_is_retrying_while_the_server_cannot_be_reached(
+    world: World, browser: Browser, service: str
+):
+    async with await browser.new_context() as context:
+        page = await signed_in_page(world, context, service)
+        unreachable = {"remaining": 2}
+
+        async def first_unreachable(route: Route) -> None:
+            if unreachable["remaining"] > 0:
+                unreachable["remaining"] -= 1
+                await route.abort("connectionrefused")
+            else:
+                await route.continue_()
+
+        await page.route("**/follow/events*", first_unreachable)
+        await page.goto(service + "/follow")
+        follow = page.locator("#follow")
+        await expect(follow).to_have_attribute("data-state", "retrying", timeout=10_000)
+        followed = await recorded(world, "client")
+        await expect(page.locator(f'#followed article[data-event-id="{followed}"]')).to_have_count(
+            1, timeout=10_000
+        )
+        await expect(follow).to_have_attribute("data-state", "live")
+        await expect(page.locator("#follow-failed")).to_be_hidden()
+        await page.wait_for_timeout(2_500)
+        await expect(page.locator(f'#followed article[data-event-id="{followed}"]')).to_have_count(
+            1
+        )
+
+
+# The contrast of what `element` shows against what is behind it, as the page
+# renders it in either scheme: colours are resolved through a canvas, so any
+# CSS colour syntax measures the same.
+_CONTRAST = """([selector, property, against]) => {
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 1;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  const rgba = (colour) => {
+    context.clearRect(0, 0, 1, 1);
+    context.fillStyle = colour;
+    context.fillRect(0, 0, 1, 1);
+    return Array.from(context.getImageData(0, 0, 1, 1).data);
+  };
+  const behind = (element) => {
+    for (let at = element; at; at = at.parentElement) {
+      const colour = rgba(getComputedStyle(at).backgroundColor);
+      if (colour[3] === 255) return colour;
+    }
+    return rgba(getComputedStyle(document.documentElement).backgroundColor);
+  };
+  const luminance = ([r, g, b]) => {
+    const linear = (c) => ((c /= 255) <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+    return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
+  };
+  const element = document.querySelector(selector);
+  const shown = rgba(getComputedStyle(element)[property]);
+  const back = against === "self" ? rgba(getComputedStyle(element).backgroundColor)
+    : behind(element.parentElement);
+  const [light, dark] = [luminance(shown), luminance(back)].sort((a, b) => b - a);
+  return (light + 0.05) / (dark + 0.05);
+}"""
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+async def test_the_viewer_s_controls_and_verdicts_have_readable_contrast(
+    world: World, browser: Browser, service: str, scheme: str
+):
+    async with await browser.new_context(color_scheme=scheme) as context:  # type: ignore[arg-type]
+        page = await signed_in_page(world, context, service)
+        await page.goto(service + "/events")
+        await page.locator("#filters summary").click()
+        for control in ("#filter-event_type", "#filter-mediation"):
+            for against in ("behind", "self"):
+                ratio = await page.evaluate(_CONTRAST, [control, "borderTopColor", against])
+                assert ratio >= 3, (control, against, ratio)
+        await page.goto(service + "/events?occurred_from=yesterday")
+        assert await page.evaluate(_CONTRAST, [".field-error", "color", "behind"]) >= 4.5
+        for against in ("behind", "self"):
+            ratio = await page.evaluate(
+                _CONTRAST, ["#filter-occurred_from", "borderTopColor", against]
+            )
+            assert ratio >= 3, (against, ratio)
+        await page.goto(service + "/integrity")
+        assert await page.evaluate(_CONTRAST, [".verdict", "color", "behind"]) >= 4.5
