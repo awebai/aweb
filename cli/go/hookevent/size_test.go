@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/awebai/aw/strictjson"
 )
@@ -20,5 +21,13 @@ func TestSigningBytesOverTheSizeBoundAreRefusedBeforeParsing(t *testing.T) {
 	hostile := append([]byte(EnvelopePrefix), bytes.Repeat([]byte("["), MaxEnvelopeBytes)...)
 	if _, err := Open(hostile); strictjson.Code(err) != "envelope_too_large" {
 		t.Fatalf("got %v; want envelope_too_large", err)
+	}
+}
+
+func TestABodyOverTheDeliveryBoundIsRefusedFirst(t *testing.T) {
+	body := bytes.Repeat([]byte(" "), MaxDeliveryBytes+1)
+	opts := ReceiveOptions{Audience: "https://logs.example.com", BindingID: "b", Now: time.Now()}
+	if _, err := VerifyDelivery("POST", "/hooks/ingest", map[string]string{}, body, opts); strictjson.Code(err) != "request_too_large" {
+		t.Fatalf("got %v; want request_too_large", err)
 	}
 }

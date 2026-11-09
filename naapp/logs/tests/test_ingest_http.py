@@ -20,7 +20,7 @@ import pytest
 from aweb.app_manifests import FetchedManifest
 from aweb.installations import install_verified_manifest_on
 from aweb_naapp.hooks import envelope
-from aweb_naapp.hooks.delivery import sign_delivery
+from aweb_naapp.hooks.delivery import MAX_DELIVERY_BYTES, sign_delivery
 from aweb_naapp.hooks.strictjson import decode_base64url
 from aweb_naapp.manifest import load_manifest
 from aweb_naapp_testing import Member
@@ -213,6 +213,13 @@ async def test_bad_transport_precedes_binding_and_writes_nothing(world):
     delivery = world.delivery("core", binding_id=str(uuid4()))
     response = await world.send(delivery, body=delivery.body + b" ")
     assert (response.status_code, _code(response)) == (401, "transport_body_mismatch")
+    assert await world.db.fetch_value("SELECT count(*) FROM {{tables.chain_events}}") == 0
+
+
+async def test_a_delivery_over_the_size_bound_is_refused_and_writes_nothing(world):
+    delivery = world.delivery("core")
+    response = await world.send(delivery, body=delivery.body + b" " * MAX_DELIVERY_BYTES)
+    assert (response.status_code, _code(response)) == (413, "request_too_large")
     assert await world.db.fetch_value("SELECT count(*) FROM {{tables.chain_events}}") == 0
 
 

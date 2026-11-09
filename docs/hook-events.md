@@ -1249,25 +1249,29 @@ registry, for a client's certificate) and its clock. Without an origin or a
 binding it refuses (`verifier_misconfigured`), as it does for a client delivery
 without the team key. It checks, in this order:
 
-1. the `AWEB-Hook DIDKey` scheme (`wrong_scheme`), so an app-event or
+1. the body is at most 524,288 bytes (512 KiB), read no further than that
+   (`request_too_large`, answered 413). An event of the largest size an
+   envelope may have fits well within it, so a producer never meets this
+   refusal, and a delivery it refuses is never retried;
+2. the `AWEB-Hook DIDKey` scheme (`wrong_scheme`), so an app-event or
    `hook-resolve` credential is refused at a hook target;
-2. the signed payload is strict base64url and strict canonical JSON, and its
+3. the signed payload is strict base64url and strict canonical JSON, and its
    signature is spelled exactly (`signature_encoding`) and verifies under the
    header's `did:key` (`bad_signature`);
-3. `auth` is `hook-delivery` (`wrong_auth`);
-4. the payload's fields, its `did_key` is the header's (`signer_mismatch`), and
+4. `auth` is `hook-delivery` (`wrong_auth`);
+5. the payload's fields, its `did_key` is the header's (`signer_mismatch`), and
    its `team_id` is well formed (`invalid_value`);
-5. `aud` is the target's own origin (`audience_mismatch`);
-6. method and path are the request's (`request_mismatch`);
-7. `body_sha256` matches the body (`body_mismatch`);
-8. the timestamp is within 300 seconds of the target's clock
+6. `aud` is the target's own origin (`audience_mismatch`);
+7. method and path are the request's (`request_mismatch`);
+8. `body_sha256` matches the body (`body_mismatch`);
+9. the timestamp is within 300 seconds of the target's clock
    (`timestamp_outside_window`);
-9. `binding_id` is the target's own binding (`binding_mismatch`);
-10. the body carries a valid envelope of the credential's team, through the
+10. `binding_id` is the target's own binding (`binding_mismatch`);
+11. the body carries a valid envelope of the credential's team, through the
     envelope checks above;
-11. the envelope's `event_id` (`event_mismatch`), and its producer, `kid` and
+12. the envelope's `event_id` (`event_mismatch`), and its producer, `kid` and
     `did_key`, are the credential's (`producer_mismatch`);
-12. for a client producer, the team certificate is present
+13. for a client producer, the team certificate is present
     (`certificate_missing`), names the event's team, producer key and
     certificate id (`certificate_mismatch`), and is signed by the team's current
     key (`certificate_invalid`).
