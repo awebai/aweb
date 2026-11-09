@@ -336,7 +336,7 @@ class StagedOnePasswordReference:
 
 
 class Custody:
-    """The native KMS-sealed store of one deployment."""
+    """The native envelope-encrypted store of one deployment."""
 
     def __init__(self, provider: KeyProvider, db: AsyncDatabaseManager) -> None:
         self._provider = provider
