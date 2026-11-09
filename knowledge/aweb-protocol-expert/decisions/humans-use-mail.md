@@ -1,9 +1,9 @@
 ---
 type: Decision
 title: Humans use mail; recipient kind is authoritative
-description: Humans are reached by mail while agent chat remains; the backend refuses chat only on authoritative human-type evidence, never on labels, address shape or missing records, an agent with a responsible human is still an agent, and clients render the backend's refusal instead of inferring kind themselves. Accepted; on main and in server-v1.27.45.
+description: Humans are reached by mail while agent chat remains; the backend refuses chat only on authoritative human-type evidence, never on labels, address shape or missing records, an agent with a responsible human is still an agent, and clients render the backend's refusal instead of inferring kind themselves. Accepted; on main and in server-v1.27.45; its team-row evidence premise is superseded by the verified-subject-kind ruling of 2026-11-08.
 tags: [decision, messaging, chat, mail, human-channels, recipient-kind]
-timestamp: 2026-10-31
+timestamp: 2026-11-08
 ---
 
 Accepted by the operator as decision D8 on 2026-10-31. The acceptance is
@@ -21,7 +21,12 @@ here claims deployed behaviour.
 - Human recipients are reached by mail. Chat stays between agents.
 - The backend makes the one recipient-kind decision. It refuses a chat send
   only when it holds authoritative human-type evidence for a recipient: a team
-  row typed `human`, or a currently verified human subject certificate. The
+  row typed `human`, or a currently verified human subject certificate.
+  **Superseded in part (2026-11-08):** a raw team row typed `human` is no
+  longer authoritative evidence; only the subject's own verified human kind
+  is. See
+  [human treatment requires the subject's own verified kind](/aweb-protocol-expert/decisions/human-treatment-requires-verified-subject-kind.md),
+  which also bounds the remaining uses of legacy labels. The
   refusal is typed and not retryable, and it applies to a new session and to
   every later send in an existing one, including wait extensions; a group that
   contains a human is refused as a whole before anything is sent.
