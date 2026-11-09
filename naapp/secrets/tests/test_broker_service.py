@@ -75,6 +75,7 @@ async def setup(
     registration_view=None,
     clock=None,
     sweep_margin=timedelta(seconds=5),
+    response_budget_bytes=None,
 ):
     await _install(db, installation_id=INSTALLATION, active_version=None)
     for migration in (
@@ -150,6 +151,11 @@ async def setup(
         derived_max_ttl_s=3600,
         internal_destinations=InternalDestinations.ALLOWED,
         clock=clock or (lambda: NOW),
+        **(
+            {}
+            if response_budget_bytes is None
+            else {"response_budget_bytes": response_budget_bytes}
+        ),
     )
 
 
