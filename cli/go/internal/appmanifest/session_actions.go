@@ -97,13 +97,15 @@ func parseSessionActions(raw json.RawMessage, roles []OwnerActRole) ([]SessionAc
 		if err != nil {
 			return nil, codedf(CodeOwnerActsInvalid, "%v", err)
 		}
-		if _, ok := byName[action.Name]; ok {
-			return nil, codedf(CodeOwnerActsInvalid, "duplicate session action %q", action.Name)
+		// Names compare trimmed, as version 2 tool names do.
+		name := strings.TrimSpace(action.Name)
+		if _, ok := byName[name]; ok {
+			return nil, codedf(CodeOwnerActsInvalid, "duplicate session action %q", name)
 		}
 		if err := validateSessionAction(action, declaredRoles); err != nil {
 			return nil, codedf(CodeOwnerActsInvalid, "session action %q: %v", action.Name, err)
 		}
-		byName[action.Name] = action
+		byName[name] = action
 		actions = append(actions, action)
 	}
 	for _, action := range actions {
@@ -399,7 +401,7 @@ func predicateValue(raw json.RawMessage) (string, error) {
 // action of the same role whose every param is an input of the confirm, so
 // aw builds the read from the confirm's own invocation.
 func validateCompletionRead(confirm SessionAction, byName map[string]SessionAction) error {
-	read, ok := byName[confirm.Completion.Read]
+	read, ok := byName[strings.TrimSpace(confirm.Completion.Read)]
 	if !ok || read.Kind != SessionActionRead {
 		return fmt.Errorf("completion.read %q is not a declared read action", confirm.Completion.Read)
 	}

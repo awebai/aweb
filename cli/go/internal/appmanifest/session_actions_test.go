@@ -60,6 +60,14 @@ func TestSessionActionsRefuseWhatTheCorpusDoesNotPin(t *testing.T) {
 			}
 			o["session_actions"] = append(actions, copied)
 		},
+		"an action name repeated with padding": func(o map[string]any, actions []any) {
+			copied := map[string]any{}
+			for k, v := range action(actions, "onepassword-token") {
+				copied[k] = v
+			}
+			copied["name"] = "onepassword-token "
+			o["session_actions"] = append(actions, copied)
+		},
 		"a read with a body param and no body member": func(o map[string]any, actions []any) {
 			read := action(actions, "change-set")
 			read["params"] = append(read["params"].([]any), map[string]any{"name": "note", "in": "body"})
@@ -129,6 +137,15 @@ func TestSessionActionsSeeTheValuesVersion2ValidationNormalizes(t *testing.T) {
 		// An absent body is mode json, as it is for any version 2 tool.
 		delete(action(actions, "onepassword-token"), "body")
 		action(actions, "confirm")["body"] = map[string]any{"mode": " json "}
+	})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+}
+
+func TestACompletionReadResolvesByTheTrimmedName(t *testing.T) {
+	err := sessionActionCaseLoad(t, func(o map[string]any, actions []any) {
+		action(actions, "confirm")["completion"].(map[string]any)["read"] = "change-set "
 	})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
