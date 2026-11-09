@@ -1193,6 +1193,23 @@ class CustomerReleaseContractTest(unittest.TestCase):
         with self.assertRaises(CANDIDATE.CandidateRefusal):
             CANDIDATE.validate_tags(root, ["aweb-secrets-runner-v0.1.0"])
 
+    def test_built_runner_requires_the_exact_values_release_and_toolkit_floor(self):
+        from email.parser import BytesParser
+        import tomllib
+
+        version = tomllib.loads((ROOT / "naapp/secrets/values/pyproject.toml").read_text())["project"]["version"]
+        with tempfile.TemporaryDirectory() as directory:
+            command(ROOT, "uv", "build", "--wheel", "--no-sources", "--out-dir", directory,
+                    "naapp/secrets/runner")
+            wheels = list(Path(directory).glob("*.whl"))
+            self.assertEqual(len(wheels), 1)
+            with zipfile.ZipFile(wheels[0]) as wheel:
+                names = [name for name in wheel.namelist() if name.endswith(".dist-info/METADATA")]
+                self.assertEqual(len(names), 1)
+                requirements = BytesParser().parsebytes(wheel.read(names[0])).get_all("Requires-Dist")
+            self.assertIn(f"aweb-secrets-values=={version}", requirements)
+            self.assertIn("aweb-naapp[pages]>=0.5.1", requirements)
+
 
 if __name__ == "__main__":
     unittest.main()
