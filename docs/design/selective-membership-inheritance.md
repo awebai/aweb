@@ -115,6 +115,17 @@ revision, without rewriting it, resetting counters or growing carried history;
 child certificate expiry still cannot be extended by a policy edit alone.
 The rest of this draft follows strict replacement pending that choice.
 
+**De-listing one named parent has the same cost:** while retaining A's direct
+membership, removing A's inheritance eligibility requires a whole-policy
+replacement. That withdraws the other parents' dependants too, not just A's.
+The narrower existing action is to revoke A's referenced direct membership
+certificate, denying its dependent path while leaving other roots alone; it
+is not an eligibility-only removal. If Juan chooses continuity across policy
+edits, he should also decide whether removing one parent's eligibility grant
+can preserve the other roots' dependants. That selective-removal case must be
+specified in the same continuity rule; it is not implied by the allowance,
+rate and expiry increases described above.
+
 ## Team policy and custody
 
 The policy is a signed admission authorization, verified under the team's
