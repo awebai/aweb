@@ -80,6 +80,16 @@ async def purge(
     events this purged."""
     if not positions:
         return 0
+    # Lock in position order, as catch-up does, so the two never deadlock.
+    await tx.fetch_all(
+        "SELECT 1 FROM {{tables.chain_events}}"
+        " WHERE team_id = $1 AND purge_act IS NULL"
+        " AND (chain_epoch, team_seq) IN (SELECT * FROM unnest($2::int[], $3::bigint[]))"
+        " ORDER BY chain_epoch, team_seq FOR UPDATE",
+        team_id,
+        [epoch for epoch, _ in positions],
+        [seq for _, seq in positions],
+    )
     purged = await tx.fetch_all(
         "UPDATE {{tables.chain_events}}"
         " SET salt = NULL, signing_bytes = NULL, signature = NULL, purge_act = $4"

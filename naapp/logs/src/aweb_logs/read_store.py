@@ -223,15 +223,6 @@ async def tail(
 # reads only the events not yet projected. Projection leaves no gaps below that
 # position: appends serialize on the team's locked chain head, so positions
 # commit in order, and each batch of projections inserts atomically.
-_INSERT_PROJECTION = (
-    "INSERT INTO {{tables.read_events}} (team_id, chain_epoch, team_seq, purged, hook,"
-    " event_id, event_type, mediation, occurred_at, result_status, trace_id,"
-    " actor_did_key, actor_did_aw, app_id, operation_id, job_id, dispatch_id,"
-    " approval_id, grant_id, secret_id)"
-    " VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,"
-    " $17, $18, $19, $20)"
-    " ON CONFLICT (team_id, chain_epoch, team_seq) DO NOTHING"
-)
 _UNPROJECTED = (
     "SELECT e.chain_epoch, e.team_seq, e.hook, e.signing_bytes"
     " FROM {{tables.chain_events}} e"
@@ -242,8 +233,19 @@ _UNPROJECTED = (
     "     ORDER BY r.chain_epoch DESC, r.team_seq DESC LIMIT 1), 0))"
     " ORDER BY e.chain_epoch, e.team_seq LIMIT $2"
     # A purge of the same events waits for this projection, and this one for
-    # a purge, so no projection keeps content that a purge removed.
+    # a purge, so no projection keeps content that a purge removed. Both lock
+    # in (chain_epoch, team_seq) order, so neither can deadlock the other.
     " FOR SHARE OF e"
+)
+
+_INSERT_PROJECTION = (
+    "INSERT INTO {{tables.read_events}} (team_id, chain_epoch, team_seq, purged, hook,"
+    " event_id, event_type, mediation, occurred_at, result_status, trace_id,"
+    " actor_did_key, actor_did_aw, app_id, operation_id, job_id, dispatch_id,"
+    " approval_id, grant_id, secret_id)"
+    " VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,"
+    " $17, $18, $19, $20)"
+    " ON CONFLICT (team_id, chain_epoch, team_seq) DO NOTHING"
 )
 
 
