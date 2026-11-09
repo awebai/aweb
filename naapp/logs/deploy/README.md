@@ -30,7 +30,7 @@ setting's meaning. A customer deployment sets:
 | `LOGS_DATABASE_URL`, `LOGS_DB_SCHEMA` | Customer PostgreSQL DSN in the private environment file; an app-owned role and schema (default `public`). Migrations run on startup. |
 | `LOGS_APP_ID` | Stable customer app id. The hosted id `logs` is refused at any other origin. |
 | `LOGS_PUBLIC_ORIGIN` | HTTPS origin of ingest, the manifest and the member tools. |
-| `LOGS_CONSOLE_ORIGIN` | Plain HTTPS reader-console origin on a host of its own: neither the public host nor a parent or subdomain of it. Startup refuses otherwise. |
+| `LOGS_CONSOLE_ORIGIN` | Plain HTTPS reader-console origin. Startup refuses the public host itself and any parent of it, where readers' passkeys would be usable from the public host. A subdomain of the public host is accepted. |
 | `LOGS_AWID_REGISTRY_URL` | The customer registry, the same one the customer's Secrets uses and the namespace's `_awid` TXT selects. The default is the public `api.awid.ai`. |
 | `LOGS_APP_KEY_FILES` | JSON object mapping the four manifest kids to mounted key files, as below. |
 | `LOGS_EMAIL_SMTP_HOST`, `LOGS_EMAIL_SMTP_PORT`, `LOGS_EMAIL_TLS`, `LOGS_EMAIL_USERNAME`, `LOGS_EMAIL_PASSWORD_FILE`, `LOGS_EMAIL_FROM`, `LOGS_EMAIL_CA_FILE` | Transactional SMTP for readers' enrolment links. All but TLS (default `starttls`) and the CA are required; the password is read only from its mounted file. |
