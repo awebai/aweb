@@ -1,11 +1,12 @@
 # Owner-designated roles held by a team's humans
 
-Status: **proposed** (aweb-acgh.16.38, for the LF demo epic aweb-acwd). Juan
-ruled H3 and the browser default for use. H1, H2 and H4 await his ruling. This is a change to the specified
+Status: **decided** (aweb-acgh.16.38, for the LF demo epic aweb-acwd). Juan
+ruled H1 to H4 and the browser default for use. This is a change to the specified
 [owner-act delivery contract](../owner-act-delivery.md). With it, the holder of
 an owner-designated role (a secrets owner, a logs reader) is an existing human
 member of the team, named by its principal. That replaces a contact enrolled
-into a naapp-local account. The contract text changes only after the ruling.
+into a naapp-local account. The contract documents change in the follow-ups under
+[Work this changes](#work-this-changes).
 [Human confirmation started from `aw`](human-confirmation-from-aw.md)
 (aweb-acwd.4) is how the holder creates its credential and then uses the
 role.
@@ -14,14 +15,14 @@ Requirement: Bookshelf `kb/concepts/customer-agent-servers.md` at `5c83ed85`
 (lines 21-24, and gap G-B at line 76). There are no naapp member accounts, and
 the same verified human identity serves every naapp.
 
-## Summary for Juan
+## Rulings
 
-| Item | State | Recommended | Main tradeoff |
+| Item | State | Ruling | Main tradeoff |
 | --- | --- | --- | --- |
-| H1. Added acts or a changed subject | Pending | Three acts added to `aweb.owner-act/1`, which is additive | The contact acts stay in the vocabulary, unused, until a separate removal. |
-| H2. Who may hold a role | Pending | A current team member of human kind, checked at designation and on every use | An auditor who is not a team member cannot be a logs reader, and each use needs the registry. |
+| H1. Added acts or a changed subject | Ruled | Three acts added to `aweb.owner-act/1`, which is additive | The contact acts stay in the vocabulary, unused, until a separate removal. |
+| H2. Who may hold a role | Ruled | A current team member of human kind, checked at designation and on every use | An auditor who is not a team member cannot be a logs reader, and each use needs the registry. |
 | H3. Lockout and recovery notices | Ruled | A notice-only email contact for the roles that declare one: in secrets, owners and issuers (D9a) | The contact receives notices only, never an enrolment or approval link. The 72-hour freeze and the hook event stay. |
-| H4. Whose credential the act binds | Pending | The controller act binds it. When the owner is not the holder, the two clients compare a fingerprint | Trust on first use rests on that comparison. |
+| H4. Whose credential the act binds | Ruled | The controller act binds it. When the owner is not the holder, the two clients compare a fingerprint | Trust on first use rests on that comparison. |
 
 ## Reused unchanged
 
@@ -224,7 +225,7 @@ that signs for the owner shows the same facts behind its step-up.
 
 ## Work this changes
 
-After the ruling:
+Each is filed as one reviewed change:
 
 - the contract text in [owner-act.md](../owner-act.md#acts-and-subjects),
   [owner-act-delivery.md](../owner-act-delivery.md) and

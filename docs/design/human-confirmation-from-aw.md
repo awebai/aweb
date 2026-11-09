@@ -1,9 +1,8 @@
 # Human confirmation started from `aw`
 
-Status: **proposed** (aweb-acwd.4, gap G-B for the LF demo epic aweb-acwd).
-Juan ruled the browser default and the optional security key. N3 and N4 await
-his ruling. This is a contract only. Implementation tasks are filed after
-review.
+Status: **decided** (aweb-acwd.4, gap G-B for the LF demo epic aweb-acwd).
+Juan ruled every item below. This is a contract; implementation tasks are
+filed from [Work this creates](#work-this-creates).
 
 With it, a human finishes every protected naapp operation that `aw` starts:
 
@@ -28,14 +27,15 @@ one.
 Requirement: Bookshelf `kb/concepts/customer-agent-servers.md` at `5c83ed85`,
 lines 127-145, 157 and 173.
 
-## Summary for Juan
+## Rulings
 
 | Item | State | Main tradeoff |
 | --- | --- | --- |
 | Browser passkey by default, opened by `aw` | Ruled | Each app origin is its own relying party, so a human creates one passkey per app origin. Synced passkeys make that one gesture each. |
 | A security key from the terminal | Ruled optional | It is accepted only for a holding bound under it, never by default. |
-| N3. How an approver finds a pending request | Pending | With no approval email for a human role, the console's own list of the approver's pending approvals is how it finds them. |
-| N4. Terminal input and output | Pending | Typing a value, or receiving the runner code, in the terminal keeps them out of the browser. It is a local barrier, not gesture evidence. |
+| A plain human-key signature as an approval | Ruled out | Not offered. |
+| N3. How an approver finds a pending request | Ruled: the console lists them | With no approval email for a human role, the console's own list of the approver's pending approvals is how it finds them. |
+| N4. Terminal input and output | Ruled: offered beside the console | Typing a value, or receiving the runner code, in the terminal keeps them out of the browser. It is a local barrier, not gesture evidence. |
 
 ## Trust
 
@@ -47,6 +47,9 @@ lines 127-145, 157 and 173.
   (`naapp-lib/src/aweb_naapp/runtime/passkeys/webauthn.py:37-50`), so the
   evidence proves the credential and the origin the client reported, as for
   any WebAuthn relying party.
+- A `session` handoff returns its result only to the loopback on the machine
+  whose browser completed the ceremony ([The handoff](#the-handoff)), so a
+  phished sign-in yields nothing to a remote attacker.
 - An agent running as the same OS user can drive the browser and the
   terminal. It cannot produce the authenticator's user verification, which
   is why every effect needs a fresh assertion.
@@ -57,20 +60,55 @@ lines 127-145, 157 and 173.
 
 One mechanism connects `aw` to a browser ceremony. It is L6's planned device
 flow (aweb-acgh.16.24), specified here once for every naapp and served on the
-installation's pinned `owner_acts.origin`:
+installation's pinned `owner_acts.origin`. By default the result comes back
+to `aw` through a loopback redirect on the same machine, as RFC 8252 describes
+for native apps:
 
-1. `aw` makes an ephemeral key, held only in memory, and calls
-   `POST <origin>/handoffs` with its purpose, the public key and, for a
-   session, the holder's scope. The app answers a handoff id, a short user
-   code and a ten-minute expiry. The handoff grants nothing.
-2. `aw` shows the user code and opens `<origin>/handoff`. The human types the
-   code shown in their terminal; the URL never carries it. The page names the
-   purpose, the app and the installation.
+1. `aw` makes an ephemeral key, held only in memory, listens on
+   `127.0.0.1:<random port>`, and makes a random verifier. It calls
+   `POST <origin>/handoffs` with its purpose, the public key, that loopback
+   redirect URI, the verifier's SHA-256 and, for a session, the holder's
+   scope. The app answers a handoff id and a ten-minute expiry. The handoff
+   grants nothing.
+2. `aw` opens `<origin>/handoff/{id}` in the local browser. The page names
+   the purpose, the app and the installation.
 3. The browser runs the purpose's ceremony (below) with B3's existing
    routes, challenges and checks.
-4. `aw` collects the result from `POST <origin>/handoffs/{id}/result`, signed
-   by the ephemeral key. A result is returned once and expires with the
-   handoff.
+4. The page then redirects the browser to the registered loopback URI with a
+   single-use code. That is a redirect the browser follows to `aw`, not one
+   that `aw` follows.
+5. `aw` collects the result from `POST <origin>/handoffs/{id}/result` with
+   the code and the verifier, signed by the ephemeral key. The app releases
+   the result only for all three, once, before the handoff expires.
+
+**Why the loopback.** A typed user code ties nothing to the `aw` that started
+the handoff, which is the device-code phishing pattern:
+
+- an attacker starts a `session` handoff for the victim's scope with its own
+  key;
+- it sends the victim the real page and code;
+- the victim signs in;
+- the attacker collects a console session for the victim's scope.
+
+Each decision still needs its own assertion, but for `logs.reader` the
+session is the read boundary. With the loopback, a phished victim's browser
+delivers the code to the victim's own machine, where the attacker's `aw` is
+not listening, and the attacker's result request is refused without it.
+
+**Fallback: no local browser** (`aw --no-browser`, for example over SSH). The
+app answers a short user code instead of a loopback. `aw` shows it, and the
+human types it into `<origin>/handoff` on any device; the URL never carries
+it. The page:
+
+- says to continue only if this person started it in their own terminal,
+  moments before;
+- shows the requesting `aw`'s hostname, as reported.
+
+Each completed fallback `session` handoff emits a `post-governance-hook`
+event, so the owner sees it. The `credential` purpose may use either path,
+because it grants nothing: a phished registration gives the attacker only a
+public key, and binding still needs the owner's act and the
+[fingerprint comparison](human-role-holders.md#what-the-owners-client-shows-and-signs).
 
 `aw` sends these requests only to the pinned origin and follows no
 redirects. The app rate-limits handoffs as it rate-limits login.
@@ -87,8 +125,12 @@ redirects. The app rate-limits handoffs as it rate-limits login.
 - **`session`.** The page runs the existing console login for the holder's
   scope, then asks the human to allow `aw` with that user code. The result is
   a console session for that scope, bound to the ephemeral key: at most 15
-  minutes, with its CSRF token, and every request signed by that key. Each
-  request re-checks that the principal is a current human member
+  minutes, with its CSRF token. Each request carries the session id and a
+  signature by that key over team-auth v2's request-bound bytes
+  ([Authentication](../aweb-sot.md#authentication): `aud`, `method`, `path`,
+  `body_sha256`, `timestamp`), with the session id in place of `team_id` and
+  a random `nonce`. The app refuses a timestamp outside the 300-second window
+  and a nonce already seen in that session. Each request re-checks that the principal is a current human member
   ([Use](human-role-holders.md#use)).
 
 ## Confirming a frozen request
@@ -111,13 +153,38 @@ Completion is what each kind already defines:
   (`naapp/secrets/src/aweb_secrets/console_changes.py:390`, `:513`).
 - **Reconciliation:** as secrets §11.4 defines.
 
-**N3 (pending): finding the request.** A human role has no approval email:
-its contact is notice-only ([H3](human-role-holders.md#summary-for-juan)).
-The console therefore lists the pending approvals for which the signed-in
-approver is a candidate: approval id, kind and the page to open, with no
-terms. Email locators stay for contact roles.
+**N3: finding the request.** A human role has no approval email: its
+contact is notice-only ([H3](human-role-holders.md#rulings)). The console
+therefore lists the pending approvals for which the signed-in approver is a
+candidate: approval id, kind and the page to open, with no terms.
 
-## N4 (pending). Terminal input and the runner code
+The existing pages open an approval only through the candidate's personal
+link token (`naapp-lib/src/aweb_naapp/runtime/approvals/service.py:467-504`),
+and B2 stores only its verifier, so the list cannot recover the emailed token.
+Selecting an entry therefore asks B2 for a **session-issued link**:
+
+- The request is `POST /approvals/{approval_id}/link` in the console
+  session, with its CSRF token.
+- B2 refuses unless the approval is pending and the session's (scope,
+  subject) is one of its candidates, still eligible under the current policy,
+  by the same checks a decision makes. The holder's principal must still be a
+  current human member.
+- B2 then mints a personal link exactly as it mints an emailed one
+  (`service.py:303-316`): bound to the approval id, that candidate's subject
+  and the frozen `request_sha256`, single-use, and expiring at the earlier of
+  the approval's expiry and ten minutes. Minting it revokes that candidate's
+  earlier unused link for the approval.
+- The token is returned once, to that session only, and never logged.
+- From there the page runs unchanged: `view-options` and `view` with a VIEW
+  assertion, `decision-options` and `decide` with an APPROVE or REJECT
+  assertion, and B2's candidate and first-decision checks.
+
+A session-issued link authorizes nothing by itself, as an emailed one does
+not. Login or an approval id never replaces the link or either assertion.
+For a human role, B2 delivers no link at request time. Emailed links stay for
+contact roles.
+
+## N4. Terminal input and the runner code
 
 By default, values are entered on the console and the runner code is shown
 there, as on main. N4 adds a terminal path through a `session` handoff.
@@ -198,12 +265,20 @@ unchanged in both profiles.
 Each item is filed after review, and each is one reviewed change.
 
 - **`aweb_naapp`:** the handoff routes and page, on B3's registration and
-  login; the human-kind check at use.
-- **Consoles (secrets, logs):** the `session` handoff; under N3, the pending
-  list.
-- **`aw`:** opening the browser and running the handoff; under N4, terminal
-  input and code output and their exclusion from tracing.
-- **The runner:** under N4, a terminal prompt for the code.
+  login, with the loopback rule and the signed session requests; the
+  human-kind check at use. Tests: a result requested without the loopback
+  code is refused; a replayed session request is refused.
+- **B2 (`aweb_naapp`):** the session-issued link, with tests:
+  - a non-candidate session is refused;
+  - an ineligible session is refused;
+  - a link for a different request hash is refused;
+  - a second issue revokes the first.
+- **Consoles (secrets, logs):** the `session` handoff and the N3 pending
+  list, opening each entry through a session-issued link.
+- **`aw`:** opening the browser, the loopback listener and the handoff, and
+  `--no-browser`; N4's terminal input and code output and their exclusion
+  from tracing.
+- **The runner:** N4's terminal prompt for the code.
 - **L6:** the `session` handoff on logs' origin.
 - **The optional security key:** the `aweb:` relying party and evidence rule
   in B3; CTAP2 creation and assertion in `aw`; a test that a redirect from
