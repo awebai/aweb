@@ -120,10 +120,60 @@ owner withdraws/changes the corresponding subtree grant or its required
 endorsement. A separately valid individual/role grant remains independent;
 none can bypass a server/app requirement that applies to the operation itself.
 
-**Before freezing:** the secrets owner must specify ordering among individual,
-role and subtree candidates, the charged grant/policy and deterministic refusal
-when none admits. Preserve existing individual/role outcomes; do not bypass
-stricter grant conditions by combining fragments from different grants.
+### Secrets lane proposal: extend decision 46
+
+The following is lane input for review, not an ACK or a settled change to the
+secrets contract. Extend its existing candidate order with a third tier:
+
+1. Grants to the requesting principal, in `grant_id` order.
+2. Grants to its roles, in `grant_id` order.
+3. Eligible subtree grants, in `grant_id` order.
+
+The first candidate that admits is used; charge only that candidate's policy
+buckets. Evaluate each candidate whole: operation/digest, open-request and
+sensitivity rules, approval, windows, rate, attestation and dispatch fence. Do
+not assemble permission from fragments of multiple grants. If candidates exist
+but all refuse, return the first candidate's refusal. If none exists, use the
+existing no-grant refusal.
+
+A principal grant's rate or window refusal can therefore be followed by a role
+or subtree grant that admits and is charged. This is additive permission, not
+a deny override. The owner contains subtree use through that grant's own policy.
+Existing principal/role grants retain their order and charging behavior.
+
+A subtree grant is eligible only when shared verification establishes current
+membership in D's subtree and the currently valid endorsement required by that
+grant. A definite wrong subtree, withdrawn endorsement or revoked ancestry
+makes it ineligible; secrets parses no chain and reveals no new detail about D
+through its no-grant refusal. An operation/team-wide required-endorsement check
+in (c) runs before grant evaluation and cannot be bypassed by another candidate.
+Unavailable verification is distinct from proven ineligibility; its treatment
+when an independently admitting grant exists remains a shared-runtime/policy
+interface question, not permission to admit an unverified subtree grant.
+
+The `grant/1` subject gains a subtree variant naming registered D (`did:aw`).
+Exact bytes/version remain for the app policy owner at freeze. Existing digest
+binding remains: editing an operation cannot silently widen a grant. Sensitive
+secrets still admit only named operations; subtree grants do not enable
+`open_request` for them.
+
+**Owner decisions still required:**
+
+- **Rate keying.** Existing per-(requesting principal, secret) buckets give each
+  new worker a fresh principal bucket; only the per-secret bucket caps the swarm
+  today. The policy lane recommends an additional per-(D, secret) bucket charged
+  on subtree-admitted uses alongside existing buckets. This is a recommendation,
+  not an accepted new rate scope. Decide its budget ownership and behavior for
+  overlapping subtree grants before freezing.
+- **Four-eyes.** Existing `distinct_approver` compares the approver's linked
+  principal to the requesting principal. It does not exclude D's endorsing
+  human from approving the swarm's use. The policy lane recommends also comparing
+  that human on subtree-admitted uses. The decision must name the exact verified
+  endorser from (d), its relation to current ancestry, and what missing/changed
+  evidence means; do not infer a natural-person difference from distinct keys.
+
+The secrets policy owner is taking these two recommendations to Juan. Neither
+is implemented or treated as approved by this draft.
 
 ## (c) Required endorsement is selected by the authority
 
@@ -257,11 +307,16 @@ admission. These cases are an acceptance matrix, not a claim of tests run:
 | Revoked D, withdrawn protected endorsement, withdrawn matching resource grant | Deny each dependent path; preserve history |
 | Unavailable required registry/proof/authority evidence | Unavailable; no effect or fallback |
 | Narrower direct grant plus broader matching subtree grant | Direct grant does not subtract inherited permission |
+| Individual rate/window refusal followed by eligible subtree admission | Charge the admitting subtree policy only; no fragment combining |
+| Ineligible subtree with no other candidate | Existing no-grant refusal; no D-specific disclosure |
+| All eligible candidates refuse | First candidate refusal in principal/role/subtree order |
+| Sensitive secret with subtree open request | Refuse; named operations only |
 | Withdraw subtree grant with an independent valid grant remaining | Evaluate independent permission under applicable operation policy |
 | Unrelated legacy/humanless operation outside the requirement | Existing disposition unchanged |
 
 The exact machine-readable vector location, semantic error names, grant
-candidate order and protected-binding producer/consumer API are open interface
+candidate-order confirmation, rate/four-eyes decisions and protected-binding
+producer/consumer API are open interface
 items for this first draft. Their resolution, lane review by runtime and secrets
 policy owners, and R + Athena ACK at one exact SHA are prerequisites to the
 implementation tasks.
