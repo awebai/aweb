@@ -3110,7 +3110,7 @@
         "act": "session.handoff_completed",
         "direction": "widening",
         "role": "secrets.approver.refunds",
-        "subject_ref": "member:did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk",
+        "subject_ref": "approver-1",
         "session_ref": "session:4f1c9a2e"
       }
     }
@@ -4746,7 +4746,7 @@
         "act": "session.handoff_completed",
         "direction": "widening",
         "role": "secrets.approver.refunds",
-        "subject_ref": "member:did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk"
+        "subject_ref": "approver-1"
       },
       "error": "rule_violation",
       "field": "session_ref"
@@ -4773,7 +4773,7 @@
         "approval_evidence_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
         "act": "session.handoff_completed",
         "direction": "widening",
-        "subject_ref": "member:did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk",
+        "subject_ref": "approver-1",
         "session_ref": "session:4f1c9a2e"
       },
       "error": "rule_violation",
@@ -4787,7 +4787,7 @@
         "act": "session.handoff_completed",
         "direction": "widening",
         "role": "secrets.approver.refunds",
-        "subject_ref": "member:did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk",
+        "subject_ref": "approver-1",
         "session_ref": "session:4f1c9a2e"
       },
       "error": "rule_violation",
@@ -4802,7 +4802,7 @@
         "act": "session.handoff_completed",
         "direction": "widening",
         "role": "secrets.approver.refunds",
-        "subject_ref": "member:did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk",
+        "subject_ref": "approver-1",
         "session_ref": "session:4f1c9a2e"
       },
       "error": "rule_violation",
@@ -4817,7 +4817,7 @@
         "act": "session.handoff_completed",
         "direction": "narrowing",
         "role": "secrets.approver.refunds",
-        "subject_ref": "member:did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk",
+        "subject_ref": "approver-1",
         "session_ref": "session:4f1c9a2e"
       },
       "error": "direction_mismatch",
@@ -4832,7 +4832,7 @@
         "act": "session.handoff_completed",
         "direction": "widening",
         "role": "secrets.approver.refunds",
-        "subject_ref": "member:did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk",
+        "subject_ref": "approver-1",
         "session_ref": "session:4f1c9a2e",
         "approval_id": "apr_c2"
       },
@@ -4848,7 +4848,7 @@
         "act": "session.handoff_completed",
         "direction": "widening",
         "role": "secrets.approver.refunds",
-        "subject_ref": "member:did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk",
+        "subject_ref": "approver-1",
         "session_ref": "session:4f1c9a2e",
         "resource_ref": "sec:1"
       },

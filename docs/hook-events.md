@@ -348,7 +348,10 @@ through the typed-code fallback
 emits `session.handoff_completed`. It carries `role` (the holder scope's
 role), `subject_ref` (the app-local subject that logged in) and
 `session_ref`, an opaque reference to the issued session that is neither its
-session id nor its CSRF token. Its `authority` is `passkey_session`, and
+session id nor its CSRF token. The producer derives it so that it cannot be
+turned back into the session id: a random reference stored with the session,
+or a keyed hash, never a plain hash of the id. `subject_ref` is the B3
+app-local subject, as for the `credential.*` acts, never a DID. Its `authority` is `passkey_session`, and
 `approval_evidence_sha256` commits to the login proof the handoff page
 retained (`binding_kind` `login`, purpose `login`). It carries none of the
 other acts' fields, and no other act carries `session_ref`. A handoff through
