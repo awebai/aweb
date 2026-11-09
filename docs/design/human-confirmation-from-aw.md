@@ -74,6 +74,7 @@ human origin:
 | Start | app origin | `POST /handoffs` | team-auth v2, as the holder | the app origin |
 | Page | human origin | `GET /handoff/{id}` | none; the browser's own ceremony | none |
 | Result | human origin | `POST /handoffs/{id}/result` | the code, the verifier and the ephemeral key's signature, in the body | none |
+| Session requests | human origin | the console's routes | the session id and the ephemeral key's signature, in no team-auth header | none |
 | Owner-act delivery | human origin | `POST /.well-known/aweb-owner-act` | the act alone, unchanged | the human origin |
 
 The handoff id ties the steps together; both origins are one service with
@@ -85,7 +86,9 @@ redirect on the same machine, as RFC 8252 describes for native apps:
    `POST <app origin>/handoffs` with its purpose, the public key, that loopback
    redirect URI, the verifier's SHA-256 and, for a session, the holder's
    scope, signed with team-auth v2 as the holder
-   ([Membership evidence](#membership-evidence)). The app accepts only a redirect URI of the form
+   ([Membership evidence](#membership-evidence)). The app refuses a scope
+   whose principal is not the verified signer. `aw` builds the page and
+   result URLs from the pinned human origin, never from the response. The app accepts only a redirect URI of the form
    `http://127.0.0.1:<port>/<path>` or `http://[::1]:<port>/<path>`, a
    literal loopback address; `localhost` and every other URI are refused
    (RFC 8252 §8.3). It answers a handoff id and a ten-minute expiry. The
