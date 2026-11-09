@@ -22,6 +22,7 @@ from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
+from aweb_logs import read_store
 from aweb_logs.chain import (
     SALT_BYTES,
     Checkpoint,
@@ -235,6 +236,8 @@ async def append_on(
     await _move_head(
         tx, event.team_id, _Head(link.chain_epoch, link.team_seq, event_hash, head.logs_origin)
     )
+    # Readers read the event once it commits, with no catch-up on their path.
+    await read_store.project(tx, event.team_id)
     return Appended(receipt=receipt, duplicate=False)
 
 
