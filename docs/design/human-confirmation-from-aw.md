@@ -59,14 +59,30 @@ lines 127-145, 157 and 173.
 ## The handoff
 
 One mechanism connects `aw` to a browser ceremony. It is L6's planned device
-flow (aweb-acgh.16.24), specified here once for every naapp and served on the
-installation's pinned `owner_acts.origin`. By default the result comes back
-to `aw` through a loopback redirect on the same machine, as RFC 8252 describes
-for native apps:
+flow (aweb-acgh.16.24), specified here once for every naapp. It spans the
+installation's two pinned origins: the app origin (the manifest's `origin`,
+the agent origin where member-signed tools are served) and the human origin
+(`owner_acts.origin`). The human origin never accepts team-auth: a request
+carrying `Authorization`, `X-AWEB-*` or `X-AWID-*` is refused there with
+`403 team_auth_refused` before any route
+(`naapp-lib/src/aweb_naapp/runtime/origins.py`). So the team-auth-signed
+start runs on the app origin, and the browser page and the result run on the
+human origin:
+
+| Step | Origin | Method and path | Authentication | `aud` |
+| --- | --- | --- | --- | --- |
+| Start | app origin | `POST /handoffs` | team-auth v2, as the holder | the app origin |
+| Page | human origin | `GET /handoff/{id}` | none; the browser's own ceremony | none |
+| Result | human origin | `POST /handoffs/{id}/result` | the code, the verifier and the ephemeral key's signature, in the body | none |
+| Owner-act delivery | human origin | `POST /.well-known/aweb-owner-act` | the act alone, unchanged | the human origin |
+
+The handoff id ties the steps together; both origins are one service with
+shared state. By default the result comes back to `aw` through a loopback
+redirect on the same machine, as RFC 8252 describes for native apps:
 
 1. `aw` makes an ephemeral key, held only in memory, listens on
    `127.0.0.1:<random port>`, and makes a random verifier. It calls
-   `POST <origin>/handoffs` with its purpose, the public key, that loopback
+   `POST <app origin>/handoffs` with its purpose, the public key, that loopback
    redirect URI, the verifier's SHA-256 and, for a session, the holder's
    scope, signed with team-auth v2 as the holder
    ([Membership evidence](#membership-evidence)). The app accepts only a redirect URI of the form
@@ -74,15 +90,16 @@ for native apps:
    literal loopback address; `localhost` and every other URI are refused
    (RFC 8252 §8.3). It answers a handoff id and a ten-minute expiry. The
    handoff grants nothing.
-2. `aw` opens `<origin>/handoff/{id}` in the local browser. The page names
+2. `aw` opens `<human origin>/handoff/{id}` in the local browser. The page names
    the purpose, the app and the installation.
 3. The browser runs the purpose's ceremony (below) with B3's existing
    routes, challenges and checks.
 4. The page then redirects the browser to the stored loopback URI, never to
    one taken from a request, with a single-use code. That is a redirect the browser follows to `aw`, not one
    that `aw` follows.
-5. `aw` collects the result from `POST <origin>/handoffs/{id}/result` with
-   the code and the verifier, signed by the ephemeral key. The app releases
+5. `aw` collects the result from `POST <human origin>/handoffs/{id}/result`
+   with the code and the verifier, signed by the ephemeral key, all in the
+   body and in no team-auth header. The app releases
    the result only for all three, once, before the handoff expires.
 
 **Why the loopback.** A typed user code ties nothing to the `aw` that started
@@ -101,7 +118,7 @@ not listening, and the attacker's result request is refused without it.
 
 **Fallback: no local browser** (`aw --no-browser`, for example over SSH). The
 app answers a short user code instead of a loopback. `aw` shows it, and the
-human types it into `<origin>/handoff` on any device; the URL never carries
+human types it into `<human origin>/handoff` on any device; the URL never carries
 it. The page:
 
 - says to continue only if this person started it in their own terminal,
@@ -114,8 +131,8 @@ because it grants nothing: a phished registration gives the attacker only a
 public key, and binding still needs the owner's act and the
 [fingerprint comparison](human-role-holders.md#what-the-owners-client-shows-and-signs).
 
-`aw` sends these requests only to the pinned origin and follows no
-redirects. The app rate-limits handoffs as it rate-limits login.
+`aw` sends these requests only to the installation's two pinned origins,
+each step to its own, and follows no redirects. The app rate-limits handoffs as it rate-limits login.
 
 An app that cannot emit that event refuses a fallback `session` handoff with
 `409 fallback_unavailable`. That includes an app whose hook catalog lacks the
@@ -177,7 +194,7 @@ must still pass on its own.
     client passes it through. A team certificate is a public statement signed
     by the team key, so it needs no proof of who carried it. The owner's
     signature still covers the credential and the binding.
-  - At a `session` handoff, `aw` signs `POST <origin>/handoffs` with
+  - At a `session` handoff, `aw` signs `POST <app origin>/handoffs` with
     [team-auth v2](../team-auth-envelope-v2.md) as the holder, so the request
     carries the certificate, which team-auth verifies as for any request. An
     unsigned handoff request is refused.
@@ -548,6 +565,10 @@ Each item is filed after review, and each is one reviewed change.
   - a result requested without the loopback code is refused;
   - a replayed session request, an expired session and a request with a bad
     signature each get the same `401 console_session_required`;
+  - a team-auth-signed `POST /handoffs` reaches the handoff service on the
+    app origin, and the same request, or any request carrying `Authorization`,
+    `X-AWEB-*` or `X-AWID-*`, sent to the human origin is still refused with
+    `403 team_auth_refused`;
   - membership evidence: a certificate for another principal, team or key, a
     revoked certificate, one signed under a rotated team key, and none
     presented or retained each refuse with `403 principal_not_member`; a
