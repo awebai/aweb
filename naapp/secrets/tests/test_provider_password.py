@@ -25,4 +25,3 @@ def test_a_safe_projection_can_drop_the_provider_password() -> None:
     result = _handle(json.dumps(document).encode(), projection=["/server/id"])
     assert result.disposition == "returned"
     assert json.loads(result.body) == {"/server/id": 7}
-
