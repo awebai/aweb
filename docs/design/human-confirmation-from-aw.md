@@ -298,8 +298,9 @@ endorsing an identity installs no app and needs no secrets or logs.
 - **Origin.** The server's human origin is the origin of `server_url` in the
   controller-signed `aweb.team-server/1` record
   ([team-server discovery](app-team-server-api.md#trust-chain-the-naapp-checks)).
-  It is the acts' `aud` and the passkeys' rp_id, and it is https, as B3's
-  relying party requires. Clients resolve it only from
+  The full origin is the acts' `aud`; the passkeys' rp_id is its hostname,
+  so for `https://coord.example:8443` the rp_id is `coord.example`. It is
+  https, as B3's relying party requires. Clients resolve it only from
   that record, never from a caller, a response or a redirect. A changed origin
   hostname orphans the bound passkeys (a new rp_id); rebinding is
   `human-credential.replace`, and there is no migration path.
@@ -410,8 +411,13 @@ certificate endorses nothing.
 H withdraws an endorsement with `POST /endorsements/{id}/withdraw` in a
 `session` handoff for H's endorser holding. Withdrawal narrows, so it needs
 no assertion beyond the session's sign-in. Signing in needs a current
-holding; when H has none or cannot sign in, the team controller ends D's
-access by revoking D's ancestry (deployment endorsement (e)). The row keeps its history and records `withdrawn_at`; a withdrawn row
+holding. When H has none or cannot sign in, D's ID certificate is revoked by
+one of the identities
+[allowed to revoke it](../id-certificates.md#revocation-authority-and-cascade):
+H, as D's current parent, with H's own key; D itself; or the namespace root.
+Team authority is not ID authority: the team controller cannot revoke D's
+ancestry. Within the team, the controller contains D by revoking D's team
+membership. The row keeps its history and records `withdrawn_at`; a withdrawn row
 never becomes current again. Admission reads the withdrawal state at the
 freshness deployment endorsement (c) bounds.
 
@@ -434,9 +440,12 @@ nothing.
  A direct
 naapp verifies the original artifacts, not the row's word:
 
-- the controller's `human-role.designate` act for the holding, under the team
-  key;
-- the retained assertion against that holding's `credential_sha256`, and its
+- the controller act that bound the credential current at consumption,
+  under the team key: the holding's `human-role.designate`, or the
+  `human-credential.replace` that superseded it once its cooling-off ended.
+  The row retains the holding's binding history, so each act in the chain
+  verifies;
+- the retained assertion against that act's `credential_sha256`, and its
   commitment against `approval_evidence_sha256`;
 - the challenge's covered request against the row's `csr_sha256`, D and H.
 
@@ -494,6 +503,7 @@ Each is a vector row, for the server and for a direct naapp:
 | An assertion by a credential that is not the holding's | refused, and no row |
 | A certificate from a session-only Cloud lane or plain human-key issuance | no row; protected admission refuses |
 | An endorsement made before a `human-credential.replace` | still verifies |
+| An endorsement made with the replacement credential, after the cooling-off | verifies against the replace act |
 | A confirmation consumed after the replace, using the old credential | refused |
 | A withdrawn endorsement | admission denies; history kept |
 | D's key rotated after the endorsement | admission refuses; D is re-endorsed |
