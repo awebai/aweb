@@ -88,3 +88,27 @@ def test_a_client_quota_admits_at_least_one_event(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv(name, "0")
     with pytest.raises(ValueError):
         LogsSettings(_env_file=None)
+
+
+@pytest.mark.parametrize(
+    "public_origin",
+    ["https://api.console.logs.example.test", "https://a.b.CONSOLE.logs.example.test"],
+    ids=["subdomain", "deeper-subdomain"],
+)
+def test_the_public_origin_is_never_under_the_console_host(
+    monkeypatch: pytest.MonkeyPatch, public_origin: str
+) -> None:
+    # A passkey's relying party, the console host, is usable from its subdomains.
+    monkeypatch.setenv("LOGS_DATABASE_URL", "postgresql://localhost/logs")
+    monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", public_origin)
+    monkeypatch.setenv("LOGS_CONSOLE_ORIGIN", "https://console.logs.example.test")
+    with pytest.raises(ValueError) as caught:
+        LogsSettings(_env_file=None)
+    assert {error["loc"] for error in caught.value.errors()} == {()}  # type: ignore[attr-defined]
+
+
+def test_the_console_may_be_under_the_public_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LOGS_DATABASE_URL", "postgresql://localhost/logs")
+    monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", "https://logs.example.test")
+    monkeypatch.setenv("LOGS_CONSOLE_ORIGIN", "https://console.logs.example.test")
+    assert LogsSettings(_env_file=None).console_origin == "https://console.logs.example.test"

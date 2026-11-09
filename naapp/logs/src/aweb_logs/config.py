@@ -46,6 +46,8 @@ class LogsSettings(NaappSettings):
             or console.password
         ):
             raise ValueError("LOGS_CONSOLE_ORIGIN must be a plain https origin")
-        if console.hostname == urlsplit(self.public_origin).hostname:
+        public = urlsplit(self.public_origin).hostname or ""
+        # A passkey's relying party, the console host, is usable from its subdomains.
+        if public == console.hostname or public.endswith("." + console.hostname):
             raise ValueError("LOGS_CONSOLE_ORIGIN must be on a host of its own")
         return self
