@@ -221,7 +221,12 @@ and every field does it treat the request as that console session.
 
 **Refusals:**
 
-- `401 session_refused` for steps 1 to 5. A replayed nonce is one of them.
+- `401 console_session_required` for steps 1 to 5. A replayed nonce is one of
+  them. It is the code the console already returns without a session, and
+  the one on which `aw` renews the session through a fresh handoff
+  ([human confirmation from aw](human-confirmation-from-aw.md)). Because the
+  code is merged, `aw` renews on a signature or replay fault too. That stays
+  safe because a confirm is sent at most once across a renewal.
 - `403 principal_not_member`.
 - `403 principal_not_human`.
 - `503 principal_status_unavailable`, the only retryable one. An unknown
@@ -229,7 +234,7 @@ and every field does it treat the request as that console session.
 
 ## Refusals stay merged
 
-`handoff_refused` and `session_refused` each cover every signature, key,
+`handoff_refused` and `console_session_required` each cover every signature, key,
 expiry, release and replay fault, so a probe learns nothing. The answer never
 says whether a handoff expired or was already used. The three
 principal refusals stay distinct, because human-role-holders.md names them
