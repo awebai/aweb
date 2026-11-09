@@ -298,7 +298,8 @@ endorsing an identity installs no app and needs no secrets or logs.
 - **Origin.** The server's human origin is the origin of `server_url` in the
   controller-signed `aweb.team-server/1` record
   ([team-server discovery](app-team-server-api.md#trust-chain-the-naapp-checks)).
-  It is the acts' `aud` and the passkeys' rp_id. Clients resolve it only from
+  It is the acts' `aud` and the passkeys' rp_id, and it is https, as B3's
+  relying party requires. Clients resolve it only from
   that record, never from a caller, a response or a redirect. A changed origin
   hostname orphans the bound passkeys (a new rp_id); rebinding is
   `human-credential.replace`, and there is no migration path.
@@ -315,7 +316,9 @@ endorsing an identity installs no app and needs no secrets or logs.
   naming any other app or installation is refused with `owner_required`. They
   arrive at `POST <origin>/.well-known/aweb-owner-act` and pass the
   delivery stages of [owner-act delivery](../owner-act-delivery.md#delivery)
-  unchanged, including stage 3's membership and kind checks.
+  unchanged, including stage 3's membership and kind checks. Stage 3's
+  installation is the one derived from the act's `team_id`, for a team the
+  server coordinates.
 - **One verifier.** The server runs naapp-lib's B2, B3, console sessions, the
   [handoff](#the-handoff) and the delivery stages as a library. It writes no
   second WebAuthn verifier and no second copy of stage 3.
