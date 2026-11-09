@@ -33,7 +33,7 @@ from tests.test_operation_record import REFUND
 PARAMS = {"charge": "ch_original", "amount_minor_units": 50, "currency": "EUR"}
 
 
-async def setup(db, fence, *, policy_changes=None):
+async def setup(db, fence, *, policy_changes=None, destination_limit=None):
     operation = OperationTemplate.from_after(copy.deepcopy(REFUND))
     pin = {"operation_id": operation.operation_id, "digest": operation.digest}
     await _install(
@@ -56,6 +56,7 @@ async def setup(db, fence, *, policy_changes=None):
             "header_allow": ["idempotency-key", "stripe-version", "x-request-id"],
             "network": "public",
             "cidr": None,
+            **({} if destination_limit is None else {"response_max_bytes": destination_limit}),
         },
         internal_destinations=InternalDestinations.DISABLED,
     )
@@ -120,6 +121,25 @@ async def test_s3_prepares_all_authority_before_its_own_locks(db, fence):
         assert ("Idempotency-Key", f"secrets-{dispatch_id}") in prepared.call.rendered.headers
         assert prepared.call.target_path_template == operation.after["url"]["path"]
         assert "ch_original" not in prepared.call.target_path_template
+
+
+@pytest.mark.parametrize("destination_limit,expected", [(1024, 1024), (8192, 4096)])
+async def test_named_operation_uses_the_smallest_owner_bound(
+    db, fence, destination_limit, expected
+):
+    _, request, admitted = await setup(
+        db,
+        fence,
+        policy_changes={"result": {"max_bytes": 4096}},
+        destination_limit=destination_limit,
+    )
+    dispatch_id = uuid4()
+    state = await machine(db, dispatch_id)
+    async with db.transaction() as tx:
+        prepared = authority(fence, admitted, request, dispatch_id)
+        await state.admit(tx, dispatch_id, fence=prepared)
+        assert prepared.call.rendered.max_bytes == expected
+        assert prepared.call.rendered.bounds.max_response_bytes == expected
 
 
 @pytest.mark.parametrize(

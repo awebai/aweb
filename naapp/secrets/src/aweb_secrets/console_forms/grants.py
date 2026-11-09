@@ -229,7 +229,7 @@ def _form(installation_id: str) -> str:
             "max_bytes",
             "Maximum response bytes",
             kind="number",
-            extra='min="1" max="67108864" value="4096"',
+            extra='min="1" max="67108864" value="16777216"',
         )
         + '<p><label for="grant-side-effect">Side effect</label><br>'
         '<select id="grant-side-effect" name="side_effect">'
