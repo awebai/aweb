@@ -16,6 +16,7 @@ from typing import Any
 
 import cbor2
 from awid.did import did_from_public_key
+from awid.signing import canonical_json_bytes, sign_message
 from cryptography.hazmat.primitives.asymmetric import ec
 from nacl.signing import SigningKey
 
@@ -24,6 +25,7 @@ from aweb_naapp.hooks.strictjson import canonical, encode_signature
 
 TEAM_SEED = bytes(range(0x21, 0x41))
 ADMIN_SEED = bytes(range(0x41, 0x61))
+MEMBER_SEED = bytes(range(0x61, 0x81))
 TEAM_ID = "demo:example.com"
 APP_ORIGIN = "https://logs.example.com"
 CONSOLE_ORIGIN = "https://console.logs.example.com"
@@ -32,6 +34,7 @@ SECRETS_CONSOLE = "https://console.secrets.example.com"
 INSTALLATION = "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b"
 SECRETS_INSTALLATION = "2c5f39cb-3fb2-4e4c-b4f6-f02ac6b8744c"
 PRINCIPAL = "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd"
+OTHER_PRINCIPAL = "did:aw:3Ag5Mr9n4WZc8pLd6SkUt8Je"
 NOTICE_CONTACT = "owner@example.com"
 OTHER_CONTACT = "someone-else@example.com"
 ISSUED = "2026-11-07T12:00:00Z"
@@ -91,6 +94,35 @@ READER_CREDENTIAL = credential("console.logs.example.com")
 OWNER_CREDENTIAL = credential("console.secrets.example.com", scalar=0x5A6B7C8D)
 REPLACEMENT_CREDENTIAL = credential("console.secrets.example.com", scalar=0x0A0B0C0D)
 SECURITY_KEY_CREDENTIAL = credential("aweb:", scalar=0x11223344)
+
+
+def team_certificate(
+    principal: str = PRINCIPAL,
+    *,
+    team_id: str = TEAM_ID,
+    team_seed: bytes = TEAM_SEED,
+    member_seed: bytes = MEMBER_SEED,
+) -> str:
+    """A team certificate as team-auth's X-AWID-Team-Certificate carries it:
+    standard base64 of its JSON, signed by the team key over its canonical
+    JSON without the signature."""
+    certificate: dict[str, Any] = {
+        "version": 1,
+        "certificate_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "team_id": team_id,
+        "team_did_key": did_key(team_seed),
+        "member_did_key": did_key(member_seed),
+        "member_did_aw": principal,
+        "alias": "holder",
+        "identity_scope": "global",
+        "issued_at": ISSUED,
+    }
+    certificate["signature"] = sign_message(team_seed, canonical_json_bytes(certificate))
+    return base64.b64encode(canonical_json_bytes(certificate)).decode("ascii")
+
+
+HOLDER_CERTIFICATE = team_certificate()
+DEFAULT = object()
 
 
 def reader_role(**changes: Any) -> dict[str, Any]:
@@ -665,14 +697,20 @@ def delivery_case(
     holding_current: bool | None = None,
     security_key: bool = False,
     body: dict[str, Any] | None = None,
+    certificate: Any = DEFAULT,
+    principal_key: str = "",
 ) -> dict[str, Any]:
     signing, signature = signed(act, seed)
     if body is None:
         body = {"signing": signing, "signature": signature}
         if credential_value is not None:
             body["credential"] = credential_value
+            if certificate is DEFAULT:
+                body["certificate"] = HOLDER_CERTIFICATE
         if notice_contact is not None:
             body["notice_contact"] = notice_contact
+        if certificate is not DEFAULT and certificate is not None:
+            body["certificate"] = certificate
     if holding_current is None:
         holding_current = act["act"] != "human-role.designate"
     app_id = act["subject"]["app_id"]
@@ -693,7 +731,11 @@ def delivery_case(
             "nonce_used": nonce_used,
             "registry": registry,
         },
-        "state": {"holding": holding_current, "principal_status": principal_status},
+        "state": {
+            "holding": holding_current,
+            "principal_status": principal_status,
+            "principal_key": principal_key or did_key(MEMBER_SEED),
+        },
         "act": act,
         "body": body,
         "expected_subject": expected_subject(act, body) if status != 400 else None,
@@ -1027,6 +1069,59 @@ def delivery_cases() -> list[dict[str, Any]]:
             detail="request_invalid",
         ),
         *forged_signature_pairs(designate, reader),
+        delivery_case(
+            "designate_without_a_certificate",
+            act=designate,
+            role=reader,
+            credential_value=READER_CREDENTIAL,
+            certificate=None,
+            status=403,
+            detail="principal_not_member",
+        ),
+        delivery_case(
+            "revoke_carrying_a_certificate",
+            act=revoke,
+            role=reader,
+            certificate=HOLDER_CERTIFICATE,
+            status=400,
+            detail="request_invalid",
+        ),
+        delivery_case(
+            "certificate_of_another_principal",
+            act=designate,
+            role=reader,
+            credential_value=READER_CREDENTIAL,
+            certificate=team_certificate(OTHER_PRINCIPAL),
+            status=403,
+            detail="principal_not_member",
+        ),
+        delivery_case(
+            "certificate_of_another_team",
+            act=designate,
+            role=reader,
+            credential_value=READER_CREDENTIAL,
+            certificate=team_certificate(team_id="other:example.com"),
+            status=403,
+            detail="principal_not_member",
+        ),
+        delivery_case(
+            "certificate_signed_by_a_rotated_team_key",
+            act=designate,
+            role=reader,
+            credential_value=READER_CREDENTIAL,
+            certificate=team_certificate(team_seed=ADMIN_SEED),
+            status=403,
+            detail="principal_not_member",
+        ),
+        delivery_case(
+            "certificate_for_a_rotated_member_key",
+            act=designate,
+            role=reader,
+            credential_value=READER_CREDENTIAL,
+            principal_key=did_key(ADMIN_SEED),
+            status=403,
+            detail="principal_not_member",
+        ),
     ]
 
 
@@ -1076,7 +1171,7 @@ def build_vector() -> dict[str, Any]:
             "authority": "docs/owner-act-delivery.md",
             "manifest": "manifest_cases: a version 3 manifest's owner_acts; error is the manifest refusal code, or null when it is valid",
             "credential": "credential_cases: credential_sha256 is the lowercase hex SHA-256 of 'aweb.human-credential/1' and a newline, then the credential's canonical JSON; fingerprint is its first 16 hex characters in groups of four",
-            "delivery": "delivery_cases: a delivery body to the app's human origin; app is the app's declaration and whether it enables the optional security key; state is whether (installation, role, principal) has a current holding and what the registry reports for the principal (member_human, not_member, not_human, unavailable); expected_subject is the subject the app builds, null when the body is refused before it; verifier_code is the owner-act/1 refusal behind a 403, or null when the act verifies; result is the HTTP status, detail and response",
+            "delivery": "delivery_cases: a delivery body to the app's human origin; app is the app's declaration and whether it enables the optional security key; state is whether (installation, role, principal) has a current holding, what the registry reports for the body's certificate and the principal's kind (member_human, not_member, not_human, unavailable), and the principal's current member key; a designate or replace body carries the holder's team certificate as team-auth's X-AWID-Team-Certificate carries it, which must verify under verifier.current_team_key_did and name the act's team_id, its principal and that member key; expected_subject is the subject the app builds, null when the body is refused before it; verifier_code is the owner-act/1 refusal behind a 403, or null when the act verifies; result is the HTTP status, detail and response",
             "signing": "standard base64 with padding of the owner-act/1 signing bytes",
             "role": "role_cases pin the declared role name, which is the act's role, against the owner-act/1 signer: a leading letter, at most 64 bytes",
             "registry": "delivery_cases' verifier.registry says whether stage 2 can read the team key; the forged_signature cases pair a present and an absent holding under each, and the pair's results are equal",
