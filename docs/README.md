@@ -189,7 +189,7 @@ presented as shipped.
   owner-only governance acts: the server and naapps verify it; the `aw` commands
   that sign it are open.
 - [Owner-act delivery](owner-act-delivery.md) — specified contract for how a
-  client prepares and delivers an app owner act to the app's declared human
+  client delivers an app's human-role owner act to the app's declared human
   origin; not shipped.
 - [App manifest](app-manifest.md) — current experimental manifest versions 1
   and 2, version 3 specified but not shipped, variant discovery, and the
