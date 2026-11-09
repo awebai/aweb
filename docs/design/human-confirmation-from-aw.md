@@ -232,7 +232,12 @@ and its display of the runner code stay available, outside this journey.
   (`cli/go/cmd/aw/id_human.go:111`).
 - It refuses with `protected_input_unavailable` when there is no controlling
   terminal or an agent-runtime marker is present. Values never come from
-  argv, the environment, a pipe or a file.
+  argv, the environment, a pipe or a file. The marker check prevents
+  mistakes; it is not a boundary. An agent running as the same OS user can
+  read the terminal and `aw`'s process, so on such a host the terminal path
+  keeps the value and the runner code out of the browser and out of logs, not
+  away from those agents. Excluding them needs a separate OS user for the
+  human's `aw`.
 - The value goes only to the pinned origin, in the handoff session. Its body
   is excluded from `--trace` (`cli/go/cmd/aw/root.go:178`) and from every
   log, never echoed, and wiped after sending.

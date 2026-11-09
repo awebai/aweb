@@ -153,6 +153,7 @@ def _configuration(body: dict[str, Any], *, secret_id: str, owner: str) -> list[
         "header_allow": [],
         "network": "public",
         "cidr": None,
+        "response_max_bytes": body["max_bytes"],
     }
     try:
         DestinationRecord.from_after(
@@ -229,7 +230,7 @@ def _form(installation_id: str) -> str:
             "max_bytes",
             "Maximum response bytes",
             kind="number",
-            extra='min="1" max="16777216" value="4096"',
+            extra='min="1" max="67108864" value="16777216"',
         )
         + '<p><label for="grant-side-effect">Side effect</label><br>'
         '<select id="grant-side-effect" name="side_effect">'
