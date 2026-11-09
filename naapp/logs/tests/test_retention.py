@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from collections.abc import AsyncIterator
 from datetime import timedelta
 
@@ -57,6 +58,16 @@ async def appended(
     return event.event_id
 
 
+async def retention_setting(
+    db: AsyncDatabaseManager, team_id: str, event_class: str, *, days: int | None
+) -> str:
+    """Set a retention as the owner act that records it would; returns the id
+    standing for that act's governance event."""
+    event_id = str(uuid.uuid4())
+    await set_retention(db, team_id, event_class, days=days, event_id=event_id)
+    return event_id
+
+
 async def contents(
     db: AsyncDatabaseManager, team_id: str = TEAM_ID
 ) -> list[tuple[int, bool, str | None]]:
@@ -82,7 +93,7 @@ async def test_events_older_than_the_retention_lose_their_content_and_keep_the_c
     await appended(db, secret_use(seq=1), age=timedelta(days=45))
     await appended(db, secret_use(seq=2), age=timedelta(days=31))
     await appended(db, secret_use(seq=3), age=timedelta(days=29))
-    setting = await set_retention(db, TEAM_ID, "all", days=30)
+    setting = await retention_setting(db, TEAM_ID, "all", days=30)
 
     assert await apply_retention(db, now=NOW) == 2
     act = f"logs.retention.set:{setting}"
@@ -96,8 +107,8 @@ async def test_events_older_than_the_retention_lose_their_content_and_keep_the_c
 async def test_a_hooks_own_retention_comes_before_the_teams(db) -> None:
     await appended(db, secret_use(seq=1), age=timedelta(days=10))
     await appended(db, certificate_observed(seq=2), age=timedelta(days=10))
-    await set_retention(db, TEAM_ID, "all", days=None)
-    setting = await set_retention(db, TEAM_ID, "post-secret-use-hook", days=7)
+    await retention_setting(db, TEAM_ID, "all", days=None)
+    setting = await retention_setting(db, TEAM_ID, "post-secret-use-hook", days=7)
 
     assert await apply_retention(db, now=NOW) == 1
     assert await contents(db) == [(1, False, f"logs.retention.set:{setting}"), (2, True, None)]
@@ -105,8 +116,8 @@ async def test_a_hooks_own_retention_comes_before_the_teams(db) -> None:
 
 async def test_setting_a_class_again_replaces_its_retention(db) -> None:
     await appended(db, secret_use(seq=1), age=timedelta(days=10))
-    await set_retention(db, TEAM_ID, "all", days=7)
-    await set_retention(db, TEAM_ID, "all", days=None)
+    await retention_setting(db, TEAM_ID, "all", days=7)
+    await retention_setting(db, TEAM_ID, "all", days=None)
     assert await apply_retention(db, now=NOW) == 0
     assert await contents(db) == [(1, True, None)]
 
@@ -151,7 +162,7 @@ async def test_a_purge_waits_for_a_projection_reading_the_same_events(db) -> Non
 async def test_a_pass_stops_between_batches_once_asked_to(db) -> None:
     for seq in (1, 2, 3):
         await appended(db, secret_use(seq=seq), age=timedelta(days=45))
-    await set_retention(db, TEAM_ID, "all", days=30)
+    await retention_setting(db, TEAM_ID, "all", days=30)
     stop = asyncio.Event()
     stop.set()
     assert await apply_retention(db, now=NOW, batch=1, stop=stop) == 0
@@ -165,8 +176,8 @@ async def test_a_team_whose_purge_fails_does_not_keep_the_others_from_theirs(
     await appended(
         db, secret_use(seq=1, team_id=OTHER_TEAM), age=timedelta(days=45), team_id=OTHER_TEAM
     )
-    await set_retention(db, TEAM_ID, "all", days=30)
-    other = await set_retention(db, OTHER_TEAM, "all", days=30)
+    await retention_setting(db, TEAM_ID, "all", days=30)
+    other = await retention_setting(db, OTHER_TEAM, "all", days=30)
     await db.execute(
         "CREATE FUNCTION refuse_update() RETURNS trigger LANGUAGE plpgsql AS"
         " $$ BEGIN RAISE EXCEPTION 'this team refuses updates'; END $$"
@@ -197,7 +208,7 @@ async def test_a_pass_reads_each_class_by_a_range_bounded_by_its_cutoff(db) -> N
     conditions: list[str] = []
 
     def walk(node: dict) -> None:
-        if "Index Cond" in node:
+        if node.get("Index Name") == "idx_chain_events_retained":
             conditions.append(node["Index Cond"])
         for child in node.get("Plans", []):
             walk(child)

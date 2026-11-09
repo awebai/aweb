@@ -27,7 +27,6 @@ from aweb_logs.app import chain_signer, create_app, serve
 from aweb_logs.chain import CHECKPOINT_PURPOSE, RECEIPT_PURPOSE, open_checkpoint
 from aweb_logs.config import LogsSettings
 from aweb_logs.ledger import append
-from aweb_logs.retention import set_retention
 
 from .deployment import (
     TEST_APP_ID,
@@ -39,6 +38,7 @@ from .deployment import (
     write_key_files,
 )
 from .fixtures import TEAM_ID, signed_event
+from .test_retention import retention_setting
 
 ORIGIN = "https://logs.example.test"
 CONSOLE = "https://console.logs.example.test"
@@ -174,7 +174,7 @@ async def test_a_running_logs_purges_what_a_teams_retention_has_expired(
                 key_evidence={},
                 received_at=datetime.now(UTC) - age,
             )
-        setting = await set_retention(database, TEAM_ID, "all", days=30)
+        setting = await retention_setting(database, TEAM_ID, "all", days=30)
         rows: list = []
         for _ in range(100):
             rows = await database.fetch_all(
