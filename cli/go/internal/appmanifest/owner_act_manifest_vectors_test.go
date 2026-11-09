@@ -73,7 +73,8 @@ func TestOwnerActManifestVectors(t *testing.T) {
 			if err := json.Unmarshal(tc.OwnerActs, &wantValue); err != nil {
 				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(gotValue, wantValue) {
+			// A null member reads as absent, so the resolved form omits it.
+			if !reflect.DeepEqual(gotValue, withoutNullMembers(wantValue)) {
 				t.Fatalf("owner_acts\n got: %s\nwant: %s", got, tc.OwnerActs)
 			}
 		})
@@ -204,5 +205,28 @@ func TestManifestV3KeepsEveryVersion2CallContextVerdict(t *testing.T) {
 				t.Fatalf("got %q want %q", got, tc.Expected)
 			}
 		})
+	}
+}
+
+// withoutNullMembers drops every object member whose value is null, at any
+// depth.
+func withoutNullMembers(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		out := map[string]any{}
+		for name, member := range v {
+			if member != nil {
+				out[name] = withoutNullMembers(member)
+			}
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, item := range v {
+			out[i] = withoutNullMembers(item)
+		}
+		return out
+	default:
+		return value
 	}
 }
