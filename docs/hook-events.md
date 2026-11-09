@@ -1155,27 +1155,33 @@ describe.
   spelling, with `fired_at` never earlier.
 - `result_status` is `success`, `denied`, `failed` or `outcome_unknown`.
 - `payload` is the catalog payload for the hook.
+- The signing bytes, prefix included, are at most 262,144 bytes (256 KiB). A
+  producer never builds a larger event: it refuses one before it spends a
+  sequence number or enters an outbox. The catalog's largest possible event,
+  computed from its bounds, is under 46 KB.
 
 **Verification** requires the team the verifier expects; without one it
 refuses (`verifier_misconfigured`). It then checks, in this order, and reports
 the first fault:
 
-1. the prefix (`wrong_prefix`);
-2. a strict parse (`duplicate_key`, `float_value`, `null_value`,
+1. the size of the signing bytes (`envelope_too_large`), before they are
+   read;
+2. the prefix (`wrong_prefix`);
+3. a strict parse (`duplicate_key`, `float_value`, `null_value`,
    `string_not_ascii`, `too_deep`, `invalid_json`);
-3. canonical bytes (`not_canonical`);
-4. the envelope's fields, top down (`unknown_field`, `missing_field`,
+4. canonical bytes (`not_canonical`);
+5. the envelope's fields, top down (`unknown_field`, `missing_field`,
    `invalid_value`), with the catalog (`unknown_catalog`) and the hook
    (`unknown_hook`);
-5. a flat payload of strings, integers, booleans and lists of strings
+6. a flat payload of strings, integers, booleans and lists of strings
    (`invalid_value`);
-6. a producer kind the hook allows (`producer_not_allowed`), so a member can
+7. a producer kind the hook allows (`producer_not_allowed`), so a member can
    never sign a server hook;
-7. for a client event, an actor equal to its signer (`actor_not_signer`), so
+8. for a client event, an actor equal to its signer (`actor_not_signer`), so
    one member cannot file events as another;
-8. the team the verifier expects (`team_mismatch`);
-9. the signature's spelling (`signature_encoding`), then the signature
-   (`bad_signature`).
+9. the team the verifier expects (`team_mismatch`);
+10. the signature's spelling (`signature_encoding`), then the signature
+    (`bad_signature`).
 
 The catalog reader then checks the payload against its hook's allowlist (see
 [Payloads](#payloads)).
