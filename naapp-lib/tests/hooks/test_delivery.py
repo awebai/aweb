@@ -9,7 +9,12 @@ from pathlib import Path
 
 import pytest
 
-from aweb_naapp.hooks.delivery import ReceiveOptions, sign_delivery, verify_delivery
+from aweb_naapp.hooks.delivery import (
+    MAX_DELIVERY_BYTES,
+    ReceiveOptions,
+    sign_delivery,
+    verify_delivery,
+)
 from aweb_naapp.hooks.envelope import Refused
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]
@@ -67,6 +72,14 @@ def test_negative_case_is_refused_with_its_code(case) -> None:
             _options(case["receive"]),
         )
     assert refused.value.code == case["error"]
+
+
+def test_a_body_over_the_delivery_bound_is_refused_first() -> None:
+    case = VECTOR["positive_cases"][0]
+    body = case["body"].encode() + b" " * MAX_DELIVERY_BYTES
+    with pytest.raises(Refused) as refused:
+        verify_delivery("POST", "/hooks/ingest", case["headers"], body, _options(case["receive"]))
+    assert refused.value.code == "request_too_large"
 
 
 def test_verify_delivery_requires_the_targets_own_facts() -> None:

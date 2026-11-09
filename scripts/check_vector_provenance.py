@@ -195,6 +195,10 @@ ROOT_CONSUMERS = {
         "id-certificates-v1.json",
         '"../../../../docs/vectors/id-certificates-v1.json"',
     ),
+    PurePosixPath("cli/go/cmd/aw/human_participation_integration_test.go"): _consumer(
+        "id-certificates-v1.json",
+        '"../../../../docs/vectors/id-certificates-v1.json"',
+    ),
     PurePosixPath("cli/go/cmd/aw/id_human_test.go"): _consumer(
         "id-certificates-v1.json",
         '"../../../../docs/vectors/id-certificates-v1.json"',
@@ -486,6 +490,10 @@ ROOT_CONSUMERS = {
         "hook-delivery-credential-v1.json",
         '(AWEB_ROOT / "docs" / "vectors" / "hook-delivery-credential-v1.json")',
     ),
+    PurePosixPath("naapp-lib/tests/hooks/test_envelope_bound.py"): _consumer(
+        "hook-catalog-v1.json",
+        'AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json"',
+    ),
     PurePosixPath("naapp/logs/tests/test_manifest.py"): _consumer(
         "hook-catalog-v1.json",
         'AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json"',
@@ -513,6 +521,10 @@ ROOT_CONSUMERS = {
     PurePosixPath("naapp-lib/tests/hooks/test_owner_act_signing.py"): _consumer(
         "owner-act-v1.json",
         '(AWEB_ROOT / "docs" / "vectors" / "owner-act-v1.json")',
+    ),
+    PurePosixPath("naapp-lib/tests/hooks/test_owner_act_delivery_vector.py"): _consumer(
+        "owner-act-delivery-v1.json",
+        'AWEB_ROOT / "docs" / "vectors" / "owner-act-delivery-v1.json"',
     ),
     PurePosixPath("cli/go/awid/owneract_test.go"): _consumer(
         "owner-act-v1.json",

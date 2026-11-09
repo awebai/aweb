@@ -145,3 +145,101 @@ its state directory is 0700 and keys/journal are 0600. Preflight does not try
 to traverse another user's private state or create users. Full scenario tests
 must still establish real broker effects, passkey approvals, durable job
 execution, revocation and audit ingestion into logs as described in RELEASE.md.
+
+## BYOT native/KMS lab profile
+
+The LF rehearsal uses a separate, explicit profile. It neither calls the hosted
+provisioner nor changes the 24 required release inputs or their acceptance.
+`lab_environment.load_lab_environment(mapping, private_dns=...)` selects exactly
+these 18 names, under the same `AWEB_SECRETS_E2E_` prefix:
+
+| Group | Suffixes |
+| --- | --- |
+| Team and services | `TEAM_ID`, `API_ORIGIN`, `CONSOLE_ORIGIN`, `LOGS_ORIGIN`, `LOGS_CONSOLE_ORIGIN` |
+| Native custody | `KMS_KEY_ARN`, `AWS_REGION`, `KMS_CREDENTIALS_FILE` |
+| Separate-user runner | `RUNNER_BINARY`, `RUNNER_CONFIG_FILE`, `RUNNER_USER`, `RUNNER_STATE_DIR` |
+| CLI selection | `AW_BINARY`, `HUMAN_IDENTITY_HOME`, `AGENT_A_IDENTITY_HOME`, `AGENT_B_IDENTITY_HOME` |
+| Customer authority | `AWID_REGISTRY_URL`, `COORDINATION_ORIGIN` |
+
+Binary and identity-home paths are absolute. Agent homes are the actual credential
+directories used by `aw --identity-home`, usually the selected workspace's `.aw`.
+The human home is the public `HumanRecordDir` under the driver's
+`~/.awid/humans/<normalized-domain>/<stable-id-suffix>`, as created by the
+protected human initializer. Its public `identity.yaml` must resolve back to that
+canonical directory and name a registered human.
+There is no fallback to the driver identity. All three homes and their certified
+principals are distinct. `AWID_REGISTRY_URL` and `COORDINATION_ORIGIN` are HTTPS
+origins without credentials, query strings or fragments. Service-origin separation
+has the same rules as the release profile. The KMS key ARN must name the selected
+region; the AWS credential reference is a private regular file, never opened by
+the reference checker. KMS is required: this profile offers no local-key fallback.
+
+`RUNNER_USER` must resolve to a real non-root OS account different from the driver.
+The checker does not traverse its protected config/state. S19 must still use
+the single `RunnerHarness` and approved supervisor/launcher, verify the actual
+worker PID/UID and protected job pins, and preserve its journal across restart.
+An account lookup alone is not separate-user execution proof.
+
+Choose DNS coverage explicitly with `private_dns="included"` or `"excluded"`.
+Included coverage additionally requires the bare hostname `PRIVATE_DNS_NAME`;
+S19 must exercise the real private-answer/refusal scenario. Excluded means that
+scenario is outside lab coverage, never that it passed. The reference check
+does not resolve DNS. External tunnel reachability is an independent requirement.
+
+The command below performs reference checks only and exits 2 for missing or
+invalid configuration, reporting selector names rather than supplied values:
+
+```text
+uv run --no-sync python e2e/lab_environment.py --private-dns excluded
+```
+
+The owning S19 context publishes the validated lab references and current actor
+metadata explicitly, without the hosted `publish_runtime`:
+
+```python
+from lab_publication import publish_lab_runtime
+
+async with publish_lab_runtime(
+    lab_inputs, private_dns="excluded", directory=new_absolute_publication_dir,
+) as path:
+    snapshot = json.loads(path.read_text())
+    # snapshot["inputs"] is the selected lab input mapping.
+    # snapshot["actors"] records canonical DIDs and certificate IDs.
+    # Start/verify the real services and separate-user runner in S19.
+```
+
+Publication runs the selected checkout CLI's offline local certificate/key
+checks for agents. For HUMAN it reads public records only, verifies the human-kind
+ID chain against fresh registry status and independent namespace DNS authority,
+and records `custody="not_tested"` and `signing_readiness="not_tested"`.
+It never calls the foreground human signer, reads the encrypted key store,
+or reads or requires a human `signing.key`. An agent identity cannot substitute
+for the human. The actual protected human gesture in the rehearsal establishes
+signing readiness. Namespace DNS verification is required even when the separate
+private-address refusal scenario is excluded.
+
+For every actor publication verifies the current certificate against the selected AWID
+registry, verifies the team's signed coordination-server record, and resolves
+any `did:aw` to its current key. An unavailable, revoked or mismatched authority
+refuses publication. CLI probes inherit neither driver API keys nor identity,
+proxy or checkout dotenv configuration. Public identity metadata that selects a
+different registry or server is refused. This certifies membership prerequisites,
+not resource grants, human user verification, B2/B3 confirmation or readiness.
+
+The new publication directory is 0700 and its sole `runtime.json` is 0600;
+an existing directory is never adopted. The context removes its own snapshot
+on normal exit or caller failure. The JSON has `profile="byot-native-kms-lab/1"`,
+`inputs`, `actors`, the configured account's `runner_uid`, and `coverage` with
+the selected DNS scenario and `full_release_gate=false`. It contains references
+and public metadata, not entered values or command streams. The optional
+`registry_transport` argument supports S19's real in-process registry, as the
+runtime does; normal operation uses the configured registry over HTTPS.
+
+The lab uses direct protected native-value input and real KMS. Its profile does
+not require 1Password, Cloud accounts, hosted agent IDs, MCP OAuth files or a
+hosted MCP endpoint. Those inputs are never adopted as BYOT authority. Protected
+human terminal input and one-time runner-code delivery remain the reviewed G-B
+client flow; no native-value/code file workaround is introduced. S19 still owns
+actual service/bootstrap/TLS/SMTP configuration and installation/grant setup;
+the typed job and its synthetic database fixture supply their reviewed target.
+Passing this lab never satisfies the supported-backend or full release gate.

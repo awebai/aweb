@@ -38,11 +38,16 @@ surface (§13), the automatic repeat and owner settlement of uncertain calls
 and runner-deregistration effects (§12). Usage reporting comes after the first
 release (§17).
 
-<!-- PENDING RULING D2: native custody KMS vs local key file; doc text unchanged until Juan rules -->
 Custody sits behind one backend interface with two implementations at launch: a
-native store sealed with KMS envelope encryption, and 1Password through a service
-account narrowly scoped to its vault. Values enter only on secrets' own human
-console, which needs an owner passkey, or directly in the vault. No agent tool and
+native envelope-encrypted store, and 1Password through a service account narrowly
+scoped to its vault. KMS is recommended for native sealing; a protected local key
+file is also allowed in production. Reading that file permits decrypting every
+value sealed with it, including stored 1Password service-account tokens, given
+the stored ciphertext and metadata. Run secrets under its own OS service account,
+with the key file unreadable by agents. Health reports the actual custody mode,
+`kms` or `local_key_file`; key-file proof never counts as KMS proof (§5.2, §15).
+Values enter only on secrets' own human console, which needs an owner passkey,
+or directly in the vault. No agent tool and
 no MCP tool ever carries a value in or out. The only exception would be the
 `--unsafe-inject` question, and that feature does not exist (§13.4).
 
@@ -90,11 +95,11 @@ deployment (§17).
 **The authority model, stated before the mechanisms.**
 
 - **Custody.** A credential value lives in a custody backend: the native
-  KMS-sealed store, or the customer's 1Password vault. The secrets process is the
-  only component that unseals a value, and only for one dispatch (§5). For runner
-  jobs the value is sealed to one registered runner for one job (§9). Sealing a
-  short-lived derivative instead comes after the first release (aweb-acgh.41,
-  decision 95; §9.5).
+  envelope-encrypted store, or the customer's 1Password vault. The secrets
+  process is the only component that unseals a value, and only for one dispatch
+  (§5). For runner jobs the value is sealed to one registered runner for one job
+  (§9). Sealing a short-lived derivative instead comes after the first release
+  (aweb-acgh.41, decision 95; §9.5).
 - **Who authorizes.** AWID establishes the current team authority and the member
   certificate. secrets' own tables decide everything else: app-local roles,
   grants, policy and approver designations, keyed to the member's stable
@@ -155,6 +160,7 @@ flowchart LR
     OUT[Hook outbox drainer] --> DB
   end
   CUS --> KMS[(KMS)]
+  CUS --> KEY[Protected local key file, alternative to KMS]
   CUS --> OP[(1Password vault)]
   DSP -->|HTTPS, pinned IP| UP[Upstream API]
   R[User-run runner] -->|outbound HTTPS, signed| API
@@ -198,7 +204,7 @@ packaging seam.
 | Auth-scheme injectors: bearer, basic, header, query, OAuth2 client credentials with a token cache, SigV4 | app-local, under Q16 | No second consumer exists, and secrets' custody argument (below) says another naapp needing a customer credential should use secrets. They move to `aweb_naapp` when a second consumer appears. |
 | Response handling: header filter, JSON-pointer projection, log redactor | app-local, under Q16 | Only secrets returns upstream responses to agents. Hook payload redaction is structural, through the strict allowlists, so it does not need this. They move to `aweb_naapp` when a second consumer appears. |
 | Known-value redaction and the credential-shape detector | `aweb_secrets_values` (`naapp/secrets/values`), shared by the app and the runner | Both the broker and the runner redact and detect with the same code (§7.6, §9.6). |
-| KMS envelope sealing with bound context | app-local, under Q16 (`aweb_secrets.custody`) | No second consumer exists. Other naapps could seal their own operational credentials this way, and it moves to `aweb_naapp` when one does. |
+| Envelope sealing with bound context and a KMS or local key-file provider | app-local, under Q16 (`aweb_secrets.custody`) | No second consumer exists. Other naapps could seal their own operational credentials this way, and it moves to `aweb_naapp` when one does. |
 | Rate-limit buckets and time windows | `aweb_naapp.ratelimit` | Shared under decision 58: Postgres token buckets taken in the caller's transaction. secrets admission and the console login limiter both use them. |
 | Role assignments keyed by stable principal | `aweb_naapp.roles` | Pages resolves role targets the same way (D1 §4). secrets only names its roles. |
 | Principal-attestation verifier (§4.6) | `aweb_naapp.runtime.attestation`, under [principal-attestation.md](../principal-attestation.md) | Any relying app could require it. |
@@ -467,24 +473,43 @@ uses the same opener and S3 record; broker opening remains after dispatching,
 with a pre-send failure recorded as `not_sent`. See
 [runner protocol §4.2](../secrets-runner-protocol.md#42-one-dispatch-one-assignment).
 
-### 5.2 Native KMS-sealed store
+### 5.2 Native envelope-encrypted store
 
-<!-- PENDING RULING D2: native custody KMS vs local key file; doc text unchanged until Juan rules -->
-- **Envelope encryption.** Each secret version gets a fresh data key from KMS
-  (`GenerateDataKey`) under a single key-encryption key. The value is encrypted
-  with AES-256-GCM. The DB stores the ciphertext, nonce and wrapped data key.
-- **Bound encryption context.** The KMS encryption context and the GCM AAD bind
+- **Provider choice (D2, Juan, 2026-11-09).** KMS is recommended, not required.
+  A local key file is allowed in production. Configure exactly one native
+  provider, and report its actual mode as `kms` or `local_key_file`. OpenBao is a
+  later option, not part of this change.
+- **Envelope encryption.** Each secret version gets a fresh data key under a
+  single key-encryption key. KMS uses `GenerateDataKey`; the local provider
+  generates the data key and wraps it with AES-256-GCM under the file's key.
+  The value is encrypted with AES-256-GCM. The DB stores the ciphertext, nonce
+  and wrapped data key.
+- **Bound encryption context.** The provider's wrapping context and the GCM AAD bind
   `{app:"secrets", installation_id, team_id, secret_id, version}`. A blob copied
   to another secret or version fails to decrypt.
-- **Decryption.** Every dispatch calls KMS `Decrypt` with that context. There is
-  no long-lived cache of plaintext data keys. KMS's own audit trail is a second,
-  independent record of every unseal. Decrypt needs exactly the context given
+- **Decryption.** Every native open unwraps its data key with the selected
+  provider and that context. There is no long-lived cache of plaintext data
+  keys. With KMS, this calls `Decrypt`, whose audit trail is a second,
+  independent record of every unseal. Local key-file mode has no independent
+  KMS audit trail. Unwrapping needs exactly the context given
   when the data key was generated, so the context cannot carry a per-dispatch
   `dispatch_id`. A KMS record is correlated with a dispatch through the
   dispatch's audit row instead: its timestamp and the secret version it names.
-- **Key policy.** Only the secrets service role can decrypt or generate keys. No
-  human operator role has decrypt rights in production. Break-glass access is an
-  explicit, audited KMS policy change outside the app.
+- **KMS policy.** Only the secrets service role can decrypt or generate keys.
+  No human operator role has decrypt rights in production. Break-glass access
+  is an explicit, audited KMS policy change outside the app.
+- **Local key-file boundary.** The key is loaded at startup from a regular file
+  containing 64 hexadecimal characters, optionally newline-terminated. The
+  loader refuses group- or world-writable files; it does not enforce read
+  isolation. Reading the key file permits decrypting every stored value sealed
+  with it, including 1Password service-account tokens, given the ciphertext and
+  metadata. Run secrets under a dedicated OS service account; agents must not
+  be able to read its key file or access that account's key material. Keep the
+  key outside agent-readable mounts and protect any key backup with the same
+  read boundary. This is a T4 deployment
+  boundary, not a protection supplied by the loader or by grants and policy.
+- **Proof.** Record which provider a run exercised. A key-file run establishes
+  key-file coverage only; KMS coverage requires a separate real KMS run.
 - **Destroy.** Destroying a version deletes its wrapped data key and
   ciphertext from the live database. Copies in backups and the write-ahead log
   stay decryptable until they expire or the key-encryption key is retired
@@ -498,7 +523,8 @@ with a pre-send failure recorded as `not_sent`. See
   installation. Its access is read-only to a dedicated vault that holds only the
   credentials agents may use. That token is itself a credential, so the owner
   enters it through the console (§6), and it is sealed in the native store. The
-  1Password backend therefore depends on KMS.
+  1Password backend therefore depends on the selected native sealing provider,
+  whether KMS or the protected local key file.
 - **Reads.** secrets reads the field at dispatch through the 1Password SDK. At
   launch it does not cache values across dispatches. There is no read cache
   at launch (Q4, decided). 1Password's own activity
@@ -549,7 +575,7 @@ Emission uses the shared codec, never a producer-local event or serializer.
 
 | Backend | What secrets holds at rest | When plaintext exists in secrets | Who else can read |
 | --- | --- | --- | --- |
-| native | ciphertext and wrapped data key; metadata | during one `open()` for one dispatch: the brokered call, OAuth token exchange, SigV4 signing, or HPKE sealing to a runner | KMS custodian with decrypt rights; a production operator able to run code as the service (trust boundary T4) |
+| native | ciphertext and wrapped data key; metadata | during one `open()` for one dispatch: the brokered call, OAuth token exchange, SigV4 signing, or HPKE sealing to a runner | KMS custodian with decrypt rights, or anyone who can read the local key file and stored ciphertext; a production operator able to run code as the service (trust boundary T4) |
 | onepassword | vault, item and field reference; the sealed service-account token | the same window, after an SDK read | the 1Password account's members and admins; the vault provider; holders of the service-account token |
 | OAuth access token | in process memory until its TTL minus 60 s (`ProcessTokenCache`) | per dispatch | as native |
 | derived (STS session, `store_as_secret` child) | **After the first release (aweb-acgh.41):** sealed in the native store with its expiry (§8.4) | per dispatch | as native |
@@ -2422,8 +2448,8 @@ Q8 decided that neither `--unsafe-inject` nor `result_handling: return` exists.
 | T1 | Requesting agent, including a prompt-injected one | nothing beyond its grants | It may use every grant it holds, within policy. secrets limits *what* it can do, not *why*. |
 | T2 | Model provider (MCP) | nothing | Responses enter its context. Hence projection, redaction and default-deny (§7.6). |
 | T3 | Custodial deployment and its L2 endpoint | custody of its custodial members' keys | It can sign as those members and so exercise their grants. It sees their parameters and responses in transit. It cannot read values, approve, widen policy or reach the console. **Consequence: an MCP agent's grants are only as strong as the operator's custody.** Grant MCP-used principals narrowly. secrets can require attested predicates (§4.6) only once the custodial deployment issues attestations; until then such a policy refuses. |
-| T4 | secrets service and its production operators | executing policy; transient plaintext | An operator able to run code as the service, with KMS decrypt or the 1Password token, can read values. Mitigations: KMS policy, KMS and 1Password independent logs, Make-only operations (§15). Not zero-knowledge. |
-| T5 | KMS provider | key custody | as for any KMS user |
+| T4 | secrets service and its production operators | executing policy; transient plaintext | An operator able to run code as the service, with KMS decrypt, the local key file or the 1Password token, can read values. Reading the local key file and stored ciphertext bypasses app policy for every value sealed with it. Mitigations: a separate service account and agent-unreadable key material; KMS policy and independent logs when KMS is used; 1Password independent logs; Make-only operations (§15). Not zero-knowledge. |
+| T5 | KMS provider, when configured | key custody | as for any KMS user |
 | T6 | 1Password | custody for that backend | the vault's own model |
 | T7 | Upstream API | receiving the credential it issued | obviously |
 | T8 | Runner host and its OS user | running pinned jobs; holding job credentials | Same-user agents or a writable config defeat it. Documented, partly detected by `doctor`. |
@@ -2469,8 +2495,12 @@ secrets follows Library's pattern (`naapp/library`):
   migrations only) and Dockerfile. **Open (aweb-acgh.18.20):** the Dockerfile.
 - **Health.** The health endpoint reports build identity, including the full
   40-character commit, as Library's `build_identity.py` does. It also reports
-  dependency status: DB, KMS (a cached result of an encrypt/decrypt canary under
-  a dedicated non-secret context), and the oldest undelivered outbox age.
+  dependency status: DB, the selected custody provider (a cached result of an
+  encrypt/decrypt canary under a dedicated non-secret context), and the oldest
+  undelivered outbox age. It reports the actual custody mode as `kms` or
+  `local_key_file`, without exposing key material, even when the canary fails.
+  The mode identifies the selected provider; it is not proof of a successful
+  provider operation.
 - **Ops manifest.** **Open (aweb-acgh.18.20):** `ops/render-production.json`,
   or the hosting provider's equivalent, pins the topology fail-closed.
 - **Production operations.** **Open (aweb-acgh.18.20):** Make-only
@@ -2481,10 +2511,15 @@ secrets follows Library's pattern (`naapp/library`):
 
 Requirements specific to secrets:
 
-<!-- PENDING RULING D2: native custody KMS vs local key file; doc text unchanged until Juan rules -->
-1. **KMS is a dependency.** The service fails readiness and refuses all
-   admissions when KMS is unavailable. The KMS provider and key are deployment
-   facts recorded with the operator (Q2). The service authenticates to KMS
+1. **The selected custody provider is a dependency.** KMS is recommended;
+   a local key file is allowed in production. Record and report the actual
+   `kms` or `local_key_file` mode. The service fails readiness and refuses
+   admissions when its selected provider is unavailable; a key-file deployment
+   does not require KMS. Anyone who can read the key file can decrypt all
+   values sealed with it, given the stored ciphertext and metadata. Run secrets
+   under its own service account and keep the key unreadable by agents (§5.2).
+   The provider and key are deployment facts recorded with the operator (Q2).
+   A KMS deployment authenticates to KMS
    through workload identity where the platform supports it. Otherwise it uses a
    narrowly scoped static credential held only in the platform's secret store,
    which is a T4 element.
@@ -2496,7 +2531,7 @@ Requirements specific to secrets:
    `secrets.hook-delivery-1`, and so on). Every key is read from a 64-hex key
    file. **Open (aweb-acgh.18.20):** each key is a KMS asymmetric key if the
    provider supports Ed25519 signing; otherwise it is generated at deploy,
-   sealed under KMS and unsealed at start.
+   sealed under the selected native provider and unsealed at start.
 3. **Two origins.** The agent API origin accepts only team-auth and the runner
    protocol, and serves no cookies.
    - **RP ID.** The WebAuthn RP ID is the **exact console host**. It is never a
@@ -2537,8 +2572,9 @@ those features (aweb-acgh.41).
 
 - real team certificates and team-auth signatures from real `aw` and from an L2
   signing path;
-- real KMS and a real 1Password test vault, with credentials referenced only by
-  name in the operator secret store;
+- the real selected native provider and a real 1Password test vault, with
+  credentials referenced only by name in the operator secret store. A local
+  key-file run does not establish KMS coverage; that needs its own real KMS run;
 - a real browser WebAuthn ceremony. It uses a browser's built-in virtual
   authenticator, which is a real ceremony with a software authenticator, stated
   as such;
@@ -2638,10 +2674,11 @@ each where one exists.
 ### 18.1 Questions answered at acceptance
 
 1. **Q1. Positioning and custody (decision 13).** Both backends at launch: the
-   native KMS-sealed store and 1Password. The native store also seals the
-   1Password token.
-2. **Q2. KMS provider, hosting and egress controls.** The KMS provider is AWS
-   KMS (HO5, aweb-acgh.14). Hosting and the deployment's egress controls are
+   native envelope-encrypted store and 1Password. The native store also seals
+   the 1Password token. D2 (Juan, 2026-11-09) permits local key-file custody in
+   production, with KMS recommended rather than required (§5.2, §15).
+2. **Q2. KMS provider, hosting and egress controls.** When KMS is used, the
+   provider is AWS KMS (HO5, aweb-acgh.14). Hosting and the deployment's egress controls are
    operator facts, recorded in HO5.
 3. **Q3. Delegated vault mediation (decision 13).** Not at launch. The
    interface keeps room for it (§5.5).
@@ -2680,7 +2717,7 @@ each where one exists.
     shared once a second consumer uses it. Shared: the egress guard, the
     dispatch state machine, the idempotency store, the console session, role
     assignments and the rate-limit buckets (`aweb_naapp.ratelimit`). App-local:
-    the auth-scheme injectors, KMS sealing and the credential-shape detector.
+    the auth-scheme injectors, native sealing and the credential-shape detector.
 
 ### 18.2 Decisions from the lane's record
 

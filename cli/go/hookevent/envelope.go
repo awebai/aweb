@@ -21,6 +21,10 @@ import (
 // signed object in the family.
 const EnvelopePrefix = "aweb.hook-event/1\n"
 
+// MaxEnvelopeBytes is the most signing bytes an event may have, prefix
+// included. Producers never build a larger one and receivers refuse it.
+const MaxEnvelopeBytes = 256 * 1024
+
 // CatalogID and CatalogVersion name the only catalog this package knows.
 const (
 	CatalogID      = "aweb.hooks"
@@ -93,6 +97,9 @@ func SigningBytes(envelope map[string]any) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := checkSize(len(EnvelopePrefix) + len(canonical)); err != nil {
+		return nil, err
+	}
 	parsed, err := strictjson.ParseCanonicalObject(canonical)
 	if err != nil {
 		return nil, err
@@ -152,6 +159,9 @@ func Verify(signing []byte, signature string, opts VerifyOptions) (*Envelope, er
 
 // Open checks everything but the expected team and the signature.
 func Open(signing []byte) (*Envelope, error) {
+	if err := checkSize(len(signing)); err != nil {
+		return nil, err
+	}
 	if !bytes.HasPrefix(signing, []byte(EnvelopePrefix)) {
 		return nil, strictjson.Refuse("wrong_prefix", "signing bytes do not start with %q", EnvelopePrefix)
 	}
@@ -508,4 +518,11 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+func checkSize(length int) error {
+	if length > MaxEnvelopeBytes {
+		return strictjson.Refuse("envelope_too_large", "%d bytes, at most %d", length, MaxEnvelopeBytes)
+	}
+	return nil
 }

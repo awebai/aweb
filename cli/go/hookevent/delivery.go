@@ -27,6 +27,11 @@ const CertificateHeader = "X-AWID-Team-Certificate"
 // receiver's clock.
 const ReplayWindow = 300 * time.Second
 
+// MaxDeliveryBytes is the largest delivery body a receiver reads: an event of
+// MaxEnvelopeBytes as base64url, with its signature and frame, fits well
+// within it.
+const MaxDeliveryBytes = 512 * 1024
+
 const deliveryTimeLayout = "2006-01-02T15:04:05Z"
 
 var deliveryPayloadKeys = []string{
@@ -156,6 +161,9 @@ type Received struct {
 func VerifyDelivery(method, path string, headers map[string]string, body []byte, opts ReceiveOptions) (*Received, error) {
 	if opts.Audience == "" || opts.BindingID == "" {
 		return nil, strictjson.Refuse("verifier_misconfigured", "an audience and a binding are required")
+	}
+	if len(body) > MaxDeliveryBytes {
+		return nil, strictjson.Refuse("request_too_large", "%d bytes, at most %d", len(body), MaxDeliveryBytes)
 	}
 	authorization := header(headers, "Authorization")
 	if !strings.HasPrefix(authorization, AuthScheme) {

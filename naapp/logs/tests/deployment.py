@@ -10,6 +10,7 @@ import secrets
 from pathlib import Path
 from typing import Any
 
+from aweb_naapp.email import EmailSettings
 from aweb_naapp.manifest import fill_manifest
 from aweb_naapp.signing_key import read_signing_key_file
 from awid.did import did_from_public_key
@@ -53,4 +54,16 @@ def served_manifest(
         app_id=TEST_APP_ID,
         origin=origin,
         did_keys={kid: did_key_of(path) for kid, path in key_files.items()},
+    )
+
+
+def no_mail() -> EmailSettings:
+    """Mail settings for a deployment whose tests send no mail."""
+    return EmailSettings(
+        host="localhost",
+        port=587,
+        tls="starttls",
+        username="logs",
+        sender="noreply@logs.example.test",
+        password=secrets.token_hex(16),
     )

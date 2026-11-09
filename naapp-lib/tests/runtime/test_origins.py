@@ -11,7 +11,7 @@ import httpx
 import pytest
 from fastapi import FastAPI, Request, Response
 
-from aweb_naapp.runtime.origins import split_origins
+from aweb_naapp.runtime.origins import OriginApps, split_origins
 
 AGENT = "https://api.example"
 HUMAN = "https://console.example"
@@ -184,3 +184,20 @@ async def test_the_lifespan_is_the_agent_apps() -> None:
         "lifespan.startup.complete",
         "lifespan.shutdown.complete",
     ]
+
+
+async def test_a_service_on_two_origins_serves_each_app_on_its_origin_and_keeps_both() -> None:
+    agent, human, seen = _apps()
+    service = OriginApps(agent, human, agent_origin=AGENT, human_origin=HUMAN)
+    assert (service.api_app, service.console_app) == (agent, human)
+    async with _client(service, AGENT) as api, _client(service, HUMAN) as console:
+        assert (await api.get("/v1/echo", headers={"Cookie": "a=b"})).json()["cookies"] == {}
+        assert (await console.get("/v1/echo")).status_code == 404
+        assert (await console.get("/login", headers={"Authorization": "x"})).status_code == 403
+    assert seen == ["agent"]
+
+
+def test_a_service_on_two_origins_refuses_one_origin_for_both() -> None:
+    agent, human, _ = _apps()
+    with pytest.raises(ValueError):
+        OriginApps(agent, human, agent_origin=AGENT, human_origin=AGENT)

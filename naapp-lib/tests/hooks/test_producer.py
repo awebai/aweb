@@ -15,7 +15,8 @@ from uuid import UUID
 import pytest
 from pgdbm import AsyncDatabaseManager
 
-from aweb_naapp.hooks.envelope import verify
+from aweb_naapp.hooks.catalog import load_catalog
+from aweb_naapp.hooks.envelope import MAX_ENVELOPE_BYTES, verify
 from aweb_naapp.hooks.producer import (
     HOOKS_CHANNEL,
     HookProducer,
@@ -189,6 +190,72 @@ async def test_a_refused_enqueue_spends_no_seq_even_when_the_caller_commits(db) 
     await enqueue(db, producer, "post-manifest-command-hook", "manifest_command_mutation")
     (row,) = await events(db)
     assert json.loads(bytes(row["payload"]).split(b"\n", 1)[1])["producer"]["seq"] == 1
+
+
+def catalog_with_unbounded_refs():
+    """The catalog with its ref type bounded by nothing, as a catalog that
+    failed its worst-case check would be."""
+    catalog = json.loads((AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json").read_bytes())
+    catalog["types"]["ref"] = {"kind": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9:_]*$"}
+    return load_catalog(json.dumps(catalog).encode())
+
+
+async def test_an_event_over_the_envelope_bound_is_refused_before_it_spends_a_seq(db) -> None:
+    producer = HookProducer(
+        app_producer().producer, catalog=catalog_with_unbounded_refs(), clock=lambda: NOW
+    )
+    oversized = {**payload("manifest_command_mutation"), "result_ref": "r" * MAX_ENVELOPE_BYTES}
+    async with db.transaction() as tx:
+        with pytest.raises(Refused) as refused:
+            await producer.enqueue(
+                tx,
+                hook="post-manifest-command-hook",
+                team_id=TEAM,
+                payload=oversized,
+                actor=SYSTEM,
+                occurred_at=NOW,
+                result_status="success",
+            )
+    assert refused.value.code == "envelope_too_large"
+    assert await events(db) == []
+    await enqueue(db, producer, "post-manifest-command-hook", "manifest_command_mutation")
+    (row,) = await events(db)
+    assert json.loads(bytes(row["payload"]).split(b"\n", 1)[1])["producer"]["seq"] == 1
+
+
+async def test_an_event_that_fits_only_with_a_shorter_seq_spends_no_seq(db) -> None:
+    producer = HookProducer(
+        app_producer().producer, catalog=catalog_with_unbounded_refs(), clock=lambda: NOW
+    )
+    hook, base = "post-manifest-command-hook", payload("manifest_command_mutation")
+
+    async def enqueue_ref(tx, ref: str) -> None:
+        await producer.enqueue(
+            tx,
+            hook=hook,
+            team_id=TEAM,
+            payload={**base, "result_ref": ref},
+            actor=SYSTEM,
+            occurred_at=NOW,
+            result_status="success",
+        )
+
+    async with db.transaction() as tx:
+        await enqueue_ref(tx, "r")
+    (probe,) = await events(db)
+    # At seq 1 this event is exactly the bound; at seq 10 it is one byte over.
+    edge = "r" * (1 + MAX_ENVELOPE_BYTES - len(bytes(probe["payload"])))
+    for _ in range(8):
+        async with db.transaction() as tx:
+            await enqueue_ref(tx, "r")
+    async with db.transaction() as tx:
+        with pytest.raises(Refused) as refused:
+            await enqueue_ref(tx, edge)
+    assert refused.value.code == "envelope_too_large"
+    async with db.transaction() as tx:
+        await enqueue_ref(tx, "r")
+    last = (await events(db))[-1]
+    assert json.loads(bytes(last["payload"]).split(b"\n", 1)[1])["producer"]["seq"] == 10
 
 
 async def test_a_payload_outside_the_catalog_is_refused(db) -> None:

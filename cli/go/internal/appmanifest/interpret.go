@@ -317,6 +317,9 @@ func validateTool(tool Tool) error {
 	paramByName := map[string]Param{}
 	for _, param := range tool.Params {
 		name := strings.TrimSpace(param.Name)
+		if name == "human" || name == "human-domain" {
+			return fmt.Errorf("param %q is reserved for CLI identity selection", name)
+		}
 		if name == "" {
 			return fmt.Errorf("tool %q has a param with empty name", tool.Name)
 		}
