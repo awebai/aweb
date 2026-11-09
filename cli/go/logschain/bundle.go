@@ -292,8 +292,10 @@ func VerifyBundle(
 	}
 
 	// A line and its newline fit the buffer, so a longer one is refused
-	// before it is read whole.
-	reader := bufio.NewReaderSize(r, MaxLineBytes+1)
+	// before it is read whole. The input is wrapped so the buffer is always
+	// the verifier's own: bufio.NewReaderSize returns a caller's larger
+	// *bufio.Reader unchanged, which would lift the bound.
+	reader := bufio.NewReaderSize(struct{ io.Reader }{r}, MaxLineBytes+1)
 	teamID := ""
 	number := 0
 	for {

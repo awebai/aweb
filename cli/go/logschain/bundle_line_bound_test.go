@@ -1,6 +1,7 @@
 package logschain
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"os"
@@ -52,6 +53,16 @@ func TestALineOfExactlyTheBoundIsVerified(t *testing.T) {
 func TestALineOneByteOverTheBoundIsRefusedAtItsNumber(t *testing.T) {
 	lines, line, _, receiptKeys, checkpointKeys := purgedCaseWithLineOf(t, MaxLineBytes+1)
 	_, err := VerifyBundle(bundleReader(lines), keySet(receiptKeys), keySet(checkpointKeys), nil, nil)
+	var malformed *BundleMalformed
+	if !errors.As(err, &malformed) || malformed.Line != line {
+		t.Fatalf("got %v; want a malformed bundle at line %d", err, line)
+	}
+}
+
+func TestALineOverTheBoundIsRefusedThroughACallersLargerBuffer(t *testing.T) {
+	lines, line, _, receiptKeys, checkpointKeys := purgedCaseWithLineOf(t, MaxLineBytes+1)
+	buffered := bufio.NewReaderSize(bundleReader(lines), 2*MaxLineBytes)
+	_, err := VerifyBundle(buffered, keySet(receiptKeys), keySet(checkpointKeys), nil, nil)
 	var malformed *BundleMalformed
 	if !errors.As(err, &malformed) || malformed.Line != line {
 		t.Fatalf("got %v; want a malformed bundle at line %d", err, line)
