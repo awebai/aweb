@@ -428,3 +428,22 @@ async def test_a_value_that_cannot_be_used_is_marked_on_the_form_with_the_rest_k
         assert kept["value"] == "task.updated", path
         assert "aria-invalid" not in kept, path
         assert "selected" in page.first("option", value="client"), path
+
+
+async def test_a_moment_finer_than_events_are_recorded_is_refused_not_rounded(world: World):
+    async with console(world) as human:
+        await signed_in(world, human)
+        core = await recorded(world, "core")  # 2026-10-20T12:00:00.412Z
+        at = Html(
+            (await human.get("/events", params={"occurred_from": "2026-10-20T12:00:00.412Z"})).text
+        )
+        after = Html(
+            (await human.get("/events", params={"occurred_from": "2026-10-20T12:00:00.413Z"})).text
+        )
+        finer = await human.get("/events", params={"occurred_from": "2026-10-20T12:00:00.412001Z"})
+    assert core in [event["data-event-id"] for event in events_of(at)]
+    assert core not in [event["data-event-id"] for event in events_of(after)]
+    assert finer.status_code == 400
+    page = Html(finer.text)
+    assert events_of(page) == []
+    assert page.first("input", id="filter-occurred_from")["aria-invalid"] == "true"

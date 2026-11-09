@@ -81,9 +81,11 @@ _FORM_FIELDS = {name: label for name, label, *_ in _SELECT_FILTERS} | dict(_TEXT
 _DATE_FIELDS = ("occurred_from", "occurred_to")
 _DATE_HELP = "In UTC: a day, as 2026-11-09, or a moment, as 2026-11-09T14:30:00Z."
 _DATE_ERROR = "This is not a day or a moment written as shown."
-# A UTC day, or a moment to the minute, second or fraction, with an optional Z.
+# A UTC day, or a moment to the minute, second or millisecond (events are
+# recorded to the millisecond, so a finer moment is refused, never rounded),
+# with an optional Z.
 _UTC_WRITTEN = re.compile(
-    r"(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,6}))?)?)?Z?"
+    r"(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?)?Z?"
 )
 _FOLLOW_INTERVAL_MS = 2000
 _SCRIPTS = ("follow", "filters")
@@ -324,7 +326,7 @@ def _utc(written: str, *, end: bool) -> str | None:
             int(hour or 0),
             int(minute or 0),
             int(second or 0),
-            int((fraction or "0").ljust(6, "0")),
+            int((fraction or "0").ljust(3, "0")) * 1000,
             tzinfo=UTC,
         )
         if hour is None and end:
