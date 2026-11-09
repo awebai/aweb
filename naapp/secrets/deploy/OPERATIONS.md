@@ -46,8 +46,8 @@ A deployment groups operations; it is not automatically a security boundary.
 It can contain several isolated execution environments. Agents that can
 impersonate one another occupy **one trust boundary** for security claims.
 Their effective authority includes all credentials, signing operations and
-privileged interfaces they can reach, regardless of the principal, role or
-soul selected by a client. Those labels still organize work, prevent mistakes
+privileged interfaces they can reach, regardless of the principal or role
+presented by a client. Those labels still organize work, prevent mistakes
 and attribute requests; they do not contain a compromised agent that can use
 another principal's authority. A fixed identity-home environment variable is
 client behavior, not isolation.
@@ -63,7 +63,7 @@ invocation policy for the installation before assigning sensitive permissions.
 | Secrets service account and mounted service keys | The [host recipe](README.md) separates the service from agents and mounts its keys read-only. Anything able to execute as that account or obtain equivalent container/host control can use its service-signing and decryption authority. | UID 10001, a read-only mount or a container label alone does not establish isolation. The host operator must demonstrate agent refusal to read keys, execute as the service, or invoke its signing authority through another reachable interface. Agents with Docker/host administration remain inside that authority boundary. |
 | Secrets local-key-file custody | Key plus ciphertext permits full decryption outside application policy. Private directory/file permissions and service-account separation are the deployment controls; the loader does not prove agent read isolation. | Qualify actual access, including groups, ACLs, mounts and backups. The host/custody operator owns missing isolation. Successful API refusal cannot compensate for a readable key. |
 | Secrets KMS custody | KMS policy and audit supplement the service account boundary. Effective authority includes reachable AWS credentials and any callable decrypt interface; a compromised service can still see plaintext. | Qualify the actual provider policy and agent/service access separately. KMS mode or a successful canary does not establish per-agent isolation, or qualify the local-key arrangement. The customer KMS/host operator owns those access controls. |
-| Logs service account and mounted app-signing keys | Logs has no Secrets custody backend. Reachable `LOGS_APP_KEY_FILES`, service execution or equivalent signing access place that authority in the caller's trust boundary. Designated-reader sessions govern normal HTTP reads. | Reader-route refusal does not prove the same agent cannot reach service keys, database access or another reader's session. The Logs/host operator must qualify those boundaries; Logs recipe and packaged proof remain with `aweb-acwd.8`. |
+| Logs service account and mounted app-signing keys | Logs has no Secrets custody backend; its app keys are mounted through `LOGS_APP_KEY_FILES`. Reachable `logs-chain` signing (receipts and checkpoints), `logs-governance` signing (Logs' own hook events), the resolve and grant-read keys, service execution, or database access place that authority in the caller's trust boundary. Database access reads every team's retained content and can purge or alter rows outside owner acts. Designated-reader sessions govern normal HTTP reads. | Reader-route refusal does not prove the same agent cannot reach service keys, database access or another reader's session. A boundary holding both the `logs-chain` key and database write can rewrite a team's history so that it verifies; tamper-evidence against it rests only on witnesses held outside it (producer receipts, exported checkpoints or bundles). Database write without the signing key is detectable by a verifier. The Logs/host operator must qualify those boundaries; the Logs recipe and packaged proof remain with `aweb-acwd.8`. |
 | HO6 separate runner UID and fixed supervisor invocation | The [supervisor contract](../e2e/SUPERVISOR.md) protects the complete executable/import chain, fixed configuration and state, and restricts the sudo command and its input/output. Runner checks exclude the runner UID and root from the configured agent UIDs and enforce job pins. | Qualify the real installed sudo/PTY line, worker UID, whole-chain ownership, state/key access, allowed commands, suppressed output and lifecycle. This separates the driver from the runner only to the extent demonstrated; it does not isolate agents sharing the driver UID or their reachable member keys. Runner/host owners retain any missing installed-boundary proof. |
 
 Claim narrower per-worker containment only after execution, credential/signing
@@ -73,8 +73,7 @@ and check B's restricted invocation and output policy. A successful authorized
 job or principal-specific refusal alone is insufficient. Exercise only lab
 identities and synthetic data, and retain outcomes rather than keys or raw I/O.
 
-Allocate sensitive permissions against these actual boundaries. A subtree
-grant shares authority; individual roles do not subtract from it. An approved
+Allocate sensitive permissions against these actual boundaries. An approved
 worker definition is distinct from enforceable runtime role assignment.
 There is no additional deployment-ceiling permission object. A concrete
 missing boundary remains a gap for its existing host, identity, custody or
