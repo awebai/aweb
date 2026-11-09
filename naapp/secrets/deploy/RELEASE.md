@@ -88,9 +88,9 @@ and component source have landed:
    allowed by the existing RC promotion checks. The qualification includes
    actual packaged service images and the runner installed in a clean
    environment using registry dependencies, not repository editable sources.
-   Create the release tags through the existing candidate entry point. The
-   release owner's operating target is 45 minutes from tag to live; qualification
-   precedes final tagging, rather than starting a full journey inside that window.
+   Create the release tags through the existing candidate entry point. Tag to
+   live must stay under 45 minutes; qualification precedes final tagging, rather
+   than starting a full journey inside that window.
 5. The release owner publishes the selected immutable tags/artifacts through
    the existing lane. Read back remote versions/digests/checksums and verify
    them using the existing publisher's verification. Do not replace an existing
