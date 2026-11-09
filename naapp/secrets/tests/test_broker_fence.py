@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import pytest
 from aweb_naapp.dispatch import Dispatches, State, apply_dispatch_migrations
-from aweb_naapp.egress import InternalDestinations
+from aweb_naapp.egress import Destination, InternalDestinations
 
 from aweb_secrets import records
 from aweb_secrets.admission import AdmissionRefused, UseRequest
@@ -269,19 +269,33 @@ async def test_policy_window_is_checked_after_a_real_s3_row_lock_wait(db, fence,
 
 
 @pytest.mark.parametrize(
-    "destination_limit,policy_limit,expected",
+    "destination_limit,policy_limit,expected,oauth",
     [
-        (None, 1024, 1024),
-        (512, 1024, 512),
-        (None, None, 16 * 1024 * 1024),
-        (32 * 1024 * 1024, 64 * 1024 * 1024, 32 * 1024 * 1024),
+        (None, 1024, 1024, False),
+        (512, 1024, 512, False),
+        (None, None, 16 * 1024 * 1024, False),
+        (32 * 1024 * 1024, 64 * 1024 * 1024, 32 * 1024 * 1024, False),
+        pytest.param(None, None, 16 * 1024 * 1024, True, id="oauth-token-destination"),
     ],
 )
 async def test_open_request_is_bounded_and_has_no_token_issuing_authority(
-    db, fence, destination_limit, policy_limit, expected
+    db, fence, destination_limit, policy_limit, expected, oauth
 ):
     result = {} if policy_limit is None else {"max_bytes": policy_limit}
-    await _install(db, policy_body={**POLICY_BODY, "result": result})
+    secret = (
+        None
+        if not oauth
+        else {
+            **SECRET,
+            "kind": "oauth2-client-credentials",
+            "kind_params": {
+                "token_endpoint": "https://api.example/v1/token",
+                "client_auth": "client_secret_basic",
+                "scope": "read",
+            },
+        }
+    )
+    await _install(db, policy_body={**POLICY_BODY, "result": result}, secret=secret)
     limit = {} if destination_limit is None else {"response_max_bytes": destination_limit}
     destination = DestinationRecord.from_after(
         {
@@ -292,7 +306,7 @@ async def test_open_request_is_bounded_and_has_no_token_issuing_authority(
             "host": "api.example",
             "port": 443,
             "path": "/v1/**",
-            "methods": ["GET"],
+            "methods": ["GET", "POST"],
             "query_rules": {},
             "header_allow": [],
             "network": "public",
@@ -325,3 +339,5 @@ async def test_open_request_is_bounded_and_has_no_token_issuing_authority(
         assert prepared.call.rendered.bounds.max_response_bytes == expected
         assert prepared.call.rendered.max_bytes == expected
         assert prepared.call.target_path_template == "/v1/**"
+        if oauth:
+            assert isinstance(prepared.call.token_destination, Destination)

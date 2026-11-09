@@ -7,6 +7,7 @@ import pytest
 from fastapi import Response
 
 from aweb_secrets.change import ChangeRefused, covered_bytes, parse_change, validate_change
+from aweb_secrets.console_forms.grants import _configuration
 from aweb_secrets.destination import DestinationInvalid, DestinationRecord
 from aweb_secrets.operation import OperationInvalid, OperationTemplate
 from aweb_secrets.operation_request import render_operation
@@ -14,13 +15,37 @@ from aweb_secrets.policy import Policy, PolicyInvalid
 
 from .harness import NAME, running_upstream
 from .test_broker_operation import _send, _template
-from .test_change import POLICY, _change
+from .test_change import DID_KEY, POLICY, _change
 from .test_destination_record import DISABLED, RECORD
 from .test_operation_record import REFUND
 from .test_policy import BODY
 
 DEFAULT = 16 * 1024 * 1024
 CEILING = 64 * 1024 * 1024
+
+
+def test_owner_form_carries_its_raised_bound_to_all_confirmed_definitions():
+    maximum = 32 * 1024 * 1024
+    changes = _configuration(
+        {
+            "url": "https://api.example/status",
+            "role": "secrets.role.reader",
+            "operation_id": "read_status",
+            "method": "GET",
+            "projection": ["/value"],
+            "max_bytes": maximum,
+            "capacity": 10,
+            "window_s": 3600,
+            "side_effect": "none",
+            "approval": "none",
+        },
+        secret_id=REFUND["secret_id"],
+        owner=DID_KEY,
+    )
+    definitions = {item["kind"]: item["after"] for item in changes}
+    assert definitions["operation"]["response"]["max_bytes"] == maximum
+    assert definitions["policy"]["result"]["max_bytes"] == maximum
+    assert definitions["destination"]["response_max_bytes"] == maximum
 
 
 @pytest.fixture
