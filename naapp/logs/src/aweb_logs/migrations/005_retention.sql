@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS {{tables.retention_settings}} (
     PRIMARY KEY (team_id, event_class)
 );
 
--- Retention finds a team's events with content in position order.
+-- Retention reads, per hook, only the events with content received before its
+-- cutoff: one range scan each, so a pass costs what has expired, not the
+-- team's history.
 CREATE INDEX IF NOT EXISTS idx_chain_events_retained
-    ON {{tables.chain_events}} (team_id, chain_epoch, team_seq) WHERE purge_act IS NULL;
+    ON {{tables.chain_events}} (team_id, hook, received_at) WHERE purge_act IS NULL;

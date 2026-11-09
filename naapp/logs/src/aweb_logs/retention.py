@@ -14,12 +14,14 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
+from aweb_naapp.hooks.catalog import packaged_catalog
 from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
 from aweb_logs import read_store
+from aweb_logs.chain import format_time
 
 logger = logging.getLogger(__name__)
 
@@ -27,23 +29,13 @@ RETENTION_ACT = "logs.retention.set"
 ALL_EVENTS = "all"
 _BATCH = 500
 
-# A team's events with content whose class's retention has expired, earliest
-# first, each with the setting that expires it. A hook's own setting comes
-# before the team's "all" setting; an event no setting names is kept.
-_EXPIRED = (
-    "SELECT e.chain_epoch, e.team_seq, s.setting_id"
-    " FROM {{tables.chain_events}} e"
-    " CROSS JOIN LATERAL ("
-    "   SELECT r.setting_id, r.retention_days FROM {{tables.retention_settings}} r"
-    "   WHERE r.team_id = e.team_id AND r.event_class IN (e.hook, '" + ALL_EVENTS + "')"
-    "   ORDER BY r.event_class = '" + ALL_EVENTS + "' LIMIT 1"
-    " ) s"
-    " WHERE e.team_id = $1 AND e.purge_act IS NULL AND s.retention_days IS NOT NULL"
-    "   AND e.received_at < to_char("
-    "     ($2::timestamptz - make_interval(days => s.retention_days)) AT TIME ZONE 'UTC',"
-    '     \'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"\')'
-    " ORDER BY e.chain_epoch, e.team_seq LIMIT $3"
-    " FOR UPDATE OF e SKIP LOCKED"
+# One hook's events with content received before a cutoff, earliest first: a
+# range of idx_chain_events_retained.
+EXPIRED = (
+    "SELECT chain_epoch, team_seq FROM {{tables.chain_events}}"
+    " WHERE team_id = $1 AND hook = $2 AND purge_act IS NULL AND received_at < $3"
+    " ORDER BY received_at LIMIT $4"
+    " FOR UPDATE SKIP LOCKED"
 )
 
 
@@ -107,31 +99,79 @@ async def purge(
     return len(purged)
 
 
-async def apply_retention(db: AsyncDatabaseManager, *, now: datetime, batch: int = _BATCH) -> int:
+async def apply_retention(
+    db: AsyncDatabaseManager,
+    *,
+    now: datetime,
+    batch: int = _BATCH,
+    stop: asyncio.Event | None = None,
+) -> int:
     """Purge every event a team's retention has expired at ``now``, one batch
-    per transaction. Returns how many events it purged."""
+    per transaction, until ``stop`` is set. A team whose purge fails is logged
+    and left for the next pass; the other teams go on. Returns how many events
+    it purged."""
     teams = await db.fetch_all(
         "SELECT DISTINCT team_id FROM {{tables.retention_settings}}"
         " WHERE retention_days IS NOT NULL ORDER BY team_id"
     )
     total = 0
     for row in teams:
-        team_id = row["team_id"]
-        while True:
+        if stop is not None and stop.is_set():
+            break
+        try:
+            total += await _apply_team(db, row["team_id"], now=now, batch=batch, stop=stop)
+        except Exception:
+            logger.exception("Retention failed for team %s", row["team_id"])
+    return total
+
+
+async def _apply_team(
+    db: AsyncDatabaseManager,
+    team_id: str,
+    *,
+    now: datetime,
+    batch: int,
+    stop: asyncio.Event | None,
+) -> int:
+    purged = 0
+    for hook, setting_id, days in await _expiring_classes(db, team_id):
+        cutoff = format_time(now - timedelta(days=days))
+        while not (stop is not None and stop.is_set()):
             async with db.transaction() as tx:
-                expired = await tx.fetch_all(_EXPIRED, team_id, now, batch)
-                by_setting: dict[str, list[tuple[int, int]]] = {}
-                for event in expired:
-                    by_setting.setdefault(str(event["setting_id"]), []).append(
-                        (event["chain_epoch"], event["team_seq"])
-                    )
-                for setting_id, positions in by_setting.items():
-                    total += await purge(
-                        tx, team_id, positions, act=f"{RETENTION_ACT}:{setting_id}"
-                    )
+                expired = await tx.fetch_all(EXPIRED, team_id, hook, cutoff, batch)
+                purged += await purge(
+                    tx,
+                    team_id,
+                    [(event["chain_epoch"], event["team_seq"]) for event in expired],
+                    act=f"{RETENTION_ACT}:{setting_id}",
+                )
             if len(expired) < batch:
                 break
-    return total
+    return purged
+
+
+async def _expiring_classes(db: AsyncDatabaseManager, team_id: str) -> list[tuple[str, str, int]]:
+    """Each hook whose events the team's retention expires, with the setting
+    that expires them: the hook's own setting, else the team's "all" setting
+    for every catalog hook without one of its own."""
+    settings = {
+        row["event_class"]: (str(row["setting_id"]), row["retention_days"])
+        for row in await db.fetch_all(
+            "SELECT event_class, setting_id, retention_days FROM {{tables.retention_settings}}"
+            " WHERE team_id = $1",
+            team_id,
+        )
+    }
+    every = settings.pop(ALL_EVENTS, None)
+    classes = dict(settings)
+    if every is not None:
+        for hook in packaged_catalog().hooks:
+            classes.setdefault(hook, every)
+    return [
+        (hook, setting_id, days)
+        for hook, (setting_id, days) in sorted(classes.items())
+        if days is not None
+    ]
 
 
 async def run_retention(
@@ -145,7 +185,7 @@ async def run_retention(
     failing pass is logged and tried again at the next interval."""
     while not stop.is_set():
         try:
-            await apply_retention(db, now=now())
+            await apply_retention(db, now=now(), stop=stop)
         except Exception:
             logger.exception("Retention pass failed")
         try:
