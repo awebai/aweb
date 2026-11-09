@@ -183,6 +183,80 @@ These rate, four-eyes and sensitive-secret requirements follow the coordinator's
 2026-11-09 disposition of the secrets lane input. Exact app subject/rate encoding
 and version remain to be frozen by the policy owner with the vectors.
 
+### Acceptance case: A requests the launch of B
+
+An instance of approved worker definition (soul) A may request the launch of
+an instance of B with different permissions. Permission to request that launch
+is separate from permission to use B's resources. In this acceptance case,
+B-only rights use B's independent principal grant or an owner-authorized app
+role designation for B's exact identity. B authenticates as B; A acquires neither
+B's role nor its credentials. Neither worker may change its own grants or role
+membership. Existing principal/role authorization remains unchanged.
+
+A legitimate designation permits B to use role X. A's own request for X, A
+presenting B's soul name, an undesignated child certificate and an edited local
+soul file must not acquire X. These protocol cases establish principal/role
+enforcement only: refusing A's own key does not prove that A cannot steal or use
+B's key. A soul name, local metadata, a locked revision, a merged PR or an
+ancestry certificate is not an app-role authorization.
+
+**Assurance boundary.** A deployment is an operational grouping, not
+automatically a security boundary. It may contain several isolated execution
+environments. Environments where agents can impersonate each other are one
+trust boundary for security claims; their effective authority includes all
+reachable credentials and privileged interfaces. On a shared-UID host with
+accessible minting and member keys, principal/role permissions remain useful
+for organization, error prevention and attribution, but do not contain a
+compromised worker. A fixed identity-home environment variable is client
+behavior, not isolation. Claim narrower per-worker containment only where
+execution, credential/signing and privileged-invocation boundaries are enforced
+and demonstrated. In particular, A must not be able to read or invoke B's key or
+impersonate the authority that provisions B.
+
+Current OATS lane evidence reports per-team deployment roots, local soul/revision
+metadata, membership eligibility by soul policy, and no enforced launch
+authority against another process on the same UID. This is the OATS owner's
+source assessment, not a W1 runtime qualification. Supported provisioning and
+support recipes must identify their actual execution/key/signing arrangement,
+its limits and evidence, separately from the protocol cases above. Reuse
+existing OS, custody and runner controls where they suffice; this contract
+prescribes no per-agent container, supervisor service or new attestation family.
+
+For dynamic workers two integration gaps remain unscheduled:
+
+- **G1, approved definition to identity/role binding.** A trusted provisioning
+  path must verify the approved soul and revision, and bind the resulting B
+  identity to its authorized role. First assess whether an isolated authorized
+  launcher can check the pinned definition and use existing owner-controlled
+  identity-to-role assignment. No portable soul claim or new certificate field
+  is frozen here. A verifier-visible signed claim needs a demonstrated
+  cross-boundary requirement. Adding a digest to a disclosure alone does not
+  enforce the runtime binding.
+- **G2, launch authority.** The authority allowing A to request B's launch must
+  be enforced by a provisioning authority A cannot impersonate. Instructions
+  to spawn only when asked do not enforce it. This is an OATS integration gap;
+  this fit check does not resume paused launch/isolation implementation.
+
+Existing per-instance principal grants and role designations work but require
+owner action for each new identity. An optional existing-identity arrangement
+for dynamic workers is a separately endorsed D_B rooting B instances, with a
+subtree grant covering that branch. D_B is not a required role or a new identity
+primitive, and its signing key must not be readable by A. G1 and G2 remain open;
+this arrangement does not establish an approved soul binding. A subtree rooted
+at B excludes its ancestor A; the real hazards are a COMMON subtree containing
+both workers and A controlling B's minting/custody. Never put B-only rights on a
+subtree containing A. Subtree grants are actual shared authority, not a ceiling
+from which a narrower worker grant subtracts. No deployment-wide permission
+object or universal child-permission-subset rule is introduced.
+
+**Restricted invocation.** If A can command B to make arbitrary resource
+requests and return arbitrary output, their permission separation is nominal.
+For this case B uses named, digest-bound operations and enforced request/output
+limits, plus its existing approval and distinct-approver policy where required.
+An `open_request` grant cannot establish that restricted-operation boundary;
+sensitive secrets never allow it. The provisioning/support evidence must also
+qualify the interface through which A invokes B, not only B's authentication.
+
 ## (c) Required endorsement is selected by the authority
 
 The server/app policy, not a client flag, selects which operations require
@@ -304,8 +378,10 @@ cannot bind a credential. The credential handoff itself authorizes nothing.
 The controller-signed `aweb.team-server/1` record selects the human origin; the
 owner's client verifies that record and the shipped declaration. The act's
 `aud` is that origin and the browser RP ID derives from its hostname. Only the
-reserved app ID and fixed per-team installation binding declared by W2 are
-accepted; another app/installation gives `owner_required`. W2 fixes those
+`team-server` app ID, `endorser` role and fixed per-team installation binding
+declared by W2 are accepted. The installation ID is UUIDv5 of
+`aweb:team-server:` followed by `team_id`, in the RFC 4122 URL namespace; another app/installation gives
+`owner_required`. W2 fixes those
 literals, shared-library composition and additive migrations. Non-users of
 protected endorsement configure nothing and run no new required service or
 startup check. Hosted deployments use the same contract; their chosen origin is
@@ -313,7 +389,10 @@ an operator decision, not an OSS dependency.
 
 The retained proof must identify the exact holding current when confirmation
 was consumed and retain its authoritative controller-act binding as well as the
-original assertion. Verifying a hash commitment or trusting an "approved" row
+original assertion. This includes any `human-credential.replace` act and its
+cooling-off transition that established the credential current at consumption;
+the original designation alone does not bind a replacement credential. Verifying a hash commitment or trusting an
+"approved" row
 alone is insufficient. A binding is made once per endorser credential; ordinary
 admission reads the local binding/holding history and performs no extra AWID
 lookup just for the holding. Public ancestry checks retain their own rules.
@@ -367,17 +446,38 @@ unavailable authority gives `deployment_endorsement_unavailable`. Cache entries
 bind the exact team/app/installation/generation, server authority, D and
 certificate revision, not just D's ID.
 
-A move requires a fresh endorsement at the new hosting origin; do not silently
-transfer another server's row. A changed origin hostname changes the RP ID and
-orphans bound passkeys; use `human-credential.replace`, not an invented passkey
-migration path. The existing endorsement/proof remains history.
+When the team server's origin changes, its existing endorsement rows stay
+valid, because their retained assertions verify under their recorded rp_id;
+new confirmations need a credential rebound with `human-credential.replace`. A
+move to a different team server carries no rows, and endorsements there are
+made afresh.
 
-**Before ACK:** W2 must freeze the reserved app/installation and binding/proof
-payload identifiers, successful-registration linkage and withdrawal API. W1 and
-W2 jointly freeze the response bytes, authorization bounds and currentness
-checks above. No proof is silently transferred across a changed D key/parent or
-certificate revision; rotation/re-parenting/refresh continuity needs an explicit
-rule and vectors. The candidate read is not shipped behavior.
+Admission compares D's current registered key to the row's `subject_key`, as
+well as its current certificate to `certificate_sha256`. A registered identity's
+key rotation need not change the certificate bytes, so the hash check alone is
+insufficient. Both comparisons use the existing ancestry observation.
+
+**Continuity.** A protected endorsement covers one D, one key and one
+certificate revision. When D's key rotates, D is re-endorsed. When D is
+re-parented or gets a new certificate revision, D is re-endorsed, because no
+row matches the new certificate. `resign` does not apply: it is for `did:key`
+children, and the covered request names a registered D. An unrelated refresh
+of D's ancestry evidence, with the same D, key and certificate, changes
+nothing.
+
+W2's [endorsement flow](human-confirmation-from-aw.md)
+provides the producer: its consumed record binds `csr_sha256` over request
+signing bytes, D's ID/domain/subject key, H, team and server installation,
+`disclosure_version`, approval ID, `approval_evidence_sha256` and the holding
+current at consumption. Its authenticated certificate-link operation records
+`certificate_sha256` over signed certificate bytes idempotently, before D
+registers it at AWID. A linked row without the matching current registered
+certificate grants nothing. Withdrawal records `withdrawn_at`; it does not
+reactivate a row or remove its history.
+
+**Before ACK:** W1 and W2 jointly freeze the read response bytes, authorization
+bounds, proof/history references and currentness checks above with the public
+corpus. The candidate read is not shipped behavior.
 
 ## (e) Withdrawal denies dependent access and keeps history
 
@@ -391,6 +491,16 @@ Independent grants are not revoked by withdrawing another grant. Their
 operations remain subject to any authority-selected endorsement requirement
 that applies to them. This distinction must be visible to the operator: removing
 one source of permission does not imply that every independent source vanished.
+
+D itself, its current valid parent, or its namespace root may revoke D's ID
+ancestry under the existing identity revocation contract. A team-controller
+key alone supplies none of that ID authority. If H cannot sign in to withdraw
+an endorsement, an authorized ID revoker can revoke D; independently, the team
+controller can revoke affected membership certificates and resource owners can
+withdraw affected app grants. Those are team/resource-local containment paths,
+not portable subtree revocation, and D's membership revocation alone does not
+revoke separate descendant memberships. Containment must name each dependency
+whose access is being removed.
 
 Revoking registered D can invalidate its descendants' ancestry without revoking
 H or H's unrelated branches. Local ordinary admission outside this protected
@@ -423,9 +533,15 @@ admission. These cases are an acceptance matrix, not a claim of tests run:
 | H-key-signed credential binding without controller act | `owner_required`; no holding or endorsement row |
 | Assertion from a credential other than the current holding | Refuse; no endorsement row |
 | Consumed endorsement predates credential replacement | Verify against historical holding; remains until explicit withdrawal |
+| Endorsement consumed after a valid replacement and cooling-off | Verify the replacement binding/history and current credential; admit |
 | Old credential used for new confirmation after replacement | Refuse; no new row |
 | Required policy with client flag omitted or false | Requirement still applies |
 | Changed CSR, target key, parent, audience or recursive disclosure | Refuse mismatched proof |
+| D key rotates while certificate bytes remain the same | Refuse; fresh protected endorsement required |
+| D re-parented or given a new certificate revision | Refuse; no matching endorsement row |
+| Same D, key and certificate after unrelated ancestry-evidence refresh | Admit under unchanged dependencies |
+| Same team server changes origin | Retained assertion/history verifies; new confirmations require rebound credential |
+| Move to another team server | No transferred endorsement row; fresh endorsement required |
 | Replay of consumed proof for another issuance or resource operation | Refuse; exact idempotent receipt replay grants no new effect |
 | Revoked D, withdrawn protected endorsement, withdrawn matching resource grant | Deny each dependent path; preserve history |
 | Unavailable required registry/proof/authority evidence | Unavailable; no effect or fallback |
@@ -440,6 +556,9 @@ admission. These cases are an acceptance matrix, not a claim of tests run:
 | Read asks another team/app/installation or supplies an approval URL | Refuse; no cross-authority lookup |
 | Server origin/key changes, or required response expires | No stale-cache or redirect fallback |
 | Withdraw subtree grant with an independent valid grant remaining | Evaluate independent permission under applicable operation policy |
+| B uses role X after legitimate owner designation | Permit only B's granted operation |
+| A uses its own key for X, claims B's soul, presents an undesignated child certificate or edits local soul files | No B-only role; protocol evidence alone does not qualify custody isolation |
+| A can reach B's key, minting authority or unrestricted privileged invocation | No per-worker containment claim, even when principal tests pass |
 | Unrelated legacy/humanless operation outside the requirement | Existing disposition unchanged |
 
 Use one public decision corpus consumed by coordination and direct naapp
