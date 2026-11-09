@@ -486,6 +486,10 @@ ROOT_CONSUMERS = {
         "hook-delivery-credential-v1.json",
         '(AWEB_ROOT / "docs" / "vectors" / "hook-delivery-credential-v1.json")',
     ),
+    PurePosixPath("naapp-lib/tests/hooks/test_envelope_bound.py"): _consumer(
+        "hook-catalog-v1.json",
+        'AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json"',
+    ),
     PurePosixPath("naapp/logs/tests/test_manifest.py"): _consumer(
         "hook-catalog-v1.json",
         'AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json"',

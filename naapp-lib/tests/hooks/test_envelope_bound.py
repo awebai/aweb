@@ -21,7 +21,8 @@ from aweb_naapp.hooks.envelope import MAX_ENVELOPE_BYTES, PREFIX
 from aweb_naapp.hooks.strictjson import MAX_SAFE_INTEGER
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]
-CATALOG_JSON = json.loads((AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json").read_bytes())
+CATALOG_PATH = AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json"
+CATALOG_JSON = json.loads(CATALOG_PATH.read_bytes())
 # A JSON string of printable ASCII escapes at most `"` and `\`, so a value
 # of n characters encodes in at most 2n + 2 bytes.
 QUOTE = 2
@@ -151,7 +152,7 @@ def test_every_catalog_string_is_bounded() -> None:
 
 
 def test_the_catalogs_largest_event_is_under_the_envelope_bound() -> None:
-    load_catalog((AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json").read_bytes())
+    load_catalog(CATALOG_PATH.read_bytes())
     frame = frame_bound()
     worst = {name: frame + payload_bound(hook) for name, hook in CATALOG_JSON["hooks"].items()}
     assert max(worst.values()) < MAX_ENVELOPE_BYTES, (
