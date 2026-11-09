@@ -939,6 +939,7 @@ self-hosted operator allows them; a hosted deployment always refuses them.
 | --- | --- |
 | 2xx with `{event_id, disposition: "appended" \| "duplicate", receipt?}` | `delivered` or `duplicate`. The producer keeps the receipt, and at least the highest receipt per team and binding. |
 | `409 event_conflict` (same id, different bytes) | `conflict`: never retried, surfaced as a fault. |
+| `413 request_too_large` (a body over the receiver's bound) | `rejected` at once and surfaced, never retried: no retry makes the same bytes smaller. A producer that keeps the envelope bound never meets it. |
 | A schema or authorization refusal | Retried with bounded backoff, in case a registry view is stale, then `rejected` and surfaced. |
 | A network error or 5xx | Retried with capped exponential backoff and never dropped. After the operator's disclosed delivery horizon it is `stalled` and surfaced to the owner. |
 | The binding is no longer active when the producer sends | Ordinary delivery is `cancelled`, with its reason. The durably authorized terminal obligation retries independently; inactive state never cancels it. |
