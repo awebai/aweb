@@ -53,6 +53,19 @@ on its own `Host`, so it can listen on one socket or on one per origin.
 While logs runs, each team whose chain has new events gets a signed checkpoint
 every `LOGS_CHECKPOINT_INTERVAL_SECONDS` (default 300); an idle team gets none.
 
+## Retention
+
+A team keeps every event until its owner sets a retention. A setting names an
+event class, a hook or `all`, and a number of days (1 to 36500), or keeps that
+class; a hook's own setting comes before the team's `all` setting. Every
+`LOGS_RETENTION_INTERVAL_SECONDS` (default 3600) logs purges the events each
+team's retention has expired, in bounded batches. A purge removes an event's
+content, salt, signature and every projection of it, and keeps its skeleton,
+so the chain still verifies and `verify` reports the purged range with the act
+`logs.retention.set:<setting id>` that purged it. **Open (aweb-acgh.16.23):**
+the owner act that sets a retention, and legal holds that suspend it; until
+then no team has a setting.
+
 ## Ingestion
 
 `POST /v1/hooks/ingest` accepts the shared `AWEB-Hook DIDKey` delivery

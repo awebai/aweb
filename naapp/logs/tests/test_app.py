@@ -11,7 +11,7 @@ import secrets
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -27,6 +27,7 @@ from aweb_logs.app import chain_signer, create_app, serve
 from aweb_logs.chain import CHECKPOINT_PURPOSE, RECEIPT_PURPOSE, open_checkpoint
 from aweb_logs.config import LogsSettings
 from aweb_logs.ledger import append
+from aweb_logs.retention import set_retention
 
 from .deployment import (
     TEST_APP_ID,
@@ -151,6 +152,43 @@ async def test_a_running_logs_checkpoints_each_team_whose_chain_moved(tmp_path: 
     assert checkpoint is not None
     opened = open_checkpoint(bytes(checkpoint["signing_bytes"]), checkpoint["signature"])
     assert (opened.team_seq, opened.logs_origin, opened.kid) == (1, ORIGIN, _chain_kid())
+
+
+async def test_a_running_logs_purges_what_a_teams_retention_has_expired(
+    tmp_path: Path, database
+) -> None:
+    settings = _deployment_on(tmp_path, database)
+    settings = settings.model_copy(update={"retention_interval_seconds": 0.05})
+    signer = chain_signer(
+        settings, load_manifest(served_manifest(settings.app_key_files, origin=ORIGIN))
+    )
+    async with running(_app(settings)):
+        for seq, age in ((1, timedelta(days=45)), (2, timedelta(days=1))):
+            signing, signature = signed_event("core", event_id=str(uuid.uuid4()), seq=seq)
+            await append(
+                database,
+                signer,
+                event=hook_envelope.verify(signing, signature, team_id=TEAM_ID),
+                signing_bytes=signing,
+                signature=signature,
+                key_evidence={},
+                received_at=datetime.now(UTC) - age,
+            )
+        setting = await set_retention(database, TEAM_ID, "all", days=30)
+        rows: list = []
+        for _ in range(100):
+            rows = await database.fetch_all(
+                "SELECT team_seq, purge_act FROM {{tables.chain_events}}"
+                " WHERE team_id = $1 ORDER BY team_seq",
+                TEAM_ID,
+            )
+            if rows and rows[0]["purge_act"] is not None:
+                break
+            await asyncio.sleep(0.05)
+    assert [(row["team_seq"], row["purge_act"]) for row in rows] == [
+        (1, f"logs.retention.set:{setting}"),
+        (2, None),
+    ]
 
 
 def test_logs_does_not_start_without_its_chain_key(tmp_path: Path) -> None:
