@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-09
+* **Harvest**: OKF proposal from aweb-protocol-expert/aweb-protocol-expert-secrets-docs with one backing note, about the naapp human-confirmation handoff; checked against aweb main at 9a54c7392 and the review branch at 8e7ca8565 (not on main).
+* **Creation**: lessons [team-auth steps run on the app origin](/aweb-protocol-expert/lessons/team-auth-steps-run-on-the-app-origin.md) and [membership evidence rides with the binding act](/aweb-protocol-expert/lessons/membership-evidence-rides-with-the-binding-act.md).
+* **Update**: [accepted guarantees change only by ruling](/aweb-protocol-expert/lessons/accepted-guarantees-change-only-by-ruling.md) gains the rule that lifecycle consequences are derived from the canonical Effects text, not a reviewer's paraphrase.
+
 ## 2026-11-06
 * **Fix**: review of the db-access proposal on npm gitHead, PubSub release and stream checkouts: hosted specifics in [stream bodies leave the request connection scope](/aweb-protocol-expert/lessons/stream-bodies-leave-the-request-connection-scope.md) and [an npm tarball publish records no gitHead](/aweb-protocol-expert/lessons/npm-tarball-publish-records-no-githead.md) are stated generically or dropped, as the OSS and Cloud boundary requires.
 * **Update**: [SSE cleanup is cancelled on client disconnect](/aweb-protocol-expert/lessons/sse-cleanup-is-cancelled-on-disconnect.md) and [a PubSub release survives any cancellation](/aweb-protocol-expert/decisions/pubsub-release-survives-any-cancellation.md) link each other: the AnyIO shield covers Starlette's disconnect, not native task cancellation.
