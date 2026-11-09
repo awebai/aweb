@@ -38,7 +38,7 @@ type signedFields struct {
 }
 
 func (c *Client) canSignMessages() bool {
-	return c != nil && c.signingKey != nil && !c.disableMessageSigning
+	return c != nil && (c.signingKey != nil || c.interactiveSigner != nil) && !c.disableMessageSigning
 }
 
 func (c *Client) canAttachPlainMessageSignature() bool {
@@ -160,7 +160,17 @@ func (c *Client) signEnvelope(ctx context.Context, env *MessageEnvelope) (signed
 	if c.canSignMessages() {
 		env.FromDID = c.did
 		env.FromStableID = c.stableID
-		sig, err := SignMessage(c.signingKey, env)
+		var sig string
+		var err error
+		if c.interactiveSigner != nil {
+			if env.Type != "mail" {
+				return signedFields{}, fmt.Errorf("human_mail_only: use mail instead of chat")
+			}
+			c.interactiveMailContext = c.interactiveMailDescription(env)
+			sig, err = checkedInteractiveSignature(c.did, c.interactiveSigner, []byte(CanonicalJSON(env)), c.interactiveMailContext+"; sign message envelope")
+		} else {
+			sig, err = SignMessage(c.signingKey, env)
+		}
 		if err != nil {
 			return signedFields{}, fmt.Errorf("sign message: %w", err)
 		}
@@ -264,7 +274,9 @@ type Client struct {
 	idChainHeader           string // optional adjacent public proof, outside signed message formats
 	baseURL                 string
 	httpClient              *http.Client
-	sseClient               *http.Client       // No response timeout; SSE connections are long-lived.
+	sseClient               *http.Client // No response timeout; SSE connections are long-lived.
+	interactiveSigner       InteractiveSigner
+	interactiveMailContext  string
 	signingKey              ed25519.PrivateKey // nil for legacy/custodial
 	did                     string             // empty for legacy/custodial
 	teamCertHeader          string             // base64-encoded team certificate for X-AWID-Team-Certificate
@@ -474,7 +486,7 @@ func (c *Client) addressAlias() string {
 
 func (c *Client) signedPayloadFrom(identityTarget, preferAlias bool) string {
 	from := strings.TrimSpace(c.address)
-	if c.signingKey == nil {
+	if c.signingKey == nil && c.interactiveSigner == nil {
 		return from
 	}
 	if identityTarget {
@@ -1756,7 +1768,7 @@ func (c *Client) signRequest(req *http.Request, body []byte) error {
 	if c.idChainHeader != "" {
 		req.Header.Set("X-AWID-ID-Chain", c.idChainHeader)
 	}
-	if c.signingKey == nil {
+	if c.signingKey == nil && c.interactiveSigner == nil {
 		return nil
 	}
 	timestamp := time.Now().UTC().Format(time.RFC3339)
@@ -1774,7 +1786,15 @@ func (c *Client) signRequest(req *http.Request, body []byte) error {
 	if c.teamCertHeader != "" {
 		claim, value = "team_id", c.teamID
 	}
-	didKey, signature, canonical, err := SignRequestCredential(c.signingKey, req.Method, req.URL, claim, value, timestamp, body, nil)
+	var didKey, signature, canonical string
+	var err error
+	if c.interactiveSigner != nil {
+		didKey = c.did
+		description := c.interactiveMailContext + "; " + req.Method + " " + req.URL.String()
+		signature, canonical, err = SignRequestCredentialWithSigner(c.did, c.interactiveSigner, req.Method, req.URL, claim, value, timestamp, body, nil, description)
+	} else {
+		didKey, signature, canonical, err = SignRequestCredential(c.signingKey, req.Method, req.URL, claim, value, timestamp, body, nil)
+	}
 	if err != nil {
 		return err
 	}

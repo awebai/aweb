@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 )
 
 const RegistryCodeCertificateAlreadyRegistered = "certificate_already_registered"
@@ -357,6 +358,18 @@ func (c *RegistryClient) FetchTeamCertificate(
 	certificateID string,
 	signingKey ed25519.PrivateKey,
 ) (*TeamCertificate, error) {
+	if signingKey == nil {
+		return nil, fmt.Errorf("signing key is required")
+	}
+	did := ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
+	return c.FetchTeamCertificateWithSigner(ctx, registryURL, domain, name, certificateID, did, func(payload []byte, _ string) (string, []byte, error) {
+		return KeySigner(signingKey)(payload)
+	})
+}
+
+// FetchTeamCertificateWithSigner preserves member-signed registry authentication
+// while allowing the member key to remain in interactive custody.
+func (c *RegistryClient) FetchTeamCertificateWithSigner(ctx context.Context, registryURL, domain, name, certificateID, did string, sign InteractiveSigner) (*TeamCertificate, error) {
 	domain = canonicalizeDomain(domain)
 	name = strings.TrimSpace(name)
 	certificateID = strings.TrimSpace(certificateID)
@@ -369,13 +382,19 @@ func (c *RegistryClient) FetchTeamCertificate(
 	if certificateID == "" {
 		return nil, fmt.Errorf("certificate_id is required")
 	}
-	if signingKey == nil {
-		return nil, fmt.Errorf("signing key is required")
+	if sign == nil {
+		return nil, fmt.Errorf("signer is required")
 	}
 
 	path := "/v1/namespaces/" + urlPathEscape(domain) + "/teams/" + urlPathEscape(name) + "/certificates/" + urlPathEscape(certificateID)
 	var out registryCertificateFetchResponse
-	if err := c.requestJSON(ctx, http.MethodGet, registryURL, path, signedPathHeaders(http.MethodGet, path, signingKey), nil, &out); err != nil {
+	timestamp := time.Now().UTC().Format(time.RFC3339)
+	signature, err := checkedInteractiveSignature(did, sign, []byte(timestamp+"\nGET\n"+path), "fetch team certificate "+domain+"/"+name+" "+certificateID)
+	if err != nil {
+		return nil, err
+	}
+	headers := map[string]string{"Authorization": fmt.Sprintf("DIDKey %s %s", did, signature), "X-AWEB-Timestamp": timestamp}
+	if err := c.requestJSON(ctx, http.MethodGet, registryURL, path, headers, nil, &out); err != nil {
 		return nil, err
 	}
 	cert, err := DecodeTeamCertificateHeader(strings.TrimSpace(out.Certificate))
@@ -388,7 +407,7 @@ func (c *RegistryClient) FetchTeamCertificate(
 	if strings.TrimSpace(out.TeamID) != "" && strings.TrimSpace(cert.Team) != strings.TrimSpace(out.TeamID) {
 		return nil, fmt.Errorf("fetched certificate team_id %q does not match response team_id %q", cert.Team, out.TeamID)
 	}
-	if did := ComputeDIDKey(signingKey.Public().(ed25519.PublicKey)); strings.TrimSpace(cert.MemberDIDKey) != did {
+	if strings.TrimSpace(cert.MemberDIDKey) != did {
 		return nil, fmt.Errorf("fetched certificate member_did_key %q does not match local signing key %q", cert.MemberDIDKey, did)
 	}
 	teamPub, err := ExtractPublicKey(strings.TrimSpace(cert.TeamDIDKey))
