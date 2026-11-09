@@ -63,6 +63,10 @@ type ownerField struct {
 	enum     []string
 }
 
+// ValidOwnerActAudience reports whether origin is in owner-act/1's audience
+// grammar: https, a lowercase host, an optional port and nothing after it.
+func ValidOwnerActAudience(origin string) bool { return ownerOrigin.MatchString(origin) }
+
 func ownerString(p *regexp.Regexp) ownerField { return ownerField{pattern: p} }
 func ownerList(p *regexp.Regexp) ownerField   { return ownerField{pattern: p, list: true} }
 func ownerEnum(v ...string) ownerField        { return ownerField{enum: v} }
