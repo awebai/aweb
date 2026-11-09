@@ -341,3 +341,28 @@ async def test_an_actor_is_a_whole_valid_did(world: World, actor_ref: str):
         await hold(world, "hold-1", actor_ref=actor_ref)
     assert await count(world, "owner_act_nonces") == 0
     assert await governance(world) == []
+
+
+async def test_an_erasure_and_an_append_overlapping_on_unprojected_history_both_complete(
+    world: World,
+):
+    await appended(world, secret_use(seq=1), age=timedelta(days=1))
+    await world.db.execute("DELETE FROM {{tables.read_events}} WHERE team_id = $1", TEAM_ID)
+    recording = asyncio.Event()
+    proceed = asyncio.Event()
+
+    async def held_while_recording() -> None:
+        recording.set()
+        await proceed.wait()
+
+    world.before_append = held_while_recording
+    range_ = {"erase_scope": "range", "chain_epoch": 1, "team_seq_first": 1, "team_seq_last": 1}
+    erasing = asyncio.create_task(erase(world, **range_))
+    await recording.wait()
+    appending = asyncio.create_task(appended(world, secret_use(seq=2), age=timedelta(seconds=1)))
+    await asyncio.sleep(0.5)
+    proceed.set()
+    assert await erasing == 1
+    await appending
+    first, second = (await purged(world)).values()
+    assert first is not None and second is None

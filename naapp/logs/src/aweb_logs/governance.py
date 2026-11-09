@@ -33,6 +33,7 @@ from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
 from aweb_logs import read_store
+from aweb_logs.ledger import lock_head
 from aweb_logs.retention import (
     ALL_EVENTS,
     GOVERNANCE_HOOK,
@@ -180,6 +181,8 @@ class LogsGovernance:
 
         async def effect(tx: TransactionManager, act: VerifiedOwnerAct) -> int:
             await lock_holds(tx, team_id)
+            # Head before events, as an append locks; this erasure appends its record.
+            await lock_head(tx, team_id)
             # The actor of an event is known from its projection: bring them up to date.
             await read_store.project(tx, team_id)
             positions = await tx.fetch_all(

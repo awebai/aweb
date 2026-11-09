@@ -433,6 +433,14 @@ async def _locked_head(tx: Any, signer: LogsSigner, team_id: str, at: datetime) 
     return head
 
 
+async def lock_head(tx: TransactionManager, team_id: str) -> None:
+    """Hold the team's chain head for the rest of ``tx``, as an append does
+    first. A writer that will lock chain events and then append (an erasure)
+    takes it before those events, so it locks in an append's order: head, then
+    events."""
+    await _existing_head(tx, team_id)
+
+
 async def _existing_head(tx: Any, team_id: str) -> _Head | None:
     row = await tx.fetch_one(
         "SELECT chain_epoch, team_seq, event_hash FROM {{tables.chain_heads}}"
