@@ -19,7 +19,7 @@ the same verified human identity serves every naapp.
 | --- | --- | --- |
 | H1. Added acts or a changed subject | Three acts added to `aweb.owner-act/1`, which is additive | The contact acts stay in the vocabulary, unused, until a separate removal. |
 | H2. Who may hold a role | A current team member of human kind, checked at designation and on every use | An auditor who is not a team member cannot be a logs reader, and each use needs the registry. |
-| H3. Lockout and recovery notices | The `post-governance-hook` event only, with no email | Without a configured contact there is no out-of-band notice. The 72-hour freeze stays. |
+| H3. Lockout and recovery notices | The `post-governance-hook` event only, with no email | A human role has no contact, so it has no out-of-band notice. The 72-hour freeze and the hook event stay. |
 | H4. Whose credential the act binds | The controller act binds it. When the owner is not the holder, the two clients compare a fingerprint | Trust on first use rests on that comparison. |
 
 ## Reused unchanged
@@ -125,7 +125,13 @@ Stages 1 and 2 are unchanged. For an authenticated act, stage 3 checks:
 - designate requires that (role, principal) has no current holding; replace
   and revoke require that it has one.
 
-Every fault of the act, its principal or its holding is `403 owner_required`.
+A principal that is not a current member of the team refuses with
+`403 principal_not_member`, and one that is not of human kind with
+`403 principal_not_human`. The principal is public, so these codes reveal
+nothing, and they tell the owner what to fix. Every other fault of the act or
+its holding is `403 owner_required`. Only `503 principal_status_unavailable`
+is retryable; the 403s are final for that act. The kind and certificate
+checks reuse the 60-second team-facts cache where it applies.
 
 **Effects:**
 

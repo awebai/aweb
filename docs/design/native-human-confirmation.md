@@ -63,8 +63,12 @@ required. Its clientDataJSON is:
 {"type": "webauthn.get", "challenge": "<base64url>", "origin": "<owner_acts.origin>"}
 ```
 
-The origin is the pinned human origin of the target whose request `aw`
-fetched.
+clientData.origin is exactly the installation's pinned `owner_acts.origin`.
+`aw` fetches the challenge from, and posts the assertion to, only that origin.
+It follows no redirects on these routes, and it never takes an origin from a
+response, a header or any other field. The challenge preimages bind no app or
+origin (`docs/hook-events.md:550-557`), so this rule is what keeps one app from
+relaying another app's challenge.
 
 **Why `aweb:`.** It is not a hostname, so no web origin can ask a browser for
 an assertion under it. A page cannot collect these assertions across apps,
@@ -86,7 +90,9 @@ the supported list is published with the implementation.
   that `rp_id` equals the origin's hostname (`proof.py:393-394`) becomes: the
   hostname, or exactly `aweb:`, for a credential bound by a human-role act.
   `aweb:` is never a hostname, so no field is added. An offline verifier
-  of retained evidence accepts both.
+  of retained evidence accepts both. Under `aweb:`, clientData.origin is
+  asserted by `aw`, not attested by a browser: the evidence proves that this
+  credential signed this challenge, with `aw` reporting that origin.
 - A credential carries the profile it was bound under. A browser-enrolled
   credential is never accepted under `aweb:`, and a native one never at a
   hostname.
@@ -195,7 +201,9 @@ Each item is filed after review, and each is one reviewed change.
   - CTAP2 credential creation and assertion;
   - rendering by action schema;
   - terminal-only input and code output;
-  - exclusion from tracing.
+  - exclusion from tracing;
+  - a test that a redirect from one app's route to another's is refused and no
+    assertion is made.
 - **The runner:** a terminal prompt for the code.
 - **L6:** a native login in place of the browser step.
 - **Supported authenticators:** the measured list.
