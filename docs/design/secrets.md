@@ -1807,7 +1807,9 @@ The transitions are `aweb_naapp.dispatch.TRANSITIONS`.
 - **`dispatching`.** It is committed **before** the first byte is sent, or before
   the job assignment is released to the runner.
 - **`completed`.** It records the upstream status (2xx through 5xx), the
-  disposition (§7.6), the response hash and the counts, never the body. For an HTTP request
+  disposition (§7.6), the response hash and the counts, never the body of a
+  brokered response; a runner job's sanitized output is delivered as §11.2
+  says. For an HTTP request
   `completed` means "a response was received", not that the operation succeeded.
 - **`not_sent`.** This is for a DNS or egress-guard refusal, a connection refused,
   or a TLS handshake failure before the request was written. Under the same
@@ -1829,8 +1831,9 @@ The transitions are `aweb_naapp.dispatch.TRANSITIONS`.
 
 - **Client key.** The key is `(installation_id, principal, request_id)` with the
   canonical request hash. The same bytes return the existing receipt at its
-  current state, after rechecking current read permission, and never send
-  again. For a completed brokered use (§7), that receipt is the persisted
+  current state, after rechecking current read permission. A replay or status
+  read of a completed brokered use (§7) never sends again, and its receipt is
+  the persisted
   value-free outcome metadata (the state, disposition, upstream status,
   response hash, byte count and truncation flag, and redaction count), with
   `body` and `headers` null. The response body reached only the original
@@ -1838,12 +1841,14 @@ The transitions are `aweb_naapp.dispatch.TRANSITIONS`.
   completes after the request has returned, so its sanitized output is
   delivered through status and replay, and the runner's private exact-byte
   retry journal is unchanged. Changing run-output retention is a separate
-  decision. Different bytes
+  decision. The paths that do send stay as specified: the approved
+  re-submission of the same `request_id` (§10.3) and the retry of a
+  `not_sent` attempt (§11.1). Different bytes
   return `409 idempotency_conflict`. The key store is the shared one (§3.1), with
   D1's semantics and a retention period set per app. secrets keeps keys for 30
   days. After that they return
   `410 idempotency_expired`; they never re-execute.
-- **Certificate renewal and no-send retrieval.** For an already-dispatched run,
+- **Certificate renewal and no-send retrieval.** For an already-dispatched use,
   a currently verified certificate for the same `(team_id, stable principal)`
   may retrieve its existing status and outcome metadata, subject to current read
   permission, within the same installation ID and generation. The certificate
@@ -1855,8 +1860,8 @@ The transitions are `aweb_naapp.dispatch.TRANSITIONS`.
   Authentication, current membership and installation-scope checks still fail
   closed. Another principal or installation gets no result; a superseded
   generation refuses with `generation_superseded`, including after reinstall.
-- This retrieval returns only the persisted no-send receipt and outcome
-  metadata. It cannot
+- This retrieval returns only the persisted no-send receipt: the outcome
+  metadata of a brokered use, or a run's delivered output. It cannot
   dispatch, retry a `not_sent` attempt, reconcile upstream, mint, release or
   reseal runner credentials, charge use rates, or consume/rearm an approval.
   Those actions retain their existing fresh-send authority and frozen-plan
