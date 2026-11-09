@@ -252,6 +252,14 @@ def _filters(where: EventFilter, raw: dict[str, str], *, action: str, limit: str
     )
 
 
+def _chain_epoch(value: str) -> int:
+    """A chain epoch as the reader wrote it, in plain decimal digits; anything
+    else is refused. :meth:`ReaderReads.verify` refuses one out of range."""
+    if not (value.isascii() and value.isdigit() and len(value) <= 10) or value != str(int(value)):
+        raise HTTPException(status_code=400, detail=InvalidRead.code)
+    return int(value)
+
+
 def _filled(request: Request) -> list[tuple[str, str]]:
     """The query's parameters, without the empty fields a submitted filter form
     leaves."""
@@ -364,9 +372,7 @@ class Viewer:
             epoch = request.query_params.get("chain_epoch")
             chain_epoch = None
             if epoch is not None:
-                if not epoch.isdigit() or epoch != str(int(epoch)) or int(epoch) < 1:
-                    raise HTTPException(status_code=400, detail=InvalidRead.code)
-                chain_epoch = int(epoch)
+                chain_epoch = _chain_epoch(epoch)
             report = await self.reads.verify(reader, chain_epoch, receipts=[], checkpoints=[])
         except HTTPException as error:
             return self.refused(error)
@@ -384,7 +390,9 @@ def _chain_section(report: dict[str, Any]) -> str:
     parts = [
         f'<section id="chain" class="integrity integrity-chain" data-intact="{"true" if intact else "false"}">'
         "<h2>Signed chain</h2>"
-        "<p>Recomputed from the signed events this log keeps.</p>"
+        "<p>Recomputed from the signed events this log keeps. This checks the log"
+        " against itself; the receipts or checkpoints you keep are what show events"
+        " removed after the last one kept.</p>"
     ]
     if intact:
         parts.append('<p class="verdict verdict-ok">The chain is intact.</p>')

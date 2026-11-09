@@ -15,27 +15,38 @@
     document.getElementById(id).hidden = false;
   };
 
+  // The events of a response, or null when it is not one list of events.
+  const eventsOf = (body) => {
+    const parsed = new DOMParser().parseFromString(body, "text/html");
+    const page = parsed.querySelector("ol[data-after]");
+    if (!page) return null;
+    const items = Array.from(page.children);
+    if (items.some((item) => item.tagName !== "LI")) return null;
+    return { after: page.dataset.after, more: "more" in page.dataset, items };
+  };
+
   const poll = async () => {
     source.searchParams.set("after", after);
     let response;
+    let body;
     try {
       response = await fetch(source, { credentials: "same-origin" });
+      if (response.ok) body = await response.text();
     } catch {
       setTimeout(poll, interval);
       return;
     }
     if (response.status === 401) return stop("follow-ended");
     if (!response.ok) return stop("follow-failed");
-    const parsed = new DOMParser().parseFromString(await response.text(), "text/html");
-    const page = parsed.querySelector("ol[data-after]");
+    const page = eventsOf(body);
     if (!page) return stop("follow-failed");
-    after = page.dataset.after;
-    for (const item of Array.from(page.children)) {
+    after = page.after;
+    for (const item of page.items) {
       list.append(document.adoptNode(item));
       received += 1;
     }
     if (received > 0) status.textContent = `${received} new ${received === 1 ? "event" : "events"}.`;
-    setTimeout(poll, page.dataset.more ? 0 : interval);
+    setTimeout(poll, page.more ? 0 : interval);
   };
 
   setTimeout(poll, interval);

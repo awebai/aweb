@@ -105,7 +105,10 @@ class ReaderReads:
         checkpoints: list[tuple[bytes, str]],
     ) -> dict[str, Any]:
         """The integrity report of the reader's team's epoch ``chain_epoch``, its
-        current one when that is None, or a 404 ``no_chain``."""
+        current one when that is None, or a 404 ``no_chain``. An epoch the chain
+        cannot hold (its column is a positive ``INTEGER``) is a 400."""
+        if chain_epoch is not None and not 1 <= chain_epoch < 2**31:
+            raise HTTPException(status_code=400, detail=InvalidRead.code)
         if chain_epoch is None:
             chain_epoch = await self.db.fetch_value(
                 "SELECT chain_epoch FROM {{tables.chain_heads}} WHERE team_id = $1",

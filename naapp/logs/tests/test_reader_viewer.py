@@ -337,3 +337,29 @@ async def test_integrity_separates_the_verified_chain_from_what_this_server_obse
     assert not any(attrs.get("id") == "observed" for attrs in sections["chain"]["within"])
     assert unknown.status_code == 404
     assert console_headed(unknown)
+
+
+async def test_integrity_refuses_an_epoch_that_is_not_a_chain_epoch(world: World):
+    async with console(world) as human:
+        await signed_in(world, human)
+        for epoch in ("0", "01", "-1", "\u00b2", "1" * 5000, str(2**31), str(2**63)):
+            response = await human.get("/integrity", params={"chain_epoch": epoch})
+            assert response.status_code == 400, epoch[:20]
+            assert console_headed(response), epoch[:20]
+
+
+HOSTILE = '<img src=x onerror="alert(1)">'
+
+
+async def test_a_value_recorded_in_an_event_is_shown_as_text(world: World):
+    async with console(world) as human:
+        await signed_in(world, human)
+        await recorded(
+            world,
+            "client",
+            payload={"command": HOSTILE, "command_class": HOSTILE, HOSTILE: HOSTILE},
+        )
+        response = await human.get("/events")
+    page = Html(response.text)
+    assert page.all("img") == []
+    assert sum(HOSTILE in element["text"] for element in page.elements) >= 3

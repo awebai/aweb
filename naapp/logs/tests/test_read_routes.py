@@ -200,3 +200,15 @@ async def test_a_reader_verifies_its_chain_without_content(world: World):
     assert report["conflicts"] == []
     assert "role.designated" not in response.text
     assert "payload" not in response.text
+
+
+async def test_verify_refuses_an_epoch_outside_the_chain_s_range(world: World):
+    scope, _ = await enrolled_reader(world)
+    async with origins(world) as (human, _):
+        await login(world, human, scope)
+        for epoch in ("0", "-1", str(2**31), str(2**63)):
+            response = await human.get("/v1/verify", params={"chain_epoch": epoch})
+            assert (response.status_code, response.json()) == (
+                400,
+                {"detail": "invalid_filter"},
+            ), epoch

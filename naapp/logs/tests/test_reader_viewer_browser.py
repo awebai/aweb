@@ -22,7 +22,14 @@ from aweb_naapp.console import (
 from aweb_naapp.runtime.origins import split_origins
 from aweb_naapp.runtime.passkeys import RelyingParty
 from fastapi import FastAPI
-from playwright.async_api import Browser, BrowserContext, Page, async_playwright, expect
+from playwright.async_api import (
+    Browser,
+    BrowserContext,
+    Page,
+    Route,
+    async_playwright,
+    expect,
+)
 from playwright.async_api import Error as PlaywrightError
 
 from aweb_logs.reader_service import ReaderService
@@ -193,3 +200,70 @@ async def test_the_follow_page_stops_and_offers_sign_in_when_the_session_ends(
         await context.clear_cookies()
         await expect(page.locator("#follow-ended")).to_be_visible(timeout=10_000)
         await expect(page.locator("#followed article")).to_have_count(0)
+
+
+@pytest.fixture
+async def cut_off() -> AsyncIterator[str]:
+    """A local server that starts an HTML response and closes the connection
+    before its body is complete: the network failing while a page is read."""
+
+    async def respond(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.readuntil(b"\r\n\r\n")
+        writer.write(
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 4096\r\n\r\n<ol"
+        )
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(respond, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        yield f"http://127.0.0.1:{port}/follow/events"
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+async def test_follow_keeps_following_when_a_response_is_cut_off(
+    world: World, browser: Browser, service: str, cut_off: str
+):
+    async with await browser.new_context() as context:
+        page = await signed_in_page(world, context, service)
+        polls: list[str] = []
+
+        async def first_cut_off(route: Route) -> None:
+            polls.append(route.request.url)
+            if len(polls) == 1:
+                await route.continue_(url=cut_off)
+            else:
+                await route.continue_()
+
+        await page.route("**/follow/events*", first_cut_off)
+        await page.goto(service + "/follow")
+        followed = await recorded(world, "client")
+        arrived = page.locator(f'#followed article[data-event-id="{followed}"]')
+        await expect(arrived).to_be_visible(timeout=10_000)
+        assert len(polls) >= 2
+        await expect(page.locator("#follow-failed")).to_be_hidden()
+        await expect(page.locator("#follow-ended")).to_be_hidden()
+
+
+async def test_follow_stops_on_a_response_that_is_not_a_list_of_events(
+    world: World, browser: Browser, service: str
+):
+    async with await browser.new_context() as context:
+        page = await signed_in_page(world, context, service)
+
+        async def malformed(route: Route) -> None:
+            await route.fulfill(
+                status=200,
+                content_type="text/html",
+                body='<ol class="events" data-after="MS45OQ"><li>event</li>'
+                '<div id="injected">not an event</div></ol>',
+            )
+
+        await page.route("**/follow/events*", malformed)
+        await page.goto(service + "/follow")
+        await expect(page.locator("#follow-failed")).to_be_visible(timeout=10_000)
+        await expect(page.locator("#followed > *")).to_have_count(0)
+        await expect(page.locator("#injected")).to_have_count(0)
