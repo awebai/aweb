@@ -1004,6 +1004,19 @@ The caller records the refusal in its own operational record in the same
 transaction, for the console's activity view. A failed admission savepoint may
 leave no intent row; this recording path requires none.
 
+**A legal hold logs records itself (ruling ed36580d).** One widening act is
+recorded without the target-availability and backlog gate:
+`logs.legal_hold.set`, so that a hold takes effect when the owner needs it,
+even while no target admits widening acts or logs' own delivery is stalled.
+The exemption is fixed in the app's reviewed code (a constant passed to the
+shared credential recorder), never configuration, and adding an act to it is
+a reviewed change. The recorder refuses it unless the app writes each event to
+its own record in the transaction that enqueued it; logs appends it to its
+own chain there. The event is still enqueued through the narrow
+`HookProducer.enqueue_self_recorded(tx, ...)` and owed to every eligible
+target; only the gate is not applied. Every other widening act, including
+lengthening retention and designating a reader, stays gated.
+
 Delivery eligibility does not change. A refusal owed to an existing stalled
 target is delivered after that target recovers. With no target owed at
 `occurred_at`, the refusal is recorded with zero deliveries owed. A later

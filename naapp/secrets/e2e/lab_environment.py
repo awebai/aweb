@@ -1,4 +1,4 @@
-"""Explicit BYOT native/KMS lab references, separate from hosted release acceptance.
+"""Explicit BYOT lab custody references, separate from hosted release acceptance.
 
 This loader never opens a credential, starts a service/runner, or claims a
 scenario passed. Actor certification/publication is a separate online step.
@@ -29,9 +29,7 @@ LAB_REQUIRED_NAMES = tuple(
         "CONSOLE_ORIGIN",
         "LOGS_ORIGIN",
         "LOGS_CONSOLE_ORIGIN",
-        "KMS_KEY_ARN",
-        "AWS_REGION",
-        "KMS_CREDENTIALS_FILE",
+        "CUSTODY_MODE",
         "RUNNER_BINARY",
         "RUNNER_CONFIG_FILE",
         "RUNNER_USER",
@@ -44,6 +42,8 @@ LAB_REQUIRED_NAMES = tuple(
         "HUMAN_IDENTITY_HOME",
     )
 )
+_KMS_NAMES = tuple(PREFIX + name for name in ("KMS_KEY_ARN", "AWS_REGION", "KMS_CREDENTIALS_FILE"))
+_KEY_FILE = PREFIX + "CUSTODY_KEY_FILE"
 ACTORS = ("HUMAN", "AGENT_A", "AGENT_B")
 _KMS_ARN = re.compile(
     r"arn:(?:aws|aws-us-gov|aws-cn):kms:([a-z0-9-]+):[0-9]{12}:(?:key|alias)/[A-Za-z0-9/_-]+"
@@ -93,7 +93,7 @@ def load_lab_environment(
     """Read references only; the caller must select DNS coverage explicitly.
 
     The runner's protected config/state are checked by its existing doctor
-    under that UID, not traversed by this driver. A real worker and KMS use
+    under that UID, not traversed by this driver. A real worker and custody use
     remain scenario requirements. Hosted/OAuth/1Password inputs are not adopted.
     """
     if private_dns not in ("included", "excluded"):
@@ -104,6 +104,18 @@ def load_lab_environment(
         for name in LAB_REQUIRED_NAMES
     }
     invalid = {name for name, value in selected.items() if not value}
+    mode = selected[PREFIX + "CUSTODY_MODE"]
+    if mode not in ("kms", "local_key_file"):
+        invalid.add(PREFIX + "CUSTODY_MODE")
+    else:
+        required = _KMS_NAMES if mode == "kms" else (_KEY_FILE,)
+        unused = (_KEY_FILE,) if mode == "kms" else _KMS_NAMES
+        for name in required:
+            value = source.get(name)
+            selected[name] = value.strip() if isinstance(value, str) else ""
+            if not selected[name]:
+                invalid.add(name)
+        invalid.update(name for name in unused if source.get(name) not in (None, ""))
     team = PREFIX + "TEAM_ID"
     try:
         parse_team_id(selected[team])
@@ -132,13 +144,17 @@ def load_lab_environment(
                 invalid.update((a, b))
         except ValueError:
             invalid.update((a, b))
-    name = PREFIX + "KMS_KEY_ARN"
-    match = _KMS_ARN.fullmatch(selected[name])
-    if match is None or match.group(1) != selected[PREFIX + "AWS_REGION"]:
-        invalid.update((name, PREFIX + "AWS_REGION"))
-    name = PREFIX + "KMS_CREDENTIALS_FILE"
-    if not _absolute(selected[name]) or not _owned_reference(Path(selected[name])):
-        invalid.add(name)
+    if mode == "kms":
+        name = PREFIX + "KMS_KEY_ARN"
+        match = _KMS_ARN.fullmatch(selected[name])
+        if match is None or match.group(1) != selected[PREFIX + "AWS_REGION"]:
+            invalid.update((name, PREFIX + "AWS_REGION"))
+        name = PREFIX + "KMS_CREDENTIALS_FILE"
+        if not _absolute(selected[name]) or not _owned_reference(Path(selected[name])):
+            invalid.add(name)
+    elif mode == "local_key_file":
+        if not _absolute(selected[_KEY_FILE]) or not _owned_reference(Path(selected[_KEY_FILE])):
+            invalid.add(_KEY_FILE)
     for suffix in ("RUNNER_BINARY", "AW_BINARY", "RUNNER_CONFIG_FILE", "RUNNER_STATE_DIR"):
         name = PREFIX + suffix
         if not _absolute(selected[name]):

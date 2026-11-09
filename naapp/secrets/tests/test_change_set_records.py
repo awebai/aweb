@@ -171,26 +171,33 @@ async def test_a_value_for_an_unknown_secret_is_refused_at_draft(world: World) -
     assert refused.value.code == "secret_unknown"
 
 
-async def test_a_destination_grant_and_policy_are_stored(world: World) -> None:  # noqa: F811
+@pytest.mark.parametrize("maximum", [None, 1024, 32 * 1024 * 1024, 64 * 1024 * 1024])
+async def test_a_destination_grant_and_policy_are_stored(world: World, maximum) -> None:  # noqa: F811
     await enrol_owner(world, ALICE, "alice@acme.com")
     policy = Policy.from_body(POLICY_BODY)
     grant = grant_after()
     first = await sealed_value(world)
+    definition = {**DESTINATION}
+    if maximum is not None:
+        definition["response_max_bytes"] = maximum
     await confirmed(
         world,
         [
             item("secret", "create", "payments-live", SECRET),
             secret_value(first.version),
-            item("destination", "create", "dst_charges01", DESTINATION),
+            item("destination", "create", "dst_charges01", definition),
             item("policy", "create", policy.digest, {"v": 1, **POLICY_BODY}),
             item("grant", "create", "grt_77c1aa", grant),
         ],
         [first],
     )
     async with world.db.transaction() as tx:
-        assert [
-            d.destination_id for d in await records.destinations(tx, INSTALLATION_ID, SECRET_ID)
-        ] == ["dst_charges01"]
+        destinations = await records.destinations(tx, INSTALLATION_ID, SECRET_ID)
+        assert [d.destination_id for d in destinations] == ["dst_charges01"]
+        assert destinations[0].after == definition
+        assert destinations[0].max_response_bytes == (
+            16 * 1024 * 1024 if maximum is None else maximum
+        )
         grants = await records.active_grants(
             tx, INSTALLATION_ID, SECRET_ID, principal_did=CAROL.principal_did, roles=[]
         )
@@ -273,22 +280,29 @@ async def test_an_unprojected_operation_on_a_sensitive_secret_is_refused(world: 
     assert refused.value.code == "operation_not_allowed"
 
 
-async def test_an_operation_becomes_the_current_one(world: World) -> None:  # noqa: F811
+@pytest.mark.parametrize("maximum", [None, 1024, 32 * 1024 * 1024, 64 * 1024 * 1024])
+async def test_an_operation_becomes_the_current_one(world: World, maximum) -> None:  # noqa: F811
     await enrol_owner(world, ALICE, "alice@acme.com")
     first = await sealed_value(world)
+    definition = copy.deepcopy(REFUND)
+    if maximum is None:
+        del definition["response"]["max_bytes"]
+    else:
+        definition["response"]["max_bytes"] = maximum
     await confirmed(
         world,
         [
             item("secret", "create", "payments-live", SECRET),
             secret_value(first.version),
-            item("operation", "create", "refund", REFUND),
+            item("operation", "create", "refund", definition),
         ],
         [first],
     )
     async with world.db.transaction() as tx:
         current = await records.current_operation(tx, INSTALLATION_ID, SECRET_ID, "refund")
     assert current is not None
-    assert current.digest == OperationTemplate.from_after(REFUND).digest
+    assert current.after == definition
+    assert current.digest == OperationTemplate.from_after(definition).digest
 
 
 async def test_a_grant_needs_its_policy(world: World) -> None:  # noqa: F811

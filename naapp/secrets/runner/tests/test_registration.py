@@ -235,8 +235,9 @@ def test_registration_lock_refuses_a_concurrent_exchange_before_network(service)
     assert service["requests"] == []
 
 
-def test_real_registration_command_returns_no_private_material(service):
-    result = subprocess.run(
+def test_private_stdin_registration_reads_one_line_without_waiting_for_eof(service):
+    extra = encode64(os.urandom(32))
+    with subprocess.Popen(
         [
             sys.executable,
             "-m",
@@ -249,18 +250,37 @@ def test_real_registration_command_returns_no_private_material(service):
             "--ca-file",
             str(service["ca_file"]),
         ],
-        input=(service["code"] + "\n").encode(),
-        capture_output=True,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr.decode()
-    assert json.loads(result.stdout) == service["response"]
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    ) as process:
+        try:
+            assert process.stdin is not None
+            assert process.stdout is not None and process.stderr is not None
+            process.stdin.write((service["code"] + "\n" + extra + "\n").encode())
+            process.stdin.flush()
+            # Keep the private pipe open: registration needs one line, not EOF.
+            assert process.wait(timeout=10) == 0
+            stdout, stderr = process.stdout.read(), process.stderr.read()
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=5)
     stored = IdentityStore(service["state_dir"]).load()
-    assert (
-        encode64(stored.signing_key.private_bytes_raw()).encode()
-        not in result.stdout + result.stderr
+    private = (
+        service["code"],
+        extra,
+        encode64(stored.signing_key.private_bytes_raw()),
+        encode64(stored.encryption_key.private_bytes_raw()),
     )
-    assert service["code"].encode() not in result.stdout + result.stderr
+    if any(value.encode() in stdout + stderr for value in private):
+        raise AssertionError("registration output contained private material")
+    assert stderr == b""
+    assert json.loads(stdout) == service["response"]
+    assert len(service["requests"]) == 1
+    if service["requests"][0][1]["code"] != service["code"]:
+        raise AssertionError("registration did not use exactly the first input line")
 
 
 def test_registration_command_has_no_code_argument():

@@ -1,0 +1,166 @@
+"""Response reservations gate real broker effects and survive every exit path."""
+
+import asyncio
+
+import pytest
+from fastapi import Request, Response
+from upstream.app import _ResetResponse
+
+from tests.harness import running_upstream
+from tests.test_admission import POLICY_BODY, SECRET
+from tests.test_broker_service import db as db
+from tests.test_broker_service import fence as fence
+from tests.test_broker_service import setup, submission
+
+LIMIT = POLICY_BODY["result"]["max_bytes"]
+
+
+async def test_capacity_refuses_immediately_before_send_and_preserves_resubmission(
+    db, fence, tmp_path
+):
+    async with running_upstream(tmp_path) as upstream:
+        entered = {name: asyncio.Event() for name in ("one", "two")}
+        released = {name: asyncio.Event() for name in entered}
+        applied = []
+
+        @upstream.app.post("/bearer/capacity/{name}")
+        async def effect(name: str, request: Request):
+            if request.headers.get("authorization") != "Bearer " + upstream.creds.bearer:
+                return Response(status_code=403)
+            applied.append(name)
+            if name in entered:
+                entered[name].set()
+                await released[name].wait()
+            return Response(b'{"ok":true}', media_type="application/json")
+
+        service = await setup(
+            db,
+            fence,
+            tmp_path,
+            upstream,
+            response_budget_bytes=2 * LIMIT,
+            policy_body={**POLICY_BODY, "rate": []},
+        )
+
+        def call(name):
+            return service.submit(
+                secret=SECRET["ref"],
+                submission=submission(
+                    upstream, request_id=name, url=upstream.url(f"/bearer/capacity/{name}")
+                ),
+            )
+
+        first = asyncio.create_task(call("one"))
+        second = asyncio.create_task(call("two"))
+        try:
+            async with asyncio.timeout(5):
+                await entered["one"].wait()
+                await entered["two"].wait()
+            # Neither response is released: a waiting reservation cannot pass.
+            async with asyncio.timeout(0.5):
+                third = await call("three")
+            assert third.status == 503 and third.body.get("code") == "capacity_unavailable", (
+                third.status,
+                third.body.get("state"),
+                third.body.get("code"),
+            )
+            assert third.headers["Retry-After"] == "1"
+            assert set(applied) == {"one", "two"}
+            assert (
+                await db.fetch_value(
+                    "SELECT count(*) FROM {{tables.dispatches}} WHERE state='dispatching'"
+                )
+                == 2
+            )
+            released["one"].set()
+            assert (await first).body["state"] == "completed"
+            # Same grant, while 'two' remains blocked: no capacity or DB lock leak.
+            async with asyncio.timeout(1):
+                fourth = await call("four")
+            assert fourth.body["state"] == "completed"
+            retry = await call("three")
+            assert retry.body["state"] == "completed"
+            assert applied.count("three") == 1
+        finally:
+            for event in released.values():
+                event.set()
+            await asyncio.gather(first, second, return_exceptions=True)
+
+
+@pytest.mark.parametrize("exit_path", ["success", "stream_failure", "cancelled"])
+async def test_response_capacity_is_released_after_success_failure_and_cancellation(
+    db, fence, tmp_path, exit_path
+):
+    async with running_upstream(tmp_path) as upstream:
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        @upstream.app.post("/bearer/reservation")
+        async def effect():
+            entered.set()
+            await release.wait()
+            if exit_path == "stream_failure":
+                return _ResetResponse()
+            return Response(b'{"ok":true}', media_type="application/json")
+
+        service = await setup(db, fence, tmp_path, upstream, response_budget_bytes=LIMIT)
+        sender = asyncio.create_task(
+            service.submit(
+                secret=SECRET["ref"],
+                submission=submission(upstream, url=upstream.url("/bearer/reservation")),
+            )
+        )
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            if exit_path == "cancelled":
+                sender.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await sender
+            else:
+                release.set()
+                original = await sender
+                assert original.body["state"] == (
+                    "outcome_unknown" if exit_path == "stream_failure" else "completed"
+                ), (original.status, original.body.get("state"), original.body.get("code"))
+            following = await service.submit(
+                secret=SECRET["ref"],
+                submission=submission(upstream, request_id="after-release"),
+            )
+            assert following.body["state"] == "completed"
+            assert upstream.paths.count("/bearer/echo") == 1
+        finally:
+            release.set()
+            if not sender.done():
+                sender.cancel()
+            await asyncio.gather(sender, return_exceptions=True)
+
+
+@pytest.mark.parametrize("maximum", [None, 64 * 1024 * 1024, 32 * 1024 * 1024, 0, -1])
+async def test_response_budget_environment_is_validated_by_the_actual_root(
+    test_db_factory, registry, tmp_path, monkeypatch, maximum
+):
+    from aweb_naapp_testing.smtp import SmtpServer
+
+    from aweb_secrets.composition import create_service
+    from aweb_secrets.config import ServiceSettings
+    from tests.test_composition import settings
+
+    monkeypatch.delenv("SECRETS_BROKER_RESPONSE_BUDGET_BYTES", raising=False)
+    database = await test_db_factory.create_db(suffix="response_budget_config")
+    with SmtpServer(tmp_path / "smtp") as smtp:
+        data = settings(database, tmp_path, smtp).model_dump(
+            exclude={"broker_response_budget_bytes"}
+        )
+        if maximum is not None:
+            monkeypatch.setenv("SECRETS_BROKER_RESPONSE_BUDGET_BYTES", str(maximum))
+        if maximum is not None and maximum < 64 * 1024 * 1024:
+            with pytest.raises(ValueError):
+                ServiceSettings(_env_file=None, **data)
+            return
+        configured = ServiceSettings(_env_file=None, **data)
+        assert configured.broker_response_budget_bytes == (
+            256 * 1024 * 1024 if maximum is None else maximum
+        )
+        service = create_service(configured, awid_transport=registry.transport)
+        async with service.api_app.router.lifespan_context(service.api_app):
+            assert service.runtime.db() is not None
+        assert service.runtime.connected_db() is None
