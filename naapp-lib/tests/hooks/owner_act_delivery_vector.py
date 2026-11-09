@@ -475,6 +475,11 @@ def session_action_grammar_cases(case, read, completion) -> list[dict[str, Any]]
         {"name": "revision", "in": "body"},
     ]
     confirm = confirm_action()
+    stage_padded_in = stage_action()
+    stage_padded_in["params"] = [
+        {"name": "installation_id", "in": "path"},
+        {"name": "value", "in": " body", "protected": True},
+    ]
     return [
         case("session_action_declares_auth", read_action(auth="none")),
         case("protected_false", stage_false),
@@ -514,6 +519,8 @@ def session_action_grammar_cases(case, read, completion) -> list[dict[str, Any]]
         case("predicate_true_and_one_are_distinct", read, predicate("n", [True, 1]), error=None),
         case("predicate_false_and_zero_are_distinct", read, predicate("n", [False, 0]), error=None),
         case("completion_read_needs_a_query_input_the_confirm_lacks", read_with_query, confirm),
+        case("stage_action_without_a_body", without(stage_action(), "body"), error=None),
+        case("protected_param_with_a_padded_in", stage_padded_in, error=None),
         case(
             "completion_read_query_input_the_confirm_declares",
             read_with_query,

@@ -13666,6 +13666,121 @@
     {
       "app_origin": "https://secrets.example.com",
       "error": null,
+      "name": "stage_action_without_a_body",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "description": "Stage the 1Password service-account token from the terminal.",
+            "input_schema": {
+              "properties": {
+                "installation_id": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "value"
+              ],
+              "type": "object"
+            },
+            "kind": "stage",
+            "method": "POST",
+            "name": "onepassword-token",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": "body",
+                "name": "value",
+                "protected": true
+              }
+            ],
+            "path": "/installations/{installation_id}/backend-credentials/onepassword/versions",
+            "role": "secrets.owner"
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": null,
+      "name": "protected_param_with_a_padded_in",
+      "owner_acts": {
+        "origin": "https://console.secrets.example.com",
+        "roles": [
+          {
+            "acts": [
+              "human-credential.replace",
+              "human-role.designate",
+              "human-role.revoke"
+            ],
+            "label": "Secrets owner",
+            "name": "secrets.owner",
+            "notice_contact": true
+          }
+        ],
+        "session_actions": [
+          {
+            "body": {
+              "mode": "json"
+            },
+            "description": "Stage the 1Password service-account token from the terminal.",
+            "input_schema": {
+              "properties": {
+                "installation_id": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "installation_id",
+                "value"
+              ],
+              "type": "object"
+            },
+            "kind": "stage",
+            "method": "POST",
+            "name": "onepassword-token",
+            "params": [
+              {
+                "in": "path",
+                "name": "installation_id"
+              },
+              {
+                "in": " body",
+                "name": "value",
+                "protected": true
+              }
+            ],
+            "path": "/installations/{installation_id}/backend-credentials/onepassword/versions",
+            "role": "secrets.owner"
+          }
+        ]
+      }
+    },
+    {
+      "app_origin": "https://secrets.example.com",
+      "error": null,
       "name": "completion_read_query_input_the_confirm_declares",
       "owner_acts": {
         "origin": "https://console.secrets.example.com",
