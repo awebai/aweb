@@ -113,6 +113,8 @@ var (
 	// dot-separated lowercase segments, at least two, no ':'.
 	roleNamePattern   = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*(\.[a-z0-9][a-z0-9_-]*)+$`)
 	v2TopLevelMembers = []string{"app_keys", "surfaces", "usage", "lifecycle", "hooks", "roles"}
+	// nonNullMembers are the members of version 2 and later that may not be null.
+	nonNullMembers = []string{"app_keys", "surfaces", "usage", "lifecycle", "hooks", "roles", "owner_acts"}
 )
 
 // UnmarshalJSON decodes a manifest strictly: unknown fields are refused at
@@ -130,7 +132,7 @@ func (m *Manifest) UnmarshalJSON(data []byte) error {
 	if err := checkManifestKeys(members); err != nil {
 		return err
 	}
-	for _, name := range v2TopLevelMembers {
+	for _, name := range nonNullMembers {
 		if value, ok := members[name]; ok && isJSONNull(value) {
 			return fmt.Errorf("%s must not be null", name)
 		}
@@ -1208,7 +1210,9 @@ type Resolved struct {
 	Lifecycle       *ResolvedLifecycle `json:"lifecycle"`
 	Hooks           *ResolvedHooks     `json:"hooks"`
 	Roles           []ResolvedRole     `json:"roles"`
-	tools           map[string]*Tool
+	// OwnerActs is the version 3 owner_acts member, nil when absent.
+	OwnerActs *OwnerActs `json:"owner_acts,omitempty"`
+	tools     map[string]*Tool
 }
 
 type ResolvedRole struct {
@@ -1394,6 +1398,9 @@ func Resolve(manifest Manifest, reservedNames map[string]bool) (*Resolved, error
 	for _, role := range roles {
 		r.Roles = append(r.Roles, ResolvedRole{Name: role.Name, Label: role.Label, Description: role.Description})
 	}
+	if r.OwnerActs, err = parseOwnerActs(manifest.OwnerActs, manifest.App.Origin); err != nil {
+		return nil, err
+	}
 	return r, nil
 }
 
@@ -1474,11 +1481,11 @@ func (r *Resolved) CheckInvocationContext(toolName string, attestation *Attestat
 	return nil
 }
 
-// CheckAnswerPayload refuses a version 2 request body that carries an answer
+// CheckAnswerPayload refuses a version 2 or later request body that carries an answer
 // member, top-level or in a top-level object member, for any tool except a
 // surface answer_tool. Answers reach an app only through that tool.
 func (r *Resolved) CheckAnswerPayload(toolName string, body any) error {
-	if r.ManifestVersion != 2 || answerTools(r.Manifest.Surfaces)[strings.TrimSpace(toolName)] {
+	if r.ManifestVersion < 2 || answerTools(r.Manifest.Surfaces)[strings.TrimSpace(toolName)] {
 		return nil
 	}
 	object, ok := body.(map[string]any)

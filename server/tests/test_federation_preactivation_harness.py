@@ -35,7 +35,7 @@ from awid.did import did_from_public_key
 from awid.external_authority import DNSLookup, OriginContext, compare_claim_to_evidence
 from awid.external_registry import StrictExternalRegistry
 from awid.federation_errors import FederationAuthorityError
-from awid.registry import RegistryClient
+from awid.registry import CachedRegistryClient, RegistryClient
 from awid.signing import canonical_json_bytes, sign_message
 from cryptography import x509
 from fastapi import FastAPI
@@ -1073,10 +1073,12 @@ async def test_http_ingress_uses_production_dns_authority_not_receiver_home_regi
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("channel", ["mail", "chat"])
+@pytest.mark.parametrize("home_client_kind", ["plain", "cached"])
 async def test_mcp_cross_registry_uses_production_strict_authority_not_home_registry(
     two_receiver_databases,
     monkeypatch,
     channel: str,
+    home_client_kind: str,
 ) -> None:
     _, receiver_db = two_receiver_databases
     domain = "alpha.test"
@@ -1129,11 +1131,19 @@ async def test_mcp_cross_registry_uses_production_strict_authority_not_home_regi
             resolver=resolver,
             txt_resolver=dns,
         )
-        home_client = RegistryClient(
-            registry_url=home_registry.origin,
-            service_token="receiver-service-must-stay-at-home-registry-only",
-            transport=httpx.AsyncHTTPTransport(verify=home_registry.client_context),
-        )
+        home_cache = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        if home_client_kind == "cached":
+            home_client = CachedRegistryClient(
+                home_registry.origin, home_cache,
+                service_token="receiver-service-must-stay-at-home-registry-only",
+                transport=httpx.AsyncHTTPTransport(verify=home_registry.client_context),
+            )
+        else:
+            home_client = RegistryClient(
+                registry_url=home_registry.origin,
+                service_token="receiver-service-must-stay-at-home-registry-only",
+                transport=httpx.AsyncHTTPTransport(verify=home_registry.client_context),
+            )
         auth = AuthContext(
             team_id="mcp:beta.test",
             agent_id=str(sender_agent_id),
@@ -1230,6 +1240,7 @@ async def test_mcp_cross_registry_uses_production_strict_authority_not_home_regi
         finally:
             await activation.aclose()
             await home_client.aclose()
+            await home_cache.aclose()
 
     assert "error" not in result, result
     assert dns.queries == ["_awid.alpha.test"]
