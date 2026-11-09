@@ -152,8 +152,22 @@ Completion is what each kind already defines:
 - **Use and run:** the requester reads `secrets.status` and re-submits the
   same `request_id`. Single-use admission stays at the target (secrets
   §10.3, §10.5, §11).
-- **Change set:** the owner's confirm on the console applies the change
-  (`naapp/secrets/src/aweb_secrets/console_changes.py:390`, `:513`).
+- **Change set:** `POST .../confirm` applies the change
+  (`naapp/secrets/src/aweb_secrets/console_changes.py:390`, `:513`). It
+  requires the deciding owner's (scope, subject), not a particular session,
+  and its result is the only carrier of a runner's registration code, which
+  is never stored for later retrieval (`console_results.py:3-5`). The two
+  journeys split here:
+  - **Approved journey (from `aw`).** `aw` first holds a `session` handoff
+    for the owner's scope. The human approves in the browser, with the
+    APPROVE assertion. `aw` reads the change set in its session until it is
+    approved, then calls `confirm` itself, so only `aw` receives the result.
+    A change set drafted from `aw` records that its confirm belongs to a
+    key-bound session, and the browser's confirm refuses it with
+    `confirm_in_aw`. On a lost reply, `aw` reads the change set's state and
+    never confirms twice; a code lost with the reply is not recovered.
+  - **Console journey.** A change set drafted on the console is confirmed on
+    the console, and the browser shows its result, as on main.
 - **Reconciliation:** as secrets §11.4 defines.
 
 **N3: finding the request.** A human role has no approval email: its
@@ -192,7 +206,8 @@ contact roles.
 In the approved journey, a value reaches secrets either from the human's
 terminal through `aw`, as below, or from the team's vault by reference, with
 no value typed. The runner code reaches the human only through `aw` on the
-controlling terminal. Both use a `session` handoff. The console's value entry
+controlling terminal, because `aw` makes the confirm call (see
+[Change set](#confirming-a-frozen-request)). Both use a `session` handoff. The console's value entry
 and its display of the runner code stay available, outside this journey.
 
 **Values.** A secret value, or the 1Password service-account token at
@@ -286,6 +301,11 @@ Each item is filed after review, and each is one reviewed change.
   - a second issue revokes the first.
 - **Consoles (secrets, logs):** the `session` handoff and the N3 pending
   list, opening each entry through a session-issued link.
+- **secrets change sets:** the confirm mark on a change set drafted from
+  `aw`, and the browser's `confirm_in_aw` refusal. Test: for such a change
+  set that creates a runner, the browser's confirm is refused and returns no
+  code, `aw`'s confirm applies it once and alone receives the code, and a
+  repeated confirm does not apply it again.
 - **`aw`:** opening the browser, the loopback listener and the handoff, and
   `--no-browser`; N4's terminal input and code output and their exclusion
   from tracing.
