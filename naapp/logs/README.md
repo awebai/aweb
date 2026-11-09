@@ -43,7 +43,7 @@ grant and `logs-governance` signs the governance events of logs' readers.
 
 ```bash
 uvicorn aweb_logs.app:serve --factory
-docker build -f naapp/logs/Dockerfile .   # from the repository root
+docker build -f naapp/logs/Dockerfile --build-arg SOURCE_COMMIT="$(git rev-parse HEAD)" .   # from the repository root
 ```
 
 The image takes the same environment; mount the key files and the mail password
