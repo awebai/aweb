@@ -14,6 +14,12 @@ import (
 // exportType is the header type of a team's exported log, aweb.logs-export/1.
 const exportType = "aweb.logs-export"
 
+// MaxLineBytes is the longest line a bundle holds, its newline excluded. An
+// event line carries at most one hook envelope (hookevent.MaxEnvelopeBytes, 256 KiB),
+// base64url-encoded, beside its link and key evidence; this leaves room for
+// those and refuses a line no exporter writes before a verifier holds it whole.
+const MaxLineBytes = 1 << 20
+
 // BundleMalformed is a bundle that is not a well-formed export. Line counts
 // from 1.
 type BundleMalformed struct {
@@ -285,18 +291,24 @@ func VerifyBundle(
 		}
 	}
 
-	reader := bufio.NewReader(r)
+	// A line and its newline fit the buffer, so a longer one is refused
+	// before it is read whole.
+	reader := bufio.NewReaderSize(r, MaxLineBytes+1)
 	teamID := ""
 	number := 0
 	for {
-		raw, err := reader.ReadBytes('\n')
-		if errors.Is(err, io.EOF) && len(raw) == 0 {
+		slice, err := reader.ReadSlice('\n')
+		if errors.Is(err, io.EOF) && len(slice) == 0 {
 			break
 		}
 		number++
+		if errors.Is(err, bufio.ErrBufferFull) {
+			return report, &BundleMalformed{number, fmt.Sprintf("a line is at most %d bytes", MaxLineBytes)}
+		}
 		if err != nil && !errors.Is(err, io.EOF) {
 			return report, err
 		}
+		raw := bytes.Clone(slice)
 		if !bytes.HasSuffix(raw, []byte("\n")) {
 			return report, &BundleMalformed{number, "a line ends with a newline"}
 		}

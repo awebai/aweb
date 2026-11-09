@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
 from typing import Any
 
-from aweb_logs.export import verify_bundle
+from aweb_logs.export import MAX_LINE_BYTES, verify_bundle
 
 from .chain_vector import b64, unb64
 from .export_cases import ExportCase, cases, malformed_cases
@@ -16,9 +17,10 @@ VECTOR_PATH = AWEB_ROOT / "docs" / "vectors" / "logs-export-v1.json"
 
 SCHEME = {
     "authority": "docs/logs-chain.md, 'Exporting a team's log'",
-    "bundle": "JSON Lines: each entry of bundle_lines is one line without its newline; the bundle is every line followed by one newline",
+    "bundle": "JSON Lines: each entry of bundle_lines is one line without its newline; the bundle is every line followed by one newline; no line, its newline excluded, is longer than max_line_bytes",
     "cases": "receipt_keys and checkpoint_keys are the keys the verifier accepts; witness_receipts and witness_checkpoints are artefacts it holds independently of the exporter; report is what a bundle verifier must return",
     "malformed": "a bundle the verifier refuses; line is the number, from 1, of its first bad line",
+    "max_line_bytes": MAX_LINE_BYTES,
     "encoding": "witness artefacts are signing_bytes_b64url (unpadded base64url) and signature (86 characters of standard base64, no padding)",
 }
 
@@ -29,7 +31,7 @@ def _artefact_json(artefact: tuple[bytes, str]) -> dict[str, str]:
 
 def report(case: ExportCase) -> dict[str, Any]:
     return verify_bundle(
-        case.lines,
+        stream(case.lines),
         receipt_keys=frozenset(case.receipt_keys),
         checkpoint_keys=frozenset(case.checkpoint_keys),
         witness_receipts=case.witness_receipts,
@@ -69,8 +71,13 @@ def render(vector: dict[str, Any]) -> bytes:
     return (json.dumps(vector, indent=2, sort_keys=True) + "\n").encode("ascii")
 
 
-def bundle_bytes(entry: dict[str, Any]) -> list[bytes]:
-    return [line.encode("ascii") + b"\n" for line in entry["bundle_lines"]]
+def stream(lines: list[bytes]) -> io.BytesIO:
+    """A bundle's lines, each ending in its newline, as the stream a verifier reads."""
+    return io.BytesIO(b"".join(lines))
+
+
+def bundle_stream(entry: dict[str, Any]) -> io.BytesIO:
+    return stream([line.encode("ascii") + b"\n" for line in entry["bundle_lines"]])
 
 
 def artefacts(entries: list[dict[str, str]]) -> list[tuple[bytes, str]]:

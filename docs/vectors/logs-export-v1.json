@@ -1372,10 +1372,11 @@
   "name": "logs-export-v1",
   "scheme": {
     "authority": "docs/logs-chain.md, 'Exporting a team's log'",
-    "bundle": "JSON Lines: each entry of bundle_lines is one line without its newline; the bundle is every line followed by one newline",
+    "bundle": "JSON Lines: each entry of bundle_lines is one line without its newline; the bundle is every line followed by one newline; no line, its newline excluded, is longer than max_line_bytes",
     "cases": "receipt_keys and checkpoint_keys are the keys the verifier accepts; witness_receipts and witness_checkpoints are artefacts it holds independently of the exporter; report is what a bundle verifier must return",
     "encoding": "witness artefacts are signing_bytes_b64url (unpadded base64url) and signature (86 characters of standard base64, no padding)",
-    "malformed": "a bundle the verifier refuses; line is the number, from 1, of its first bad line"
+    "malformed": "a bundle the verifier refuses; line is the number, from 1, of its first bad line",
+    "max_line_bytes": 1048576
   },
   "status": "proposed (aweb-acgh.16.23); frozen once reviewed"
 }

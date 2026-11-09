@@ -266,16 +266,22 @@ and its signature. An `event` is:
 
 This placement is normative. It puts every artefact right after the event it
 witnesses, so a verifier checks each epoch in one pass with state that does
-not grow with the epoch. **Open (aweb-acgh.16.47):** the maximum length of a
-line, derived from the hook envelope's size bound, which both verifiers
-enforce before they read a line whole.
+not grow with the epoch.
+
+No line, its newline excluded, is longer than **1 MiB (1,048,576 bytes)**. An
+event line carries at most one hook envelope, whose signing bytes are bounded
+at 256 KiB ([hook events, "Event envelope"](hook-events.md#event-envelope)),
+base64url-encoded beside its link and key evidence, so every line an exporter
+writes fits with room to spare. A verifier reads at most that many bytes for a
+line and refuses a longer one as malformed at its number, before it holds the
+line whole.
 
 A bundle is **malformed**, and is refused with the number of its first bad
-line, when a line is not a strict canonical JSON object, when the header is
-not the first line or is invalid, when a record is not one of those above,
-when a record of an epoch precedes its genesis, or when an epoch's
-`chain_epoch` is not greater than the previous one's. Everything else is
-verified and reported.
+line, when a line is longer than that bound, when a line is not a strict
+canonical JSON object, when the header is not the first line or is invalid,
+when a record is not one of those above, when a record of an epoch precedes its
+genesis, or when an epoch's `chain_epoch` is not greater than the previous
+one's. Everything else is verified and reported.
 
 ### Verifying a bundle
 

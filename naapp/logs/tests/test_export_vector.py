@@ -12,7 +12,7 @@ import pytest
 from aweb_logs.export import BundleMalformed, verify_bundle
 
 from .export_cases import cases
-from .export_vector import VECTOR_PATH, artefacts, build_vector, bundle_bytes, render, report
+from .export_vector import VECTOR_PATH, artefacts, build_vector, bundle_stream, render, report
 
 VECTOR: dict[str, Any] = json.loads(VECTOR_PATH.read_bytes())
 
@@ -52,7 +52,7 @@ def test_each_report_holds_what_its_case_expects(case) -> None:
 @pytest.mark.parametrize("entry", VECTOR["cases"], ids=lambda e: e["name"])
 def test_cases_from_the_file(entry: dict[str, Any]) -> None:
     verified = verify_bundle(
-        bundle_bytes(entry),
+        bundle_stream(entry),
         receipt_keys=frozenset(entry["receipt_keys"]),
         checkpoint_keys=frozenset(entry["checkpoint_keys"]),
         witness_receipts=artefacts(entry["witness_receipts"]),
@@ -64,5 +64,5 @@ def test_cases_from_the_file(entry: dict[str, Any]) -> None:
 @pytest.mark.parametrize("entry", VECTOR["malformed"], ids=lambda e: e["name"])
 def test_malformed_bundles_from_the_file(entry: dict[str, Any]) -> None:
     with pytest.raises(BundleMalformed) as refused:
-        verify_bundle(bundle_bytes(entry), receipt_keys=frozenset(), checkpoint_keys=frozenset())
+        verify_bundle(bundle_stream(entry), receipt_keys=frozenset(), checkpoint_keys=frozenset())
     assert refused.value.line == entry["line"]

@@ -11,9 +11,9 @@ report says how far that reaches.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, BinaryIO
 
 from aweb_naapp.hooks.strictjson import (
     Refused,
@@ -43,6 +43,11 @@ from aweb_logs.verify import (
 )
 
 EXPORT_TYPE = "aweb.logs-export"
+# The longest line a bundle holds, its newline excluded. An event line carries
+# at most one hook envelope (MAX_ENVELOPE_BYTES, 256 KiB), base64url-encoded,
+# beside its link and key evidence; this leaves room for those and refuses a
+# line no exporter writes before a verifier holds it whole.
+MAX_LINE_BYTES = 1 << 20
 _EVIDENCE_TEXT = ("kid", "did_key", "installation_id")
 _EVIDENCE_LISTS = ("purposes", "binding_ids")
 
@@ -265,16 +270,18 @@ class _Epoch:
 
 
 def verify_bundle(
-    lines: Iterable[bytes],
+    bundle: BinaryIO,
     *,
     receipt_keys: frozenset[str],
     checkpoint_keys: frozenset[str],
     witness_receipts: Sequence[tuple[bytes, str]] = (),
     witness_checkpoints: Sequence[tuple[bytes, str]] = (),
 ) -> BundleReport:
-    """Verify a bundle, read line by line, against the receipt and checkpoint
-    keys the verifier accepts and the witnesses it holds independently of the
-    exporter. Raises :class:`BundleMalformed` for a bundle that is not one."""
+    """Verify a bundle, read line by line from ``bundle``, against the receipt
+    and checkpoint keys the verifier accepts and the witnesses it holds
+    independently of the exporter. A line longer than :data:`MAX_LINE_BYTES` is
+    refused before it is read whole. Raises :class:`BundleMalformed` for a
+    bundle that is not one."""
     keys = {"receipt": receipt_keys, "checkpoint": checkpoint_keys}
     witnesses: list[_Witness] = []
     contradicted: list[Contradiction] = []
@@ -307,7 +314,8 @@ def verify_bundle(
                     held[(witness.kind, witness.index)] = reason
 
     number = 0
-    for number, raw in enumerate(lines, start=1):
+    while raw := bundle.readline(MAX_LINE_BYTES + 1):
+        number += 1
         record = _record(raw, number)
         if team_id is None:
             team_id = _header(record, number)
@@ -372,6 +380,8 @@ def verify_bundle(
 
 def _record(raw: bytes, number: int) -> dict[str, Any]:
     if not raw.endswith(b"\n"):
+        if len(raw) > MAX_LINE_BYTES:
+            raise BundleMalformed(number, f"a line is at most {MAX_LINE_BYTES} bytes")
         raise BundleMalformed(number, "a line ends with a newline")
     try:
         return parse_canonical_object(raw[:-1])

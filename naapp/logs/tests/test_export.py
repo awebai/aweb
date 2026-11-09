@@ -16,13 +16,14 @@ from aweb_logs.export import (
 
 from .chain_cases import EVENT_IDS, LOGS_DID, receipt
 from .export_cases import bundle, two_epochs
+from .export_vector import stream
 
 KEYS = frozenset({LOGS_DID})
 
 
 def verified(lines: list[bytes], **witnesses: Any) -> dict[str, Any]:
     return verify_bundle(
-        lines, receipt_keys=KEYS, checkpoint_keys=KEYS, **witnesses
+        stream(lines), receipt_keys=KEYS, checkpoint_keys=KEYS, **witnesses
     ).to_json()
 
 
