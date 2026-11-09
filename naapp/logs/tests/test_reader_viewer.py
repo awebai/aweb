@@ -208,6 +208,8 @@ async def test_a_reader_sees_its_teams_events_newest_first_each_marked_by_its_me
     assert marked and all(within_event(element, client) for element in marked)
     window = page.first(id="revocation-window")
     assert window["data-seconds"] == "60"
+    # Every fact shown has a value; one an event lacks is left out.
+    assert all(element["text"].strip() for element in page.elements if element["tag"] == "dd")
 
 
 async def test_a_reader_narrows_the_events_by_an_exact_filter_and_follows_a_trace(world: World):

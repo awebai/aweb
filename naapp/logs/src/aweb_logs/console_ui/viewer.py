@@ -176,10 +176,12 @@ def render_event(event: dict[str, Any]) -> str:
             escape(_RESULT_LABELS.get(event["result_status"], event["result_status"])),
             result_status=event["result_status"],
         ),
-        _row("Actor", _actor(event["actor"])),
         _row("Producer", _producer(event["producer"])),
         _row("Trace", _linked("trace_id", event["trace_id"])),
     ]
+    actor = _actor(event["actor"])
+    if actor:
+        facts.insert(2, _row("Actor", actor))
     payload = event["payload"]
     facts += [
         _row(name.replace("_", " ").capitalize(), _linked(name, payload[name]))
