@@ -228,6 +228,11 @@ async def test_a_reader_exports_its_teams_log_and_it_verifies_with_no_server(wor
     assert response.status_code == 200
     assert console_headed(response)
     assert response.headers["content-type"].split(";")[0] == "application/jsonl"
+    disposition = response.headers["content-disposition"]
+    assert disposition.startswith("attachment;")
+    filename = disposition.split('filename="', 1)[1].rstrip('"')
+    assert filename.endswith(".jsonl") and "example.com" in filename
+    assert all(c.isalnum() or c in "-._" for c in filename)
     lines = [json.loads(line) for line in body.splitlines()]
     assert lines[0] == {"v": 1, "type": "aweb.logs-export", "team_id": TEAM_ID}
     assert sum("event" in line for line in lines) == 2  # its designation and enrolment
