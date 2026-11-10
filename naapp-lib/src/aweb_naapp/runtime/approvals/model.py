@@ -156,13 +156,14 @@ class ActionPolicy:
 @dataclass(frozen=True)
 class Approver:
     """An owner-designated human in one scope, with the contact the owner
-    registered. `principal_did` is the team principal the approver stands for,
-    when the app has mapped one; a task presentation needs it."""
+    registered; a human-role holder whose role declares no notice contact has
+    none. `principal_did` is the team principal the approver stands for, when
+    the app has mapped one; a task presentation needs it."""
 
     scope: str
     subject: str
     subject_type: str
-    contact: str
+    contact: str | None
     principal_did: str | None = None
 
 
