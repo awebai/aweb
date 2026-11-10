@@ -87,6 +87,18 @@ describe("displayed fields are bound to the signed claims", () => {
     expect(message.message_id).toBe("outer-id");
   });
 
+  for (const kind of ["mail", "chat"] as const) {
+    for (const field of ["conversation_id", "from_did", "to_did", "body"]) {
+      test(`${kind}: a null displayed ${field} is an empty one`, async () => {
+        const signed: Fields = { type: kind, body: "body", subject: "subject", message_id: "message", conversation_id: "conversation", from_did: did, to_did: did };
+        const { raw } = signedResponse(signed, { ...signed, [field]: null });
+        expect((await read(kind, raw)).verification_status).toBe("failed");
+        const { raw: unsigned } = signedResponse({ ...signed, [field]: "" }, { ...signed, [field]: null });
+        expect((await read(kind, unsigned)).verification_status).toBe(field === "from_did" ? "unverified" : "verified");
+      });
+    }
+  }
+
   test("a message with no signed payload is verified from its envelope fields", async () => {
     const message = await read("chat", { message_id: "m", conversation_id: "conversation", from_did: did, to_did: did, body: "body", timestamp: "2026-01-01T00:00:00Z" });
     expect(message.verification_status).toBe("unverified");
