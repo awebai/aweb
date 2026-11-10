@@ -197,8 +197,19 @@ async def read_holding(
     return _holding(installation_id, team_id, role, principal, row)
 
 
+async def is_holding_scope(db: Executor, b3_scope: str) -> bool:
+    """Whether the installation ever recorded a holding for this B3 scope,
+    current or ended. It grants nothing: it only tells a B3 scope that belongs
+    to human-role holdings from one that does not."""
+    return bool(await db.fetch_value(_RECORD, b3_scope))
+
+
 async def _lock(
-    tx: TransactionManager, mode: str, installation_id: str, team_id: str, role: str,
+    tx: TransactionManager,
+    mode: str,
+    installation_id: str,
+    team_id: str,
+    role: str,
     principal: str,
 ) -> Holding | None:
     # The assignment first, then the record: every holder and writer locks in
@@ -282,9 +293,12 @@ async def end_holding(
 ) -> bool:
     """End the holding, keeping its record as history. False, writing
     nothing, when nothing is held."""
-    if await lock_holding(
-        tx, installation_id=installation_id, team_id=team_id, role=role, principal=principal
-    ) is None:
+    if (
+        await lock_holding(
+            tx, installation_id=installation_id, team_id=team_id, role=role, principal=principal
+        )
+        is None
+    ):
         return False
     ended = await tx.fetch_value(
         """

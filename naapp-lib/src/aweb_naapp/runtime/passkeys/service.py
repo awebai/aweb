@@ -35,7 +35,7 @@ import json
 import logging
 import secrets
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -393,9 +393,10 @@ def _bound_to_rp(rp_id: str) -> str:
     return f"(c.rp_id IS NULL OR c.rp_id = {rp_id})"
 
 
-# The scope's approver in effect now ($2) that holds an unrevoked passkey.
+# The scope's approver in effect now ($2) that holds an unrevoked passkey,
+# with the principal a human-role holder is linked to.
 _USABLE_APPROVER = (
-    f"SELECT subject, {_EFFECTIVE_CONTACT} AS contact "
+    f"SELECT subject, {_EFFECTIVE_CONTACT} AS contact, principal "
     "FROM {{tables.passkey_approvers}} a "
     f"WHERE scope = $1 AND {_CURRENT} AND EXISTS ("
     "SELECT 1 FROM {{tables.passkey_credentials}} c "
@@ -426,12 +427,16 @@ class Passkeys:
         clock: Callable[[], datetime] = _utcnow,
         owner_scopes: Callable[[str], bool] = lambda scope: True,
         proof_context: ProofContextResolver | None = None,
+        holding_scopes: Callable[[TransactionManager, str], Awaitable[bool]] | None = None,
     ) -> None:
         """`lockout` is the app's or owner's policy; `lockout_floor` is the
         deployment's, at or above the module floors. The policy must meet the
         deployment floor. `owner_scopes` says which scopes are owner scopes:
         their approvers are designated only by a team owner act, and only their
-        approvers' decisions are owner approvals. By default every scope is."""
+        approvers' decisions are owner approvals. By default every scope is.
+        `holding_scopes` says, in a transaction, whether a scope was ever a
+        human-role holding (`aweb_naapp.roles.is_holding_scope`, for an app
+        that keeps role holdings); such a scope leaves the contact paths."""
         self.db = db
         self.rp = rp
         self._delivery = delivery
@@ -441,6 +446,7 @@ class Passkeys:
         self._challenge_ttl = challenge_ttl
         self._owner_scopes = owner_scopes
         self._proof_context = proof_context
+        self._holding_scopes = holding_scopes
         floor = lockout_floor or LockoutPolicy()
         self._lockout = lockout or floor
         self._lockout.require_at_least(
@@ -638,6 +644,10 @@ class Passkeys:
         )
 
     async def _holds_a_human_role(self, tx: TransactionManager, scope: str) -> bool:
+        """Whether the scope is a human-role holding's, now or once: by the
+        app's holding record, or by an approver linked to a principal."""
+        if self._holding_scopes is not None and await self._holding_scopes(tx, scope):
+            return True
         return bool(
             await tx.fetch_value(
                 "SELECT 1 FROM {{tables.passkey_approvers}} "
@@ -1156,7 +1166,11 @@ class Passkeys:
         if row is None:
             return None
         return Approver(
-            scope=scope, subject=row["subject"], subject_type=SUBJECT_TYPE, contact=row["contact"]
+            scope=scope,
+            subject=row["subject"],
+            subject_type=SUBJECT_TYPE,
+            contact=row["contact"],
+            principal_did=row["principal"],
         )
 
     async def current_subject_in(self, tx: TransactionManager, scope: str) -> str | None:
