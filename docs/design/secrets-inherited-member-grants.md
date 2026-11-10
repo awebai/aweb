@@ -114,7 +114,8 @@ eligibility, that needs no key at all. Where the owner and the controller are
 the same human, the cost is small; the recommendation still does not depend on
 that.
 
-A root-scoped grant authorizes a line, not a count. Within `root` and
+A root-scoped grant is the owner preauthorizing a root's future line. It
+authorizes a line, not a count. Within `root` and
 `max_depth`, how many workers are covered, and when, is set by the root, which
 spawns them, and by the controller, through the policy's allowance and its
 widening revisions. The rate buckets below bound their use; nothing in the
@@ -151,8 +152,8 @@ read. A grant to an inherited subject never makes a withdrawn path usable.
 | --- | --- |
 | Controller revokes the root's membership, or a parent on the path | The verifier denies every member depending on it. No grant is read. Members of other roots are unaffected. |
 | Policy withdrawn or expired | Every dependant is denied at membership. |
-| Narrowing revision (same `policy_id`) | Per acwd.13, dependants are withdrawn and denied at membership. A member re-admitted under the revision matches the same grant with no owner act. |
-| Widening revision (same `policy_id`) | Dependants keep membership, and the grant keeps covering them. Members the revision admits are covered only within the grant's `root` and `max_depth`. |
+| Narrowing revision (same `policy_id`), including any edit that reduces a limit or removes eligibility | Per acwd.13, dependants are withdrawn and denied at membership. A member re-admitted under the revision matches the same grant with no owner act. |
+| Widening revision (same `policy_id`): raising allowance or rate, or extending expiry ([acwd.13 continuity](selective-membership-inheritance.md#policy-continuity)) | Dependants keep membership, and the grant keeps covering them. Members admitted afterwards are covered only within the grant's `root` and `max_depth`. Eligibility-mode changes, added eligibility and increased depth are classified in acwd.13's wire freeze; until then they refuse publication. |
 | Policy replaced by another `policy_id` | Existing grants cover nothing under it. The owner grants again, if wanted. |
 | Owner revokes the grant | Admission refuses at once, the fence refuses `grant_revoked`, and derived secrets issued under the grant are disabled ([§8.4](secrets.md#84-derived-secret-creation-and-use)), as for every grant. Any change to the grant is a `grant.changed`, which is widening and needs the passkey. |
 | Global root rotates its key and is re-admitted under the same `member_did_aw` | The root principal is unchanged, so a root-scoped grant still names it. Old child paths do not transfer; re-admitted children match again. |
