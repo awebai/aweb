@@ -195,6 +195,86 @@ class ComposeConfigTests(unittest.TestCase):
 
 
 @unittest.skipUnless(os.environ.get('AWEB_TEST_DOCKER_NETWORK') == '1', 'requires an approved Docker slot')
+class ComposeExitStatusTests(unittest.TestCase):
+    def test_real_exec_status_and_failed_up_on_both_wrapper_paths(self):
+        real = os.environ.get('AWEB_CANDIDATE_REAL_DOCKER') or shutil.which('docker')
+        label = 'acwx-status-' + uuid.uuid4().hex[:12]
+        runner = label + '-runner'
+        projects = [label + suffix for suffix in ('-exec', '-up-network', '-up-host')]
+
+        def docker(*args, check=True):
+            return subprocess.run([real, *args], check=check, capture_output=True,
+                                  text=True, timeout=90)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            compose = Path(tmp) / 'compose.json'
+            compose.write_text(json.dumps({'services': {'worker': {
+                'image': 'python:3.12-slim', 'command': ['sleep', '600'],
+                'labels': {'aweb.candidate-gate': label},
+                'cpus': .25, 'mem_limit': '64m', 'pids_limit': 32}}}))
+            env = {**os.environ, 'AWEB_CANDIDATE_REAL_DOCKER': real,
+                   'AWEB_CANDIDATE_RESOURCE_LABEL': label,
+                   'CANDIDATE_RESOURCE_MANIFEST': '',
+                   'AWEB_CANDIDATE_SIBLING_CPUS': '.25',
+                   'AWEB_CANDIDATE_SIBLING_MEMORY': '64m',
+                   'AWEB_CANDIDATE_SIBLING_PIDS': '32'}
+
+            def wrapped(project, runner_name, *args):
+                with tempfile.TemporaryDirectory(dir=tmp, prefix="overlay's ") as overlays:
+                    result = subprocess.run(
+                        ['bash', str(ROOT / 'candidate-gate/bin/docker'), 'compose',
+                         '-p', project, '-f', str(compose), *args],
+                        env={**env, 'CANDIDATE_RUNNER_NAME': runner_name, 'TMPDIR': overlays},
+                        capture_output=True, text=True, timeout=90)
+                    leftovers = list(Path(overlays).glob('aweb-candidate-compose-*'))
+                    return result, leftovers
+
+            try:
+                docker('run', '-d', '--name', runner, '--label', 'aweb.candidate-gate=' + label,
+                       '--cpus', '.25', '--memory', '64m', '--pids-limit', '32',
+                       'python:3.12-slim', 'sleep', '600')
+                docker('compose', '-p', projects[0], '-f', str(compose), 'up', '-d')
+                for runner_name in ('', runner):
+                    for status in (0, 2, 17):
+                        with self.subTest(operation='exec', runner=runner_name, status=status):
+                            result, leftovers = wrapped(
+                                projects[0], runner_name, 'exec', '-T', 'worker', 'python', '-c',
+                                f'import sys; print("worker-result"); sys.exit({status})')
+                            self.assertEqual(result.returncode, status, result.stderr)
+                            self.assertEqual(result.stdout.strip(), 'worker-result')
+                            self.assertEqual(leftovers, [])
+                            self.assertNotIn('unbound variable', result.stderr)
+                config = json.loads(compose.read_text())
+                config['services']['worker']['command'] = ['python', '-c', 'raise SystemExit(17)']
+                compose.write_text(json.dumps(config))
+                for project, runner_name in zip(projects[1:], (runner, '')):
+                    with self.subTest(operation='up', runner=runner_name, status=17):
+                        result, leftovers = wrapped(project, runner_name, 'up',
+                                                    '--abort-on-container-exit',
+                                                    '--exit-code-from', 'worker')
+                        self.assertEqual(result.returncode, 17, result.stdout + result.stderr)
+                        self.assertEqual(leftovers, [])
+                        attached = json.loads(docker('inspect', runner).stdout)[0]['NetworkSettings']['Networks']
+                        self.assertNotIn(project + '_default', attached, 'failed up attached the runner')
+            finally:
+                cleanup_errors = []
+                for project in projects:
+                    result = docker('compose', '-p', project, '-f', str(compose),
+                                    'down', '-v', '--remove-orphans', check=False)
+                    if result.returncode:
+                        cleanup_errors.append(result.stderr)
+                owned = docker('ps', '-aq', '--filter', 'label=aweb.candidate-gate=' + label).stdout.split()
+                if owned:
+                    docker('rm', '-fv', *owned)
+                self.assertEqual(docker('ps', '-aq', '--filter', 'label=aweb.candidate-gate=' + label).stdout.strip(), '')
+                for project in projects:
+                    self.assertEqual(docker('network', 'ls', '-q', '--filter',
+                                            'label=com.docker.compose.project=' + project).stdout.strip(), '')
+                self.assertEqual(cleanup_errors, [])
+                print(f'status probe cleanup PASSED: label={label}; containers=0; project networks=0')
+
+
+@unittest.skipUnless(os.environ.get('AWEB_TEST_DOCKER_NETWORK') == '1', 'requires an approved Docker slot')
 class ComposeNetworkTests(unittest.TestCase):
     def test_real_services_start_despite_competing_host_port_and_stay_isolated(self):
         real = os.environ.get('AWEB_CANDIDATE_REAL_DOCKER') or shutil.which('docker')
@@ -251,14 +331,6 @@ class ComposeNetworkTests(unittest.TestCase):
                                        '--filter', 'label=com.docker.compose.service=awid').stdout.strip()
                     info = json.loads(docker('inspect', container).stdout)[0]
                     self.assertFalse(info['HostConfig'].get('PortBindings'), info['HostConfig'])
-                    for status in (0, 2, 7):
-                        command = [*cmd, 'exec', '-T', 'awid', 'python', '-c',
-                                   f'import sys; print("worker-result"); sys.exit({status})']
-                        completed = subprocess.run(command, env=env, capture_output=True,
-                                                   text=True, timeout=30)
-                        self.assertEqual(completed.returncode, status, completed.stderr)
-                        self.assertEqual(completed.stdout.strip(), 'worker-result')
-                        self.assertNotIn('unbound variable', completed.stderr)
                     url = f'http://{project}-awid.test:8010'
                     self.assertEqual(docker('exec', runner, 'python', '-c', fetch, url).stdout.strip(), project)
                     # Temporary Docker clients take the same direct route.
