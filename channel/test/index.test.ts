@@ -3,7 +3,8 @@ import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
-import { createChannelRegistryResolver, loadChannelConfig, isDirectExecution, resolveRegistryFallbackURL, handleClaudeStreamState, notifyClaudeAwakening } from "../src/index.js";
+import { CHANNEL_INSTRUCTIONS, createChannelRegistryResolver, loadChannelConfig, isDirectExecution, resolveRegistryFallbackURL, handleClaudeStreamState, notifyClaudeAwakening } from "../src/index.js";
+import { eventStreamRefusedAwakening } from "@awebai/channel-core";
 import { createShadowedPrincipalFixture } from "../../channel-core/test/helpers/config_fixture.js";
 
 describe("loadChannelConfig", () => {
@@ -62,6 +63,58 @@ describe("stream state handling", () => {
 
     await notifyClaudeAwakening(mcp, { kind: "mail", content: "hello", deliveryIntent: "wake", meta: { type: "mail", message_id: "m1" } });
     expect(notifications).toHaveLength(1);
+  });
+});
+
+describe("the refused notice", () => {
+  test("the start of a refusal episode is the one stream state presented to Claude, as a notice from the channel itself", async () => {
+    const logs: string[] = [];
+    const notifications: any[] = [];
+    const mcp = { notification: async (item: unknown) => { notifications.push(item); } } as any;
+    const nextAttemptAt = new Date(2026, 2, 1, 9, 5).getTime();
+    const refused = { state: "refused" as const, cause: "401", retryInMs: 60_000, nextAttemptAt, startsEpisode: true as const };
+
+    // The stream state handler is the operator surface: it logs and presents nothing.
+    handleClaudeStreamState(refused, (message) => logs.push(message));
+    handleClaudeStreamState({ state: "reconnected", endedRefusal: "401" }, (message) => logs.push(message));
+    expect(logs).toHaveLength(2);
+    expect(notifications).toHaveLength(0);
+
+    // The channel loop presents the notice through the plugin's awakening path.
+    await notifyClaudeAwakening(mcp, eventStreamRefusedAwakening(refused));
+    expect(notifications).toEqual([{
+      method: "notifications/claude/channel",
+      params: {
+        content: "The aweb server refused this channel's event stream (401). Mail and chat will not arrive until the stream is accepted again. The next attempt is at 09:05.",
+        meta: {
+          type: "channel",
+          notice: "event_stream_refused",
+          cause: "401",
+          next_attempt_at: new Date(nextAttemptAt).toISOString(),
+        },
+      },
+    }]);
+  });
+
+  test("the plugin tells Claude what a channel notice is", () => {
+    expect(CHANNEL_INSTRUCTIONS).toContain(
+      'Channel notices (type="channel") come from this plugin itself, not from another agent',
+    );
+  });
+});
+
+describe("refused stream handling", () => {
+  test("the stream state handler logs a refused stream once on entry and once on exit", () => {
+    const logs: string[] = [];
+    const nextAttemptAt = new Date(2026, 2, 1, 9, 5).getTime();
+
+    handleClaudeStreamState({ state: "refused", cause: "401", retryInMs: 60_000, nextAttemptAt }, (message) => logs.push(message));
+    handleClaudeStreamState({ state: "reconnected", endedRefusal: "401" }, (message) => logs.push(message));
+
+    expect(logs).toEqual([
+      "aweb: event stream refused: 401, next try 09:05",
+      "aweb: event stream accepted again (was refused: 401)",
+    ]);
   });
 });
 

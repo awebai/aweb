@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/awebai/aw/internal/atomicfile"
 	"github.com/spf13/cobra"
 )
 
@@ -141,7 +142,7 @@ func installCodexActivityHooks(dir string) (bool, error) {
 	if err = os.MkdirAll(dir, 0o700); err != nil {
 		return false, err
 	}
-	return true, writeFileAtomic(dir, "hooks.json", out.Bytes(), mode)
+	return true, atomicfile.Write(filepath.Join(dir, "hooks.json"), out.Bytes(), mode)
 }
 
 // codexGroupHandlers reads a matcher group's handlers, refusing a shape it

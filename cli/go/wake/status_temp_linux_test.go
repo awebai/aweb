@@ -47,7 +47,7 @@ func TestStatusWritesReuseTemporaryName(t *testing.T) {
 					t.Fatal("truncated inotify event")
 				}
 				name := strings.TrimRight(string(buf[off+16:end]), "\x00")
-				if strings.HasPrefix(name, ".tmp-") {
+				if strings.HasPrefix(name, ".tmp.") {
 					names[name] = true
 				}
 				off = end
@@ -61,7 +61,7 @@ func TestStatusWritesReuseTemporaryName(t *testing.T) {
 	if len(names) != 1 {
 		t.Fatalf("status writes created %d distinct temporary names; want one reusable writer name", len(names))
 	}
-	matches, err := filepath.Glob(filepath.Join(store.Dir(), ".tmp-*"))
+	matches, err := filepath.Glob(filepath.Join(store.Dir(), ".tmp.*"))
 	if err != nil {
 		t.Fatal(err)
 	}

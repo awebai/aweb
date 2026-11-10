@@ -90,7 +90,7 @@ func (s IDInvitationFileStore) PutInvitation(inv *awid.IDInvitation) error {
 	if err != nil {
 		return err
 	}
-	return durableWriteFile(path, append(data, '\n'))
+	return atomicWriteFile(path, append(data, '\n'))
 }
 
 // Invitations lists every invitation, ordered by invitation ID.

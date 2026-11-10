@@ -1,6 +1,8 @@
 import { APIError, type APIClient } from "./client.js";
 import type { MessageEnvelope, VerificationStatus } from "../identity/signing.js";
 import type { ReplacementAnnouncement, RotationAnnouncement, SenderMembership } from "../identity/trust.js";
+import { isEncryptedMessage } from "../identity/encrypted.js";
+import { signedDisplayMatches } from "../identity/signed_display.js";
 import {
   signedPayloadConversationStatus,
   verifyMessage,
@@ -54,11 +56,30 @@ export async function fetchHistory(
   );
 
   for (const msg of resp.messages) {
+    if (!displayMatchesSignedClaims(msg)) {
+      // The response is left as received: signed metadata is not projected
+      // over fields the signature does not cover.
+      msg.projected_from_did = msg.from_did;
+      msg.verification_status = "failed";
+      continue;
+    }
     hydrateAddressesFromSignedPayload(msg);
     msg.verification_status = await verifyChatMessage(msg);
   }
 
   return resp.messages;
+}
+
+function displayMatchesSignedClaims(msg: ChatMessage): boolean {
+  if (!msg.signed_payload || isEncryptedMessage(msg)) return true;
+  return signedDisplayMatches(msg.signed_payload, {
+    type: "chat",
+    body: msg.body,
+    message_id: msg.message_id,
+    conversation_id: msg.conversation_id,
+    from_did: msg.from_did,
+    to_did: msg.to_did,
+  });
 }
 
 function hydrateAddressesFromSignedPayload(msg: ChatMessage): void {

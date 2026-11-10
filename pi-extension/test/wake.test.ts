@@ -3,6 +3,7 @@ import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   dispatchAgentEvent,
+  eventStreamRefusedAwakening,
   PinStore,
   type AgentEvent,
   type ChannelAwakening,
@@ -42,6 +43,62 @@ test("transport reconnect and disconnect are diagnostics, not Pi model input", a
   await createPiAwakeningHandler(dispatcher)(awakening());
   assert.equal(calls.length, 1);
   assert.equal(calls[0][0].customType, "aweb-channel");
+});
+
+test("the stream state handler shows a refused stream in the status and logs it once on entry and once on exit", () => {
+  const calls: Array<Parameters<ExtensionAPI["sendMessage"]>> = [];
+  const logs: string[] = [];
+  const statuses: string[] = [];
+  fakePi((message, options) => {
+    calls.push([message, options]);
+  });
+  const ctx = {
+    hasUI: true,
+    ui: {
+      theme: { fg: (_kind: string, text: string) => text },
+      setStatus: (_key: string, value: string) => statuses.push(value),
+    },
+  };
+  const nextAttemptAt = new Date(2026, 2, 1, 9, 5).getTime();
+
+  handlePiStreamState({ state: "refused", cause: "401", retryInMs: 60_000, nextAttemptAt }, ctx, (message) => logs.push(message));
+  handlePiStreamState({ state: "reconnected", endedRefusal: "401" }, ctx, (message) => logs.push(message));
+
+  assert.equal(calls.length, 0);
+  assert.deepEqual(logs, [
+    "aweb: event stream refused: 401, next try 09:05",
+    "aweb: event stream accepted again (was refused: 401)",
+  ]);
+  assert.deepEqual(statuses, ["✕ aweb events refused (401); next try 09:05", "✓ aweb connected"]);
+});
+
+test("the start of a refusal episode is the one stream state presented to Pi, as a notice from the channel itself", async () => {
+  const calls: Array<Parameters<ExtensionAPI["sendMessage"]>> = [];
+  const logs: string[] = [];
+  const pi = fakePi((message, options) => {
+    calls.push([message, options]);
+  });
+  const ctx = { hasUI: false };
+  const nextAttemptAt = new Date(2026, 2, 1, 9, 5).getTime();
+  const refused = { state: "refused" as const, cause: "401", retryInMs: 60_000, nextAttemptAt, startsEpisode: true as const };
+
+  // The stream state handler is the operator surface: it logs and presents nothing.
+  handlePiStreamState(refused, ctx, (message) => logs.push(message));
+  handlePiStreamState({ state: "reconnected", endedRefusal: "401" }, ctx, (message) => logs.push(message));
+  assert.equal(logs.length, 2);
+  assert.equal(calls.length, 0);
+
+  // The channel loop presents the notice through the extension's awakening path.
+  const dispatcher = createWakeDispatcher(pi, () => {});
+  await createPiAwakeningHandler(dispatcher)(eventStreamRefusedAwakening(refused));
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0].customType, "aweb-channel");
+  assert.equal(calls[0][0].content, [
+    "aweb channel notice, from the aweb channel itself and not from another agent.",
+    "",
+    "The aweb server refused this channel's event stream (401). Mail and chat will not arrive until the stream is accepted again. The next attempt is at 09:05.",
+  ].join("\n"));
+  assert.deepEqual(calls[0][1], { triggerTurn: true });
 });
 
 function awakening(overrides: Partial<ChannelAwakening> = {}): ChannelAwakening {

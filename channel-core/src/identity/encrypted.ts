@@ -3,6 +3,11 @@ import { verifySignedPayload } from "./signing.js";
 import { decodeRawStdBase64 } from "./base64.js";
 import { canonicalJSONValue } from "./canonical.js";
 
+/** Whether a received message carries its content in an encrypted envelope. */
+export function isEncryptedMessage(msg: { content_mode?: string; message_version?: number; encrypted_envelope?: unknown }): boolean {
+  return msg.content_mode === "encrypted_v2" || msg.message_version === 2 || msg.encrypted_envelope != null;
+}
+
 export interface DecryptedMessageProof {
   message_id: string;
   conversation_id?: string;

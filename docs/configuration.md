@@ -246,6 +246,40 @@ in the `aweb-coordination` skill. The skill is the sole source for the command
 order, so injected instructions defer to it rather than embedding a copy that
 can drift.
 
+## Server URL and API mount
+
+`aweb_url` names the base the API is served at, including a mount prefix such
+as `/api` when the server has one. `aw init` probes for that base. Afterwards
+`aw` uses the stored `aweb_url` as given; with `AWEB_URL` set it probes that
+URL on every start.
+
+Every request `aw` signs covers its path, so `aw` sends each request once, to
+the URL it was signed for, and never sends it again to another mount.
+
+When the stored `aweb_url` answers 404, `aw` makes one unauthenticated
+`GET /v1/agents/heartbeat` at the stored base and at the same origin with or
+without `/api`, to see which answers as the API. The 404 is returned as the
+server sent it, and when another mount answers the error names it:
+
+```text
+aweb: http 404: {"detail":"Not Found"}
+The server answers at https://aweb.example/api. The configured server URL should be that: set aweb_url in workspace.yaml to https://aweb.example/api.
+```
+
+Each client `aw` builds keeps the probe's answer, so a 404 the API itself
+returns costs a command one probe. A mount is only ever looked for on the origin
+of the stored URL: the same scheme, host and port.
+
+The event streams of `aw run` and the `aw wake` broker repair this themselves.
+A stream refused at the stored `aweb_url` is retried under the
+[event stream policy](event-stream-client-policy.md); before each retry the
+client probes as above and builds its requests for the mount that answers.
+Once a stream signed for that mount has opened there, `aw` stores it as
+`aweb_url` in `workspace.yaml`. A retry that is refused or fails stores
+nothing. A grant home keeps the server URL its grant was issued with: its
+stream is signed for the mount that answers and nothing is stored, and its
+commands return a 404 without probing.
+
 ## HTTP request compression
 
 Before its first write to an aweb server, `aw` makes an unauthenticated

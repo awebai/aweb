@@ -29,7 +29,7 @@
   "card_digest_contract": {
     "algorithm": "sha256",
     "encoding": "sha256:<lowercase-hex>",
-    "canonicalization": "A2A v1.0 card-signature canonical bytes over the materialized AgentCard object after omitting signatures: A2A field/default processing, then JCS/awid.CanonicalJSONValue-compatible canonical JSON.",
+    "canonicalization": "Canonical bytes over the materialized AgentCard object after omitting signatures: A2A field/default processing, then the escaped form of aweb canonical JSON (awid.CanonicalJSONValueEscapingLineSeparators; docs/a2a.md section 5.2). These are RFC 8785 (JCS) bytes for the cards in this file; they differ from RFC 8785 for a card holding U+2028 or U+2029, for keys whose order differs between code points and UTF-16 code units, for negative zero and for an unpaired surrogate.",
     "excluded_fields": ["signatures"]
   },
   "agent_cards": [
