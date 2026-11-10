@@ -138,8 +138,13 @@ class HumanRoleHandoffAuthority:
             raise _not_held()
         try:
             admitted = (await self._fence.permit(rows[0]["team_id"])).admitted
-        except InstallationRefused:
-            raise _not_held() from None
+        except InstallationRefused as refused:
+            # An inactive installation holds nothing; anything else, such as
+            # an installation authority that cannot be reached, keeps its own
+            # typed refusal rather than reading as a lost holding.
+            if refused.code == "installation_inactive":
+                raise _not_held() from None
+            raise
         if admitted.installation_id != installation_id:
             raise _not_held()
         return admitted

@@ -18,15 +18,20 @@ import time
 from types import SimpleNamespace
 
 import pytest
+from asyncpg.exceptions import LockNotAvailableError
 from aweb_naapp_testing.owner_acts import APP_ID, INSTALLATION_ID, TEAM_ID
 from fastapi import HTTPException
 
 from aweb_naapp.console.handoff_authority import PublicScope
 from aweb_naapp.console.human_role_authority import HumanRoleHandoffAuthority
-from aweb_naapp.runtime.authorization import Grant
+from aweb_naapp.runtime.authorization import Grant, GrantUnavailable
 from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.human_roles import HumanRoleHoldings
-from aweb_naapp.runtime.installation import InstallationFence, apply_installation_migrations
+from aweb_naapp.runtime.installation import (
+    InstallationFence,
+    InstallationRefused,
+    apply_installation_migrations,
+)
 from tests.runtime.approvals.test_human_role_holders import (
     CERTIFICATE,
     OTHER_PRINCIPAL,
@@ -47,9 +52,12 @@ OTHER_ROLE = "example.auditor"
 
 
 class Installations:
-    """The app's installation in TEAM_ID as the team server reports it."""
+    """The app's installation in TEAM_ID as the team server reports it: active
+    unless ``state`` says otherwise, and unreachable while ``unreachable``."""
 
     def __init__(self) -> None:
+        self.state = "active"
+        self.unreachable = False
         self.grant = Grant(
             team_id=TEAM_ID,
             installation_id=INSTALLATION_ID,
@@ -62,12 +70,14 @@ class Installations:
         return self.grant if team_id == TEAM_ID else None
 
     async def status_for(self, team_id):
+        if self.unreachable:
+            raise GrantUnavailable()
         if team_id != TEAM_ID:
             return None
         return SimpleNamespace(
             team_id=TEAM_ID,
             app_id=APP_ID,
-            state="active",
+            state=self.state,
             installation_id=INSTALLATION_ID,
             generation=1,
             granted_scopes=self.grant.scopes,
@@ -76,11 +86,15 @@ class Installations:
 
 
 async def authority_for(
-    pw: PasskeyWorld, role: str = ROLE, *, declared: frozenset[str] = frozenset({ROLE})
+    pw: PasskeyWorld,
+    role: str = ROLE,
+    *,
+    declared: frozenset[str] = frozenset({ROLE}),
+    installations: Installations | None = None,
 ) -> HumanRoleHandoffAuthority:
     db = pw.passkeys.db
     await apply_installation_migrations(db)
-    fence = InstallationFence(db, app_id=APP_ID, grants=Installations())
+    fence = InstallationFence(db, app_id=APP_ID, grants=installations or Installations())
     await fence.refresh(TEAM_ID)
     return HumanRoleHandoffAuthority(
         role=role,
@@ -342,3 +356,47 @@ async def test_a_target_whose_selector_names_another_installation_is_never_held(
                 tx, moved, approver_pairs=[(SCOPE, designation.approver.subject)]
             )
     assert refusal(refused) == (403, "role_not_held")
+
+
+async def test_a_hold_locks_the_holding_itself_not_only_its_credential(pw: PasskeyWorld):
+    """While the prepared authority is retained, the holding's assignment and
+    record cannot be locked for writing, whatever B3 holds."""
+    authority = await authority_for(pw)
+    designation = await designate(pw, holder())
+    target = await authority.session_target(PUBLIC)
+    pair = (SCOPE, designation.approver.subject)
+    assignment = (
+        "SELECT 1 FROM {{tables.role_assignments}}"
+        " WHERE team_id = $1 AND role = $2 AND principal_did = $3 FOR UPDATE NOWAIT"
+    )
+    record = "SELECT 1 FROM {{tables.role_holdings}} WHERE b3_scope = $1 FOR UPDATE NOWAIT"
+    async with pw.passkeys.db.transaction() as tx:
+        await authority.hold_session_target(tx, target, approver_pairs=[pair])
+        async with pw.passkeys.db.transaction() as probe:
+            with pytest.raises(LockNotAvailableError):
+                await probe.fetch_value(assignment, TEAM_ID, ROLE, PRINCIPAL)
+        async with pw.passkeys.db.transaction() as probe:
+            with pytest.raises(LockNotAvailableError):
+                await probe.fetch_value(record, SCOPE)
+    async with pw.passkeys.db.transaction() as probe:
+        assert await probe.fetch_value(assignment, TEAM_ID, ROLE, PRINCIPAL) == 1
+
+
+async def test_an_inactive_installation_holds_nothing(pw: PasskeyWorld):
+    installations = Installations()
+    authority = await authority_for(pw, installations=installations)
+    await designate(pw, holder())
+    installations.state = "inactive"
+    with pytest.raises(HTTPException) as refused:
+        await authority.session_target(PUBLIC)
+    assert refusal(refused) == (403, "role_not_held")
+
+
+async def test_an_unreachable_installation_authority_is_not_a_lost_holding(pw: PasskeyWorld):
+    installations = Installations()
+    authority = await authority_for(pw, installations=installations)
+    await designate(pw, holder())
+    installations.unreachable = True
+    with pytest.raises(InstallationRefused) as refused:
+        await authority.session_target(PUBLIC)
+    assert (refused.value.status, refused.value.code) == (503, "authority_unavailable")
