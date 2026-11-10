@@ -62,8 +62,7 @@
           "contradicted": []
         }
       },
-      "witness_checkpoints": [],
-      "witness_receipts": []
+      "witness_lines": []
     },
     {
       "bundle_lines": [
@@ -120,8 +119,7 @@
           "contradicted": []
         }
       },
-      "witness_checkpoints": [],
-      "witness_receipts": []
+      "witness_lines": []
     },
     {
       "bundle_lines": [
@@ -169,8 +167,7 @@
           "contradicted": []
         }
       },
-      "witness_checkpoints": [],
-      "witness_receipts": []
+      "witness_lines": []
     },
     {
       "bundle_lines": [
@@ -216,8 +213,7 @@
           "contradicted": []
         }
       },
-      "witness_checkpoints": [],
-      "witness_receipts": []
+      "witness_lines": []
     },
     {
       "bundle_lines": [
@@ -269,12 +265,8 @@
           ]
         }
       },
-      "witness_checkpoints": [],
-      "witness_receipts": [
-        {
-          "signature": "WlFC4Nihd/sOeUCTsQzOhXI+o0FYu2FS4KJ/SHGFqBXvzb7a98+NCfM9ZpQQFjingdmTgsiRVHmZ63lRZ1YuBQ",
-          "signing_bytes_b64url": "YXdlYi5sb2dzLXJlY2VpcHQvMQp7ImNoYWluX2Vwb2NoIjoxLCJkaWRfa2V5IjoiZGlkOmtleTp6Nk1rblZiaXh0NHZKTWNLemFYVVdVUlpOOFpaMXRDMWt4UkZ5c0tSRlhZalFwRHAiLCJldmVudF9oYXNoIjoiNmFhNGNmOGRiNWJjM2Q1ODM5MjNiNGJkMjJkNGQ5YjQ5MjVkMDZkY2YzYTQ3YzEwYTBhMDIxZTI0MmI2ZTlhYSIsImV2ZW50X2lkIjoiMDE5MmYwYzQtOGIzMS03YzYyLTlmMWYtM2I3NWE0ZDJhZTEzIiwia2lkIjoibG9ncy0yMDI2LTEwIiwibG9nc19vcmlnaW4iOiJodHRwczovL2xvZ3MuZXhhbXBsZS5jb20iLCJyZWNlaXZlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDMuNTAwWiIsInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9zZXEiOjMsInR5cGUiOiJhd2ViLmxvZ3MtcmVjZWlwdCIsInYiOjF9"
-        }
+      "witness_lines": [
+        "{\"receipt\":{\"signature\":\"WlFC4Nihd/sOeUCTsQzOhXI+o0FYu2FS4KJ/SHGFqBXvzb7a98+NCfM9ZpQQFjingdmTgsiRVHmZ63lRZ1YuBQ\",\"signing_bytes\":\"YXdlYi5sb2dzLXJlY2VpcHQvMQp7ImNoYWluX2Vwb2NoIjoxLCJkaWRfa2V5IjoiZGlkOmtleTp6Nk1rblZiaXh0NHZKTWNLemFYVVdVUlpOOFpaMXRDMWt4UkZ5c0tSRlhZalFwRHAiLCJldmVudF9oYXNoIjoiNmFhNGNmOGRiNWJjM2Q1ODM5MjNiNGJkMjJkNGQ5YjQ5MjVkMDZkY2YzYTQ3YzEwYTBhMDIxZTI0MmI2ZTlhYSIsImV2ZW50X2lkIjoiMDE5MmYwYzQtOGIzMS03YzYyLTlmMWYtM2I3NWE0ZDJhZTEzIiwia2lkIjoibG9ncy0yMDI2LTEwIiwibG9nc19vcmlnaW4iOiJodHRwczovL2xvZ3MuZXhhbXBsZS5jb20iLCJyZWNlaXZlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDMuNTAwWiIsInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9zZXEiOjMsInR5cGUiOiJhd2ViLmxvZ3MtcmVjZWlwdCIsInYiOjF9\"}}"
       ]
     },
     {
@@ -326,8 +318,7 @@
           "contradicted": []
         }
       },
-      "witness_checkpoints": [],
-      "witness_receipts": []
+      "witness_lines": []
     },
     {
       "bundle_lines": [
@@ -384,13 +375,9 @@
           ]
         }
       },
-      "witness_checkpoints": [
-        {
-          "signature": "24eLmiTfUoFx54aMhLXK4KFUNmJZ1kLJ9iSzeqxxyNYrR3cXF74DZlz3QTEltYjpSc3TrjqFVxTpg2/uw17iAQ",
-          "signing_bytes_b64url": "YXdlYi5sb2dzLWNoZWNrcG9pbnQvMQp7ImNoYWluX2Vwb2NoIjoyLCJkaWRfa2V5IjoiZGlkOmtleTp6Nk1rblZiaXh0NHZKTWNLemFYVVdVUlpOOFpaMXRDMWt4UkZ5c0tSRlhZalFwRHAiLCJldmVudF9oYXNoIjoiZThjOTBmODgzMGJjMTUzZmQ5NGEyOGM3M2EwNjhmMWM5MDE5NGRiYzQ4NDAxYjlkZTc0OTJjMjU1MmM4ZTBiNCIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MTA6MDAuMDAwWiIsImtpZCI6ImxvZ3MtMjAyNi0xMCIsImxvZ3Nfb3JpZ2luIjoiaHR0cHM6Ly9sb2dzLmV4YW1wbGUuY29tIiwidGVhbV9pZCI6ImRlbW86ZXhhbXBsZS5jb20iLCJ0ZWFtX3NlcSI6MSwidHlwZSI6ImF3ZWIubG9ncy1jaGVja3BvaW50IiwidiI6MX0"
-        }
-      ],
-      "witness_receipts": []
+      "witness_lines": [
+        "{\"checkpoint\":{\"signature\":\"24eLmiTfUoFx54aMhLXK4KFUNmJZ1kLJ9iSzeqxxyNYrR3cXF74DZlz3QTEltYjpSc3TrjqFVxTpg2/uw17iAQ\",\"signing_bytes\":\"YXdlYi5sb2dzLWNoZWNrcG9pbnQvMQp7ImNoYWluX2Vwb2NoIjoyLCJkaWRfa2V5IjoiZGlkOmtleTp6Nk1rblZiaXh0NHZKTWNLemFYVVdVUlpOOFpaMXRDMWt4UkZ5c0tSRlhZalFwRHAiLCJldmVudF9oYXNoIjoiZThjOTBmODgzMGJjMTUzZmQ5NGEyOGM3M2EwNjhmMWM5MDE5NGRiYzQ4NDAxYjlkZTc0OTJjMjU1MmM4ZTBiNCIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MTA6MDAuMDAwWiIsImtpZCI6ImxvZ3MtMjAyNi0xMCIsImxvZ3Nfb3JpZ2luIjoiaHR0cHM6Ly9sb2dzLmV4YW1wbGUuY29tIiwidGVhbV9pZCI6ImRlbW86ZXhhbXBsZS5jb20iLCJ0ZWFtX3NlcSI6MSwidHlwZSI6ImF3ZWIubG9ncy1jaGVja3BvaW50IiwidiI6MX0\"}}"
+      ]
     },
     {
       "bundle_lines": [
@@ -454,21 +441,10 @@
           "contradicted": []
         }
       },
-      "witness_checkpoints": [
-        {
-          "signature": "VAQGf0sg/QmKD7clHHro/9ZWG/2gKBPDVfTw3flnp4do6Q1dnN1mnxGlCuvweXlNYFHd77/Na8KXAP3D6o25CA",
-          "signing_bytes_b64url": "YXdlYi5sb2dzLWNoZWNrcG9pbnQvMQp7ImNoYWluX2Vwb2NoIjoxLCJkaWRfa2V5IjoiZGlkOmtleTp6Nk1rblZiaXh0NHZKTWNLemFYVVdVUlpOOFpaMXRDMWt4UkZ5c0tSRlhZalFwRHAiLCJldmVudF9oYXNoIjoiNmFhNGNmOGRiNWJjM2Q1ODM5MjNiNGJkMjJkNGQ5YjQ5MjVkMDZkY2YzYTQ3YzEwYTBhMDIxZTI0MmI2ZTlhYSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MTA6MDAuMDAwWiIsImtpZCI6ImxvZ3MtMjAyNi0xMCIsImxvZ3Nfb3JpZ2luIjoiaHR0cHM6Ly9sb2dzLmV4YW1wbGUuY29tIiwidGVhbV9pZCI6ImRlbW86ZXhhbXBsZS5jb20iLCJ0ZWFtX3NlcSI6MywidHlwZSI6ImF3ZWIubG9ncy1jaGVja3BvaW50IiwidiI6MX0"
-        },
-        {
-          "signature": "24eLmiTfUoFx54aMhLXK4KFUNmJZ1kLJ9iSzeqxxyNYrR3cXF74DZlz3QTEltYjpSc3TrjqFVxTpg2/uw17iAQ",
-          "signing_bytes_b64url": "YXdlYi5sb2dzLWNoZWNrcG9pbnQvMQp7ImNoYWluX2Vwb2NoIjoyLCJkaWRfa2V5IjoiZGlkOmtleTp6Nk1rblZiaXh0NHZKTWNLemFYVVdVUlpOOFpaMXRDMWt4UkZ5c0tSRlhZalFwRHAiLCJldmVudF9oYXNoIjoiZThjOTBmODgzMGJjMTUzZmQ5NGEyOGM3M2EwNjhmMWM5MDE5NGRiYzQ4NDAxYjlkZTc0OTJjMjU1MmM4ZTBiNCIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MTA6MDAuMDAwWiIsImtpZCI6ImxvZ3MtMjAyNi0xMCIsImxvZ3Nfb3JpZ2luIjoiaHR0cHM6Ly9sb2dzLmV4YW1wbGUuY29tIiwidGVhbV9pZCI6ImRlbW86ZXhhbXBsZS5jb20iLCJ0ZWFtX3NlcSI6MSwidHlwZSI6ImF3ZWIubG9ncy1jaGVja3BvaW50IiwidiI6MX0"
-        }
-      ],
-      "witness_receipts": [
-        {
-          "signature": "WlFC4Nihd/sOeUCTsQzOhXI+o0FYu2FS4KJ/SHGFqBXvzb7a98+NCfM9ZpQQFjingdmTgsiRVHmZ63lRZ1YuBQ",
-          "signing_bytes_b64url": "YXdlYi5sb2dzLXJlY2VpcHQvMQp7ImNoYWluX2Vwb2NoIjoxLCJkaWRfa2V5IjoiZGlkOmtleTp6Nk1rblZiaXh0NHZKTWNLemFYVVdVUlpOOFpaMXRDMWt4UkZ5c0tSRlhZalFwRHAiLCJldmVudF9oYXNoIjoiNmFhNGNmOGRiNWJjM2Q1ODM5MjNiNGJkMjJkNGQ5YjQ5MjVkMDZkY2YzYTQ3YzEwYTBhMDIxZTI0MmI2ZTlhYSIsImV2ZW50X2lkIjoiMDE5MmYwYzQtOGIzMS03YzYyLTlmMWYtM2I3NWE0ZDJhZTEzIiwia2lkIjoibG9ncy0yMDI2LTEwIiwibG9nc19vcmlnaW4iOiJodHRwczovL2xvZ3MuZXhhbXBsZS5jb20iLCJyZWNlaXZlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDMuNTAwWiIsInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9zZXEiOjMsInR5cGUiOiJhd2ViLmxvZ3MtcmVjZWlwdCIsInYiOjF9"
-        }
+      "witness_lines": [
+        "{\"receipt\":{\"signature\":\"WlFC4Nihd/sOeUCTsQzOhXI+o0FYu2FS4KJ/SHGFqBXvzb7a98+NCfM9ZpQQFjingdmTgsiRVHmZ63lRZ1YuBQ\",\"signing_bytes\":\"YXdlYi5sb2dzLXJlY2VpcHQvMQp7ImNoYWluX2Vwb2NoIjoxLCJkaWRfa2V5IjoiZGlkOmtleTp6Nk1rblZiaXh0NHZKTWNLemFYVVdVUlpOOFpaMXRDMWt4UkZ5c0tSRlhZalFwRHAiLCJldmVudF9oYXNoIjoiNmFhNGNmOGRiNWJjM2Q1ODM5MjNiNGJkMjJkNGQ5YjQ5MjVkMDZkY2YzYTQ3YzEwYTBhMDIxZTI0MmI2ZTlhYSIsImV2ZW50X2lkIjoiMDE5MmYwYzQtOGIzMS03YzYyLTlmMWYtM2I3NWE0ZDJhZTEzIiwia2lkIjoibG9ncy0yMDI2LTEwIiwibG9nc19vcmlnaW4iOiJodHRwczovL2xvZ3MuZXhhbXBsZS5jb20iLCJyZWNlaXZlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDMuNTAwWiIsInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9zZXEiOjMsInR5cGUiOiJhd2ViLmxvZ3MtcmVjZWlwdCIsInYiOjF9\"}}",
+        "{\"checkpoint\":{\"signature\":\"VAQGf0sg/QmKD7clHHro/9ZWG/2gKBPDVfTw3flnp4do6Q1dnN1mnxGlCuvweXlNYFHd77/Na8KXAP3D6o25CA\",\"signing_bytes\":\"YXdlYi5sb2dzLWNoZWNrcG9pbnQvMQp7ImNoYWluX2Vwb2NoIjoxLCJkaWRfa2V5IjoiZGlkOmtleTp6Nk1rblZiaXh0NHZKTWNLemFYVVdVUlpOOFpaMXRDMWt4UkZ5c0tSRlhZalFwRHAiLCJldmVudF9oYXNoIjoiNmFhNGNmOGRiNWJjM2Q1ODM5MjNiNGJkMjJkNGQ5YjQ5MjVkMDZkY2YzYTQ3YzEwYTBhMDIxZTI0MmI2ZTlhYSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MTA6MDAuMDAwWiIsImtpZCI6ImxvZ3MtMjAyNi0xMCIsImxvZ3Nfb3JpZ2luIjoiaHR0cHM6Ly9sb2dzLmV4YW1wbGUuY29tIiwidGVhbV9pZCI6ImRlbW86ZXhhbXBsZS5jb20iLCJ0ZWFtX3NlcSI6MywidHlwZSI6ImF3ZWIubG9ncy1jaGVja3BvaW50IiwidiI6MX0\"}}",
+        "{\"checkpoint\":{\"signature\":\"24eLmiTfUoFx54aMhLXK4KFUNmJZ1kLJ9iSzeqxxyNYrR3cXF74DZlz3QTEltYjpSc3TrjqFVxTpg2/uw17iAQ\",\"signing_bytes\":\"YXdlYi5sb2dzLWNoZWNrcG9pbnQvMQp7ImNoYWluX2Vwb2NoIjoyLCJkaWRfa2V5IjoiZGlkOmtleTp6Nk1rblZiaXh0NHZKTWNLemFYVVdVUlpOOFpaMXRDMWt4UkZ5c0tSRlhZalFwRHAiLCJldmVudF9oYXNoIjoiZThjOTBmODgzMGJjMTUzZmQ5NGEyOGM3M2EwNjhmMWM5MDE5NGRiYzQ4NDAxYjlkZTc0OTJjMjU1MmM4ZTBiNCIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MTA6MDAuMDAwWiIsImtpZCI6ImxvZ3MtMjAyNi0xMCIsImxvZ3Nfb3JpZ2luIjoiaHR0cHM6Ly9sb2dzLmV4YW1wbGUuY29tIiwidGVhbV9pZCI6ImRlbW86ZXhhbXBsZS5jb20iLCJ0ZWFtX3NlcSI6MSwidHlwZSI6ImF3ZWIubG9ncy1jaGVja3BvaW50IiwidiI6MX0\"}}"
       ]
     },
     {
@@ -539,13 +515,9 @@
           ]
         }
       },
-      "witness_checkpoints": [
-        {
-          "signature": "KLUuK2VjF6E3do3foCkllAVs/iAIMETSdj1CBSKqbBAn8q0pWLtZ1APSG7AgZN9PdE35dTcWTfrtWNbR5U9bAQ",
-          "signing_bytes_b64url": "YXdlYi5sb2dzLWNoZWNrcG9pbnQvMQp7ImNoYWluX2Vwb2NoIjoxLCJkaWRfa2V5IjoiZGlkOmtleTp6Nk1rb3JZZTdGbVNraUw1OE5UWXZybnR3QzJnbldpUUdRZVExUEN6NWNocUxYWHgiLCJldmVudF9oYXNoIjoiNmFhNGNmOGRiNWJjM2Q1ODM5MjNiNGJkMjJkNGQ5YjQ5MjVkMDZkY2YzYTQ3YzEwYTBhMDIxZTI0MmI2ZTlhYSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MTA6MDAuMDAwWiIsImtpZCI6ImxvZ3MtMjAyNi0xMCIsImxvZ3Nfb3JpZ2luIjoiaHR0cHM6Ly9sb2dzLmV4YW1wbGUuY29tIiwidGVhbV9pZCI6ImRlbW86ZXhhbXBsZS5jb20iLCJ0ZWFtX3NlcSI6MywidHlwZSI6ImF3ZWIubG9ncy1jaGVja3BvaW50IiwidiI6MX0"
-        }
-      ],
-      "witness_receipts": []
+      "witness_lines": [
+        "{\"checkpoint\":{\"signature\":\"KLUuK2VjF6E3do3foCkllAVs/iAIMETSdj1CBSKqbBAn8q0pWLtZ1APSG7AgZN9PdE35dTcWTfrtWNbR5U9bAQ\",\"signing_bytes\":\"YXdlYi5sb2dzLWNoZWNrcG9pbnQvMQp7ImNoYWluX2Vwb2NoIjoxLCJkaWRfa2V5IjoiZGlkOmtleTp6Nk1rb3JZZTdGbVNraUw1OE5UWXZybnR3QzJnbldpUUdRZVExUEN6NWNocUxYWHgiLCJldmVudF9oYXNoIjoiNmFhNGNmOGRiNWJjM2Q1ODM5MjNiNGJkMjJkNGQ5YjQ5MjVkMDZkY2YzYTQ3YzEwYTBhMDIxZTI0MmI2ZTlhYSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MTA6MDAuMDAwWiIsImtpZCI6ImxvZ3MtMjAyNi0xMCIsImxvZ3Nfb3JpZ2luIjoiaHR0cHM6Ly9sb2dzLmV4YW1wbGUuY29tIiwidGVhbV9pZCI6ImRlbW86ZXhhbXBsZS5jb20iLCJ0ZWFtX3NlcSI6MywidHlwZSI6ImF3ZWIubG9ncy1jaGVja3BvaW50IiwidiI6MX0\"}}"
+      ]
     },
     {
       "bundle_lines": [
@@ -597,12 +569,8 @@
           ]
         }
       },
-      "witness_checkpoints": [],
-      "witness_receipts": [
-        {
-          "signature": "WlFC4Nihd/sOeUCTsQzOhXI+o0FYu2FS4KJ/SHGFqBXvzb7a98+NCfM9ZpQQFjingdmTgsiRVHmZ63lRZ1YuBQ",
-          "signing_bytes_b64url": "YXdlYi5sb2dzLXJlY2VpcHQvMQp7ImNoYWluX2Vwb2NoIjoxLCJkaWRfa2V5IjoiZGlkOmtleTp6Nk1rblZiaXh0NHZKTWNLemFYVVdVUlpOOFpaMXRDMWt4UkZ5c0tSRlhZalFwRHAiLCJldmVudF9oYXNoIjoiNmFhNGNmOGRiNWJjM2Q1ODM5MjNiNGJkMjJkNGQ5YjQ5MjVkMDZkY2YzYTQ3YzEwYTBhMDIxZTI0MmI2ZTlhYSIsImV2ZW50X2lkIjoiMDE5MmYwYzQtOGIzMS03YzYyLTlmMWYtM2I3NWE0ZDJhZTEzIiwia2lkIjoibG9ncy0yMDI2LTEwIiwibG9nc19vcmlnaW4iOiJodHRwczovL2xvZ3MuZXhhbXBsZS5jb20iLCJyZWNlaXZlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDMuNTAwWiIsInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9zZXEiOjMsInR5cGUiOiJhd2ViLmxvZ3MtcmVjZWlwdCIsInYiOjF9"
-        }
+      "witness_lines": [
+        "{\"receipt\":{\"signature\":\"WlFC4Nihd/sOeUCTsQzOhXI+o0FYu2FS4KJ/SHGFqBXvzb7a98+NCfM9ZpQQFjingdmTgsiRVHmZ63lRZ1YuBQ\",\"signing_bytes\":\"YXdlYi5sb2dzLXJlY2VpcHQvMQp7ImNoYWluX2Vwb2NoIjoxLCJkaWRfa2V5IjoiZGlkOmtleTp6Nk1rblZiaXh0NHZKTWNLemFYVVdVUlpOOFpaMXRDMWt4UkZ5c0tSRlhZalFwRHAiLCJldmVudF9oYXNoIjoiNmFhNGNmOGRiNWJjM2Q1ODM5MjNiNGJkMjJkNGQ5YjQ5MjVkMDZkY2YzYTQ3YzEwYTBhMDIxZTI0MmI2ZTlhYSIsImV2ZW50X2lkIjoiMDE5MmYwYzQtOGIzMS03YzYyLTlmMWYtM2I3NWE0ZDJhZTEzIiwia2lkIjoibG9ncy0yMDI2LTEwIiwibG9nc19vcmlnaW4iOiJodHRwczovL2xvZ3MuZXhhbXBsZS5jb20iLCJyZWNlaXZlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDMuNTAwWiIsInRlYW1faWQiOiJkZW1vOmV4YW1wbGUuY29tIiwidGVhbV9zZXEiOjMsInR5cGUiOiJhd2ViLmxvZ3MtcmVjZWlwdCIsInYiOjF9\"}}"
       ]
     },
     {
@@ -670,8 +638,7 @@
           "contradicted": []
         }
       },
-      "witness_checkpoints": [],
-      "witness_receipts": []
+      "witness_lines": []
     },
     {
       "bundle_lines": [
@@ -737,8 +704,7 @@
           "contradicted": []
         }
       },
-      "witness_checkpoints": [],
-      "witness_receipts": []
+      "witness_lines": []
     },
     {
       "bundle_lines": [
@@ -785,8 +751,7 @@
           "contradicted": []
         }
       },
-      "witness_checkpoints": [],
-      "witness_receipts": []
+      "witness_lines": []
     },
     {
       "bundle_lines": [
@@ -843,8 +808,7 @@
           "contradicted": []
         }
       },
-      "witness_checkpoints": [],
-      "witness_receipts": []
+      "witness_lines": []
     },
     {
       "bundle_lines": [
@@ -898,8 +862,7 @@
           "contradicted": []
         }
       },
-      "witness_checkpoints": [],
-      "witness_receipts": []
+      "witness_lines": []
     },
     {
       "bundle_lines": [
@@ -949,8 +912,7 @@
           "contradicted": []
         }
       },
-      "witness_checkpoints": [],
-      "witness_receipts": []
+      "witness_lines": []
     },
     {
       "bundle_lines": [
@@ -1005,8 +967,7 @@
           "contradicted": []
         }
       },
-      "witness_checkpoints": [],
-      "witness_receipts": []
+      "witness_lines": []
     },
     {
       "bundle_lines": [
@@ -1061,8 +1022,7 @@
           "contradicted": []
         }
       },
-      "witness_checkpoints": [],
-      "witness_receipts": []
+      "witness_lines": []
     },
     {
       "bundle_lines": [
@@ -1117,8 +1077,7 @@
           "contradicted": []
         }
       },
-      "witness_checkpoints": [],
-      "witness_receipts": []
+      "witness_lines": []
     }
   ],
   "malformed": [
@@ -1373,8 +1332,7 @@
   "scheme": {
     "authority": "docs/logs-chain.md, 'Exporting a team's log'",
     "bundle": "JSON Lines: each entry of bundle_lines is one line without its newline; the bundle is every line followed by one newline; no line, its newline excluded, is longer than max_line_bytes",
-    "cases": "receipt_keys and checkpoint_keys are the keys the verifier accepts; witness_receipts and witness_checkpoints are artefacts it holds independently of the exporter; report is what a bundle verifier must return",
-    "encoding": "witness artefacts are signing_bytes_b64url (unpadded base64url) and signature (86 characters of standard base64, no padding)",
+    "cases": "receipt_keys and checkpoint_keys are the keys the verifier accepts; witness_lines are the lines of a witness file (docs/logs-chain.md, 'Witness files'), each without its newline: the receipts and checkpoints it holds independently of the exporter; report is what a bundle verifier must return",
     "malformed": "a bundle the verifier refuses; line is the number, from 1, of its first bad line",
     "max_line_bytes": 1048576
   },

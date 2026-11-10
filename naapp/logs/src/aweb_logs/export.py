@@ -11,7 +11,7 @@ report says how far that reaches.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, BinaryIO
 
@@ -28,6 +28,7 @@ from aweb_logs.chain import (
     Genesis,
     Link,
     Receipt,
+    artefact_json,
     artefact_sha256,
     open_checkpoint,
     open_receipt,
@@ -99,15 +100,11 @@ def event_line(event: StoredEvent) -> bytes:
 
 
 def receipt_line(signing_bytes: bytes, signature: str) -> bytes:
-    return _line({"receipt": _artefact_json(signing_bytes, signature)})
+    return _line({"receipt": artefact_json(signing_bytes, signature)})
 
 
 def checkpoint_line(signing_bytes: bytes, signature: str) -> bytes:
-    return _line({"checkpoint": _artefact_json(signing_bytes, signature)})
-
-
-def _artefact_json(signing_bytes: bytes, signature: str) -> dict[str, str]:
-    return {"signing_bytes": encode_base64url(signing_bytes), "signature": signature}
+    return _line({"checkpoint": artefact_json(signing_bytes, signature)})
 
 
 @dataclass(frozen=True)
@@ -314,9 +311,7 @@ def verify_bundle(
                     held[(witness.kind, witness.index)] = reason
 
     number = 0
-    while raw := bundle.readline(MAX_LINE_BYTES + 1):
-        number += 1
-        record = _record(raw, number)
+    for number, record in _records(bundle):
         if team_id is None:
             team_id = _header(record, number)
             for witness in witnesses:
@@ -376,6 +371,33 @@ def verify_bundle(
         last_checkpoint=last_checkpoint,
         witnesses_contradicted=tuple(contradicted),
     )
+
+
+def read_witnesses(
+    stream: BinaryIO,
+) -> tuple[list[tuple[bytes, str]], list[tuple[bytes, str]]]:
+    """Read a witness file: lines in a bundle's own artefact shape,
+    ``{"receipt": artefact}`` or ``{"checkpoint": artefact}``, under a bundle's
+    line rules. Returns its receipts and its checkpoints, each in file order.
+    Raises :class:`BundleMalformed` for a line that is not one."""
+    witnesses: dict[str, list[tuple[bytes, str]]] = {"receipt": [], "checkpoint": []}
+    for number, record in _records(stream):
+        _one(record, number)
+        ((name, value),) = record.items()
+        if name not in witnesses:
+            raise BundleMalformed(number, "not a receipt or checkpoint record")
+        witnesses[name].append(_artefact(value, number))
+    return witnesses["receipt"], witnesses["checkpoint"]
+
+
+def _records(stream: BinaryIO) -> Iterator[tuple[int, dict[str, Any]]]:
+    """A bundle's or a witness file's lines, numbered from 1, each a strict
+    canonical JSON object. A line longer than :data:`MAX_LINE_BYTES` is refused
+    before it is read whole."""
+    number = 0
+    while raw := stream.readline(MAX_LINE_BYTES + 1):
+        number += 1
+        yield number, _record(raw, number)
 
 
 def _record(raw: bytes, number: int) -> dict[str, Any]:
