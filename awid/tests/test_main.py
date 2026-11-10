@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 import pytest
@@ -42,42 +43,72 @@ async def test_health_and_ops_health_expose_registry_state(client):
     health = await client.get("/health")
     assert health.status_code == 200
     assert health.json()["status"] == "ok"
+    assert health.json()["checks"]["redis"] == health.json()["checks"]["database"] == "ok"
     assert health.json()["checks"]["schema"] == "awid"
 
     ops = await client.get("/ops/health")
     assert ops.status_code == 200
     assert ops.json() == health.json()
 
+    ready = await client.get("/ready")
+    assert ready.status_code == 200
+    assert ready.json() == health.json()
+
+    live = await client.get("/live")
+    assert (live.status_code, live.json()) == (200, {"status": "ok"})
+
+
+class BrokenRedis:
+    async def ping(self) -> bool:
+        raise RuntimeError("redis failure at redis://secret-host:6379/0")
+
+
+class BrokenDbManager:
+    async def fetch_value(self, _query: str):
+        raise RuntimeError("postgres failure at postgresql://secret-host/db")
+
+
+class BrokenDbInfra:
+    is_initialized = True
+    schema = "awid"
+
+    def get_manager(self, _name: str = "aweb"):
+        return BrokenDbManager()
+
 
 @pytest.mark.asyncio
-async def test_health_hides_backend_exception_details(awid_db_infra, fake_redis):
-    class BrokenRedis:
-        async def ping(self) -> bool:
-            raise RuntimeError("redis failure at redis://secret-host:6379/0")
-
-    class BrokenDbManager:
-        async def fetch_value(self, _query: str):
-            raise RuntimeError("postgres failure at postgresql://secret-host/db")
-
-    class BrokenDbInfra:
-        is_initialized = True
-        schema = "awid"
-
-        def get_manager(self, _name: str = "aweb"):
-            return BrokenDbManager()
-
-    app = create_app(db_infra=BrokenDbInfra(), redis=BrokenRedis())
+@pytest.mark.parametrize(
+    "redis_fails,database_fails",
+    [(False, True), (True, False), (True, True)],
+    ids=["database-fails", "redis-fails", "both-fail"],
+)
+async def test_health_answers_503_and_hides_backend_exception_details(
+    awid_db_infra, fake_redis, caplog, redis_fails, database_fails
+):
+    caplog.set_level(logging.WARNING, logger="awid_service.main")
+    app = create_app(
+        db_infra=BrokenDbInfra() if database_fails else awid_db_infra,
+        redis=BrokenRedis() if redis_fails else fake_redis,
+    )
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://testserver") as test_client:
             response = await test_client.get("/health")
+            ops = await test_client.get("/ops/health")
+            ready = await test_client.get("/ready")
+            live = await test_client.get("/live")
 
-    assert response.status_code == 200
+    assert response.status_code == 503
     payload = response.json()
     assert payload["status"] == "unhealthy"
-    assert payload["checks"]["redis"] == "error"
-    assert payload["checks"]["database"] == "error"
+    assert payload["checks"]["redis"] == ("error" if redis_fails else "ok")
+    assert payload["checks"]["database"] == ("error" if database_fails else "ok")
     assert "secret-host" not in response.text
+    assert (ops.status_code, ops.json()) == (503, payload)
+    assert (ready.status_code, ready.json()) == (503, payload)
+    assert (live.status_code, live.json()) == (200, {"status": "ok"})
+    assert ("awid health check failed for redis" in caplog.text) == redis_fails
+    assert ("awid health check failed for database" in caplog.text) == database_fails
 
 
 @pytest.mark.asyncio
