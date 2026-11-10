@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- An MCP `send_mail` reply on a conversation whose stored route is a federation
+  route to this server's own origin wakes the recipient's event stream when the
+  message is stored; the recipient's stream used to show it only on its slow
+  reconcile. MCP mail and chat sent to another server name the serving
+  application's configured public origin as the sender's delivery origin when
+  the MCP app was created without one, as the REST routes do, and no longer
+  need `DATABASE_URL` in the environment to find it.
+
 - `aw` writes U+2028 (line separator) and U+2029 (paragraph separator) as UTF-8
   in the canonical JSON it signs, as the Python reference
   (`awid.signing.canonical_json_bytes`) and TypeScript do; Go's JSON encoder
