@@ -12,9 +12,14 @@ logger = logging.getLogger(__name__)
 MutationCallback = Callable[[str, dict], Awaitable[None]]
 
 
+def mutation_callback(request: Request) -> MutationCallback | None:
+    """Return the on_mutation callback of the application serving this request."""
+    return getattr(request.app.state, "on_mutation", None)
+
+
 async def fire_mutation_hook(request: Request, event_type: str, context: dict) -> None:
     """Call app.state.on_mutation if registered. Never raises."""
-    await fire_mutation_callback(getattr(request.app.state, "on_mutation", None), event_type, context)
+    await fire_mutation_callback(mutation_callback(request), event_type, context)
 
 
 async def fire_mutation_callback(callback: MutationCallback | None, event_type: str, context: dict) -> None:

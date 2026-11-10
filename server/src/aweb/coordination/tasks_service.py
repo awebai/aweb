@@ -5,17 +5,78 @@ import re
 import hashlib
 import json
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal, Optional
 from uuid import UUID, uuid4
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from awid.team_ids import team_slug
-from ..claims import claim_focus_task_ref, resolve_task_claim_apex_on
+from ..claims import claim_focus_task_ref, release_task_claims_on, resolve_task_claim_apex_on
+from ..hooks import MutationCallback, fire_mutation_callback
 from ..service_errors import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from ..team_auth_deps import TeamIdentity
 
 logger = logging.getLogger(__name__)
 
 _UNSET = object()
+
+# The functions that change a task on a member's behalf (create_task,
+# update_task, soft_delete_task, add_dependency, remove_dependency,
+# add_comment) take the acting member and the on_mutation callback, and fire
+# the change's events through that callback after their own write commits. A
+# caller that runs one inside its own transaction passes a callback that
+# records the events, and fires them after that transaction commits.
+
+
+class CreateTaskRequest(BaseModel):
+    """What a member may supply to create a task, for every transport."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(..., min_length=1, max_length=4096)
+    description: str = Field("", max_length=65536)
+    notes: str = Field("", max_length=65536)
+    priority: int = Field(2, ge=0, le=4)
+    task_type: Literal["task", "bug", "feature", "epic", "chore"] = "task"
+    labels: list[str] = Field(default_factory=list)
+    parent_task_id: Optional[str] = None
+    assignee_alias: Optional[str] = None
+
+
+class UpdateTaskRequest(BaseModel):
+    """What a member may supply to change a task, for every transport."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: Optional[str] = Field(None, min_length=1, max_length=4096)
+    description: Optional[str] = Field(None, max_length=65536)
+    notes: Optional[str] = Field(None, max_length=65536)
+    status: Optional[Literal["open", "in_progress", "closed"]] = None
+    priority: Optional[int] = Field(None, ge=0, le=4)
+    task_type: Optional[Literal["task", "bug", "feature", "epic", "chore"]] = None
+    labels: Optional[list[str]] = None
+    assignee_alias: Optional[str] = None
+    parent_task_id: Optional[str] = None
+
+    def changes(self) -> dict[str, Any]:
+        """The fields to change, as update_task arguments.
+
+        A null assignee or parent clears it; any other null field is left alone.
+        """
+        clearable = {"assignee_alias", "parent_task_id"}
+        return {
+            name: getattr(self, name)
+            for name in self.model_fields_set
+            if name in clearable or getattr(self, name) is not None
+        }
+
+
+class AddCommentRequest(BaseModel):
+    """What a member may supply to comment on a task, for every transport."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    body: str = Field(..., min_length=1, max_length=65536)
 
 
 def answer_comment_projection(*, body_md: str, answer_sha256: str) -> str:
@@ -182,6 +243,8 @@ async def answer_task_on(
            WHERE task_id = $1 RETURNING rev""",
         task_id, actor.alias, principal,
     )
+    task_ref = format_task_ref(_get_team_slug(team_id), task["task_ref_suffix"])
+    released_claim_workspace_ids = await release_task_claims_on(tx, team_id=team_id, task_ref=task_ref)
     row = await tx.fetch_one(
         """INSERT INTO {{tables.task_answers}}
                (task_id, question_rev, task_rev, answer_key, answer_sha256, answered_by_did, certificate_id,
@@ -199,8 +262,8 @@ async def answer_task_on(
     if outcome is not None:
         outcome["created"] = True
         outcome["comment_id"] = str(comment["comment_id"])
-        outcome.update(task_ref=format_task_ref(_get_team_slug(team_id), task["task_ref_suffix"]),
-                       title=task["title"], assignee_alias=task["assignee_alias"])
+        outcome.update(task_ref=task_ref, title=task["title"], assignee_alias=task["assignee_alias"],
+                       released_claim_workspace_ids=released_claim_workspace_ids)
     return _answer_receipt(row, current_question_rev=task["question_rev"])
 
 
@@ -371,8 +434,8 @@ async def resolve_task_ref(db, *, team_id: str, ref: str) -> UUID:
 async def create_task(
     db,
     *,
-    team_id: str,
-    created_by_alias: str,
+    actor: TeamIdentity,
+    on_mutation: MutationCallback | None,
     title: str,
     description: str = "",
     notes: str = "",
@@ -381,21 +444,16 @@ async def create_task(
     labels: list[str] | None = None,
     parent_task_id: str | None = None,
     assignee_alias: str | None = None,
-    created_by_did: str | None = None,
 ) -> dict[str, Any]:
+    team_id = actor.team_id
+    created_by_alias = actor.alias
+    created_by_did = actor.did_aw or actor.did_key
     slug = _get_team_slug(team_id)
     aweb_db = db.get_manager("aweb")
     resolved_parent_task_id: UUID | None = None
     task_ref_suffix: str | None = None
 
     async with aweb_db.transaction() as tx:
-        if created_by_did is None:
-            creator = await tx.fetch_one(
-                """SELECT COALESCE(NULLIF(did_aw, ''), did_key) AS principal_did
-                   FROM {{tables.agents}} WHERE team_id=$1 AND alias=$2 AND deleted_at IS NULL FOR SHARE""",
-                team_id, created_by_alias,
-            )
-            created_by_did = creator["principal_did"] if creator else None
         assignee_did = None
         if assignee_alias:
             assignee_alias, assignee_did = await _resolve_assignee_on(
@@ -475,7 +533,7 @@ async def create_task(
             created_by_did,
         )
 
-    return {
+    result = {
         "task_id": str(row["task_id"]),
         "task_ref": format_task_ref(slug, task_ref_suffix),
         "task_number": task_number,
@@ -500,6 +558,22 @@ async def create_task(
         "created_by_did": created_by_did,
         "closed_by_did": None,
     }
+    await fire_mutation_callback(
+        on_mutation,
+        "task.created",
+        {
+            "task_id": result["task_id"],
+            "team_id": team_id,
+            "task_ref": result["task_ref"],
+            "title": result["title"],
+            "parent_task_id": result["parent_task_id"],
+            "assignee_alias": result["assignee_alias"],
+            "actor_agent_id": actor.agent_id,
+            "actor_alias": actor.alias,
+            "actor_did_aw": actor.did_aw,
+        },
+    )
+    return result
 
 
 async def _resolve_assignee_on(manager, *, team_id: str, assignee_ref: str) -> tuple[str, str]:
@@ -1092,9 +1166,9 @@ async def list_blocked_tasks(db, *, team_id: str) -> list[dict[str, Any]]:
 async def update_task(
     db,
     *,
-    team_id: str,
+    actor: TeamIdentity,
+    on_mutation: MutationCallback | None,
     ref: str,
-    actor_alias: str,
     title: str | None = None,
     description: str | None = None,
     notes: str | None = None,
@@ -1104,8 +1178,9 @@ async def update_task(
     labels: list[str] | None = None,
     assignee_alias: str | None | object = _UNSET,
     parent_task_id: str | None | object = _UNSET,
-    assignment_change: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    team_id = actor.team_id
+    actor_alias = actor.alias
     task_id = await resolve_task_ref(db, team_id=team_id, ref=ref)
     slug = _get_team_slug(team_id)
     aweb_db = db.get_manager("aweb")
@@ -1113,6 +1188,7 @@ async def update_task(
     resolved_assignee_alias: str | None | object = _UNSET
     resolved_parent_task_id: UUID | None | object = _UNSET
     claim_preacquired = False
+    released_claim_workspace_ids: list[str] = []
 
     if parent_task_id is not _UNSET:
         if parent_task_id:
@@ -1296,17 +1372,17 @@ async def update_task(
                 sets.append(f"assignee_alias = ${idx}")
                 params.append(actor_alias)
                 idx += 1
-                actor = await tx.fetch_one(
+                claimant = await tx.fetch_one(
                     """SELECT COALESCE(NULLIF(did_aw, ''), did_key) AS principal_did
                        FROM {{tables.agents}}
                        WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
                        FOR SHARE""",
                     team_id, actor_alias,
                 )
-                if current["app_request"] is not None and (not actor or actor["principal_did"] != current["assignee_did"]):
+                if current["app_request"] is not None and (not claimant or claimant["principal_did"] != current["assignee_did"]):
                     raise ForbiddenError("target_mismatch")
                 sets.append(f"assignee_did = ${idx}")
-                params.append(actor["principal_did"] if actor else None)
+                params.append(claimant["principal_did"] if claimant else None)
                 idx += 1
                 sets.append("picked_up = TRUE")
 
@@ -1367,31 +1443,82 @@ async def update_task(
             *params,
         )
 
+        # A status change to anything but in_progress ends every claim on the
+        # task, in this transaction. The release follows the status write
+        # because a released workspace keeps its focus only on an open task.
+        if status is not None and status != current["status"] and status != "in_progress":
+            released_claim_workspace_ids = await release_task_claims_on(
+                tx,
+                team_id=team_id,
+                task_ref=format_task_ref(slug, current["task_ref_suffix"]),
+            )
+
     # Capture the actual write, including implicit claim assignment, from the
     # locked row and resolved input. A post-commit read may see a later writer.
-    # Keep this hook metadata out of the public task response and MCP results.
+    # This metadata goes to the events only; the returned task does not carry it.
     new_assignee = (
         actor_alias if status == "in_progress"
         else resolved_assignee_alias if resolved_assignee_alias is not _UNSET
         else current["assignee_alias"]
     )
-    if assignment_change is not None and new_assignee != current["assignee_alias"]:
-        assignment_change.update(
-            old_assignee_alias=current["assignee_alias"],
-            assignee_alias=new_assignee,
-        )
     old_status = current["status"]
     result = await get_task(db, team_id=team_id, ref=str(task_id))
     if auto_closed:
         result["auto_closed"] = auto_closed
     if status is not None and status != old_status:
-        result["old_status"] = old_status
-    if claim_preacquired:
-        result["claim_preacquired"] = True
+        await fire_mutation_callback(
+            on_mutation,
+            "task.status_changed",
+            {
+                "task_id": result["task_id"],
+                "team_id": team_id,
+                "task_ref": result["task_ref"],
+                "title": result["title"],
+                "old_status": old_status,
+                "new_status": result["status"],
+                "assignee_alias": result["assignee_alias"],
+                "parent_task_id": result["parent_task_id"],
+                "actor_agent_id": actor.agent_id,
+                "actor_alias": actor.alias,
+                "actor_did_aw": actor.did_aw,
+                "claim_preacquired": claim_preacquired,
+                "released_claim_workspace_ids": released_claim_workspace_ids,
+            },
+        )
+    else:
+        await fire_mutation_callback(
+            on_mutation,
+            "task.updated",
+            {
+                "task_id": result["task_id"],
+                "task_ref": result["task_ref"],
+                "actor_agent_id": actor.agent_id,
+                "actor_did_aw": actor.did_aw,
+            },
+        )
+    if new_assignee != current["assignee_alias"]:
+        await fire_mutation_callback(
+            on_mutation,
+            "task.assignee_changed",
+            {
+                "task_id": result["task_id"],
+                "team_id": team_id,
+                "task_ref": result["task_ref"],
+                "title": result["title"],
+                "actor_agent_id": actor.agent_id,
+                "actor_alias": actor.alias,
+                "actor_did_aw": actor.did_aw,
+                "old_assignee_alias": current["assignee_alias"],
+                "assignee_alias": new_assignee,
+            },
+        )
     return result
 
 
-async def soft_delete_task(db, *, team_id: str, ref: str) -> dict[str, Any]:
+async def soft_delete_task(
+    db, *, actor: TeamIdentity, on_mutation: MutationCallback | None, ref: str,
+) -> dict[str, Any]:
+    team_id = actor.team_id
     task_id = await resolve_task_ref(db, team_id=team_id, ref=ref)
     slug = _get_team_slug(team_id)
     aweb_db = db.get_manager("aweb")
@@ -1410,10 +1537,24 @@ async def soft_delete_task(db, *, team_id: str, ref: str) -> dict[str, Any]:
         if not row:
             raise NotFoundError("Task not found")
 
-    return {"status": "deleted", "task_id": str(task_id), "task_ref": format_task_ref(slug, row["task_ref_suffix"])}
+    result = {"status": "deleted", "task_id": str(task_id), "task_ref": format_task_ref(slug, row["task_ref_suffix"])}
+    await fire_mutation_callback(
+        on_mutation,
+        "task.deleted",
+        {
+            "task_id": result["task_id"],
+            "task_ref": result["task_ref"],
+            "actor_agent_id": actor.agent_id,
+            "actor_did_aw": actor.did_aw,
+        },
+    )
+    return result
 
 
-async def add_dependency(db, *, team_id: str, task_ref: str, depends_on_ref: str) -> dict[str, Any]:
+async def add_dependency(
+    db, *, actor: TeamIdentity, on_mutation: MutationCallback | None, task_ref: str, depends_on_ref: str,
+) -> dict[str, Any]:
+    team_id = actor.team_id
     task_id = await resolve_task_ref(db, team_id=team_id, ref=task_ref)
     depends_on_id = await resolve_task_ref(db, team_id=team_id, ref=depends_on_ref)
     if task_id == depends_on_id:
@@ -1453,10 +1594,23 @@ async def add_dependency(db, *, team_id: str, task_ref: str, depends_on_ref: str
         if "duplicate key" not in str(exc).lower():
             raise
 
+    await fire_mutation_callback(
+        on_mutation,
+        "task.dependency_added",
+        {
+            "task_id": str(task_id),
+            "depends_on_task_id": str(depends_on_id),
+            "actor_agent_id": actor.agent_id,
+            "actor_did_aw": actor.did_aw,
+        },
+    )
     return {"task_id": str(task_id), "depends_on_id": str(depends_on_id)}
 
 
-async def remove_dependency(db, *, team_id: str, task_ref: str, dep_ref: str) -> dict[str, Any]:
+async def remove_dependency(
+    db, *, actor: TeamIdentity, on_mutation: MutationCallback | None, task_ref: str, dep_ref: str,
+) -> dict[str, Any]:
+    team_id = actor.team_id
     task_id = await resolve_task_ref(db, team_id=team_id, ref=task_ref)
     dep_id = await resolve_task_ref(db, team_id=team_id, ref=dep_ref)
     aweb_db = db.get_manager("aweb")
@@ -1465,10 +1619,24 @@ async def remove_dependency(db, *, team_id: str, task_ref: str, dep_ref: str) ->
         task_id,
         dep_id,
     )
+    await fire_mutation_callback(
+        on_mutation,
+        "task.dependency_removed",
+        {
+            "task_id": str(task_id),
+            "removed_depends_on_task_id": str(dep_id),
+            "actor_agent_id": actor.agent_id,
+            "actor_did_aw": actor.did_aw,
+        },
+    )
     return {"task_id": str(task_id), "removed_depends_on_id": str(dep_id)}
 
 
-async def add_comment(db, *, team_id: str, ref: str, author_alias: str, body: str) -> dict[str, Any]:
+async def add_comment(
+    db, *, actor: TeamIdentity, on_mutation: MutationCallback | None, ref: str, body: str,
+) -> dict[str, Any]:
+    team_id = actor.team_id
+    author_alias = actor.alias
     task_id = await resolve_task_ref(db, team_id=team_id, ref=ref)
     aweb_db = db.get_manager("aweb")
     row = await aweb_db.fetch_one(
@@ -1482,13 +1650,24 @@ async def add_comment(db, *, team_id: str, ref: str, author_alias: str, body: st
         author_alias,
         body,
     )
-    return {
+    result = {
         "comment_id": str(row["comment_id"]),
         "task_id": str(task_id),
         "author_alias": author_alias,
         "body": body,
         "created_at": row["created_at"].isoformat(),
     }
+    await fire_mutation_callback(
+        on_mutation,
+        "task.comment_added",
+        {
+            "task_id": result["task_id"],
+            "comment_id": result["comment_id"],
+            "actor_agent_id": actor.agent_id,
+            "actor_did_aw": actor.did_aw,
+        },
+    )
+    return result
 
 
 async def list_comments(db, *, team_id: str, ref: str) -> list[dict[str, Any]]:

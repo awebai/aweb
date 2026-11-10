@@ -74,6 +74,28 @@
   The MCP endpoint and the subscription listing, which act as an agent, also
   refuse an actor that names no agent.
 
+- Task changes made through the MCP task tools (`task_create`, `task_update`,
+  `task_claim`, `task_close`, `task_reopen`, `task_comment_add`) publish the
+  same task events as the HTTP routes, with the same context, so they reach the
+  team and workspace event streams. A task's claims are released in the same
+  transaction as the status change that ends them, whether or not a mutation
+  hook runs, and the `task.status_changed` hook context names the released
+  workspaces in `released_claim_workspace_ids`. The MCP task tools apply the
+  input bounds of the routes and answer a refusal or a conflict as an error. A
+  task response does not carry `claim_preacquired`. The task service functions
+  (`create_task`, `update_task`, `soft_delete_task`, `add_dependency`,
+  `remove_dependency`, `add_comment`) take the acting member and the
+  `on_mutation` callback as required arguments and fire the events themselves;
+  an embedding host that calls them passes both and does not fire task events
+  of its own.
+
+- Add the one-off operator command `aweb release-closed-task-claims [--apply]`
+  for claims that existing data leaves on closed tasks. By default it reports,
+  as JSON, the number of such claims in total and the number of tasks and
+  claims per team id, and changes nothing; `--apply` releases them through the
+  same release as a status change and reports the number released. Run it once
+  after deploying the release of claims with the status change.
+
 - The channel client (the Claude Code plugin, the Pi extension and `aw wake`)
   signs every certificate and identity request with the
   [v2 request envelope](docs/team-auth-envelope-v2.md), which binds the

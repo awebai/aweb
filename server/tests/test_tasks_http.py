@@ -10,10 +10,12 @@ from httpx import ASGITransport, AsyncClient
 import aweb.coordination.routes.tasks as tasks_routes
 from aweb.coordination.routes.tasks import router as tasks_router
 from aweb.coordination.tasks_service import (
+    create_task,
     get_task,
     list_active_work,
     list_blocked_tasks,
     list_ready_tasks,
+    update_task,
 )
 from aweb.team_auth_deps import TeamIdentity, get_team_identity
 
@@ -50,17 +52,22 @@ def _build_tasks_app(aweb_db) -> FastAPI:
     return app
 
 
-async def _fake_team_identity(request=None, db_infra=None) -> TeamIdentity:
+def member_identity(alias: str = "alice", *, team_id: str = TEAM_ID) -> TeamIdentity:
+    """An already-authenticated member, as the task routes and service receive one."""
     return TeamIdentity(
-        team_id=TEAM_ID,
-        alias="alice",
-        did_key="did:key:z6Mkalice",
-        did_aw="did:aw:alice",
-        address="acme.com/alice",
+        team_id=team_id,
+        alias=alias,
+        did_key=f"did:key:z6Mk{alias}",
+        did_aw=f"did:aw:{alias}",
+        address=f"acme.com/{alias}",
         agent_id=str(uuid4()),
         identity_scope="global",
         certificate_id="cert-001",
     )
+
+
+async def _fake_team_identity(request=None, db_infra=None) -> TeamIdentity:
+    return member_identity()
 
 
 async def _seed_team(aweb_db) -> None:
@@ -352,6 +359,45 @@ async def test_create_task_mutation_context_includes_actor_did_aw(aweb_cloud_db,
     assert resp.status_code == 200, resp.text
     assert captured["event_type"] == "task.created"
     assert captured["context"]["actor_did_aw"] == "did:aw:alice"
+
+
+@pytest.mark.asyncio
+async def test_a_caller_transaction_holds_the_status_change_its_claim_release_and_its_events(aweb_cloud_db):
+    db = aweb_cloud_db.aweb_db
+    await _seed_team(db)
+    actor = member_identity()
+    workspace_id = uuid4()
+    await db.execute(
+        "INSERT INTO {{tables.workspaces}} (workspace_id, team_id, agent_id, alias) VALUES ($1, $2, $3, 'alice')",
+        workspace_id, TEAM_ID, uuid4(),
+    )
+    task = await create_task(_DbShim(db), actor=actor, on_mutation=None, title="Held by the caller")
+    await update_task(_DbShim(db), actor=actor, on_mutation=None, ref=task["task_ref"], status="in_progress")
+    held: list[tuple[str, dict]] = []
+
+    async def hold(event_type: str, context: dict) -> None:
+        held.append((event_type, context))
+
+    async def claims(manager) -> int:
+        return await manager.fetch_value(
+            "SELECT count(*) FROM {{tables.task_claims}} WHERE team_id = $1 AND task_ref = $2", TEAM_ID, task["task_ref"],
+        )
+
+    with pytest.raises(RuntimeError, match="caller aborts"):
+        async with db.transaction() as tx:
+            closed = await update_task(_DbShim(tx), actor=actor, on_mutation=hold, ref=task["task_ref"], status="closed")
+            assert closed["status"] == "closed"
+            assert await claims(tx) == 0
+            # Other connections see neither the close nor the release.
+            assert await claims(db) == 1
+            raise RuntimeError("caller aborts")
+
+    # The caller held the event; nothing was published for the change it rolled back.
+    assert [(kind, context["released_claim_workspace_ids"]) for kind, context in held] == [
+        ("task.status_changed", [str(workspace_id)]),
+    ]
+    assert await claims(db) == 1
+    assert (await get_task(_DbShim(db), team_id=TEAM_ID, ref=task["task_ref"]))["status"] == "in_progress"
 
 
 @pytest.mark.asyncio
