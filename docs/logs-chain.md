@@ -5,8 +5,8 @@ aweb OSS hooks lane (aweb-acgh.16.21). This document is the source of truth for
 the bytes logs commits to and signs. Its vector is
 `docs/vectors/logs-chain-v1.json`. The Python implementation in
 `naapp/logs/src/aweb_logs/chain.py` and `verify.py` regenerates it byte for
-byte. The Go verifier in `cli/go/logschain`, on which `aw logs verify` is to be
-built, passes it. The design and its rationale are in
+byte. The Go verifier in `cli/go/logschain`, which `aw logs verify --bundle`
+runs, passes it. The design and its rationale are in
 [the audit substrate design](design/audit-substrate.md), §B3 and §B6.
 
 ## What the chain proves, and what it does not
@@ -351,3 +351,28 @@ the events after the last checkpoint, or whole trailing epochs, and the rest
 still verifies. Only an artefact held independently of the exporter proves the
 tail: give it as a witness, and a receipt or checkpoint past the bundle's end
 is contradicted as `not_in_chain`, or `epoch_absent` for a dropped epoch.
+
+### Witness files
+
+A verifier is given its witnesses as witness files. A witness file follows a
+bundle's line rules: each line is one strict canonical JSON object followed by
+a newline, and no line, its newline excluded, is longer than the bundle's line
+bound. Each line is `{"receipt": artefact}` or `{"checkpoint": artefact}`, with
+the artefact as above: the same lines a bundle carries. Any other line makes
+the file unusable, reported by its line number from 1. Witnesses are indexed
+per kind in the order given: file by file, then line by line.
+
+A checkpoint line cut from an earlier export is a witness as it stands. So is
+a producer's receipt: logs' ingest ack carries `{"event_id", "disposition",
+"receipt"}`, and its `receipt` is this artefact object, so
+`{"receipt": <the ack's receipt>}` is a witness line.
+
+`aw logs verify --bundle FILE|- --receipt-key DID_KEY --checkpoint-key DID_KEY
+[--witness FILE]... [--json]` verifies a bundle offline: it reads only the
+files it is given and reaches no workspace, identity or server. It requires at
+least one key of each kind, each an Ed25519 `did:key`, and never takes a key
+from the bundle. `--bundle -` reads stdin; a witness file cannot. `--json`
+prints the report above. It exits 0 when the bundle is intact, 1 when it is
+verified and not intact, and 2 when it could not be verified, with the error
+codes `usage`, `keys_invalid`, `input_unreadable`, `bundle_malformed`,
+`witness_malformed` and, for anything else, `verify_failed`.
