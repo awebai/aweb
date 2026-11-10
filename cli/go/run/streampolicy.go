@@ -312,8 +312,9 @@ func (p *StreamPolicy) confirmed() string {
 }
 
 // served records that the server is serving this caller: an event other
-// than the opening connected event was read, or a connection reached its
-// planned close. Only then does the refused delay return to its start (§4).
+// than the opening connected event was read, or a connection that opened
+// reached its planned close. Only then does the refused delay return to its
+// start (§4).
 func (p *StreamPolicy) served() {
 	p.mu.Lock()
 	p.refusedDelay = StreamRefusedDelayMin
@@ -366,6 +367,8 @@ type StreamConnection struct {
 
 	confirmOnce sync.Once
 	lastRead    atomic.Int64
+	// isOpen is true once the server answered the open with a stream.
+	isOpen atomic.Bool
 	// opened carries the silence watch's timer from Open to watch.
 	opened chan streamTimer
 	done   chan struct{}
@@ -452,6 +455,7 @@ func (c *StreamConnection) Open() (awid.EventSource, error) {
 	if err != nil {
 		return nil, err
 	}
+	c.isOpen.Store(true)
 	c.read()
 	if activity, ok := source.(streamActivitySource); ok {
 		activity.OnRead(c.read)
@@ -501,6 +505,16 @@ func (c *StreamConnection) Reopen() {
 	c.cancel(errStreamReopened)
 }
 
+// plannedCloseReached records a planned close. A connection that opened and
+// lasted to its planned close was served. An attempt that reached its
+// deadline before any answer arrived was not: it reconnects at once like any
+// planned close, and the refused delay stays where it is.
+func (c *StreamConnection) plannedCloseReached() {
+	if c.isOpen.Load() {
+		c.policy.served()
+	}
+}
+
 // End finishes the attempt and classifies it. err is what Open returned, or
 // what ended the reading of the source.
 func (c *StreamConnection) End(err error) StreamEnd {
@@ -520,7 +534,7 @@ func (c *StreamConnection) End(err error) StreamEnd {
 	case errors.Is(closedBy, errStreamReopened):
 		return StreamEnd{Kind: StreamEndPlannedClose}
 	case errors.Is(closedBy, errStreamPlannedClose):
-		c.policy.served()
+		c.plannedCloseReached()
 		return StreamEnd{Kind: StreamEndPlannedClose}
 	case errors.Is(closedBy, ErrStreamSilent):
 		return c.policy.failed(StreamEndTransient, "silence", ErrStreamSilent)
@@ -529,7 +543,7 @@ func (c *StreamConnection) End(err error) StreamEnd {
 	// closes at the deadline it was asked for can do so up to a second before
 	// this connection's own timer. That end is the planned close.
 	if errors.Is(err, io.EOF) && !c.policy.cfg.Now().Before(c.deadline.Truncate(time.Second)) {
-		c.policy.served()
+		c.plannedCloseReached()
 		return StreamEnd{Kind: StreamEndPlannedClose}
 	}
 	kind, cause := ClassifyStreamFailure(err)

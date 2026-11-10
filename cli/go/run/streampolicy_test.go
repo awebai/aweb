@@ -1117,6 +1117,51 @@ func TestStreamPolicyRefusedDelayResets(t *testing.T) {
 		refusedWaits(t, policy, source, time.Minute, 2*time.Minute)
 	})
 
+	t.Run("an attempt that reaches its deadline before it opens does not", func(t *testing.T) {
+		// No answer arrived, so the server never served: the attempt ends as
+		// a planned close and reconnects at once, and the refused delay stays.
+		clock := manualclock.New(policyStart)
+		refuse := true
+		open := func(ctx context.Context, _ time.Time) (awid.EventSource, error) {
+			if refuse {
+				return nil, streamtest.HTTPFailure(401)
+			}
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+		policy := NewStreamPolicy(open, nil, policyConfig(clock))
+		for attempt, delay := range []time.Duration{time.Minute, 2 * time.Minute, 4 * time.Minute} {
+			if end := attemptOnce(policy); end.Kind != StreamEndRefused || end.Wait != delay/2 {
+				t.Fatalf("attempt %d ended %+v, want refused waiting half of %s", attempt, end, delay)
+			}
+		}
+
+		refuse = false
+		conn := policy.Connect(context.Background(), func(string) { t.Error("an attempt that never opened was confirmed") })
+		opened := make(chan error, 1)
+		go func() {
+			_, err := conn.Open()
+			opened <- err
+		}()
+		awaitTimers(t, clock, 1)
+		clock.Advance(3*time.Minute + 30*time.Second)
+		end := conn.End(<-opened)
+		if end.Kind != StreamEndPlannedClose || end.Wait != 0 {
+			t.Fatalf("ended %+v, want a planned close with no wait", end)
+		}
+		if !policy.Wait(context.Background(), end) {
+			t.Fatal("the attempt did not reconnect at once")
+		}
+		if !policy.Refused() {
+			t.Fatal("an attempt that never opened ended the refused state")
+		}
+
+		refuse = true
+		if end := attemptOnce(policy); end.Kind != StreamEndRefused || end.EnteredRefused || end.Wait != 4*time.Minute {
+			t.Fatalf("refused after an unopened attempt %+v, want half of 8 minutes and no transition", end)
+		}
+	})
+
 	t.Run("a reopen the client asked for does not", func(t *testing.T) {
 		clock := manualclock.New(policyStart)
 		policy, source := flappingPolicy(clock)
