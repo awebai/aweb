@@ -81,15 +81,9 @@ var rootCmd = &cobra.Command{
 				}
 			}
 		}
-		if home.External() {
-			_ = os.Setenv(awconfig.IdentityHomeEnv, home.Root)
-		} else if hadIdentityHomeEnv {
-			_ = os.Setenv(awconfig.IdentityHomeEnv, identityHomeEnv)
-		} else {
-			_ = os.Unsetenv(awconfig.IdentityHomeEnv)
-		}
 		activeIdentityHome = awconfig.IdentityHome{}
 		if home.External() {
+			_ = os.Setenv(awconfig.IdentityHomeEnv, home.Root)
 			activeIdentityHome = home
 		}
 		restoreIdentityHomeAfterCommand(cmd, identityHomeEnv, hadIdentityHomeEnv, previousActiveIdentityHome)
