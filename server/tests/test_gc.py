@@ -1,430 +1,350 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
 
-from aweb.gc import gc_delivered_lifecycle_side_effects, gc_inactive_scopes
+from aweb.gc import DEAD_ROW_RULES, delete_dead_rows
+
+QUIET = "quiet:acme.com"
+BUSY = "busy:acme.com"
+TEAMS = (QUIET, BUSY)
+
+RULE_TABLES = (
+    "app_events",
+    "control_signals",
+    "federation_mutation_outbox",
+    "lifecycle_side_effect_outbox",
+)
 
 
-def _db_infra(aweb_db):
-    class _DbInfra:
-        def get_manager(self, name="aweb"):
-            assert name == "aweb"
-            return aweb_db
-
-    return _DbInfra()
+def _ago(days: int) -> datetime:
+    return datetime.now(timezone.utc) - timedelta(days=days)
 
 
-@pytest.mark.asyncio
-async def test_gc_delivered_lifecycle_side_effects_keeps_pending_and_recent_rows(
-    aweb_cloud_db,
-):
-    aweb_db = aweb_cloud_db.aweb_db
-    old_operation_id = uuid4()
-    recent_operation_id = uuid4()
-    pending_operation_id = uuid4()
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.lifecycle_side_effect_outbox}} (
-            operation_id, effect_order, team_id, effect_kind, payload_json,
-            delivered_at
+async def _seed(db) -> dict[str, set]:
+    """Two teams, each with rows on both sides of every rule.
+
+    Per team and table: one dead row past the rule's age, one dead row short
+    of it and, where the table has a live state, one live row older than the
+    age. The quiet team was created 60 days ago and holds a task and no
+    messages. Returns the primary keys of the rows the cleanup deletes, per
+    table.
+    """
+    dead: dict[str, set] = {table: set() for table in RULE_TABLES}
+    for team_id in TEAMS:
+        slug = team_id.split(":")[0]
+        agent_id = uuid4()
+        await db.execute(
+            """
+            INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key, created_at)
+            VALUES ($1, 'acme.com', $2, $3, $4)
+            """,
+            team_id,
+            slug,
+            f"did:key:team-{slug}",
+            _ago(60),
         )
-        VALUES
-            ($1, 0, 'backend:acme.com', 'presence_clear', '{}'::jsonb, NOW() - INTERVAL '31 days'),
-            ($2, 0, 'backend:acme.com', 'presence_clear', '{}'::jsonb, NOW()),
-            ($3, 0, 'backend:acme.com', 'presence_clear', '{}'::jsonb, NULL)
+        await db.execute(
+            """
+            INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, created_at)
+            VALUES ($1, $2, $3, 'alice', $4)
+            """,
+            agent_id,
+            team_id,
+            f"did:key:agent-{slug}",
+            _ago(60),
+        )
+
+        for days, is_dead in ((31, True), (29, False)):
+            event_id = uuid4()
+            await db.execute(
+                """
+                INSERT INTO {{tables.app_events}} (
+                    event_id, team_id, app_id, event_type, producer_key_id,
+                    producer_did_key, created_at
+                )
+                VALUES ($1, $2, 'tracker', 'tracker.changed', 'key-1', 'did:key:producer', $3)
+                """,
+                event_id,
+                team_id,
+                _ago(days),
+            )
+            if is_dead:
+                dead["app_events"].add(event_id)
+
+        # Consumed 31 and 29 days ago, and one sent 60 days ago that its
+        # target has not received.
+        for consumed_at, is_dead in ((_ago(31), True), (_ago(29), False), (None, False)):
+            signal_id = uuid4()
+            await db.execute(
+                """
+                INSERT INTO {{tables.control_signals}} (
+                    signal_id, team_id, target_agent_id, from_agent_id,
+                    signal_type, created_at, consumed_at
+                )
+                VALUES ($1, $2, $3, $3, 'pause', $4, $5)
+                """,
+                signal_id,
+                team_id,
+                agent_id,
+                _ago(60),
+                consumed_at,
+            )
+            if is_dead:
+                dead["control_signals"].add(signal_id)
+
+        for delivered_at, is_dead in ((_ago(31), True), (_ago(29), False), (None, False)):
+            outbox_id = uuid4()
+            await db.execute(
+                """
+                INSERT INTO {{tables.lifecycle_side_effect_outbox}} (
+                    outbox_id, operation_id, effect_order, team_id, effect_kind,
+                    payload_json, created_at, delivered_at
+                )
+                VALUES ($1, $2, 0, $3, 'presence_clear', '{}'::jsonb, $4, $5)
+                """,
+                outbox_id,
+                uuid4(),
+                team_id,
+                _ago(60),
+                delivered_at,
+            )
+            if is_dead:
+                dead["lifecycle_side_effect_outbox"].add(outbox_id)
+
+        for delivered_at, is_dead in ((_ago(31), True), (_ago(29), False), (None, False)):
+            outbox_id = uuid4()
+            message_id = uuid4()
+            await db.execute(
+                """
+                INSERT INTO {{tables.message_ingress_receipts}} (
+                    message_id, storage_kind, legacy_unreplayable
+                )
+                VALUES ($1, 'mail', TRUE)
+                """,
+                message_id,
+            )
+            await db.execute(
+                """
+                INSERT INTO {{tables.federation_mutation_outbox}} (
+                    outbox_id, message_id, event_type, payload_json, created_at, delivered_at
+                )
+                VALUES ($1, $2, 'message.sent', $3::jsonb, $4, $5)
+                """,
+                outbox_id,
+                message_id,
+                json.dumps({"team_id": team_id}),
+                _ago(60),
+                delivered_at,
+            )
+            if is_dead:
+                dead["federation_mutation_outbox"].add(outbox_id)
+
+    await db.execute(
+        """
+        INSERT INTO {{tables.tasks}} (team_id, task_number, task_ref_suffix, title, created_at)
+        VALUES ($1, 1, 'aaaa', 'task', $2)
         """,
-        old_operation_id,
-        recent_operation_id,
-        pending_operation_id,
+        QUIET,
+        _ago(60),
     )
+    return dead
 
-    result = await gc_delivered_lifecycle_side_effects(
-        _db_infra(aweb_db), ttl_days=30
-    )
 
-    assert result == {"lifecycle_side_effects_deleted": 1}
-    remaining = await aweb_db.fetch_all(
+async def _primary_keys(db) -> dict[str, set]:
+    keys = {}
+    for rule in DEAD_ROW_RULES:
+        rows = await db.fetch_all(
+            f"SELECT {rule.key} AS key FROM {{{{tables.{rule.table}}}}}"
+        )
+        keys[rule.table] = {row["key"] for row in rows}
+    return keys
+
+
+async def _row_counts_outside_rules(db) -> dict[str, int]:
+    """Row count of every table in the schema that no rule names."""
+    tables = await db.fetch_all(
         """
-        SELECT operation_id
-        FROM {{tables.lifecycle_side_effect_outbox}}
-        ORDER BY operation_id
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = 'aweb' AND table_type = 'BASE TABLE'
+        ORDER BY table_name
         """
     )
-    assert {row["operation_id"] for row in remaining} == {
-        recent_operation_id,
-        pending_operation_id,
+    counts = {}
+    for row in tables:
+        table = row["table_name"]
+        if table in RULE_TABLES:
+            continue
+        counts[table] = await db.fetch_value(f'SELECT COUNT(*) FROM aweb."{table}"')
+    return counts
+
+
+def _report(dead: dict[str, set], *, apply: bool, deleted: bool) -> dict:
+    return {
+        "apply": apply,
+        "tables": {
+            table: {
+                "older_than_days": 30,
+                "dead_rows": len(dead[table]),
+                "deleted_rows": len(dead[table]) if deleted else 0,
+            }
+            for table in RULE_TABLES
+        },
     }
 
 
+def test_rules_name_the_expected_tables():
+    assert tuple(sorted(rule.table for rule in DEAD_ROW_RULES)) == RULE_TABLES
+
+
 @pytest.mark.asyncio
-async def test_gc_inactive_scopes_hard_deletes_populated_team(aweb_cloud_db):
-    aweb_db = aweb_cloud_db.aweb_db
-    team_id = "backend:acme.com"
-    active_team_id = "active:acme.com"
-    created_at = datetime.now(timezone.utc) - timedelta(days=45)
-    agent_id = uuid4()
-    active_agent_id = uuid4()
-    repo_id = uuid4()
-    workspace_id = uuid4()
-    task_id = uuid4()
-    other_task_id = uuid4()
-    session_id = uuid4()
-    chat_message_id = uuid4()
-    read_receipt_agent_id = agent_id
+async def test_dry_run_counts_dead_rows_and_deletes_nothing(aweb_cloud_db):
+    db = aweb_cloud_db.aweb_db
+    dead = await _seed(db)
+    assert all(len(keys) == 2 for keys in dead.values())
+    keys_before = await _primary_keys(db)
+    others_before = await _row_counts_outside_rules(db)
 
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key, created_at)
-        VALUES
-            ($1, 'acme.com', 'Backend', 'did:key:team-inactive', $2),
-            ($3, 'acme.com', 'Active', 'did:key:team-active', $2)
-        """,
-        team_id,
-        created_at,
-        active_team_id,
-    )
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (
-            agent_id, team_id, did_key, alias, human_name, role, created_at
-        )
-        VALUES
-            ($1, $2, $3, $4, $5, $6, $7),
-            ($8, $9, $10, $11, $12, $13, NOW())
-        """,
-        agent_id,
-        team_id,
-        "did:key:inactive",
-        "alice",
-        "Alice",
-        "developer",
-        created_at,
-        active_agent_id,
-        active_team_id,
-        "did:key:active",
-        "bob",
-        "Bob",
-        "developer",
-    )
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.repos}} (id, team_id, origin_url, canonical_origin, name, created_at)
-        VALUES ($1, $2, $3, $3, $4, $5)
-        """,
-        repo_id,
-        team_id,
-        "https://example.com/acme/backend.git",
-        "backend",
-        created_at,
-    )
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.workspaces}} (
-            workspace_id, team_id, agent_id, repo_id, alias, human_name,
-            role, hostname, workspace_path, created_at, updated_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
-        """,
-        workspace_id,
-        team_id,
-        agent_id,
-        repo_id,
-        "alice",
-        "Alice",
-        "developer",
-        "mac.local",
-        "/tmp/backend",
-        created_at,
-    )
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.messages}} (
-            from_did, to_did, from_alias, to_alias, subject, body, team_id, from_agent_id, to_agent_id, created_at
-        )
-        VALUES ($1, $2, 'alice', 'alice', 'subject', 'body', $3, $4, $4, $5)
-        """,
-        "did:key:inactive",
-        "did:key:inactive",
-        team_id,
-        agent_id,
-        created_at,
-    )
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by, created_at)
-        VALUES ($1, $2, 'alice', $3)
-        """,
-        session_id,
-        team_id,
-        created_at,
-    )
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, joined_at)
-        VALUES ($1, 'did:key:inactive', $2, 'alice', $3)
-        """,
-        session_id,
-        agent_id,
-        created_at,
-    )
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.chat_messages}} (
-            message_id, session_id, from_agent_id, from_did, from_alias, body, created_at
-        )
-        VALUES ($1, $2, $3, 'did:key:inactive', 'alice', 'hello', $4)
-        """,
-        chat_message_id,
-        session_id,
-        agent_id,
-        created_at,
-    )
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.chat_read_receipts}} (
-            session_id, did, agent_id, last_read_message_id, last_read_at
-        )
-        VALUES ($1, 'did:key:inactive', $2, $3, $4)
-        """,
-        session_id,
-        read_receipt_agent_id,
-        chat_message_id,
-        created_at,
-    )
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.contacts}} (owner_did, contact_address, label, created_at)
-        VALUES ('did:key:inactive', 'did:key:carol', 'Carol', $1)
-        """,
-        created_at,
-    )
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.control_signals}} (
-            team_id, target_agent_id, from_agent_id, signal_type, created_at
-        )
-        VALUES ($1, $2, $2, 'interrupt', $3)
-        """,
-        team_id,
-        agent_id,
-        created_at,
-    )
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.lifecycle_side_effect_outbox}} (
-            operation_id, effect_order, team_id, effect_kind, payload_json
-        )
-        VALUES ($1, 0, $2, 'presence_clear', '{"workspace_ids": []}'::jsonb)
-        """,
-        uuid4(),
-        team_id,
-    )
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.tasks}} (
-            task_id, team_id, task_number, task_ref_suffix, title, created_at
-        )
-        VALUES
-            ($1, $2, 1, '1', 'Root task', $3),
-            ($4, $2, 2, '2', 'Dependent task', $3)
-        """,
-        task_id,
-        team_id,
-        created_at,
-        other_task_id,
-    )
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.task_comments}} (task_id, team_id, author_alias, body, created_at)
-        VALUES ($1, $2, 'alice', 'comment', $3)
-        """,
-        task_id,
-        team_id,
-        created_at,
-    )
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.task_dependencies}} (task_id, depends_on_id, team_id)
-        VALUES ($1, $2, $3)
-        """,
-        other_task_id,
-        task_id,
-        team_id,
-    )
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.task_counters}} (team_id, next_number)
-        VALUES ($1, 3)
-        """,
-        team_id,
-    )
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.task_root_counters}} (team_id, next_number)
-        VALUES ($1, 2)
-        """,
-        team_id,
-    )
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.task_claims}} (
-            team_id, workspace_id, alias, human_name, task_ref, apex_task_ref, claimed_at
-        )
-        VALUES ($1, $2, 'alice', 'Alice', 'aweb-aafx.63', 'aweb-aafx.63', $3)
-        """,
-        team_id,
-        workspace_id,
-        created_at,
-    )
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.reservations}} (
-            team_id, resource_key, holder_alias, holder_agent_id, acquired_at
-        )
-        VALUES ($1, 'repo:backend', 'alice', $2, $3)
-        """,
-        team_id,
-        agent_id,
-        created_at,
-    )
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.team_roles}} (
-            team_id, version, bundle_json, is_active, created_by_alias, created_at, updated_at
-        )
-        VALUES ($1, 1, '[]'::jsonb, TRUE, 'alice', $2, $2)
-        """,
-        team_id,
-        created_at,
-    )
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.team_instructions}} (
-            team_id, version, document_json, is_active, created_by_alias, created_at, updated_at
-        )
-        VALUES ($1, 1, '{}'::jsonb, TRUE, 'alice', $2, $2)
-        """,
-        team_id,
-        created_at,
-    )
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.audit_log}} (
-            team_id, alias, event_type, resource, details, created_at
-        )
-        VALUES ($1, 'alice', 'task.created', 'task', '{}'::jsonb, $2)
-        """,
-        team_id,
-        created_at,
-    )
-    await aweb_db.execute(
-        """
-        INSERT INTO {{tables.messages}} (
-            from_did, to_did, from_alias, to_alias, subject, body, team_id, from_agent_id, to_agent_id, created_at
-        )
-        VALUES ('did:key:active', 'did:key:active', 'bob', 'bob', 'recent', 'keep', $1, $2, $2, NOW())
-        """,
-        active_team_id,
-        active_agent_id,
-    )
+    report = await delete_dead_rows(db)
 
-    active_task_id = uuid4()
-    await aweb_db.execute(
-        """INSERT INTO {{tables.tasks}} (task_id,team_id,task_number,task_ref_suffix,title)
-           VALUES ($1,$2,1,'aaaa','Keep the active team decision')""",
-        active_task_id, active_team_id,
-    )
-    # Both teams have all three C2 dependency levels. Cleanup must remove only
-    # the inactive team's evidence, in foreign-key order, before its task.
-    for scope, scoped_task in ((team_id, task_id), (active_team_id, active_task_id)):
-        receipt_id = uuid4()
-        await aweb_db.execute(
-            """INSERT INTO {{tables.task_app_requests}}
-               (task_id,team_id,app_id,installation_id,installation_generation,originator_did,
-                external_request_id,task_body_sha256,task_authorization,receipt)
-               VALUES ($1,$2,'fixture','install-fixture',1,'did:key:originator','request-1',$3,'{}','{}')""",
-            scoped_task, scope, "0" * 64,
-        )
-        await aweb_db.execute(
-            """INSERT INTO {{tables.task_answers}}
-               (receipt_id,task_id,question_rev,task_rev,answer_key,answer_sha256,
-                answered_by_did,certificate_id,stage_receipt)
-               VALUES ($1,$2,1,1,'answer-1',$3,'did:key:answerer','certificate-1','{}')""",
-            receipt_id, scoped_task, "0" * 64,
-        )
-        await aweb_db.execute(
-            """INSERT INTO {{tables.task_answer_stage_nonces}}
-               (team_id,app_id,installation_id,nonce,receipt_id)
-               VALUES ($1,'fixture','install-fixture',$2,$3)""",
-            scope, "a" * 32, receipt_id,
-        )
+    assert report == _report(dead, apply=False, deleted=False)
+    assert await _primary_keys(db) == keys_before
+    assert await _row_counts_outside_rules(db) == others_before
 
-    result = await gc_inactive_scopes(_db_infra(aweb_db), ttl_days=30)
 
-    assert result == {"scopes_deleted": 1}
+@pytest.mark.asyncio
+async def test_apply_deletes_dead_rows_past_the_age_in_every_team_and_nothing_else(aweb_cloud_db):
+    db = aweb_cloud_db.aweb_db
+    dead = await _seed(db)
+    keys_before = await _primary_keys(db)
+    others_before = await _row_counts_outside_rules(db)
 
-    counts = {
-        "teams": ("SELECT COUNT(*) AS count FROM aweb.teams WHERE team_id = $1", (team_id,)),
-        "agents": ("SELECT COUNT(*) AS count FROM aweb.agents WHERE team_id = $1", (team_id,)),
-        "messages": ("SELECT COUNT(*) AS count FROM aweb.messages WHERE from_did = $1", ("did:key:inactive",)),
-        "chat_sessions": ("SELECT COUNT(*) AS count FROM aweb.chat_sessions WHERE session_id = $1", (session_id,)),
-        "chat_participants": ("""
-            SELECT COUNT(*) AS count
-            FROM aweb.chat_participants cp
-            WHERE cp.did = $1
-        """, ("did:key:inactive",)),
-        "chat_messages": ("""
-            SELECT COUNT(*) AS count
-            FROM aweb.chat_messages cm
-            WHERE cm.session_id = $1
-        """, (session_id,)),
-        "chat_read_receipts": ("""
-            SELECT COUNT(*) AS count
-            FROM aweb.chat_read_receipts crr
-            WHERE crr.did = $1
-        """, ("did:key:inactive",)),
-        "contacts": ("SELECT COUNT(*) AS count FROM aweb.contacts WHERE owner_did = $1", ("did:key:inactive",)),
-        "control_signals": ("SELECT COUNT(*) AS count FROM aweb.control_signals WHERE team_id = $1", (team_id,)),
-        "lifecycle_side_effect_outbox": ("SELECT COUNT(*) AS count FROM aweb.lifecycle_side_effect_outbox WHERE team_id = $1", (team_id,)),
-        "repos": ("SELECT COUNT(*) AS count FROM aweb.repos WHERE team_id = $1", (team_id,)),
-        "workspaces": ("SELECT COUNT(*) AS count FROM aweb.workspaces WHERE team_id = $1", (team_id,)),
-        "tasks": ("SELECT COUNT(*) AS count FROM aweb.tasks WHERE team_id = $1", (team_id,)),
-        "task_app_requests": ("SELECT COUNT(*) AS count FROM aweb.task_app_requests WHERE team_id = $1", (team_id,)),
-        "task_answers": ("SELECT COUNT(*) AS count FROM aweb.task_answers WHERE task_id = $1", (task_id,)),
-        "task_answer_stage_nonces": ("SELECT COUNT(*) AS count FROM aweb.task_answer_stage_nonces WHERE team_id = $1", (team_id,)),
-        "task_comments": ("SELECT COUNT(*) AS count FROM aweb.task_comments WHERE team_id = $1", (team_id,)),
-        "task_dependencies": ("SELECT COUNT(*) AS count FROM aweb.task_dependencies WHERE team_id = $1", (team_id,)),
-        "task_counters": ("SELECT COUNT(*) AS count FROM aweb.task_counters WHERE team_id = $1", (team_id,)),
-        "task_root_counters": ("SELECT COUNT(*) AS count FROM aweb.task_root_counters WHERE team_id = $1", (team_id,)),
-        "task_claims": ("SELECT COUNT(*) AS count FROM aweb.task_claims WHERE team_id = $1", (team_id,)),
-        "reservations": ("SELECT COUNT(*) AS count FROM aweb.reservations WHERE team_id = $1", (team_id,)),
-        "team_roles": ("SELECT COUNT(*) AS count FROM aweb.team_roles WHERE team_id = $1", (team_id,)),
-        "team_instructions": ("SELECT COUNT(*) AS count FROM aweb.team_instructions WHERE team_id = $1", (team_id,)),
-        "audit_log": ("SELECT COUNT(*) AS count FROM aweb.audit_log WHERE team_id = $1", (team_id,)),
-    }
-    for table, (sql, params) in counts.items():
-        row = await aweb_db.fetch_one(sql, *params)
-        assert row is not None
-        expected = 0
-        if table in {"messages", "chat_sessions", "chat_participants", "chat_messages", "chat_read_receipts", "contacts"}:
-            expected = 1
-        assert row["count"] == expected, table
+    report = await delete_dead_rows(db, apply=True)
 
-    active_team = await aweb_db.fetch_one(
-        """
-        SELECT team_id FROM {{tables.teams}}
-        WHERE team_id = $1
-        """,
-        active_team_id,
-    )
-    assert active_team is not None
-    for table in ("tasks", "task_app_requests", "task_answers"):
-        assert await aweb_db.fetch_value(
-            f"SELECT count(*) FROM aweb.{table} WHERE task_id = $1", active_task_id,
-        ) == 1
-    assert await aweb_db.fetch_value(
-        "SELECT count(*) FROM {{tables.task_answer_stage_nonces}} WHERE team_id = $1", active_team_id,
+    assert report == _report(dead, apply=True, deleted=True)
+    keys_after = await _primary_keys(db)
+    for table in RULE_TABLES:
+        assert keys_after[table] == keys_before[table] - dead[table], table
+        # The dead row short of the age, and the live row where the table has
+        # one, remain in each team.
+        assert len(keys_after[table]) == (2 if table == "app_events" else 4), table
+    assert await _row_counts_outside_rules(db) == others_before
+
+    second = await delete_dead_rows(db, apply=True)
+
+    assert second == _report({table: set() for table in RULE_TABLES}, apply=True, deleted=True)
+    assert await _primary_keys(db) == keys_after
+
+
+@pytest.mark.asyncio
+async def test_quiet_team_with_tasks_survives(aweb_cloud_db):
+    db = aweb_cloud_db.aweb_db
+    await _seed(db)
+
+    await delete_dead_rows(db, apply=True)
+
+    assert await db.fetch_value(
+        "SELECT COUNT(*) FROM {{tables.teams}} WHERE team_id = $1", QUIET
     ) == 1
+    assert await db.fetch_value(
+        "SELECT COUNT(*) FROM {{tables.agents}} WHERE team_id = $1 AND deleted_at IS NULL", QUIET
+    ) == 1
+    assert await db.fetch_value(
+        "SELECT COUNT(*) FROM {{tables.tasks}} WHERE team_id = $1 AND deleted_at IS NULL", QUIET
+    ) == 1
+
+
+@pytest.mark.asyncio
+async def test_apply_deletes_every_dead_row_in_batches(aweb_cloud_db):
+    db = aweb_cloud_db.aweb_db
+    dead = await _seed(db)
+    extra = [uuid4() for _ in range(5)]
+    for event_id in extra:
+        await db.execute(
+            """
+            INSERT INTO {{tables.app_events}} (
+                event_id, team_id, app_id, event_type, producer_key_id,
+                producer_did_key, created_at
+            )
+            VALUES ($1, $2, 'tracker', 'tracker.changed', 'key-1', 'did:key:producer', $3)
+            """,
+            event_id,
+            QUIET,
+            _ago(45),
+        )
+    dead["app_events"].update(extra)
+    keys_before = await _primary_keys(db)
+
+    # Seven dead app events: three full batches of two and a last batch of one.
+    report = await delete_dead_rows(db, apply=True, batch_size=2)
+
+    assert report == _report(dead, apply=True, deleted=True)
+    keys_after = await _primary_keys(db)
+    for table in RULE_TABLES:
+        assert keys_after[table] == keys_before[table] - dead[table], table
+
+
+@pytest.mark.asyncio
+async def test_each_rule_has_an_index_on_its_age_column(aweb_cloud_db):
+    db = aweb_cloud_db.aweb_db
+    rows = await db.fetch_all(
+        "SELECT tablename, indexdef FROM pg_indexes WHERE schemaname = 'aweb'"
+    )
+    for rule in DEAD_ROW_RULES:
+        leading = [
+            row["indexdef"]
+            for row in rows
+            if row["tablename"] == rule.table
+            and f"({rule.age_column})" in row["indexdef"].replace(" DESC", "")
+        ]
+        assert leading, f"{rule.table} has no index on ({rule.age_column})"
+
+
+@pytest.mark.asyncio
+async def test_cli_reports_by_default_and_deletes_with_apply(test_db_factory):
+    import asyncio
+    import os
+    import sys
+
+    from awid.db_config import build_database_config
+    from pgdbm import AsyncDatabaseManager
+
+    from aweb.db import DatabaseInfra
+
+    base = await test_db_factory.create_db(suffix="delete_dead_rows_cli")
+    await base.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public")
+    pool = await AsyncDatabaseManager.create_shared_pool(
+        build_database_config(connection_string=base.config.get_dsn())
+    )
+    infra = DatabaseInfra()
+    await infra.initialize(shared_pool=pool)
+    db = infra.get_manager()
+    try:
+        dead = await _seed(db)
+        keys_before = await _primary_keys(db)
+
+        async def run_cli(*args: str) -> dict:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, "-c", "from aweb.cli import app; app()",
+                "delete-dead-rows", *args,
+                env={**os.environ, "AWEB_DATABASE_URL": base.config.get_dsn()},
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(process.communicate(), 20)
+            assert process.returncode == 0, stderr.decode()
+            return json.loads(stdout)
+
+        assert await run_cli() == _report(dead, apply=False, deleted=False)
+        assert await _primary_keys(db) == keys_before
+
+        assert await run_cli("--apply") == _report(dead, apply=True, deleted=True)
+        keys_after = await _primary_keys(db)
+        for table in RULE_TABLES:
+            assert keys_after[table] == keys_before[table] - dead[table], table
+    finally:
+        await infra.close()
+        await pool.close()
