@@ -21,12 +21,11 @@ from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
 from aweb_logs import read_store
-from aweb_logs.chain import format_time
+from aweb_logs.chain import GOVERNANCE_HOOK, format_time
 
 logger = logging.getLogger(__name__)
 
 RETENTION_ACT = "logs.retention.set"
-GOVERNANCE_HOOK = "post-governance-hook"
 ALL_EVENTS = "all"
 _BATCH = 500
 

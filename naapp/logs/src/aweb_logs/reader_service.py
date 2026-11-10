@@ -33,6 +33,7 @@ from aweb_naapp.runtime.passkeys import PasskeyDelivery, Passkeys, RelyingParty
 from fastapi import APIRouter
 from pgdbm import AsyncDatabaseManager
 
+from aweb_logs.chain import GOVERNANCE_HOOK
 from aweb_logs.console_ui import console_pages_router
 from aweb_logs.governance import SELF_RECORDED_ACTS, LogsGovernance
 from aweb_logs.ledger import LogsSigner
@@ -45,7 +46,6 @@ from aweb_logs.read_routes import (
 )
 from aweb_logs.readers import ReaderDesignations, ReaderDirectory, ReaderRemovals
 
-GOVERNANCE_HOOK = "post-governance-hook"
 CREDENTIAL_AUDIT_MODULE = "aweb_logs_credential_audit"
 
 

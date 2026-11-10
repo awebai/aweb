@@ -17,7 +17,7 @@ from aweb_naapp.hooks.owner_act import Refused, VerifiedOwnerAct
 from aweb_naapp_testing.owner_acts import APP_ID, INSTALLATION_ID, TEAM_ID
 
 from aweb_logs.governance import GovernanceRefused
-from aweb_logs.ledger import append
+from aweb_logs.ledger import append, open_next_epoch, verify_epoch
 from aweb_logs.retention import apply_retention
 
 from .fixtures import _APP_EVENT, SECRETS_SEED
@@ -250,12 +250,12 @@ async def test_a_hold_id_is_set_once(world: World):
         await release(world, "hold-2")
 
 
-def another_apps_governance() -> tuple[bytes, str]:
+def another_apps_governance(**payload) -> tuple[bytes, str]:
     """A post-governance-hook event another app produced and logs received."""
     event = copy.deepcopy(_APP_EVENT)
     event["event_id"] = str(uuid.uuid4())
     event["hook"] = "post-governance-hook"
-    event["payload"] = {"act": "role.revoked", "direction": "narrowing"}
+    event["payload"] = payload or {"act": "role.revoked", "direction": "narrowing"}
     return hook_envelope.sign(SECRETS_SEED, event)
 
 
@@ -366,3 +366,77 @@ async def test_an_erasure_and_an_append_overlapping_on_unprojected_history_both_
     await appending
     first, second = (await purged(world)).values()
     assert first is not None and second is None
+
+
+async def verified(world: World, chain_epoch: int = 1) -> dict:
+    keys = frozenset({world.signer.did_key})
+    return await verify_epoch(
+        world.db, TEAM_ID, chain_epoch, receipt_keys=keys, checkpoint_keys=keys
+    )
+
+
+async def governance_positions(world: World) -> list[dict]:
+    """Where each of logs' own governance entries sits in the team's chain."""
+    rows = await world.db.fetch_all(
+        "SELECT chain_epoch, team_seq FROM {{tables.chain_events}} WHERE team_id = $1"
+        " AND hook = 'post-governance-hook' AND producer_origin = $2"
+        " ORDER BY chain_epoch, team_seq",
+        TEAM_ID,
+        LOGS,
+    )
+    return [{"chain_epoch": row["chain_epoch"], "team_seq": row["team_seq"]} for row in rows]
+
+
+async def test_verify_discloses_each_hold_from_its_chain_entries(world: World):
+    await appended(world, secret_use(seq=1), age=timedelta(days=1))
+    await hold(world, "hold-1")
+    await hold(world, "hold-2", actor_ref=AGENT)
+    await release(world, "hold-1")
+    set_1, set_2, released_1 = await governance_positions(world)
+    report = await verified(world)
+    assert report["intact"]
+    assert report["holds"] == [
+        {"hold_id": "hold-1", "hold_scope": "all", "set": set_1, "released": released_1},
+        {"hold_id": "hold-2", "hold_scope": "actor", "actor_ref": AGENT, "set": set_2,
+         "released": None},
+    ]  # fmt: skip
+
+
+async def test_verify_never_counts_another_producers_hold_acts(world: World):
+    await hold(world, "hold-1")
+    forged = {"direction": "widening", "hold_scope": "all", "reason_code": "litigation"}
+    await appended(
+        world,
+        another_apps_governance(act="logs.legal_hold.set", hold_id="forged", **forged),
+        age=timedelta(seconds=1),
+    )
+    await appended(
+        world,
+        another_apps_governance(act="logs.legal_hold.released", direction="narrowing",
+                                hold_id="hold-1"),
+        age=timedelta(seconds=1),
+    )  # fmt: skip
+    [set_1] = await governance_positions(world)
+    report = await verified(world)
+    assert report["intact"]
+    assert report["holds"] == [
+        {"hold_id": "hold-1", "hold_scope": "all", "set": set_1, "released": None}
+    ]
+
+
+async def test_verify_carries_each_hold_still_active_into_the_next_epoch(world: World):
+    await hold(world, "hold-1")
+    await hold(world, "hold-2")
+    await release(world, "hold-2")
+    await open_next_epoch(world.db, world.signer, TEAM_ID, at=datetime.now(UTC))
+    await hold(world, "hold-3", actor_ref=AGENT)
+    await release(world, "hold-1")
+    set_1, _, _, set_3, released_1 = await governance_positions(world)
+    assert (set_1["chain_epoch"], set_3["chain_epoch"], released_1["chain_epoch"]) == (1, 2, 2)
+    report = await verified(world, chain_epoch=2)
+    assert report["intact"]
+    assert report["holds"] == [
+        {"hold_id": "hold-1", "hold_scope": "all", "set": set_1, "released": released_1},
+        {"hold_id": "hold-3", "hold_scope": "actor", "actor_ref": AGENT, "set": set_3,
+         "released": None},
+    ]  # fmt: skip

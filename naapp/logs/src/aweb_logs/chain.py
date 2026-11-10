@@ -35,6 +35,9 @@ from aweb_naapp.hooks.strictjson import (
 from awid.did import did_from_public_key
 from nacl.signing import SigningKey
 
+# The hook logs records its own owner acts under, in each team's chain.
+GOVERNANCE_HOOK = "post-governance-hook"
+
 RECEIPT_PURPOSE = "logs-receipt"
 CHECKPOINT_PURPOSE = "logs-checkpoint"
 

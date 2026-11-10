@@ -24,6 +24,7 @@ from pgdbm.core import TransactionManager
 
 from aweb_logs import read_store
 from aweb_logs.chain import (
+    GOVERNANCE_HOOK,
     SALT_BYTES,
     Checkpoint,
     Genesis,
@@ -37,7 +38,13 @@ from aweb_logs.chain import (
     sign_checkpoint,
     sign_receipt,
 )
-from aweb_logs.verify import Content, StoredEvent, verify_chain, verify_deliveries
+from aweb_logs.verify import (
+    Content,
+    StoredEvent,
+    disclosed_holds,
+    verify_chain,
+    verify_deliveries,
+)
 
 
 @dataclass(frozen=True)
@@ -327,29 +334,71 @@ async def load_epoch(
 ) -> tuple[Genesis, list[StoredEvent]]:
     """One team epoch's genesis and stored events, in team_seq order, for verify."""
     epoch = await db.fetch_one(
-        "SELECT logs_origin, created_at, previous_checkpoint_sha256"
-        " FROM {{tables.chain_epochs}} WHERE team_id = $1 AND chain_epoch = $2",
+        "SELECT " + _GENESIS_COLUMNS + " FROM {{tables.chain_epochs}}"
+        " WHERE team_id = $1 AND chain_epoch = $2",
         team_id,
         chain_epoch,
     )
     if epoch is None:
         raise LookupError(f"team {team_id} has no epoch {chain_epoch}")
-    genesis = Genesis(
-        team_id=team_id,
-        chain_epoch=chain_epoch,
-        logs_origin=epoch["logs_origin"],
-        created_at=epoch["created_at"],
-        previous_checkpoint_sha256=epoch["previous_checkpoint_sha256"],
-    )
     rows = await db.fetch_all(
-        "SELECT team_seq, prev_event_hash, event_hash, received_at, hook, producer_origin,"
-        " content_commitment, salt, signing_bytes, signature, key_evidence, purge_act"
-        " FROM {{tables.chain_events}} WHERE team_id = $1 AND chain_epoch = $2"
-        " ORDER BY team_seq",
+        "SELECT " + _EVENT_COLUMNS + " FROM {{tables.chain_events}}"
+        " WHERE team_id = $1 AND chain_epoch = $2 ORDER BY team_seq",
         team_id,
         chain_epoch,
     )
-    return genesis, [_stored_event(team_id, chain_epoch, row) for row in rows]
+    return _genesis(team_id, epoch), [_stored_event(team_id, chain_epoch, row) for row in rows]
+
+
+async def load_governance_before(
+    db: AsyncDatabaseManager | TransactionManager, team_id: str, chain_epoch: int
+) -> list[tuple[Genesis, list[StoredEvent]]]:
+    """Each of the team's epochs before ``chain_epoch``, in order, with only
+    logs' own governance entries in it: the chain that carries a hold across
+    epochs."""
+    epochs = await db.fetch_all(
+        "SELECT " + _GENESIS_COLUMNS + " FROM {{tables.chain_epochs}}"
+        " WHERE team_id = $1 AND chain_epoch < $2 ORDER BY chain_epoch",
+        team_id,
+        chain_epoch,
+    )
+    rows = await db.fetch_all(
+        "SELECT " + _EVENT_COLUMNS + " FROM {{tables.chain_events}} e"
+        " JOIN {{tables.chain_epochs}} p USING (team_id, chain_epoch)"
+        " WHERE e.team_id = $1 AND e.chain_epoch < $2 AND e.hook = $3"
+        " AND e.producer_origin = p.logs_origin ORDER BY e.chain_epoch, e.team_seq",
+        team_id,
+        chain_epoch,
+        GOVERNANCE_HOOK,
+    )
+    return [
+        (
+            _genesis(team_id, epoch),
+            [
+                _stored_event(team_id, epoch["chain_epoch"], row)
+                for row in rows
+                if row["chain_epoch"] == epoch["chain_epoch"]
+            ],
+        )
+        for epoch in epochs
+    ]
+
+
+_GENESIS_COLUMNS = "chain_epoch, logs_origin, created_at, previous_checkpoint_sha256"
+_EVENT_COLUMNS = (
+    "chain_epoch, team_seq, prev_event_hash, event_hash, received_at, hook, producer_origin,"
+    " content_commitment, salt, signing_bytes, signature, key_evidence, purge_act"
+)
+
+
+def _genesis(team_id: str, row: Mapping[str, Any]) -> Genesis:
+    return Genesis(
+        team_id=team_id,
+        chain_epoch=row["chain_epoch"],
+        logs_origin=row["logs_origin"],
+        created_at=row["created_at"],
+        previous_checkpoint_sha256=row["previous_checkpoint_sha256"],
+    )
 
 
 def _stored_event(team_id: str, chain_epoch: int, row: Mapping[str, Any]) -> StoredEvent:
@@ -393,6 +442,7 @@ async def verify_epoch(
     async with db.transaction() as tx:
         await _existing_head(tx, team_id)
         genesis, events = await load_epoch(tx, team_id, chain_epoch)
+        earlier = await load_governance_before(tx, team_id, chain_epoch)
         faults = await tx.fetch_all(
             "SELECT f.fault_id, f.event_id, e.team_seq, f.kind, f.refused_sha256, f.recorded_at"
             " FROM {{tables.chain_faults}} f JOIN {{tables.chain_events}} e"
@@ -404,6 +454,9 @@ async def verify_epoch(
         genesis, events, receipt_keys=receipt_keys, checkpoint_keys=checkpoint_keys,
         receipts=receipts, checkpoints=checkpoints,
     ).to_json()
+    report["holds"] = [
+        hold.to_json() for hold in disclosed_holds([*earlier, (genesis, events)])
+    ]
     report["delivery"] = verify_deliveries(genesis, events).to_json()
     report["conflicts"] = [
         {"fault_id": f["fault_id"], "event_id": str(f["event_id"]), "team_seq": f["team_seq"],

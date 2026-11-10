@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any
 
@@ -19,6 +19,7 @@ from aweb_naapp.hooks.strictjson import Refused
 from awid.log import canonical_server_origin
 
 from aweb_logs.chain import (
+    GOVERNANCE_HOOK,
     Checkpoint,
     Genesis,
     Link,
@@ -63,6 +64,35 @@ class PurgedRange:
     first: int
     last: int
     act: str
+
+
+@dataclass(frozen=True)
+class Position:
+    chain_epoch: int
+    team_seq: int
+
+    def to_json(self) -> dict[str, int]:
+        return {"chain_epoch": self.chain_epoch, "team_seq": self.team_seq}
+
+
+@dataclass(frozen=True)
+class Hold:
+    """A legal hold as logs' own chain entries disclose it: where its set entry
+    is, and where its release is once released."""
+
+    hold_id: str
+    hold_scope: str
+    actor_ref: str | None
+    set: Position
+    released: Position | None = None
+
+    def to_json(self) -> dict[str, Any]:
+        disclosed: dict[str, Any] = {"hold_id": self.hold_id, "hold_scope": self.hold_scope}
+        if self.actor_ref is not None:
+            disclosed["actor_ref"] = self.actor_ref
+        disclosed["set"] = self.set.to_json()
+        disclosed["released"] = None if self.released is None else self.released.to_json()
+        return disclosed
 
 
 @dataclass(frozen=True)
@@ -247,6 +277,54 @@ def _interval(event: hook_envelope.Envelope, binding: Any, kind: str) -> dict[st
     names = ("binding_id", "app_id", "origin", "installation_id", "generation", "digest",
              "method", "path", "active_from")
     return {name: binding[name] for name in names}
+
+
+def disclosed_holds(
+    epochs: Sequence[tuple[Genesis, Sequence[StoredEvent]]],
+) -> tuple[Hold, ...]:
+    """The legal holds the last of a team's ``epochs`` discloses, from the
+    chain alone: each hold still active at its start, carried from the earlier
+    epochs, and each hold set in it, with its release if released. ``epochs``
+    are in order and need hold only logs' governance entries before the last.
+
+    Only logs' own entries count: a retained ``post-governance-hook`` event
+    whose producer origin is its epoch's logs origin and that verifies. A hold
+    act any other producer signs is never a hold."""
+    holds: dict[str, Hold] = {}
+    for genesis, events in epochs:
+        holds = {hold_id: hold for hold_id, hold in holds.items() if hold.released is None}
+        for position, payload in _own_governance(genesis, events):
+            if payload["act"] == "logs.legal_hold.set" and payload["hold_id"] not in holds:
+                holds[payload["hold_id"]] = Hold(
+                    payload["hold_id"], payload["hold_scope"], payload.get("actor_ref"), position
+                )
+            elif payload["act"] == "logs.legal_hold.released":
+                hold = holds.get(payload["hold_id"])
+                if hold is not None and hold.released is None:
+                    holds[hold.hold_id] = replace(hold, released=position)
+    return tuple(holds.values())
+
+
+def _own_governance(
+    genesis: Genesis, events: Sequence[StoredEvent]
+) -> list[tuple[Position, Mapping[str, Any]]]:
+    """The payloads of logs' own retained, verifying governance entries in one
+    epoch, in chain order, each with its position."""
+    own = []
+    for stored in sorted(events, key=lambda stored: stored.link.team_seq):
+        link = stored.link
+        if (
+            link.hook != GOVERNANCE_HOOK
+            or link.producer_origin != genesis.logs_origin
+            or stored.content is None
+            or _event_fault(genesis, stored, linked=True) is not None
+        ):
+            continue
+        event = hook_envelope.verify(
+            stored.content.signing_bytes, stored.content.signature, team_id=genesis.team_id
+        )
+        own.append((Position(link.chain_epoch, link.team_seq), event.fields["payload"]))
+    return own
 
 
 def verify_chain(
