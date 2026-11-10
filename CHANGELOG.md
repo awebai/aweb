@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `aw --json` prints every number with the digits the command produced.
+  Integers above 2^53 were rounded to the nearest value a 64-bit float holds.
+
 - `RegistryClient.list_addresses` and `RegistryClient.list_did_addresses` (and
   their cached forms) follow the registry's cursor until `has_more` is false
   and return every address; they returned the first 50. A cursor that does not
