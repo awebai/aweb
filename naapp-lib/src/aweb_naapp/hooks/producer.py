@@ -227,6 +227,39 @@ class HookProducer:
             gate=True,
         )
 
+    async def enqueue_self_recorded(
+        self,
+        tx: TransactionManager,
+        *,
+        team_id: str,
+        payload: Mapping[str, Any],
+        actor: Mapping[str, Any],
+        occurred_at: datetime,
+        signed_trace_id: str | None = None,
+    ) -> UUID:
+        """Store a governance event that its app also records in its own audit
+        chain in ``tx``, with no registered-target gate.
+
+        Only a governance act that the app's reviewed code exempts reaches
+        this, through the credential recorder, which refuses the exemption
+        unless the app writes each event to its own chain in the transaction
+        that enqueued it (ruling ed36580d). The event is still enqueued and
+        owed to every target as usual; only the gate is not applied. Catalog,
+        envelope, key and atomic storage checks remain.
+        """
+        return await self._enqueue(
+            tx,
+            hook="post-governance-hook",
+            team_id=team_id,
+            payload=payload,
+            actor=actor,
+            occurred_at=occurred_at,
+            result_status="success",
+            signed_trace_id=signed_trace_id,
+            view=None,
+            gate=False,
+        )
+
     async def enqueue_refusal(
         self,
         tx: TransactionManager,

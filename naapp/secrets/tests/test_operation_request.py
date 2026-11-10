@@ -14,7 +14,6 @@ from typing import Any
 import pytest
 from aweb_naapp.egress import EgressRefused, canonical_url, match_destination
 from aweb_naapp.egress.addresses import InternalDestinations
-from aweb_naapp.egress.send import MAX_RESPONSE_BYTES
 
 from aweb_secrets.operation import OperationTemplate
 from aweb_secrets.operation_request import render_operation
@@ -84,8 +83,8 @@ def test_the_template_response_bound_applies_above_the_egress_default() -> None:
         }
     )
     request = _render(template, PARAMS, headers=[])
-    assert request.bounds.max_response_bytes == MAX_RESPONSE_BYTES == 16 * 1024 * 1024
-    assert request.max_bytes == MAX_RESPONSE_BYTES
+    assert request.bounds.max_response_bytes == 16 * 1024 * 1024
+    assert request.max_bytes == 16 * 1024 * 1024
 
 
 @pytest.mark.parametrize(
