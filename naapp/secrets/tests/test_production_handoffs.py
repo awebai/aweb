@@ -1,5 +1,6 @@
 """The production origins mount shared handoffs without creating authority."""
 
+import asyncio
 import hashlib
 import json
 import secrets
@@ -7,14 +8,20 @@ from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
+from aweb_naapp.dispatch import apply_dispatch_migrations
 from aweb_naapp.roles import PrincipalKey, has_role
 from aweb_naapp_testing import Member, did_key
 from aweb_naapp_testing.webauthn import SoftAuthenticator
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from nacl.signing import SigningKey
 
+from aweb_secrets.activity_service import ActivityReads
 from aweb_secrets.console import OwnerConsole, owner_console_router
+from aweb_secrets.console_access import ConsoleAccess, console_access_router
+from aweb_secrets.console_activity import ConsoleActivity, console_activity_router
+from aweb_secrets.console_reconciliation.authority import ConsoleReconciliationFence
 from aweb_secrets.owners import OWNER_ROLE
+from aweb_secrets.use_context import apply_use_context_migrations
 from tests.test_handoff_sessions import journey as journey
 from tests.test_handoff_sessions import signed_request
 from tests.test_handoff_sessions import world as world
@@ -174,3 +181,138 @@ async def test_owner_console_s4_uses_the_shared_verified_session_once(journey):
     ) as client:
         assert (await client.post("/logout", content=raw, headers=headers)).status_code == 200
         assert (await client.post("/logout", content=raw, headers=headers)).status_code == 401
+
+
+def bound_console(journey, *, prepared=True):
+    original = journey.world.console
+    return OwnerConsole(
+        db=original.db,
+        passkeys=original.passkeys,
+        directory=original.directory,
+        fence=original.fence,
+        verifier=original.verifier,
+        installation=original.installation,
+        credential_audit=original.credential_audit,
+        key_bound=journey.factory.current,
+        prepare_key_bound=journey.factory.prepare if prepared else None,
+    )
+
+
+async def read_app(journey):
+    await apply_dispatch_migrations(journey.world.db)
+    await apply_use_context_migrations(journey.world.db)
+    console = bound_console(journey)
+    app = FastAPI()
+    app.include_router(console_access_router(services=ConsoleAccess(console=console)))
+    app.include_router(
+        console_activity_router(services=ConsoleActivity(console=console, reads=ActivityReads()))
+    )
+    return app
+
+
+@pytest.mark.parametrize("path", ["/access", "/activity/events"])
+async def test_owner_read_consumers_accept_the_actual_key_bound_session(journey, path):
+    key, issued = await journey.open()
+    app = await read_app(journey)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app), base_url=journey.device.origin
+    ) as client:
+        response = await client.get(
+            path,
+            headers=signed_request(
+                key, journey.device.origin, "GET", path, b"", session_id=issued["session_id"]
+            ),
+        )
+    assert response.status_code == 200, response.text
+
+
+async def current_session(journey, key, issued):
+    headers = signed_request(
+        key, journey.device.origin, "GET", "/protected", b"", session_id=issued["session_id"]
+    )
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/protected",
+            "headers": [(name.lower().encode(), value.encode()) for name, value in headers.items()],
+        }
+    )
+    return await journey.factory.current(request)
+
+
+async def test_reconciliation_reuses_the_same_factory_b3_union_without_rearming(journey):
+    key, issued = await journey.open()
+    current = await current_session(journey, key, issued)
+    fence = ConsoleReconciliationFence(
+        console=bound_console(journey), current=current, scope=journey.world.admitted
+    )
+    async with journey.world.db.transaction() as tx:
+        with pytest.raises(RuntimeError, match="rollback preparation"):
+            async with tx.transaction():
+                handle = await fence.prepare(tx)
+                held = await journey.factory.prepare(
+                    tx, current, approver_pairs=[(current.scope, current.subject)]
+                )
+                assert handle is held.approvers
+                assert await fence.prepare(tx) is handle
+                await fence.check(tx)
+                raise RuntimeError("rollback preparation")
+        with pytest.raises(HTTPException):
+            await fence.prepare(tx)
+
+
+async def test_key_bound_owner_read_without_its_factory_dependency_refuses(journey):
+    key, issued = await journey.open()
+    current = await current_session(journey, key, issued)
+    with pytest.raises(HTTPException) as refusal:
+        await ConsoleAccess(console=bound_console(journey, prepared=False)).view(current)
+    assert (refusal.value.status_code, refusal.value.detail) == (401, "console_session_required")
+
+
+async def test_activity_rechecks_the_original_session_after_a_blocked_projection(journey):
+    key, issued = await journey.open()
+    app = await read_app(journey)
+    db = journey.world.db
+    await db.execute(
+        "UPDATE {{tables.console_sessions}} SET expires_at=clock_timestamp()+interval '2 seconds'"
+        " WHERE token_sha256=$1",
+        hashlib.sha256(issued["session_id"].encode()).digest(),
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app), base_url=journey.device.origin
+    ) as client:
+        async with db.transaction() as blocker:
+            pid = await blocker.fetch_value("SELECT pg_backend_pid()")
+            await blocker.execute(
+                "LOCK TABLE {{tables.broker_use_events}} IN ACCESS EXCLUSIVE MODE"
+            )
+            path = "/activity/events"
+            pending = asyncio.create_task(
+                client.get(
+                    path,
+                    headers=signed_request(
+                        key,
+                        journey.device.origin,
+                        "GET",
+                        path,
+                        b"",
+                        session_id=issued["session_id"],
+                    ),
+                )
+            )
+            try:
+                async with asyncio.timeout(5):
+                    while not await db.fetch_value(
+                        "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))",
+                        pid,
+                    ):
+                        assert not pending.done()
+                        await asyncio.sleep(0.01)
+                await asyncio.sleep(2.05)
+            except BaseException:
+                pending.cancel()
+                await asyncio.gather(pending, return_exceptions=True)
+                raise
+        response = await pending
+    assert (response.status_code, response.json()["detail"]) == (401, "console_session_required")
