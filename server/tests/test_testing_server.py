@@ -5,6 +5,7 @@ given; AWID_REGISTRY_URL names an address nothing listens on."""
 from __future__ import annotations
 
 import json
+import logging
 import os
 from types import SimpleNamespace
 from uuid import uuid4
@@ -54,14 +55,56 @@ async def test_the_server_is_healthy_and_reached_through_its_transport(stack) ->
     assert stack.registry.transport.calls[0].url.path == "/health"
 
 
+class _FailingRedis:
+    async def ping(self):
+        raise RuntimeError("redis refused")
+
+
+class _FailingDb:
+    def get_manager(self, name: str = "aweb"):
+        return self
+
+    async def fetch_value(self, _query: str):
+        raise RuntimeError("postgres refused")
+
+
 @pytest.mark.asyncio
-async def test_the_server_is_ready_and_live_with_its_dependencies_up(stack) -> None:
-    async with stack.server.client() as client:
-        health = await client.get("/health")
-        ready = await client.get("/ready")
-        live = await client.get("/live")
-    assert (ready.status_code, ready.json()) == (200, health.json())
+@pytest.mark.parametrize(
+    "redis_fails,database_fails",
+    [(False, False), (False, True), (True, False), (True, True)],
+    ids=["healthy", "database-fails", "redis-fails", "both-fail"],
+)
+async def test_health_and_ready_answer_503_when_a_dependency_fails_and_live_answers_200(
+    stack, caplog, redis_fails, database_fails
+) -> None:
+    caplog.set_level(logging.ERROR, logger="aweb.api")
+    state = stack.server.app.state
+    redis, db = state.redis, state.db
+    if redis_fails:
+        state.redis = _FailingRedis()
+    if database_fails:
+        state.db = _FailingDb()
+    try:
+        async with stack.server.client() as client:
+            health = await client.get("/health")
+            ready = await client.get("/ready")
+            live = await client.get("/live")
+    finally:
+        state.redis, state.db = redis, db
+
+    healthy = not (redis_fails or database_fails)
+    body = {
+        "status": "ok" if healthy else "unhealthy",
+        "checks": {
+            "redis": "error" if redis_fails else "ok",
+            "database": "error" if database_fails else "ok",
+        },
+    }
+    assert (health.status_code, health.json()) == (200 if healthy else 503, body)
+    assert (ready.status_code, ready.json()) == (health.status_code, body)
     assert (live.status_code, live.json()) == (200, {"status": "ok"})
+    assert ("Health check failed for Redis" in caplog.text) == redis_fails
+    assert ("Health check failed for database" in caplog.text) == database_fails
 
 
 @pytest.mark.asyncio

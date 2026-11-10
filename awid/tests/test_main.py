@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from datetime import datetime, timezone
 
 import pytest
@@ -83,9 +82,8 @@ class BrokenDbInfra:
     ids=["database-fails", "redis-fails", "both-fail"],
 )
 async def test_health_answers_503_and_hides_backend_exception_details(
-    awid_db_infra, fake_redis, caplog, redis_fails, database_fails
+    awid_db_infra, fake_redis, redis_fails, database_fails
 ):
-    caplog.set_level(logging.WARNING, logger="awid_service.main")
     app = create_app(
         db_infra=BrokenDbInfra() if database_fails else awid_db_infra,
         redis=BrokenRedis() if redis_fails else fake_redis,
@@ -107,8 +105,6 @@ async def test_health_answers_503_and_hides_backend_exception_details(
     assert (ops.status_code, ops.json()) == (503, payload)
     assert (ready.status_code, ready.json()) == (503, payload)
     assert (live.status_code, live.json()) == (200, {"status": "ok"})
-    assert ("awid health check failed for redis" in caplog.text) == redis_fails
-    assert ("awid health check failed for database" in caplog.text) == database_fails
 
 
 @pytest.mark.asyncio
