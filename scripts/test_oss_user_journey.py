@@ -78,7 +78,6 @@ class InboxParsingTests(unittest.TestCase):
         self.assertEqual(result.stdout, "")
 
 
-
 class MailRefusalTraceTests(unittest.TestCase):
     """Real global-member client traces, consumed by Phase 12e's exact check.
 
@@ -103,9 +102,9 @@ class MailRefusalTraceTests(unittest.TestCase):
             def log_message(self, *args):
                 pass
 
-            def respond(self, status, body):
+            def respond(self, status, body, content_type="application/json"):
                 self.send_response(status)
-                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
@@ -123,6 +122,12 @@ class MailRefusalTraceTests(unittest.TestCase):
                 posts.append((self.path, json.loads(self.rfile.read(
                     int(self.headers["Content-Length"])))))
                 status = remaining.pop(0)
+                if status is None:
+                    self.close_connection = True  # EOF before any HTTP response.
+                    return
+                if status == "html503":
+                    self.respond(503, b"<html><body>Service unavailable</body></html>", "text/html")
+                    return
                 body = (b'{"detail":{"code":"database_unavailable","retryable":true}}'
                         if status == 503 else b'{"detail":"Not found"}')
                 self.respond(status, body)
@@ -181,6 +186,43 @@ class MailRefusalTraceTests(unittest.TestCase):
         self.assertIn(b"retrying 1/3 (POST /v1/messages)", hidden)
         result = self.compare(hidden, missing)
         self.assertEqual(result.returncode, 0, result.stderr.decode())
+
+    def test_transport_retry_still_compares_the_final_refusal(self):
+        hidden = self.capture("carol", "11111111-1111-4111-8111-111111111111", [None, 404])
+        missing = self.capture("alice", "99999999-9999-4999-8999-999999999999", [404])
+        self.assertIn(b"retrying 1/3 (POST /v1/messages)", hidden)
+        result = self.compare(hidden, missing)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+
+    def test_sanitized_html_retry_does_not_need_a_raw_body_length(self):
+        hidden = self.capture("carol", "11111111-1111-4111-8111-111111111111", ["html503", 404])
+        missing = self.capture("alice", "99999999-9999-4999-8999-999999999999", [404])
+        result = self.compare(hidden, missing)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+
+    def test_exhausted_post_retries_remain_a_failure(self):
+        hidden = self.capture("carol", "11111111-1111-4111-8111-111111111111", [503] * 4)
+        missing = self.capture("alice", "99999999-9999-4999-8999-999999999999", [404])
+        result = self.compare(hidden, missing)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"final mail POST HTTP 503", result.stderr)
+
+    def test_bad_retry_and_malformed_traces_are_not_discarded(self):
+        hidden = self.capture("carol", "11111111-1111-4111-8111-111111111111", [503, 404])
+        missing = self.capture("alice", "99999999-9999-4999-8999-999999999999", [404])
+        retry_notice = b"service temporarily unavailable, retrying 1/3 (POST /v1/messages)\n"
+        cases = {
+            "non-retryable earlier response": hidden.replace(b"AW TRACE response: HTTP 503", b"AW TRACE response: HTTP 403"),
+            "missing retry notice": hidden.replace(retry_notice, b""),
+            "partial earlier response": hidden.replace(b"AW TRACE response: HTTP 503\n", b""),
+            "incomplete final body": hidden.replace(b'AW TRACE response body: {"detail":"Not found"}', b'AW TRACE response body: {"detail":'),
+            "missing final response": hidden[:hidden.rindex(b"AW TRACE response: HTTP 404")],
+            "different final bytes": hidden.replace(b'{"detail":"Not found"}', b'{"detail":"NoT found"}'),
+            "different content type": hidden.replace(b"Content-Type: application/json", b"Content-Type: application/problem+json"),
+        }
+        for name, trace in cases.items():
+            with self.subTest(name=name):
+                self.assertNotEqual(self.compare(trace, missing).returncode, 0)
 
 
 class ServicePortTests(unittest.TestCase):
