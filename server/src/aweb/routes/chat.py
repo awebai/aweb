@@ -2216,6 +2216,7 @@ async def _sse_events(
     contact_owner_dids: list[str],
     deadline: datetime,
     auth: MessagingAuth,
+    opened_at: datetime,
     after: datetime | None = None,
     delivery_team_id: str | None = None,
     include_activity: bool = False,
@@ -2336,10 +2337,10 @@ async def _sse_events(
             yield grant_terminal_sse(reason)
             return
 
-        # Without after, the stream delivers messages and read receipts from
-        # now on. The cursors are taken before activity setup awaits, so
-        # anything committed during that setup is still delivered.
-        opened_at = datetime.now(timezone.utc)
+        # Without after, the stream delivers messages and read receipts created
+        # after opened_at, the instant the handler took before the response
+        # started, so a message posted once the client has the 200 is delivered
+        # whatever setup is still running here.
         woken_at_open = False
         if activity is not None and pubsub is not None:
             try:
@@ -2650,6 +2651,9 @@ async def stream(
 
     after_dt = _parse_timestamp(after, "after") if after is not None else None
     await require_valid_stream_grant(request, db, auth)
+    # The live cursor is taken before the stream announces itself: a peer that
+    # answers the waiting registration or the wake sends after this instant.
+    opened_at = datetime.now(timezone.utc)
     await register_waiting(redis, str(session_uuid), actor_did)
     await wake_chat_session_participants(
         aweb_db, agent_wake_publisher(request.app.state), session_id=session_uuid
@@ -2666,6 +2670,7 @@ async def stream(
             contact_owner_dids=owner_dids,
             deadline=deadline_dt,
             auth=auth,
+            opened_at=opened_at,
             after=after_dt,
             delivery_team_id=sess.get("team_id"),
             include_activity="agent_activity" in {value.strip() for value in (include or "").split(",")},

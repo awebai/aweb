@@ -16,6 +16,11 @@
   `aw` builds and stored records reproduce. `docs/vectors/canonical-json-v1.json`
   pins the canonical bytes for Go, Python and TypeScript.
 
+- A chat session stream opened without `after` delivers every message sent
+  after the client received the 200 response. The stream takes its live cursor
+  before the response starts, so a message sent while the stream was still
+  being set up is delivered.
+
 - The channel client (the Claude Code plugin, the Pi extension and `aw wake`)
   signs every certificate and identity request with the
   [v2 request envelope](docs/team-auth-envelope-v2.md), which binds the

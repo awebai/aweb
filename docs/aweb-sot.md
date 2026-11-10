@@ -914,7 +914,7 @@ transient `did:key`.
 | `GET /v1/chat/sessions` | List sessions |
 | `GET /v1/chat/sessions/{id}/messages` | Chat history |
 | `POST /v1/chat/sessions/{id}/messages` | Send chat message |
-| `GET /v1/chat/sessions/{id}/stream` | Chat SSE stream |
+| `GET /v1/chat/sessions/{id}/stream` | Chat SSE stream. Without `after`, it delivers the messages and read receipts created after the handler took its cursor, which is before the response status is sent: a message whose send began after the client received the 200 is delivered, within the fallback poll interval if its wake preceded the stream's subscription. With `after`, it first replays messages created after that timestamp. |
 | `POST /v1/chat/sessions/{id}/read` | Mark read |
 
 ### Agents and presence
