@@ -3,10 +3,14 @@ import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { APIError } from "../src/api/client.js";
+import * as ed from "@noble/ed25519";
+import { createActivityEmitter } from "../src/activity/runtime.js";
+import { APIError, type APIClient } from "../src/api/client.js";
 import { formatEventStreamState, streamAgentEvents, type EventStreamOptions, type EventStreamState } from "../src/api/events.js";
-import { createChannelClient, createChannelCredentialReload, PinStore, startChannelLoop } from "../src/index.js";
-import { resolveConfig } from "../src/config.js";
+import {
+  createChannelClient, createChannelCredentialReload, PinStore, ReceiveStreamReceipt, SenderTrustManager, startChannelLoop,
+} from "../src/index.js";
+import { resolveConfig, type AgentConfig } from "../src/config.js";
 import { writeTestPrincipal } from "./helpers/config_fixture.js";
 
 // The event stream client under docs/event-stream-client-policy.md: what the
@@ -303,6 +307,14 @@ describe("credentials", () => {
     return (await resolveConfig(workdir)).teamCertificateHeader;
   }
 
+  /** What holds the channel's own did:key beside its client. */
+  function holders(client: APIClient, config: AgentConfig) {
+    return {
+      self: { alias: config.alias, address: config.address, did: config.did, stableID: config.stableID },
+      trust: new SenderTrustManager(client, {} as never, config.teamID, config.did, config.stableID),
+    };
+  }
+
   function stubFetch(...script: Answer[]) {
     const certificates: string[] = [];
     let opens = 0;
@@ -325,7 +337,9 @@ describe("credentials", () => {
     const { certificates, fetchMock } = stubFetch(answers(503), answers(401), answers(401), streams(frame("connected")));
     const stream = run(client as never, {
       random: () => 0,
-      reloadCredentials: createChannelCredentialReload(client, config, () => resolveConfig(workdir)),
+      reloadCredentials: createChannelCredentialReload({
+        client, config, load: () => resolveConfig(workdir), ...holders(client, config),
+      }),
     });
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
@@ -356,18 +370,76 @@ describe("credentials", () => {
     await stream.done;
   });
 
-  test("that name another identity fail the attempt without a request", async () => {
+  test("a rotated key and certificate for the same stable identity are taken", async () => {
+    const config = await resolveConfig(workdir);
+    const client = createChannelClient(config);
+    const { self, trust } = holders(client, config);
+    const receipt = new ReceiveStreamReceipt({
+      identityHome: config.identityHome!, kind: "claude-channel", did: config.did, stableID: config.stableID,
+    });
+    const renewReceipt = vi.spyOn(receipt, "renewDID");
+    const activity = createActivityEmitter(config, client);
+    const renewSigner = vi.spyOn(activity, "renewSigner");
+    const { certificates, fetchMock } = stubFetch(answers(401), streams(frame("connected")));
+    const stream = run(client as never, {
+      random: () => 0,
+      reloadCredentials: createChannelCredentialReload({
+        client, config, load: () => resolveConfig(workdir), self, trust, receipt, activity: () => activity,
+      }),
+    });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    // The identity's key is rotated: the home holds another did:key and its
+    // certificate, for the same stable identity, team and server.
+    const rotatedSeed = new Uint8Array(32).fill(10);
+    const rotated = await writeTestPrincipal(join(workdir, ".aw"), { alias: "agent", seedByte: 10, teamID: TEAM });
+    const rotatedConfig = await resolveConfig(workdir);
+    expect(rotated.did).not.toBe(config.did);
+    expect(rotatedConfig.stableID).toBe(config.stableID);
+
+    await vi.advanceTimersByTimeAsync(30 * SECOND);
+    await vi.waitFor(() => expect(stream.received).toEqual(["connected"]));
+    expect(stream.states.map((state) => state.state)).toEqual(["refused", "reconnected"]);
+
+    // The request that was accepted is signed with the rotated key and carries its certificate.
+    const headers = fetchMock.mock.calls[1][1]?.headers as Record<string, string>;
+    const [scheme, signingDID, signature] = headers.Authorization.split(" ");
+    expect(scheme).toBe("DIDKey");
+    expect(signingDID).toBe(rotated.did);
+    expect(ed.verify(
+      Buffer.from(signature, "base64"),
+      Buffer.from(headers["X-AWEB-Signed-Payload"], "base64url"),
+      ed.getPublicKey(rotatedSeed),
+    )).toBe(true);
+    expect(certificates[1]).toBe(rotatedConfig.teamCertificateHeader);
+    expect(certificates[1]).not.toBe(config.teamCertificateHeader);
+
+    // Everything else that holds the channel's own did:key follows the rotation.
+    expect(self.did).toBe(rotated.did);
+    const toRetiredKey = await trust.normalizeTrust(new PinStore(), "verified", "peer", "did:key:zpeer", undefined, config.did, undefined);
+    expect(toRetiredKey.status).toBe("identity_mismatch");
+    expect(renewReceipt).toHaveBeenCalledWith(rotated.did);
+    expect(renewSigner).toHaveBeenCalledWith(expect.objectContaining({ did: rotated.did, seed: rotatedSeed, stableID: config.stableID }));
+
+    stream.abort.abort();
+    await stream.done;
+  });
+
+  test("that name another stable identity fail the attempt without a request", async () => {
     const config = await resolveConfig(workdir);
     const client = createChannelClient(config);
     const { certificates, fetchMock } = stubFetch(answers(401), streams(frame("connected")));
     const stream = run(client as never, {
       random: () => 0,
-      reloadCredentials: createChannelCredentialReload(client, config, () => resolveConfig(workdir)),
+      reloadCredentials: createChannelCredentialReload({
+        client, config, load: () => resolveConfig(workdir), ...holders(client, config),
+      }),
     });
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
-    // Another agent's key and certificate are written into the same home.
-    await writeTestPrincipal(join(workdir, ".aw"), { alias: "agent", seedByte: 10, teamID: TEAM });
+    // Another agent's key, certificate and stable identity are written into the same home.
+    await writeTestPrincipal(join(workdir, ".aw"), { alias: "other", seedByte: 10, teamID: TEAM });
+    expect((await resolveConfig(workdir)).stableID).not.toBe(config.stableID);
     await vi.advanceTimersByTimeAsync(30 * SECOND);
     // The lowest draw waits half of 2 minutes: the failed read keeps the quarantine's pace.
     await vi.advanceTimersByTimeAsync(MINUTE - 5 * SECOND);
@@ -389,13 +461,16 @@ describe("credentials", () => {
     { name: "another identity home", change: { identityHome: "/elsewhere/.aw" }, message: "another identity home" },
     { name: "another team", change: { teamID: "other:aweb.test" }, message: "another identity" },
     { name: "another stable identity", change: { stableID: "did:aw:other" }, message: "another identity" },
+    { name: "no stable identity", change: { stableID: "" }, message: "another identity" },
     { name: "another way to authenticate", change: { authMode: "grant" as const, grantID: "grant-1" }, message: "another identity" },
   ])("that name $name are not taken", async ({ change, message }) => {
     const config = await resolveConfig(workdir);
     const client = createChannelClient(config);
     const { certificates, fetchMock } = stubFetch(answers(401));
-    const reload = createChannelCredentialReload(client, config, async () => ({ ...config, ...change }));
+    const { self, trust } = holders(client, config);
+    const reload = createChannelCredentialReload({ client, config, load: async () => ({ ...config, ...change }), self, trust });
     await expect(reload(new AbortController().signal)).rejects.toThrow(message);
+    expect(self.did).toBe(config.did);
 
     await client.openSSE("/v1/events/stream").catch(() => {});
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -403,15 +478,54 @@ describe("credentials", () => {
     expect(certificates).toEqual([config.teamCertificateHeader]);
   });
 
+  test("of a local identity, which has no stable identity, are not taken with another key", async () => {
+    // Without a stable identity the did:key is the identity.
+    const local = { ...(await resolveConfig(workdir)), stableID: "" };
+    const client = createChannelClient(local);
+    const { certificates, fetchMock } = stubFetch(answers(401));
+    const { self, trust } = holders(client, local);
+    const rotated = await writeTestPrincipal(join(workdir, ".aw"), { alias: "agent", seedByte: 10, teamID: TEAM });
+    const reload = createChannelCredentialReload({
+      client, config: local, load: async () => ({ ...(await resolveConfig(workdir)), stableID: "" }), self, trust,
+    });
+    await expect(reload(new AbortController().signal)).rejects.toThrow("another identity");
+    expect(self.did).toBe(local.did);
+    expect(self.did).not.toBe(rotated.did);
+
+    await client.openSSE("/v1/events/stream").catch(() => {});
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(certificates).toEqual([local.teamCertificateHeader]);
+    expect((fetchMock.mock.calls[0][1]?.headers as Record<string, string>).Authorization).toContain(` ${local.did} `);
+  });
+
+  test("of a local identity are taken when its key is the same", async () => {
+    const local = { ...(await resolveConfig(workdir)), stableID: "" };
+    const client = createChannelClient(local);
+    const { certificates } = stubFetch(answers(401));
+    const renewed = await renewCertificate("cert-renewed");
+    const reload = createChannelCredentialReload({
+      client, config: local, load: async () => ({ ...(await resolveConfig(workdir)), stableID: "" }), ...holders(client, local),
+    });
+    await reload(new AbortController().signal);
+
+    await client.openSSE("/v1/events/stream").catch(() => {});
+    expect(certificates).toEqual([renewed]);
+  });
+
   test("read after the stream stopped are not taken", async () => {
     const config = await resolveConfig(workdir);
     const client = createChannelClient(config);
     const { certificates } = stubFetch(answers(401));
     const stopped = new AbortController();
-    const reload = createChannelCredentialReload(client, config, async () => {
-      const renewed = await renewCertificate("cert-renewed");
-      stopped.abort();
-      return { ...config, teamCertificateHeader: renewed };
+    const reload = createChannelCredentialReload({
+      client,
+      config,
+      load: async () => {
+        const renewed = await renewCertificate("cert-renewed");
+        stopped.abort();
+        return { ...config, teamCertificateHeader: renewed };
+      },
+      ...holders(client, config),
     });
     await expect(reload(stopped.signal)).rejects.toThrow();
 
