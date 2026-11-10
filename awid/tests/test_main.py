@@ -38,7 +38,7 @@ def test_get_manager_accepts_any_name(awid_db_infra):
 
 
 @pytest.mark.asyncio
-async def test_health_and_ops_health_expose_registry_state(client):
+async def test_health_and_ops_health_expose_registry_state(client, fake_redis):
     health = await client.get("/health")
     assert health.status_code == 200
     assert health.json()["status"] == "ok"
@@ -55,6 +55,9 @@ async def test_health_and_ops_health_expose_registry_state(client):
 
     live = await client.get("/live")
     assert (live.status_code, live.json()) == (200, {"status": "ok"})
+
+    # The probes are unauthenticated and count against no rate limit.
+    assert fake_redis.eval_calls == []
 
 
 class BrokenRedis:
