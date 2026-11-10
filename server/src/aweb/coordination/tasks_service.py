@@ -9,7 +9,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from awid.team_ids import team_slug
-from ..claims import claim_focus_task_ref, resolve_task_claim_apex_on
+from ..claims import claim_focus_task_ref, release_task_claims_on, resolve_task_claim_apex_on
 from ..service_errors import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from ..team_auth_deps import TeamIdentity
 
@@ -182,6 +182,8 @@ async def answer_task_on(
            WHERE task_id = $1 RETURNING rev""",
         task_id, actor.alias, principal,
     )
+    task_ref = format_task_ref(_get_team_slug(team_id), task["task_ref_suffix"])
+    released_claim_workspace_ids = await release_task_claims_on(tx, team_id=team_id, task_ref=task_ref)
     row = await tx.fetch_one(
         """INSERT INTO {{tables.task_answers}}
                (task_id, question_rev, task_rev, answer_key, answer_sha256, answered_by_did, certificate_id,
@@ -199,8 +201,8 @@ async def answer_task_on(
     if outcome is not None:
         outcome["created"] = True
         outcome["comment_id"] = str(comment["comment_id"])
-        outcome.update(task_ref=format_task_ref(_get_team_slug(team_id), task["task_ref_suffix"]),
-                       title=task["title"], assignee_alias=task["assignee_alias"])
+        outcome.update(task_ref=task_ref, title=task["title"], assignee_alias=task["assignee_alias"],
+                       released_claim_workspace_ids=released_claim_workspace_ids)
     return _answer_receipt(row, current_question_rev=task["question_rev"])
 
 
@@ -1113,6 +1115,7 @@ async def update_task(
     resolved_assignee_alias: str | None | object = _UNSET
     resolved_parent_task_id: UUID | None | object = _UNSET
     claim_preacquired = False
+    released_claim_workspace_ids: list[str] = []
 
     if parent_task_id is not _UNSET:
         if parent_task_id:
@@ -1367,6 +1370,16 @@ async def update_task(
             *params,
         )
 
+        # A status change to anything but in_progress ends every claim on the
+        # task, in this transaction. The release follows the status write
+        # because a released workspace keeps its focus only on an open task.
+        if status is not None and status != current["status"] and status != "in_progress":
+            released_claim_workspace_ids = await release_task_claims_on(
+                tx,
+                team_id=team_id,
+                task_ref=format_task_ref(slug, current["task_ref_suffix"]),
+            )
+
     # Capture the actual write, including implicit claim assignment, from the
     # locked row and resolved input. A post-commit read may see a later writer.
     # Keep this hook metadata out of the public task response and MCP results.
@@ -1388,6 +1401,8 @@ async def update_task(
         result["old_status"] = old_status
     if claim_preacquired:
         result["claim_preacquired"] = True
+    if released_claim_workspace_ids:
+        result["released_claim_workspace_ids"] = released_claim_workspace_ids
     return result
 
 

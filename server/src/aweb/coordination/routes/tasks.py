@@ -246,6 +246,7 @@ async def answer_task_route(
                 "old_status": "open", "new_status": "closed",
                 "actor_agent_id": identity.agent_id, "actor_alias": identity.alias,
                 "actor_did_aw": identity.did_aw, "assignee_alias": outcome["assignee_alias"],
+                "released_claim_workspace_ids": outcome["released_claim_workspace_ids"],
             })
             await fire_mutation_hook(request, "task.comment_added", {
                 "task_id": str(task_id), "comment_id": outcome["comment_id"],
@@ -311,6 +312,7 @@ async def update_task_route(
     )
 
     old_status = result.pop("old_status", None)
+    released_claim_workspace_ids = result.pop("released_claim_workspace_ids", [])
     if old_status is not None:
         await fire_mutation_hook(
             request,
@@ -328,6 +330,7 @@ async def update_task_route(
                 "actor_alias": identity.alias,
                 "actor_did_aw": identity.did_aw,
                 "claim_preacquired": result.pop("claim_preacquired", False),
+                "released_claim_workspace_ids": released_claim_workspace_ids,
             },
         )
     else:

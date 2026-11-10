@@ -122,6 +122,7 @@ async def task_close(db_infra, *, ref: str) -> str:
         return json.dumps({"error": exc.detail})
     task.pop("old_status", None)
     task.pop("claim_preacquired", None)
+    task.pop("released_claim_workspace_ids", None)
     return json.dumps(task)
 
 
@@ -180,6 +181,7 @@ async def task_update(
         return json.dumps({"error": exc.detail})
 
     task.pop("old_status", None)
+    task.pop("released_claim_workspace_ids", None)
     return json.dumps(task)
 
 
