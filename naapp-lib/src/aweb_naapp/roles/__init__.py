@@ -157,13 +157,18 @@ class Holding:
 
 
 # A holding: the live assignment joined to the installation's record of it.
-_HOLDING = """
-    SELECT h.b3_scope, h.certificate, a.assigned_at
+_HOLDINGS = """
+    SELECT h.b3_scope, h.certificate, a.assigned_at,
+        h.installation_id, h.team_id, h.role, h.principal_did
     FROM {{tables.role_assignments}} a
     JOIN {{tables.role_holdings}} h
         ON h.team_id = a.team_id AND h.role = a.role AND h.principal_did = a.principal_did
-    WHERE h.installation_id = $1 AND a.team_id = $2 AND a.role = $3 AND a.principal_did = $4
 """
+_HOLDING = (
+    _HOLDINGS
+    + "WHERE h.installation_id = $1 AND a.team_id = $2 AND a.role = $3 AND a.principal_did = $4"
+)
+_HOLDING_OF_SCOPE = _HOLDINGS + "WHERE h.b3_scope = $1"
 _ASSIGNMENT = """
     SELECT assigned_at FROM {{tables.role_assignments}}
     WHERE team_id = $1 AND role = $2 AND principal_did = $3
@@ -171,16 +176,14 @@ _ASSIGNMENT = """
 _RECORD = "SELECT 1 FROM {{tables.role_holdings}} WHERE b3_scope = $1"
 
 
-def _holding(
-    installation_id: str, team_id: str, role: str, principal: str, row: Any
-) -> Holding | None:
+def _holding(row: Any) -> Holding | None:
     if row is None:
         return None
     return Holding(
-        installation_id=installation_id,
-        team_id=team_id,
-        role=role,
-        principal=principal,
+        installation_id=row["installation_id"],
+        team_id=row["team_id"],
+        role=row["role"],
+        principal=row["principal_did"],
         b3_scope=row["b3_scope"],
         certificate=None if row["certificate"] is None else bytes(row["certificate"]),
         held_since=row["assigned_at"],
@@ -194,7 +197,15 @@ async def read_holding(
     no holding, and for a bare role assignment the installation has no record of."""
     holding_scope(installation_id, team_id, role, principal)
     row = await db.fetch_one(_HOLDING, installation_id, team_id, role, principal)
-    return _holding(installation_id, team_id, role, principal, row)
+    return _holding(row)
+
+
+async def read_holding_of_scope(db: Executor, b3_scope: str) -> Holding | None:
+    """The current holding whose record is ``b3_scope``, by SQL reads only: no
+    lock and no refresh. None for a scope the installation never recorded, and
+    for one whose holding has ended. The caller checks the holding is its own
+    installation's."""
+    return _holding(await db.fetch_one(_HOLDING_OF_SCOPE, b3_scope))
 
 
 async def is_holding_scope(db: Executor, b3_scope: str) -> bool:
@@ -220,7 +231,7 @@ async def _lock(
     if await tx.fetch_one(f"{_RECORD} FOR {mode}", scope) is None:
         return None
     row = await tx.fetch_one(_HOLDING, installation_id, team_id, role, principal)
-    return _holding(installation_id, team_id, role, principal, row)
+    return _holding(row)
 
 
 async def hold_holding(

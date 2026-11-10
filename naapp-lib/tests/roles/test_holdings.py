@@ -25,6 +25,7 @@ from aweb_naapp.roles import (
     lock_holding,
     purge_team,
     read_holding,
+    read_holding_of_scope,
     refresh_holding_certificate,
 )
 
@@ -236,3 +237,50 @@ async def test_a_scope_that_was_ever_held_stays_a_holding_scope(db: AsyncDatabas
     await _end(db)
     assert await is_holding_scope(db, scope)
     assert not await is_holding_scope(db, other)
+
+
+async def test_a_current_holding_reads_by_its_scope(db: AsyncDatabaseManager) -> None:
+    begun = await _begin(db)
+    assert begun is not None
+    async with db.transaction() as tx:
+        assert await read_holding_of_scope(tx, begun.b3_scope) == begun
+
+
+async def test_a_scope_reads_its_current_version_and_nothing_once_ended(
+    db: AsyncDatabaseManager,
+) -> None:
+    scope = holding_scope(INSTALLATION, TEAM, READER, PRINCIPAL)
+    await _begin(db)
+    await _end(db)
+    async with db.transaction() as tx:
+        assert await read_holding_of_scope(tx, scope) is None
+    again = await _begin(db, RENEWED)
+    async with db.transaction() as tx:
+        assert await read_holding_of_scope(tx, scope) == again
+
+
+async def test_a_scope_reads_only_its_own_holding(db: AsyncDatabaseManager) -> None:
+    await _begin(db)
+    async with db.transaction() as tx:
+        await assign(tx, PrincipalKey(TEAM, "did:aw:9Zx8yW7vU6tS5rQ4pO3nM2lK1j"), READER)
+        assert await read_holding_of_scope(tx, "unknown") is None
+        assert (
+            await read_holding_of_scope(
+                tx, holding_scope(OTHER_INSTALLATION, TEAM, READER, PRINCIPAL)
+            )
+            is None
+        )
+        assert (
+            await read_holding_of_scope(
+                tx, holding_scope(INSTALLATION, TEAM, READER, "did:aw:9Zx8yW7vU6tS5rQ4pO3nM2lK1j")
+            )
+            is None
+        )
+
+
+async def test_a_purged_team_holds_nothing_by_scope(db: AsyncDatabaseManager) -> None:
+    begun = await _begin(db)
+    assert begun is not None
+    async with db.transaction() as tx:
+        await purge_team(tx, TEAM)
+        assert await read_holding_of_scope(tx, begun.b3_scope) is None
