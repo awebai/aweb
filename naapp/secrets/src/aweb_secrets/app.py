@@ -112,6 +112,7 @@ def create_app(
     prepare: Prepare | None = None,
     console_routers: Sequence[ConsoleRouter] = (),
     runner_routers: Sequence[RunnerRouter] = (),
+    handoff_router: ConsoleRouter | None = None,
 ) -> SecretsService:
     """The secrets service. ``grants`` is the team-server grant authority,
     ``policy`` secrets' admission policy and ``kms`` its KMS canary.
@@ -123,6 +124,9 @@ def create_app(
     adapters under /runner/v1/ on the API origin outside B1; their existing
     protocol validates runner authority. Prepared services close before the
     database disconnects; composed routes are removed on failure and shutdown.
+    The shared handoff start mounts POST /handoffs on the API origin outside
+    B1; it authenticates the exact member signature itself, before any holding
+    or session admission. Its human routes are separate console factories.
     """
     runtime = NaappRuntime(
         settings,
@@ -197,6 +201,16 @@ def create_app(
                             if runner_path in runner_paths:
                                 raise ValueError("a runner route is composed more than once")
                             runner_paths.add(runner_path)
+                        api.include_router(router)
+                    if handoff_router is not None:
+                        router = handoff_router(runtime)
+                        if len(router.routes) != 1 or any(
+                            not isinstance(route, APIRoute)
+                            or route.methods != {"POST"}
+                            or route.path != "/handoffs"
+                            for route in router.routes
+                        ):
+                            raise ValueError("handoff router contains only POST /handoffs")
                         api.include_router(router)
                     for console_factory in console_routers:
                         console.include_router(console_factory(runtime))

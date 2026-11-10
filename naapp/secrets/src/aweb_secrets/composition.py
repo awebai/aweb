@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import timedelta
@@ -14,7 +14,13 @@ from ipaddress import IPv4Network, IPv6Network
 from typing import Any
 
 import httpx
-from aweb_naapp.console import apply_console_migrations
+from aweb_naapp.console import (
+    ConsoleSession,
+    KeyBoundConsoleSession,
+    apply_console_migrations,
+)
+from aweb_naapp.console.handoff_authority import HandoffAuthority, PreparedSessionTarget
+from aweb_naapp.console.handoff_sessions import ConsoleHandoffs
 from aweb_naapp.dispatch import apply_dispatch_migrations
 from aweb_naapp.egress import AddressPolicy, DnsResolver, Egress
 from aweb_naapp.email import EmailSettings, Mailer
@@ -36,7 +42,7 @@ from aweb_naapp.runtime.credential_audit import CredentialAudit, GovernanceUnava
 from aweb_naapp.runtime.health import CheckResult
 from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty
 from aweb_naapp.signing_key import read_signing_key_file
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pgdbm.core import TransactionManager
 
 from aweb_secrets.activity_service import ActivityReads
@@ -90,6 +96,8 @@ from aweb_secrets.custody import (
     seal_canary,
 )
 from aweb_secrets.custody.opening import UseSecretOpener
+from aweb_secrets.human_holders import OwnerHoldingAuthority
+from aweb_secrets.human_holding_identity import owner_holding_identity
 from aweb_secrets.installation_lookup import InstallationLookup
 from aweb_secrets.jobs import apply_job_migrations
 from aweb_secrets.metadata_routes import MetadataServices, metadata_router
@@ -141,6 +149,7 @@ class _Approvers:
 @dataclass
 class _Services:
     console: OwnerConsole
+    handoffs: ConsoleHandoffs
     changes: ConsoleChanges
     containment: Containment
     values: ConsoleValues
@@ -250,6 +259,22 @@ async def _compose(
     async def team_key(team_id):
         return (await runtime.team_cache().get(team_id)).team_did_key
 
+    # These callbacks close the construction cycle without replacing the
+    # console's original sessions, database or passkeys. They are called only
+    # after the one factory below has been built.
+    handoffs: ConsoleHandoffs
+
+    async def key_bound(request: Request) -> ConsoleSession:
+        return await handoffs.current(request)
+
+    async def prepare_key_bound(
+        tx: TransactionManager,
+        current: KeyBoundConsoleSession,
+        *,
+        approver_pairs: Sequence[tuple[str, str]],
+    ) -> PreparedSessionTarget:
+        return await handoffs.prepare(tx, current, approver_pairs=approver_pairs)
+
     console = OwnerConsole(
         db=db,
         passkeys=passkeys,
@@ -263,6 +288,23 @@ async def _compose(
         ),
         installation=InstallationLookup(fence),
         credential_audit=credentials,
+        key_bound=key_bound,
+        prepare_key_bound=prepare_key_bound,
+    )
+    holding = OwnerHoldingAuthority(console=console)
+    handoffs = ConsoleHandoffs(
+        db=db,
+        passkeys=passkeys,
+        authority=HandoffAuthority(
+            holding.credential_target,
+            holding.session_target,
+            holding.hold_session_target,
+            holding.check_session_target,
+            owner_holding_identity,
+        ),
+        principal=runtime.principal,
+        human_member=runtime.check_human_member,
+        limiter=console.limiter,
     )
     custody = Custody(provider, db)
     tokens = ProcessTokenCache()
@@ -300,6 +342,7 @@ async def _compose(
         tokens=tokens,
         governance=governance,
         credential_audit=credentials,
+        prepare_key_bound=prepare_key_bound,
     )
     writer = ChangeSets(
         db,
@@ -318,6 +361,7 @@ async def _compose(
         approvals=approvals,
         registrations=registrations,
         after_commit=containment.evict,
+        handoffs=handoffs,
         # Run stores and both typed pages are composed above/below. The
         # reconciliation stores and page are deliberately not composed here.
         approval_kind=partial(approval_kind, enable_runs=True, enable_reconciliation=False),
@@ -371,6 +415,7 @@ async def _compose(
     containment.deregister_runner = runs.deregister_runner
     return _Services(
         console,
+        handoffs,
         changes,
         containment,
         ConsoleValues(console=console, custody=custody),
@@ -549,7 +594,9 @@ def create_service(
         hook_internal_origins=hook_internal_origins,
         prepare=prepare,
         tool_routers=(metadata, uses, contain),
+        handoff_router=lambda rt: current().handoffs.api_router(),
         console_routers=(
+            human(lambda s: s.handoffs.human_router()),
             human(lambda s: owner_console_router(s.console)),
             human(
                 lambda s: console_ui_router(
