@@ -45,9 +45,11 @@
     - `recipient_encryption_assertion_invalid_or_stale`: "this recipient's
       published encryption key can't be verified right now; try again later,
       and if it persists contact support".
-    - `identity_binding_mismatch`, and an encrypted envelope addressed to a key
-      other than the one this server records for the recipient: "this
-      recipient's key changed; refresh and resend".
+    - `identity_binding_mismatch`: "this recipient's identity or key no longer
+      matches the registry; check the address and resend".
+    - An encrypted envelope addressed to a key other than the one this server
+      records for the recipient: "this recipient's key changed; resend the
+      message".
     - `identity_binding_unavailable`: "the registry can't confirm this
       recipient's key right now; try again shortly".
 

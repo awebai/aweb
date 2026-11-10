@@ -623,7 +623,7 @@ NEXT_ACTIONS = [
         "reason": "recipient_encryption_assertion_invalid_or_stale",
     }),
     (lambda: _binding_refusal(403, "identity_binding_mismatch"), {}, {
-        "error": "this recipient's key changed; refresh and resend",
+        "error": "this recipient's identity or key no longer matches the registry; check the address and resend",
         "reason": "identity_binding_mismatch",
     }),
     (lambda: _binding_refusal(503, "identity_binding_unavailable"), {}, {
@@ -703,5 +703,5 @@ def test_an_envelope_for_a_key_this_server_does_not_record_is_refused_as_a_chang
     # The route's answer is unchanged.
     assert (refused.value.status_code, refused.value.detail) == (422, "encrypted envelope recipient did mismatch")
     assert json.loads(_send_refusal(refused.value, hosted_envelope=True)) == {
-        "error": "this recipient's key changed; refresh and resend",
+        "error": "this recipient's key changed; resend the message",
     }

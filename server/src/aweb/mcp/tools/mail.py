@@ -199,7 +199,10 @@ RECIPIENT_ENCRYPTION_KEY_NOT_VERIFIABLE = (
     "this recipient's published encryption key can't be verified right now; try again later, "
     "and if it persists contact support"
 )
-RECIPIENT_KEY_CHANGED = "this recipient's key changed; refresh and resend"
+RECIPIENT_KEY_CHANGED = "this recipient's key changed; resend the message"
+RECIPIENT_NOT_AS_REGISTERED = (
+    "this recipient's identity or key no longer matches the registry; check the address and resend"
+)
 REGISTRY_CANNOT_CONFIRM_RECIPIENT_KEY = (
     "the registry can't confirm this recipient's key right now; try again shortly"
 )
@@ -213,7 +216,7 @@ _HOSTED_ENVELOPE_NEXT_ACTIONS = {
     "recipient_encryption_assertion_invalid_or_stale": RECIPIENT_ENCRYPTION_KEY_NOT_VERIFIABLE,
 }
 _IDENTITY_BINDING_NEXT_ACTIONS = {
-    "identity_binding_mismatch": RECIPIENT_KEY_CHANGED,
+    "identity_binding_mismatch": RECIPIENT_NOT_AS_REGISTERED,
     "identity_binding_unavailable": REGISTRY_CANNOT_CONFIRM_RECIPIENT_KEY,
 }
 
