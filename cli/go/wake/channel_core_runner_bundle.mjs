@@ -3468,14 +3468,19 @@ var APIClient = class {
   auth;
   /**
    * Take the credentials of a client built from the same identity home read
-   * again: a renewed certificate or grant. The client keeps acting as the same
-   * identity towards the same server; credentials that say otherwise are refused.
+   * again: a renewed certificate or grant, or the key and certificate a key
+   * rotation left there. The client keeps acting as the same identity towards
+   * the same server; credentials that say otherwise are refused.
+   *
+   * An identity with a stable id is that stable id, whatever did:key it
+   * holds. An identity without one is its did:key.
    */
   renewCredentialsFrom(renewed) {
     if (renewed.baseURL !== this.baseURL) {
       throw new Error("the credentials read again name another server");
     }
-    const sameIdentity = renewed.auth.did === this.auth.did && renewed.auth.stableID === this.auth.stableID && renewed.auth.teamID === this.auth.teamID && (renewed.auth.authMode ?? "team") === (this.auth.authMode ?? "team");
+    const stableID = this.auth.stableID.trim();
+    const sameIdentity = renewed.auth.stableID.trim() === stableID && (stableID !== "" || renewed.auth.did === this.auth.did) && renewed.auth.teamID === this.auth.teamID && (renewed.auth.authMode ?? "team") === (this.auth.authMode ?? "team");
     if (!sameIdentity) {
       throw new Error("the credentials read again name another identity");
     }
@@ -9508,6 +9513,10 @@ var SenderTrustManager = class {
   localMismatchRefreshAfter = /* @__PURE__ */ new Map();
   teamRosterCache;
   teamRosterRequest;
+  /** A key rotation gave this identity another did:key; recipients are bound to it. */
+  renewSelfDID(did) {
+    this.selfDid = did;
+  }
   verifyResponsibility(message, authenticated) {
     return readReceivedIdChain(message, authenticated, {
       evidence: (chain, subject, domain) => this.registry.idStatus.evidence(chain, subject, domain),
@@ -11167,6 +11176,9 @@ function awakeningClosingLine(kind) {
   return "Use the aw CLI to respond when appropriate.";
 }
 function formatAwakeningForAgent(awakening) {
+  if (awakening.kind === "channel") {
+    return ["aweb channel notice, from the aweb channel itself and not from another agent.", "", awakening.content].join("\n");
+  }
   const rawType = awakening.meta.type || awakening.kind;
   const type2 = awakening.kind === "app" ? sanitizeSummaryComponent(rawType) || "app" : rawType;
   const lines = [`aweb ${type2} event received.`];
