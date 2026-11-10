@@ -20,9 +20,7 @@ from uuid import UUID
 
 from aweb_naapp.hooks.envelope import verify
 from aweb_naapp.roles import (
-    end_holding,
     holding_record_of_scope,
-    lock_holding,
     members_of,
     principal_key,
 )
@@ -127,6 +125,16 @@ class ReaderDirectory:
         )
         return await self._holdings().read_holding_of_scope(
             tx, installation=admitted, b3_scope=scope
+        )
+
+    async def hold_holding(
+        self, tx: TransactionManager, *, installation: AdmittedInstallation, principal: str
+    ) -> HumanRoleHolding | None:
+        """The current ``logs.reader`` holding of ``principal`` in
+        ``installation``, held FOR SHARE until ``tx`` ends, so no holding
+        writer commits under it; after the fence, before any B3 row."""
+        return await self._holdings().hold_holding(
+            tx, installation=installation, role=READER_ROLE, principal=principal
         )
 
     def _holdings(self) -> HumanRoleHoldings:
@@ -307,18 +315,17 @@ class ReaderRemovals:
             raise RemovalRefused("reader_unknown", 404)
         await self.fence.refresh(grant.team_id)
         async with self.directory.db.transaction() as tx:
-            # The fence first, then the holding, then B3: every holding writer
-            # locks in this order.
+            # The fence first, then the holding, then B3: the order every
+            # holder and holding writer takes. The holding is held, not
+            # ended: containment retires the credential, and the holding
+            # continues until the owner replaces it or revokes it.
             admitted = await self.fence.admit(tx, grant)
             if admitted.installation_id != reader.installation_id:
                 raise RemovalRefused("reader_unknown", 404)
-            key = {
-                "installation_id": admitted.installation_id,
-                "team_id": admitted.team_id,
-                "role": READER_ROLE,
-                "principal": reader.principal,
-            }
-            if await lock_holding(tx, **key) is None:
+            held = await self.directory.hold_holding(
+                tx, installation=admitted, principal=reader.principal
+            )
+            if held is None or held.b3_scope != scope:
                 raise RemovalRefused("reader_unknown", 404)
             # The holding's approver, or the pending one while a replaced
             # credential is in its cooling-off.
@@ -352,7 +359,6 @@ class ReaderRemovals:
             )
             with self.recorder.prepared(prepared):
                 try:
-                    await end_holding(tx, **key)
                     await self.passkeys.retire_in(
                         tx,
                         scope=scope,

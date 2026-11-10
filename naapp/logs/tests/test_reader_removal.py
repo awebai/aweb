@@ -2,9 +2,11 @@
 §B5), on real PostgreSQL with a real AWID registry, real owner acts and a
 software passkey.
 
-The removal ends the reader's holding of ``logs.reader`` and appends logs' own signed
+The removal is containment (human-role-holders.md): it retires the reader's
+credential, so the reader can no longer sign in, and appends logs' own signed
 ``role.revoked`` event, naming the member's team certificate as its authority,
-in one transaction. Team authority alone never removes the last current
+in one transaction. The holding continues until the owner replaces the
+credential or revokes it. Team authority alone never removes the last current
 reader of an installation: that takes the owner's act. Concurrent removals,
 by members or by the owner, are counted against the same reader set, so
 together they cannot leave the installation without a reader.
@@ -78,13 +80,15 @@ async def test_a_member_removes_a_reader_on_logs_own_chain(world: World):
     assert entry["actor"]["did_key"] == remover.did_key
 
 
-async def test_a_removed_reader_can_be_held_again_by_the_owners_act(world: World):
+async def test_a_removed_readers_holding_continues_until_the_owner_acts(world: World):
     await held_reader(world)
     removed, _ = await held_reader(world, OTHER_READER)
     await world.removals.remove(principal=member(), grant=world.grant, scope=removed)
-    again, _ = await held_reader(world, OTHER_READER)
-    assert again == removed
-    assert await world.directory.is_current_reader(removed)
+    assert not await world.directory.is_current_reader(removed)
+    assert await world.directory.record(removed) is not None
+    # Still held: the owner replaces its credential, or revokes it.
+    await replaced_reader(world, OTHER_READER)
+    await revoked_reader(world, OTHER_READER)
 
 
 async def test_a_member_cannot_remove_the_last_reader(world: World):
