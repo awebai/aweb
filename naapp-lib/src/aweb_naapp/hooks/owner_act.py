@@ -69,11 +69,15 @@ CREDENTIAL_PREFIX = b"aweb.human-credential/1\n"
 _CREDENTIAL_FIELDS = frozenset({"credential_id", "public_key", "rp_id"})
 
 
+def _base64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
 def _unpadded_base64url(value: Any) -> bytes:
     if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", value):
         raise ValueError("a credential field is not unpadded base64url")
     decoded = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
-    if base64.urlsafe_b64encode(decoded).rstrip(b"=").decode("ascii") != value:
+    if _base64url(decoded) != value:
         raise ValueError("a credential field is not unpadded base64url")
     return decoded
 
@@ -83,12 +87,20 @@ class HumanCredential:
     """The credential a human-role act binds: exactly ``credential_id`` and
     ``public_key`` (each unpadded base64url) and ``rp_id``. ``sha256`` is the
     ``credential_sha256`` an act names it by: the SHA-256 of the prefix and the
-    credential's canonical JSON."""
+    credential's canonical JSON, always of these fields."""
 
     credential_id: bytes
     public_key: bytes
     rp_id: str
-    sha256: str
+
+    @property
+    def sha256(self) -> str:
+        fields = {
+            "credential_id": _base64url(self.credential_id),
+            "public_key": _base64url(self.public_key),
+            "rp_id": self.rp_id,
+        }
+        return hashlib.sha256(CREDENTIAL_PREFIX + canonical(fields)).hexdigest()
 
     @classmethod
     def parse(cls, value: Any) -> HumanCredential:
@@ -99,10 +111,13 @@ class HumanCredential:
         rp_id = value["rp_id"]
         if not isinstance(rp_id, str) or not rp_id:
             raise ValueError("a credential's rp_id is a nonempty string")
-        credential_id = _unpadded_base64url(value["credential_id"])
-        public_key = _unpadded_base64url(value["public_key"])
-        digest = hashlib.sha256(CREDENTIAL_PREFIX + canonical(dict(value))).hexdigest()
-        return cls(credential_id, public_key, rp_id, digest)
+        # An rp_id canonical JSON refuses (ValueError) is refused here.
+        canonical({"rp_id": rp_id})
+        return cls(
+            _unpadded_base64url(value["credential_id"]),
+            _unpadded_base64url(value["public_key"]),
+            rp_id,
+        )
 
 
 _TIME = "%Y-%m-%dT%H:%M:%SZ"

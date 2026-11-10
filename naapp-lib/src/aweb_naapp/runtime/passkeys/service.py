@@ -816,11 +816,6 @@ class Passkeys:
         previous: str | None = None,
     ) -> Designation:
         act_id, kind, actor = act
-        if await tx.fetch_value(
-            "SELECT 1 FROM {{tables.passkey_credentials}} WHERE credential_id = $1",
-            credential.credential_id,
-        ):
-            raise DesignationRefused("the credential is already registered")
         approver = Approver(
             scope=scope,
             subject=str(uuid.uuid4()),
@@ -839,16 +834,20 @@ class Passkeys:
             now,
             effective_at,
         )
-        await tx.execute(
+        # A credential id is registered once, ever: one already registered, or
+        # bound concurrently by another holding, is refused and never reused.
+        if not await tx.fetch_value(
             "INSERT INTO {{tables.passkey_credentials}} "
             "(credential_id, subject, public_key, sign_count, created_at, rp_id) "
-            "VALUES ($1, $2, $3, 0, $4, $5)",
+            "VALUES ($1, $2, $3, 0, $4, $5) ON CONFLICT (credential_id) DO NOTHING "
+            "RETURNING 1",
             credential.credential_id,
             approver.subject,
             credential.public_key,
             now,
             credential.rp_id,
-        )
+        ):
+            raise DesignationRefused("the credential is already registered")
         await self._record_act(tx, act_id, kind, actor, scope, approver.subject, now)
         details = {
             "scope": scope,
