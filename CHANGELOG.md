@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- **Operator-visible:** on both the aweb server and AWID, `GET /health` answers
+  503, with the same JSON body, when the Redis or database check fails, and 200
+  when both pass (AWID's `/ops/health` alias follows it). `GET /ready` is the
+  same response under a readiness name. `GET /live` answers `200 {"status": "ok"}`
+  whenever the process serves requests and checks no dependency. Probe mapping:
+  liveness probes and container healthchecks, which restart the process, use
+  `/live`; readiness probes, load-balancer routing and start-up ordering use
+  `/ready`; monitoring reads `/health`. The `server/Dockerfile`, `awid/Dockerfile`
+  and `awid/Dockerfile.release` `HEALTHCHECK`s probe `/live`, and the compose
+  healthchecks probe `/ready`. **If your probe relied on `/health` answering 200
+  during a dependency outage** (a liveness probe or restart policy), point it at
+  `/live`; leaving it on `/health` restarts every replica into the outage. An
+  aweb server's start-up AWID check reads AWID's `/health`, so it does not start
+  against an AWID whose Redis or database check fails. The CLI's
+  request-compression discovery treats a 503 as no advertisement and sends plain
+  bodies. See [health probes](docs/aweb-sot.md#health-probes).
+
 - Self-custodial humans can select their OS-keychain identity with `aw --human
   <did:aw> --human-domain <domain>` to fetch a controller-issued team certificate,
   connect, send/read/reply to plaintext mail, and make ordinary team-auth naapp

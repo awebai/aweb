@@ -401,5 +401,18 @@ curl http://localhost:8010/health
 ./scripts/e2e-oss-user-journey.sh
 ```
 
+Both services serve the same three unauthenticated probe routes:
+
+| Route | Answers | Point at it |
+|---|---|---|
+| `/live` | 200 whenever the process serves requests; checks no dependency | Liveness probes and container healthchecks, which restart the process |
+| `/ready` | 200 when Redis and the database answer, 503 when either check fails | Readiness probes, load-balancer routing, start-up ordering |
+| `/health` | The same response as `/ready` | Monitoring and manual checks |
+
+A probe that restarts the container must use `/live`: on `/ready` or `/health`
+it restarts every replica during a Redis or database outage, into the same
+outage. The shipped images' `HEALTHCHECK`s probe `/live`, and the compose
+healthchecks, which only order start-up, probe `/ready`.
+
 The end-to-end script is the strongest local smoke test. It boots the stack,
 creates identities and teams, and exercises the real OSS workflow.
