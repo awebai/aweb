@@ -1232,7 +1232,9 @@ class Passkeys:
         """
         if tx is None:
             async with self.db.transaction() as own:
-                return await self.login_evidence_is_current(scope, subject, evidence_ref, tx=own, hold=hold)
+                return await self.login_evidence_is_current(
+                    scope, subject, evidence_ref, tx=own, hold=hold
+                )
         current = await tx.fetch_value(
             "SELECT subject FROM {{tables.passkey_approvers}} "
             f"WHERE scope=$1 AND {_CURRENT} AND subject=$3" + (" FOR SHARE" if hold else ""),
@@ -1247,7 +1249,8 @@ class Passkeys:
                 "SELECT 1 FROM {{tables.passkey_assertions}} e "
                 "JOIN {{tables.passkey_credentials}} c ON c.credential_id=e.credential_id "
                 "AND c.subject=e.subject WHERE e.evidence_ref=$1 AND e.subject=$2 "
-                "AND e.purpose='login' AND c.revoked_at IS NULL" + (" FOR SHARE OF c" if hold else ""),
+                "AND e.purpose='login' AND c.revoked_at IS NULL"
+                + (" FOR SHARE OF c" if hold else ""),
                 evidence_ref,
                 subject,
             )
@@ -1351,6 +1354,23 @@ class Passkeys:
                 )
                 if hashlib.sha256(preimage).digest() != challenge:
                     raise PasskeyProofUnavailable()
+            # Context acquisition may take upstream app/F6 locks. Only then
+            # share the parent through insertion, so retirement either drains
+            # this issuer or makes it refuse after its parent wait. Enrolment
+            # remains allowed during a pending recovery's cooling-off period.
+            parent = await tx.fetch_one(
+                "SELECT scope,effective_at FROM {{tables.passkey_approvers}}"
+                " WHERE subject=$1 AND superseded_at IS NULL FOR SHARE",
+                subject,
+            )
+            if parent is None:
+                if purpose == "enrolment":
+                    raise EnrolmentRefused("enrolment subject is retired")
+                raise ProofContextUnavailable()
+            if purpose != "enrolment" and (
+                parent["scope"] != scope or parent["effective_at"] > self._clock()
+            ):
+                raise ProofContextUnavailable()
             now = self._clock()
             await tx.execute(
                 "DELETE FROM {{tables.passkey_challenges}} WHERE expires_at <= $1", now
@@ -1577,13 +1597,28 @@ class Passkeys:
             raise PasskeyProofUnavailable()
         evidence_ref = str(uuid.uuid4())
         async with self.db.transaction() as tx:
+            # The spent challenge stays spent even when this live-parent check
+            # refuses. Parent first matches canonical B3/retirement order and
+            # drains this entire counter/evidence transaction before deletion.
+            current = await tx.fetch_value(
+                "SELECT subject FROM {{tables.passkey_approvers}}"
+                " WHERE subject=$1 AND scope=$2 AND superseded_at IS NULL"
+                " AND effective_at<=$3 FOR SHARE",
+                subject,
+                context["scope"],
+                self._clock(),
+            )
+            if current is None:
+                raise AuthenticationFailed("assertion subject is retired")
             advanced = await tx.fetch_value(
-                "UPDATE {{tables.passkey_credentials}} SET sign_count = $2 "
+                "UPDATE {{tables.passkey_credentials}} AS c SET sign_count = $2 "
                 "WHERE credential_id = $1 AND revoked_at IS NULL "
-                "AND sign_count=$3 AND (sign_count < $2 OR (sign_count = 0 AND $2 = 0)) RETURNING credential_id",
+                "AND sign_count=$3 AND (sign_count < $2 OR (sign_count = 0 AND $2 = 0)) "
+                f"AND {_bound_to_rp('$4')} RETURNING credential_id",
                 credential_id,
                 verified.new_sign_count,
                 credential["sign_count"],
+                self.rp.rp_id,
             )
             if advanced is None:
                 raise AuthenticationFailed("authenticator counter did not advance")

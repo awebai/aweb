@@ -45,6 +45,15 @@ async def retire_team(tx: TransactionManager, team_id: str, *, app_id: str) -> N
             scope_names,
         )
         subject_ids = [subject["subject"] for subject in subjects]
+        # The parent lock drained current verifier/issuer transactions before
+        # child deletion. Refuse issuers already in flight that acquire it only
+        # after this transaction commits, without losing historical ownership.
+        await tx.execute(
+            "UPDATE {{tables.passkey_approvers}}"
+            " SET superseded_at=COALESCE(superseded_at,clock_timestamp())"
+            " WHERE subject=ANY($1::text[])",
+            subject_ids,
+        )
         destroyed = {}
         # Assertions' restricted proof sidecars cascade; historical audit and
         # owner-act authorization remain separately attributable.
