@@ -8,11 +8,11 @@ human-role writers bind it the same way, to the same scope.
 
 from __future__ import annotations
 
-from aweb_naapp.runtime.human_roles import HumanRoleHoldings
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID, TEAM_ID
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 
 from aweb_naapp.roles import apply_roles_migrations, begin_holding, end_holding, holding_scope
+from aweb_naapp.runtime.human_roles import HumanRoleHoldings
 from aweb_naapp.runtime.installation import AdmittedInstallation
 from tests.runtime.approvals.test_passkeys import (
     ORIGIN,
@@ -142,4 +142,3 @@ async def test_a_refresh_retains_a_new_certificate_for_the_same_holding(pw: Pass
             tx, holding=holding, certificate=b'{"certificate_id":"cert-2"}'
         )
     assert (await read(store, pw)).certificate == b'{"certificate_id":"cert-2"}'
-

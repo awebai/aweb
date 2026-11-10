@@ -141,27 +141,29 @@ async def test_a_held_holding_blocks_its_writers_until_the_holder_commits(
     db: AsyncDatabaseManager,
 ) -> None:
     await _begin(db)
-    holding = asyncio.Event()
-    release = asyncio.Event()
-
-    async def holder() -> None:
-        async with db.transaction() as tx:
-            assert await hold_holding(tx, **KEY) is not None
-            holding.set()
-            await release.wait()
+    started: asyncio.Future[int] = asyncio.get_running_loop().create_future()
 
     async def writer() -> bool:
-        await holding.wait()
-        return await _end(db)
+        async with db.transaction() as tx:
+            started.set_result(await tx.fetch_value("SELECT pg_backend_pid()"))
+            return await end_holding(tx, **KEY)
 
-    held = asyncio.create_task(holder())
-    ending = asyncio.create_task(writer())
-    await holding.wait()
-    await asyncio.sleep(0.3)
-    assert not ending.done()
-    release.set()
-    await held
-    assert await ending
+    ending = None
+    try:
+        async with db.transaction() as tx:
+            assert await hold_holding(tx, **KEY) is not None
+            holder = await tx.fetch_value("SELECT pg_backend_pid()")
+            ending = asyncio.create_task(writer())
+            pid = await asyncio.wait_for(started, 5)
+            async with asyncio.timeout(5):
+                while holder not in await db.fetch_value("SELECT pg_blocking_pids($1)", pid):
+                    assert not ending.done(), "the writer ended a held holding"
+                    await asyncio.sleep(0.01)
+        assert await asyncio.wait_for(ending, 5)
+    finally:
+        if ending is not None and not ending.done():
+            ending.cancel()
+            await asyncio.gather(ending, return_exceptions=True)
 
 
 @pytest.mark.parametrize("principal", ["did:key:z6MkfirstKey", "did:aw:"])
