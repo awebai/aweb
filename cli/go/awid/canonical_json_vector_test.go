@@ -48,6 +48,48 @@ func loadCanonicalJSONVector(t *testing.T) []canonicalJSONVectorCase {
 	return cases
 }
 
+// canonicalJSONBehaviourCase records what each implementation does with an
+// input outside the contract: "refused" or the hex of the bytes it writes.
+type canonicalJSONBehaviourCase struct {
+	Name            string `json:"name"`
+	JSON            string `json:"json"`
+	Float64         string `json:"go_canonical_json_value"`
+	UseNumber       string `json:"go_canonical_json_value_use_number"`
+	StrictUseNumber string `json:"go_strict_canonical_json_use_number"`
+}
+
+type canonicalJSONVectorLists struct {
+	EscapedLineSeparatorCases []canonicalJSONVectorCase    `json:"escaped_line_separator_cases"`
+	OutOfContractNumberCases  []canonicalJSONBehaviourCase `json:"out_of_contract_number_cases"`
+	LoneSurrogateCases        []canonicalJSONBehaviourCase `json:"lone_surrogate_cases"`
+}
+
+func loadCanonicalJSONVectorLists(t *testing.T) canonicalJSONVectorLists {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "vectors", "canonical-json-v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lists canonicalJSONVectorLists
+	if err := json.Unmarshal(data, &lists); err != nil {
+		t.Fatal(err)
+	}
+	return lists
+}
+
+func requireCanonicalJSONCaseNames(t *testing.T, list string, got []string, required ...string) {
+	t.Helper()
+	names := map[string]bool{}
+	for _, name := range got {
+		names[name] = true
+	}
+	for _, name := range required {
+		if !names[name] {
+			t.Fatalf("shared vector list %s has no case %q", list, name)
+		}
+	}
+}
+
 func decodeCanonicalJSONVectorValue(t *testing.T, raw json.RawMessage) any {
 	t.Helper()
 	decoder := json.NewDecoder(bytes.NewReader(raw))
@@ -97,6 +139,114 @@ func TestIDCertificateCanonicalReproducesTheSharedVector(t *testing.T) {
 			if hex.EncodeToString(got) != c.CanonicalHex {
 				t.Fatalf("canonical bytes\n got %x\nwant %s", got, c.CanonicalHex)
 			}
+		})
+	}
+}
+
+func TestSharedVectorTellsCodePointOrderFromCodeUnitOrder(t *testing.T) {
+	var names []string
+	for _, c := range loadCanonicalJSONVector(t) {
+		names = append(names, c.Name)
+	}
+	requireCanonicalJSONCaseNames(t, "code_point_key_order_cases", names,
+		"key_order_non_bmp_after_bmp", "key_order_non_bmp_against_u_e000", "key_order_non_bmp_against_u_ffff",
+		"key_order_non_bmp_pair", "key_order_non_bmp_nested")
+}
+
+// The escaped form: the bytes of the digests that only aw computes (A2A card
+// digests, custody request digests, blueprint payload digests, the stored
+// hosted creation response).
+func TestCanonicalJSONValueEscapingLineSeparatorsReproducesTheEscapedForm(t *testing.T) {
+	cases := loadCanonicalJSONVectorLists(t).EscapedLineSeparatorCases
+	var names []string
+	for _, c := range cases {
+		names = append(names, c.Name)
+	}
+	requireCanonicalJSONCaseNames(t, "escaped_line_separator_cases", names,
+		"escaped_line_separator_in_string", "escaped_paragraph_separator_in_string", "escaped_separators_in_keys",
+		"escaped_separator_after_reverse_solidus_text", "escaped_form_code_point_key_order", "a2a_agent_card_with_line_separators")
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			got, err := CanonicalJSONValueEscapingLineSeparators(decodeCanonicalJSONVectorValue(t, c.Value))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if hex.EncodeToString([]byte(got)) != c.CanonicalHex {
+				t.Fatalf("escaped form bytes\n got %x\nwant %s", got, c.CanonicalHex)
+			}
+			// The escaped form differs from the canonical form only in the
+			// two separators.
+			raw, err := CanonicalJSONValue(decodeCanonicalJSONVectorValue(t, c.Value))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rawLineSeparators(got) != raw {
+				t.Fatalf("escaped form with raw separators\n got %x\nwant %x", rawLineSeparators(got), raw)
+			}
+		})
+	}
+}
+
+// Inputs outside the contract (non-integer numbers, integers beyond 2^53-1,
+// negative zero, exponent forms, unpaired surrogates): the vector records what
+// each serializer does with them, so that a change in any is noticed.
+func TestOutOfContractInputsKeepTheirRecordedBehaviour(t *testing.T) {
+	lists := loadCanonicalJSONVectorLists(t)
+	var numberNames, surrogateNames []string
+	for _, c := range lists.OutOfContractNumberCases {
+		numberNames = append(numberNames, c.Name)
+	}
+	for _, c := range lists.LoneSurrogateCases {
+		surrogateNames = append(surrogateNames, c.Name)
+	}
+	requireCanonicalJSONCaseNames(t, "out_of_contract_number_cases", numberNames,
+		"number_with_fraction", "integral_float", "integer_above_safe_range", "negative_zero", "negative_zero_float",
+		"exponent_form", "exponent_form_large")
+	requireCanonicalJSONCaseNames(t, "lone_surrogate_cases", surrogateNames,
+		"lone_surrogate_in_string", "lone_surrogate_in_key", "lone_surrogate_key_order")
+
+	behaviour := func(written []byte, err error) string {
+		if err != nil {
+			return "refused"
+		}
+		return hex.EncodeToString(written)
+	}
+	canonical := func(value any) string {
+		got, err := CanonicalJSONValue(value)
+		return behaviour([]byte(got), err)
+	}
+	check := func(t *testing.T, what, got, want string) {
+		t.Helper()
+		if want == "" {
+			t.Fatalf("%s: the vector records no behaviour", what)
+		}
+		if got != want {
+			t.Fatalf("%s\n got %s\nwant %s", what, got, want)
+		}
+	}
+	for _, c := range lists.OutOfContractNumberCases {
+		t.Run(c.Name, func(t *testing.T) {
+			var asFloat64 any
+			if err := json.Unmarshal([]byte(c.JSON), &asFloat64); err != nil {
+				t.Fatal(err)
+			}
+			asNumber := decodeCanonicalJSONVectorValue(t, json.RawMessage(c.JSON))
+			check(t, "CanonicalJSONValue of float64", canonical(asFloat64), c.Float64)
+			check(t, "CanonicalJSONValue of json.Number", canonical(asNumber), c.UseNumber)
+			check(t, "StrictCanonicalJSON of json.Number", behaviour(StrictCanonicalJSON(asNumber)), c.StrictUseNumber)
+			check(t, "StrictCanonicalJSON of float64", behaviour(StrictCanonicalJSON(asFloat64)), "refused")
+		})
+	}
+	for _, c := range lists.LoneSurrogateCases {
+		t.Run(c.Name, func(t *testing.T) {
+			var asFloat64 any
+			if err := json.Unmarshal([]byte(c.JSON), &asFloat64); err != nil {
+				t.Fatal(err)
+			}
+			asNumber := decodeCanonicalJSONVectorValue(t, json.RawMessage(c.JSON))
+			check(t, "CanonicalJSONValue of float64", canonical(asFloat64), c.Float64)
+			check(t, "CanonicalJSONValue of json.Number", canonical(asNumber), c.UseNumber)
+			check(t, "StrictCanonicalJSON of json.Number", behaviour(StrictCanonicalJSON(asNumber)), c.StrictUseNumber)
 		})
 	}
 }

@@ -549,8 +549,9 @@ ROOT_CONSUMERS = {
         '"../../../docs/vectors/hook-catalog-v1.json"',
     ),
     PurePosixPath("cli/go/a2a/card_test.go"): _consumer(
-        "a2a-v1.json",
+        {"a2a-v1.json", "canonical-json-v1.json"},
         'filepath.Join(root, "docs", "vectors", "a2a-v1.json")',
+        'filepath.Join(root, "docs", "vectors", "canonical-json-v1.json")',
     ),
     PurePosixPath("cli/go/a2agw/envelope_vector_test.go"): _consumer(
         "a2a-bridge-envelope-v0.json",

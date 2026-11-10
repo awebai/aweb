@@ -1,6 +1,7 @@
 package a2a
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -216,5 +217,56 @@ func TestCardDigestOfTextWithLineSeparatorsIsStable(t *testing.T) {
 	}
 	if want := "sha256:774f392afd24f5dafec9f81ad2ab84047292da7f95ad1a4ed57e727ba6e9be4d"; digest.Value != want {
 		t.Fatalf("digest = %s, want %s", digest.Value, want)
+	}
+}
+
+// The card cases of the shared canonical JSON vector's escaped form: the bytes
+// a card digest is computed over, and the digest.
+func TestCardDigestReproducesTheEscapedFormVector(t *testing.T) {
+	_, sourcePath, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(sourcePath), "..", "..", ".."))
+	data, err := os.ReadFile(filepath.Join(root, "docs", "vectors", "canonical-json-v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vector struct {
+		Cases []struct {
+			Name         string          `json:"name"`
+			Value        json.RawMessage `json:"value"`
+			CanonicalHex string          `json:"canonical_hex"`
+			CardDigest   string          `json:"card_digest"`
+		} `json:"escaped_line_separator_cases"`
+	}
+	if err := json.Unmarshal(data, &vector); err != nil {
+		t.Fatal(err)
+	}
+	cards := 0
+	for _, c := range vector.Cases {
+		if c.CardDigest == "" {
+			continue
+		}
+		cards++
+		t.Run(c.Name, func(t *testing.T) {
+			var card Card
+			if err := json.Unmarshal(c.Value, &card); err != nil {
+				t.Fatal(err)
+			}
+			digest, err := CardDigest(card)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := hex.EncodeToString([]byte(digest.CanonicalNoSignatures)); got != c.CanonicalHex {
+				t.Fatalf("canonical bytes\n got %s\nwant %s", got, c.CanonicalHex)
+			}
+			if digest.Value != c.CardDigest {
+				t.Fatalf("digest = %s, want %s", digest.Value, c.CardDigest)
+			}
+		})
+	}
+	if cards == 0 {
+		t.Fatal("shared vector has no card digest case")
 	}
 }
