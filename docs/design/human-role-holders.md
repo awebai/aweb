@@ -180,6 +180,66 @@ unknown answer refuses, and a revoked membership ends the holder's authority.
 A human role has no enrolment link; the link-based enrolment stays for
 contact roles.
 
+### Reading a holding
+
+The app that writes a role's holdings owns its one read of them: one table,
+one owner. A consumer, such as a console handoff, maps that read onto its
+own interface and never reads the holding table itself. The read has this
+signature in `aweb_naapp` terms:
+
+```python
+@dataclass(frozen=True)
+class HumanRoleHolding:
+    installation_id: str
+    team_id: str
+    role: str
+    principal: str
+    b3_scope: str
+    subject: str | None
+    held_since: datetime
+
+
+async def read_holding(
+    tx: TransactionManager,
+    *,
+    installation: AdmittedInstallation,
+    role: str,
+    principal: str,
+) -> HumanRoleHolding | None: ...
+```
+
+- **Where it runs.** In the caller's transaction, by SQL reads only. It does
+  no network or registry read, takes no lock, and refreshes nothing. The
+  caller orders its locks and calls it again after them to compare.
+- **No holding.** It returns `None` when (installation, role, principal) has
+  no current holding: never designated, or revoked. It also returns `None`
+  for a role the app does not declare with the human-role acts, and for a
+  `principal` that is not a `did:aw`.
+- **The key.** `installation_id` and `team_id` are the admitted
+  installation's. `b3_scope` is derived from the installation, the team, the
+  role and the principal only, as secrets derives an owner's scope
+  (`naapp/secrets/src/aweb_secrets/owners.py:43-45`). A holding is never
+  read from a contact hash. A slot made by `app-role.designate` before the
+  app declared the role with the human-role acts is not a holding, and the
+  read never returns one.
+- **The credential.** `subject` is B3's subject for the credential that can
+  log in. It is `None` while none can: from a replace until the end of its
+  cooling-off. The holding still exists then, so the caller refuses the login
+  without treating the role as unheld.
+- **The holding's version.** `held_since` is set when designate creates the
+  holding. A replace keeps it. A revoke followed by a designate gives a new
+  value, so a consumer that bound a session to the earlier holding sees that
+  it changed. A consumer's binding to a holding uses only installation, team,
+  role, principal and `held_since`, none of which is secret.
+- **Membership and kind are not read here.** Each use re-checks that
+  `principal` is a current human member ([Use](#use)). That check is the
+  runtime's shared exact-principal check
+  (`aweb_naapp.runtime.human_member.check_human_member`). The caller runs it
+  before its effect transaction and keeps its proof fresh around each read.
+  The read runs no copy of that check. A holding whose principal has left
+  the team still reads as a holding, so revoke can target it (stage 3
+  above), and the shared check refuses its use.
+
 ### What the owner's client shows and signs
 
 The client shows:
@@ -237,4 +297,7 @@ Each is filed as one reviewed change:
   it;
 - C3's `aw app role designate|revoke` and `aw app credential replace`, naming
   `--principal` and, where the role declares one, the notice contact;
-- the `credential` handoff (aweb-acwd.4).
+- the `credential` handoff (aweb-acwd.4);
+- each app's holding read, to the signature in
+  [Reading a holding](#reading-a-holding): for logs, with its holding table
+  and writer (aweb-acgh.16.44).
