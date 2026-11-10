@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/atomicfile"
 )
 
 var idIssuanceFileName = regexp.MustCompile(`^sha256:([0-9a-f]{64})$`)
@@ -48,7 +49,7 @@ func (s IDIssuanceFileStore) directory(create bool) (bool, error) {
 		if err := os.Mkdir(s.Dir, 0o700); err != nil {
 			return false, err
 		}
-		return true, syncDirectory(filepath.Dir(s.Dir))
+		return true, atomicfile.SyncDir(filepath.Dir(s.Dir))
 	}
 	if err != nil {
 		return false, err
@@ -159,7 +160,7 @@ func (s IDIssuanceFileStore) Put(entry *awid.IDIssuanceEntry) error {
 	if err != nil {
 		return err
 	}
-	return durableWriteFile(path, append(data, '\n'))
+	return atomicWriteFile(path, append(data, '\n'))
 }
 
 func decodeIDIssuanceEntry(data []byte) (*awid.IDIssuanceEntry, error) {
@@ -170,22 +171,4 @@ func decodeIDIssuanceEntry(data []byte) (*awid.IDIssuanceEntry, error) {
 		return nil, err
 	}
 	return &entry, nil
-}
-
-// durableWriteFile writes a private file by temp-file-and-rename, then syncs
-// the directory so the rename itself survives a crash.
-func durableWriteFile(path string, data []byte) error {
-	if err := atomicWriteFileMode(path, data, 0o600); err != nil {
-		return err
-	}
-	return syncDirectory(filepath.Dir(path))
-}
-
-func syncDirectory(path string) error {
-	dir, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = dir.Close() }()
-	return dir.Sync()
 }

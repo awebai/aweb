@@ -25,12 +25,10 @@
   not send the compact v1 form and does not fall back to it; a server that
   refuses v2 refuses the request.
 
-- The channel client (the Claude Code plugin, the Pi extension and `aw wake`)
-  reports mail and chat as verified only when the displayed body, subject,
-  message id, conversation id, sender and recipient agree with the claims in
-  the signed payload, by the same rules `aw` applies. A message whose displayed
-  fields differ is presented with trust status `failed` and its fields as
-  received. Room posts use the same comparison.
+- `aw` writes signing keys, certificates and its other credential and state
+  files through one atomic write that syncs the file and then its directory, so
+  a key reported as saved survives a host crash. Recovery-only key writes keep
+  refusing an existing key.
 
 - AWID bounds its request input. The registry service refuses a request body
   over `AWID_MAX_REQUEST_BODY_BYTES` with 413 before parsing it (default 4 MiB,
@@ -39,6 +37,54 @@
   size can encode is refused without being decoded, and the DID fields of
   address registration and reassignment are limited to 256 characters like
   every other DID field. The limiter is `awid.request_body_limit`.
+
+- The channel client (the Claude Code plugin, the Pi extension and `aw wake`)
+  reports mail and chat as verified only when the displayed body, subject,
+  message id, conversation id, sender and recipient agree with the claims in
+  the signed payload, by the same rules `aw` applies. A message whose displayed
+  fields differ is presented with trust status `failed` and its fields as
+  received. Room posts use the same comparison.
+
+- `aw` reads its configuration from the process environment, flags and its own
+  config files. It does not read `.env` or `.env.aweb` files from the working
+  directory; export any settings kept in such a file (for example `AWEB_URL` or
+  `AWEB_API_KEY`) in the shell that runs `aw` instead.
+
+- The `aweb` server, `awid` and A2A gateway images declare their user as the
+  numeric `USER 1001:1001`, so Kubernetes admits them under
+  `securityContext.runAsNonRoot: true` without a `runAsUser` override. The
+  ids are those of the images' `aweb` and `awid` accounts, so ownership of
+  existing files and volumes is unaffected. See
+  [container users](docs/self-hosting-guide.md#container-users).
+
+- **Operator-visible:** on both the aweb server and AWID, `GET /health` answers
+  503, with the same JSON body, when the Redis or database check fails, and 200
+  when both pass (AWID's `/ops/health` alias follows it). `GET /ready` is the
+  same response under a readiness name. `GET /live` answers `200 {"status": "ok"}`
+  whenever the process serves requests and checks no dependency. Probe mapping:
+  liveness probes and container healthchecks, which restart the process, use
+  `/live`; readiness probes, load-balancer routing and start-up ordering use
+  `/ready`; monitoring reads `/health`. The `server/Dockerfile`, `awid/Dockerfile`
+  and `awid/Dockerfile.release` `HEALTHCHECK`s probe `/live`, and the compose
+  healthchecks probe `/ready`. **If your probe relied on `/health` answering 200
+  during a dependency outage** (a liveness probe or restart policy), point it at
+  `/live`; leaving it on `/health` restarts every replica into the outage. An
+  aweb server's start-up AWID check reads AWID's `/health` and starts, with a
+  warning, when AWID answers with its health report of a failed dependency of
+  its own. The CLI's
+  request-compression discovery treats a 503 as no advertisement and sends plain
+  bodies. See [health probes](docs/aweb-sot.md#health-probes).
+
+- The A2A gateway serves `GET /live`, which answers `200 {"status":"ok"}`
+  whenever the process serves requests and checks no dependency. The gateway
+  image's `HEALTHCHECK` probes `/live`; `/health` remains the readiness and
+  monitoring route. The gateway's registry check treats AWID's health report
+  with status `unhealthy`, which AWID sends with 503 when its own Redis or
+  database check fails, as a registry it reached, so a registry dependency
+  outage does not make the gateway unhealthy. **Self-hosters:** an aweb server
+  older than this release treats any non-2xx answer from AWID's `/health` as
+  unreachable and refuses to start while its registry reports unhealthy;
+  upgrade the server together with the registry.
 
 - Self-custodial humans can select their OS-keychain identity with `aw --human
   <did:aw> --human-domain <domain>` to fetch a controller-issued team certificate,

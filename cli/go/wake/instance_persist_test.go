@@ -2,7 +2,6 @@ package wake
 
 import (
 	"github.com/awebai/aw/wake/session"
-	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -22,15 +21,13 @@ func TestInstancePersistenceCannotOverwriteNewerPause(t *testing.T) {
 	firstDone := make(chan struct{})
 	secondDone := make(chan struct{})
 	var writes atomic.Int32
-	originalRename := wakeRename
-	wakeRename = func(old, new string) error {
-		if strings.Contains(new, "instances.d") && writes.Add(1) == 1 {
+	wakeBeforeCommit = func(path string) {
+		if strings.Contains(path, "instances.d") && writes.Add(1) == 1 {
 			close(entered)
 			<-release
 		}
-		return os.Rename(old, new)
 	}
-	defer func() { wakeRename = originalRename }()
+	defer func() { wakeBeforeCommit = nil }()
 	go func() { runner.persist(); close(firstDone) }()
 	<-entered
 	runner.mu.Lock()

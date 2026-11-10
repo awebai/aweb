@@ -7,6 +7,7 @@ from importlib.metadata import version as pkg_version
 from typing import Optional
 
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
 from redis.asyncio import from_url as async_redis_from_url
 
@@ -188,13 +189,18 @@ def mount_registry(app: FastAPI) -> None:
         checks["rate_limiter"] = type(request.app.state.rate_limiter).__name__
         return {"status": "ok" if healthy else "unhealthy", "version": service_version, "checks": checks}
 
-    @app.get("/health", tags=["ops"])
-    async def health(request: Request) -> dict:
-        return await _health_payload(request)
+    @app.get("/live", tags=["ops"])
+    async def live() -> dict:
+        # Checks no dependency: a Redis or database outage must not make an
+        # orchestrator restart a process that is serving requests.
+        return {"status": "ok"}
 
+    @app.get("/health", tags=["ops"])
+    @app.get("/ready", tags=["ops"])
     @app.get("/ops/health", tags=["ops"])
-    async def ops_health(request: Request) -> dict:
-        return await _health_payload(request)
+    async def health(request: Request) -> JSONResponse:
+        payload = await _health_payload(request)
+        return JSONResponse(status_code=200 if payload["status"] == "ok" else 503, content=payload)
 
     app.state.rotate_max_body_bytes = rotate_max_body_bytes_from_env()
     app.state.max_request_body_bytes = _max_request_body_bytes(app.state.rotate_max_body_bytes)

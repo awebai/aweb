@@ -283,8 +283,11 @@ includes a neutral OSS task request, the same request carrying a signed
 `trace_id` member (an additive case: extra signed members are signed and
 ignored by the auth layer, which is how aw-hooks carries its trace), and a
 hosted-route interoperability case; negative cases cover cross-endpoint/origin replay, body tampering, and a missing
-protocol version. The aweb server, Go conformance suite, and public naapp
-verifiers consume it. See
+protocol version. `identity_cases` holds identity-only requests, which sign
+`did_aw` in place of `team_id`: one for a stable identity and one for a local
+identity, whose `did_aw` is the empty string. The aweb server, Go conformance
+suite, and channel-core request signer consume every case; the public naapp
+verifiers consume the certificate cases. See
 [`team-auth-envelope-v2.md`](../team-auth-envelope-v2.md).
 
 ### `federation-origin-ip-v1.json`

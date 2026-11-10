@@ -46,11 +46,11 @@ COPY --from=builder --chown=aweb:aweb /naapp-lib /naapp-lib
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 
-USER aweb
+USER 1001:1001
 
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD curl -f http://localhost:8000/live || exit 1
 
 CMD ["aweb", "serve", "--host", "0.0.0.0", "--port", "8000"]

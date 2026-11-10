@@ -25,19 +25,12 @@ import (
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/identityutil"
 	"github.com/awebai/aw/internal/termtext"
-	"github.com/joho/godotenv"
 	"golang.org/x/term"
 )
 
 // DefaultAwebURL is the public aweb instance used when no aweb URL is
 // configured via flags, environment, or local config.
 const DefaultAwebURL = "https://app.aweb.ai"
-
-func loadDotenvBestEffort() {
-	// Best effort: load from current working directory.
-	_ = godotenv.Load()
-	_ = godotenv.Overload(".env.aweb")
-}
 
 // lastClient holds the most recently created client, used to check
 // the X-Latest-Client-Version header after command execution.

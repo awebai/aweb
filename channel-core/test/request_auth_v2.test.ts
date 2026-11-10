@@ -24,8 +24,9 @@ interface VectorCase {
 
 const vectors = JSON.parse(
   readFileSync(join(import.meta.dirname, "..", "..", "docs", "vectors", "team-auth-envelope-v2.json"), "utf8"),
-) as { cases: VectorCase[] };
+) as { cases: VectorCase[]; identity_cases: VectorCase[] };
 const REQUIRED = ["aud", "body_sha256", "method", "path", "team_id", "timestamp", "v"];
+const IDENTITY_REQUIRED = ["aud", "body_sha256", "did_aw", "method", "path", "timestamp", "v"];
 
 describe("v2 request envelope conformance", () => {
   const plain = vectors.cases.filter((c) => Object.keys(c.payload).sort().join() === REQUIRED.join());
@@ -43,6 +44,30 @@ describe("v2 request envelope conformance", () => {
       signingKey: Buffer.from(c.seed_hex, "hex"),
       claim: "team_id",
       value: String(c.payload.team_id),
+      timestamp: String(c.payload.timestamp),
+    });
+    expect(signed.canonicalPayload).toBe(c.canonical_payload);
+    expect(signed["X-AWEB-Signed-Payload"]).toBe(c.signed_payload_b64url);
+    expect(signed.Authorization).toBe(`DIDKey ${c.did_key} ${c.signature_b64}`);
+    expect(signed["X-AWEB-Timestamp"]).toBe(c.payload.timestamp);
+  });
+
+  test("the vector file has a stable-identity case and a local-identity case", () => {
+    const values = vectors.identity_cases.map((c) => c.payload.did_aw);
+    expect(values).toContain("");
+    expect(values.some((value) => value !== "")).toBe(true);
+  });
+
+  test.each(vectors.identity_cases)("$name: identity headers match the shared vector byte for byte", (c) => {
+    expect(Object.keys(c.payload).sort()).toEqual(IDENTITY_REQUIRED);
+    const signed = signRequestHeaders({
+      baseURL: String(c.payload.aud),
+      path: String(c.payload.path),
+      method: String(c.payload.method).toLowerCase(),
+      bodyText: c.body,
+      signingKey: Buffer.from(c.seed_hex, "hex"),
+      claim: "did_aw",
+      value: String(c.payload.did_aw),
       timestamp: String(c.payload.timestamp),
     });
     expect(signed.canonicalPayload).toBe(c.canonical_payload);
