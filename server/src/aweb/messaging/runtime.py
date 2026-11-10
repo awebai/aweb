@@ -15,13 +15,14 @@ from aweb.identity_binding import identity_binding_cache
 
 @dataclass(frozen=True)
 class MessagingRuntime:
-    """The serving application's registry, federation transports, origins and publishers.
+    """The serving application's registry, federation authority and transports, origins and publishers.
 
     Sends take it in place of a request, so every caller of a send reaches the
     same application services.
     """
 
     registry_client: Any
+    federation_authority: Any
     mail_transport: Any
     chat_transport: Any
     public_origin: str
@@ -35,6 +36,7 @@ def messaging_runtime(app_state) -> MessagingRuntime:
     """The messaging runtime of the application that owns ``app_state``."""
     return MessagingRuntime(
         registry_client=getattr(app_state, "awid_registry_client", None),
+        federation_authority=getattr(app_state, "federation_authority", None),
         mail_transport=getattr(app_state, "federation_mail_transport", None),
         chat_transport=(
             getattr(app_state, "federation_chat_transport", None)

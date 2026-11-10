@@ -30,19 +30,25 @@ def mcp_messaging_runtime(
     auth: AuthContext,
     *,
     public_origin: str | None = None,
+    registry_client: Any = None,
+    federation_authority: Any = None,
     mail_transport: Any = None,
     chat_transport: Any = None,
 ) -> MessagingRuntime:
     """The serving application's messaging runtime as this MCP app sends with it.
 
-    The origin and the federation transports are the ones the MCP app was
-    created with; the registry client, wake publisher and identity binding
-    cache are the serving application's.
+    The origin, the federation authority and the federation transports are the
+    ones the MCP app was created with, as is the registry client when a tool
+    passes its own; the wake publisher and identity binding cache are the
+    serving application's, and so is the registry client otherwise.
     """
     state = getattr(getattr(auth.request, "app", None), "state", None)
     origin = (public_origin or "").strip()
     return MessagingRuntime(
-        registry_client=getattr(state, "awid_registry_client", None),
+        registry_client=(
+            registry_client if registry_client is not None else getattr(state, "awid_registry_client", None)
+        ),
+        federation_authority=federation_authority,
         mail_transport=mail_transport,
         chat_transport=chat_transport,
         public_origin=origin or application_public_origin(state),

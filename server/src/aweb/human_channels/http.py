@@ -211,7 +211,7 @@ def _exact(result, message_id, conversation_id, kind, envelope_hash):
 async def _target(request, payload, auth, db, kind, session_id):
     from aweb.messaging.messages import get_agent_by_id, resolve_agent_by_did
     from aweb.messaging.address_auth import identity_recipient
-    from aweb.routes.messages import _resolve_message_alias
+    from aweb.messaging.mail_send import _resolve_message_alias
 
     aliases = (
         [getattr(payload, "to_alias", None)]

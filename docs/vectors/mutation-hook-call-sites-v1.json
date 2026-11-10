@@ -73,17 +73,17 @@
     },
     {
       "source": "server/src/aweb/mcp/tools/mail.py",
-      "function": "_fire_message_sent",
-      "event": "message.sent"
-    },
-    {
-      "source": "server/src/aweb/mcp/tools/mail.py",
       "function": "check_inbox",
       "event": "message.acknowledged"
     },
     {
       "source": "server/src/aweb/messaging/mail_send.py",
       "function": "deliver_remote_mail_and_project_locally",
+      "event": "message.sent"
+    },
+    {
+      "source": "server/src/aweb/messaging/mail_send.py",
+      "function": "send_mail",
       "event": "message.sent"
     },
     {
@@ -120,11 +120,6 @@
       "source": "server/src/aweb/routes/messages.py",
       "function": "ack_message",
       "event": "message.acknowledged"
-    },
-    {
-      "source": "server/src/aweb/routes/messages.py",
-      "function": "send_message",
-      "event": "message.sent"
     },
     {
       "source": "server/src/aweb/routes/reservations.py",

@@ -120,9 +120,8 @@ federation fires through its outbox instead, so the inventory does not list it. 
 calls for the same event. The table below groups those exact call sites by their
 public HTTP behavior. The create, update, delete, dependency and comment rows of
 `/v1/tasks` fire from the task service the route calls, and a `POST /v1/messages`
-send over a stored conversation route or to another server fires from
-`server/src/aweb/messaging/mail_send.py`, which the route and the MCP `send_mail`
-tool both call; every other row fires from its route.
+send fires from `server/src/aweb/messaging/mail_send.py`, which the route and
+the MCP `send_mail` tool both call; every other row fires from its route.
 
 | HTTP route | Event | When called |
 |---|---|---|
@@ -163,8 +162,10 @@ table fires the hook.
 
 The task tools and the task routes call one service function for each change,
 and that function fires the events: for the same change by the same member the
-event names, their order and the whole context are equal. The mail and chat
-tools build their context in the tool, with the same keys as their routes. MCP
+event names, their order and the whole context are equal. `send_mail` and
+`POST /v1/messages` likewise call one mail send, which fires `message.sent`
+with one context for both. `check_mail` and the chat tools build their context
+in the tool, with the same keys as their routes. MCP
 has no tool that deletes a task, changes its dependencies or answers it, and
 none for reservations or agent status; those events come from the routes only.
 
