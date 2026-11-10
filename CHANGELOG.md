@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Activating a team instructions version deactivates the active version and
+  activates the chosen one in one transaction, and activations of one team run
+  one at a time. A failed activation leaves the active version as it was, and
+  concurrent activations leave exactly one version active.
+
 - `aw` writes U+2028 (line separator) and U+2029 (paragraph separator) as UTF-8
   in the canonical JSON it signs, as the Python reference
   (`awid.signing.canonical_json_bytes`) and TypeScript do; Go's JSON encoder
