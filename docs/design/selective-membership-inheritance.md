@@ -460,7 +460,7 @@ Resource decisions consume only verified membership facts. The following rule
 follows the converged rule for acwd.16 (Athena `2bc86d1b-8ff1-4063-8686-8bb3633cb6c5`,
 settled with R and relayed by secrets `e536012c-0fd4-4feb-86fb-cc4ded970483`):
 
-The shared verifier's original membership dependency deadline (the earliest fresh_until across the verified evidence, retained from admission, never refreshed by a cache hit) is compared LOCALLY against the clock read after the last effect-lock wait in the final fence transaction. That transaction covers approval consumption, credential opening and release, and the dispatch or assignment commit. It applies to direct and inherited members alike and makes no network call. An expired deadline refuses inside that transaction, so the transaction rolls back:
+The shared verifier's original membership dependency deadline (the earliest fresh_until across the verified evidence, retained from admission, never refreshed by a cache hit) is compared LOCALLY against the database clock at two checkpoints, each read after that transaction's own last effect-lock wait: the admission transaction (approval consumption and intent commit) and the dispatch or runner-claim transaction (credential opening and release, and the dispatch or assignment commit). It applies to direct and inherited members alike and makes no network call. An expired deadline refuses inside that transaction, so the transaction rolls back:
 
 - no approval is newly consumed by the rolled-back transaction;
 - no assignment is persisted;
@@ -632,7 +632,7 @@ direct-naapp consumers:
 | Unclassified transition, forged floor or changed proof with old status hash | Refuse; transition validation and exact signed/status binding are mandatory. |
 | Laptop and managed-server children with equivalent evidence | Same membership/resource decisions; no placement condition or forced host migration. |
 | Direct member versus inherited leaf | Only inherited result exposes verified policy/root/ordered ancestors; caller fields cannot substitute. |
-| Membership deadline expires during the last effect-lock wait | Local refusal; no newly consumed approval in the failed transaction, no assignment/release/send. Earlier committed admission consumption is not undone. Short wait with unexpired evidence succeeds. |
+| Membership deadline expires during the dispatch or claim fence's lock wait | Local refusal; no newly consumed approval in the failed transaction, no assignment/release/send. Earlier committed admission consumption is not undone. Short wait with unexpired evidence succeeds. |
 | Runner claims queued job after membership deadline, including another worker | 503 `current_membership_unavailable`; intent closes refused, admission approval stays consumed; no assignment, credential release or send. Recovery needs a fresh request and fresh approval where required. |
 | Evidence expires during the admission transaction lock wait or deadline persistence | DB-first timestamp plus later rounded-down remaining budget does not extend authority; admission refuses before commit with no approval consumed, assignment, credential release or send. |
 | Local B reused across teams | Existing local-scope refusal; distinct local children or existing global B are the valid neighbors. |
