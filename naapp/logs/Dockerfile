@@ -44,8 +44,9 @@ COPY naapp/logs/src ./src
 RUN uv sync --frozen --no-dev
 
 # A fixed UID, so mounted key files can be owned by the service user alone.
-RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin logs
-USER logs
+RUN groupadd --gid 10001 logs \
+    && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin logs
+USER 10001:10001
 
 EXPOSE 8765
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s \

@@ -32,9 +32,10 @@ COPY naapp/secrets/pyproject.toml naapp/secrets/uv.lock naapp/secrets/README.md 
 RUN uv sync --frozen --no-install-project --no-dev
 COPY naapp/secrets/src ./src
 RUN uv sync --frozen --no-dev \
-    && useradd --uid 10001 --create-home --shell /usr/sbin/nologin secrets
+    && groupadd --gid 10001 secrets \
+    && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin secrets
 
-USER secrets
+USER 10001:10001
 EXPOSE 8770
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s \
     CMD ["/app/.venv/bin/python", "-c", "import os,urllib.request; r=urllib.request.Request('http://127.0.0.1:8770/ready',headers={'Host':__import__('urllib.parse',fromlist=['urlsplit']).urlsplit(os.environ['SECRETS_PUBLIC_ORIGIN']).netloc}); urllib.request.urlopen(r,timeout=4).close()"]

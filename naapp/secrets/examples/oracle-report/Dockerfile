@@ -3,5 +3,6 @@ COPY requirements.txt /opt/report/requirements.txt
 RUN python -m pip install --no-cache-dir --require-hashes -r /opt/report/requirements.txt
 COPY report.py /opt/report/report.py
 WORKDIR /opt/report
+USER 10000:10000
 # The runner replaces image defaults with the complete pinned job argv/env/cwd.
 ENTRYPOINT ["/usr/local/bin/python", "-I", "-B", "/opt/report/report.py"]
