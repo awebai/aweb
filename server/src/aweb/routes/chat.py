@@ -2651,11 +2651,13 @@ async def stream(
 
     after_dt = _parse_timestamp(after, "after") if after is not None else None
     await require_valid_stream_grant(request, db, auth)
+    # The live cursor is taken before the stream announces itself: a peer that
+    # answers the waiting registration or the wake sends after this instant.
+    opened_at = datetime.now(timezone.utc)
     await register_waiting(redis, str(session_uuid), actor_did)
     await wake_chat_session_participants(
         aweb_db, agent_wake_publisher(request.app.state), session_id=session_uuid
     )
-    opened_at = datetime.now(timezone.utc)
 
     return StreamingResponse(
         _sse_events(
