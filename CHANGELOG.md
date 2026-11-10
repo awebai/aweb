@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- `aw run` and the `aw wake` broker follow one reconnect policy for the event
+  stream, [docs/event-stream-client-policy.md](docs/event-stream-client-policy.md).
+  Neither stops its stream for good on a refusal or a rate limit: 408, 409, 425,
+  429 and 5xx are retried from 1 second to 15 seconds with jitter, and
+  `Retry-After` is honoured as a minimum wait up to 5 minutes. A refusal (any
+  other 4xx, or a grant terminal event) is retried slowly, from 1 minute to
+  15 minutes, with the identity read again from disk before each attempt, and is
+  reported once on the way in and once on the way out: `aw run` prints
+  `aweb: event stream refused: <status>, next try HH:MM`, and `aw wake status`
+  shows the stream as `refused` with `cause` and `next_attempt_at`, never as
+  admitted. `aw run`'s planned close is between 3 min 30 s and 4 min,
+  where it was a local deadline of 10 minutes; the broker's is the same range,
+  where it was 4 minutes. Both close a connection that has delivered nothing,
+  heartbeat included, for 75 seconds. A repeated `aw wake register` retries a
+  refused stream at once. `wake.Config` takes `StreamPolicy` in place of
+  `StreamTTL`, `BackoffMin` and `BackoffMax`.
+
 - AWID bounds its request input. The registry service refuses a request body
   over `AWID_MAX_REQUEST_BODY_BYTES` with 413 before parsing it (default 4 MiB,
   following a raised `AWID_ROTATE_MAX_BODY_BYTES`; a value below the rotate

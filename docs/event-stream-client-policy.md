@@ -160,13 +160,13 @@ nothing.
 
 | | channel-core | wake broker | `aw run` |
 |---|---|---|---|
-| Backoff ceiling | 5 s becomes 15 s | unchanged | 2 s becomes 15 s |
-| Jitter | added | unchanged | added |
-| `Retry-After` | honoured | honoured | honoured |
-| Refusals | every 5 s becomes 1 to 15 minutes, reported as refused | a stop becomes 1 to 15 minutes; a registration retries at once | a stop becomes 1 to 15 minutes |
-| 408, 409, 429 | unchanged | unchanged | a stop becomes transient retry |
-| Planned close | jittered | jittered | 10 minutes becomes 3.5 to 4 minutes |
-| Silence | unchanged | added | added |
+| Backoff ceiling | 5 s becomes 15 s | follows the policy | follows the policy |
+| Jitter | added | follows the policy | follows the policy |
+| `Retry-After` | honoured | follows the policy | follows the policy |
+| Refusals | every 5 s becomes 1 to 15 minutes, reported as refused | follows the policy | follows the policy |
+| 408, 409, 429 | unchanged | follows the policy | follows the policy |
+| Planned close | jittered | follows the policy | follows the policy |
+| Silence | unchanged | follows the policy | follows the policy |
 
 The two Go clients share one implementation of sections 2 to 6. The
 TypeScript client has its own and is tested against the same table of cases.
