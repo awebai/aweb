@@ -47,6 +47,6 @@ USER 1001:1001
 EXPOSE 8010
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:8010/health || exit 1
+    CMD curl -f http://localhost:8010/live || exit 1
 
 CMD ["awid", "--host", "0.0.0.0", "--port", "8010"]

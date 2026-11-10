@@ -1443,7 +1443,11 @@ selection.
 ## awid API surface (what aweb depends on)
 
 The standard server uses these AWID read families through the cached registry
-client. Startup also performs an uncached AWID health check before serving.
+client. Startup also performs an uncached AWID health check before serving: the
+server does not start unless AWID answers `GET /health`. AWID's health report
+with status `unhealthy`, which it sends with 503 when its own Redis or database
+check fails, counts as reached: the server logs a warning and starts. Any other
+failure, including a 503 that is not that report, stops start-up.
 
 ### Team resolution (on first agent connection or cache miss)
 
@@ -1753,6 +1757,30 @@ This intentional split means a self-hosted aweb deployed inside a
 private VPC behind authenticated agent traffic does not pay the cost
 of artificial limits, while a hosted operator can apply whatever
 metering its product needs without changing the aweb contract.
+
+### Health probes
+
+Three unauthenticated routes report the server's state. None is rate limited.
+
+| Route | Checks | Answers | Use it for |
+|---|---|---|---|
+| `GET /live` | Nothing | `200 {"status": "ok"}` whenever the process serves requests | Liveness probes and container healthchecks: anything that restarts the process |
+| `GET /ready` | Redis and the database | 200 when both answer, 503 when either fails | Readiness probes, load-balancer routing, start-up ordering |
+| `GET /health` | The same as `/ready` | The same response as `/ready` | Monitoring and manual checks |
+
+`/ready` and `/health` are one handler. Their body is
+`{"status": "ok" | "unhealthy", "checks": {"redis": "ok" | "error", "database": "ok" | "error"}}`
+with either status code; failure details go to the server log, never the body.
+
+Point a restarting probe at `/live` only. A probe that restarts the process on
+`/ready` or `/health` restarts every replica during a Redis or database outage,
+into the same outage. The `server/Dockerfile` `HEALTHCHECK` probes `/live`; the
+compose files' healthchecks, which order start-up, probe `/ready`.
+
+A host that mounts the app under a prefix serves the three routes under that
+prefix. The CLI's request-compression discovery reads `GET /health` and treats
+a non-2xx answer as no advertisement, so writes to a server that is not ready
+go uncompressed.
 
 ### Server lifecycle
 
