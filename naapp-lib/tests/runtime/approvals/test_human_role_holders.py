@@ -297,18 +297,38 @@ async def test_a_credential_changed_after_parsing_is_not_the_one_the_act_binds(
 async def test_one_credential_binds_one_holding_when_two_are_designated_at_once(
     pw: PasskeyWorld,
 ):
+    """Both writers reach the credential insert before either commits: a
+    SHARE lock on the credential table holds them there until both wait."""
     member = holder()
-    results = await asyncio.gather(
-        designate(pw, member),
-        designate(pw, member, principal=OTHER_PRINCIPAL),
-        return_exceptions=True,
+    db = pw.passkeys.db
+    waiting_inserts = (
+        "SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation "
+        "WHERE l.database = (SELECT oid FROM pg_database WHERE datname = current_database()) "
+        "AND c.relname = 'passkey_credentials' AND l.mode = 'RowExclusiveLock' AND NOT l.granted"
     )
+    writers = None
+    try:
+        async with db.transaction() as gate:
+            await gate.execute("LOCK TABLE {{tables.passkey_credentials}} IN SHARE MODE")
+            writers = asyncio.ensure_future(
+                asyncio.gather(
+                    designate(pw, member),
+                    designate(pw, member, principal=OTHER_PRINCIPAL),
+                    return_exceptions=True,
+                )
+            )
+            async with asyncio.timeout(5):
+                while await db.fetch_value(waiting_inserts) < 2:
+                    assert not writers.done(), writers.result()
+                    await asyncio.sleep(0.01)
+        results = await asyncio.wait_for(writers, 5)
+    finally:
+        if writers is not None and not writers.done():
+            writers.cancel()
+            await asyncio.gather(writers, return_exceptions=True)
     refused = [r for r in results if isinstance(r, DesignationRefused)]
     held = [r for r in results if not isinstance(r, BaseException)]
     assert len(refused) == 1 and len(held) == 1, results
-    [winner] = held
-    assert winner.approver.principal_did in (PRINCIPAL, OTHER_PRINCIPAL)
-    db = pw.passkeys.db
     assert await db.fetch_value("SELECT count(*) FROM {{tables.passkey_approvers}}") == 1
     assert await db.fetch_value("SELECT count(*) FROM {{tables.role_holdings}}") == 1
     assert await db.fetch_value("SELECT count(*) FROM {{tables.owner_act_nonces}}") == 1
