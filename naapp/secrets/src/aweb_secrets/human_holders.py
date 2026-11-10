@@ -143,11 +143,12 @@ class OwnerHoldingAuthority:
         async with self._console.db.transaction() as tx:
             await self._console.fence.check(tx, destination.admitted)
             assigned_at = await self._role_stamp(tx, destination)
-            approver = await self._console.passkeys.designated_approver(destination.b3_scope)
-            await self._console.fence.check(tx, destination.admitted)
-            if approver is None:
-                # Holding loss is final; a held role without usable B3 needs LOGIN.
-                raise HTTPException(401, "console_session_required")
+        # B3's manager read must not acquire a second pool connection while
+        # this projection retains one. Effect preparation rechecks under tx.
+        approver = await self._console.passkeys.designated_approver(destination.b3_scope)
+        if approver is None:
+            # Holding loss is final; a held role without usable B3 needs LOGIN.
+            raise HTTPException(401, "console_session_required")
         # This projection grants nothing; the caller must hold/recheck it before
         # release or effect. A changed B3 association cannot heal this subject.
         return OwnerSessionTarget(
