@@ -525,8 +525,15 @@ def create_app(
             content={"detail": exc.detail},
         )
 
+    @app.get("/live", tags=["internal"])
+    async def live() -> dict:
+        # Checks no dependency: a Redis or database outage must not make an
+        # orchestrator restart a process that is serving requests.
+        return {"status": "ok"}
+
     @app.get("/health", tags=["internal"])
-    async def health(request: Request) -> dict:
+    @app.get("/ready", tags=["internal"])
+    async def health(request: Request) -> JSONResponse:
         checks = {}
         healthy = True
 
@@ -551,7 +558,10 @@ def create_app(
             checks["database"] = "error"
             healthy = False
 
-        return {"status": "ok" if healthy else "unhealthy", "checks": checks}
+        return JSONResponse(
+            status_code=200 if healthy else 503,
+            content={"status": "ok" if healthy else "unhealthy", "checks": checks},
+        )
 
     app.include_router(agents_router)
     app.include_router(agent_status_router)
