@@ -198,7 +198,8 @@ async def test_a_replacement_is_one_recovery_receipt_with_its_own_key_ref(world:
     member = holder()
     second = await replace(world, member)
     assert [p["act"] for p in await payloads(world)] == ["role.designated", "credential.recovered"]
-    old, new = (await authorization(world, d.approver.subject) for d in (first, second))
+    old = await authorization(world, first.approver.subject)
+    new = await authorization(world, second.approver.subject)
     assert new["credential_sha256"] == member.credential.sha256
     assert new["effective_at"] == second.effective_at
     assert new["credential_ref"] != old["credential_ref"]
