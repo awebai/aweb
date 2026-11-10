@@ -12,7 +12,8 @@ from uuid import UUID
 from pgdbm.core import TransactionManager
 from webauthn.helpers import base64url_to_bytes
 
-from aweb_naapp.roles import principal_key
+from aweb_naapp.hooks.owner_act import HumanCredential
+from aweb_naapp.roles import HoldingRecord, principal_key
 from aweb_naapp.runtime.audit import AuditEvent, AuditKind
 from aweb_naapp.runtime.credential_audit.recorder import (
     GovernanceUnavailable,
@@ -184,6 +185,8 @@ class _NarrowingAuthority:
     signing: bytes | None
     signature: str | None
     signed_trace_id: str | None
+    # The human-role holding a consumed human-role.revoke ends, bound to the act.
+    holding: HoldingRecord | None = None
 
 
 # The payload field that carries each authority's commitment.
@@ -213,13 +216,24 @@ async def _narrowing_authority(
             None,
             context.signed_trace_id,
         )
-    # An owner act revokes a role; it never revokes one passkey.
+    # An owner act revokes a role; it never revokes one passkey. A scope whose
+    # role is declared human pairs only with human-role.revoke, bound to the
+    # holding the act names; any other scope only with app-role.revoke.
     if (
         isinstance(context, _OwnerActContext)
         and context.owner is owner
         and event.kind is AuditKind.APPROVER_RETIRED
     ):
-        digest = await owner._consumed_act(tx, context, event, "app-role.revoke")
+        scope = event.details.get("scope")
+        if not isinstance(scope, str) or not scope:
+            raise GovernanceUnavailable()
+        holding = await owner.declared_human_record(tx, scope)
+        if holding is not None:
+            holding = await owner.human_record(
+                tx, scope, context.admitted, owner.signed_subject(context)
+            )
+        expected = "app-role.revoke" if holding is None else "human-role.revoke"
+        digest = await owner._consumed_act(tx, context, event, expected)
         return _NarrowingAuthority(
             context.admitted,
             "owner_act",
@@ -229,6 +243,7 @@ async def _narrowing_authority(
             context.signing,
             context.signature,
             None,
+            holding,
         )
     raise GovernanceUnavailable()
 
@@ -237,45 +252,23 @@ async def record_narrowing(
     owner: CredentialAudit, event: AuditEvent, tx: TransactionManager, context: Any
 ) -> None:
     authority = await _narrowing_authority(owner, event, tx, context)
-    # Containment removes application approver metadata before B3. The frozen
-    # designation association survives that removal; no live resolver is used.
-    row = await tx.fetch_one(
-        "SELECT a.*,p.superseded_at FROM {{tables.credential_authorizations}} a "
-        "JOIN {{tables.passkey_approvers}} p USING(subject) WHERE a.subject=$1 AND p.scope=a.scope",
-        event.subject,
-    )
-    if (
-        row is None
-        or owner._admitted(row) != authority.admitted
-        or event.details.get("scope") != row["scope"]
-    ):
-        raise GovernanceUnavailable()
+    if authority.holding is not None:
+        await _require_holding_ended(tx, event, authority.holding)
+        role = authority.holding.role
+    else:
+        role = await _require_narrowed_subject(owner, tx, event, authority)
     payload = dict(
         act="role.revoked",
         direction="narrowing",
         subject_ref=event.subject,
-        role=row["role"],
+        role=role,
         authority=authority.authority,
     )
-    if event.kind is AuditKind.APPROVER_RETIRED:
-        if row["superseded_at"] != event.occurred_at:
-            raise GovernanceUnavailable()
-    else:
-        try:
-            credential_id = base64url_to_bytes(event.details["credential_id"])
-        except (KeyError, TypeError, ValueError):
-            raise GovernanceUnavailable() from None
-        key = await tx.fetch_one(
-            "SELECT c.credential_ref,k.revoked_at FROM {{tables.credential_completion_links}} c "
-            "JOIN {{tables.passkey_credentials}} k ON k.credential_id=c.credential_id "
-            "AND k.subject=c.subject WHERE c.subject=$1 AND c.credential_id=$2",
-            event.subject,
-            credential_id,
-        )
-        if key is None or key["revoked_at"] != event.occurred_at or key["credential_ref"] is None:
-            raise GovernanceUnavailable()
+    if event.kind is AuditKind.APPROVER_PASSKEY_REVOKED:
         payload.update(
-            act="credential.revoked", resource_type="passkey", resource_ref=key["credential_ref"]
+            act="credential.revoked",
+            resource_type="passkey",
+            resource_ref=await _revoked_key_ref(tx, event),
         )
     if authority.commitment is not None:
         payload[_COMMITMENT_FIELDS[authority.authority]] = authority.commitment
@@ -307,3 +300,97 @@ async def record_narrowing(
         authority.signature,
         event.occurred_at,
     )
+
+
+async def _require_holding_ended(
+    tx: TransactionManager, event: AuditEvent, holding: HoldingRecord
+) -> None:
+    """A human-role.revoke's narrowing is the end of the holding the act names,
+    in this very transaction. Its subject is the holding's latest approver,
+    retired now or earlier by containment, or the principal of a holding that
+    never had an approver; nothing is made up for either."""
+    if holding.ended_in is None or holding.ended_in != await tx.fetch_value(
+        "SELECT txid_current()"
+    ):
+        raise GovernanceUnavailable()
+    latest = await tx.fetch_one(
+        "SELECT subject,superseded_at FROM {{tables.passkey_approvers}} "
+        "WHERE scope=$1 ORDER BY designated_at DESC LIMIT 1",
+        holding.b3_scope,
+    )
+    if latest is None:
+        if event.subject != holding.principal:
+            raise GovernanceUnavailable()
+        return
+    if (
+        event.subject != latest["subject"]
+        or latest["superseded_at"] is None
+        or latest["superseded_at"] > event.occurred_at
+        or not await tx.fetch_value(
+            "SELECT 1 FROM {{tables.credential_authorizations}} WHERE subject=$1 AND scope=$2",
+            event.subject,
+            holding.b3_scope,
+        )
+    ):
+        raise GovernanceUnavailable()
+
+
+async def _require_narrowed_subject(
+    owner: CredentialAudit,
+    tx: TransactionManager,
+    event: AuditEvent,
+    authority: _NarrowingAuthority,
+) -> str:
+    """The designation a narrowing retires or revokes a key of, retired at the
+    event's own time; its role."""
+    # Containment removes application approver metadata before B3. The frozen
+    # designation association survives that removal; no live resolver is used.
+    row = await tx.fetch_one(
+        "SELECT a.*,p.superseded_at FROM {{tables.credential_authorizations}} a "
+        "JOIN {{tables.passkey_approvers}} p USING(subject) WHERE a.subject=$1 AND p.scope=a.scope",
+        event.subject,
+    )
+    if (
+        row is None
+        or owner._admitted(row) != authority.admitted
+        or event.details.get("scope") != row["scope"]
+    ):
+        raise GovernanceUnavailable()
+    if event.kind is AuditKind.APPROVER_RETIRED and row["superseded_at"] != event.occurred_at:
+        raise GovernanceUnavailable()
+    return row["role"]
+
+
+async def _revoked_key_ref(tx: TransactionManager, event: AuditEvent) -> str:
+    """The opaque reference of the key a PASSKEY_REVOKED event revoked at its
+    own time: an enrolled key's from its completion link, a human-role
+    holder's from its authorization, matched by the credential digest."""
+    try:
+        credential_id = base64url_to_bytes(event.details["credential_id"])
+    except (KeyError, TypeError, ValueError):
+        raise GovernanceUnavailable() from None
+    key = await tx.fetch_one(
+        "SELECT c.credential_ref,k.revoked_at FROM {{tables.credential_completion_links}} c "
+        "JOIN {{tables.passkey_credentials}} k ON k.credential_id=c.credential_id "
+        "AND k.subject=c.subject WHERE c.subject=$1 AND c.credential_id=$2",
+        event.subject,
+        credential_id,
+    )
+    if key is None:
+        key = await tx.fetch_one(
+            "SELECT a.credential_ref,a.credential_sha256,k.revoked_at,k.public_key,k.rp_id "
+            "FROM {{tables.credential_authorizations}} a "
+            "JOIN {{tables.passkey_credentials}} k ON k.subject=a.subject "
+            "WHERE a.subject=$1 AND k.credential_id=$2 AND a.credential_ref IS NOT NULL",
+            event.subject,
+            credential_id,
+        )
+        if (
+            key is not None
+            and HumanCredential(credential_id, bytes(key["public_key"]), key["rp_id"]).sha256
+            != key["credential_sha256"]
+        ):
+            raise GovernanceUnavailable()
+    if key is None or key["revoked_at"] != event.occurred_at or key["credential_ref"] is None:
+        raise GovernanceUnavailable()
+    return key["credential_ref"]

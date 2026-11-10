@@ -159,13 +159,16 @@ class Holding:
 @dataclass(frozen=True)
 class HoldingRecord:
     """The installation's record of a holding, kept as history after the
-    holding ends. It grants nothing: it names whose scope ``b3_scope`` is."""
+    holding ends. It grants nothing: it names whose scope ``b3_scope`` is.
+    ``ended_in`` is the ``txid_current()`` of the transaction that ended the
+    holding, or None while it is held or has never ended."""
 
     installation_id: str
     team_id: str
     role: str
     principal: str
     b3_scope: str
+    ended_in: int | None
 
 
 # A holding: the live assignment joined to the installation's record of it.
@@ -187,7 +190,7 @@ _ASSIGNMENT = """
 """
 _RECORD = "SELECT 1 FROM {{tables.role_holdings}} WHERE b3_scope = $1"
 _RECORD_OF_SCOPE = """
-    SELECT installation_id, team_id, role, principal_did, b3_scope
+    SELECT installation_id, team_id, role, principal_did, b3_scope, ended_in
     FROM {{tables.role_holdings}} WHERE b3_scope = $1
 """
 
@@ -238,6 +241,7 @@ async def holding_record_of_scope(db: Executor, b3_scope: str) -> HoldingRecord 
         role=row["role"],
         principal=row["principal_did"],
         b3_scope=row["b3_scope"],
+        ended_in=row["ended_in"],
     )
 
 
@@ -314,7 +318,7 @@ async def begin_holding(
         INSERT INTO {{tables.role_holdings}} AS h
             (b3_scope, installation_id, team_id, role, principal_did, certificate)
         VALUES ($1, $2, $3, $4, $5, $6)
-        ON CONFLICT (b3_scope) DO UPDATE SET certificate = EXCLUDED.certificate
+        ON CONFLICT (b3_scope) DO UPDATE SET certificate = EXCLUDED.certificate, ended_in = NULL
         WHERE (h.installation_id, h.team_id, h.role, h.principal_did)
             = (EXCLUDED.installation_id, EXCLUDED.team_id, EXCLUDED.role,
                EXCLUDED.principal_did)
@@ -354,7 +358,13 @@ async def end_holding(
         principal,
         role,
     )
-    return ended is not None
+    if ended is None:
+        return False
+    await tx.execute(
+        "UPDATE {{tables.role_holdings}} SET ended_in = txid_current() WHERE b3_scope = $1",
+        holding_scope(installation_id, team_id, role, principal),
+    )
+    return True
 
 
 async def refresh_holding_certificate(

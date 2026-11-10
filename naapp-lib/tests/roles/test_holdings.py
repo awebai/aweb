@@ -292,16 +292,18 @@ async def test_a_scope_names_its_record_while_held_and_after_it_ends(
     db: AsyncDatabaseManager,
 ) -> None:
     scope = holding_scope(INSTALLATION, TEAM, READER, PRINCIPAL)
-    record = HoldingRecord(**KEY, b3_scope=scope)
+    held = HoldingRecord(**KEY, b3_scope=scope, ended_in=None)
     async with db.transaction() as tx:
         assert await holding_record_of_scope(tx, scope) is None
     await _begin(db)
     async with db.transaction() as tx:
-        assert await holding_record_of_scope(tx, scope) == record
+        assert await holding_record_of_scope(tx, scope) == held
         assert await end_holding(tx, **KEY)
-        assert await holding_record_of_scope(tx, scope) == record
+        ending = await tx.fetch_value("SELECT txid_current()")
+        ended = HoldingRecord(**KEY, b3_scope=scope, ended_in=ending)
+        assert await holding_record_of_scope(tx, scope) == ended
     async with db.transaction() as tx:
-        assert await holding_record_of_scope(tx, scope) == record
+        assert await holding_record_of_scope(tx, scope) == ended
         assert (
             await holding_record_of_scope(
                 tx, holding_scope(OTHER_INSTALLATION, TEAM, READER, PRINCIPAL)
@@ -310,3 +312,26 @@ async def test_a_scope_names_its_record_while_held_and_after_it_ends(
         )
         await purge_team(tx, TEAM)
         assert await holding_record_of_scope(tx, scope) is None
+
+
+async def test_holding_again_clears_the_end_of_the_earlier_holding(
+    db: AsyncDatabaseManager,
+) -> None:
+    scope = holding_scope(INSTALLATION, TEAM, READER, PRINCIPAL)
+    await _begin(db)
+    await _end(db)
+    await _begin(db, RENEWED)
+    async with db.transaction() as tx:
+        record = await holding_record_of_scope(tx, scope)
+    assert record is not None and record.ended_in is None
+
+
+async def test_a_refused_end_records_no_end(db: AsyncDatabaseManager) -> None:
+    scope = holding_scope(INSTALLATION, TEAM, READER, PRINCIPAL)
+    await _begin(db)
+    await _end(db)
+    async with db.transaction() as tx:
+        first = (await holding_record_of_scope(tx, scope)).ended_in
+    assert not await _end(db)
+    async with db.transaction() as tx:
+        assert (await holding_record_of_scope(tx, scope)).ended_in == first
