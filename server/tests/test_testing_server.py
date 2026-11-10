@@ -55,6 +55,16 @@ async def test_the_server_is_healthy_and_reached_through_its_transport(stack) ->
 
 
 @pytest.mark.asyncio
+async def test_the_server_is_ready_and_live_with_its_dependencies_up(stack) -> None:
+    async with stack.server.client() as client:
+        health = await client.get("/health")
+        ready = await client.get("/ready")
+        live = await client.get("/live")
+    assert (ready.status_code, ready.json()) == (200, health.json())
+    assert (live.status_code, live.json()) == (200, {"status": "ok"})
+
+
+@pytest.mark.asyncio
 async def test_a_member_connects_through_the_servers_own_route(stack) -> None:
     team_sk, _, team_did = _make_keypair()
     member_sk, _, member_did = _make_keypair()
