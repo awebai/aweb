@@ -73,7 +73,7 @@ issuer selection and the predicate's signed binding are freeze choices below.
 | OATS, reported at 0.69.12 | Locked soul commits, frozen instance homes, same-host and SSH-target spawning. Instance metadata records soul ID/revision under the deployment UID. | Entitlement schema, explicit co-residency enforcement, protected launch mode and trustworthy per-instance caller binding. OATS has no container backend. |
 | Aweb identity | Own keys, team certificates, separate local homes per team, ordinary membership and request authentication. | Acwd.13 inherited admission is a reviewed contract, not implemented or qualified here. No soul claim follows from its membership evidence. |
 | Secrets | Optional `requires_attestation`, current grants and policy checks; custodial principal-attestation verification. | Acwd.16 inherited-member grants, a launch-provenance predicate and its claim/issuer contract. |
-| Provisioning evidence | The contributor reports a lab worker UID denied root administration, sudo and the Docker socket, and denied service-key reads, with privileged positive controls. | That does not prove isolation among workers sharing the UID or protection from administrators. Egress policy, resource limits and protected launcher integration remain proposed. |
+| Provisioning evidence | The contributor reports a lab worker UID denied root administration, sudo and the Docker socket, and denied service-key reads (worker open probes); privileged positive controls were run for the sudo and Docker checks only. | That does not prove isolation among workers sharing the UID or protection from administrators. Egress policy, resource limits and protected launcher integration remain proposed. |
 
 OATS facts are contributor evidence (`e2f4c06f`, corrected by `fd251667`), not a
 new runtime test by this editor. Provisioning evidence is Hestia's report
@@ -168,7 +168,9 @@ requests:
    binding**, not merely a signature made with a key peers can read. A local
    socket's authenticated UID can distinguish instances only where their UIDs
    actually differ; an off-host credential must likewise be protected from
-   peers. Shared-UID key possession proves only membership of that trust group.
+   peers. Authenticate this binding afresh for each proof request: read socket
+   peer credentials at request time, never reuse authentication cached from
+   launch. Shared-UID key possession proves only membership of that trust group.
 2. Resolve the issuer-controlled launch record and verify that the exact
    member/team/certificate/key in the team-auth request belongs to that launch.
    The requester cannot substitute a sibling, a chosen soul digest or a record
@@ -263,11 +265,24 @@ its own admission and effect fences; proof validity does not override it.
 Offline issuers cannot supply fresh evidence to policies that require it;
 absence never proves self-custody or bypasses the predicate.
 
-Acwd.13/.16's membership effect deadline remains separate from launch-proof
-freshness. Neither cache hits, retries nor a later launch proof refresh the
-original membership deadline. The joint consumer freeze must identify which
-claim deadlines are checked at each admission/effect boundary and preserve them
-through waits, rather than imply that a valid launch record extends authority.
+The launch-proof consumer must retain the verified claim's `exp`. Today's
+retained `VerifiedAttestation` does not carry that field, so this is required
+consumer work for the new claim, not an existing fence guarantee. In the
+admission transaction, sample the database clock first, then compute the
+remaining original monotonic membership budget, rounded down, as specified in
+[acwd.13's consumer contract](selective-membership-inheritance.md#consumers-and-released-client-compatibility).
+Persist the earlier of that conservatively DB-anchored membership deadline and
+the claim's absolute `exp`. A non-positive remaining budget refuses; adding an
+earlier budget to a later DB sample must never extend authority.
+
+Compare this retained deadline with the database clock at **both checkpoints**,
+each after that transaction's own last effect-lock wait: admission, and the
+dispatch or runner-claim fence. These are local comparisons, with no new network
+lookup. The commit-boundary outcomes remain those of acwd.13/.16: before
+admission commits, rollback leaves approval unconsumed; after it commits, later
+refusal does not undo that consumption. Neither cache hits, retries, dequeue nor
+a later launch proof refresh the original membership deadline or rebase the
+retained deadline. A persistent launch record extends neither bound.
 
 ## Laptops and attribution
 
@@ -298,10 +313,10 @@ this work. Exact cache/freshness and failure behavior are part of the freeze.
 | Protected launch mode and caller binding | OATS + provisioning | Separate protected principal and narrow API; qualify actual UID/signer/remote isolation. Decide whether to open this execution mode and whether to support a laptop profile. No container backend is commissioned. |
 | Runtime policy and key custody | Provisioning | Supported target controls, owned pins/mounts/credential references, admin trust base, resource and egress enforcement, fail-closed startup. No worker authority to edit the enforcer. |
 | Launch claim, issuer registration and request-proof API | Protocol + OATS | Versioned non-custody authority, exact request/identity/source binding, compatible shared-group semantics if selected, time/replay/failure behavior and maximum-size vectors. Resource owners explicitly select trusted issuer authority. |
-| Current launch and resource authorization | OATS + resource owner | Check live lifecycle/source/runtime at proof issuance; current owner grant/predicate at resource admission/fence. No replayable launch record or implicit entitlement grant. |
+| Current launch and resource authorization | OATS + resource owner | Authenticate the protected caller afresh per proof request and check live lifecycle/source/runtime; current owner grant/predicate at resource admission/fence. Retain launch-proof `exp` and persist min(membership deadline, claim expiry), using the DB-clock-first anchor above; compare after each checkpoint's last wait. Qualify expiry during admission and dispatch/claim waits. No replayable launch record or implicit entitlement grant. |
 | Membership and resource composition | Acwd.13 + acwd.16 owners | Finish their separate wire/consumer freeze and qualification; keep membership independent of soul predicates and quotas at their authorized scope. |
 | Lifecycle and recovery | OATS + provisioning + protocol | Choose stop/retire/revoke and existing proof validity; disposition of shared/persistent targets and pending work; offline/failure behavior, explicit ownership and teardown. Stopping a process alone revokes no team certificate or resource grant. |
-| Cost and evidence | All existing owners | Measure issuer availability/latency and per-request signature cost; qualify source substitution, peer impersonation, stale lifecycle, wrong-request proofs, unauthorized entitlement and incompatible co-residency with valid neighbors. |
+| Cost and evidence | All existing owners | Choose issuer placement and an availability target, then measure availability/latency and per-request signature cost; qualify source substitution, peer impersonation, stale lifecycle, wrong-request proofs, unauthorized entitlement and incompatible co-residency with valid neighbors. |
 
 ## Decision checkpoint and provenance
 
