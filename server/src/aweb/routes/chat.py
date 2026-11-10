@@ -52,6 +52,7 @@ from aweb.federation.envelope import (
     verify_federation_envelope,
 )
 from aweb.federation.mail import FederatedMailDeliveryError, deliver_federated_message
+from aweb.federation.transport import delivery_transport
 from aweb.hooks import fire_mutation_hook
 from aweb.identity_metadata import lookup_identity_metadata_by_did, routable_chat_address
 from aweb.id_chain_auth import stored_id_chain
@@ -538,10 +539,11 @@ def _chat_federation_signature(payload: CreateSessionRequest | SendMessageReques
 
 
 def _federation_transport(request: Request):
-    return (
-        getattr(request.app.state, "federation_chat_transport", None)
-        or getattr(request.app.state, "federation_message_transport", None)
-        or getattr(request.app.state, "federation_mail_transport", None)
+    return delivery_transport(
+        getattr(request.app.state, "federation_authority", None),
+        getattr(request.app.state, "federation_chat_transport", None),
+        getattr(request.app.state, "federation_message_transport", None),
+        getattr(request.app.state, "federation_mail_transport", None),
     )
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from functools import cached_property
 from uuid import uuid4
 
 from awid.external_authority import (
@@ -21,6 +22,7 @@ from awid.federation_errors import FederationAuthorityError
 from .authority import AuthorityClaim, FederationAuthorityCore
 from .authority_state import AuthorityRepository, AuthoritySecurityToken
 from .authority_work import AuthorityLease, AuthorityWorkRepository, AuthorityWorkResult
+from .transport import AddressCheckedTransport
 
 
 @dataclass(frozen=True)
@@ -47,6 +49,16 @@ class FederationAuthorityActivation:
     resolver: StrictExternalRegistry
     txt_resolver: TXTOutcomeResolver
     test_default_registry_authority: RegistryAuthority | None = None
+
+    @cached_property
+    def delivery_transport(self) -> AddressCheckedTransport:
+        """The transport federated delivery sends through: the resolver, origin
+        policy and trust anchors are the ones registry reads use."""
+        return AddressCheckedTransport(
+            host_resolver=self.resolver.host_resolver,
+            origin_context=self.resolver.origin_context,
+            ssl_context=self.resolver.ssl_context,
+        )
 
     async def _discover_registry_authority(self, domain: str) -> RegistryAuthority:
         if self.test_default_registry_authority is not None:

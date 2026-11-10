@@ -1,37 +1,16 @@
 """ID-tree reads scoped to the authority already admitted by Phase A."""
 
-import asyncio
 import logging
 from contextlib import asynccontextmanager
-from urllib.parse import urlsplit
 
-import httpx
 from awid.dns_verify import DomainAuthority
-from awid.external_authority import RegistryAuthority, isolated_registry_test_enabled, validate_resolved_addresses
+from awid.external_authority import RegistryAuthority
 from awid.federation_errors import FederationAuthorityError
 from awid.registry import CachedRegistryClient
 
+from .transport import PinnedTransport, admitted_addresses
+
 logger = logging.getLogger(__name__)
-
-
-class _PinnedTransport(httpx.AsyncBaseTransport):
-    def __init__(self, origin, approved_ips, ssl_context):
-        self.origin = httpx.URL(origin)
-        self.ip = approved_ips[0]
-        self.transport = httpx.AsyncHTTPTransport(verify=ssl_context or True, trust_env=False)
-
-    async def handle_async_request(self, request):
-        if (request.url.scheme, request.url.host, request.url.port) != (
-            self.origin.scheme, self.origin.host, self.origin.port
-        ):
-            raise FederationAuthorityError("sender_registry_origin_forbidden")
-        request.headers["Host"] = self.origin.netloc.decode("ascii")
-        request.extensions["sni_hostname"] = self.origin.host
-        request.url = request.url.copy_with(host=self.ip)
-        return await self.transport.handle_async_request(request)
-
-    async def aclose(self):
-        await self.transport.aclose()
 
 
 class _ScopedRegistry(CachedRegistryClient):
@@ -66,16 +45,14 @@ async def received_registry_client(activation, token, did_key, redis):
     )
     # Reuse strict resolver address admission, including its isolated-test policy.
     try:
-        async with asyncio.timeout(5):
-            answers = await activation.resolver.host_resolver.resolve_all(urlsplit(authority.registry_origin).hostname)
+        approved_ips = await admitted_addresses(
+            authority.registry_origin,
+            host_resolver=activation.resolver.host_resolver,
+            origin_context=activation.resolver.origin_context,
+        )
     except TimeoutError as exc:
         logger.warning("Federation ID-tree registry host lookup timed out", exc_info=True)
         raise FederationAuthorityError("sender_registry_unavailable") from exc
-    approved_ips = validate_resolved_addresses(
-        answers, allow_nonpublic_test=isolated_registry_test_enabled(
-            authority.registry_origin, activation.resolver.origin_context,
-        ),
-    )
     domain = token.canonical_address.split("/", 1)[0]
 
     async def verify_domain(requested):
@@ -93,7 +70,7 @@ async def received_registry_client(activation, token, did_key, redis):
 
     client = _ScopedRegistry(
         registry_url=authority.registry_origin, redis_client=redis,
-        transport=_PinnedTransport(authority.registry_origin, approved_ips, activation.resolver.ssl_context),
+        transport=PinnedTransport(authority.registry_origin, approved_ips, activation.resolver.ssl_context),
         domain_verifier=verify_domain,
     )
     object.__setattr__(client, "_authority_scope", f"federation:{authority.registry_origin}:{row['authority_statement_digest']}:{token.cohort_generation}:")

@@ -20,6 +20,7 @@ from redis.asyncio import Redis
 from awid.registry import RegistryClient
 from aweb.config import get_awid_registry_url
 from aweb.db import DatabaseInfra
+from aweb.federation.transport import delivery_transport
 from aweb.mcp.auth import MCPAuthMiddleware
 from aweb.mcp.notifications import append_pending_nudge
 from aweb.mcp.signing import HostedMessageDecryptor, HostedMessageEncryptor, HostedMessageSigner
@@ -159,7 +160,12 @@ def register_tools(
     Call this on your own :class:`FastMCP` instance to compose aweb tools
     alongside additional tools.  Pass ``redis=None`` if Redis is unavailable;
     presence-related tools will degrade gracefully.
+
+    Federated mail and chat are delivered through the federation authority's
+    transport unless the host passes one.
     """
+    federation_mail_transport = delivery_transport(federation_authority, federation_mail_transport)
+    federation_chat_transport = delivery_transport(federation_authority, federation_chat_transport)
 
     # -- Identity --
 

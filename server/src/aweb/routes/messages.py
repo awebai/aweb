@@ -37,7 +37,8 @@ from aweb.federation.envelope import (
     enforce_message_timestamp_skew,
     verify_federation_envelope,
 )
-from aweb.federation.mail import FederatedMailDeliveryError, deliver_federated_mail
+from aweb.federation.mail import FederatedMailDeliveryError, deliver_federated_message
+from aweb.federation.transport import delivery_transport
 from aweb.hooks import fire_mutation_hook
 from aweb.identity_binding import verify_identity_binding
 from aweb.id_chain_auth import stored_id_chain
@@ -944,12 +945,15 @@ async def _deliver_remote_mail_and_project_locally(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     try:
-        remote = await deliver_federated_mail(
+        remote = await deliver_federated_message(
             delivery_origin=delivery_origin,
             envelope=envelope,
             signature=federation_signature,
             id_chain=getattr(getattr(request, "state", None), "id_chain", None),
-            transport=getattr(request.app.state, "federation_mail_transport", None),
+            transport=delivery_transport(
+                getattr(request.app.state, "federation_authority", None),
+                getattr(request.app.state, "federation_mail_transport", None),
+            ),
             own_origins=public_origins(request),
         )
     except FederatedMailDeliveryError as exc:
