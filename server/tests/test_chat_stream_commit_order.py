@@ -204,8 +204,11 @@ async def test_message_committed_after_a_later_stamped_one_is_delivered(privacy_
         late_commit = await _expect_frame(frames, "the message stamped first and committed second")
         assert late_commit["message_id"] == stamped_first
     assert late_commit["body"] == "stamped first, committed second"
-    stamps = [datetime.fromisoformat(frame["timestamp"]) for frame in (delivered, late_commit)]
-    assert stamps[1] < stamps[0]
+    stamps = await env.db.fetch_all(
+        "SELECT created_at FROM {{tables.chat_messages}} WHERE message_id = ANY($1::uuid[]) ORDER BY seq",
+        [delivered["message_id"], late_commit["message_id"]],
+    )
+    assert stamps[1]["created_at"] < stamps[0]["created_at"]
 
 
 @pytest.mark.asyncio
@@ -249,8 +252,12 @@ async def test_read_receipt_committed_after_a_later_stamped_one_is_delivered(pri
         late_commit = await _expect_frame(frames, "the read receipt stamped first and committed second")
     assert late_commit["reader_alias"] == "carol"
     assert late_commit["up_to_message_id"] == from_bob
-    stamps = [datetime.fromisoformat(frame["timestamp"]) for frame in (delivered, late_commit)]
-    assert stamps[1] < stamps[0]
+    stamps = await env.db.fetch_all(
+        "SELECT last_read_at FROM {{tables.chat_read_receipts}} WHERE session_id = $1 AND seq = ANY($2::bigint[]) "
+        "ORDER BY seq",
+        session_id, [delivered["seq"], late_commit["seq"]],
+    )
+    assert stamps[1]["last_read_at"] < stamps[0]["last_read_at"]
 
 
 @pytest.mark.asyncio
