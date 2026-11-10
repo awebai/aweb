@@ -149,3 +149,23 @@ def parse_internal_auth_context(request: Request) -> Optional[InternalAuthContex
         "principal_id": principal_id,
         "actor_id": actor_id,
     }
+
+
+async def fetch_active_internal_actor(aweb_db, *, team_id: str, actor_id: str):
+    """The agent a trusted proxy forwards a request for, while it is an active member.
+
+    The proxy's signature says which agent row the request is for; it does not
+    say that the agent is still a member. Only a row of that team with status
+    'active' that is not deleted is one: a retired, archived or deleted agent
+    whose row remains is not admitted. Every resolver that acts for a forwarded
+    actor reads the actor here. Returns the row, or None.
+    """
+    return await aweb_db.fetch_one(
+        """
+        SELECT agent_id, alias, did_key, did_aw, address, identity_scope
+        FROM {{tables.agents}}
+        WHERE agent_id = $1 AND team_id = $2 AND status = 'active' AND deleted_at IS NULL
+        """,
+        uuid.UUID(actor_id),
+        team_id,
+    )

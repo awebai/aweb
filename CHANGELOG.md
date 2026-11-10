@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- A request that a trusted proxy forwards for an agent is admitted only while
+  that agent is an active member of the team: its row has status `active` and is
+  not deleted. The MCP endpoint and `GET /v1/events/subscriptions` answer 403
+  for an agent that is retired, archived or deleted.
+
 - The channel client (the Claude Code plugin, the Pi extension and `aw wake`)
   signs every certificate and identity request with the
   [v2 request envelope](docs/team-auth-envelope-v2.md), which binds the

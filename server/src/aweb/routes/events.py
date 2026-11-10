@@ -44,7 +44,7 @@ from aweb.identity_metadata import lookup_identity_metadata_by_did, routable_cha
 from aweb.messaging.chat import get_pending_conversations
 from aweb.messaging.room_notices import RoomAuthorityUnavailable, RoomAuthorityWindow, current_room_events
 from aweb.messaging.waiting import get_waiting_agents, get_waiting_agents_by_session
-from aweb.internal_auth import parse_internal_auth_context
+from aweb.internal_auth import fetch_active_internal_actor, parse_internal_auth_context
 from aweb.grant_streams import (
     GRANT_STREAM_RECHECK_SECONDS,
     agent_event_allowed,
@@ -168,7 +168,12 @@ def _subscription_response(subscription: AppEventSubscription) -> AppEventSubscr
 async def _subscription_read_identity(request: Request, db) -> tuple[str, str]:
     internal = parse_internal_auth_context(request)
     if internal is not None:
-        return internal["team_id"], internal["actor_id"]
+        actor = await fetch_active_internal_actor(
+            db.get_manager("aweb"), team_id=internal["team_id"], actor_id=internal["actor_id"]
+        )
+        if not actor:
+            raise HTTPException(status_code=403, detail="Agent not connected")
+        return internal["team_id"], str(actor["agent_id"])
     identity = await get_team_identity(request, db)
     return identity.team_id, identity.agent_id
 
