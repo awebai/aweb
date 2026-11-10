@@ -324,8 +324,13 @@ async def refresh_holding_certificate(
   transaction reuse the prepared rows (`check_current_approver`, :103) and
   acquire nothing further upstream. Every writer of the holding row locks it
   `FOR UPDATE` in the same order, after the fence and before any B3 row:
-  designate, replace and revoke under the owner act (stage 3), and the
-  certificate refresh. On the hold
+  designate, replace and revoke under the owner act (stage 3), the
+  certificate refresh, and team retirement's purge. The purge runs in the
+  retirement's observation transaction, under the installation fence's row
+  lock (`InstallationFence._slot` then `_retire` in
+  `naapp-lib/src/aweb_naapp/runtime/installation.py`), and `purge_team`
+  (`naapp-lib/src/aweb_naapp/roles/__init__.py`) deletes a team's assignments
+  before its holding records, the order holders take. On the hold
   side, secrets' owner holding takes this order with `hold_role`
   (`naapp-lib/src/aweb_naapp/roles/__init__.py:158`) on the role row as its
   hold.
