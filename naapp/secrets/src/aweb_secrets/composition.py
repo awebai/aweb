@@ -363,7 +363,7 @@ async def _compose(
     runs = run_dispatch(
         db,
         **common,
-        redaction=custody.run_redaction,
+        pins=custody.run_pins,
         passkeys=passkeys,
         origin=settings.public_origin,
         assignment_ttl=timedelta(seconds=settings.runner_assignment_ttl_seconds),

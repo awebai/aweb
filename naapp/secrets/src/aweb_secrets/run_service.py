@@ -48,7 +48,7 @@ from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
-from aweb_secrets import jobs, records, runners, tool_results
+from aweb_secrets import jobs, records, run_pin_store, runners, tool_results
 from aweb_secrets.admission import IDEMPOTENCY_RETENTION, AdmissionRefused, _charges, mint_intent_id
 from aweb_secrets.broker_audit import mint_refusal_ref, record_use_refusal
 from aweb_secrets.containment_state import ContainmentRefused, require_enabled
@@ -56,12 +56,11 @@ from aweb_secrets.custody import (
     CustodyUnavailable,
     Plaintext,
     SealContext,
-    SealedValue,
     ValueInvalid,
     decode_value,
 )
 from aweb_secrets.custody.opening import BackendObservation, UseSecretOpener
-from aweb_secrets.custody.run_redaction import RunRedaction
+from aweb_secrets.custody.run_pins import PreparedRunPin, RunPins, observation_pin
 from aweb_secrets.grant import is_secrets_role
 from aweb_secrets.member_types import MemberSubmission, ToolReply
 from aweb_secrets.policy import IDENTIFIER
@@ -78,7 +77,7 @@ from aweb_secrets.run_audit import RunAudit
 from aweb_secrets.run_context import OriginalRun, original_run, store_run_context
 from aweb_secrets.run_dispatch_authority import RunDispatchAuthority
 from aweb_secrets.run_input import RunInput
-from aweb_secrets.run_plan import PreparedRun, RunPlanRefused
+from aweb_secrets.run_plan import FrozenRunPlan, FrozenRunSlot, PreparedRun, RunPlanRefused
 from aweb_secrets.run_planner import RunPlanner
 from aweb_secrets.run_status import RunStatus
 from aweb_secrets.runner_protocol import (
@@ -113,7 +112,19 @@ class _Opened:
     values: tuple[Plaintext, ...]
     observations: tuple[BackendObservation | None, ...]
     contexts: tuple[SealContext, ...]
-    redaction: SealedValue
+    pins: tuple[PreparedRunPin, ...]
+
+
+@dataclass(frozen=True, repr=False)
+class _OriginalRedaction:
+    known: KnownValues
+    pins: tuple[PreparedRunPin, ...]
+    observations: tuple[BackendObservation | None, ...]
+    deadline: datetime
+
+
+class _ReleaseContextUnavailable(Exception):
+    """Rollback tentative returned streams and retain only withheld metadata."""
 
 
 def _job(original: OriginalRun) -> jobs.JobDefinition:
@@ -126,6 +137,13 @@ def _contexts(original: OriginalRun) -> tuple[SealContext, ...]:
         SealContext(scope.installation_id, scope.team_id, slot.source_id, slot.source_version)
         for slot in original.plan.slots
     )
+
+
+def _recovery_slots(plan: FrozenRunPlan) -> tuple[FrozenRunSlot, ...] | None:
+    slots = plan.slots
+    if any(slot.body["delivery"] != "durable" or slot.body["mint"] is not None for slot in slots):
+        return None
+    return slots
 
 
 class _RunFence:
@@ -215,7 +233,7 @@ class RunDispatch:
         *,
         fence: InstallationFence,
         opener: UseSecretOpener,
-        redaction: RunRedaction,
+        pins: RunPins,
         committer: UseCommitter,
         response_key: ResponseKey,
         service_key: SigningKey,
@@ -243,7 +261,7 @@ class RunDispatch:
         ):
             raise ValueError("run composition requires valid keys and bounded lifetimes")
         self._db, self._fence, self._opener = db, fence, opener
-        self._redaction = redaction
+        self._pins = pins
         self._committer, self._response_key, self._service_key = (
             committer,
             response_key,
@@ -809,11 +827,12 @@ class RunDispatch:
             grant = await self._runner_grant(parsed)
 
     async def _open(self, original: OriginalRun) -> _Opened:
-        known, values, observations = KnownValues(), [], []
+        values, observations, pins = [], [], []
         contexts = _contexts(original)
-        # SDK/network and native unsealing have a bounded lifetime and run
-        # outside every held authority transaction. No later failure reopens a
-        # value to reconstruct this original redaction context.
+        # Release values remain transient. Persist only a random sealed MAC
+        # key and whole-value digest, prepared outside authority transactions.
+        if len({context.secret_id for context in contexts}) != len(contexts):
+            raise CustodyUnavailable("run slots must identify distinct source secrets")
         async with asyncio.timeout(self._assignment_ttl.total_seconds()):
             for slot, context in zip(original.plan.slots, contexts, strict=True):
                 observation = await self._opener.observe(context)
@@ -827,15 +846,14 @@ class RunDispatch:
                 }
                 if not required.issubset(fields) or any("\0" in fields[name] for name in required):
                     raise CustodyUnavailable("job credential fields unavailable")
-                for item in fields.values():
-                    if item:
-                        known.add(slot.body["label"], item)
-                if "username" in fields and "password" in fields:
-                    known.add_basic(slot.body["label"], fields["username"], fields["password"])
                 values.append(value)
                 observations.append(observation)
-        redaction = await self._redaction.seal(original.installation, original.dispatch_id, known)
-        return _Opened(tuple(values), tuple(observations), contexts, redaction)
+                pins.append(
+                    await self._pins.prepare(
+                        context, original.dispatch_id, value, observation=observation
+                    )
+                )
+        return _Opened(tuple(values), tuple(observations), contexts, tuple(pins))
 
     async def _published(
         self,
@@ -973,13 +991,7 @@ class RunDispatch:
                 expires,
                 current.attempts,
             )
-            await self._redaction.retain(
-                tx,
-                scope,
-                original.dispatch_id,
-                deadline=recovery_deadline,
-                sealed=opened.redaction,
-            )
+            await run_pin_store.retain(tx, opened.pins, deadline=recovery_deadline)
             await self._consume(tx, submission, grant)
             # Nonce/outbox/sealing await work too: the sole aggregate final
             # fence follows all of them, before this transaction commits.
@@ -1126,6 +1138,8 @@ class RunDispatch:
         reply: ToolReply,
         audit: Mapping[str, Any] | None,
         approvals: tuple[Approval, ...],
+        *,
+        drop_pins: bool = True,
     ) -> bool:
         machine = self._machine(original, completed=audit)
         record = {
@@ -1158,31 +1172,118 @@ class RunDispatch:
         selected = await record(
             tx, original.dispatch_id, dict(reply.body), expected_attempt=attempt
         )
-        await self._redaction.drop(tx, original.installation, original.dispatch_id)
+        if drop_pins:
+            await run_pin_store.discard_dispatch(
+                tx,
+                installation_id=original.installation.installation_id,
+                team_id=original.installation.team_id,
+                dispatch_id=original.dispatch_id,
+            )
         return selected
 
     async def _original_redaction(
         self, dispatch_ref: str, submission: RunnerSubmission, grant: Grant, runner_id: str
-    ) -> tuple[KnownValues, datetime] | None:
-        # Authenticate and scope the original before touching its secret-bearing
-        # snapshot. Provider I/O happens after this short transaction releases.
-        # The result transaction still consumes the nonce and checks every final
-        # runner/F6/version fence, including after another worker or retirement.
+    ) -> _OriginalRedaction | None:
+        # Authenticate and scope first. This transaction releases all locks
+        # before key unsealing or a native/vault value reopen.
         async with self._db.transaction() as tx:
             scope = await self._fence.admit(tx, grant)
             await self._verify(tx, submission, grant)
             original = await self._assigned(tx, dispatch_ref, runner_id, grant)
-            snapshot = await self._redaction.read(
-                tx, scope, original.dispatch_id, now=self._clock()
+            rows = await run_pin_store.read(
+                tx,
+                installation_id=scope.installation_id,
+                team_id=scope.team_id,
+                dispatch_id=original.dispatch_id,
+            )
+            delivery = await tx.fetch_one(
+                "SELECT d.sweep_after,v.report_sha256,clock_timestamp() AS now"
+                " FROM {{tables.dispatches}} d JOIN {{tables.run_deliveries}} v USING(dispatch_id)"
+                " WHERE d.dispatch_id=$1",
+                original.dispatch_id,
             )
             await self._fence.check(tx, scope)
-        if snapshot is None:
+        if delivery is None or delivery["report_sha256"] is not None:
             return None
+        deadline = delivery["sweep_after"]
+        if deadline is None or deadline <= max(delivery["now"], self._clock()):
+            return None
+        slots = _recovery_slots(original.plan)
+        if slots is None:
+            return None
+        by_secret = {row["secret_id"]: row for row in rows}
+        contexts = _contexts(original)
+        if set(by_secret) != {context.secret_id for context in contexts}:
+            return None
+        known, pins, observations = KnownValues(), [], []
         try:
-            known = await self._redaction.open(snapshot)
-        except CustodyUnavailable:
+            async with asyncio.timeout((deadline - delivery["now"]).total_seconds()):
+                for slot, context in zip(slots, contexts, strict=True):
+                    row = by_secret[context.secret_id]
+                    pin = PreparedRunPin.from_row(row)
+                    if pin.context != context or row["deadline"] != deadline:
+                        return None
+                    before = await self._opener.observe(context)
+                    if observation_pin(before) != pin.observation:
+                        return None
+                    value = await self._opener.open(context)
+                    after = await self._opener.observe(context)
+                    if observation_pin(after) != pin.observation or not await self._pins.matches(
+                        pin, value
+                    ):
+                        return None
+                    fields = decode_value(slot.body["source"]["record"]["kind"], value.reveal())
+                    for item in fields.values():
+                        if item:
+                            known.add(slot.body["label"], item)
+                    if "username" in fields and "password" in fields:
+                        known.add_basic(slot.body["label"], fields["username"], fields["password"])
+                    pins.append(pin)
+                    observations.append(after)
+        except (CustodyUnavailable, ValueInvalid, TimeoutError):
             return None
-        return (known, snapshot.deadline) if snapshot.deadline > self._clock() else None
+        return _OriginalRedaction(known, tuple(pins), tuple(observations), deadline)
+
+    async def _redaction_is_current(
+        self, tx: TransactionManager, original: OriginalRun, recovered: _OriginalRedaction
+    ) -> bool:
+        # S3 is already held, after the complete B2 union. Every disposer
+        # follows that same S3 -> ordered pin-row sequence.
+        scope = original.installation
+        rows = await run_pin_store.read(
+            tx,
+            installation_id=scope.installation_id,
+            team_id=scope.team_id,
+            dispatch_id=original.dispatch_id,
+            hold=True,
+        )
+        expected = {pin.context.secret_id: pin for pin in recovered.pins}
+        if len(rows) != len(expected):
+            return False
+        for row in rows:
+            if row["deadline"] != recovered.deadline or PreparedRunPin.from_row(
+                row
+            ) != expected.get(row["secret_id"]):
+                return False
+        try:
+            await require_enabled(tx, scope.installation_id, scope.team_id)
+            for pin, observation in zip(recovered.pins, recovered.observations, strict=True):
+                await self._opener.check_observation(tx, pin.context, observation)
+        except (CustodyUnavailable, ContainmentRefused):
+            return False
+        # Sample the DB clock AFTER all blocking reads/locks, never report
+        # arrival time. The assignment's persisted bound is not rebased.
+        timing = await tx.fetch_one(
+            "SELECT sweep_after,clock_timestamp() AS now FROM {{tables.dispatches}}"
+            " WHERE dispatch_id=$1",
+            original.dispatch_id,
+        )
+        return bool(
+            timing is not None
+            and timing["sweep_after"] == recovered.deadline
+            and timing["now"] < recovered.deadline
+            and self._clock() < recovered.deadline
+        )
 
     async def result(self, dispatch_ref: str, submission: RunnerSubmission) -> RunnerReply:
         parsed = parse_request(submission.header)
@@ -1209,83 +1310,104 @@ class RunDispatch:
             if previous is not None and bytes(previous) != digest:
                 raise RunnerRefused("runner_result_conflict")
             if previous is None:
-                known = None if original_known is None else original_known[0]
-                # Disable/rotation observations discard the recovered original
-                # context; they never cause a replacement value to be opened.
+                known = None
+                if original_known is not None and await self._redaction_is_current(
+                    tx, original, original_known
+                ):
+                    known = original_known.known
                 try:
-                    await require_enabled(tx, scope.installation_id, scope.team_id)
-                    for slot, sealed_context in zip(
-                        original.plan.slots, _contexts(original), strict=True
-                    ):
-                        current = await records.secret_by_ref(
-                            tx,
-                            scope.installation_id,
-                            scope.team_id,
-                            slot.body["source"]["ref"],
-                            lock=False,
+                    async with tx.transaction() as attempt:
+                        await self._persist_result(
+                            attempt, original, submission, approvals, known, digest
                         )
+                        await self._verify(attempt, submission, grant)
+                        await self._fence.check(attempt, scope)
+                        # Outcome/audit/nonce writes can wait too. Roll back
+                        # their tentative streams if the bound expired there.
                         if (
-                            current is None
-                            or current.active_version != sealed_context.version
-                            or current.state != "active"
+                            original_known is not None
+                            and known is not None
+                            and not await self._redaction_is_current(
+                                attempt, original, original_known
+                            )
                         ):
-                            known = None
-                except ContainmentRefused:
-                    known = None
-                if original_known is not None and original_known[1] <= self._clock():
-                    known = None
-                try:
-                    handled = process_runner_result(
-                        submission.body, job=_job(original), known=known
-                    )
-                except RunnerResultInvalid:
-                    raise RunnerRefused("runner_result_invalid") from None
-                projected = {
-                    "exit_code": handled.exit_code,
-                    "body": None if handled.body is None else json.loads(handled.body),
-                    "truncated": handled.truncated,
-                    "upstream_bytes": handled.output_bytes,
-                    "redaction_count": handled.redaction_count,
-                    "runner_redaction_count": handled.runner_redaction_count,
-                    "runner_result_withheld": handled.runner_result_withheld,
-                    "runner_truncated": handled.runner_truncated,
-                }
-                identity = {"request_id": original.request_id, "request_ref": original.intent_id}
-                envelope: dict[str, Any] = (
-                    tool_results.result_withheld(
-                        handled.withheld_reason or "release_context_unavailable", **identity
-                    )
-                    if handled.result_withheld
-                    else {"state": "completed", **identity}
+                            raise _ReleaseContextUnavailable()
+                except _ReleaseContextUnavailable:
+                    await self._persist_result(tx, original, submission, approvals, None, digest)
+                    await self._verify(tx, submission, grant)
+                    await self._fence.check(tx, scope)
+                await run_pin_store.discard_dispatch(
+                    tx,
+                    installation_id=scope.installation_id,
+                    team_id=scope.team_id,
+                    dispatch_id=original.dispatch_id,
                 )
-                envelope["result"] = projected
-                response = BrokeredResult(
-                    status=200,
-                    headers=[],
-                    body=handled.body,
-                    disposition="withheld" if handled.result_withheld else "returned",
-                    withheld_reason=None,
-                    undeclared_credential=handled.withheld_reason == "credential_shaped",
-                    redaction_count=handled.redaction_count,
-                    truncated=handled.truncated,
-                    upstream_bytes=len(submission.body),
-                )
-                audit = self._response_key.record(
-                    submission.body, upstream_truncated=handled.runner_truncated, result=response
-                ).fields()
-                await self._record(
-                    tx, original, State.COMPLETED, ToolReply(200, envelope), audit, approvals
-                )
-                await tx.execute(
-                    "UPDATE {{tables.run_deliveries}} SET report_sha256=$2 WHERE dispatch_id=$1",
-                    original.dispatch_id,
-                    digest,
-                )
-            # Recheck exact bytes/time/current held key after the report work.
-            # The nonce inserted above rolls back with any refusal or effect.
-            await self._verify(tx, submission, grant)
-            await self._fence.check(tx, scope)
+            else:
+                # Exact-byte replay still checks the current held runner/F6.
+                await self._verify(tx, submission, grant)
+                await self._fence.check(tx, scope)
         return RunnerReply(204)
+
+    async def _persist_result(
+        self,
+        tx: TransactionManager,
+        original: OriginalRun,
+        submission: RunnerSubmission,
+        approvals: tuple[Approval, ...],
+        known: KnownValues | None,
+        digest: bytes,
+    ) -> None:
+        try:
+            handled = process_runner_result(submission.body, job=_job(original), known=known)
+        except RunnerResultInvalid:
+            raise RunnerRefused("runner_result_invalid") from None
+        projected = {
+            "exit_code": handled.exit_code,
+            "body": None if handled.body is None else json.loads(handled.body),
+            "truncated": handled.truncated,
+            "upstream_bytes": handled.output_bytes,
+            "redaction_count": handled.redaction_count,
+            "runner_redaction_count": handled.runner_redaction_count,
+            "runner_result_withheld": handled.runner_result_withheld,
+            "runner_truncated": handled.runner_truncated,
+        }
+        identity = {"request_id": original.request_id, "request_ref": original.intent_id}
+        envelope: dict[str, Any] = (
+            tool_results.result_withheld(
+                handled.withheld_reason or "release_context_unavailable", **identity
+            )
+            if handled.result_withheld
+            else {"state": "completed", **identity}
+        )
+        envelope["result"] = projected
+        response = BrokeredResult(
+            status=200,
+            headers=[],
+            body=handled.body,
+            disposition="withheld" if handled.result_withheld else "returned",
+            withheld_reason=None,
+            undeclared_credential=handled.withheld_reason == "credential_shaped",
+            redaction_count=handled.redaction_count,
+            truncated=handled.truncated,
+            upstream_bytes=len(submission.body),
+        )
+        audit = self._response_key.record(
+            submission.body, upstream_truncated=handled.runner_truncated, result=response
+        ).fields()
+        await self._record(
+            tx,
+            original,
+            State.COMPLETED,
+            ToolReply(200, envelope),
+            audit,
+            approvals,
+            drop_pins=False,
+        )
+        await tx.execute(
+            "UPDATE {{tables.run_deliveries}} SET report_sha256=$2 WHERE dispatch_id=$1",
+            original.dispatch_id,
+            digest,
+        )
 
     async def reconcile(
         self,
@@ -1314,7 +1436,12 @@ class RunDispatch:
         ):
             raise UseAuditUnavailable()
         await self._machine(frozen).reconcile(tx, original.dispatch_id, state, dict(result))
-        await self._redaction.drop(tx, frozen.installation, frozen.dispatch_id)
+        await run_pin_store.discard_dispatch(
+            tx,
+            installation_id=frozen.installation.installation_id,
+            team_id=frozen.installation.team_id,
+            dispatch_id=frozen.dispatch_id,
+        )
 
     async def deregister_runner(
         self,

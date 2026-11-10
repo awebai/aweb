@@ -11,6 +11,8 @@ from aweb_naapp.roles import purge_team
 from aweb_naapp.runtime.passkeys import RetiringInstallation, retire_subjects
 from pgdbm.core import TransactionManager
 
+from aweb_secrets import run_pin_store
+
 
 async def retire_team(tx: TransactionManager, team_id: str, *, app_id: str) -> None:
     """Called only under the shared installation fence, before new admission."""
@@ -53,7 +55,10 @@ async def retire_team(tx: TransactionManager, team_id: str, *, app_id: str) -> N
         )
         identity = retired_subjects.installation
         destroyed = dict(retired_subjects.destroyed)
-        for table in ("sealed_versions", "onepassword_credentials", "run_redaction_contexts"):
+        destroyed["run_redaction_pins"] = await run_pin_store.discard_installation(
+            tx, installation_id=installation_id, team_id=team_id
+        )
+        for table in ("sealed_versions", "onepassword_credentials"):
             removed = await tx.fetch_all(
                 f"DELETE FROM {{{{tables.{table}}}}} WHERE installation_id=$1 AND team_id=$2 RETURNING 1",
                 installation_id,

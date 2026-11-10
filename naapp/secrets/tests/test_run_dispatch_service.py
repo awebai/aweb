@@ -40,9 +40,15 @@ class Context(RunWorld):
         return admitted, claim, json.loads(claim.body)
 
 
-async def setup(uses, *, approval_required=False, producer_clock=None):
+async def setup(
+    uses, *, approval_required=False, producer_clock=None, job_timeout_s=None, variant=""
+):
     original = await setup_world(
-        uses, approval_required=approval_required, producer_clock=producer_clock
+        uses,
+        approval_required=approval_required,
+        producer_clock=producer_clock,
+        job_timeout_s=job_timeout_s,
+        variant=variant,
     )
     return Context(**vars(original))
 
@@ -200,7 +206,7 @@ async def test_new_worker_recovers_original_redaction_context_for_report_output(
     context = await setup(uses)
     _, _, wire = await context.assigned()
     dispatch_ref = wire["assignment"]["dispatch_id"]
-    snapshot = await uses.world.db.fetch_one("SELECT * FROM {{tables.run_redaction_contexts}}")
+    snapshot = await uses.world.db.fetch_one("SELECT * FROM {{tables.run_redaction_pins}}")
     assert snapshot is not None
     assert snapshot["deadline"] == await uses.world.db.fetch_value(
         "SELECT sweep_after FROM {{tables.dispatches}}"
@@ -223,34 +229,37 @@ async def test_new_worker_recovers_original_redaction_context_for_report_output(
     if context.credential in json.dumps(receipt.body):
         raise AssertionError("original credential was not redacted by the replacement worker")
     assert (
-        await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.run_redaction_contexts}}")
-        == 0
+        await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.run_redaction_pins}}") == 0
     )
 
 
-@pytest.mark.parametrize("unavailable", ["missing", "expired", "corrupt"])
-async def test_unusable_original_snapshot_withholds_output(uses, unavailable):
+@pytest.mark.parametrize("unavailable", ["missing", "expired", "corrupt", "digest_mismatch"])
+async def test_unusable_original_pin_withholds_output(uses, unavailable):
     context = await setup(uses)
     _, _, wire = await context.assigned()
     dispatch_ref = wire["assignment"]["dispatch_id"]
-    snapshot = await uses.world.db.fetch_one("SELECT * FROM {{tables.run_redaction_contexts}}")
+    snapshot = await uses.world.db.fetch_one("SELECT * FROM {{tables.run_redaction_pins}}")
     if unavailable == "expired":
         uses.clock.now = snapshot["deadline"] + timedelta(seconds=1)
     else:
-        await uses.world.db.execute("DELETE FROM {{tables.run_redaction_contexts}}")
-        if unavailable == "corrupt":
+        await uses.world.db.execute("DELETE FROM {{tables.run_redaction_pins}}")
+        if unavailable in {"corrupt", "digest_mismatch"}:
+            import secrets
+
+            changed = dict(snapshot)
+            if unavailable == "corrupt":
+                changed["ciphertext"] = secrets.token_bytes(len(changed["ciphertext"]))
+            else:
+                changed["digest"] = secrets.token_bytes(32)
+            columns = ",".join(changed)
+            parameters = ",".join(f"${i}" for i in range(1, len(changed) + 1))
             await uses.world.db.execute(
-                "INSERT INTO {{tables.run_redaction_contexts}}"
-                " (installation_id,team_id,dispatch_id,deadline,key_id,wrapped_key,nonce,ciphertext)"
-                " VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
-                snapshot["installation_id"],
-                snapshot["team_id"],
-                snapshot["dispatch_id"],
-                snapshot["deadline"],
-                snapshot["key_id"],
-                snapshot["wrapped_key"],
-                snapshot["nonce"],
-                bytes(snapshot["ciphertext"]) + b"corrupt",
+                "INSERT INTO {{tables.run_redaction_pins}} ("
+                + columns
+                + ") VALUES ("
+                + parameters
+                + ")",
+                *changed.values(),
             )
     replacement = RunDispatch(uses.world.db, **context.arguments)
     await replacement.result(
@@ -262,11 +271,11 @@ async def test_unusable_original_snapshot_withholds_output(uses, unavailable):
     assert receipt.body["result"]["body"] is None
 
 
-async def test_snapshot_storage_failure_rolls_back_assignment_publication(uses):
+async def test_pin_storage_failure_rolls_back_assignment_publication(uses):
     context = await setup(uses)
     await context.service.submit(job=context.job.job_id, submission=context.submission)
     await uses.world.db.execute(
-        "ALTER TABLE {{tables.run_redaction_contexts}} ADD CONSTRAINT refuse_snapshot CHECK (false) NOT VALID"
+        "ALTER TABLE {{tables.run_redaction_pins}} ADD CONSTRAINT refuse_pin CHECK (false) NOT VALID"
     )
     with pytest.raises(asyncpg.CheckViolationError):
         await context.service.claim(context.signed("/runner/v1/claim"))
@@ -275,8 +284,7 @@ async def test_snapshot_storage_failure_rolls_back_assignment_publication(uses):
         await uses.world.db.fetch_value("SELECT assignment FROM {{tables.run_deliveries}}") is None
     )
     assert (
-        await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.run_redaction_contexts}}")
-        == 0
+        await uses.world.db.fetch_value("SELECT count(*) FROM {{tables.run_redaction_pins}}") == 0
     )
 
 

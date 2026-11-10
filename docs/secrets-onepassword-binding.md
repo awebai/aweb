@@ -122,6 +122,36 @@ failure, with operational/refusal outbox and nonce recorded atomically. No SDK
 I/O under locks, second authority path, approval rearm or replacement-version
 transplant. See [runner protocol §4.2](secrets-runner-protocol.md#42-one-dispatch-one-assignment).
 
+
+## Runner read costs and quota
+
+Each 1Password slot costs two SDK item reads at assignment release
+(`observe`, then `open`) and three at result (`observe`, `open`, `observe`).
+A completed run therefore costs five item reads per 1Password slot, plus one
+native-custody digest-key unseal at result. Each item read also unseals the
+service-account token. Preparing the random digest key uses the configured
+native sealing provider. These provider operations are separate from the
+1Password item-read quota.
+
+Release and result share the service-account quota. For `k` 1Password slots,
+an hourly read allowance `H` bounds completed runs in a busy hour by
+`floor(H / (5k))`; the remaining account-wide daily request allowance `D`
+bounds them by `floor(D / (5k))`. Other service-account activity, writes,
+retries and SDK overhead consume the same applicable budgets. These formulas
+are item-read ceilings, not measured throughput or a concurrency promise.
+
+At quota exhaustion, release preparation refuses a still-admitted run under
+[runner protocol §4.2](secrets-runner-protocol.md#42-one-dispatch-one-assignment). A failed
+result reopen withholds streams with `release_context_unavailable` under
+[§4.3](secrets-runner-protocol.md#43-original-value-redaction-context), preserving
+exit status and local metadata. Result reopens can exhaust quota needed for
+new release preparation. Neither failure authorizes another run.
+
+The [operator limits table](../naapp/secrets/deploy/OPERATIONS.md#1password-runner-quota)
+contains the vendor-published per-plan budgets and worked examples. Real SDK
+request accounting, quota headroom and latency on the dedicated e2e read-only
+service account remain an HO6 step-4 proof item.
+
 ## Token replacement and dependencies
 
 Activating another service-account version never silently substitutes it under

@@ -31,7 +31,7 @@ from aweb_naapp.runtime.team_auth import Principal
 from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
-from aweb_secrets import derived_lineage, use_approvals
+from aweb_secrets import derived_lineage, run_pin_store, use_approvals
 from aweb_secrets.containment_state import ContainmentRefused
 from aweb_secrets.containment_state import require_enabled as require_enabled
 from aweb_secrets.custody import Custody, SealContext
@@ -213,6 +213,7 @@ async def disable_installation(
         revoked_by=revoked_by,
         reason="installation_disabled",
     )
+    await run_pin_store.discard_installation(tx, installation_id=installation_id, team_id=team_id)
     await tx.execute(
         "INSERT INTO {{tables.containment_installations}} (installation_id, team_id, disabled_at)"
         " VALUES ($1,$2,NOW()) ON CONFLICT (installation_id, team_id)"

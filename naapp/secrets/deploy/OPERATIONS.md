@@ -119,6 +119,61 @@ All dispositions above are pending lab exercises. Do not infer the incident's
 cause from an HTTP status alone; use its fixed code and correlated source and
 receiver metadata.
 
+
+## 1Password runner quota
+
+The runner sequence costs five SDK item reads per 1Password slot per completed
+run: two at release and three at result. The [binding contract](../../../docs/secrets-onepassword-binding.md#runner-read-costs-and-quota)
+describes the separate custody operations and failure rules.
+
+The following budgets are 1Password's figures, as published on its
+[service-account rate limits page](https://www.1password.dev/service-accounts/rate-limits),
+read 2026-11-10. Hourly read limits apply per token; daily request limits count
+reads and writes across all service accounts in the 1Password account.
+Additional tokens do not increase the shared daily budget. Check the linked
+vendor page when sizing a deployment.
+
+| Plan | Item reads per hour per token | Requests per day per account |
+| --- | ---: | ---: |
+| Business | 10,000 | 50,000 |
+| Teams | 1,000 | 5,000 |
+| Individual / Families | 1,000 | 1,000 |
+
+For `k` 1Password slots, result reopens alone have the logical hourly ceiling
+`floor(H/(3k))`; completed runs including release have `floor(H/(5k))` per busy
+hour and `floor(D/(5k))` per day. The examples allocate the entire hourly token
+budget and daily account budget to this one service account, with no other
+traffic, retries, writes or SDK overhead. Actual headroom can be lower. Both
+hourly and daily limits apply; the daily-budget hourly mean is truncated to
+three decimal places and does not assume any result concurrency.
+
+| Plan | Slots | Result reopens/hour alone | Completed runs/busy hour | Completed runs/day | Daily-budget mean runs/hour |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Business | 1 | 3,333 | 2,000 | 10,000 | 416.666 |
+| Business | 3 | 1,111 | 666 | 3,333 | 138.888 |
+| Business | 5 | 666 | 400 | 2,000 | 83.333 |
+| Teams | 1 | 333 | 200 | 1,000 | 41.666 |
+| Teams | 3 | 111 | 66 | 333 | 13.888 |
+| Teams | 5 | 66 | 40 | 200 | 8.333 |
+| Individual / Families | 1 | 333 | 200 | 200 | 8.333 |
+| Individual / Families | 3 | 111 | 66 | 66 | 2.777 |
+| Individual / Families | 5 | 66 | 40 | 40 | 1.666 |
+
+Re-derivation raises the item reads per slot per completed run from two to
+five, reducing these read-budget ceilings by a factor of 2.5. For example,
+Teams at three slots has a daily-budget mean below 14 runs/hour, and
+Individual/Families at five slots has a ceiling of 40 runs/day.
+
+| Exhaustion symptom | Meaning and action | Qualification |
+| --- | --- | --- |
+| New assignment preparation refuses a still-admitted run | Release and result share quota; result reopens can consume the allowance new releases need. Inspect the service-account/account budgets and other traffic. Do not bypass preparation or manufacture an assignment. | Source constraint; real SDK accounting/latency pending HO6 step 4 |
+| Runner result is accepted with streams withheld and `release_context_unavailable` | A result reopen could not establish its original-value context. Quota exhaustion is one possible cause, not a diagnosis established by this code alone. Preserve exit/status metadata and the original receipt; do not authorize a replacement run merely to recover output. | Source constraint; real SDK accounting/latency pending HO6 step 4 |
+
+Measure actual SDK request accounting, quota headroom and latency on the
+dedicated `aweb-secrets-e2e` read-only service account after the HO6 step-4
+operator prerequisite. Published arithmetic does not qualify that measurement
+or the full real-vault setup journey.
+
 ## Backup and restore
 
 **Gap: restore is not supported by this draft.** Secrets design §15 item 5
