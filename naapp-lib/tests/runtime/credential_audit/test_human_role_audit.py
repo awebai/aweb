@@ -15,6 +15,7 @@ import asyncpg
 import pytest
 from aweb_naapp_testing.owner_acts import APP_ID, INSTALLATION_ID, TEAM_ID, revocation_subject
 from pgdbm.core import TransactionManager
+from pgdbm.errors import QueryError
 
 from aweb_naapp.hooks.owner_act import VerifiedOwnerAct
 from aweb_naapp.roles import PrincipalKey, assign, begin_holding, end_holding, holding_scope
@@ -230,7 +231,7 @@ async def test_a_replacement_after_containment_names_the_approver_containment_re
     )
     second = await replace(world, holder())
     assert (await payloads(world))[-1]["act"] == "credential.recovered"
-    assert (await recovered_event(world))["previous_subject"] == first.approver.subject
+    assert (await recovered_event(world)).get("previous_subject") == first.approver.subject
     assert (await authorization(world, second.approver.subject))["principal"] == PRINCIPAL
 
 
@@ -353,6 +354,7 @@ async def test_containment_revoking_a_holders_key_names_it_by_its_opaque_ref(wor
     revoked = (await payloads(world))[-1]
     assert (revoked["act"], revoked["resource_type"]) == ("credential.revoked", "passkey")
     assert revoked["resource_ref"] == (await authorization(world, approver))["credential_ref"]
+    assert revoked["resource_ref"] != member.credential.sha256
 
 
 async def test_a_human_role_act_for_a_contact_role_takes_no_effect(world: World):
@@ -397,7 +399,7 @@ async def test_a_contact_act_for_a_holder_role_takes_no_effect(world: World):
 async def test_an_authorization_is_exactly_one_model(world: World, columns: dict[str, str]):
     names = ", ".join(columns)
     values = ", ".join(f"${i}" for i in range(9, 9 + len(columns)))
-    with pytest.raises(asyncpg.CheckViolationError):
+    with pytest.raises(QueryError) as refused:
         await world.db.execute(
             "INSERT INTO {{tables.credential_authorizations}} "
             "(subject,scope,app_id,team_id,installation_id,generation,role,effective_at,"
@@ -413,6 +415,7 @@ async def test_an_authorization_is_exactly_one_model(world: World, columns: dict
             "commitment",
             *columns.values(),
         )
+    assert isinstance(refused.value.__context__, asyncpg.CheckViolationError)
 
 
 async def test_a_revoke_event_under_a_replacement_act_records_nothing(world: World):
