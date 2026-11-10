@@ -432,11 +432,16 @@ describe("credentials", () => {
     const config = await resolveConfig(workdir);
     const client = createChannelClient(config);
     const { certificates, fetchMock } = stubFetch(answers(401), streams(frame("connected")));
+    const reload = createChannelCredentialReload({
+      client, config, load: () => resolveConfig(workdir), ...holders(client, config),
+    });
+    const reloads: string[] = [];
     const stream = run(client as never, {
       random: () => 0,
-      reloadCredentials: createChannelCredentialReload({
-        client, config, load: () => resolveConfig(workdir), ...holders(client, config),
-      }),
+      reloadCredentials: (signal) => reload(signal).then(
+        () => { reloads.push("taken"); },
+        (error) => { reloads.push(String(error.message)); throw error; },
+      ),
     });
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
@@ -444,6 +449,7 @@ describe("credentials", () => {
     await writeTestPrincipal(join(workdir, ".aw"), { alias: "other", seedByte: 10, teamID: TEAM });
     expect((await resolveConfig(workdir)).stableID).not.toBe(config.stableID);
     await vi.advanceTimersByTimeAsync(30 * SECOND);
+    await vi.waitFor(() => expect(reloads).toEqual(["the credentials read again name another identity"]));
     // The lowest draw waits half of 2 minutes: the failed read keeps the quarantine's pace.
     await vi.advanceTimersByTimeAsync(MINUTE - 5 * SECOND);
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -452,6 +458,7 @@ describe("credentials", () => {
     await writeTestPrincipal(join(workdir, ".aw"), { alias: "agent", seedByte: 9, teamID: TEAM });
     await vi.advanceTimersByTimeAsync(5 * SECOND);
     await vi.waitFor(() => expect(stream.received).toEqual(["connected"]));
+    expect(reloads).toHaveLength(2);
     expect(certificates).toEqual([config.teamCertificateHeader, config.teamCertificateHeader]);
     expect(stream.states.map((state) => state.state)).toEqual(["refused", "reconnected"]);
 

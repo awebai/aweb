@@ -30,6 +30,12 @@ export interface EventStreamState {
   nextAttemptAt?: number;
   /** On "reconnected": the refusal the confirmed stream ended. */
   endedRefusal?: string;
+  /**
+   * On "refused": present when the refusal starts a refusal episode, absent
+   * when the server has not served this caller since an earlier refusal
+   * (stream_policy.ts, StreamEnd.startedRefusalEpisode).
+   */
+  startsEpisode?: true;
 }
 
 export interface EventStreamOptions {
@@ -171,7 +177,13 @@ export async function* streamAgentEvents(
       // Reported once on entering the quarantine; a retry that is refused
       // again moves the next attempt and says nothing.
       if (end.enteredRefused) {
-        onState({ state: "refused", cause: end.cause, retryInMs: end.waitMs, nextAttemptAt: end.nextAttemptAt });
+        onState({
+          state: "refused",
+          cause: end.cause,
+          retryInMs: end.waitMs,
+          nextAttemptAt: end.nextAttemptAt,
+          ...(end.startedRefusalEpisode ? { startsEpisode: true as const } : {}),
+        });
       }
     } else if (!disconnected) {
       disconnected = true;

@@ -10,7 +10,7 @@ import { activitySigner } from "./activity/runtime.js";
 import { APIClient } from "./api/client.js";
 import type { AgentConfig } from "./config.js";
 import type { ReceiveStreamReceipt } from "./receive.js";
-import { streamAgentEvents, formatEventStreamState, type AgentEvent, type EventStreamOptions, type EventStreamState, type EventStreamObserver } from "./api/events.js";
+import { streamAgentEvents, formatEventStreamState, localClockTime, type AgentEvent, type EventStreamOptions, type EventStreamState, type EventStreamObserver } from "./api/events.js";
 import { ackMessage, fetchInbox, type InboxMessage } from "./api/mail.js";
 import { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";
 import { fetchRoomMessage, ackRoomNotice } from "./api/room.js";
@@ -48,7 +48,8 @@ export interface SelfIdentity {
   stableID: string;
 }
 
-export type ChannelAwakeningKind = "mail" | "chat" | "room" | "control" | "work" | "claim" | "claim_removed" | "app";
+/** "channel" is a notice from the channel itself; every other kind carries an event of the stream. */
+export type ChannelAwakeningKind = "mail" | "chat" | "room" | "control" | "work" | "claim" | "claim_removed" | "app" | "channel";
 export type ChannelDeliveryIntent = "wake" | "steer" | "ambient";
 
 export interface ChannelAwakening {
@@ -88,7 +89,13 @@ export interface ChannelLoopOptions {
   awCommand?: string;
   pinStoreWriter?: PinStoreWriter;
   log?: (message: string) => void;
-  /** Operator diagnostics only; stream state must never become an awakening. */
+  /**
+   * Operator diagnostics: every change of the stream's state. Stream state is
+   * not presented to the agent, with one exception the loop makes itself: the
+   * refusal that starts a refusal episode is presented once through
+   * onAwakening (eventStreamRefusedAwakening). A refused retry, the end of a
+   * quarantine and every other state present nothing.
+   */
   onStreamState?: (state: EventStreamState) => void;
   streamObserver?: EventStreamObserver;
   /**
@@ -440,6 +447,29 @@ export function createChannelCredentialReload(options: ChannelCredentialReloadOp
   };
 }
 
+/**
+ * The notice the agent is given when a refusal episode starts: the status or
+ * terminal event name, the time of the next attempt, and what it means for
+ * the agent. It is from the channel itself: it names no sender and carries no
+ * trust status.
+ */
+export function eventStreamRefusedAwakening(state: EventStreamState): ChannelAwakening {
+  const nextAttemptAt = state.nextAttemptAt ?? Date.now();
+  return {
+    kind: "channel",
+    content: `The aweb server refused this channel's event stream (${state.cause}). `
+      + "Mail and chat will not arrive until the stream is accepted again. "
+      + `The next attempt is at ${localClockTime(nextAttemptAt)}.`,
+    deliveryIntent: "wake",
+    meta: {
+      type: "channel",
+      notice: "event_stream_refused",
+      cause: state.cause || "",
+      next_attempt_at: new Date(nextAttemptAt).toISOString(),
+    },
+  };
+}
+
 function emitTrace(
   options: Pick<ChannelLoopOptions, "onTrace">,
   stage: string,
@@ -490,6 +520,9 @@ export async function startChannelLoop(options: ChannelLoopOptions & { teamID: s
       teamID: options.teamID,
     }) : undefined
   );
+  const reportStreamState = options.onStreamState || ((state: EventStreamState) => {
+    if (state.state !== "connected") (options.log || console.error)(formatEventStreamState(state));
+  });
   await consumeAgentEvents(
     // Retain the undelivered log: dropping it silently loses failure evidence (aweb-aayl).
     { ...options, deliveryStore, undeliveredLog, localDecrypt },
@@ -497,9 +530,19 @@ export async function startChannelLoop(options: ChannelLoopOptions & { teamID: s
     streamAgentEvents(
       options.client,
       options.signal,
-      options.onStreamState || ((state) => {
-        if (state.state !== "connected") (options.log || console.error)(formatEventStreamState(state));
-      }),
+      (state) => {
+        reportStreamState(state);
+        if (state.state !== "refused" || !state.startsEpisode) return;
+        // The agent hears nothing while its stream is refused, so it is told
+        // once that the episode started. Nothing is presented when it ends:
+        // the next event shows that.
+        Promise.resolve()
+          .then(() => options.onAwakening(eventStreamRefusedAwakening(state)))
+          .catch((error) => {
+            const detail = error instanceof Error ? error.message : String(error);
+            (options.log || console.error)(`aweb: could not present the refused event stream to the agent: ${detail}`);
+          });
+      },
       (event) => emitTrace(options, "frame_parsed", event, eventDispatchLane(event)),
       options.streamObserver,
       { reloadCredentials: options.reloadCredentials },
@@ -1212,6 +1255,9 @@ function awakeningClosingLine(kind: ChannelAwakening["kind"]): string {
 }
 
 export function formatAwakeningForAgent(awakening: ChannelAwakening): string {
+  if (awakening.kind === "channel") {
+    return ["aweb channel notice, from the aweb channel itself and not from another agent.", "", awakening.content].join("\n");
+  }
   const rawType = awakening.meta.type || awakening.kind;
   const type = awakening.kind === "app" ? sanitizeSummaryComponent(rawType) || "app" : rawType;
   const lines: string[] = [`aweb ${type} event received.`];

@@ -78,6 +78,15 @@ export interface StreamEnd {
    * retry inside it (§8).
    */
   enteredRefused: boolean;
+  /**
+   * True for the refusal that starts a refusal episode (§8). An episode ends
+   * only when the server serves this caller: an event other than the opening
+   * connected event is read, or an open connection reaches its planned close.
+   * A heartbeat or connected ends the quarantine but not the episode, so a
+   * server that accepts the open, sends them and refuses again, every time,
+   * is one episode however many times the quarantine is entered.
+   */
+  startedRefusalEpisode: boolean;
 }
 
 /**
@@ -162,6 +171,7 @@ export class StreamPolicy {
   private retryDelay = STREAM_RETRY_DELAY_MIN_MS;
   private refusedDelay = STREAM_REFUSED_DELAY_MIN_MS;
   private refusedCause: string | undefined;
+  private inRefusalEpisode = false;
 
   constructor(config: StreamPolicyConfig = {}) {
     this.now = config.now ?? Date.now;
@@ -184,7 +194,7 @@ export class StreamPolicy {
     const attempt: StreamAttempt = {
       now: this.now,
       confirmed: () => this.confirmed(),
-      served: () => { this.refusedDelay = STREAM_REFUSED_DELAY_MIN_MS; },
+      served: () => this.served(),
       failed: (kind, cause, error) => this.failed(kind, cause, error),
     };
     return new StreamConnection(attempt, this.now() + plannedIn, this.refused, onConfirm);
@@ -215,6 +225,17 @@ export class StreamPolicy {
   }
 
   /**
+   * Records that the server is serving this caller: an event other than the
+   * opening connected event was read, or an open connection reached its
+   * planned close. The refused delay returns to its start and the refusal
+   * episode, if there is one, ends (§4, §8).
+   */
+  private served(): void {
+    this.refusedDelay = STREAM_REFUSED_DELAY_MIN_MS;
+    this.inRefusalEpisode = false;
+  }
+
+  /**
    * Records a failure and decides the wait before the next attempt.
    *
    * A quarantine holds until a stream is confirmed, so a transient failure
@@ -223,8 +244,11 @@ export class StreamPolicy {
   private failed(kind: "transient" | "refused", cause: string, error: unknown): StreamEnd {
     const now = this.now();
     let enteredRefused = false;
+    let startedRefusalEpisode = false;
     if (kind === "refused") {
       enteredRefused = !this.refused;
+      startedRefusalEpisode = !this.inRefusalEpisode;
+      this.inRefusalEpisode = true;
       this.refusedCause = cause;
     }
     let delay: number;
@@ -238,7 +262,7 @@ export class StreamPolicy {
       this.retryDelay = Math.min(delay * 2, STREAM_RETRY_DELAY_MAX_MS);
     }
     const waitMs = retryAfterMs(error, now) + this.jittered(delay);
-    return { kind, cause, error, waitMs, nextAttemptAt: now + waitMs, enteredRefused };
+    return { kind, cause, error, waitMs, nextAttemptAt: now + waitMs, enteredRefused, startedRefusalEpisode };
   }
 }
 
@@ -287,8 +311,9 @@ export class StreamConnection {
   /**
    * An event was read. Any event confirms the stream. An event other than the
    * opening connected event also shows the server is serving this caller,
-   * which returns the refused delay to its start; connected does not, because
-   * the server sends it before it checks the grant.
+   * which returns the refused delay to its start and ends a refusal episode;
+   * connected does not, because the server sends it before it checks the
+   * grant.
    */
   event(type: string): void {
     this.comment();
@@ -298,11 +323,15 @@ export class StreamConnection {
   /**
    * The connection closed itself at its planned close. An open stream that
    * lasted until then was served, which returns the refused delay to its
-   * start; an attempt that was still opening was not.
+   * start and ends a refusal episode; an attempt that was still opening was
+   * not.
    */
   reachedPlannedClose(): StreamEnd {
     if (this.isOpen) this.attempt.served();
-    return { kind: "planned_close", cause: "", waitMs: 0, nextAttemptAt: this.attempt.now(), enteredRefused: false };
+    return {
+      kind: "planned_close", cause: "", waitMs: 0, nextAttemptAt: this.attempt.now(),
+      enteredRefused: false, startedRefusalEpisode: false,
+    };
   }
 
   /**

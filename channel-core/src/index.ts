@@ -81,6 +81,7 @@ export {
   UndeliveredLog,
   createRegistryResolver,
   dispatchAgentEvent,
+  eventStreamRefusedAwakening,
   formatAwakeningForAgent,
   isTrustedVerificationStatus,
   loadPinStore,

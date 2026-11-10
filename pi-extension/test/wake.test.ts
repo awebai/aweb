@@ -45,7 +45,7 @@ test("transport reconnect and disconnect are diagnostics, not Pi model input", a
   assert.equal(calls[0][0].customType, "aweb-channel");
 });
 
-test("a refused stream is shown in the status and logged once on entry and once on exit, not Pi model input", () => {
+test("the stream state handler shows a refused stream in the status and logs it once on entry and once on exit", () => {
   const calls: Array<Parameters<ExtensionAPI["sendMessage"]>> = [];
   const logs: string[] = [];
   const statuses: string[] = [];

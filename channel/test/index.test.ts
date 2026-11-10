@@ -104,7 +104,7 @@ describe("the refused notice", () => {
 });
 
 describe("refused stream handling", () => {
-  test("a refused stream is one diagnostic on entry and one on exit, not Claude model input", () => {
+  test("the stream state handler logs a refused stream once on entry and once on exit", () => {
     const logs: string[] = [];
     const nextAttemptAt = new Date(2026, 2, 1, 9, 5).getTime();
 
