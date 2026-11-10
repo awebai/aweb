@@ -113,9 +113,18 @@ class CandidatePortRaceTests(unittest.TestCase):
                       'competitor took it and the subsequent service bind failed: '
                       + refused.stderr.strip())
         finally:
-            for name in (project + '-ports', competitor, consumer):
-                subprocess.run(['docker', 'rm', '-fv', name],
-                               text=True, capture_output=True, timeout=30)
+            # The incident allocator and both probe containers share this
+            # run-unique label, including a failed docker-run container.
+            owned = subprocess.run(
+                ['docker', 'ps', '-aq', '--filter', 'label=aweb.e2e.project=' + project],
+                text=True, capture_output=True, timeout=30, check=True).stdout.split()
+            if owned:
+                subprocess.run(['docker', 'rm', '-fv', *owned],
+                               text=True, capture_output=True, timeout=30, check=True)
+            remaining = subprocess.run(
+                ['docker', 'ps', '-aq', '--filter', 'label=aweb.e2e.project=' + project],
+                text=True, capture_output=True, timeout=30, check=True).stdout.strip()
+            self.assertEqual(remaining, '', 'race-probe containers survived cleanup')
 
     def test_two_concurrent_allocators_do_not_return_the_same_port(self):
         # Both workers allocate on each round before either consumer binds.
