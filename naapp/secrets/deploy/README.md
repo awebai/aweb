@@ -51,6 +51,8 @@ environment variables only; it does not load a checkout's `.env`.
 | `SECRETS_EGRESS_DENIED_NETWORKS` | JSON array of deployment egress/metadata IP addresses or strict CIDRs; explicitly use `[]` if there are no additional ranges. Applies to broker **and hook** egress. |
 | `SECRETS_GIT_SHA` | Set in the image from the required full 40-character `SOURCE_COMMIT` build argument; keep it unchanged at runtime. |
 
+Behind a proxy chain (for example, CDN then load balancer), an appending `X-Forwarded-For` ends in the CDN's egress address; use a single-value client-IP header that the edge sets and overwrites, or use `X-Forwarded-For` only when exactly one trusted proxy appends to it.
+
 The app-key mapping uses paths, never key values:
 
 ```text
