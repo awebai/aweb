@@ -2,7 +2,7 @@
 type: Reference
 title: Continue the coordinator through maintained contracts and task evidence
 description: The OATS home changes execution layout without replacing the team's current policy or historical record.
-timestamp: 2026-09-05
+timestamp: 2026-11-10
 ---
 
 Current work and claims live in aw. Read them from the instance home. Runtime
@@ -12,8 +12,9 @@ identity, SSE, and the host wake service; OATS owns runtime receipts and termina
 operations. A submitted wake is not a fetched or acknowledged task.
 
 The prior coordinator's historical decisions, documents, and memory remain
-preserved at agents/coordinator/decisions, agents/coordinator/docs, and
-agents/coordinator/memory in the OSS repository. Consult them selectively as
+preserved in the private ac repository under
+aweb-team-records/agents/coordinator (decisions, docs, and memory), moved from
+the OSS repository at 07b554c1f. Consult them selectively as
 historical evidence; they are not converted into current OKF facts by linking.
 Future durable learning enters this indexed soul through reviewed OKF harvest.
 
