@@ -5,8 +5,9 @@ it reports, so the two commit together or not at all. A drain then
 materializes the event's deliveries, one per target its resolver names, and
 delivers each through a pluggable transport, at least once, with bounded
 exponential backoff per delivery. Nothing is dropped: an event whose targets
-cannot be resolved yet stays pending, and a failing delivery is retried until
-the transport reports a final outcome. :func:`outbox_status` exposes the
+cannot be resolved yet stays pending and is resolved again with the same
+backoff, and a failing delivery is retried until the transport reports a final
+outcome. :func:`outbox_status` exposes the
 backlog, dead letters and faults.
 
 Imports only the standard library and pgdbm, so the core server can use it
@@ -144,7 +145,8 @@ class RetryPolicy:
     """How failed deliveries are retried.
 
     Retries back off exponentially from ``base_seconds``, capped at
-    ``max_seconds``. A delivery still failing ``stalled_after`` its event was
+    ``max_seconds``; an event whose targets cannot be resolved is resolved
+    again on the same schedule. A delivery still failing ``stalled_after`` its event was
     enqueued becomes ``stalled`` and keeps being retried. A ``Permanent``
     failure becomes ``rejected`` on its ``rejected_after_attempts``-th attempt.
     A resolver or transport call still running after ``call_timeout_seconds``
@@ -160,6 +162,10 @@ class RetryPolicy:
     def __post_init__(self) -> None:
         if not 0 < self.call_timeout_seconds <= MAX_CALL_TIMEOUT_SECONDS:
             raise ValueError(f"call_timeout_seconds must be in (0, {MAX_CALL_TIMEOUT_SECONDS}]")
+
+    def backoff_seconds(self, attempts: int) -> int:
+        """The wait after the ``attempts``-th failed attempt."""
+        return min(self.max_seconds, self.base_seconds * 2 ** min(attempts - 1, 20))
 
 
 @dataclass(frozen=True)
@@ -345,10 +351,10 @@ async def _materialize(
         rows = await tx.fetch_all(
             """
             SELECT event_id, team_id, kind, occurred_at, payload, signature, critical, producer,
-                   channel
+                   channel, resolve_attempts
             FROM {{tables.outbox_events}}
-            WHERE materialized_at IS NULL AND channel = $2
-            ORDER BY position
+            WHERE materialized_at IS NULL AND channel = $2 AND next_resolve_at <= NOW()
+            ORDER BY next_resolve_at, position
             LIMIT $1
             FOR UPDATE SKIP LOCKED
             """,
@@ -361,8 +367,10 @@ async def _materialize(
                 targets = await asyncio.wait_for(resolver(event), policy.call_timeout_seconds)
             except Exception:
                 logger.exception("Outbox resolver failed for event %s", event.event_id)
+                await _defer_resolution(tx, row, policy)
                 continue
             if targets is None:
+                await _defer_resolution(tx, row, policy)
                 continue
             try:
                 async with tx.transaction() as event_tx:
@@ -386,9 +394,30 @@ async def _materialize(
                     )
             except TargetChannelConflict:
                 logger.exception("Outbox event %s names another channel's target", event.event_id)
+                await _defer_resolution(tx, row, policy)
                 continue
             materialized += 1
     return materialized
+
+
+async def _defer_resolution(
+    tx: TransactionManager, row: Mapping[str, Any], policy: RetryPolicy
+) -> None:
+    """Back the unresolved event off, so the events behind it are claimed first.
+    The wait runs from the wall clock: the pass's transaction started before
+    every resolver call it made."""
+    attempts = row["resolve_attempts"] + 1
+    await tx.execute(
+        """
+        UPDATE {{tables.outbox_events}}
+        SET resolve_attempts = $2,
+            next_resolve_at = clock_timestamp() + $3 * INTERVAL '1 second'
+        WHERE event_id = $1
+        """,
+        row["event_id"],
+        attempts,
+        policy.backoff_seconds(attempts),
+    )
 
 
 async def _deliver_one(
@@ -404,7 +433,7 @@ async def _deliver_one(
             JOIN {{tables.outbox_events}} e ON e.event_id = d.event_id
             WHERE d.state IN ('pending', 'stalled') AND d.next_attempt_at <= NOW()
               AND e.channel = $2
-            ORDER BY e.position, d.target_id
+            ORDER BY d.next_attempt_at, e.position, d.target_id
             LIMIT 1
             FOR UPDATE OF d SKIP LOCKED
             """,
@@ -484,16 +513,14 @@ async def _record(
             """
             UPDATE {{tables.outbox_deliveries}}
             SET state = $3, attempts = $4, last_error_class = $5, updated_at = NOW(),
-                next_attempt_at = NOW() + LEAST($6, $7 * POWER(2, LEAST($4 - 1, 20)))
-                                  * INTERVAL '1 second'
+                next_attempt_at = NOW() + $6 * INTERVAL '1 second'
             WHERE event_id = $1 AND target_id = $2
             """,
             *key,
             state,
             attempts,
             outcome.error_class,
-            policy.max_seconds,
-            policy.base_seconds,
+            policy.backoff_seconds(attempts),
         )
 
 
@@ -528,6 +555,9 @@ async def drain(
 ) -> DrainResult:
     """Materialize the channel's pending events, then deliver each of its due
     deliveries once. Other channels' events are left to their own drains.
+    At most ``limit`` events are resolved and ``limit`` deliveries sent, each
+    taken in the order it fell due, so one that failed is tried again only
+    after those that fell due before its retry did.
 
     Materialization commits before any send, so a crash never re-resolves an
     event. Each delivery is sent and recorded in its own transaction, holding
