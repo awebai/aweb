@@ -144,7 +144,7 @@ async def test_b3_wait_after_verification_leaves_the_first_b2_decision_lock_free
             holder = await blocker.fetch_value("SELECT pg_backend_pid()")
             await blocker.fetch_value(
                 "SELECT subject FROM {{tables.passkey_approvers}} WHERE scope=$1 AND subject=$2 "
-                "FOR UPDATE",
+                "FOR NO KEY UPDATE",
                 SCOPE,
                 candidate.subject,
             )
