@@ -9,9 +9,11 @@ chat and control signals for as long as it runs. This page states one policy
 for how such a client connects, reconnects and reports its state. Three
 clients implement the stream today, each with its own rules:
 
-- `channel-core/src/api/events.ts` (the Claude Code plugin, the Pi extension
-  and the `aw wake` child);
-- `cli/go/wake/stream.go` (the `aw wake` broker, one stream per identity);
+- `channel-core/src/api/events.ts` (the Claude Code plugin and the Pi
+  extension);
+- `cli/go/wake/stream.go` (the `aw wake` broker, one stream per identity; the
+  channel-core child it runs for each instance does not open the stream, it
+  is fed the broker's events);
 - `cli/go/run/eventbus.go` (`aw run`).
 
 ## What the three clients do today
@@ -107,8 +109,10 @@ So a refused stream is **quarantined**:
   reports that it left `refused`.
 - The refused delay returns to 1 minute only after the stream delivers an
   event other than a comment or the opening `connected` event (which the
-  server sends before it checks the grant), or a connection reaches its
-  planned close. A heartbeat or `connected` confirms the stream and ends the
+  server sends before it checks the grant), or a connection that opened
+  reaches its planned close. An attempt that reaches its deadline before the
+  server answers reconnects at once and leaves the delay where it is. A
+  heartbeat or `connected` confirms the stream and ends the
   quarantine but leaves the delay where it is, so a server that accepts the
   open, sends them and then refuses again is retried at a growing interval,
   not once a minute.
@@ -160,10 +164,16 @@ retry:
 - The wake broker's status shows the identity as refused, with the status or
   event name and the time of the next attempt. It never shows a refused
   identity as admitted.
-- The channel (the Claude Code plugin, the Pi extension and the `aw wake`
-  child) puts one notice into the session when a stream enters `refused`,
-  naming the status and the time of the next attempt, and one when it
-  leaves.
+- The channel (the Claude Code plugin and the Pi extension) reports to two
+  readers. The operator surface (the plugin's stderr, the Pi status line)
+  gets every transition. The model gets exactly one notice per refusal
+  episode, at entry, naming the status and the time of the next attempt. It
+  arrives as an ordinary channel message and may wake the agent: an agent
+  that cannot hear its mail has to know. An episode ends only when the
+  server serves: an event other than a comment or the opening `connected`
+  event, or the planned close of an open stream. A server that accepts the
+  open and refuses again therefore does not produce a notice per cycle. The
+  model gets no notice on leaving; the next real event shows the recovery.
 - `aw run` logs the same two transitions.
 
 A retry that is refused again changes the time of the next attempt and says
