@@ -130,6 +130,31 @@ class EndpointTests(unittest.TestCase):
 
 
 class ComposeConfigTests(unittest.TestCase):
+    def test_compose_failure_preserves_diagnostic_and_cleans_overlays(self):
+        # Actual Compose CLI refusal, before any daemon call. Exercise both the
+        # network and resource-only wrapper paths, including a quoted temp path.
+        real = os.environ.get('AWEB_CANDIDATE_REAL_DOCKER') or shutil.which('docker')
+        self.assertIsNotNone(real)
+        with tempfile.TemporaryDirectory(prefix="compose error's ") as tmp:
+            root = Path(tmp)
+            compose_file = root / 'compose.json'
+            compose_file.write_text(json.dumps({'services': {'awid': {'image': 'busybox'}}}))
+            args = ['compose', '-p', 'proof', '-f', str(compose_file),
+                    'config', '--format', 'invalid-format']
+            direct = subprocess.run([real, *args], capture_output=True, text=True, timeout=30)
+            self.assertNotEqual(direct.returncode, 0, direct.stdout)
+            for runner in ('', 'proof-runner'):
+                with self.subTest(runner=runner):
+                    env = {**os.environ, 'AWEB_CANDIDATE_REAL_DOCKER': real,
+                           'AWEB_CANDIDATE_RESOURCE_LABEL': 'proof',
+                           'CANDIDATE_RUNNER_NAME': runner, 'CANDIDATE_RESOURCE_MANIFEST': '',
+                           'TMPDIR': tmp}
+                    wrapped = subprocess.run(['bash', str(ROOT / 'candidate-gate/bin/docker'), *args],
+                                             env=env, capture_output=True, text=True, timeout=30)
+                    self.assertEqual(wrapped.returncode, direct.returncode, wrapped.stderr)
+                    self.assertEqual(wrapped.stderr, direct.stderr)
+                    self.assertEqual(list(root.glob('aweb-candidate-compose-*')), [])
+
     def test_existing_shared_namespace_fixtures_survive_the_network_overlay(self):
         # Real Compose config merges only: no daemon, builds or containers.
         docker = os.environ.get('AWEB_CANDIDATE_REAL_DOCKER') or shutil.which('docker')
@@ -226,6 +251,14 @@ class ComposeNetworkTests(unittest.TestCase):
                                        '--filter', 'label=com.docker.compose.service=awid').stdout.strip()
                     info = json.loads(docker('inspect', container).stdout)[0]
                     self.assertFalse(info['HostConfig'].get('PortBindings'), info['HostConfig'])
+                    for status in (0, 2, 7):
+                        command = [*cmd, 'exec', '-T', 'awid', 'python', '-c',
+                                   f'import sys; print("worker-result"); sys.exit({status})']
+                        completed = subprocess.run(command, env=env, capture_output=True,
+                                                   text=True, timeout=30)
+                        self.assertEqual(completed.returncode, status, completed.stderr)
+                        self.assertEqual(completed.stdout.strip(), 'worker-result')
+                        self.assertNotIn('unbound variable', completed.stderr)
                     url = f'http://{project}-awid.test:8010'
                     self.assertEqual(docker('exec', runner, 'python', '-c', fetch, url).stdout.strip(), project)
                     # Temporary Docker clients take the same direct route.
