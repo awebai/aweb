@@ -129,7 +129,7 @@
     },
     {
       "name": "generation_zero",
-      "note": "generation is a decimal integer of at least 1",
+      "note": "generation is the integer generation, at least 1, as ASCII [1-9][0-9]*",
       "fields": {
         "app_id": "logs",
         "team_id": "demo:example.com",
@@ -167,6 +167,36 @@
         "generation": "3",
         "role": "logs.reader",
         "principal": "did:key:z6MknVbixt4vJMcKzaXUWURZN8ZZ1tC1kxRFysKRFXYjQpDp",
+        "subject": "8f14e45f-ceea-467a-9f3b-6d2b7c1e0a55",
+        "held_since": "2026-11-07T12:01:00.123456Z",
+        "b3_scope": "logs.reader.9ffb12fb48dd17ae09f3d2796023b01a9452698d"
+      }
+    },
+    {
+      "name": "generation_leading_zero",
+      "note": "generation is rendered with no leading zero: '03' is not the spelling of 3",
+      "fields": {
+        "app_id": "logs",
+        "team_id": "demo:example.com",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": "03",
+        "role": "logs.reader",
+        "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+        "subject": "8f14e45f-ceea-467a-9f3b-6d2b7c1e0a55",
+        "held_since": "2026-11-07T12:01:00.123456Z",
+        "b3_scope": "logs.reader.9ffb12fb48dd17ae09f3d2796023b01a9452698d"
+      }
+    },
+    {
+      "name": "generation_signed",
+      "note": "generation is rendered with no sign: '+3' is not the spelling of 3",
+      "fields": {
+        "app_id": "logs",
+        "team_id": "demo:example.com",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": "+3",
+        "role": "logs.reader",
+        "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
         "subject": "8f14e45f-ceea-467a-9f3b-6d2b7c1e0a55",
         "held_since": "2026-11-07T12:01:00.123456Z",
         "b3_scope": "logs.reader.9ffb12fb48dd17ae09f3d2796023b01a9452698d"

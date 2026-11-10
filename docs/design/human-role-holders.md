@@ -362,15 +362,18 @@ async def refresh_holding_certificate(
   never a request's or client's time. Consumers compare it only for
   equality. A replace keeps it. A revoke followed by a designate gives a new
   value, so a consumer that bound a session to the earlier holding sees that
-  it changed. A consumer's binding to a holding uses only installation, team,
-  role, principal and `held_since`, none of which is secret.
+  it changed. Comparing a holding's version uses installation, team, role,
+  principal and `held_since`, none of which is secret. A console session
+  binds to the full holding identity below, which also covers the subject,
+  so a replace ends it.
 - **The holding's identity.** A console session binds to one holding
   through `human-role-holding/1`, a public digest that grants nothing. It is
   defined only while `subject` is not `None`: during a replace's cooling-off
   no session can log in, so there is nothing to bind. Its input is the strict
   canonical JSON ([canonical-json-v1](../vectors/canonical-json-v1.json)) of
   nine nonempty strings: `app_id`, `team_id`, `installation_id`, `generation`
-  (the admitted installation's generation, a decimal integer of at least 1),
+  (the admitted installation's integer generation rendered as ASCII
+  `[1-9][0-9]*`, with no sign and no leading zero),
   `role`, `principal`, `b3_scope`, `subject`, and `held_since` (UTC to the
   microsecond, `YYYY-MM-DDTHH:MM:SS.ffffffZ`). `b3_scope` must be the one
   derived from the key below. The identity is
