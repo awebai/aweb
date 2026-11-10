@@ -38,8 +38,8 @@ var rootCmd = &cobra.Command{
 			return prepareHumanParticipation(cmd)
 		}
 		// Offline key preparation validates its explicit destination itself.
-		// Do not renew keys, load dotenv selectors or contact update services
-		// before its two-state check, including on a refusal.
+		// Do not renew keys or contact update services before its two-state
+		// check, including on a refusal.
 		if flag := cmd.Annotations[identityKeyPreparationAnnotation]; flag != "" && cmd.Flags().Changed(flag) {
 			enabled, _ := cmd.Flags().GetBool(flag)
 			if enabled {
@@ -81,7 +81,6 @@ var rootCmd = &cobra.Command{
 				}
 			}
 		}
-		loadDotenvBestEffort()
 		if home.External() {
 			_ = os.Setenv(awconfig.IdentityHomeEnv, home.Root)
 		} else if hadIdentityHomeEnv {
