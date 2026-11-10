@@ -18,7 +18,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/awebai/aw/awid"
-	"github.com/mr-tron/base58"
 	"gopkg.in/yaml.v3"
 )
 
@@ -670,8 +669,7 @@ func unsafeContent(s string) bool {
 		if len(match) < 2 {
 			continue
 		}
-		decoded, err := base58.Decode(match[1])
-		if err == nil && len(decoded) == 20 {
+		if _, err := awid.DecodeStableID(match[1]); err == nil {
 			return true
 		}
 	}

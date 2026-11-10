@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `aw` refuses a did:key suffix longer than 47 characters and a did:aw suffix
+  longer than 28 characters before base58-decoding it, as awid's Python parser
+  does.
+
 - `aw` writes U+2028 (line separator) and U+2029 (paragraph separator) as UTF-8
   in the canonical JSON it signs, as the Python reference
   (`awid.signing.canonical_json_bytes`) and TypeScript do; Go's JSON encoder
