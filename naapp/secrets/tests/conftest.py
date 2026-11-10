@@ -13,6 +13,11 @@ pytest_plugins = ("pgdbm.fixtures.conftest",)
 
 
 @pytest.fixture
+def human_member_cache_seconds() -> int:
+    return 60
+
+
+@pytest.fixture
 async def test_db_factory(test_db_factory: Any) -> SchemaDatabases:
     return SchemaDatabases(test_db_factory)
 

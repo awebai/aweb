@@ -174,11 +174,6 @@ class Journey:
 
 
 @pytest.fixture
-def human_member_cache_seconds() -> int:
-    return 60
-
-
-@pytest.fixture
 async def journey(world, human_member_cache_seconds) -> AsyncIterator[Journey]:
     # Imported at runtime so collection remains possible while the factory is
     # test-first work. It will fail at this exact supported API until implemented.
