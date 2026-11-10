@@ -1,6 +1,10 @@
 // Package atomicfile replaces a file so that a reader, or a host that crashes
 // at any moment, finds either the complete previous content or the complete
 // replacement, and so that a completed write survives a crash.
+//
+// Surviving a crash costs two syncs on every write. State that need not
+// survive one, such as what a hook records on each event, has no use for
+// them: a writer of such state added here skips the syncs.
 package atomicfile
 
 import (

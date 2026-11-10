@@ -9,9 +9,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"errors"
 	"github.com/awebai/aw/internal/atomicfile"
 	"github.com/awebai/aw/internal/crashtest"
 	"github.com/awebai/aw/internal/pathpreflight"
+	"syscall"
 )
 
 // GenerateKeypair creates a new Ed25519 keypair using crypto/rand.
@@ -69,9 +71,21 @@ func SaveSigningKeyExclusive(path string, priv ed25519.PrivateKey) error {
 		Bytes: priv.Seed(),
 	})
 	if err := atomicfile.WriteExclusive(path, data, 0o600); err != nil {
-		return fmt.Errorf("create private key %s without overwrite: %w", path, err)
+		return exclusiveKeyWriteError(path, err)
 	}
 	return nil
+}
+
+// exclusiveKeyWriteError words a failed exclusive write of the key at path.
+// The key is put in place with a hard link, and a filesystem that has none
+// refuses the link; that refusal is explained instead of left as the link's
+// own error.
+func exclusiveKeyWriteError(path string, err error) error {
+	var link *os.LinkError
+	if errors.As(err, &link) && (errors.Is(link.Err, syscall.EPERM) || errors.Is(link.Err, syscall.ENOTSUP) || errors.Is(link.Err, syscall.EOPNOTSUPP) || errors.Is(link.Err, syscall.EXDEV)) {
+		return fmt.Errorf("create private key %s without overwrite: the filesystem holding %s does not support hard links; keep the identity home on a local filesystem: %w", path, path, err)
+	}
+	return fmt.Errorf("create private key %s without overwrite: %w", path, err)
 }
 
 // LoadSigningKey reads an Ed25519 private key from a PEM file.
