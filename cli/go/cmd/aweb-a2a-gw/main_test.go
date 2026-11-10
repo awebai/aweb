@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"sync"
 	"testing"
 	"time"
@@ -1691,5 +1692,113 @@ func TestA2AGatewayRuntimeHealthClaimsNoRepositoryWhenItWasNotGivenOne(t *testin
 	if strings.Contains(resp.Body.String(), "git_sha_repo") {
 		t.Fatalf("a gateway never told where its commit resolves named a repository anyway,\n"+
 			"which a reader would then trust: %s", resp.Body.String())
+	}
+}
+
+// A registry that answers its health report is reached, whatever the report
+// says about the registry's own dependencies. Only a registry that does not
+// answer with that report is unreachable.
+func TestA2AGatewayRuntimeHealthRegistryReach(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		registry      http.HandlerFunc
+		wantCode      int
+		wantReachable bool
+		wantStatus    string
+	}{
+		{
+			name: "unhealthy_report_is_reached",
+			registry: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_ = json.NewEncoder(w).Encode(map[string]any{"status": "unhealthy", "version": "0.5.11", "checks": map[string]any{"redis": "error", "database": "ok"}})
+			},
+			wantCode: http.StatusOK, wantReachable: true, wantStatus: "unhealthy",
+		},
+		{
+			name: "unavailable_without_a_report_is_not_reached",
+			registry: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_ = json.NewEncoder(w).Encode(map[string]any{"detail": "no backend"})
+			},
+			wantCode: http.StatusServiceUnavailable, wantReachable: false, wantStatus: "Service Unavailable",
+		},
+		{
+			name: "unhealthy_report_below_the_minimum_version_is_incompatible",
+			registry: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_ = json.NewEncoder(w).Encode(map[string]any{"status": "unhealthy", "version": "0.5.10"})
+			},
+			wantCode: http.StatusServiceUnavailable, wantReachable: true, wantStatus: "version_below_minimum",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			registry := httptest.NewServer(tc.registry)
+			defer registry.Close()
+			writeGatewayWorkspace(t, tmp, "http://aweb.invalid")
+			cfgPath := filepath.Join(tmp, "a2a-gw.yaml")
+			writeConfig(t, cfgPath, tmp, registry.URL)
+			gateway, err := buildGateway(mustLoadConfig(t, cfgPath))
+			if err != nil {
+				t.Fatalf("buildGateway: %v", err)
+			}
+			resp := httptest.NewRecorder()
+			runtimeHandler(gateway, mustLoadConfig(t, cfgPath)).ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/health", nil))
+			if resp.Code != tc.wantCode {
+				t.Fatalf("health status=%d want %d body=%s", resp.Code, tc.wantCode, resp.Body.String())
+			}
+			var health map[string]any
+			if err := json.Unmarshal(resp.Body.Bytes(), &health); err != nil {
+				t.Fatal(err)
+			}
+			awidRegistry := health["awid_registry"].(map[string]any)
+			if awidRegistry["reachable"] != tc.wantReachable || awidRegistry["status"] != tc.wantStatus {
+				t.Fatalf("unexpected registry payload: %#v", awidRegistry)
+			}
+		})
+	}
+}
+
+// /live answers whenever the process serves requests and asks the registry
+// nothing, so a probe that restarts the gateway does not restart it for a
+// registry outage.
+func TestA2AGatewayLiveChecksNoDependency(t *testing.T) {
+	tmp := t.TempDir()
+	var registryRequests atomic.Int32
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		registryRequests.Add(1)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer registry.Close()
+	writeGatewayWorkspace(t, tmp, "http://aweb.invalid")
+	cfgPath := filepath.Join(tmp, "a2a-gw.yaml")
+	writeConfig(t, cfgPath, tmp, registry.URL)
+	cfg := mustLoadConfig(t, cfgPath)
+	gateway, err := buildGateway(cfg)
+	if err != nil {
+		t.Fatalf("buildGateway: %v", err)
+	}
+	for name, handler := range map[string]http.Handler{
+		"static":  runtimeHandler(gateway, cfg),
+		"managed": &managedGateway{cfg: cfg, gateway: gateway},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resp := httptest.NewRecorder()
+			handler.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/live", nil))
+			if resp.Code != http.StatusOK || strings.TrimSpace(resp.Body.String()) != `{"status":"ok"}` {
+				t.Fatalf("live status=%d body=%s", resp.Code, resp.Body.String())
+			}
+			if got := resp.Header().Get("Content-Type"); got != "application/json" {
+				t.Fatalf("live content type=%q", got)
+			}
+		})
+	}
+	if got := registryRequests.Load(); got != 0 {
+		t.Fatalf("/live made %d registry requests; want 0", got)
+	}
+	health := httptest.NewRecorder()
+	runtimeHandler(gateway, cfg).ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if health.Code != http.StatusServiceUnavailable {
+		t.Fatalf("health status=%d with the registry answering 502; want 503", health.Code)
 	}
 }
