@@ -18,6 +18,13 @@
 -- no message or receipt is written between the backfill and the triggers and
 -- this transaction never waits for a second table while holding the first in
 -- a weaker mode.
+--
+-- ACCESS EXCLUSIVE blocks every read and write of the three tables until this
+-- transaction commits: chat sends, read marks, history, pending and open
+-- streams' polls wait for it. The transaction writes each row of the three
+-- tables once and builds two indexes; with tens of thousands of rows that is
+-- well under a second. A deployment with many millions of chat rows should
+-- expect a pause in proportion.
 LOCK TABLE {{tables.chat_sessions}}, {{tables.chat_messages}}, {{tables.chat_read_receipts}}
     IN ACCESS EXCLUSIVE MODE;
 
