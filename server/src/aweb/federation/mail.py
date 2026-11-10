@@ -17,7 +17,7 @@ from aweb.messaging.chat_policy import HumanChatRefused
 from aweb.messaging.address_auth import refuse_same_origin_nonresident
 
 from .envelope import FederatedDeliveryRequest, FederationEnvelope
-from .transport import DestinationRefused
+from .transport import AddressRefused, DestinationRefused
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +69,8 @@ class FederatedMailDeliveryError(RuntimeError):
 
 
 def _transport_failure_reason(exc: Exception) -> str:
+    if isinstance(exc, AddressRefused):
+        return "delivery_address_refused"
     if isinstance(exc, DestinationRefused):
         return "delivery_origin_refused"
     if isinstance(exc, (TimeoutError, httpx.TimeoutException)):
@@ -144,15 +146,12 @@ async def deliver_federated_message(
             answer = None
         if not isinstance(answer, dict):
             answer = {}
+        _log_unrelayed_answer(origin, response.status_code, content)
         # Preserve this application refusal across the chat federation hop.
         if (envelope.type == "chat" and response.status_code == 422
                 and answer.get("reason") == HumanChatRefused.reason
                 and answer.get("retryable") is False):
             raise HumanChatRefused(_refused_recipients(answer.get("recipients")))
-        logger.warning(
-            "Federated delivery to %s answered HTTP %d: %s",
-            origin, response.status_code, _safe_error_text(content)[:MAX_LOGGED_ERROR_CHARS],
-        )
         raise FederatedMailDeliveryError(
             origin,
             _typed_refusal_reason(answer) or f"HTTP {response.status_code}",
@@ -162,10 +161,20 @@ async def deliver_federated_message(
     try:
         data = json.loads(content)
     except Exception as exc:
+        _log_unrelayed_answer(origin, response.status_code, content)
         raise FederatedMailDeliveryError(origin, "invalid JSON", status_code=502) from exc
     if not isinstance(data, dict):
+        _log_unrelayed_answer(origin, response.status_code, content)
         raise FederatedMailDeliveryError(origin, "invalid response", status_code=502)
     return data
+
+
+def _log_unrelayed_answer(origin: str, status_code: int, content: bytes) -> None:
+    """Log, at a bounded length, the answer text a failed delivery does not relay."""
+    logger.warning(
+        "Federated delivery to %s answered HTTP %d: %s",
+        origin, status_code, _safe_error_text(content)[:MAX_LOGGED_ERROR_CHARS],
+    )
 
 
 def _typed_refusal_reason(answer: dict) -> str | None:
