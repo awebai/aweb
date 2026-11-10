@@ -215,8 +215,9 @@ read. A grant to an inherited subject never makes a withdrawn path usable.
 
 An approved `per_use` request is consumed only when the same request is
 re-submitted ([§10.3](secrets.md#103-flow)), and that re-submission is
-verified as a member request again. A withdrawn path therefore cannot consume
-an approval granted before the withdrawal.
+verified as a member request again. Once a withdrawal is observed, under the
+verifier's freshness bound, a withdrawn path cannot consume an approval granted
+before it. Until then, a re-submission can still use an unexpired observation.
 
 ## Derived secrets
 
@@ -275,9 +276,10 @@ The custody limits:
 - **A compromised eligible root** can admit attacker-held keys up to the
   policy's allowance. Together they share the line's bucket, so more keys do
   not buy more use. Two containment acts each cut the whole line, with a
-  difference. The owner revoking the grant also stops admitted intents at the
-  fence. The controller revoking the root's membership stops admissions, but
-  intents already admitted still dispatch unless the grant is revoked too.
+  difference. The owner revoking the grant stops admitted intents at the fence
+  at once. The controller revoking the root's membership stops admissions once
+  it is observed. Intents already admitted can dispatch only until their
+  retained membership deadline, after which the fence stops them on its own.
 - **Several keys under one worker UID** remain one compromise boundary, as
   acwd.13 states.
 
