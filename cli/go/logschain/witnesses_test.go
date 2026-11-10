@@ -8,52 +8,17 @@ import (
 	"testing"
 )
 
-// witnessLine is one witness in the bundle's own artefact line shape. The
-// vector names a byte field signing_bytes_b64url, the cross-vector convention;
-// the bundle's wire field signing_bytes already holds base64url text.
-func witnessLine(t *testing.T, kind string, a vectorArtefact) string {
-	t.Helper()
-	return `{"` + kind + `":{"signature":"` + a.Signature + `","signing_bytes":"` + a.SigningBytes + `"}}`
-}
-
-func TestWitnessesReadFromBundleArtefactLinesVerifyAsGiven(t *testing.T) {
-	for _, c := range loadExportVector(t).Cases {
-		if len(c.WitnessReceipts)+len(c.WitnessCheckpoints) == 0 {
-			continue
-		}
-		t.Run(c.Name, func(t *testing.T) {
-			var lines []string
-			for _, a := range c.WitnessCheckpoints {
-				lines = append(lines, witnessLine(t, "checkpoint", a))
-			}
-			for _, a := range c.WitnessReceipts {
-				lines = append(lines, witnessLine(t, "receipt", a))
-			}
-			var witnesses Witnesses
-			if err := witnesses.Read(bundleReader(lines)); err != nil {
-				t.Fatal(err)
-			}
-			report, err := VerifyBundle(
-				bundleReader(c.BundleLines), keySet(c.ReceiptKeys), keySet(c.CheckpointKeys),
-				witnesses.Receipts, witnesses.Checkpoints,
-			)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got := asJSON(t, report.JSON()); !reflect.DeepEqual(got, asJSON(t, c.Report)) {
-				t.Fatalf("report:\n got %v\nwant %v", got, c.Report)
-			}
-		})
-	}
+// witnessLine is one witness file line holding a receipt or checkpoint.
+func witnessLine(kind, signingBytes, signature string) string {
+	return `{"` + kind + `":{"signature":"` + signature + `","signing_bytes":"` + signingBytes + `"}}`
 }
 
 func TestWitnessesKeepPerKindOrderAcrossReads(t *testing.T) {
-	a := vectorArtefact{SigningBytes: base64.RawURLEncoding.EncodeToString([]byte("a")), Signature: "sa"}
-	b := vectorArtefact{SigningBytes: base64.RawURLEncoding.EncodeToString([]byte("b")), Signature: "sb"}
+	a, b := base64.RawURLEncoding.EncodeToString([]byte("a")), base64.RawURLEncoding.EncodeToString([]byte("b"))
 	var witnesses Witnesses
 	for _, lines := range [][]string{
-		{witnessLine(t, "receipt", a), witnessLine(t, "checkpoint", b)},
-		{witnessLine(t, "receipt", b)},
+		{witnessLine("receipt", a, "sa"), witnessLine("checkpoint", b, "sb")},
+		{witnessLine("receipt", b, "sb")},
 	} {
 		if err := witnesses.Read(bundleReader(lines)); err != nil {
 			t.Fatal(err)

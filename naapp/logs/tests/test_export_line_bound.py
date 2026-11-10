@@ -12,10 +12,16 @@ from typing import Any
 import pytest
 from aweb_naapp.hooks.envelope import MAX_ENVELOPE_BYTES
 
-from aweb_logs.export import MAX_LINE_BYTES, BundleMalformed, event_line, verify_bundle
+from aweb_logs.export import (
+    MAX_LINE_BYTES,
+    BundleMalformed,
+    event_line,
+    read_witnesses,
+    verify_bundle,
+)
 
 from .export_cases import two_epochs
-from .export_vector import VECTOR_PATH, artefacts, stream
+from .export_vector import VECTOR_PATH, lines_stream, stream
 
 VECTOR: dict[str, Any] = json.loads(VECTOR_PATH.read_bytes())
 PURGED = next(c for c in VECTOR["cases"] if c["name"] == "purged_event_keeps_its_skeleton_and_act")
@@ -36,12 +42,13 @@ def with_act_padded_to(length: int) -> tuple[list[bytes], str]:
 
 
 def verify(bundle: io.BufferedIOBase) -> dict[str, Any]:
+    receipts, checkpoints = read_witnesses(lines_stream(PURGED["witness_lines"]))
     return verify_bundle(
         bundle,
         receipt_keys=frozenset(PURGED["receipt_keys"]),
         checkpoint_keys=frozenset(PURGED["checkpoint_keys"]),
-        witness_receipts=artefacts(PURGED["witness_receipts"]),
-        witness_checkpoints=artefacts(PURGED["witness_checkpoints"]),
+        witness_receipts=receipts,
+        witness_checkpoints=checkpoints,
     ).to_json()
 
 

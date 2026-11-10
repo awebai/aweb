@@ -6,7 +6,6 @@ import (
 	"errors"
 	"os"
 	"reflect"
-	"strings"
 	"testing"
 )
 
@@ -14,13 +13,12 @@ const exportVectorPath = "../../../docs/vectors/logs-export-v1.json"
 
 type exportVector struct {
 	Cases []struct {
-		Name               string           `json:"name"`
-		BundleLines        []string         `json:"bundle_lines"`
-		ReceiptKeys        []string         `json:"receipt_keys"`
-		CheckpointKeys     []string         `json:"checkpoint_keys"`
-		WitnessReceipts    []vectorArtefact `json:"witness_receipts"`
-		WitnessCheckpoints []vectorArtefact `json:"witness_checkpoints"`
-		Report             map[string]any   `json:"report"`
+		Name           string         `json:"name"`
+		BundleLines    []string       `json:"bundle_lines"`
+		ReceiptKeys    []string       `json:"receipt_keys"`
+		CheckpointKeys []string       `json:"checkpoint_keys"`
+		WitnessLines   []string       `json:"witness_lines"`
+		Report         map[string]any `json:"report"`
 	} `json:"cases"`
 	Malformed []struct {
 		Name        string   `json:"name"`
@@ -42,16 +40,25 @@ func loadExportVector(t *testing.T) exportVector {
 	return v
 }
 
+// bundleReader is lines, each ended by a newline: a file with no lines is empty.
 func bundleReader(lines []string) *bytes.Reader {
-	return bytes.NewReader([]byte(strings.Join(lines, "\n") + "\n"))
+	var file []byte
+	for _, line := range lines {
+		file = append(append(file, line...), '\n')
+	}
+	return bytes.NewReader(file)
 }
 
 func TestExportVectorCases(t *testing.T) {
 	for _, c := range loadExportVector(t).Cases {
 		t.Run(c.Name, func(t *testing.T) {
+			var witnesses Witnesses
+			if err := witnesses.Read(bundleReader(c.WitnessLines)); err != nil {
+				t.Fatalf("witnesses: %v", err)
+			}
 			report, err := VerifyBundle(
 				bundleReader(c.BundleLines), keySet(c.ReceiptKeys), keySet(c.CheckpointKeys),
-				artefacts(t, c.WitnessReceipts), artefacts(t, c.WitnessCheckpoints),
+				witnesses.Receipts, witnesses.Checkpoints,
 			)
 			if err != nil {
 				t.Fatalf("verify: %v", err)
