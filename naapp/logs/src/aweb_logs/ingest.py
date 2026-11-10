@@ -26,7 +26,6 @@ from aweb_naapp.hooks.envelope import TEAM_ID_PATTERN, Envelope, verify_signatur
 from aweb_naapp.hooks.strictjson import (
     Refused,
     decode_base64url,
-    encode_base64url,
     parse_canonical_object,
 )
 from aweb_naapp.runtime.app import NaappRuntime
@@ -44,7 +43,7 @@ from awid.team_certificate import decode_team_certificate
 from awid.team_ids import parse_team_id
 from fastapi import HTTPException, Request
 
-from aweb_logs.chain import format_time
+from aweb_logs.chain import artefact_json, format_time
 from aweb_logs.ledger import Conflicted, LogsSigner, OriginMismatch, append
 
 # How far an event's occurred_at may lead logs' clock: the delivery
@@ -207,7 +206,7 @@ class Ingestor:
         return {
             "event_id": event.event_id,
             "disposition": "duplicate" if result.duplicate else "appended",
-            "receipt": {"signing_bytes": encode_base64url(result.receipt[0]), "signature": result.receipt[1]},
+            "receipt": artefact_json(*result.receipt),
         }
 
     async def _current_team_key(self, team_id: str) -> str:
