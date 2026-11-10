@@ -26,7 +26,13 @@ from aweb_naapp.hooks.envelope import verify
 from aweb_naapp.hooks.owner_act import VerifiedOwnerAct
 from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier, PreparedOwnerAct
 from aweb_naapp.hooks.strictjson import Refused
-from aweb_naapp.roles import principal_key, read_holding_of_scope
+from aweb_naapp.roles import (
+    end_holding,
+    holding_record_of_scope,
+    lock_holding,
+    members_of,
+    principal_key,
+)
 from aweb_naapp.runtime.authorization import Grant
 from aweb_naapp.runtime.human_roles import HumanRoleHolding, HumanRoleHoldings
 from aweb_naapp.runtime.installation import AdmittedInstallation, InstallationFence
@@ -195,7 +201,7 @@ class ReaderDirectory:
     async def _held(self, tx: TransactionManager, scope: str) -> HumanRoleHolding | None:
         """The current holding of ``scope`` in its own installation, provided
         that installation is still logs' active one; SQL reads only."""
-        record = await read_holding_of_scope(tx, scope)
+        record = await holding_record_of_scope(tx, scope)
         if record is None or record.role != READER_ROLE:
             return None
         try:
@@ -239,17 +245,60 @@ class ReaderDirectory:
         )
 
     async def current_readers(self, *, installation_id: str, team_id: str) -> list[Reader]:
-        """The claimed slots of this installation and team that a holder
-        currently fills."""
-        rows = await self.db.fetch_all(
-            "SELECT r.scope, r.installation_id, r.team_id FROM {{tables.readers}} r"
-            " JOIN {{tables.passkey_approvers}} a ON a.scope = r.scope AND a.superseded_at IS NULL"
-            " WHERE r.installation_id = $1 AND r.team_id = $2 AND r.claimed_at IS NOT NULL"
-            " ORDER BY r.scope",
-            installation_id,
-            team_id,
+        """The readers of this installation and team who can sign in now, in
+        scope order."""
+        async with self.db.transaction() as tx:
+            readers = await self.current_readers_in(
+                tx, installation_id=installation_id, team_id=team_id
+            )
+        return sorted(readers, key=lambda reader: reader.scope)
+
+    async def current_readers_in(
+        self, tx: TransactionManager, *, installation_id: str, team_id: str
+    ) -> list[Reader]:
+        try:
+            context = await installation_context(
+                tx, app_id=self.app_id, team_id=team_id, installation_id=installation_id
+            )
+        except ProofContextUnavailable:
+            return []
+        admitted = AdmittedInstallation(
+            team_id=context.team_id,
+            app_id=context.app_id,
+            installation_id=context.installation_id,
+            generation=context.generation,
         )
-        return [Reader(**row) for row in rows]
+        holdings = self._holdings()
+        readers = []
+        for member in await members_of(tx, team_id, READER_ROLE):
+            held = await holdings.read_holding(
+                tx, installation=admitted, role=READER_ROLE, principal=member.principal_did
+            )
+            if held is not None and held.subject is not None:
+                readers.append(
+                    Reader(
+                        scope=held.b3_scope,
+                        installation_id=held.installation_id,
+                        team_id=held.team_id,
+                        principal=held.principal,
+                    )
+                )
+        return readers
+
+    async def record(self, scope: str) -> Reader | None:
+        """The ``logs.reader`` holding recorded for ``scope``, current or
+        ended, as a reader of its installation and team. It admits nothing."""
+        if not is_reader_scope(scope):
+            return None
+        held = await holding_record_of_scope(self.db, scope)
+        if held is None or held.role != READER_ROLE:
+            return None
+        return Reader(
+            scope=scope,
+            installation_id=held.installation_id,
+            team_id=held.team_id,
+            principal=held.principal,
+        )
 
     async def is_current_reader(self, scope: str) -> bool:
         """Whether ``scope`` admits a reader now (see :meth:`reader`): the
@@ -271,27 +320,31 @@ class ReaderDirectory:
     async def role_of(
         self, tx: TransactionManager, *, scope: str, admitted: AdmittedInstallation
     ) -> str | None:
-        """The B3 role ``scope`` holds in ``admitted``: a current holding of
-        ``logs.reader`` in that installation is a reader."""
-        held = await self._holdings().read_holding_of_scope(
-            tx, installation=admitted, b3_scope=scope
-        )
-        return READER_ROLE if held is not None else None
+        """The B3 role ``scope`` names in ``admitted``: a ``logs.reader``
+        holding recorded for that installation and team, current or ended in
+        this transaction, as when its revocation is recorded. It names the
+        role only; admission reads the current holding."""
+        record = await holding_record_of_scope(tx, scope)
+        if (
+            record is None
+            or record.role != READER_ROLE
+            or (record.installation_id, record.team_id)
+            != (admitted.installation_id, admitted.team_id)
+        ):
+            return None
+        return READER_ROLE
 
     def proof_context(self, *, app_id: str) -> ProofContextResolver:
-        """B3's proof context of a reader scope: the installation its claimed
-        slot belongs to."""
+        """B3's proof context of a reader scope: the installation its holding
+        is recorded in, current or ended, which must still be the app's active
+        installation of that team."""
 
         async def context(scope: str, *, tx: TransactionManager) -> PasskeyInstallationContext:
-            row = await tx.fetch_one(
-                "SELECT installation_id, team_id FROM {{tables.readers}}"
-                " WHERE scope = $1 AND claimed_at IS NOT NULL",
-                scope,
-            )
-            if row is None:
+            record = await holding_record_of_scope(tx, scope)
+            if record is None or record.role != READER_ROLE:
                 raise ProofContextUnavailable()
             return await installation_context(
-                tx, app_id=app_id, team_id=row["team_id"], installation_id=row["installation_id"]
+                tx, app_id=app_id, team_id=record.team_id, installation_id=record.installation_id
             )
 
         return context
@@ -486,14 +539,26 @@ class ReaderRemovals:
     async def remove(self, *, principal: Principal, grant: Grant, scope: str) -> None:
         if principal.team_id != grant.team_id:
             raise RemovalRefused("reader_unknown", 404)
-        reader = await self.directory.reader(scope)
-        if reader is None or reader.team_id != grant.team_id:
+        reader = await self.directory.record(scope)
+        if reader is None or reader.team_id != grant.team_id or reader.principal is None:
             raise RemovalRefused("reader_unknown", 404)
         await self.fence.refresh(grant.team_id)
         async with self.directory.db.transaction() as tx:
+            # The fence first, then the holding, then B3: every holding writer
+            # locks in this order.
             admitted = await self.fence.admit(tx, grant)
             if admitted.installation_id != reader.installation_id:
                 raise RemovalRefused("reader_unknown", 404)
+            key = {
+                "installation_id": admitted.installation_id,
+                "team_id": admitted.team_id,
+                "role": READER_ROLE,
+                "principal": reader.principal,
+            }
+            if await lock_holding(tx, **key) is None:
+                raise RemovalRefused("reader_unknown", 404)
+            # The holding's approver, or the pending one while a replaced
+            # credential is in its cooling-off.
             holder = await tx.fetch_value(
                 "SELECT subject FROM {{tables.passkey_approvers}}"
                 " WHERE scope = $1 AND superseded_at IS NULL",
@@ -504,22 +569,18 @@ class ReaderRemovals:
 
             async def protect(guard: TransactionManager, _scope: str, _subject: str) -> None:
                 # Admission holds the installation's fence row for update until
-                # commit, and every reader change holds it at least for share,
-                # so this count sees every earlier removal or revocation committed.
-                # Only a reader who can sign in protects: a designation whose
-                # holder has no unrevoked passkey reads nothing yet.
-                others = await guard.fetch_value(
-                    "SELECT count(*) FROM {{tables.readers}} r"
-                    " JOIN {{tables.passkey_approvers}} a"
-                    " ON a.scope = r.scope AND a.superseded_at IS NULL"
-                    " WHERE r.installation_id = $1 AND r.team_id = $2"
-                    " AND r.claimed_at IS NOT NULL AND r.scope <> $3"
-                    " AND EXISTS (SELECT 1 FROM {{tables.passkey_credentials}} k"
-                    " WHERE k.subject = a.subject AND k.revoked_at IS NULL)",
-                    admitted.installation_id,
-                    admitted.team_id,
-                    scope,
-                )
+                # commit, and every holding writer holds it at least for share,
+                # so this count sees every earlier removal or revocation
+                # committed. Only a reader who can sign in protects.
+                others = [
+                    other
+                    for other in await self.directory.current_readers_in(
+                        guard,
+                        installation_id=admitted.installation_id,
+                        team_id=admitted.team_id,
+                    )
+                    if other.scope != scope
+                ]
                 if not others:
                     raise RetirementRefused("last_reader_protected")
 
@@ -528,6 +589,7 @@ class ReaderRemovals:
             )
             with self.recorder.prepared(prepared):
                 try:
+                    await end_holding(tx, **key)
                     await self.passkeys.retire_in(
                         tx,
                         scope=scope,
