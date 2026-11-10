@@ -134,6 +134,9 @@ HOOK_INVENTORY = "vectors/mutation-hook-call-sites-v1.json"
 # callback first, MCP tools pass neither. A call inside one of these functions
 # forwards its caller's event and is not a call site.
 HOOK_FIRING_FUNCTIONS = {"fire_mutation_hook": 1, "fire_mutation_callback": 1, "fire_mcp_mutation_hook": 0}
+# Functions that deliver events recorded by a call site, by file and name: they
+# forward events whose names a call site gave, and are not call sites themselves.
+HOOK_FORWARDING_FUNCTIONS = {("server/src/aweb/hooks.py", "fire")}
 
 FEDERATION_DOC_REQUIREMENTS = {
     "aweb-sot.md": (
@@ -270,7 +273,10 @@ class _HookCallVisitor(ast.NodeVisitor):
         else:
             name = ""
         event_position = HOOK_FIRING_FUNCTIONS.get(name)
-        forwards = bool(self.function_stack) and self.function_stack[-1] in HOOK_FIRING_FUNCTIONS
+        forwards = bool(self.function_stack) and (
+            self.function_stack[-1] in HOOK_FIRING_FUNCTIONS
+            or (self.relative, self.function_stack[-1]) in HOOK_FORWARDING_FUNCTIONS
+        )
         if event_position is not None and not forwards:
             event_expression = node.args[event_position] if len(node.args) > event_position else next(
                 (keyword.value for keyword in node.keywords if keyword.arg == "event_type"),
