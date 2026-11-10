@@ -15,9 +15,11 @@ exact-principal check around every hold and check.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import hashlib
+import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from weakref import ReferenceType, ref
 
@@ -26,6 +28,7 @@ from pgdbm.core import TransactionManager
 
 from aweb_naapp import roles
 from aweb_naapp.console.handoff_authority import PublicScope
+from aweb_naapp.hooks.strictjson import Refused, canonical
 from aweb_naapp.runtime.human_roles import HumanRoleHolding, HumanRoleHoldings
 from aweb_naapp.runtime.installation import (
     AdmittedInstallation,
@@ -34,6 +37,71 @@ from aweb_naapp.runtime.installation import (
     InstallationRefused,
 )
 from aweb_naapp.runtime.passkeys import Passkeys, PreparedCurrentApprovers
+
+_IDENTITY_DOMAIN = b"aweb.human-role-holding/1\n"
+_IDENTITY_PREFIX = "aweb.human-role-holding/1:"
+_IDENTITY_FIELDS = frozenset(
+    {
+        "app_id",
+        "team_id",
+        "installation_id",
+        "generation",
+        "role",
+        "principal",
+        "b3_scope",
+        "subject",
+        "held_since",
+    }
+)
+_GENERATION = re.compile(r"[1-9][0-9]*")
+_HELD_SINCE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z")
+
+
+def holding_identity(fields: Mapping[str, Any]) -> str:
+    """``human-role-holding/1`` of a holding named by exactly its nine
+    nonempty string fields: a public digest that grants nothing. A holding
+    whose fields are not exactly so spelled, whose ``b3_scope`` is not the one
+    its key derives, or which no credential can log in to, has none
+    (ValueError)."""
+    if set(fields) != _IDENTITY_FIELDS or any(
+        not isinstance(value, str) or not value for value in fields.values()
+    ):
+        raise ValueError("a holding identity needs exactly its nine nonempty strings")
+    if not _GENERATION.fullmatch(fields["generation"]):
+        raise ValueError("generation is a positive integer without sign or leading zero")
+    if not _HELD_SINCE.fullmatch(fields["held_since"]):
+        raise ValueError("held_since is UTC to the microsecond, ending in Z")
+    if fields["b3_scope"] != roles.holding_scope(
+        fields["installation_id"], fields["team_id"], fields["role"], fields["principal"]
+    ):
+        raise ValueError("b3_scope is not the one the holding's key derives")
+    try:
+        encoded = canonical(dict(fields))
+    except Refused:
+        raise ValueError("a holding identity's fields are not canonical") from None
+    return _IDENTITY_PREFIX + hashlib.sha256(_IDENTITY_DOMAIN + encoded).hexdigest()
+
+
+def human_role_holding_identity(target: HumanRoleSessionTarget) -> str:
+    """The identity of the holding ``target`` projects."""
+    admitted, scope = target.admitted, target.public_scope
+    if not isinstance(admitted.generation, int) or isinstance(admitted.generation, bool):
+        raise ValueError("generation is the admitted installation's integer generation")
+    if target.held_since.utcoffset() is None:
+        raise ValueError("held_since is a time with its offset")
+    return holding_identity(
+        {
+            "app_id": admitted.app_id,
+            "team_id": admitted.team_id,
+            "installation_id": admitted.installation_id,
+            "generation": str(admitted.generation),
+            "role": scope.role,
+            "principal": scope.principal,
+            "b3_scope": target.b3_scope,
+            "subject": target.subject,
+            "held_since": target.held_since.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+        }
+    )
 
 
 def _not_held() -> HTTPException:
@@ -270,6 +338,13 @@ class HumanRoleHandoffAuthority:
         if (target.b3_scope, target.subject) not in union:
             raise _not_held()
         return union
+
+    def holding_identity(self, target: HumanRoleSessionTarget) -> str:
+        """The value-free identity a console session binds to: the target's
+        holding's ``human-role-holding/1``. A target of another authority's
+        role or installation selector has none."""
+        self._require_own(target)
+        return human_role_holding_identity(target)
 
     async def check_session_target(
         self, tx: TransactionManager, held: PreparedHumanRoleHolding
