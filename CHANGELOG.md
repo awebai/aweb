@@ -14,8 +14,9 @@
   healthchecks probe `/ready`. **If your probe relied on `/health` answering 200
   during a dependency outage** (a liveness probe or restart policy), point it at
   `/live`; leaving it on `/health` restarts every replica into the outage. An
-  aweb server's start-up AWID check reads AWID's `/health`, so it does not start
-  against an AWID whose Redis or database check fails. The CLI's
+  aweb server's start-up AWID check reads AWID's `/health` and starts, with a
+  warning, when AWID answers with its health report of a failed dependency of
+  its own. The CLI's
   request-compression discovery treats a 503 as no advertisement and sends plain
   bodies. See [health probes](docs/aweb-sot.md#health-probes).
 

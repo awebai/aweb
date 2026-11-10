@@ -1435,7 +1435,8 @@ into the same outage. The `awid/Dockerfile` and `awid/Dockerfile.release`
 start-up, probe `/ready`.
 
 The registry client's `health()` reads `GET /health` and raises `RegistryError`
-on the 503, so an aweb server does not start against an AWID that is not ready.
+on the 503. An aweb server's start-up check treats that health report as a
+registry it reached, logs a warning and starts.
 
 ---
 

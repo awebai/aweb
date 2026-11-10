@@ -1444,8 +1444,10 @@ selection.
 
 The standard server uses these AWID read families through the cached registry
 client. Startup also performs an uncached AWID health check before serving: the
-server does not start unless AWID's `GET /health` answers 2xx, which it does
-only when AWID's own Redis and database checks pass.
+server does not start unless AWID answers `GET /health`. AWID's health report
+with status `unhealthy`, which it sends with 503 when its own Redis or database
+check fails, counts as reached: the server logs a warning and starts. Any other
+failure, including a 503 that is not that report, stops start-up.
 
 ### Team resolution (on first agent connection or cache miss)
 
