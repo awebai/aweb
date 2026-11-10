@@ -1,7 +1,8 @@
 # Event stream client policy
 
-Status: **proposal for review** (aweb-acxc.23). Nothing here is implemented
-until it is accepted. The terminal-status rules are a protocol decision.
+Status: **accepted policy** (aweb-acxc.23). The clients are brought to it one
+at a time; "What changes in each client" lists what remains. The
+terminal-status rules are a protocol decision and change only by review.
 
 A client of `GET /v1/events/stream` is a process that must hear about mail,
 chat and control signals for as long as it runs. This page states one policy
@@ -102,6 +103,12 @@ So a refused stream is **quarantined**:
 `verification_unavailable` is not a refusal. It says the server could not
 check the grant; it is transient and follows section 3.
 
+Slow retry is safe only because of two things. Section 5 holds without
+exception. And a server must not turn refused retries into a lockout: it may
+count them, but a refused stream open never extends, renews or triggers a
+block on the identity, the certificate or the address. A client that keeps
+knocking at this pace must be able to get in the moment the cause ends.
+
 ### 5. No fallback and no change of identity
 
 A refused client does not retry with other credentials, another signing
@@ -134,6 +141,21 @@ next attempt where there is one:
 
 A planned close does not leave `streaming`.
 
+`refused` reaches a person or the agent once per transition, never once per
+retry:
+
+- The wake broker's status shows the identity as refused, with the status or
+  event name and the time of the next attempt. It never shows a refused
+  identity as admitted.
+- The channel (the Claude Code plugin, the Pi extension and the `aw wake`
+  child) puts one notice into the session when a stream enters `refused`,
+  naming the status and the time of the next attempt, and one when it
+  leaves.
+- `aw run` logs the same two transitions.
+
+A retry that is refused again changes the time of the next attempt and says
+nothing.
+
 ## What changes in each client
 
 | | channel-core | wake broker | `aw run` |
@@ -149,18 +171,12 @@ A planned close does not leave `streaming`.
 The two Go clients share one implementation of sections 2 to 6. The
 TypeScript client has its own and is tested against the same table of cases.
 
-## Questions for the reviewer
+## Decisions recorded at review
 
-1. **Is slow retry right for 401 and 403, or should a revoked credential stop
-   for good?** The case for slow retry is that the client cannot tell a
-   revoked certificate from a corrected clock or a renewed file, and the cost
-   to the server is one refused request per identity every 15 minutes. The
-   case against is that a revoked identity keeps knocking. The server already
-   counts refused authentication.
-2. **Which 4xx statuses are transient.** This page lists 408, 409, 425 and
-   429. Any 4xx not named in section 3 or 4 is treated as a refusal.
-3. **The quarantine delays** (1 to 15 minutes) and the `Retry-After` cap
-   (5 minutes) are choices, not derived values.
-4. **`aw run`'s planned close.** Moving from 10 minutes to under 4 changes
-   nothing a user sees, since the server closes at 5, but it is a change of
-   behaviour in a released client.
+1. 401 and 403 are slow-retried, not stopped, on the conditions in section 4.
+2. The transient 4xx statuses are 408, 409, 425 and 429. Every other 4xx is a
+   refusal.
+3. The quarantine delays (1 to 15 minutes) and the `Retry-After` cap
+   (5 minutes) are as written.
+4. `aw run`'s planned close moves from a local deadline of 10 minutes to
+   between 3 minutes 30 seconds and 4 minutes.
