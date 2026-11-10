@@ -91,6 +91,7 @@ export {
   type ChannelAwakening,
   type ChannelAwakeningKind,
   type ChannelDeliveryIntent,
+  type ChannelCredentialReloadOptions,
   type ChannelLoopOptions,
   type ChannelTraceEntry,
   type RegistryIdentityConfig,

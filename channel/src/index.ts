@@ -152,7 +152,7 @@ async function main() {
   // Agent activity runs in either delivery mode; it is attributed only when
   // this plugin presents the chat wake itself. When Claude Code closes the
   // session (stdin ends) or the loop stops, the open turn is ended once.
-  const activity = await startClaudeActivity(config, workdir);
+  const activity = await startClaudeActivity(config, workdir, { client });
   let activityStopped: Promise<void> | undefined;
   const stopActivity = (): Promise<void> => (activityStopped ??= activity?.stop() ?? Promise.resolve());
   process.stdin.once("end", () => { void stopActivity(); });
@@ -227,17 +227,18 @@ Control events (type="control") are operational signals. On "pause", stop curren
     identityHome: config.identityHome!, kind: "claude-channel", did: config.did, stableID: config.stableID,
     onError: console.error,
   });
+  const self: SelfIdentity = {
+    alias: config.alias,
+    address: config.address,
+    did: config.did,
+    stableID: config.stableID,
+  };
   try {
     await startChannelLoop({
       client,
       pinStore,
       trust,
-      self: {
-        alias: config.alias,
-        address: config.address,
-        did: config.did,
-        stableID: config.stableID,
-      },
+      self,
       signal: abort.signal,
       teamID: config.teamID,
       workdir,
@@ -255,7 +256,9 @@ Control events (type="control") are operational signals. On "pause", stop curren
       mailAcknowledgment: "delivery",
       onTrace: traceSink?.onTrace,
       onStreamState: (state) => handleClaudeStreamState(state),
-      reloadCredentials: createChannelCredentialReload(client, config, () => loadChannelConfig(workdir)),
+      reloadCredentials: createChannelCredentialReload({
+        client, config, load: () => loadChannelConfig(workdir), self, trust, receipt, activity: () => activity?.emitter,
+      }),
       streamObserver: receipt,
       log: (message) => console.error(message),
     });

@@ -435,23 +435,26 @@ export default function awebPiExtension(pi: ExtensionAPI) {
       onError: (message) => console.warn(message),
     });
     wakeDispatcher = createWakeDispatcher(pi, wakeLog);
+    const self = {
+      alias: config.alias,
+      address: config.address,
+      did: config.did,
+      stableID: config.stableID,
+    };
     channelLoop = startChannelLoop({
       client,
       pinStore,
       trust,
-      self: {
-        alias: config.alias,
-        address: config.address,
-        did: config.did,
-        stableID: config.stableID,
-      },
+      self,
       signal,
       teamID: config.teamID,
       workdir: ctx.cwd,
       onAwakening: (awakening) => createPiAwakeningHandler(wakeDispatcher)(awakening),
       onChatPresented: (sessionID, options) => activity?.chatWakeDelivered(sessionID, options),
       onStreamState: (state) => handlePiStreamState(state, ctx),
-      reloadCredentials: createChannelCredentialReload(client, config, () => loadChannelConfig(ctx.cwd)),
+      reloadCredentials: createChannelCredentialReload({
+        client, config, load: () => loadChannelConfig(ctx.cwd), self, trust, receipt, activity: () => activity,
+      }),
       streamObserver: receipt,
       log: (message) => {
         if (ctx.hasUI) ctx.ui.notify(message, "warning");

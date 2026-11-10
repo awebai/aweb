@@ -86,15 +86,20 @@ export class APIClient {
 
   /**
    * Take the credentials of a client built from the same identity home read
-   * again: a renewed certificate or grant. The client keeps acting as the same
-   * identity towards the same server; credentials that say otherwise are refused.
+   * again: a renewed certificate or grant, or the key and certificate a key
+   * rotation left there. The client keeps acting as the same identity towards
+   * the same server; credentials that say otherwise are refused.
+   *
+   * An identity with a stable id is that stable id, whatever did:key it
+   * holds. An identity without one is its did:key.
    */
   renewCredentialsFrom(renewed: APIClient): void {
     if (renewed.baseURL !== this.baseURL) {
       throw new Error("the credentials read again name another server");
     }
-    const sameIdentity = renewed.auth.did === this.auth.did
-      && renewed.auth.stableID === this.auth.stableID
+    const stableID = this.auth.stableID.trim();
+    const sameIdentity = renewed.auth.stableID.trim() === stableID
+      && (stableID !== "" || renewed.auth.did === this.auth.did)
       && renewed.auth.teamID === this.auth.teamID
       && (renewed.auth.authMode ?? "team") === (this.auth.authMode ?? "team");
     if (!sameIdentity) {

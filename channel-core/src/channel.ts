@@ -5,7 +5,11 @@ import { homedir } from "node:os";
 import { appendFile, mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { lock } from "proper-lockfile";
 
+import type { ActivityEmitter } from "./activity/emitter.js";
+import { activitySigner } from "./activity/runtime.js";
 import { APIClient } from "./api/client.js";
+import type { AgentConfig } from "./config.js";
+import type { ReceiveStreamReceipt } from "./receive.js";
 import { streamAgentEvents, formatEventStreamState, type AgentEvent, type EventStreamOptions, type EventStreamState, type EventStreamObserver } from "./api/events.js";
 import { ackMessage, fetchInbox, type InboxMessage } from "./api/mail.js";
 import { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";
@@ -392,28 +396,47 @@ export function createChannelClient(config: ChannelClientConfig): APIClient {
   return client;
 }
 
+export interface ChannelCredentialReloadOptions {
+  client: APIClient;
+  /** The configuration the channel started with. */
+  config: AgentConfig;
+  /** Reads the configuration again from the identity home the channel started with. */
+  load: () => Promise<AgentConfig>;
+  /** The reader identity the channel loop dispatches with. */
+  self: SelfIdentity;
+  /** The sender trust check the channel loop dispatches with. */
+  trust: SenderTrustManager;
+  receipt?: ReceiveStreamReceipt;
+  /** The session's activity emitter, when it has one. */
+  activity?: () => ActivityEmitter | undefined;
+}
+
 /**
  * Returns the function a channel loop calls before each retry of a refused
- * event stream. It reads the configuration again with load, which must read
- * the identity home the channel started with, and gives the client the
- * certificate or grant found there, so one renewed on disk is used without a
- * restart. It is not a way to another identity: a configuration that names
- * another identity home, server, identity, team or way to authenticate is
- * refused and the client keeps what it holds.
+ * event stream. It reads the configuration again with load and gives the
+ * client the certificate or grant found there, so one renewed on disk, or the
+ * key and certificate a key rotation left there, is used without a restart.
+ * It is not a way to another identity: a configuration that names another
+ * identity home, server, identity, team or way to authenticate is refused
+ * and the channel keeps what it holds.
+ *
+ * A key rotation changes the identity's did:key. Everything that holds it
+ * beside the client is given the one read: the reader identity, the sender
+ * trust check, the receive receipt and the activity signer.
  */
-export function createChannelCredentialReload(
-  client: APIClient,
-  config: ChannelClientConfig,
-  load: () => Promise<ChannelClientConfig>,
-): (signal: AbortSignal) => Promise<void> {
+export function createChannelCredentialReload(options: ChannelCredentialReloadOptions): (signal: AbortSignal) => Promise<void> {
   return async (signal) => {
-    const renewed = await load();
+    const renewed = await options.load();
     // A stream that stopped while the files were read takes nothing from them.
     signal.throwIfAborted();
-    if ((renewed.identityHome || "") !== (config.identityHome || "")) {
+    if ((renewed.identityHome || "") !== (options.config.identityHome || "")) {
       throw new Error("the credentials read again come from another identity home");
     }
-    client.renewCredentialsFrom(createChannelClient(renewed));
+    options.client.renewCredentialsFrom(createChannelClient(renewed));
+    options.self.did = renewed.did;
+    options.trust.renewSelfDID(renewed.did);
+    options.receipt?.renewDID(renewed.did);
+    options.activity?.()?.renewSigner(activitySigner(renewed));
   };
 }
 
