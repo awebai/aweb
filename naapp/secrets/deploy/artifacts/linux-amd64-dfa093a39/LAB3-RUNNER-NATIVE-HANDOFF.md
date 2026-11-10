@@ -14,11 +14,18 @@ release the first-owner STOP. Missing prerequisites stop the sequence.
 
 ## 1. Deliver the exact inputs
 
-Secrets/aweb arranges the existing authenticated artifact transfer to the
-administrator. No new download service is needed. Root retains the archive at
+**Transport STOP:** no authorized archive transfer to the lab is established.
+The prepared scp step is pending Juan's decision through Secrets/aweb. Do not
+execute it until that authorization and its sequencing are confirmed. The
+target's existing HTTPS Git fetch carries source, not this archive; procedure
+review and forwarding do not authorize binary delivery.
+
+Root retains the 75,391,366-byte archive only on antares at
 `artifacts/lab3-dfa/runner-linux-amd64-dfa093a39.tar.gz`; the other three files
-are in this directory at the pinned commits below. If Hestia cannot obtain
-these bytes through that route, STOP and return the missing transfer to
+are in this directory at the pinned commits below. Do not put the archive on
+a Git ref/release, attach it to mail, or create an endpoint as a substitute.
+After a transport is authorized, require the pinned hash at each hop and
+before installation. Until then STOP here and return the missing transfer to
 Secrets. Do not rebuild or substitute an archive.
 
 The administrator stages these four files under the new, root-owned,
