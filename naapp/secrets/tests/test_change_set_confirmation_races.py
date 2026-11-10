@@ -1,5 +1,10 @@
 # ruff: noqa: F811 -- imported real composition fixtures.
-"""Actual signed/cookie confirmation serializes with the two closing paths."""
+"""Signed/cookie confirmation and closure retain one terminal outcome.
+
+These outcome controls do not prove the closer waits on B2: PostgreSQL also
+reports soft queue blockers. The separate close-order NOWAIT cases prove
+the changed lock order.
+"""
 
 import asyncio
 from datetime import UTC, datetime, timedelta
@@ -78,8 +83,8 @@ async def test_real_confirmation_and_closer_have_one_terminal_outcome(
                 confirmer_pid = await blocked_pid(db, holder, confirming)
                 closing_task = asyncio.create_task(close())
                 tasks.append(closing_task)
-                # The closer must queue behind that confirmer's B2 lock, not
-                # acquire the change row and later reverse onto B2.
+                # Establish overlap with the actual confirmer. This includes
+                # soft queue blocking and does not identify the awaited table.
                 await blocked_pid(db, confirmer_pid, closing_task)
             result = await asyncio.wait_for(confirming, 5)
             assert result.status_code == 200
