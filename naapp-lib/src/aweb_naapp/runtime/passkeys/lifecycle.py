@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pgdbm.core import TransactionManager
 
 from aweb_naapp.runtime.installation import AdmittedInstallation
+from aweb_naapp.runtime.passkeys.current_approver import _live
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -46,6 +47,8 @@ async def retire_subjects(
     The app must collect scopes before deleting its discovery records or roles;
     this function neither discovers ownership nor purges app role assignments.
     """
+    if not _live(tx) or await tx.fetch_value("SHOW transaction_isolation") != "read committed":
+        raise ValueError("subject retirement needs a live READ COMMITTED transaction")
     identity = RetiringInstallation(
         app_id=installation.app_id,
         team_id=installation.team_id,
