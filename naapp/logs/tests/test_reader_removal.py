@@ -2,7 +2,7 @@
 §B5), on real PostgreSQL with a real AWID registry, real owner acts and a
 software passkey.
 
-The removal ends the reader's designation and appends logs' own signed
+The removal ends the reader's holding of ``logs.reader`` and appends logs' own signed
 ``role.revoked`` event, naming the member's team certificate as its authority,
 in one transaction. Team authority alone never removes the last current
 reader of an installation: that takes the owner's act. Concurrent removals,
@@ -13,7 +13,6 @@ together they cannot leave the installation without a reader.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 from typing import Any
 
 import pytest
@@ -25,14 +24,14 @@ from nacl.signing import SigningKey
 from aweb_logs.readers import READER_ROLE, RemovalRefused
 
 from .reader_world import (
-    OTHER_CONTACT,
+    OTHER_READER,
     World,
     chained,
-    designated_reader,
-    enrolled_reader,
+    held_reader,
     holder,
-    revocation,
-    slot,
+    reader_scope,
+    replaced_reader,
+    revoked_reader,
     world_fixture,  # noqa: F401
 )
 
@@ -60,11 +59,12 @@ async def current(world: World) -> list[str]:
 
 
 async def test_a_member_removes_a_reader_on_logs_own_chain(world: World):
-    kept, _ = await enrolled_reader(world)
-    removed, reader = await enrolled_reader(world, OTHER_CONTACT)
+    kept, _ = await held_reader(world)
+    removed, reader = await held_reader(world, OTHER_READER)
     remover = member()
     await world.removals.remove(principal=remover, grant=world.grant, scope=removed)
     assert await holder(world, removed) is None
+    assert await world.directory.reader(removed) is None
     assert await current(world) == [kept]
     entry = (await chained(world))[-1]
     assert entry["payload"] == {
@@ -78,8 +78,17 @@ async def test_a_member_removes_a_reader_on_logs_own_chain(world: World):
     assert entry["actor"]["did_key"] == remover.did_key
 
 
+async def test_a_removed_reader_can_be_held_again_by_the_owners_act(world: World):
+    await held_reader(world)
+    removed, _ = await held_reader(world, OTHER_READER)
+    await world.removals.remove(principal=member(), grant=world.grant, scope=removed)
+    again, _ = await held_reader(world, OTHER_READER)
+    assert again == removed
+    assert await world.directory.is_current_reader(removed)
+
+
 async def test_a_member_cannot_remove_the_last_reader(world: World):
-    scope, reader = await enrolled_reader(world)
+    scope, reader = await held_reader(world)
     before = await chained(world)
     with pytest.raises(RemovalRefused) as refused:
         await world.removals.remove(principal=member(), grant=world.grant, scope=scope)
@@ -88,36 +97,47 @@ async def test_a_member_cannot_remove_the_last_reader(world: World):
     assert await chained(world) == before
 
 
-async def test_a_reader_that_has_not_enrolled_does_not_protect_the_last_one_who_has(
+async def test_a_reader_who_cannot_sign_in_does_not_protect_the_last_one_who_can(
     world: World,
 ):
-    designated, _ = await designated_reader(world, OTHER_CONTACT)
-    scope, reader = await enrolled_reader(world)
+    """A reader whose credential is being replaced holds the role but cannot
+    sign in until the cooling-off ends, so it does not keep the installation
+    readable."""
+    replacing, _ = await held_reader(world, OTHER_READER)
+    await replaced_reader(world, OTHER_READER)
+    scope, reader = await held_reader(world)
     with pytest.raises(RemovalRefused) as refused:
         await world.removals.remove(principal=member(), grant=world.grant, scope=scope)
     assert refused.value.code == "last_reader_protected"
     assert await holder(world, scope) == reader
-    # The designation that cannot read yet is removable while one who can remains.
-    await world.removals.remove(principal=member(), grant=world.grant, scope=designated)
-    assert await holder(world, designated) is None
+    # The holding that cannot read yet is removable while one who can remains.
+    await world.removals.remove(principal=member(), grant=world.grant, scope=replacing)
+    assert await world.directory.reader(replacing) is None
+    assert await current(world) == [scope]
 
 
 async def test_a_reader_the_owner_revoked_no_longer_counts(world: World):
-    revoked, revoked_holder = await enrolled_reader(world)
-    remaining, reader = await enrolled_reader(world, OTHER_CONTACT)
-    signing, signature = world.owner.sign("app-role.revoke", revocation(revoked, revoked_holder))
-    await world.designations.revoke(signing=signing, signature=signature, scope=revoked)
+    await held_reader(world)
+    remaining, reader = await held_reader(world, OTHER_READER)
+    await revoked_reader(world)
     with pytest.raises(RemovalRefused) as refused:
         await world.removals.remove(principal=member(), grant=world.grant, scope=remaining)
     assert refused.value.code == "last_reader_protected"
     assert await holder(world, remaining) == reader
 
 
-@pytest.mark.parametrize("named", ["pending slot", "no reader scope"])
+@pytest.mark.parametrize("named", ["revoked holding", "never held", "no reader scope"])
 async def test_a_scope_that_is_no_current_reader_is_removed_by_nobody(world: World, named):
-    await enrolled_reader(world)
-    await enrolled_reader(world, OTHER_CONTACT)
-    scope = await slot(world) if named == "pending slot" else "logs.reader." + "0" * 32
+    await held_reader(world)
+    revoked, _ = await held_reader(world, OTHER_READER)
+    await held_reader(world, "did:aw:4Ys9oZp6nR2tV3xA7bC1dE5fG8")
+    if named == "revoked holding":
+        await revoked_reader(world, OTHER_READER)
+        scope = revoked
+    elif named == "never held":
+        scope = reader_scope("did:aw:5Zt1pAq7oS3uW4yB8cD2eF6gH9")
+    else:
+        scope = "logs.reader." + "0" * 32
     before = await chained(world)
     with pytest.raises(RemovalRefused) as refused:
         await world.removals.remove(principal=member(), grant=world.grant, scope=scope)
@@ -126,8 +146,8 @@ async def test_a_scope_that_is_no_current_reader_is_removed_by_nobody(world: Wor
 
 
 async def test_a_member_of_another_team_removes_nobody(world: World):
-    await enrolled_reader(world)
-    scope, reader = await enrolled_reader(world, OTHER_CONTACT)
+    await held_reader(world)
+    scope, reader = await held_reader(world, OTHER_READER)
     with pytest.raises(RemovalRefused):
         await world.removals.remove(
             principal=member("another-team"), grant=world.grant, scope=scope
@@ -163,8 +183,8 @@ async def race(world: World, first, second) -> list[Any]:
 
 
 async def test_concurrent_member_removals_leave_a_reader(world: World):
-    first, _ = await enrolled_reader(world)
-    second, _ = await enrolled_reader(world, OTHER_CONTACT)
+    first, _ = await held_reader(world)
+    second, _ = await held_reader(world, OTHER_READER)
     results = await race(
         world,
         lambda: world.removals.remove(principal=member(), grant=world.grant, scope=first),
@@ -177,20 +197,17 @@ async def test_concurrent_member_removals_leave_a_reader(world: World):
 
 
 async def test_a_member_removal_racing_the_owners_revocation_leaves_a_reader(world: World):
-    revoked, revoked_holder = await enrolled_reader(world)
-    remaining, _ = await enrolled_reader(world, OTHER_CONTACT)
-    signing, signature = world.owner.sign("app-role.revoke", revocation(revoked, revoked_holder))
+    await held_reader(world)
+    remaining, _ = await held_reader(world, OTHER_READER)
     results = await race(
         world,
-        lambda: world.designations.revoke(signing=signing, signature=signature, scope=revoked),
+        lambda: revoked_reader(world),
         lambda: world.removals.remove(principal=member(), grant=world.grant, scope=remaining),
     )
     assert results[0] is None
     assert isinstance(results[1], RemovalRefused)
     assert await current(world) == [remaining]
-    acts = [entry["payload"]["act"] for entry in await chained(world)]
-    assert acts.count("role.revoked") == 1
-    assert (
-        hashlib.sha256(signing).hexdigest()
-        == (await chained(world))[-1]["payload"]["owner_act_sha256"]
-    )
+    entries = await chained(world)
+    revoked = [e for e in entries if e["payload"].get("authority") != "team_cert"][-1]
+    assert "owner_act_sha256" in revoked["payload"]
+    assert [e["payload"].get("authority") for e in entries].count("team_cert") == 0
