@@ -90,7 +90,7 @@ func recordPIDAsAlive(t *testing.T, dir string, pid int) int {
 func TestLockLeftByAKilledHolderWhosePIDIsAliveAgainDoesNotBlockAStart(t *testing.T) {
 	store := tempStore(t)
 
-	holder := startLockHolder(t, store.LockDir())
+	holder := startLockHolder(t, store.LockPath())
 	holderPID := holder.Process.Pid
 	if err := holder.Process.Kill(); err != nil {
 		t.Fatal(err)
@@ -100,7 +100,7 @@ func TestLockLeftByAKilledHolderWhosePIDIsAliveAgainDoesNotBlockAStart(t *testin
 		t.Fatal("the killed holder left no record of its pid to reuse")
 	}
 
-	lock, err := AcquireLock(store.LockDir())
+	lock, err := AcquireLock(store.LockPath())
 	if err != nil {
 		t.Fatalf("a lock whose holder was killed blocked a start: %v", err)
 	}
@@ -112,9 +112,9 @@ func TestLockLeftByAKilledHolderWhosePIDIsAliveAgainDoesNotBlockAStart(t *testin
 func TestLockHeldByALiveProcessRefusesNamingItsPID(t *testing.T) {
 	store := tempStore(t)
 
-	holder := startLockHolder(t, store.LockDir())
+	holder := startLockHolder(t, store.LockPath())
 
-	_, err := AcquireLock(store.LockDir())
+	_, err := AcquireLock(store.LockPath())
 	var running *ErrDaemonAlreadyRunning
 	if !errors.As(err, &running) {
 		t.Fatalf("err=%v want ErrDaemonAlreadyRunning", err)
@@ -130,14 +130,14 @@ func TestLockHeldByALiveProcessRefusesNamingItsPID(t *testing.T) {
 func TestLockReleasedCanBeTakenAgain(t *testing.T) {
 	store := tempStore(t)
 
-	first, err := AcquireLock(store.LockDir())
+	first, err := AcquireLock(store.LockPath())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := first.Release(); err != nil {
 		t.Fatal(err)
 	}
-	second, err := AcquireLock(store.LockDir())
+	second, err := AcquireLock(store.LockPath())
 	if err != nil {
 		t.Fatalf("a released lock could not be taken again: %v", err)
 	}

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- `aw wake run` takes its one-daemon-per-host lock as an exclusive OS lock on
+  `daemon.lock` in the wake state directory, which the kernel drops when the
+  broker exits, however it exits. A broker that was killed, or whose container
+  was recreated over the same state volume, never blocks the next start,
+  whatever process has its pid by then. The holder's pid is recorded in
+  `daemon.lock.pid` for `aw wake status` and the second-start message. A
+  `lock/` directory in the state directory is not read and can be deleted; a
+  broker from an earlier `aw` that is still running does not hold
+  `daemon.lock`, so stop it before starting this one.
+
 - `aw` writes U+2028 (line separator) and U+2029 (paragraph separator) as UTF-8
   in the canonical JSON it signs, as the Python reference
   (`awid.signing.canonical_json_bytes`) and TypeScript do; Go's JSON encoder
