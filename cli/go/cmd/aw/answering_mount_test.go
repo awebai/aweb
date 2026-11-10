@@ -49,8 +49,8 @@ type movedMountServer struct {
 	streamAnswer int
 	// noAPIMount makes /api answer 404 like every other path.
 	noAPIMount bool
-	// sentMountHeader, when set, is sent on every 404 under the name the
-	// client keeps for the mount that answers.
+	// sentMountHeader, when set, is sent on every 404 as an
+	// X-Aw-Client-Answering-Mount response header.
 	sentMountHeader string
 }
 
@@ -315,9 +315,9 @@ func TestNotFoundAtAnAnsweringServerURLCarriesNoHint(t *testing.T) {
 	}
 }
 
-// The header that carries the answering mount to the error display is the
-// client's own. A value the server sends under that name is dropped: it is
-// never shown, whether or not the client finds a mount itself.
+// The answering mount reaches the error display on the request's context, not
+// in a response header. A value the server sends in a header is never shown,
+// whether or not the client finds a mount itself.
 func TestServerSentAnsweringMountHeaderIsNeverRendered(t *testing.T) {
 	t.Run("no mount answers", func(t *testing.T) {
 		server := newMovedMountServer(t)
@@ -353,8 +353,7 @@ func TestServerSentAnsweringMountHeaderIsNeverRendered(t *testing.T) {
 		}
 	})
 	t.Run("another origin", func(t *testing.T) {
-		// A client with no transport of its own to drop the header: the
-		// display still refuses a mount that is not on the request's origin.
+		// A client with no transport that looks for a mount.
 		server := newMovedMountServer(t)
 		server.set(func(ms *movedMountServer) {
 			ms.noAPIMount = true
@@ -370,6 +369,76 @@ func TestServerSentAnsweringMountHeaderIsNeverRendered(t *testing.T) {
 		}
 		if strings.Contains(err.Error(), "answers at") || strings.Contains(err.Error(), "other.invalid") {
 			t.Fatalf("a mount on another origin was rendered: %s", err.Error())
+		}
+	})
+}
+
+// A client that does not look for a mount itself shows no hint, whatever the
+// server sends: a grant home keeps the server URL its grant was issued with,
+// and with AWEB_URL set the base was probed when the client was built. The
+// server names a mount on the request's own origin under the header name.
+func TestServerSentAnsweringMountHeaderIsNotRenderedByClientsThatDoNotProbe(t *testing.T) {
+	requireNotFoundWithoutHint := func(t *testing.T, err error, sent string) {
+		t.Helper()
+		if status, ok := awid.HTTPStatusCode(err); !ok || status != http.StatusNotFound {
+			t.Fatalf("err=%v, want the server's 404", err)
+		}
+		if strings.Contains(err.Error(), "answers at") || strings.Contains(err.Error(), sent) {
+			t.Fatalf("the server's own header value was rendered: %s", err.Error())
+		}
+	}
+	t.Run("grant home", func(t *testing.T) {
+		root := resolvedTempDir(t)
+		isolateIdentityResolution(t, root)
+		server := newMovedMountServer(t)
+		sent := server.URL + "/api"
+		server.set(func(ms *movedMountServer) { ms.sentMountHeader = sent })
+		workingDir := filepath.Join(root, "work")
+		if err := os.MkdirAll(workingDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		grantHome := filepath.Join(root, "grant.aweb-identity")
+		writeTestGrantHome(t, grantHome, renewedTestGrantID, server.URL)
+		identityHomeFlag = grantHome
+
+		client, _, err := resolveClientSelectionForDir(workingDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Run("command", func(t *testing.T) {
+			_, err := client.Heartbeat(context.Background())
+			requireNotFoundWithoutHint(t, err, sent)
+		})
+		t.Run("stream open", func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			stream, err := client.EventStream(ctx, time.Now().Add(time.Minute))
+			if err == nil {
+				_ = stream.Close()
+				t.Fatal("the stream opened; the grant's server URL answers 404")
+			}
+			requireNotFoundWithoutHint(t, err, sent)
+		})
+		if probes := server.unsignedCount("GET /api/v1/agents/heartbeat"); probes != 0 {
+			t.Fatalf("the mount under /api was probed %d times, want none from a grant home", probes)
+		}
+	})
+	t.Run("AWEB_URL", func(t *testing.T) {
+		server := newMovedMountServer(t)
+		sent := server.URL + "/elsewhere"
+		server.set(func(ms *movedMountServer) { ms.sentMountHeader = sent })
+		workingDir, _ := movedMountWorkspace(t, server.URL)
+		t.Setenv("AWEB_URL", server.URL)
+
+		client, _, err := resolveClientSelectionForDir(workingDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = client.Get(context.Background(), "/v1/tasks/missing", nil)
+		requireNotFoundWithoutHint(t, err, sent)
+		seen := server.signedSeen()
+		if len(seen) != 1 || seen[0].Path != "/api/v1/tasks/missing" || !seen[0].SignedForIt {
+			t.Fatalf("signed requests the server saw: %+v, want one, at the probed mount and signed for it", seen)
 		}
 	})
 }
