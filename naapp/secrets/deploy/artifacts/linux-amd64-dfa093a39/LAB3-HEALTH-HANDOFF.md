@@ -95,7 +95,7 @@ Record source/tree, actual image IDs, image UID10001, package versions and publi
 | Secrets API | `/live`200; `/health`200 with database/outbox/selected-provider checks true; `/ready`200; `labels.custody_mode=local_key_file`; `build.git_sha` equals dfa |
 | Secrets console | The same three health routes, checks, custody label and build assertion as the Secrets API |
 | Logs public/API | `/live`200; `/health`200 with database/outbox checks true; `/ready`200; `build.git_sha` equals dfa |
-| Logs console | No health/build routes are mounted here. Check TLS/Host routing separately using its reader routes; an unauthenticated `GET /v1/events` must refuse, not return events. This does not create a reader or qualify the reader journey. |
+| Logs console | No health/build routes are mounted here. Check TLS/Host routing separately using its reader routes; an unauthenticated `GET /v1/events` must return `401 console_session_required`; a `404` is a routing failure, not a pass. This does not create a reader or qualify the reader journey. |
 
 `/health`200 alone is insufficient. Do not require Logs-console health or add new product routes to satisfy this procedure. Use only a configured CA, never a TLS bypass.
 
