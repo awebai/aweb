@@ -465,7 +465,7 @@ def _grant(view: AccessView, agent: AgentAccess, grant: GrantAccess, *, removabl
     )
 
 
-def _render(view: AccessView) -> str:
+def _render(view: AccessView, *, live_names: bool = False) -> str:
     if view.secret_ref is None:
         heading = "<h1>Access</h1>"
         intro = "Which agents can use your team’s secrets, and on what terms."
@@ -479,6 +479,11 @@ def _render(view: AccessView) -> str:
         f" (revision {view.revision}). Every request is still checked when it is made,"
         " including approvals, rate limits and allowed times.</p>",
     ]
+    if live_names:
+        parts.append(
+            '<p class="access-note">Names and aliases may include updates made while this'
+            ' view was loading. <a href="">Refresh this view</a> to check again.</p>'
+        )
     if not view.agents:
         parts.append('<p id="access-empty">No agent can use these secrets.</p>')
     for agent in view.agents:
@@ -540,7 +545,11 @@ def console_access_router(*, services: ConsoleAccess) -> APIRouter:
         except HTTPException as refused:
             return _recovery(refused)
         title = "Access" if secret_ref is None else f"Access to {secret_ref}"
-        return console_page(title=title, body_html=_render(view), session=current)
+        return console_page(
+            title=title,
+            body_html=_render(view, live_names=isinstance(current, KeyBoundConsoleSession)),
+            session=current,
+        )
 
     @router.get("/access", response_class=HTMLResponse)
     async def agents(request: Request) -> Response:
