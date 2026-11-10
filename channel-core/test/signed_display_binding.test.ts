@@ -3,12 +3,15 @@
 // claims before the message is reported verified. The cases mirror the Go
 // client's (cli/go/awid/signed_display_test.go, mail_reader_display_test.go),
 // so both clients give one message the same status.
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
+import * as ed from "@noble/ed25519";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { dispatchAgentEvent, PinStore, type ChannelAwakening, type SenderTrustManager } from "../src/index.js";
 import { fetchHistory, type ChatMessage } from "../src/api/chat.js";
 import { fetchInbox, type InboxMessage } from "../src/api/mail.js";
+import { computeDIDKey } from "../src/identity/did.js";
 import { signBytes } from "../src/identity/signing.js";
 import { signedDisplayMatches } from "../src/identity/signed_display.js";
 
@@ -24,14 +27,10 @@ function sign(payload: string): string {
   return signBytes(seed, new TextEncoder().encode(payload));
 }
 
-function reader(identity = { did, stableID: "" }) {
-  return { readerIdentity: () => identity };
-}
-
-async function read(kind: Kind, raw: Fields, identity?: { did: string; stableID: string }): Promise<InboxMessage | ChatMessage> {
-  const client = { get: async () => ({ messages: [{ ...raw }] }), ...reader(identity) };
+async function read(kind: Kind, raw: Fields, reader = { did, stableID: "" }): Promise<InboxMessage | ChatMessage> {
+  const client = { get: async () => ({ messages: [{ ...raw }] }) };
   const messages = kind === "mail"
-    ? await fetchInbox(client as never, true, 50, undefined, () => {})
+    ? await fetchInbox(client as never, true, 50, undefined, () => {}, reader)
     : await fetchHistory(client as never, "conversation");
   return messages[0];
 }
@@ -158,4 +157,39 @@ describe("mail to this reader", () => {
       }
     });
   }
+});
+
+describe("dispatched mail", () => {
+  const self = { alias: "reader", address: "", did: computeDIDKey(ed.getPublicKey(new Uint8Array(32).fill(7))), stableID: "did:aw:reader" };
+  // Reports the status it is given, so the status seen is the one the read produced.
+  const trust = { normalizeResolvedTrust: vi.fn(async (_store: unknown, status: unknown) => ({ status, stored: false })) } as unknown as SenderTrustManager;
+
+  async function dispatched(signed: Fields, outer: Fields): Promise<ChannelAwakening> {
+    const { raw } = signedResponse(signed, { from_agent_id: "agent", from_alias: "sender", priority: "normal", created_at: "2026-01-01T00:00:00Z", ...outer });
+    const client = { get: vi.fn(async () => ({ messages: [{ ...raw }] })), post: vi.fn(async () => undefined) };
+    const awoke: ChannelAwakening[] = [];
+    await dispatchAgentEvent(
+      { client: client as never, pinStore: new PinStore(), trust, self, onAwakening: (a) => { awoke.push(a); }, mailAcknowledgment: "manual" },
+      new Set(),
+      { type: "mail_message", message_id: String(outer.message_id) },
+    );
+    expect(awoke).toHaveLength(1);
+    return awoke[0];
+  }
+
+  const signed = { type: "mail", from_did: did, to: "reader", to_did: "", body: "body", subject: "subject", message_id: "message", conversation_id: "conversation" };
+  const outer = { from_did: did, to_did: self.did, body: "body", subject: "subject", message_id: "message", conversation_id: "conversation" };
+
+  test("an empty recipient claim stands for the identity the channel reads as", async () => {
+    expect((await dispatched(signed, outer)).meta).toMatchObject({ trust_status: "verified", verified: "true" });
+    expect((await dispatched(signed, { ...outer, to_did: self.stableID })).meta).toMatchObject({ trust_status: "verified", verified: "true" });
+  });
+
+  test("an empty recipient claim does not stand for another displayed recipient", async () => {
+    expect((await dispatched(signed, { ...outer, to_did: did })).meta).toMatchObject({ trust_status: "failed", verified: "false" });
+  });
+
+  test("a displayed body the sender did not sign is presented as failed", async () => {
+    expect((await dispatched(signed, { ...outer, body: "changed" })).meta).toMatchObject({ trust_status: "failed", verified: "false" });
+  });
 });

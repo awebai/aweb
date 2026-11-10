@@ -14,7 +14,7 @@ import { terminalInputSafeText } from "./terminal.js";
 import { PinStore, type PinStoreWriter } from "./identity/pinstore.js";
 import { RegistryResolver, type ResolveTxt } from "./identity/registry.js";
 import { SenderTrustManager } from "./identity/trust.js";
-import { verifyDecryptedMessage } from "./identity/encrypted.js";
+import { isEncryptedMessage, verifyDecryptedMessage } from "./identity/encrypted.js";
 import type { VerificationStatus } from "./identity/signing.js";
 import {
   createLocalAWDecryptProvider,
@@ -697,7 +697,7 @@ async function dispatchMailEvent(
   log: (message: string) => void,
 ): Promise<void> {
   emitTrace(options, "exact_fetch_started", event, "mail");
-  const messages = await fetchInbox(options.client, true, MAIL_FETCH_LIMIT, event.message_id, log);
+  const messages = await fetchInbox(options.client, true, MAIL_FETCH_LIMIT, event.message_id, log, options.self);
   emitTrace(options, "exact_fetch_completed", event, "mail");
   for (const msg of messages) {
     const messageEvent = eventForMessage(event, msg.message_id, msg.conversation_id);
@@ -1103,10 +1103,6 @@ async function resolveChatForDelivery(
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
-}
-
-function isEncryptedMessage(msg: Pick<InboxMessage | ChatMessage, "content_mode" | "message_version" | "encrypted_envelope">): boolean {
-  return msg.content_mode === "encrypted_v2" || msg.message_version === 2 || msg.encrypted_envelope != null;
 }
 
 function encryptedDeliveryFailureMeta(
