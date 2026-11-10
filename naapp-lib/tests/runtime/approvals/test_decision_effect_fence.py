@@ -49,7 +49,7 @@ class DecisionFence:
         self.calls.append("check")
         [candidate] = self.approval.candidates
         assert await self.world.passkeys.check_current_approver(
-            tx, self.prepared, candidate.scope, candidate.subject
+            tx, self.prepared, scope=candidate.scope, subject=candidate.subject
         )
         assert (
             await tx.fetch_value(
