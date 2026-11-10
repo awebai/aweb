@@ -280,6 +280,17 @@ async def refresh_holding_certificate(
   with the human-role acts. There is no hold by scope. Before an effect, the
   caller takes `principal` from this read, holds with `hold_holding`, and
   compares `held_since`, `b3_scope` and `subject` with what it read.
+- **The record of a scope.** A consumer that must name whose scope it is
+  after the holding has ended, such as when it attributes a credential event
+  or retires an approver in the transaction that ends the holding, reads the
+  holding's record with `holding_record_of_scope(tx, b3_scope)`. It returns
+  the installation, team, role, principal and scope of the holding that scope
+  belongs to, current or ended, and `None` for a scope never recorded or
+  purged with its team. It takes no lock. It is history, not a holding: it
+  grants nothing and never stands in for `read_holding`,
+  `read_holding_of_scope` or `hold_holding` before a login, an approval or an
+  effect. The caller refuses a record whose installation or team is not the
+  admitted installation's.
 - **The key.** `installation_id` and `team_id` are the admitted
   installation's. `b3_scope` is derived from the installation, the team, the
   role and the principal only, as secrets derives an owner's scope
