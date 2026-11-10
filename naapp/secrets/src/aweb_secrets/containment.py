@@ -241,6 +241,7 @@ ACTIONS = {
     "deregister-runner": "runner.deregistered",
 }
 GovernanceEnqueue = Callable[..., Awaitable[UUID]]
+BeforeApprovals = Callable[[TransactionManager], Awaitable[None]]
 
 
 class RunnerDeregistration(Protocol):
@@ -724,6 +725,7 @@ class Containment:
         secret_ids: tuple[str, ...],
         approval_ids: tuple[str, ...] = (),
         job_ids: Sequence[str] = (),
+        before_approvals: BeforeApprovals | None = None,
     ) -> None:
         """Lock the complete replacement/reenable forest before B2 consumption.
 
@@ -795,6 +797,8 @@ class Containment:
             team_id=team_id,
             secret_ids=tuple(affected),
         )
+        if before_approvals is not None:
+            await before_approvals(tx)
         await self.approvals.lock_many(
             tx,
             [*approval_ids, *associated_ids],

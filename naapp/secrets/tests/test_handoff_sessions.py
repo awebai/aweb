@@ -174,7 +174,12 @@ class Journey:
 
 
 @pytest.fixture
-async def journey(world) -> AsyncIterator[Journey]:
+def human_member_cache_seconds() -> int:
+    return 60
+
+
+@pytest.fixture
+async def journey(world, human_member_cache_seconds) -> AsyncIterator[Journey]:
     # Imported at runtime so collection remains possible while the factory is
     # test-first work. It will fail at this exact supported API until implemented.
     from aweb_naapp.console.handoff_sessions import ConsoleHandoffs
@@ -234,7 +239,7 @@ async def journey(world) -> AsyncIterator[Journey]:
             )
         cache = AWIDTeamCache(
             registry_url=REGISTRY_URL,
-            ttl_seconds=60,
+            ttl_seconds=human_member_cache_seconds,
             service_token=SERVICE_TOKEN,
             transport=world.registry.transport,
         )

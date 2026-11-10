@@ -10,6 +10,7 @@ from datetime import timedelta
 from functools import partial
 from time import monotonic_ns
 
+import asyncpg
 import httpx
 import pytest
 from aweb_naapp.egress import InternalDestinations
@@ -35,6 +36,13 @@ from tests.test_owner_bootstrap import world  # noqa: F401
 from tests.test_owner_directory import Audit
 
 ROOT = f"/installations/{INSTALLATION_ID}/change-sets"
+
+
+@pytest.fixture(name="human_member_cache_seconds")
+def short_member_cache() -> int:
+    # A real supported cache bound makes the original proof expire before PG's
+    # lock timeout. No proof/clock is replaced, and production defaults stay put.
+    return 2
 
 
 @dataclass(frozen=True)
@@ -236,6 +244,16 @@ async def test_marked_runner_confirm_belongs_only_to_a_bound_decider(
         refused = await browser.post(path + "/confirm", json={}, headers=headers)
         assert refused.status_code == 409
         assert refused.json() == {"detail": "confirm_in_aw"}
+        assert await c.handoff.world.db.fetch_value(
+            "SELECT confirm_in_aw FROM {{tables.change_sets}} WHERE change_id=$1",
+            drafted.json()["change_id"],
+        )
+        with pytest.raises(asyncpg.RaiseError):
+            async with c.handoff.world.db.transaction() as tx:
+                await tx.execute(
+                    "UPDATE {{tables.change_sets}} SET confirm_in_aw=FALSE WHERE change_id=$1",
+                    drafted.json()["change_id"],
+                )
         assert not await c.handoff.world.db.fetch_value("SELECT count(*) FROM {{tables.runners}}")
     if fresh_session:
         key, issued = await c.handoff.open()
@@ -301,6 +319,10 @@ async def test_unmarked_draft_keeps_browser_confirmation(confirmation_journey, v
                 "approval_id": pending.approval.approval_id,
             }
         path = await c.approve(browser, headers, request)
+        assert not await c.handoff.world.db.fetch_value(
+            "SELECT confirm_in_aw FROM {{tables.change_sets}} WHERE change_id=$1",
+            request["change_id"],
+        )
         confirmed = await browser.post(path + "/confirm", json={}, headers=headers)
         assert confirmed.status_code == 200
         assert confirmed.json()["runner_registrations"][0]["runner_id"] == runner
