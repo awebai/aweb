@@ -234,20 +234,30 @@ async def refresh_holding_certificate(
   takes no lock: it projects a target before an effect transaction, and its
   result protects nothing by itself.
 - **The hold.** `hold_holding` returns the same result as `read_holding`,
-  and locks what it read `FOR SHARE` until the caller's transaction ends:
-  the holding row, and the B3 approver and credential rows that the holding's
-  writers change with it. Before an effect, the caller holds the holding
-  and compares `held_since` and `subject` with the target it projected. A
-  difference, or `None`, refuses the effect. A revoke or replace therefore
-  cannot commit between the comparison and the effect.
+  and locks the holding row `FOR SHARE` until the caller's transaction ends.
+  It locks no B3 row. While the caller holds it, no holding writer can
+  commit, so neither can a replace's change to the holding's credential
+  rows. Before an effect, the caller holds the holding and compares
+  `held_since` and `subject` with the target it projected. A difference, or
+  `None`, refuses the effect. A revoke or replace therefore cannot commit
+  between the comparison and the effect.
 - **Lock order.** The caller takes the installation's dispatch fence first,
-  then `hold_holding`, then B3's current-approver preparation, then its own
-  approval, change-set and session rows. Every writer of the holding row
-  locks it `FOR UPDATE` in the same order, after the fence and before any B3
-  row: designate, replace and revoke under the owner act (stage 3), the
-  certificate refresh, and any app path that ends a holding. On the hold side, secrets' owner holding
-  takes this order with `hold_role` (`naapp-lib/src/aweb_naapp/roles/__init__.py:158`) on the
-  role row as its hold.
+  then `hold_holding` and any other role or holding rows it needs, then
+  one complete B3 preparation, then its own approval, change-set and session
+  rows. That B3 preparation is B3's canonical one
+  (`naapp-lib/src/aweb_naapp/runtime/passkeys/current_approver.py:69`): a
+  single sorted union of every (scope, subject) pair the transaction needs,
+  which includes the held holding's `b3_scope` and `subject`. A consumer
+  that acts for several holders holds every holding first and prepares one
+  union for all of them, never one union per holder. Later checks in the
+  transaction reuse the prepared rows (`check_current_approver`, :103) and
+  acquire nothing further upstream. Every writer of the holding row locks it
+  `FOR UPDATE` in the same order, after the fence and before any B3 row:
+  designate, replace and revoke under the owner act (stage 3), the
+  certificate refresh, and any app path that ends a holding. On the hold
+  side, secrets' owner holding takes this order with `hold_role`
+  (`naapp-lib/src/aweb_naapp/roles/__init__.py:158`) on the role row as its
+  hold.
 - **No holding.** It returns `None` when (installation, role, principal) has
   no current holding: never designated, or revoked. It also returns `None`
   for a role the app does not declare with the human-role acts, and for a
