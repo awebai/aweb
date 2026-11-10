@@ -8,13 +8,12 @@ authority, broker history and custody version allocators are not credentials.
 import json
 
 from aweb_naapp.roles import purge_team
+from aweb_naapp.runtime.passkeys import RetiringInstallation, retire_subjects
 from pgdbm.core import TransactionManager
 
 
 async def retire_team(tx: TransactionManager, team_id: str, *, app_id: str) -> None:
     """Called only under the shared installation fence, before new admission."""
-    # Preserve the shared role hold/cleanup contract and lock order.
-    await purge_team(tx, team_id)
     retired = await tx.fetch_all(
         "SELECT r.installation_id FROM {{tables.retired_installation_fences}} r"
         " LEFT JOIN {{tables.installation_retirement_events}} e"
@@ -24,6 +23,7 @@ async def retire_team(tx: TransactionManager, team_id: str, *, app_id: str) -> N
         app_id,
         team_id,
     )
+    scopes_by_installation = {}
     for row in retired:
         installation_id = row["installation_id"]
         scopes = await tx.fetch_all(
@@ -38,42 +38,21 @@ async def retire_team(tx: TransactionManager, team_id: str, *, app_id: str) -> N
             team_id,
             app_id,
         )
-        scope_names = [scope["scope"] for scope in scopes]
-        subjects = await tx.fetch_all(
-            "SELECT subject FROM {{tables.passkey_approvers}} WHERE scope=ANY($1::text[])"
-            " ORDER BY subject FOR UPDATE",
-            scope_names,
+        scopes_by_installation[installation_id] = [scope["scope"] for scope in scopes]
+    # Discovery precedes role/holding deletion. Preserve the existing role
+    # cleanup contract and acquire B3 locks only after these role locks.
+    await purge_team(tx, team_id)
+    for row in retired:
+        installation_id = row["installation_id"]
+        retired_subjects = await retire_subjects(
+            tx,
+            installation=RetiringInstallation(
+                app_id=app_id, team_id=team_id, installation_id=installation_id
+            ),
+            scopes=scopes_by_installation[installation_id],
         )
-        subject_ids = [subject["subject"] for subject in subjects]
-        # The parent lock drained current verifier/issuer transactions before
-        # child deletion. Refuse issuers already in flight that acquire it only
-        # after this transaction commits, without losing historical ownership.
-        await tx.execute(
-            "UPDATE {{tables.passkey_approvers}}"
-            " SET superseded_at=COALESCE(superseded_at,clock_timestamp())"
-            " WHERE subject=ANY($1::text[])",
-            subject_ids,
-        )
-        destroyed = {}
-        # Assertions' restricted proof sidecars cascade; historical audit and
-        # owner-act authorization remain separately attributable.
-        for table in (
-            "passkey_assertions",
-            "passkey_credentials",
-            "passkey_challenges",
-            "passkey_enrolments",
-            "passkey_contact_proofs",
-        ):
-            removed = await tx.fetch_all(
-                f"DELETE FROM {{{{tables.{table}}}}} WHERE subject=ANY($1::text[]) RETURNING 1",
-                subject_ids,
-            )
-            destroyed[table] = len(removed)
-        removed = await tx.fetch_all(
-            "DELETE FROM {{tables.console_sessions}} WHERE scope=ANY($1::text[]) RETURNING 1",
-            scope_names,
-        )
-        destroyed["console_sessions"] = len(removed)
+        identity = retired_subjects.installation
+        destroyed = dict(retired_subjects.destroyed)
         for table in ("sealed_versions", "onepassword_credentials", "run_redaction_contexts"):
             removed = await tx.fetch_all(
                 f"DELETE FROM {{{{tables.{table}}}}} WHERE installation_id=$1 AND team_id=$2 RETURNING 1",
@@ -96,8 +75,8 @@ async def retire_team(tx: TransactionManager, team_id: str, *, app_id: str) -> N
         await tx.execute(
             "INSERT INTO {{tables.installation_retirement_events}}"
             " (app_id,team_id,installation_id,destroyed) VALUES ($1,$2,$3,$4)",
-            app_id,
-            team_id,
-            installation_id,
+            identity.app_id,
+            identity.team_id,
+            identity.installation_id,
             json.dumps(destroyed),
         )
