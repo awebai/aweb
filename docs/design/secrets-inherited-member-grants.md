@@ -139,15 +139,49 @@ inherited grant cannot tell whether one exists for another root.
 The dispatch fence ([§11.3](secrets.md#113-the-dispatch-fence)) re-reads the
 admitting grant as today, and re-evaluates its inherited match against the
 verified path retained with the intent. A revoked or narrowed grant therefore
-stops admitted, not-yet-sent uses, as removing a role member does
-([§12](secrets.md#12-containment-from-day-one)). The fence does not re-verify
-membership for any member, direct or inherited. A path withdrawn after
-admission is bounded by the verifier's observation window
-([acwd.13 currentness](selective-membership-inheritance.md#withdrawal-reissue-and-currentness))
-plus the intent's time from admission to dispatch, and secrets adds no second
-membership check. That time is short for a brokered request, which dispatches
-on re-submission. A runner job waits for its runner, and an automatic repeat
-([§11.4](secrets.md#114-reconciliation-before-retry)) can run later still.
+stops admitted, not-yet-sent uses at once, as removing a role member does
+([§12](secrets.md#12-containment-from-day-one)).
+
+**The membership deadline is checked after the last wait.** Admission retains
+the shared verifier's original membership dependency deadline: the earliest
+`fresh_until` across the verified evidence, which a cache hit never refreshes
+([acwd.13 currentness](selective-membership-inheritance.md#withdrawal-reissue-and-currentness)).
+The verifier's proof keeps that deadline on a process-local monotonic clock
+(`naapp-lib/src/aweb_naapp/runtime/team_auth.py`), which must not be persisted
+or read by another worker. So the admission transaction samples the database's
+`clock_timestamp()` first, adds the smallest remaining original budget,
+rounded down, and persists that absolute deadline. It is never rebased after a
+wait; adding an earlier budget to a later timestamp would extend authority.
+The final fence transaction compares it with the same database clock, read
+after its last effect-lock wait. That transaction covers approval consumption, credential
+opening and release, and the dispatch or assignment commit. The rule applies to
+direct and inherited members alike and makes no network call, so §11.3 gains
+"membership evidence deadline" in its list of re-checks. An expired deadline
+refuses with the shared `503 current_membership_unavailable`, a fixed
+unavailable refusal and not a claim that membership was withdrawn. The refusal
+happens inside the transaction, which rolls back: no approval is consumed, no
+credential is released, no assignment is persisted and no bytes are sent. The
+requester recovers by a fresh authenticated re-submission, through the normal
+grant, approval and idempotency checks. Dequeueing, cache hits, retries and
+lock acquisition never restart the old window. Grant revocation remains an
+independent stop.
+
+The consequences:
+
+- **Runner jobs.** A job admitted while no runner is connected, and claimed
+  after its deadline, refuses at the claim fence
+  ([§9.3](secrets.md#93-transport)) with `current_membership_unavailable`.
+  The refusal is final for that dispatch, and only re-submission recovers it.
+  Because a cache hit keeps the original expiry, the deadline can fall under
+  60 seconds after admission. That is the availability cost: a queued job
+  needs a connected runner, or a re-submit.
+- **Brokered requests** are admitted and dispatched in one flow, so in practice
+  they are unaffected.
+- **Exposure to a withdrawn path** is the verifier's observation window, with
+  no added queue delay.
+- Whether a re-submission reuses its `request_id` and the unconsumed approval
+  is fixed with the vectors, under the idempotency rules of
+  [§11.2](secrets.md#112-idempotency).
 
 ## Currentness, withdrawal and policy revisions
 
@@ -265,6 +299,9 @@ Then, for each worker, with no human act:
 | Owner revokes the grant | `grant_missing` at admission; `grant_revoked` at the fence for admitted intents. |
 | Approver linked to A_H, `distinct_approver: required`, B_H requests | A_H's approver is excluded. |
 | Ten workers of A_H's line request S together | They share one `principal_secret` bucket; spawning more does not raise it. |
+| A request's membership deadline passes during a proven final-fence lock wait | `503 current_membership_unavailable` in that transaction: no approval consumed, no credential released, nothing sent. |
+| The deadline passes while the admission transaction persists it | Refused: no approval consumed, no credential released, nothing sent. |
+| Another worker claims a queued job after the requester's deadline | `current_membership_unavailable`: no approval consumed, no credential released, no assignment row; re-submission recovers. |
 | Membership evidence unavailable | The verifier's 503; no grant is read and no fallback applies. |
 
 ## Work this creates, after acceptance
@@ -272,7 +309,8 @@ Then, for each worker, with no human act:
 - **acwd.13 verifier output**: the inherited fields above, from verified
   evidence only, retained with the intent for the fence.
 - **secrets**: the `grant/1` subject, the admission order, the fence
-  re-evaluation, the line-keyed `principal_secret` bucket, the
+  re-evaluation, the membership deadline in the final fence for every member,
+  the line-keyed `principal_secret` bucket, the
   `distinct_approver` path exclusion and the console
   rendering. The console shows the policy, the root, `max_depth` and the
   policy's current terms as read at draft time, labelled as such.
@@ -280,8 +318,13 @@ Then, for each worker, with no human act:
   [§12](secrets.md#12-containment-from-day-one) and
   [§16](secrets.md#16-tests) change with it.
 - **Vectors**: the grant subject encoding, and the refusals above for both
-  local and global roots.
+  local and global roots. That includes expiry during a proven effect-lock
+  wait, expiry while the deadline is persisted, and a queued job claimed by
+  another worker after the deadline. Each asserts that no approval was
+  consumed, no credential was released and nothing was sent.
 
-No hook payload changes. `grant.created`, `grant.changed` and `grant.revoked`
-keep their fields, and a `post-secret-use-hook` event keeps its fields; its
-admitting `grant_id` identifies the subject.
+The hook catalog's `post-secret-use-hook` refusal codes gain
+`current_membership_unavailable`, through a reviewed catalog revision. No payload field changes:
+`grant.created`, `grant.changed` and `grant.revoked` keep their fields, and a
+`post-secret-use-hook` event keeps its fields, with its admitting `grant_id`
+identifying the subject.
