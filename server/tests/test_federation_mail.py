@@ -352,17 +352,31 @@ async def test_federation_delivery_enforces_error_limit(
             signature="signature",
             transport=transport,
         )
+    assert "xx" not in str(caught.value)
     if should_reach_remote_error:
-        assert str(caught.value).endswith("x" * (64 * 1024))
+        assert str(caught.value) == "Federated mail delivery to https://target.example failed: HTTP 500"
+        assert caught.value.reason == "HTTP 500"
     else:
         assert "maximum size of 65536 bytes" in str(caught.value)
+    assert caught.value.status_code == 502
 
 
 @pytest.mark.asyncio
-async def test_federation_delivery_sanitizes_error_controls():
-    transport = MockTransport(
-        lambda _request: Response(500, content=b"bad\x1b[31m\nnext\x00line")
-    )
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"bad\x1b[31m\nnext\x00line",
+        b'{"detail": "bad\\u001b[31m next line", "error": "internal"}',
+        b'{"detail": {"code": "internal", "message": "free text"}}',
+        b'{"reason": "not_a_federation_reason", "detail": "free text"}',
+        b'{"reason": ["recipient_policy_rejected"]}',
+        b'["recipient_policy_rejected"]',
+        b"[" * 60_000,
+        b"",
+    ],
+)
+async def test_federation_delivery_does_not_relay_an_untyped_error_answer(content: bytes):
+    transport = MockTransport(lambda _request: Response(500, content=content))
 
     with pytest.raises(FederatedMailDeliveryError) as caught:
         await deliver_federated_message(
@@ -371,8 +385,109 @@ async def test_federation_delivery_sanitizes_error_controls():
             signature="signature",
             transport=transport,
         )
-    message = str(caught.value)
+    assert str(caught.value) == "Federated mail delivery to https://target.example failed: HTTP 500"
+    assert caught.value.reason == "HTTP 500"
+    assert caught.value.status_code == 502
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "reason", "relayed_status"),
+    [
+        (403, "recipient_policy_rejected", 403),
+        (422, "local_sender_route_mismatch", 422),
+        (404, "recipient_identity_not_found", 404),
+        (421, "target_route_mismatch", 421),
+        (503, "sender_registry_unavailable", 502),
+    ],
+)
+async def test_federation_delivery_relays_only_the_typed_refusal_reason(
+    status: int, reason: str, relayed_status: int,
+):
+    body = {
+        "detail": "The recipient is not set up for messaging; internal note 8f3a",
+        "reason": reason,
+        "retryable": False,
+        "correlation_id": "c0ffee",
+        "peer_body": "internal note 8f3a",
+    }
+    transport = MockTransport(lambda _request: Response(status, json=body))
+
+    with pytest.raises(FederatedMailDeliveryError) as caught:
+        await deliver_federated_message(
+            delivery_origin="https://target.example",
+            envelope=_envelope(),
+            signature="signature",
+            transport=transport,
+        )
+    assert str(caught.value) == f"Federated mail delivery to https://target.example failed: {reason}"
+    assert caught.value.reason == reason
+    assert caught.value.status_code == relayed_status
+
+
+@pytest.mark.asyncio
+async def test_federation_delivery_logs_a_bounded_sanitized_error_answer(caplog):
+    content = b"bad\x1b[31m\nnext\x00line " + b"y" * 60_000
+    transport = MockTransport(lambda _request: Response(500, content=content))
+
+    with caplog.at_level("WARNING", logger="aweb.federation.mail"):
+        with pytest.raises(FederatedMailDeliveryError):
+            await deliver_federated_message(
+                delivery_origin="https://target.example",
+                envelope=_envelope(),
+                signature="signature",
+                transport=transport,
+            )
+    [message] = [record.getMessage() for record in caplog.records if record.name == "aweb.federation.mail"]
+    assert "https://target.example" in message
+    assert "bad [31m next line" in message
     assert "\x1b" not in message
     assert "\n" not in message
     assert "\x00" not in message
-    assert message.endswith("bad [31m next line")
+    assert len(message) <= 512
+
+
+@pytest.mark.asyncio
+async def test_federation_delivery_reports_a_transport_failure_by_kind():
+    def handler(_request):
+        raise httpx.ConnectError("peer said: internal note 8f3a")
+
+    with pytest.raises(FederatedMailDeliveryError) as caught:
+        await deliver_federated_message(
+            delivery_origin="https://target.example",
+            envelope=_envelope(),
+            signature="signature",
+            transport=MockTransport(handler),
+        )
+    assert str(caught.value) == (
+        "Federated mail delivery to https://target.example failed: delivery_origin_unreachable"
+    )
+    assert caught.value.status_code == 502
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("recipients", "relayed"),
+    [
+        (["beta.test/bob"], ["beta.test/bob"]),
+        (["beta.test/bob", "x" * 400], []),
+        (["beta.test/bob\x1b[31m"], []),
+        (["beta.test/bob"] * 40, []),
+        ("beta.test/bob", []),
+    ],
+)
+async def test_federation_delivery_bounds_human_chat_refusal_recipients(recipients, relayed):
+    from aweb.messaging.chat_policy import HumanChatRefused
+
+    body = {"reason": "recipient_human_mail_only", "retryable": False, "recipients": recipients,
+            "detail": "free text"}
+    envelope = _envelope().model_copy(update={"type": "chat"})
+
+    with pytest.raises(HumanChatRefused) as caught:
+        await deliver_federated_message(
+            delivery_origin="https://target.example",
+            envelope=envelope,
+            signature="signature",
+            transport=MockTransport(lambda _request: Response(422, json=body)),
+        )
+    assert caught.value.recipients == sorted(set(relayed))
