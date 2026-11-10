@@ -850,7 +850,11 @@ class RunDispatch:
                 observations.append(observation)
                 pins.append(
                     await self._pins.prepare(
-                        context, original.dispatch_id, value, observation=observation
+                        context,
+                        original.dispatch_id,
+                        value,
+                        observation=observation,
+                        grant_id=slot.parent_grant.grant_id,
                     )
                 )
         return _Opened(tuple(values), tuple(observations), contexts, tuple(pins))
@@ -1196,17 +1200,25 @@ class RunDispatch:
                 team_id=scope.team_id,
                 dispatch_id=original.dispatch_id,
             )
+            sample_started = asyncio.get_running_loop().time()
             delivery = await tx.fetch_one(
                 "SELECT d.sweep_after,v.report_sha256,clock_timestamp() AS now"
                 " FROM {{tables.dispatches}} d JOIN {{tables.run_deliveries}} v USING(dispatch_id)"
                 " WHERE d.dispatch_id=$1",
                 original.dispatch_id,
             )
+            budget_until = sample_started
+            if delivery is not None and delivery["sweep_after"] is not None:
+                budget_until += (delivery["sweep_after"] - delivery["now"]).total_seconds()
             await self._fence.check(tx, scope)
         if delivery is None or delivery["report_sha256"] is not None:
             return None
         deadline = delivery["sweep_after"]
-        if deadline is None or deadline <= max(delivery["now"], self._clock()):
+        if (
+            deadline is None
+            or deadline <= max(delivery["now"], self._clock())
+            or asyncio.get_running_loop().time() >= budget_until
+        ):
             return None
         slots = _recovery_slots(original.plan)
         if slots is None:
@@ -1217,11 +1229,15 @@ class RunDispatch:
             return None
         known, pins, observations = KnownValues(), [], []
         try:
-            async with asyncio.timeout((deadline - delivery["now"]).total_seconds()):
+            async with asyncio.timeout_at(budget_until):
                 for slot, context in zip(slots, contexts, strict=True):
                     row = by_secret[context.secret_id]
                     pin = PreparedRunPin.from_row(row)
-                    if pin.context != context or row["deadline"] != deadline:
+                    if (
+                        pin.context != context
+                        or row["deadline"] != deadline
+                        or pin.grant_id != slot.parent_grant.grant_id
+                    ):
                         return None
                     before = await self._opener.observe(context)
                     if observation_pin(before) != pin.observation:
@@ -1265,6 +1281,15 @@ class RunDispatch:
                 row
             ) != expected.get(row["secret_id"]):
                 return False
+        return await self._redaction_source_is_current(tx, original, recovered)
+
+    async def _redaction_source_is_current(
+        self, tx: TransactionManager, original: OriginalRun, recovered: _OriginalRedaction
+    ) -> bool:
+        # The caller has already checked and held the original rows. This
+        # DB-only fence also runs AFTER our own transactional disposal, so its
+        # final DELETE/relation-lock wait cannot outlive an earlier sample.
+        scope = original.installation
         try:
             await require_enabled(tx, scope.installation_id, scope.team_id)
             for pin, observation in zip(recovered.pins, recovered.observations, strict=True):
@@ -1298,10 +1323,7 @@ class RunDispatch:
             if len(submission.body) > 6 * _job(original).after["output"]["max_bytes"] + 1024:
                 raise RunnerRefused("runner_result_invalid")
             approvals = await self._lock_outcomes(tx, original)
-            await tx.fetch_one(
-                "SELECT dispatch_id FROM {{tables.dispatches}} WHERE dispatch_id=$1 FOR UPDATE",
-                original.dispatch_id,
-            )
+            await run_pin_store.prepare_dispatches(tx, [original.dispatch_id])
             previous = await tx.fetch_value(
                 "SELECT report_sha256 FROM {{tables.run_deliveries}} WHERE dispatch_id=$1",
                 original.dispatch_id,
@@ -1320,10 +1342,6 @@ class RunDispatch:
                         await self._persist_result(
                             attempt, original, submission, approvals, known, digest
                         )
-                        await self._verify(attempt, submission, grant)
-                        await self._fence.check(attempt, scope)
-                        # Outcome/audit/nonce writes can wait too. Roll back
-                        # their tentative streams if the bound expired there.
                         if (
                             original_known is not None
                             and known is not None
@@ -1332,16 +1350,36 @@ class RunDispatch:
                             )
                         ):
                             raise _ReleaseContextUnavailable()
+                        await run_pin_store.discard_dispatch(
+                            attempt,
+                            installation_id=scope.installation_id,
+                            team_id=scope.team_id,
+                            dispatch_id=original.dispatch_id,
+                        )
+                        await self._verify(attempt, submission, grant)
+                        await self._fence.check(attempt, scope)
+                        # Every effect, including disposal, is in this rollback
+                        # boundary. Only now sample the original DB deadline.
+                        if (
+                            original_known is not None
+                            and known is not None
+                            and not await self._redaction_source_is_current(
+                                attempt, original, original_known
+                            )
+                        ):
+                            raise _ReleaseContextUnavailable()
                 except _ReleaseContextUnavailable:
+                    # Rollback restored both tentative evidence and our deleted
+                    # pin rows. Persist only withheld metadata, then dispose.
                     await self._persist_result(tx, original, submission, approvals, None, digest)
+                    await run_pin_store.discard_dispatch(
+                        tx,
+                        installation_id=scope.installation_id,
+                        team_id=scope.team_id,
+                        dispatch_id=original.dispatch_id,
+                    )
                     await self._verify(tx, submission, grant)
                     await self._fence.check(tx, scope)
-                await run_pin_store.discard_dispatch(
-                    tx,
-                    installation_id=scope.installation_id,
-                    team_id=scope.team_id,
-                    dispatch_id=original.dispatch_id,
-                )
             else:
                 # Exact-byte replay still checks the current held runner/F6.
                 await self._verify(tx, submission, grant)
@@ -1435,6 +1473,7 @@ class RunDispatch:
             or frozen is None
         ):
             raise UseAuditUnavailable()
+        await run_pin_store.prepare_dispatches(tx, [frozen.dispatch_id])
         await self._machine(frozen).reconcile(tx, original.dispatch_id, state, dict(result))
         await run_pin_store.discard_dispatch(
             tx,
@@ -1484,6 +1523,7 @@ class RunDispatch:
         await self._approvals.lock_many(
             tx, [item.approval_id for group in approvals.values() for item in group]
         )
+        await run_pin_store.prepare_dispatches(tx, [item.dispatch_id for item in originals])
         for original in originals:
             current = await tx.fetch_one(
                 "SELECT state FROM {{tables.dispatches}} WHERE dispatch_id=$1 FOR UPDATE",
@@ -1533,6 +1573,7 @@ class RunDispatch:
                     if original is None:
                         raise UseAuditUnavailable()
                     approvals = await self._lock_outcomes(tx, original)
+                    await run_pin_store.prepare_dispatches(tx, [original.dispatch_id])
                     current = await tx.fetch_one(
                         "SELECT state,sweep_after FROM {{tables.dispatches}} WHERE dispatch_id=$1 FOR UPDATE",
                         original.dispatch_id,

@@ -132,6 +132,9 @@ async def disable_secret_tree(
         revoked_by=revoked_by,
         reason="secret_disabled",
     )
+    await run_pin_store.prepare_secrets(
+        tx, installation_id=installation_id, team_id=team_id, secret_ids=ids
+    )
     await _disable(
         tx,
         custody,
@@ -213,6 +216,7 @@ async def disable_installation(
         revoked_by=revoked_by,
         reason="installation_disabled",
     )
+    await run_pin_store.prepare_installation(tx, installation_id=installation_id, team_id=team_id)
     await run_pin_store.discard_installation(tx, installation_id=installation_id, team_id=team_id)
     await tx.execute(
         "INSERT INTO {{tables.containment_installations}} (installation_id, team_id, disabled_at)"
@@ -803,6 +807,11 @@ class Containment:
         await self.approvals.lock_many(
             tx,
             [*approval_ids, *associated_ids],
+        )
+        # App's trusted B3 callback stays before B2. Prepare the ENTIRE
+        # affected S3/pin union only after B2, before revision or item effects.
+        await run_pin_store.prepare_secrets(
+            tx, installation_id=installation_id, team_id=team_id, secret_ids=affected
         )
 
     async def reenable(

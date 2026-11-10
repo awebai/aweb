@@ -1,6 +1,7 @@
 """Real native assignment/result and transactional pin destruction paths."""
 
 import asyncio
+import json
 import secrets
 from datetime import timedelta
 
@@ -38,6 +39,13 @@ async def test_value_narrowing_disposes_pins_before_any_report_and_withholds(use
             other_wire["assignment"]["dispatch_id"],
         )
     async with db.transaction() as tx:
+        if effect != "installation":
+            await run_pin_store.prepare_secrets(
+                tx,
+                installation_id=scope.installation_id,
+                team_id=TEAM,
+                secret_ids=[pinned.secret_id],
+            )
         if effect == "rotate":
             new = await custody.sealer.ingest(
                 tx,
@@ -116,6 +124,7 @@ async def test_disposal_during_native_reopen_withholds_the_original_result(uses)
             # Exercise the real lifecycle sink while the original native
             # value remains readable. This isolates pin liveness from the
             # independent destroy/disabled-value checks above.
+            await run_pin_store.prepare_dispatches(tx, [dispatch_id])
             await run_pin_store.discard_dispatch(
                 tx,
                 installation_id=scope.installation_id,
@@ -134,7 +143,7 @@ async def test_disposal_during_native_reopen_withholds_the_original_result(uses)
         await asyncio.gather(pending, return_exceptions=True)
 
 
-@pytest.mark.parametrize("wait_stage", ["dispatch", "outbox"])
+@pytest.mark.parametrize("wait_stage", ["dispatch", "outbox", "pin_disposal"])
 async def test_original_database_deadline_expiring_during_a_wait_withholds(uses, wait_stage):
     context = await setup(uses, job_timeout_s=1)
     context.arguments["assignment_ttl"] = timedelta(seconds=2)
@@ -149,6 +158,10 @@ async def test_original_database_deadline_expiring_during_a_wait_withholds(uses,
             blocker = await barrier.fetch_value("SELECT pg_backend_pid()")
             if wait_stage == "dispatch":
                 await barrier.fetch_one("SELECT dispatch_id FROM {{tables.dispatches}} FOR UPDATE")
+            elif wait_stage == "pin_disposal":
+                # RowShare from the liveness SELECT FOR UPDATE is allowed;
+                # RowExclusive from our final DELETE must actually wait.
+                await barrier.execute("LOCK TABLE {{tables.run_redaction_pins}} IN SHARE MODE")
             else:
                 # This blocks the actual outcome producer after output was
                 # tentatively rendered, exercising the savepoint rollback.
@@ -173,6 +186,14 @@ async def test_original_database_deadline_expiring_during_a_wait_withholds(uses,
         assert receipt.body["result"]["exit_code"] == 0
         assert await db.fetch_value("SELECT sweep_after FROM {{tables.dispatches}}") == deadline
         assert await db.fetch_value("SELECT count(*) FROM {{tables.run_redaction_pins}}") == 0
+        observations = await db.fetch_all(
+            "SELECT result FROM {{tables.dispatch_observations}} WHERE kind='outcome'"
+        )
+        assert len(observations) == 1
+        stored = json.loads(observations[0]["result"])
+        assert stored["state"] == "result_withheld"
+        assert stored["result"]["body"] is None
+
     finally:
         if pending is not None:
             if not pending.done():
@@ -206,6 +227,12 @@ async def test_failed_destruction_rolls_back_pin_disposal_with_the_value(uses):
 
     with pytest.raises(RollBack):
         async with db.transaction() as tx:
+            await run_pin_store.prepare_secrets(
+                tx,
+                installation_id=scope.installation_id,
+                team_id=TEAM,
+                secret_ids=[SECRET["secret_id"]],
+            )
             await uses.world.custody.destroy(
                 tx, SealContext(scope.installation_id, TEAM, SECRET["secret_id"], 1)
             )
@@ -236,8 +263,6 @@ async def test_confirmed_uninstall_disposes_assignment_keys_in_its_retirement_tr
     destroyed = await db.fetch_value(
         "SELECT destroyed FROM {{tables.installation_retirement_events}}"
     )
-    import json
-
     assert json.loads(destroyed)["run_redaction_pins"] == 1
 
 
@@ -263,3 +288,110 @@ async def test_terminal_run_settlement_disposes_original_assignment_keys(uses, t
                 revoked_by="owner-fixture",
             )
     assert await db.fetch_value("SELECT count(*) FROM {{tables.run_redaction_pins}}") == 0
+
+
+async def test_reopen_budget_does_not_restart_after_a_delayed_real_preflight(uses):
+    context = await setup(uses, job_timeout_s=1)
+    context.arguments["assignment_ttl"] = timedelta(seconds=2)
+    context.arguments["sweep_margin"] = timedelta(milliseconds=100)
+    _, _, wire = await context.assigned()
+    db, loop = uses.world.db, asyncio.get_running_loop()
+    timing = await db.fetch_one(
+        "SELECT deadline,clock_timestamp() AS now FROM {{tables.run_redaction_pins}}"
+    )
+    # Taking the monotonic sample after this response is an upper bound for
+    # the true original deadline, sufficient to detect any restarted interval.
+    latest_end = loop.time() + (timing["deadline"] - timing["now"]).total_seconds()
+    fence, opener = context.arguments["fence"], context.arguments["opener"]
+    actual_check, actual_open = fence.check, opener.open
+    delayed = False
+    opened, finished = [], []
+
+    async def delayed_real_check(tx, admitted):
+        nonlocal delayed
+        await actual_check(tx, admitted)
+        if not delayed:
+            delayed = True
+            remaining = (
+                timing["deadline"] - await tx.fetch_value("SELECT clock_timestamp()")
+            ).total_seconds()
+            await tx.execute("SELECT pg_sleep($1::double precision)", max(0, remaining) * 0.6)
+
+    async def bounded_real_open(sealed_context):
+        value = await actual_open(sealed_context)
+        opened.append(loop.time())
+        try:
+            await asyncio.sleep(6)
+            return value
+        finally:
+            finished.append(loop.time())
+
+    fence.check, opener.open = delayed_real_check, bounded_real_open
+    try:
+        receipt = await asyncio.wait_for(
+            stored_result(context, wire["assignment"]["dispatch_id"]), 8
+        )
+        assert len(opened) == len(finished) == 1
+        assert finished[0] <= latest_end + 0.25
+        assert receipt.body["state"] == "result_withheld"
+        assert receipt.body["result"]["body"] is None
+    finally:
+        fence.check, opener.open = actual_check, actual_open
+
+
+async def test_ordinary_grant_revocation_disposes_only_its_original_assignment(uses):
+    from aweb_secrets.revisions import config_revision
+    from tests.test_containment_service import act, service
+
+    original = await setup(uses)
+    _, _, first_wire = await original.assigned()
+    other = await setup(uses, variant="independent", reuse_source=original)
+    _, _, other_wire = await other.assigned()
+    db, scope = uses.world.db, uses.world.admitted
+    first_id = await db.fetch_value(
+        "SELECT dispatch_id FROM {{tables.run_contexts}} WHERE dispatch_ref=$1",
+        first_wire["assignment"]["dispatch_id"],
+    )
+    other_id = await db.fetch_value(
+        "SELECT dispatch_id FROM {{tables.run_contexts}} WHERE dispatch_ref=$1",
+        other_wire["assignment"]["dispatch_id"],
+    )
+    before = await config_revision(db, scope.installation_id)
+    await act(await service(uses), uses, "revoke-grant", "grt_durable001", "revoke-root-run")
+    assert await config_revision(db, scope.installation_id) == before + 1
+    assert (
+        await db.fetch_value(
+            "SELECT count(*) FROM {{tables.run_redaction_pins}} WHERE dispatch_id=$1", first_id
+        )
+        == 0
+    )
+    assert (
+        await db.fetch_value(
+            "SELECT count(*) FROM {{tables.run_redaction_pins}} WHERE dispatch_id=$1", other_id
+        )
+        == 1
+    )
+    assert await db.fetch_value("SELECT count(*) FROM {{tables.sealed_versions}}") == 1
+    dispatch_ref = first_wire["assignment"]["dispatch_id"]
+    assert (
+        await original.service.result(
+            dispatch_ref,
+            original.signed(
+                f"/runner/v1/dispatches/{dispatch_ref}/result", report(original.credential)
+            ),
+        )
+    ).status == 204
+    stored = json.loads(
+        await db.fetch_value(
+            "SELECT result FROM {{tables.dispatches}} WHERE dispatch_id=$1", first_id
+        )
+    )
+    assert stored["state"] == "result_withheld"
+    assert stored["result"]["body"] is None
+    # Current grant revocation still denies requester reads; do not restore it
+    # to inspect the receipt. The unrelated grant on the SAME value still works.
+    denied = await original.service.submit(job=original.job.job_id, submission=original.submission)
+    assert denied.status == 404
+    unrelated = await stored_result(other, other_wire["assignment"]["dispatch_id"])
+    assert unrelated.body["state"] == "completed"
+    assert unrelated.body["result"]["redaction_count"] > 0

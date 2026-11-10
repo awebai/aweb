@@ -717,7 +717,7 @@ class Custody:
     async def disable(
         self, tx: TransactionManager, *, installation_id: str, team_id: str, secret_id: str
     ) -> None:
-        """Refuse every open and ingest of the secret from now on."""
+        """Refuse every open/ingest; caller prepares affected S3/pins before effects."""
         await run_pin_store.discard_secret(
             tx,
             installation_id=installation_id,
@@ -758,7 +758,8 @@ class Custody:
         Copies in backups and the write-ahead log stay decryptable until they
         expire or the key-encryption key is retired. A reference's monotonic
         allocator and opaque local version handle survive its destruction;
-        no provider write or deletion is performed."""
+        no provider write or deletion is performed. The caller prepares the
+        complete affected S3/pin union before revision or per-secret effects."""
         await run_pin_store.discard_secret(
             tx,
             installation_id=context.installation_id,

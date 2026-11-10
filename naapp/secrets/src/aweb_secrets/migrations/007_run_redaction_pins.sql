@@ -7,6 +7,7 @@ CREATE TABLE {{tables.run_redaction_pins}} (
     dispatch_id UUID NOT NULL,
     secret_id TEXT NOT NULL,
     version BIGINT NOT NULL CHECK (version > 0),
+    grant_id TEXT NOT NULL,
     observation TEXT,
     credential_version BIGINT CHECK (credential_version > 0),
     digest BYTEA NOT NULL CHECK (octet_length(digest)=32),

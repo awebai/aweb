@@ -57,6 +57,7 @@ def observation_pin(observation: BackendObservation | None) -> str | None:
 class PreparedRunPin:
     context: SealContext
     dispatch_id: UUID
+    grant_id: str
     observation: str | None
     credential_version: int | None
     digest: bytes
@@ -69,6 +70,7 @@ class PreparedRunPin:
             self.dispatch_id,
             self.context.secret_id,
             self.context.version,
+            self.grant_id,
             self.observation,
             self.credential_version,
             self.digest,
@@ -83,6 +85,7 @@ class PreparedRunPin:
         return cls(
             SealContext(row["installation_id"], row["team_id"], row["secret_id"], row["version"]),
             row["dispatch_id"],
+            row["grant_id"],
             row["observation"],
             row["credential_version"],
             bytes(row["digest"]),
@@ -108,6 +111,7 @@ class RunPins:
         value: Plaintext,
         *,
         observation: BackendObservation | None,
+        grant_id: str,
     ) -> PreparedRunPin:
         key = secrets.token_bytes(32)
         sealed_key = await asyncio.to_thread(
@@ -116,6 +120,7 @@ class RunPins:
         return PreparedRunPin(
             context,
             dispatch_id,
+            grant_id,
             observation_pin(observation),
             None if observation is None else observation.binding.credential_context.version,
             hmac.digest(key, _DOMAIN + value.reveal(), "sha256"),

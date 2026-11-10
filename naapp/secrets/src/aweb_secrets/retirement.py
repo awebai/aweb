@@ -44,6 +44,7 @@ async def retire_team(tx: TransactionManager, team_id: str, *, app_id: str) -> N
     # Discovery precedes role/holding deletion. Preserve the existing role
     # cleanup contract and acquire B3 locks only after these role locks.
     await purge_team(tx, team_id)
+    subjects_by_installation = {}
     for row in retired:
         installation_id = row["installation_id"]
         retired_subjects = await retire_subjects(
@@ -53,6 +54,13 @@ async def retire_team(tx: TransactionManager, team_id: str, *, app_id: str) -> N
             ),
             scopes=scopes_by_installation[installation_id],
         )
+        subjects_by_installation[installation_id] = retired_subjects
+    await run_pin_store.prepare_retired_installations(
+        tx, team_id=team_id, installation_ids=[row["installation_id"] for row in retired]
+    )
+    for row in retired:
+        installation_id = row["installation_id"]
+        retired_subjects = subjects_by_installation[installation_id]
         identity = retired_subjects.installation
         destroyed = dict(retired_subjects.destroyed)
         destroyed["run_redaction_pins"] = await run_pin_store.discard_installation(

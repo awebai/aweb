@@ -18,7 +18,9 @@ def pins(provider):
 async def original(pins):
     context = SealContext("installation", "team", "sec_original", 7)
     value = Plaintext(secrets.token_bytes(48))
-    return value, await pins.prepare(context, uuid4(), value, observation=None)
+    return value, await pins.prepare(
+        context, uuid4(), value, observation=None, grant_id="grt_original001"
+    )
 
 
 async def test_digest_proves_the_whole_original_value(pins):
@@ -41,7 +43,9 @@ async def test_envelope_contains_only_an_independent_random_key(pins, provider):
 
 async def test_identical_values_have_independent_assignment_keys(pins):
     value, pin = await original(pins)
-    another = await pins.prepare(pin.context, uuid4(), value, observation=None)
+    another = await pins.prepare(
+        pin.context, uuid4(), value, observation=None, grant_id="grt_original001"
+    )
     assert pin.digest != another.digest
     assert pin.sealed_key != another.sealed_key
     assert await pins.matches(another, value)
@@ -86,7 +90,9 @@ async def test_onepassword_value_equivalence_does_not_depend_on_metadata_complet
     read = project_item(reference(), item, credential_context=token)
     binding = ActiveOnePasswordBinding(context, token, reference(), 7, "version-ref", "{}")
     observed = BackendObservation(binding, read.item_version, read.updated_at)
-    pin = await pins.prepare(context, uuid4(), read.value, observation=observed)
+    pin = await pins.prepare(
+        context, uuid4(), read.value, observation=observed, grant_id="grt_original001"
+    )
     assert pin.credential_version == 3
     assert pin.observation == observation_pin(observed)
     assert await pins.matches(pin, read.value)

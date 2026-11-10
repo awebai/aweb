@@ -41,7 +41,14 @@ class Context(RunWorld):
 
 
 async def setup(
-    uses, *, approval_required=False, producer_clock=None, job_timeout_s=None, variant=""
+    uses,
+    *,
+    approval_required=False,
+    producer_clock=None,
+    job_timeout_s=None,
+    variant="",
+    reuse_source=None,
+    paired=False,
 ):
     original = await setup_world(
         uses,
@@ -49,6 +56,8 @@ async def setup(
         producer_clock=producer_clock,
         job_timeout_s=job_timeout_s,
         variant=variant,
+        reuse_source=reuse_source,
+        paired=paired,
     )
     return Context(**vars(original))
 
@@ -277,8 +286,9 @@ async def test_pin_storage_failure_rolls_back_assignment_publication(uses):
     await uses.world.db.execute(
         "ALTER TABLE {{tables.run_redaction_pins}} ADD CONSTRAINT refuse_pin CHECK (false) NOT VALID"
     )
-    with pytest.raises(asyncpg.CheckViolationError):
+    with pytest.raises(asyncpg.CheckViolationError) as failed:
         await context.service.claim(context.signed("/runner/v1/claim"))
+    assert failed.value.constraint_name == "refuse_pin"
     assert await uses.world.db.fetch_value("SELECT state FROM {{tables.dispatches}}") == "admitted"
     assert (
         await uses.world.db.fetch_value("SELECT assignment FROM {{tables.run_deliveries}}") is None
