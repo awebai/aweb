@@ -323,6 +323,8 @@ async def supervisor_result(command, request):
         "writable-file",
         "writable-directory",
         "linked-directory",
+        "writable-ancestor",
+        "linked-ancestor",
         "fifo",
     ],
 )
@@ -356,6 +358,13 @@ async def test_linux_networked_launch_refuses_bad_marker_before_worker(world, fa
         target = marker.parent.with_name("real-directory")
         marker.parent.rename(target)
         marker.parent.symlink_to(target, target_is_directory=True)
+    elif fault == "writable-ancestor":
+        marker.parent.parent.chmod(0o777)
+    elif fault == "linked-ancestor":
+        ancestor = marker.parent.parent
+        target = ancestor.with_name("real-run")
+        ancestor.rename(target)
+        ancestor.symlink_to(target, target_is_directory=True)
     elif fault == "fifo":
         marker.unlink()
         os.mkfifo(marker, 0o644)
