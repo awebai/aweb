@@ -418,7 +418,7 @@ priority 0/1.
 
 aweb mail is delivery, not archival storage. The retention contract is a
 ~30-day TTL: `gc_expired_messages(ttl_days=30)`
-(`server/src/aweb/gc.py:18`) defines it. Verified 2026-08-31: **no
+(`server/src/aweb/gc.py:19`) defines it. Verified 2026-08-31: **no
 deployment currently schedules that GC** — it has zero callers in
 aweb-oss and zero references in the hosted repo — so mail persists
 longer in practice today. Neither fact changes the rule: a deployment
