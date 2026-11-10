@@ -104,14 +104,21 @@ subject joins the existing three; it replaces none of them.
 | **Recommend: root-scoped only.** | The owner names each eligible root once, for example a deployment member A_H, and every worker A_H's line admits within `max_depth` is covered. Only the owner's passkey can extend use to another root's line. Cost: one owner act per root, never per worker. |
 | Also offer policy-scoped. | One owner act covers every root's line. H's controller then extends secret use by making more members eligible (a named-parent eligibility grant, or all-direct-members mode, which covers every direct member it later admits), with no secrets owner passkey. That moves a widening change outside [§6.3](secrets.md#63-widening-changes-need-owner-passkey-confirmation). |
 
-The recommendation keeps one rule: only an owner's passkey widens secret use.
-The controller's existing power is unchanged
-([§14, T10](secrets.md#141-trust-boundaries)): it can certify keys, and a
-controller that re-certifies a root's `did:aw` inherits that root's covered
-line, as it inherits the root's own grants today. Policy-scoped would add a
-second path, controller-driven eligibility, that needs no re-certification.
-Where the owner and the controller are the same human, the cost is small; the
-recommendation still does not depend on that.
+The recommendation keeps one rule: only an owner's passkey widens which lines
+are covered. The controller's existing power is unchanged
+([§14, T10](secrets.md#141-trust-boundaries)), and it cannot take over a
+root's line: every request is signed by the member's own key, and for a global
+root the verifier also requires the certificate's key to be the `did:aw`'s
+current registry key. Policy-scoped would add a second path, controller-driven
+eligibility, that needs no key at all. Where the owner and the controller are
+the same human, the cost is small; the recommendation still does not depend on
+that.
+
+A root-scoped grant authorizes a line, not a count. Within `root` and
+`max_depth`, how many workers are covered, and when, is set by the root, which
+spawns them, and by the controller, through the policy's allowance and its
+widening revisions. The rate buckets below bound their use; nothing in the
+grant bounds their number.
 
 ## Admission order
 
@@ -129,8 +136,11 @@ stops admitted, not-yet-sent uses, as removing a role member does
 ([§12](secrets.md#12-containment-from-day-one)). The fence does not re-verify
 membership for any member, direct or inherited. A path withdrawn after
 admission is bounded by the verifier's observation window
-([acwd.13 currentness](selective-membership-inheritance.md#withdrawal-reissue-and-currentness)),
-and secrets adds no second membership check.
+([acwd.13 currentness](selective-membership-inheritance.md#withdrawal-reissue-and-currentness))
+plus the intent's time from admission to dispatch, and secrets adds no second
+membership check. That time is short for a brokered request, which dispatches
+on re-submission. A runner job waits for its runner, and an automatic repeat
+([§11.4](secrets.md#114-reconciliation-before-retry)) can run later still.
 
 ## Currentness, withdrawal and policy revisions
 
@@ -153,6 +163,16 @@ An approved `per_use` request is consumed only when the same request is
 re-submitted ([§10.3](secrets.md#103-flow)), and that re-submission is
 verified as a member request again. A withdrawn path therefore cannot consume
 an approval granted before the withdrawal.
+
+## Derived secrets
+
+A `store_as_secret` result ([§8.4](secrets.md#84-derived-secret-creation-and-use))
+creates a child secret with a grant from pinned template terms. When the
+requester is an inherited member, that grant names the requester's own
+principal, never the inherited subject that admitted it. A credential one
+worker created is therefore not usable by the rest of its line unless an owner
+grants it. Today `store_as_secret` is refused (`store_as_secret_unavailable`),
+so the rule takes effect when derived-secret creation is enabled.
 
 ## Approvals and four eyes
 
@@ -196,8 +216,10 @@ The custody limits:
   can still require them.
 - **A compromised eligible root** can admit attacker-held keys up to the
   policy's allowance. Together they share the line's bucket, so more keys do
-  not buy more use. Two containment acts each cut the whole line: the
-  controller revokes the root's membership, or the owner revokes the grant.
+  not buy more use. Two containment acts each cut the whole line, with a
+  difference. The owner revoking the grant also stops admitted intents at the
+  fence. The controller revoking the root's membership stops admissions, but
+  intents already admitted still dispatch unless the grant is revoked too.
 - **Several keys under one worker UID** remain one compromise boundary, as
   acwd.13 states.
 
