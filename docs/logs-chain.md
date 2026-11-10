@@ -363,9 +363,9 @@ the file unusable, reported by its line number from 1. Witnesses are indexed
 per kind in the order given: file by file, then line by line.
 
 A checkpoint line cut from an earlier export is a witness as it stands. So is
-a producer's receipt: logs' ingest ack carries `{"event_id", "disposition",
-"receipt"}`, and its `receipt` is this artefact object, so
-`{"receipt": <the ack's receipt>}` is a witness line.
+a producer's receipt. Logs answers every delivery it accepts, `appended` or
+`duplicate`, with `{"event_id", "disposition", "receipt"}`, and its `receipt` is
+this artefact object, so `{"receipt": <the ack's receipt>}` is a witness line.
 
 `aw logs verify --bundle FILE|- --receipt-key DID_KEY --checkpoint-key DID_KEY
 [--witness FILE]... [--json]` verifies a bundle offline: it reads only the
