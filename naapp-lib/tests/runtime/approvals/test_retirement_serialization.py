@@ -56,9 +56,7 @@ async def test_same_installation_waits_until_original_transaction_ends(db, rollb
                 await prepare_retirement(tx, installation=INSTALLATION)
                 holder = await tx.fetch_value("SELECT pg_backend_pid()")
                 started = asyncio.get_running_loop().create_future()
-                task = asyncio.create_task(
-                    acquire(db, started, replace(INSTALLATION, generation=2))
-                )
+                task = asyncio.create_task(acquire(db, started, replace(INSTALLATION, generation=2)))
                 waiter = await asyncio.wait_for(started, 5)
                 await wait_for_holder(db, holder, waiter, task)
                 if rollback:
@@ -111,3 +109,22 @@ async def test_ended_transaction_cannot_take_an_ephemeral_lock(db):
         pass
     with pytest.raises(ValueError, match="live transaction"):
         await prepare_retirement(tx, installation=INSTALLATION)
+
+
+async def test_v1_key_vector_and_bigint_key_space_are_separate(db):
+    # Frozen preimage: domain+LF followed by canonical JSON, not joined fields.
+    # b'aweb.naapp.passkeys.retirement/1\n["example","example:team","install-a"]'
+    namespace, scope = 1110659633, 1742630348
+    async with db.transaction() as tx:
+        await prepare_retirement(tx, installation=INSTALLATION)
+        assert await tx.fetch_value(
+            "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE pid=pg_backend_pid() "
+            "AND locktype='advisory' AND classid=$1::oid AND objid=$2::oid "
+            "AND objsubid=2 AND mode='ExclusiveLock' AND granted)",
+            namespace,
+            scope,
+        )
+        async with db.transaction() as other:
+            assert await other.fetch_value(
+                "SELECT pg_try_advisory_xact_lock($1::bigint)", (namespace << 32) | scope
+            )
