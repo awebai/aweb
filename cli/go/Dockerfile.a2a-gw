@@ -42,6 +42,6 @@ USER 1001:1001
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD wget -qO- "http://127.0.0.1:${PORT}/health" >/dev/null || exit 1
+    CMD wget -qO- "http://127.0.0.1:${PORT}/live" >/dev/null || exit 1
 
 CMD ["sh", "-c", "exec /usr/local/bin/aweb-a2a-gw -config \"${AWEB_A2A_GW_CONFIG}\" -listen \"0.0.0.0:${PORT}\""]

@@ -514,6 +514,17 @@ and returns the standard aweb send response. Polling gets
 `route_id`, `to_address`, and `limit`, returning the standard inbox response.
 Route/address and conversation bindings are checked; they are not caller hints.
 
+The gateway serves two probe routes. `/live` answers `200 {"status":"ok"}`
+whenever the process serves requests and checks no dependency; point a probe
+that restarts the gateway, such as the image's `HEALTHCHECK` or a liveness
+probe, at it. `/health` answers 200 when the gateway can serve its routes and
+503 otherwise; use it for readiness and monitoring. `/health` reads the
+registry's `/health` on each request: a registry that answers is reached, and
+that includes a registry answering 503 with its own health report of a failed
+dependency, which `awid_registry.status` then shows as `unhealthy`. A registry
+that does not answer, or answers without that report, is unreachable and makes
+the gateway's `/health` answer 503.
+
 `/health` reports `managed_config` with `enabled`, `gateway_id`,
 `config_revision`, `expires_at`, `expired`, `routes`, `status`, and `error`.
 Initial missing-token and HTTP 401/403 failures are fatal. A transient initial
