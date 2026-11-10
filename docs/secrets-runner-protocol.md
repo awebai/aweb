@@ -372,7 +372,9 @@ not a value released for another dispatch.
 
 **At release.** During runner preparation (§4.2), outside every transaction,
 generate a random key for this assignment for each credential slot, seal it
-through custody under its own context, and compute one keyed digest of the
+through custody under its own context naming the installation, the dispatch
+and the slot's secret, so a row copied to another dispatch fails to unseal,
+and compute one keyed digest of the
 whole released value. Never store a prefix or partial digest. Store the sealed
 key and the digest in one row keyed by the dispatch and the slot's secret, in
 the release transaction that commits `dispatching`. Persist
