@@ -1,31 +1,24 @@
-"""The readers of a team's log: humans an owner act designates, who read only
-in a passkey session on logs' console origin (audit-substrate.md §B5).
+"""The readers of a team's log: the current holders of ``logs.reader``, humans
+the owner names by a human-role act, who read only in a passkey session on
+logs' console origin (audit-substrate.md §B5, human-role-holders.md).
 
-Each reader has a B3 scope of its own, a slot ``logs.reader.<32 hex>`` that
-logs draws at random before the owner signs and binds to the installation,
-the team and the hash of the contact the owner act must name. The scope is
-public in the reader's governance events, so it is never derived from the
-contact. The owner signs the exact slot; an act naming a slot for another
-installation, team or contact, or an expired or already claimed one, claims
-nothing. A pending slot grants nothing. A claimed slot is the reader's scope
-for good, through enrolment, contact changes and recovery, and it says which
-team its sessions read.
+A reader's B3 scope is its holding's: ``logs.reader.<40 hex>``, named by the
+installation, the team and the principal, never by a contact. The holding
+store keeps one record per scope; a console session holds only the scope, and
+the directory answers from the store on every request: the holding must be
+current, in logs' active installation, with a credential that can sign in.
 """
 
 from __future__ import annotations
 
 import re
-import secrets
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
 from aweb_naapp.hooks.envelope import verify
-from aweb_naapp.hooks.owner_act import VerifiedOwnerAct
-from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier, PreparedOwnerAct
-from aweb_naapp.hooks.strictjson import Refused
 from aweb_naapp.roles import (
     end_holding,
     holding_record_of_scope,
@@ -37,13 +30,11 @@ from aweb_naapp.runtime.authorization import Grant
 from aweb_naapp.runtime.human_roles import HumanRoleHolding, HumanRoleHoldings
 from aweb_naapp.runtime.installation import AdmittedInstallation, InstallationFence
 from aweb_naapp.runtime.passkeys import (
-    DesignationRefused,
     PasskeyInstallationContext,
     Passkeys,
     ProofContextResolver,
     ProofContextUnavailable,
     RetirementRefused,
-    contact_sha256,
     installation_context,
 )
 from pgdbm import AsyncDatabaseManager
@@ -56,19 +47,11 @@ if TYPE_CHECKING:
     from aweb_naapp.runtime.team_auth import Principal
 
 READER_ROLE = "logs.reader"
-SLOT_TTL = timedelta(hours=1)
 _SCOPE = re.compile(r"logs\.reader\.[0-9a-f]{40}")
-_SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 def is_reader_scope(scope: str) -> bool:
     return _SCOPE.fullmatch(scope) is not None
-
-
-class ReaderRefused(Exception):
-    """No pending, unexpired slot issued for this installation, team and contact."""
-
-    code = "owner_required"
 
 
 class RemovalRefused(Exception):
@@ -81,30 +64,15 @@ class RemovalRefused(Exception):
 
 
 @dataclass(frozen=True)
-class Slot:
-    scope: str
-    expires_at: datetime
-
-
-@dataclass(frozen=True)
-class Pending:
-    scope: str
-    installation_id: str
-    team_id: str
-    contact_sha256: str
-
-
-@dataclass(frozen=True)
 class Reader:
     scope: str
     installation_id: str
     team_id: str
-    # The principal holding the reader role; None for a slot reader.
-    principal: str | None = None
+    principal: str
 
 
 class ReaderDirectory:
-    """The reader slots of this deployment, pending and claimed."""
+    """The readers of this deployment: the current ``logs.reader`` holdings."""
 
     def __init__(
         self,
@@ -112,72 +80,10 @@ class ReaderDirectory:
         *,
         app_id: str,
         passkeys: Callable[[], Passkeys],
-        slot_ttl: timedelta = SLOT_TTL,
     ) -> None:
         self.db = db
         self.app_id = app_id
         self._passkeys = passkeys
-        self._slot_ttl = slot_ttl
-
-    async def create_slot(
-        self, tx: TransactionManager, *, installation_id: str, team_id: str, contact_sha256: str
-    ) -> Slot:
-        """Issue, in the caller's transaction, a pending slot for the reader the
-        owner will designate at this contact."""
-        if not _SHA256.fullmatch(contact_sha256):
-            raise ValueError("a reader's contact is named by its SHA-256")
-        scope = f"{READER_ROLE}.{secrets.token_hex(16)}"
-        expires_at = await tx.fetch_value(
-            "INSERT INTO {{tables.readers}}"
-            " (scope, installation_id, team_id, contact_sha256, expires_at)"
-            " VALUES ($1, $2, $3, $4, NOW() + $5) RETURNING expires_at",
-            scope,
-            installation_id,
-            team_id,
-            contact_sha256,
-            self._slot_ttl,
-        )
-        return Slot(scope=scope, expires_at=expires_at)
-
-    async def sweep_expired(self, *, limit: int) -> int:
-        """Delete up to ``limit`` expired pending slots; the number deleted.
-        A claim racing a sweep is resolved by the row lock: a claim that waits
-        finds the slot deleted and claims nothing, and the sweep skips a slot a
-        claim holds and never deletes a claimed one."""
-        deleted: int = await self.db.fetch_value(
-            "WITH expired AS (SELECT scope FROM {{tables.readers}}"
-            " WHERE claimed_at IS NULL AND expires_at <= NOW()"
-            " ORDER BY expires_at LIMIT $1 FOR UPDATE SKIP LOCKED),"
-            " deleted AS (DELETE FROM {{tables.readers}} r USING expired e"
-            " WHERE r.scope = e.scope AND r.claimed_at IS NULL RETURNING 1)"
-            " SELECT count(*) FROM deleted",
-            limit,
-        )
-        return deleted
-
-    async def claim(
-        self,
-        tx: TransactionManager,
-        *,
-        scope: str,
-        installation_id: str,
-        team_id: str,
-        contact_sha256: str,
-    ) -> Reader:
-        """Claim, in the designating transaction, the pending slot the owner act names."""
-        claimed = await tx.fetch_value(
-            "UPDATE {{tables.readers}} SET claimed_at = NOW()"
-            " WHERE scope = $1 AND installation_id = $2 AND team_id = $3"
-            " AND contact_sha256 = $4 AND claimed_at IS NULL AND expires_at > NOW()"
-            " RETURNING scope",
-            scope,
-            installation_id,
-            team_id,
-            contact_sha256,
-        )
-        if claimed is None:
-            raise ReaderRefused("no pending slot for this act")
-        return Reader(scope=scope, installation_id=installation_id, team_id=team_id)
 
     async def reader(self, scope: str) -> Reader | None:
         """The reader ``scope`` admits now: the current holder of
@@ -225,24 +131,6 @@ class ReaderDirectory:
 
     def _holdings(self) -> HumanRoleHoldings:
         return HumanRoleHoldings(roles=frozenset({READER_ROLE}), passkeys=self._passkeys())
-
-    async def readers(self, *, installation_id: str, team_id: str) -> list[Reader]:
-        rows = await self.db.fetch_all(
-            "SELECT scope, installation_id, team_id FROM {{tables.readers}}"
-            " WHERE installation_id = $1 AND team_id = $2 AND claimed_at IS NOT NULL"
-            " ORDER BY scope",
-            installation_id,
-            team_id,
-        )
-        return [Reader(**row) for row in rows]
-
-    async def holder(self, scope: str) -> str | None:
-        """The B3 subject currently designated for ``scope``, if any."""
-        return await self.db.fetch_value(
-            "SELECT subject FROM {{tables.passkey_approvers}}"
-            " WHERE scope = $1 AND superseded_at IS NULL",
-            scope,
-        )
 
     async def current_readers(self, *, installation_id: str, team_id: str) -> list[Reader]:
         """The readers of this installation and team who can sign in now, in
@@ -305,17 +193,6 @@ class ReaderDirectory:
         console sessions' admission of a reader scope, at login and on every
         request."""
         return await self.reader(scope) is not None
-
-    async def pending(self, scope: str) -> Pending | None:
-        """The unexpired, unclaimed slot ``scope``, before any transaction."""
-        if not is_reader_scope(scope):
-            return None
-        row = await self.db.fetch_one(
-            "SELECT installation_id, team_id, contact_sha256 FROM {{tables.readers}}"
-            " WHERE scope = $1 AND claimed_at IS NULL AND expires_at > NOW()",
-            scope,
-        )
-        return Pending(scope=scope, **row) if row is not None else None
 
     async def role_of(
         self, tx: TransactionManager, *, scope: str, admitted: AdmittedInstallation
@@ -398,120 +275,6 @@ class ReaderDirectory:
         return append_own
 
 
-class ReaderDesignations:
-    """The owner designates a reader by an ``app-role.designate`` act naming a
-    pending slot exactly: its installation, the slot as the role, and its
-    contact's hash.
-
-    One transaction consumes the act's nonce, claims the slot, designates the
-    slot's B3 holder and records the governance event, which the recorder's
-    ``after_enqueue`` appends to logs' own chain. An act that names anything
-    else, or whose nonce was used, designates nobody.
-    """
-
-    def __init__(
-        self,
-        directory: ReaderDirectory,
-        *,
-        fence: InstallationFence,
-        verifier: OwnerActVerifier,
-        passkeys: Passkeys,
-        recorder: CredentialAudit,
-    ) -> None:
-        self.directory = directory
-        self.fence = fence
-        self.verifier = verifier
-        self.passkeys = passkeys
-        self.recorder = recorder
-
-    async def designate(
-        self, *, signing: bytes, signature: str, scope: str, contact: str
-    ) -> Reader:
-        pending = await self.directory.pending(scope)
-        if pending is None or pending.contact_sha256 != contact_sha256(contact):
-            raise ReaderRefused("no pending slot for this act")
-        admitted = (await self.fence.permit(pending.team_id)).admitted
-        if admitted.installation_id != pending.installation_id:
-            raise ReaderRefused("the slot belongs to another installation")
-        expected = {
-            "app_id": admitted.app_id,
-            "installation_id": admitted.installation_id,
-            "role": scope,
-            "contact_sha256": pending.contact_sha256,
-        }
-        prepared = await self._prepare(signing, signature, admitted)
-        context = await self.recorder.prepare_owner_act(
-            admitted, signing=signing, signature=signature
-        )
-        with self.recorder.prepared(context):
-            async with self.directory.db.transaction() as tx:
-                await self.fence.check(tx, admitted)
-                act = await self._consume(tx, prepared, expected)
-                reader = await self.directory.claim(
-                    tx,
-                    scope=scope,
-                    installation_id=admitted.installation_id,
-                    team_id=admitted.team_id,
-                    contact_sha256=pending.contact_sha256,
-                )
-                try:
-                    designation = await self.passkeys.designate(
-                        tx, scope=scope, contact=contact, evidence=act
-                    )
-                except DesignationRefused:
-                    raise ReaderRefused("the slot cannot be designated") from None
-                await self.fence.check(tx, admitted)
-        await self.passkeys.deliver(designation)
-        return reader
-
-    async def revoke(self, *, signing: bytes, signature: str, scope: str) -> None:
-        """End a reader's designation by an ``app-role.revoke`` act naming its
-        scope and current holder. The slot stays claimed and holds no reader
-        until the owner designates one again."""
-        reader = await self.directory.reader(scope)
-        holder = await self.directory.holder(scope) if reader is not None else None
-        if reader is None or holder is None:
-            raise ReaderRefused("no reader holds this scope")
-        admitted = (await self.fence.permit(reader.team_id)).admitted
-        if admitted.installation_id != reader.installation_id:
-            raise ReaderRefused("the reader belongs to another installation")
-        expected = {
-            "app_id": admitted.app_id,
-            "installation_id": admitted.installation_id,
-            "role": scope,
-            "subject_ref": holder,
-        }
-        prepared = await self._prepare(signing, signature, admitted)
-        context = await self.recorder.prepare_owner_act(
-            admitted, signing=signing, signature=signature
-        )
-        with self.recorder.prepared(context):
-            async with self.directory.db.transaction() as tx:
-                await self.fence.check(tx, admitted)
-                act = await self._consume(tx, prepared, expected)
-                try:
-                    await self.passkeys.retire(tx, scope=scope, evidence=act)
-                except DesignationRefused:
-                    raise ReaderRefused("the reader cannot be revoked") from None
-                await self.fence.check(tx, admitted)
-
-    async def _prepare(
-        self, signing: bytes, signature: str, admitted: AdmittedInstallation
-    ) -> PreparedOwnerAct:
-        try:
-            return await self.verifier.prepare(signing, signature, team_id=admitted.team_id)
-        except Refused:
-            raise ReaderRefused("the act is not the owner's") from None
-
-    async def _consume(
-        self, tx: TransactionManager, prepared: PreparedOwnerAct, expected: dict[str, str]
-    ) -> VerifiedOwnerAct:
-        try:
-            return await self.verifier.consume_in(tx, prepared, expected_subject=expected)
-        except Refused:
-            raise ReaderRefused("the act does not name this reader") from None
-
-
 class ReaderRemovals:
     """A team member removes a reader by team authority alone.
 
@@ -540,7 +303,7 @@ class ReaderRemovals:
         if principal.team_id != grant.team_id:
             raise RemovalRefused("reader_unknown", 404)
         reader = await self.directory.record(scope)
-        if reader is None or reader.team_id != grant.team_id or reader.principal is None:
+        if reader is None or reader.team_id != grant.team_id:
             raise RemovalRefused("reader_unknown", 404)
         await self.fence.refresh(grant.team_id)
         async with self.directory.db.transaction() as tx:
