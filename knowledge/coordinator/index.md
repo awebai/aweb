@@ -9,9 +9,9 @@ team.
 
 * [operating-continuity.md](operating-continuity.md) — Find current decisions and preserve the historical coordinator record.
 
-Historical record, preserved in the repository as written and not converted to
-OKF: `agents/coordinator/decisions/`, `agents/coordinator/docs/` and
-`agents/coordinator/memory/`.
+Historical record, preserved as written and not converted to OKF: decisions,
+docs and memory under `aweb-team-records/agents/coordinator/` in the private ac
+repository, moved from this repository at `07b554c1f`.
 
 ## Decisions about coordination
 
