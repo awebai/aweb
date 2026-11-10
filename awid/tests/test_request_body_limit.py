@@ -21,7 +21,7 @@ LIMIT = 16
 LOGGER = "awid.request_body_limit"
 
 
-def _app(seen: list[bytes]) -> RequestBodyLimitMiddleware:
+def _app(seen: list[bytes], **limit_options) -> RequestBodyLimitMiddleware:
     app = FastAPI()
 
     @app.post("/echo")
@@ -43,7 +43,7 @@ def _app(seen: list[bytes]) -> RequestBodyLimitMiddleware:
         seen.append(b"unread")
         return "ok"
 
-    return RequestBodyLimitMiddleware(app, max_body_bytes=LIMIT)
+    return RequestBodyLimitMiddleware(app, max_body_bytes=LIMIT, **limit_options)
 
 
 async def _chunks(*parts: bytes):
@@ -198,3 +198,28 @@ async def test_a_logged_path_stops_at_an_encoded_query_or_fragment(http, caplog)
         f"Request body too large: POST /echo declared {LIMIT + 1} bytes, limit {LIMIT}",
     ]
     assert "secret" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_host_redacts_the_logged_path_with_its_own_rule(seen, caplog):
+    """A host whose paths carry secrets of its own (an invite code, a token) gives the rule that
+    writes the path a refusal logs, in place of dropping the query and fragment; it is given the
+    decoded request path."""
+    given: list[str] = []
+
+    def host_rule(path: str) -> str:
+        given.append(path)
+        return path.split("?", 1)[0].replace("/echo", "/[Filtered]")
+
+    app = _app(seen, logged_path=host_rule)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as http:
+        with caplog.at_level(logging.WARNING, logger=LOGGER):
+            declared = await http.post("/echo?token=secret", content=b"x" * (LIMIT + 1))
+            counted = await http.post("/echo?token=secret", content=_chunks(b"x" * LIMIT, b"x"))
+    assert (declared.status_code, counted.status_code) == (413, 413)
+    assert given == ["/echo", "/echo"]
+    assert _refusals(caplog) == [
+        f"Request body too large: POST /[Filtered] declared {LIMIT + 1} bytes, limit {LIMIT}",
+        f"Request body too large: POST /[Filtered] received {LIMIT + 1} bytes, limit {LIMIT}",
+    ]
+    assert "secret" not in caplog.text and "/echo" not in caplog.text
