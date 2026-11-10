@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-09
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-owner-acts (aweb-acgh.16.40).
+* **Update**: [focused proof includes the contract guards](/aweb-expert/lessons/focused-proof-includes-the-contract-guards.md) gains that a green candidate checks stage runs no Go tests, so a Go change also needs a full make test-cli run.
+* **Creation**: lesson [widening a supported set moves its negative controls](/aweb-expert/lessons/widening-a-supported-set-moves-its-negative-controls.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
