@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- AWID bounds its request input. The registry service refuses a request body
+  over `AWID_MAX_REQUEST_BODY_BYTES` with 413 before parsing it (default 4 MiB,
+  following a raised `AWID_ROTATE_MAX_BODY_BYTES`; a value below the rotate
+  limit refuses to start). `did:key` and `did:aw` text longer than its fixed
+  size can encode is refused without being decoded, and the DID fields of
+  address registration and reassignment are limited to 256 characters like
+  every other DID field. The limiter is `awid.request_body_limit`.
+
 - Self-custodial humans can select their OS-keychain identity with `aw --human
   <did:aw> --human-domain <domain>` to fetch a controller-issued team certificate,
   connect, send/read/reply to plaintext mail, and make ordinary team-auth naapp

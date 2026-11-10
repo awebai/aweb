@@ -1427,6 +1427,12 @@ AWID_LOG_JSON=true
 # Required when this AWID serves aweb; set the same >=32-byte secret on both.
 # Generate, for example, with: openssl rand -hex 32
 AWID_SERVICE_TOKEN=
+
+# Optional. The largest request body the service reads, in bytes: 413 above
+# it, before the body is parsed. Unset, it is 4 MiB, or
+# AWID_ROTATE_MAX_BODY_BYTES when that is set higher. A value below the rotate
+# limit, or one that is not a positive whole number, refuses to start.
+# AWID_MAX_REQUEST_BODY_BYTES=4194304
 ```
 
 awid has no encryption keys, no custody keys, no signing keys.
