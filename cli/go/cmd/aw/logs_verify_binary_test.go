@@ -134,9 +134,17 @@ func (w *logsVerifyWorld) file(name string, lines []string) string {
 
 func (w *logsVerifyWorld) run(stdin []byte, args ...string) logsVerifyRun {
 	w.t.Helper()
-	cmd := exec.CommandContext(w.ctx, w.bin, append([]string{"logs", "verify"}, args...)...)
+	return w.runAs(nil, nil, stdin, args...)
+}
+
+// runAs runs the binary with root arguments before `logs verify` and extra
+// environment, which overrides the world's.
+func (w *logsVerifyWorld) runAs(rootArgs, env []string, stdin []byte, args ...string) logsVerifyRun {
+	w.t.Helper()
+	argv := append(append(append([]string{}, rootArgs...), "logs", "verify"), args...)
+	cmd := exec.CommandContext(w.ctx, w.bin, argv...)
 	cmd.Dir = w.dir
-	cmd.Env = w.env
+	cmd.Env = append(append([]string{}, w.env...), env...)
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
@@ -402,5 +410,102 @@ func TestLogsVerifyWritesOnlyTheReportToStdout(t *testing.T) {
 	}
 	if strings.TrimSpace(run.stderr) == "" {
 		t.Fatal("a report that is not intact says so on stderr")
+	}
+}
+
+func TestLogsVerifyIgnoresEveryIdentityHomeSelector(t *testing.T) {
+	w := newLogsVerifyWorld(t)
+	c := loadLogsExportVector(t).named(t, "whole_log_of_two_epochs")
+	args := append([]string{"--bundle", w.file("whole.bundle", c.BundleLines), "--json"}, keyArgs(c)...)
+	regular := w.file("a-regular-file", []string{"not an identity home"})
+	for name, selector := range map[string]struct {
+		rootArgs, env []string
+	}{
+		"unset":             {env: []string{awconfig.IdentityHomeEnv + "="}},
+		"relative_env":      {env: []string{awconfig.IdentityHomeEnv + "=relative/home"}},
+		"regular_file_env":  {env: []string{awconfig.IdentityHomeEnv + "=" + regular}},
+		"relative_flag":     {rootArgs: []string{"--identity-home", "relative/home"}},
+		"regular_file_flag": {rootArgs: []string{"--identity-home=" + regular}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			run := w.runAs(selector.rootArgs, selector.env, nil, args...)
+			if run.code != 0 {
+				t.Fatalf("exit %d; want 0\nstderr: %s", run.code, run.stderr)
+			}
+			if got := jsonValue(t, run.stdout); !reflect.DeepEqual(got, asJSONValue(t, c.Report)) {
+				t.Fatalf("report:\n got %v\nwant %v", got, c.Report)
+			}
+		})
+	}
+}
+
+// summaryLines is the human summary of a vector case, line by line.
+func summaryLines(t *testing.T, w *logsVerifyWorld, c logsExportCase) []string {
+	t.Helper()
+	run := w.run(nil, append([]string{"--bundle", w.file(c.Name+".bundle", c.BundleLines)}, keyArgs(c)...)...)
+	if run.code != exitFor(c.Report) {
+		t.Fatalf("exit %d; want %d\nstderr: %s", run.code, exitFor(c.Report), run.stderr)
+	}
+	return strings.Split(run.stdout, "\n")
+}
+
+func TestLogsVerifySummaryCallsUnanchoredEventsVerifiedOnlyInAnIntactEpoch(t *testing.T) {
+	w := newLogsVerifyWorld(t)
+	v := loadLogsExportVector(t)
+	for name, intact := range map[string]bool{
+		"events_after_the_last_checkpoint_are_unanchored": true,
+		"event_out_of_position_order_is_misplaced":        false,
+	} {
+		t.Run(name, func(t *testing.T) {
+			ranges := 0
+			for _, line := range summaryLines(t, w, v.named(t, name)) {
+				// The line that names an epoch's unanchored range by team_seq.
+				if !strings.Contains(strings.ToLower(line), "unanchored") || !strings.Contains(line, "team_seq") {
+					continue
+				}
+				ranges++
+				if strings.Contains(line, "verified") != intact {
+					t.Fatalf("intact=%v epoch's unanchored line: %q", intact, line)
+				}
+			}
+			if ranges == 0 {
+				t.Fatal("the summary names no unanchored range")
+			}
+		})
+	}
+}
+
+func TestLogsVerifyRefusesTerminalControlsInExporterText(t *testing.T) {
+	w := newLogsVerifyWorld(t)
+	c := loadLogsExportVector(t).named(t, "purged_event_keeps_its_skeleton_and_act")
+	act := c.Report["epochs"].([]any)[0].(map[string]any)["purged"].([]any)[0].(map[string]any)["act"].(string)
+	for name, hostile := range map[string]string{
+		"osc_and_bell":  act + "\x1b]0;owned\x07",
+		"forged_line":   act + "\nThe bundle is intact.",
+		"bidi_override": act + "\u202e",
+	} {
+		t.Run(name, func(t *testing.T) {
+			encoded, err := json.Marshal(hostile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines := append([]string{}, c.BundleLines...)
+			replaced := false
+			for i, line := range lines {
+				if strings.Contains(line, `"purge_act":"`+act+`"`) {
+					lines[i] = strings.Replace(line, `"purge_act":"`+act+`"`, `"purge_act":`+string(encoded), 1)
+					replaced = true
+				}
+			}
+			if !replaced {
+				t.Fatal("the purged case has no purge_act line")
+			}
+			bundle := w.file(name+".bundle", lines)
+			human := w.run(nil, append([]string{"--bundle", bundle}, keyArgs(c)...)...)
+			if human.code != 2 || human.stdout != "" {
+				t.Fatalf("exit %d with stdout %q; want 2 and no summary", human.code, human.stdout)
+			}
+			requireErrorCode(t, w.run(nil, append([]string{"--bundle", bundle, "--json"}, keyArgs(c)...)...), "bundle_malformed")
+		})
 	}
 }

@@ -29,6 +29,20 @@ func TestIdentityHomeNeutralExemptionsAreExact(t *testing.T) {
 	}
 }
 
+func TestOfflineCommandsAreExactAndIdentityHomeNeutral(t *testing.T) {
+	if len(offlineCommands) != 1 {
+		t.Fatalf("offline command count=%d want 1", len(offlineCommands))
+	}
+	if _, ok := offlineCommands[logsVerifyCmd]; !ok {
+		t.Fatal("aw logs verify is not an offline command")
+	}
+	for cmd := range offlineCommands {
+		if !isIdentityHomeNeutralCommand(cmd) {
+			t.Fatalf("offline command %s is not identity-home neutral", cmd.CommandPath())
+		}
+	}
+}
+
 func TestInitExternalIdentityHomeAllowedOnlyForWorkspaceTeam(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
