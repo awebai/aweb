@@ -140,12 +140,14 @@ class OwnerHoldingAuthority:
 
     async def session_target(self, public_scope: PublicScope) -> OwnerSessionTarget:
         destination = await self.credential_target(public_scope)
-        approver = await self._console.passkeys.designated_approver(destination.b3_scope)
-        if approver is None:
-            raise _refused()
         async with self._console.db.transaction() as tx:
             await self._console.fence.check(tx, destination.admitted)
             assigned_at = await self._role_stamp(tx, destination)
+            approver = await self._console.passkeys.designated_approver(destination.b3_scope)
+            await self._console.fence.check(tx, destination.admitted)
+            if approver is None:
+                # Holding loss is final; a held role without usable B3 needs LOGIN.
+                raise HTTPException(401, "console_session_required")
         # This projection grants nothing; the caller must hold/recheck it before
         # release or effect. A changed B3 association cannot heal this subject.
         return OwnerSessionTarget(
@@ -218,12 +220,18 @@ class OwnerHoldingAuthority:
         if await self._role_stamp(tx, target) != target._role_assigned_at:
             raise _refused()
         approvers = await self._console.passkeys.prepare_current_approvers(tx, pairs)
+        current = await self._console.passkeys.check_current_approver(
+            tx, approvers, scope=target.b3_scope, subject=target.subject
+        )
+        # The role/stamp is held above. Classify B3 retirement separately, with
+        # the typed fence/deadline check after the last B3 wait and before refusal.
+        await fence.check(tx, target)
+        if not current:
+            raise HTTPException(401, "console_session_required")
         held = PreparedOwnerHolding(target, self, tx, fence, approvers, pairs)
         # A reconstructed dataclass must not turn copied guard fields into a
         # freshly issued app handle. This is in-process identity, not a store.
         object.__setattr__(held, "_issued_as", ref(held))
-        if not await self.check_session_target(tx, held):
-            raise _refused()
         return held
 
     @staticmethod
