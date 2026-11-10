@@ -31,6 +31,7 @@ from aweb.mcp.tools import contacts as contacts_tools
 from aweb.mcp.tools import chat as chat_tools
 from aweb.mcp.tools import mail as mail_tools
 from did_key_fixtures import named_did_key
+from test_messages_http import _encrypted_mail_envelope
 
 
 class DBInfra:
@@ -716,7 +717,7 @@ async def test_mcp_send_mail_uses_hosted_encryptor_by_default_for_trusted_proxy(
     alice_agent_id = uuid4()
     workspace_id = uuid4()
     bob_agent_id = uuid4()
-    _, alice_pub = generate_keypair()
+    alice_sk, alice_pub = generate_keypair()
     alice_did = did_from_public_key(alice_pub)
 
     await aweb_cloud_db.aweb_db.execute(
@@ -763,10 +764,15 @@ async def test_mcp_send_mail_uses_hosted_encryptor_by_default_for_trusted_proxy(
         return {
             "content_mode": "encrypted_v2",
             "message_version": 2,
-            "encrypted_envelope": _fake_encrypted_mail_envelope(
-                payload,
+            # The send validates the envelope as it does one a client supplies.
+            "encrypted_envelope": _encrypted_mail_envelope(
+                sender_sk=alice_sk,
                 sender_did=alice_did,
+                sender_stable_id="did:aw:alice",
                 recipient_did=named_did_key("z6MkBob"),
+                recipient_stable_id="did:aw:bob",
+                message_id=payload["message_id"],
+                conversation_id=payload["conversation_id"],
             ),
         }
 
@@ -1435,6 +1441,14 @@ async def test_mcp_send_mail_requires_current_local_address_authority(
     )
 
     class _Registry:
+        registry_url = "https://registry.test"
+
+        async def registry_audience(self, domain: str):
+            return "https://registry.test"
+
+        async def resolve_address(self, domain: str, name: str, *, did_key: str | None = None):
+            return await self.resolve_address_fresh(domain, name)
+
         async def resolve_address_fresh(
             self, domain: str, name: str, *, did_key: str | None = None
         ):
@@ -3295,6 +3309,14 @@ async def test_mcp_full_address_to_another_teams_local_identity_is_refused_witho
     )
 
     class _Registry:
+        registry_url = "https://registry.test"
+
+        async def registry_audience(self, domain: str):
+            return "https://registry.test"
+
+        async def resolve_address(self, domain: str, name: str, *, did_key: str | None = None):
+            return await self.resolve_address_fresh(domain, name)
+
         async def resolve_address_fresh(self, domain: str, name: str, *, did_key: str | None = None):
             assert (domain, name) == ("otherco.com", "bob")
             return None
