@@ -7,7 +7,8 @@ passkey login and reading the team's log. Its chain key, the one key that signs
 receipts and checkpoints, is loaded at construction by the shared app-key
 loader, so a deployment without it, or with a key the served manifest does not
 declare, does not start. While it runs, every team whose chain moved gets a
-checkpoint each ``checkpoint_interval_seconds``.
+checkpoint each ``checkpoint_interval_seconds``, and each team's owner-set
+retention is applied each ``retention_interval_seconds``.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
 import httpx
-from aweb_naapp.egress import Egress
+from aweb_naapp.egress.send import Resolver
 from aweb_naapp.email import EmailSettings, Mailer
 from aweb_naapp.hooks.catalog import packaged_catalog
 from aweb_naapp.manifest import Manifest
@@ -27,6 +28,7 @@ from aweb_naapp.runtime.app import NaappRuntime, mount_manifest_routes
 from aweb_naapp.runtime.app_keys import AppKeyError, load_app_key
 from aweb_naapp.runtime.authorization import DeclaredTool
 from aweb_naapp.runtime.health import mount_health
+from aweb_naapp.runtime.hook_egress import HookEgress
 from aweb_naapp.runtime.origins import OriginApps
 from aweb_naapp.runtime.passkeys.email import PasskeyEmailDelivery
 from aweb_naapp.runtime.team_auth import Principal
@@ -40,6 +42,7 @@ from aweb_logs.config import LogsSettings
 from aweb_logs.ingest import Ingestor, IngestRefused
 from aweb_logs.ledger import LogsSigner, checkpoint_moved_heads
 from aweb_logs.reader_service import reader_service
+from aweb_logs.retention import run_retention
 
 logger = logging.getLogger(__name__)
 
@@ -89,11 +92,13 @@ def create_app(
     email: EmailSettings,
     awid_transport: httpx.AsyncBaseTransport | None = None,
     team_server_transport: httpx.AsyncBaseTransport | None = None,
-    hook_egress: Egress | None = None,
+    resolver: Resolver | None = None,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> OriginApps:
     """logs on its public origin and its console origin. ``email`` sends the
-    enrolment links of designated readers."""
+    enrolment links of designated readers. Hook events leave through the guard
+    the settings configure; ``resolver`` replaces its DNS resolver."""
+    hooks = HookEgress.from_settings(settings, resolver=resolver)
     runtime = NaappRuntime(
         settings,
         module_name=MIGRATIONS_MODULE,
@@ -101,7 +106,9 @@ def create_app(
         manifest_path=MANIFEST_PATH,
         awid_transport=awid_transport,
         team_server_transport=team_server_transport,
-        hook_egress=hook_egress,
+        hook_egress=hooks.egress,
+        hook_internal_cidr=hooks.internal_cidr,
+        hook_internal_origins=hooks.internal_origins,
     )
     signer = chain_signer(settings, runtime.manifest)
     authorized = runtime.authorized(grants=runtime.installation_grants(), policy=admit_members)
@@ -127,6 +134,7 @@ def create_app(
     async def lifespan(api: FastAPI) -> AsyncIterator[None]:
         api_routes, console_routes = list(api.routes), list(console.routes)
         try:
+            await hooks.preflight()
             async with runtime.lifespan(api):
                 readers = await reader_service(
                     runtime,
@@ -147,11 +155,20 @@ def create_app(
                         stop=stop,
                     )
                 )
+                retention = asyncio.create_task(
+                    run_retention(
+                        runtime.db(),
+                        interval_seconds=settings.retention_interval_seconds,
+                        logs_origin=settings.public_origin,
+                        stop=stop,
+                    )
+                )
                 try:
                     yield
                 finally:
                     stop.set()
                     await checkpoints
+                    await retention
         finally:
             api.router.routes[:] = api_routes
             console.router.routes[:] = console_routes
