@@ -7,12 +7,14 @@ from importlib.metadata import version as pkg_version
 from typing import Optional
 
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
 from redis.asyncio import from_url as async_redis_from_url
 
 from awid.log_config import configure_logging
 from awid.ratelimit import build_rate_limiter as _shared_build_rate_limiter
-from .attestation_rotation import rotate_max_body_bytes_from_env
+from awid.request_body_limit import RequestBodyLimitMiddleware
+from .attestation_rotation import DEFAULT_ROTATE_MAX_BODY_BYTES, rotate_max_body_bytes_from_env
 from .config import get_settings
 from .routes.a2a_publications import router as a2a_publications_router
 from .routes.attestation_records import router as attestation_records_router
@@ -24,6 +26,32 @@ from .routes.teams import router as teams_router
 from .db import AwidDatabaseInfra
 
 logger = logging.getLogger(__name__)
+
+# The largest body any route accepts is the rotate route's, which has its own
+# limit. Every other route's tighter bound still applies under this one.
+DEFAULT_MAX_REQUEST_BODY_BYTES = DEFAULT_ROTATE_MAX_BODY_BYTES
+
+
+def _max_request_body_bytes(rotate_max_body_bytes: int) -> int:
+    """The service's request body limit, from AWID_MAX_REQUEST_BODY_BYTES.
+
+    Unset, it is the default or the rotate limit, whichever is larger, so a
+    raised rotate limit keeps working. Set, it must admit the rotate route.
+    """
+    raw = os.getenv("AWID_MAX_REQUEST_BODY_BYTES")
+    if raw is None:
+        return max(DEFAULT_MAX_REQUEST_BODY_BYTES, rotate_max_body_bytes)
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value < 1:
+        raise ValueError("AWID_MAX_REQUEST_BODY_BYTES must be a positive whole number of bytes")
+    if value < rotate_max_body_bytes:
+        raise ValueError(
+            f"AWID_MAX_REQUEST_BODY_BYTES ({value}) must be at least the rotate body limit ({rotate_max_body_bytes})"
+        )
+    return value
 
 
 def _public_health_error(*, component: str, exc: Exception, checks: dict[str, str]) -> None:
@@ -128,8 +156,9 @@ def _service_version() -> str:
 
 def mount_registry(app: FastAPI) -> None:
     """AWID's routes on ``app``, its ops routes and its registry, with the
-    configuration they read. The ops routes include ``/`` and ``/health``, so
-    a host that embeds AWID in its own app mounts it under a prefix."""
+    configuration they read and the request body limit. The ops routes include
+    ``/`` and ``/health``, and the limit covers every request to ``app``, so a
+    host that embeds AWID in its own app mounts it under a prefix."""
     service_version = _service_version()
 
     @app.get("/", tags=["ops"])
@@ -160,15 +189,22 @@ def mount_registry(app: FastAPI) -> None:
         checks["rate_limiter"] = type(request.app.state.rate_limiter).__name__
         return {"status": "ok" if healthy else "unhealthy", "version": service_version, "checks": checks}
 
-    @app.get("/health", tags=["ops"])
-    async def health(request: Request) -> dict:
-        return await _health_payload(request)
+    @app.get("/live", tags=["ops"])
+    async def live() -> dict:
+        # Checks no dependency: a Redis or database outage must not make an
+        # orchestrator restart a process that is serving requests.
+        return {"status": "ok"}
 
+    @app.get("/health", tags=["ops"])
+    @app.get("/ready", tags=["ops"])
     @app.get("/ops/health", tags=["ops"])
-    async def ops_health(request: Request) -> dict:
-        return await _health_payload(request)
+    async def health(request: Request) -> JSONResponse:
+        payload = await _health_payload(request)
+        return JSONResponse(status_code=200 if payload["status"] == "ok" else 503, content=payload)
 
     app.state.rotate_max_body_bytes = rotate_max_body_bytes_from_env()
+    app.state.max_request_body_bytes = _max_request_body_bytes(app.state.rotate_max_body_bytes)
+    app.add_middleware(RequestBodyLimitMiddleware, max_body_bytes=app.state.max_request_body_bytes)
 
     # Covering controller signatures use configuration, never Host/forwarded headers.
     app.state.awid_public_origins = tuple(

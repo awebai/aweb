@@ -8,11 +8,14 @@ import {
   type EventStreamState,
 } from "../src/index.js";
 import {
-  EVENT_STREAM_DEADLINE_MS,
   EVENT_STREAM_INACTIVITY_MS,
   EVENT_STREAM_SERVER_HEARTBEAT_MS,
   parseAgentEvent,
 } from "../src/api/events.js";
+import { STREAM_PLANNED_CLOSE_MAX_MS, STREAM_PLANNED_CLOSE_MIN_MS } from "../src/api/stream_policy.js";
+
+/** The largest value a uniform random source in [0, 1) returns. */
+const ALMOST_ONE = 1 - Number.EPSILON / 2;
 
 function sseFrame(event: string, payload: object): Uint8Array {
   return new TextEncoder().encode(
@@ -121,22 +124,34 @@ describe("parseAgentEvent", () => {
         return new Response(body);
       }),
     };
+    const startedAt = Date.now();
     const consuming = (async () => {
-      for await (const event of streamAgentEvents(client as never, abort.signal, (state) => states.push(state))) {
+      for await (const event of streamAgentEvents(
+        client as never, abort.signal, (state) => states.push(state), undefined, undefined, { random: () => 0 },
+      )) {
         if (event.type === "connected") {
           abort.abort();
           break;
         }
       }
     })();
-    await vi.waitFor(() => expect(states).toHaveLength(1));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(states).toHaveLength(1);
+    expect(attempts).toBe(1);
 
-    await vi.advanceTimersByTimeAsync(5000);
-    await vi.advanceTimersByTimeAsync(5000);
+    // The lowest draw waits half of 1 second, then half of 2 seconds.
+    await vi.advanceTimersByTimeAsync(499);
+    expect(attempts).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(attempts).toBe(2);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(attempts).toBe(2);
+    await vi.advanceTimersByTimeAsync(1);
     await consuming;
 
+    expect(attempts).toBe(3);
     expect(states).toEqual([
-      { state: "disconnected", cause: "network unavailable", retryInMs: 5000 },
+      { state: "disconnected", cause: "network unavailable", retryInMs: 500, nextAttemptAt: startedAt + 500 },
       { state: "reconnected" },
     ]);
     vi.useRealTimers();
@@ -157,17 +172,23 @@ describe("parseAgentEvent", () => {
         }));
       }),
     };
+    const startedAt = Date.now();
     const consuming = (async () => {
-      for await (const _event of streamAgentEvents(client as never, abort.signal, (state) => states.push(state))) {
+      for await (const _event of streamAgentEvents(
+        client as never, abort.signal, (state) => states.push(state), undefined, undefined, { random: () => ALMOST_ONE },
+      )) {
         // Empty streams must not yield or prove recovery.
       }
     })();
 
     await vi.waitFor(() => expect(states).toHaveLength(1));
     expect(attempts).toBe(1);
+    // The highest draw waits just under the delay of 1 second.
     expect(states).toEqual([
-      { state: "disconnected", cause: "connection closed", retryInMs: 1000 },
+      { state: "disconnected", cause: "connection closed", retryInMs: 999, nextAttemptAt: expect.any(Number) },
     ]);
+    expect(states[0].nextAttemptAt).toBeGreaterThanOrEqual(startedAt + 999);
+    expect(states[0].nextAttemptAt).toBeLessThanOrEqual(Date.now() + 999);
     await vi.advanceTimersByTimeAsync(500);
     expect(attempts).toBe(1);
     await vi.advanceTimersByTimeAsync(600);
@@ -238,7 +259,7 @@ describe("parseAgentEvent", () => {
     expect(states.map((state) => state.state)).toEqual([
       "connected", "disconnected", "reconnected",
     ]);
-    await vi.advanceTimersByTimeAsync(EVENT_STREAM_DEADLINE_MS * 2);
+    await vi.advanceTimersByTimeAsync(STREAM_PLANNED_CLOSE_MAX_MS * 2);
     expect(attempts).toBe(2);
     vi.useRealTimers();
   });
@@ -266,7 +287,7 @@ describe("parseAgentEvent", () => {
     })();
 
     await vi.waitFor(() => expect(streamController).toBeDefined());
-    for (let elapsed = 0; elapsed < EVENT_STREAM_DEADLINE_MS / 2;
+    for (let elapsed = 0; elapsed < STREAM_PLANNED_CLOSE_MIN_MS - EVENT_STREAM_SERVER_HEARTBEAT_MS;
       elapsed += EVENT_STREAM_SERVER_HEARTBEAT_MS) {
       await vi.advanceTimersByTimeAsync(EVENT_STREAM_SERVER_HEARTBEAT_MS);
       streamController!.enqueue(sseComment());
@@ -288,8 +309,11 @@ describe("parseAgentEvent", () => {
     let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
     let attempts = 0;
     const received: string[] = [];
+    const paths: string[] = [];
+    const startedAt = Date.now();
     const client = {
-      openSSE: vi.fn(async () => {
+      openSSE: vi.fn(async (path: string) => {
+        paths.push(path);
         attempts++;
         if (attempts === 1) {
           return new Response(new ReadableStream<Uint8Array>({
@@ -315,6 +339,10 @@ describe("parseAgentEvent", () => {
         client as never,
         abort.signal,
         (state) => states.push(state),
+        undefined,
+        undefined,
+        // The lowest draw closes the connection 3 minutes 30 seconds after it opens.
+        { random: () => 0 },
       )) {
         received.push(event.type);
         if (event.type === "mail_message") {
@@ -325,8 +353,12 @@ describe("parseAgentEvent", () => {
     })();
 
     await vi.waitFor(() => expect(received).toEqual(["connected"]));
+    // The server is asked to end the stream at the connection's planned close.
+    expect(paths).toEqual([
+      `/v1/events/stream?deadline=${encodeURIComponent(new Date(startedAt + STREAM_PLANNED_CLOSE_MIN_MS).toISOString())}`,
+    ]);
     for (let elapsed = 0;
-      elapsed < EVENT_STREAM_DEADLINE_MS - EVENT_STREAM_SERVER_HEARTBEAT_MS;
+      elapsed < STREAM_PLANNED_CLOSE_MIN_MS - EVENT_STREAM_SERVER_HEARTBEAT_MS;
       elapsed += EVENT_STREAM_SERVER_HEARTBEAT_MS) {
       await vi.advanceTimersByTimeAsync(EVENT_STREAM_SERVER_HEARTBEAT_MS);
       streamController!.enqueue(sseComment());
@@ -422,7 +454,7 @@ describe("parseAgentEvent", () => {
     await vi.runAllTimersAsync();
     await consuming;
     expect(getEventListeners(abort.signal, "abort")).toHaveLength(0);
-    await vi.advanceTimersByTimeAsync(EVENT_STREAM_DEADLINE_MS * 2);
+    await vi.advanceTimersByTimeAsync(STREAM_PLANNED_CLOSE_MAX_MS * 2);
     expect(attempts).toBe(12);
     vi.useRealTimers();
   });
@@ -526,18 +558,22 @@ test("terminal verification failure reports disconnect and drops later frames", 
       },
     }))),
   };
+  const startedAt = Date.now();
   for await (const event of streamAgentEvents(client as never, abort.signal, (state) => {
     states.push(state);
     if (state.state === "disconnected") abort.abort();
-  })) {
+  }, undefined, undefined, { random: () => 0 })) {
     received.push(event);
   }
   expect(received).toEqual([]);
+  // verification_unavailable is transient: the lowest draw waits half of 1 second.
   expect(states).toEqual([{
     state: "disconnected",
     cause: "agent event stream closed: identity grant verification unavailable; retry",
-    retryInMs: 1000,
+    retryInMs: 500,
+    nextAttemptAt: expect.any(Number),
   }]);
+  expect(states[0].nextAttemptAt).toBeGreaterThanOrEqual(startedAt + 500);
   expect(client.openSSE).toHaveBeenCalledTimes(1);
 });
 

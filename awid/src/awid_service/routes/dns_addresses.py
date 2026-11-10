@@ -224,8 +224,8 @@ class AddressRegisterRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(..., min_length=1, max_length=256)
-    did_aw: str = Field(..., min_length=1)
-    current_did_key: str = Field(..., min_length=1)
+    did_aw: str = Field(..., min_length=1, max_length=256)
+    current_did_key: str = Field(..., min_length=1, max_length=256)
     # Deprecated compatibility fields. They are accepted but ignored; all new
     # address writes use neutral global metadata (public, visible_to_team_id=NULL).
     reachability: str | None = Field(default=None, max_length=32)
@@ -247,8 +247,8 @@ class AddressUpdateRequest(BaseModel):
 class AddressReassignRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    did_aw: str = Field(..., min_length=1)
-    current_did_key: str = Field(..., min_length=1)
+    did_aw: str = Field(..., min_length=1, max_length=256)
+    current_did_key: str = Field(..., min_length=1, max_length=256)
 
     _check_did_aw = field_validator("did_aw")(_validate_did_aw)
     _check_did_key = field_validator("current_did_key")(_validate_did_key)

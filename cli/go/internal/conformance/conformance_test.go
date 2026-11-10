@@ -120,6 +120,7 @@ type teamAuthEnvelopeVectors struct {
 	Version             int                      `json:"version"`
 	ReplayWindowSeconds int                      `json:"replay_window_seconds"`
 	Cases               []teamAuthEnvelopeVector `json:"cases"`
+	IdentityCases       []teamAuthEnvelopeVector `json:"identity_cases"`
 	NegativeCases       []struct {
 		Name string `json:"name"`
 	} `json:"negative_cases"`
@@ -159,7 +160,7 @@ func TestTeamAuthEnvelopeV2Vectors(t *testing.T) {
 		t.Fatalf("expected cross-endpoint/cross-origin/tampered-body/missing-version negative cases")
 	}
 
-	for _, v := range vectors.Cases {
+	for _, v := range append(append([]teamAuthEnvelopeVector{}, vectors.Cases...), vectors.IdentityCases...) {
 		t.Run(v.Name, func(t *testing.T) {
 			seed, err := hex.DecodeString(v.SeedHex)
 			if err != nil {
@@ -190,6 +191,55 @@ func TestTeamAuthEnvelopeV2Vectors(t *testing.T) {
 				t.Fatalf("body_sha256 got %s want %s", got, hex.EncodeToString(sum[:]))
 			}
 		})
+	}
+
+	// An identity request binds did_aw in place of team_id: the stable
+	// identity, or the empty string for a local identity.
+	identityClaims := map[string]bool{}
+	for _, v := range vectors.IdentityCases {
+		didAW, ok := v.Payload["did_aw"].(string)
+		if !ok {
+			t.Fatalf("identity case %s must carry a string did_aw: %#v", v.Name, v.Payload)
+		}
+		if _, ok := v.Payload["team_id"]; ok {
+			t.Fatalf("identity case %s must not carry team_id: %#v", v.Name, v.Payload)
+		}
+		identityClaims[didAW] = true
+		t.Run(v.Name+"/signer", func(t *testing.T) {
+			seed, err := hex.DecodeString(v.SeedHex)
+			if err != nil {
+				t.Fatal(err)
+			}
+			target, err := url.Parse(fmt.Sprintf("%s%s", v.Payload["aud"], v.Payload["path"]))
+			if err != nil {
+				t.Fatal(err)
+			}
+			didKey, signature, canonical, err := awid.SignRequestCredential(
+				ed25519.NewKeyFromSeed(seed),
+				fmt.Sprint(v.Payload["method"]),
+				target,
+				"did_aw",
+				didAW,
+				fmt.Sprint(v.Payload["timestamp"]),
+				[]byte(v.Body),
+				nil,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if didKey != v.DIDKey {
+				t.Fatalf("did:key got %s want %s", didKey, v.DIDKey)
+			}
+			if canonical != v.CanonicalPayload {
+				t.Fatalf("canonical:\n got:  %s\n want: %s", canonical, v.CanonicalPayload)
+			}
+			if signature != v.SignatureB64 {
+				t.Fatalf("signature got %s want %s", signature, v.SignatureB64)
+			}
+		})
+	}
+	if !identityClaims[""] || len(identityClaims) < 2 {
+		t.Fatalf("expected identity cases for a stable identity and a local identity, got did_aw values %v", identityClaims)
 	}
 }
 

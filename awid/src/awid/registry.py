@@ -334,6 +334,15 @@ class RegistryClient:
             "_http_client",
             httpx.AsyncClient(
                 timeout=self.timeout_seconds,
+                # AWID's server closes idle connections after five seconds.
+                # The client's idle clock starts later, after consuming the
+                # response: an equal expiry can race that close on reuse.
+                # Keep a margin, without replaying ambiguous failed writes.
+                limits=httpx.Limits(
+                    max_connections=100,
+                    max_keepalive_connections=20,
+                    keepalive_expiry=1.0,
+                ),
                 transport=self.transport,
                 follow_redirects=False,
             ),

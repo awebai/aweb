@@ -12,6 +12,7 @@ import {
 } from "./registry.js";
 import { PinStore, type IdentityScope } from "./pinstore.js";
 import { decodeRawStdBase64 } from "./base64.js";
+import { compareByCodePoint } from "./canonical.js";
 
 ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 
@@ -154,11 +155,16 @@ export class SenderTrustManager {
     private readonly client: APIClient,
     private readonly registry: RegistryResolver,
     private readonly teamID: string,
-    private readonly selfDid: string,
+    private selfDid: string,
     private readonly selfStableID: string = "",
     private readonly now: () => number = () => Date.now(),
     private readonly random: () => number = () => Math.random(),
   ) {}
+
+  /** A key rotation gave this identity another did:key; recipients are bound to it. */
+  renewSelfDID(did: string): void {
+    this.selfDid = did;
+  }
 
   verifyResponsibility(message: ReceivedIdChain, authenticated: boolean) {
     return readReceivedIdChain(message, authenticated, {
@@ -1127,7 +1133,7 @@ export function canonicalReplacementJSON(
 }
 
 function canonicalObject(fields: Array<[string, string]>): string {
-  const sorted = [...fields].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  const sorted = [...fields].sort(([a], [b]) => compareByCodePoint(a, b));
   return `{${sorted.map(([key, value]) => `"${key}":"${escapeJSON(value)}"`).join(",")}}`;
 }
 

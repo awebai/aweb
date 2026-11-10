@@ -12,6 +12,7 @@ import os
 from types import SimpleNamespace
 from uuid import uuid4
 
+import httpx
 import pytest
 import pytest_asyncio
 from awid.ratelimit import NoOpRateLimiter
@@ -41,7 +42,7 @@ async def awid(shared_test_pool, monkeypatch):
         registry_app = create_registry_app(db_infra=infra, redis=redis, rate_limiter=NoOpRateLimiter())
         async with registry_app.router.lifespan_context(registry_app):
             yield SimpleNamespace(
-                db=infra.get_manager(), redis=redis, transport=ServiceTransport(registry_app)
+                app=registry_app, db=infra.get_manager(), redis=redis, transport=ServiceTransport(registry_app)
             )
 
 
@@ -76,6 +77,36 @@ async def test_a_library_mode_server_does_not_start_when_its_awid_is_down(awid, 
         async with app.router.lifespan_context(app):
             pass
     assert [request.url.path for request in awid.transport.calls] == ["/health"]
+
+
+class _RefusingRedis:
+    async def ping(self):
+        raise RuntimeError("redis refused")
+
+
+@pytest.mark.asyncio
+async def test_a_library_mode_server_starts_when_its_awid_answers_with_a_failed_dependency(
+    awid, db_infra
+) -> None:
+    # The registry answers, so it is reached; its own Redis outage is not a
+    # reason for this server to refuse to start.
+    awid.app.state.redis = _RefusingRedis()
+    app = create_app(db_infra=db_infra, redis=awid.redis, awid_transport=awid.transport)
+    async with app.router.lifespan_context(app):
+        assert [request.url.path for request in awid.transport.calls] == ["/health"]
+    async with httpx.AsyncClient(transport=awid.transport, base_url="http://registry.test") as http:
+        assert (await http.get("/health")).status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_a_library_mode_server_does_not_start_on_a_503_that_is_not_a_health_report(
+    awid, db_infra
+) -> None:
+    awid.transport.fault = lambda request, response: httpx.Response(503, json={"detail": "no backend"})
+    app = create_app(db_infra=db_infra, redis=awid.redis, awid_transport=awid.transport)
+    with pytest.raises(RuntimeError, match="Failed to reach AWID registry"):
+        async with app.router.lifespan_context(app):
+            pass
 
 
 def test_a_standalone_server_refuses_a_transport(awid) -> None:
