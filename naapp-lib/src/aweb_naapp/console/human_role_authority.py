@@ -209,6 +209,7 @@ class HumanRoleHandoffAuthority:
             return target
         if not isinstance(target, HumanRoleSessionTarget):
             raise _not_held()
+        self._require_own(target)
         pairs = self._pair_union(target, approver_pairs)
         fence = self._fence.for_installation(target.admitted)
         await fence.prepare(tx)
@@ -232,6 +233,20 @@ class HumanRoleHandoffAuthority:
         # this authority issued. This is in-process identity, not a store.
         object.__setattr__(prepared, "_issued_as", ref(prepared))
         return prepared
+
+    def _require_own(self, target: HumanRoleSessionTarget) -> None:
+        """A target this authority could have projected: its selector names
+        this role and the target's own admitted installation, and its B3 scope
+        is that holding's. A target of another role's authority, sharing the
+        store, is refused here rather than held."""
+        scope = self._scope(target.public_scope)
+        admitted = target.admitted
+        if scope.installation_id != admitted.installation_id or target.b3_scope != (
+            roles.holding_scope(
+                admitted.installation_id, admitted.team_id, scope.role, scope.principal
+            )
+        ):
+            raise _not_held()
 
     @staticmethod
     def _pair_union(

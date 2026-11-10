@@ -28,6 +28,7 @@ from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.human_roles import HumanRoleHoldings
 from aweb_naapp.runtime.installation import InstallationFence, apply_installation_migrations
 from tests.runtime.approvals.test_human_role_holders import (
+    CERTIFICATE,
     OTHER_PRINCIPAL,
     PRINCIPAL,
     ROLE,
@@ -35,12 +36,14 @@ from tests.runtime.approvals.test_human_role_holders import (
     PasskeyWorld,
     designate,
     holder,
+    owner,
     pw,  # noqa: F401
     replace,
     revoke,
 )
 
 PUBLIC = PublicScope(installation_id=INSTALLATION_ID, role=ROLE, principal=PRINCIPAL)
+OTHER_ROLE = "example.auditor"
 
 
 class Installations:
@@ -72,17 +75,43 @@ class Installations:
         )
 
 
-async def authority_for(pw: PasskeyWorld) -> HumanRoleHandoffAuthority:
+async def authority_for(
+    pw: PasskeyWorld, role: str = ROLE, *, declared: frozenset[str] = frozenset({ROLE})
+) -> HumanRoleHandoffAuthority:
     db = pw.passkeys.db
     await apply_installation_migrations(db)
     fence = InstallationFence(db, app_id=APP_ID, grants=Installations())
     await fence.refresh(TEAM_ID)
     return HumanRoleHandoffAuthority(
-        role=ROLE,
-        holdings=HumanRoleHoldings(roles=frozenset({ROLE}), passkeys=pw.passkeys),
+        role=role,
+        holdings=HumanRoleHoldings(roles=declared, passkeys=pw.passkeys),
         fence=fence,
         passkeys=pw.passkeys,
     )
+
+
+async def designate_other_role(pw: PasskeyWorld):
+    """The owner names PRINCIPAL as holder of OTHER_ROLE too, with its own
+    credential."""
+    member = holder()
+    subject = {
+        "app_id": APP_ID,
+        "installation_id": INSTALLATION_ID,
+        "role": OTHER_ROLE,
+        "principal": PRINCIPAL,
+        "credential_sha256": member.credential.sha256,
+    }
+    signer = owner(pw)
+    prepared = await signer.prepare("human-role.designate", subject)
+    async with pw.passkeys.db.transaction() as tx:
+        verified = await signer.consume(tx, prepared, subject)
+        return await pw.passkeys.designate_holder(
+            tx,
+            act=verified,
+            credential=member.credential,
+            certificate=CERTIFICATE,
+            notice_contact=None,
+        )
 
 
 def refusal(raised: pytest.ExceptionInfo[HTTPException]) -> tuple[int, str]:
@@ -243,13 +272,73 @@ async def test_a_hold_serializes_a_revocation_until_the_holder_s_transaction_end
     designation = await designate(pw, holder())
     target = await authority.session_target(PUBLIC)
     pair = (SCOPE, designation.approver.subject)
-    async with pw.passkeys.db.transaction() as tx:
-        held = await authority.hold_session_target(tx, target, approver_pairs=[pair])
-        revoking = asyncio.create_task(revoke(pw))
-        await asyncio.sleep(0.5)
-        assert not revoking.done()
-        assert await authority.check_session_target(tx, held)
-    await asyncio.wait_for(revoking, 10)
+    writer: list[int] = []
+
+    async def revoking_writer() -> None:
+        async with pw.passkeys.db.transaction() as wtx:
+            writer.append(await wtx.fetch_value("SELECT pg_backend_pid()"))
+            await revoke(pw, wtx)
+
+    revoking: asyncio.Task[None] | None = None
+    try:
+        async with pw.passkeys.db.transaction() as tx:
+            held = await authority.hold_session_target(tx, target, approver_pairs=[pair])
+            holding_pid = await tx.fetch_value("SELECT pg_backend_pid()")
+            revoking = asyncio.create_task(revoking_writer())
+            # The writer's own backend waits on this transaction's hold.
+            try:
+                async with asyncio.timeout(10):
+                    while not (
+                        writer
+                        and await tx.fetch_value(
+                            "SELECT $1 = ANY(pg_blocking_pids($2))", holding_pid, writer[0]
+                        )
+                    ):
+                        await asyncio.sleep(0.02)
+            except TimeoutError:
+                pytest.fail("the revocation never waited on the hold")
+            assert not revoking.done()
+            assert await authority.check_session_target(tx, held)
+        await asyncio.wait_for(revoking, 10)
+    finally:
+        if revoking is not None and not revoking.done():
+            revoking.cancel()
+            await asyncio.gather(revoking, return_exceptions=True)
     with pytest.raises(HTTPException) as refused:
         await authority.session_target(PUBLIC)
+    assert refusal(refused) == (403, "role_not_held")
+
+
+async def test_a_target_projected_for_another_role_is_never_held(pw: PasskeyWorld):
+    """One store declaring two roles: a real target of the other role's
+    authority, with its own pair, is refused, not held under this role."""
+    declared = frozenset({ROLE, OTHER_ROLE})
+    reader = await authority_for(pw, ROLE, declared=declared)
+    auditor = await authority_for(pw, OTHER_ROLE, declared=declared)
+    await designate(pw, holder())
+    await designate_other_role(pw)
+    theirs = await auditor.session_target(PublicScope(INSTALLATION_ID, OTHER_ROLE, PRINCIPAL))
+    async with pw.passkeys.db.transaction() as tx:
+        with pytest.raises(HTTPException) as refused:
+            await reader.hold_session_target(
+                tx, theirs, approver_pairs=[(theirs.b3_scope, theirs.subject)]
+            )
+    assert refusal(refused) == (403, "role_not_held")
+
+
+async def test_a_target_whose_selector_names_another_installation_is_never_held(
+    pw: PasskeyWorld,
+):
+    authority = await authority_for(pw)
+    designation = await designate(pw, holder())
+    target = await authority.session_target(PUBLIC)
+    moved = dataclasses.replace(
+        target,
+        public_scope=PublicScope("6f9619ff-8b86-4011-b42d-00c04fc964ff", ROLE, PRINCIPAL),
+    )
+    async with pw.passkeys.db.transaction() as tx:
+        with pytest.raises(HTTPException) as refused:
+            await authority.hold_session_target(
+                tx, moved, approver_pairs=[(SCOPE, designation.approver.subject)]
+            )
     assert refusal(refused) == (403, "role_not_held")
