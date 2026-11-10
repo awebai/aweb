@@ -79,8 +79,8 @@ if getent passwd aweb-runner; then echo 'STOP: existing runner account'; exit 1;
 [ ! -e /opt/aweb-secrets-e2e ] && [ ! -L /opt/aweb-secrets-e2e ]
 [ ! -e /opt/aweb-secrets-e2e-inputs ] && [ ! -L /opt/aweb-secrets-e2e-inputs ]
 
-python3 - <<'PY'
-import hashlib, json, os, pathlib, stat
+python3 -I - <<'PY'
+import grp, hashlib, json, os, pathlib, pwd, runpy, stat, tarfile
 from urllib.parse import urlsplit
 stage = pathlib.Path('/root/lab/runner-stage')
 pins = {
@@ -99,6 +99,27 @@ for name in [*pins, 'supervisor-config.json']:
     if name in pins:
         with path.open('rb') as stream:
             assert hashlib.file_digest(stream, 'sha256').hexdigest() == pins[name]
+agent = pwd.getpwnam('oatsagent')
+privileged_groups = {0}
+for name in ('docker', 'sudo', 'adm', 'lxd', 'incus'):
+    try:
+        privileged_groups.add(grp.getgrnam(name).gr_gid)
+    except KeyError:
+        pass
+assert not privileged_groups.intersection(os.getgrouplist(agent.pw_name, agent.pw_gid))
+# Reuse the hash-verified UID-attested wrapper; never interpret sudo's own
+# failure to launch as a denial by the agent.
+checked = runpy.run_path(str(stage / 'verify-installed.py'), run_name='preflight_verifier')
+identity = checked['as_user']('oatsagent', ['/usr/bin/id', '-u'])
+assert identity.returncode == 0 and identity.stdout.strip() == str(agent.pw_uid)
+root_probe = checked['as_user']('oatsagent', ['/usr/bin/sudo', '-n', '-u', 'root', '--', '/usr/bin/true'])
+assert root_probe.returncode != 0
+with tarfile.open(stage / 'runner-linux-amd64-dfa093a39.tar.gz') as archive:
+    for member in archive.getmembers():
+        path = pathlib.PurePosixPath(member.name)
+        assert not path.is_absolute() and '..' not in path.parts
+        assert path.parts and path.parts[0] == 'aweb-secrets-e2e'
+        assert member.isdir() or member.isfile()
 config = json.loads((stage / 'supervisor-config.json').read_text())
 assert set(config) == {'origin'} and isinstance(config['origin'], str)
 origin = urlsplit(config['origin'])
@@ -140,7 +161,7 @@ id aweb-runner
 install -o root -g root -m 0644 /root/lab/runner-stage/supervisor-config.json \
   /opt/aweb-secrets-e2e/supervisor-config.json
 install -d -o aweb-runner -g aweb-runner -m 0700 /opt/aweb-secrets-e2e/runner-state
-python3 - <<'PY'
+python3 -I - <<'PY'
 import json, os, pathlib, pwd
 agent = pwd.getpwnam('oatsagent')
 runner = pwd.getpwnam('aweb-runner')
