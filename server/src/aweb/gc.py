@@ -1,4 +1,4 @@
-"""Deletion of rows no reader needs again, and of expired messages."""
+"""Deletion of rows no reader needs again."""
 
 from __future__ import annotations
 
@@ -14,27 +14,6 @@ def _rows_affected(status: str) -> int:
     if len(parts) >= 2 and parts[-1].isdigit():
         return int(parts[-1])
     return 0
-
-
-async def gc_expired_messages(db_infra, *, ttl_days: int = 30) -> dict:
-    aweb_db = db_infra.get_manager("aweb")
-    cutoff = datetime.now(timezone.utc) - timedelta(days=ttl_days)
-
-    chat_status = await aweb_db.execute(
-        "DELETE FROM {{tables.chat_messages}} WHERE created_at < $1",
-        cutoff,
-    )
-    chat_deleted = _rows_affected(chat_status)
-
-    mail_status = await aweb_db.execute(
-        "DELETE FROM {{tables.messages}} WHERE created_at < $1",
-        cutoff,
-    )
-    mail_deleted = _rows_affected(mail_status)
-
-    total = chat_deleted + mail_deleted
-    logger.info("gc_expired_messages: deleted %d messages (cutoff=%s)", total, cutoff.isoformat())
-    return {"messages_deleted": total, "chat_deleted": chat_deleted, "mail_deleted": mail_deleted}
 
 
 @dataclass(frozen=True)

@@ -1771,6 +1771,7 @@ The command deletes from no other table. It never deletes a team, an agent, a
 task, a message, an `audit_log` row or an identity session grant, whatever
 their age or activity: aweb defines no retention period for `audit_log`, and
 expired and revoked grants are read by the grant list and by agent health.
+The server deletes no mail or chat message automatically.
 
 Each `DELETE` statement removes at most 1000 rows and commits on its own, so a
 run holds no long lock and may be stopped and run again. Each rule selects its
@@ -1782,11 +1783,6 @@ whole.
 The aweb server process does not run the command. Operators run it on a
 schedule (cron, a Kubernetes CronJob, or equivalent; typically nightly) with
 `AWEB_DATABASE_URL` set as for the server.
-
-`aweb.gc.gc_expired_messages(db_infra, ttl_days=30)` deletes mail and chat
-messages older than `ttl_days` (raw `created_at < now - ttl_days`). The command
-does not call it; an operator that wants message expiry calls the function
-from its own job.
 
 ### Releasing claims on closed tasks
 

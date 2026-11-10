@@ -29,8 +29,8 @@ async def _seed(db) -> dict[str, set]:
 
     Per team and table: one dead row past the rule's age, one dead row short
     of it and, where the table has a live state, one live row older than the
-    age. The quiet team was created 60 days ago and holds a task and no
-    messages. Returns the primary keys of the rows the cleanup deletes, per
+    age. The quiet team was created 60 days ago and holds a task, an unread
+    mail and a chat message, all 60 days old. Returns the primary keys of the rows the cleanup deletes, per
     table.
     """
     dead: dict[str, set] = {table: set() for table in RULE_TABLES}
@@ -151,6 +151,31 @@ async def _seed(db) -> dict[str, set]:
         QUIET,
         _ago(60),
     )
+    await db.execute(
+        """
+        INSERT INTO {{tables.messages}} (
+            from_did, to_did, from_alias, to_alias, subject, body, team_id, created_at
+        )
+        VALUES ('did:key:agent-busy', 'did:key:agent-quiet', 'alice', 'alice', 'hi', 'unread', $1, $2)
+        """,
+        QUIET,
+        _ago(60),
+    )
+    session_id = uuid4()
+    await db.execute(
+        "INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by, created_at) VALUES ($1, $2, 'alice', $3)",
+        session_id,
+        QUIET,
+        _ago(60),
+    )
+    await db.execute(
+        """
+        INSERT INTO {{tables.chat_messages}} (session_id, from_did, from_alias, body, created_at)
+        VALUES ($1, 'did:key:agent-busy', 'alice', 'unread', $2)
+        """,
+        session_id,
+        _ago(60),
+    )
     return dead
 
 
@@ -241,7 +266,7 @@ async def test_apply_deletes_dead_rows_past_the_age_in_every_team_and_nothing_el
 
 
 @pytest.mark.asyncio
-async def test_quiet_team_with_tasks_survives(aweb_cloud_db):
+async def test_quiet_team_keeps_its_tasks_mail_and_chat(aweb_cloud_db):
     db = aweb_cloud_db.aweb_db
     await _seed(db)
 
@@ -255,6 +280,18 @@ async def test_quiet_team_with_tasks_survives(aweb_cloud_db):
     ) == 1
     assert await db.fetch_value(
         "SELECT COUNT(*) FROM {{tables.tasks}} WHERE team_id = $1 AND deleted_at IS NULL", QUIET
+    ) == 1
+    assert await db.fetch_value(
+        "SELECT COUNT(*) FROM {{tables.messages}} WHERE team_id = $1 AND read_at IS NULL", QUIET
+    ) == 1
+    assert await db.fetch_value(
+        """
+        SELECT COUNT(*)
+        FROM {{tables.chat_messages}} m
+        JOIN {{tables.chat_sessions}} s ON s.session_id = m.session_id
+        WHERE s.team_id = $1
+        """,
+        QUIET,
     ) == 1
 
 
