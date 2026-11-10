@@ -1,4 +1,5 @@
-import type { APIClient } from "./client.js";
+import { APIError, type APIClient } from "./client.js";
+import { EventStreamClosedError, STREAM_SILENCE_LIMIT_MS, StreamPolicy, type StreamEnd } from "./stream_policy.js";
 
 export type AgentEventType =
   | "connected"
@@ -14,10 +15,33 @@ export type AgentEventType =
   | "app_event"
   | "error";
 
+/**
+ * A change of the stream's state (docs/event-stream-client-policy.md, section
+ * 8). The stream is streaming after "connected" and "reconnected", retrying
+ * after "disconnected" and refused after "refused". A planned close does not
+ * leave streaming and a retry that is refused again reports nothing.
+ */
 export interface EventStreamState {
-  state: "connected" | "disconnected" | "reconnected";
+  state: "connected" | "disconnected" | "reconnected" | "refused";
+  /** Why the stream is disconnected, or the HTTP status or terminal event name that refused it. */
   cause?: string;
   retryInMs?: number;
+  /** When the next attempt is made, in epoch milliseconds. */
+  nextAttemptAt?: number;
+  /** On "reconnected": the refusal the confirmed stream ended. */
+  endedRefusal?: string;
+}
+
+export interface EventStreamOptions {
+  /**
+   * Reads the stream's credentials again from where they are kept. It is
+   * called before each retry of a refused stream and at no other time, with a
+   * signal that aborts when the stream stops. When it rejects, the attempt
+   * fails without a request.
+   */
+  reloadCredentials?: (signal: AbortSignal) => Promise<void>;
+  /** A uniform draw in [0, 1) for the policy's jitter and planned close. */
+  random?: () => number;
 }
 
 export interface EventStreamObserver {
@@ -51,13 +75,15 @@ export interface AgentEvent {
 }
 
 export const EVENT_STREAM_SERVER_HEARTBEAT_MS = 30_000;
-export const EVENT_STREAM_INACTIVITY_MS = 2 * EVENT_STREAM_SERVER_HEARTBEAT_MS + 15_000;
-export const EVENT_STREAM_DEADLINE_MS = 5 * 60 * 1000;
-const EVENT_STREAM_PLANNED_CLOSE_MS = 4 * 60 * 1000;
+export const EVENT_STREAM_INACTIVITY_MS = STREAM_SILENCE_LIMIT_MS;
 
 /**
  * Consume the agent event stream (GET /v1/events/stream).
- * Yields parsed AgentEvent objects. Reconnects on stream end.
+ * Yields parsed AgentEvent objects. It reconnects for as long as signal is not
+ * aborted: no answer from the server ends the stream. What the end of a
+ * connection means and how long to wait before the next one are decided by
+ * the event stream client policy (stream_policy.ts); this loop owns the
+ * connection, its timers and the reporting of state.
  */
 export async function* streamAgentEvents(
   client: APIClient,
@@ -65,68 +91,57 @@ export async function* streamAgentEvents(
   onState: (state: EventStreamState) => void = () => {},
   onEvent: (event: AgentEvent) => void = () => {},
   observer?: EventStreamObserver,
+  options: EventStreamOptions = {},
 ): AsyncGenerator<AgentEvent> {
+  const policy = new StreamPolicy({ random: options.random });
   let connectedOnce = false;
   let disconnected = false;
-  let retryInMs = 1000;
-  const maxRetryInMs = 5000;
   while (!signal.aborted) {
+    // Opening the response is not proof that the stream is live: a proxy can
+    // answer 200 and close the body. The stream is confirmed by its first
+    // heartbeat comment or event.
+    const connection = policy.connect((endedRefusal) => {
+      if (endedRefusal) onState({ state: "reconnected", endedRefusal });
+      else if (disconnected) onState({ state: "reconnected" });
+      else if (!connectedOnce) onState({ state: "connected" });
+      disconnected = false;
+      connectedOnce = true;
+    });
     const openedAt = Date.now();
-    const deadline = new Date(openedAt + EVENT_STREAM_DEADLINE_MS).toISOString();
+    // The server is asked to end the stream at the connection's planned close.
+    const deadline = new Date(connection.plannedCloseAt).toISOString();
     const attemptAbort = new AbortController();
     let deadlineReached = false;
     const abortAttempt = () => attemptAbort.abort(signal.reason);
     signal.addEventListener("abort", abortAttempt, { once: true });
+    // The server is required to close at this same deadline. Local enforcement
+    // is that planned close: a half-open transport can hide the server's EOF.
     const deadlineTimer = setTimeout(() => {
       deadlineReached = true;
       attemptAbort.abort(new Error("event stream local deadline reached"));
-    }, EVENT_STREAM_DEADLINE_MS);
+    }, connection.plannedCloseAt - openedAt);
     const finishAttempt = () => {
       clearTimeout(deadlineTimer);
       signal.removeEventListener("abort", abortAttempt);
     };
 
-    let resp: Response;
+    let resp: Response | undefined;
+    let failed = false;
+    let failure: unknown;
     try {
+      if (connection.reloadsCredentials && options.reloadCredentials) {
+        await untilAborted(options.reloadCredentials(attemptAbort.signal), attemptAbort.signal);
+      }
       resp = await client.openSSE(
         `/v1/events/stream?deadline=${encodeURIComponent(deadline)}`,
         attemptAbort.signal,
       );
-    } catch (err) {
-      finishAttempt();
-      if (signal.aborted) return;
-      // The server is required to close at this same deadline. Treat our local
-      // enforcement like that planned close: reconnect immediately and do not
-      // claim an outage merely because a half-open transport hid server EOF.
-      if (deadlineReached) continue;
-      const fetchRetryInMs = maxRetryInMs;
-      if (!disconnected) {
-        disconnected = true;
-        onState({ state: "disconnected", cause: streamErrorCause(err), retryInMs: fetchRetryInMs });
-      }
-      retryInMs = fetchRetryInMs;
-      await sleep(retryInMs, signal);
-      continue;
-    }
-
-    try {
-      let streamConfirmed = false;
+      connection.opened();
       try {
         for await (const event of parseSSEResponse(resp, attemptAbort.signal, () => {
           try { observer?.onRead(openedAt, Date.now()); } catch { /* Local evidence cannot interrupt delivery. */ }
-        })) {
-          if (!streamConfirmed) {
-            streamConfirmed = true;
-            retryInMs = 1000;
-            if (disconnected) {
-              disconnected = false;
-              connectedOnce = true;
-              onState({ state: "reconnected" });
-            } else if (!connectedOnce) {
-              connectedOnce = true;
-              onState({ state: "connected" });
-            }
-          }
+        }, () => connection.comment())) {
+          connection.event(event.type);
           try {
             onEvent(event);
           } catch {
@@ -138,38 +153,59 @@ export async function* streamAgentEvents(
         // Remove proof before retry backoff, including errors and planned closes.
         try { await observer?.onClose(); } catch { /* Keep delivery independent of diagnostics. */ }
       }
-      if (!signal.aborted && !deadlineReached
-        && Date.now() - openedAt < EVENT_STREAM_PLANNED_CLOSE_MS) {
-        if (!disconnected) {
-          disconnected = true;
-          onState({ state: "disconnected", cause: "connection closed", retryInMs });
-        }
-        await sleep(retryInMs, signal);
-        retryInMs = Math.min(maxRetryInMs, retryInMs * 2);
-      }
     } catch (err) {
-      if (signal.aborted) return;
-      if (deadlineReached) continue;
-      if (!disconnected) {
-        disconnected = true;
-        onState({ state: "disconnected", cause: streamErrorCause(err), retryInMs });
-      }
-      // AbortError is only expected when our parent signal is aborted (handled
-      // above). A read failure, including heartbeat inactivity, reconnects via
-      // the existing bounded backoff.
-      await sleep(retryInMs, signal);
-      retryInMs = Math.min(maxRetryInMs, retryInMs * 2);
+      failed = true;
+      failure = err ?? new Error("event stream failed");
     } finally {
       finishAttempt();
-      resp.body?.cancel().catch(() => {});
+      resp?.body?.cancel().catch(() => {});
     }
+    if (signal.aborted) return;
+
+    let end: StreamEnd;
+    if (deadlineReached) end = connection.reachedPlannedClose();
+    else end = connection.ended(failed ? failure : undefined);
+    // A planned close is not an outage: reconnect at once and report nothing.
+    if (end.kind === "planned_close") continue;
+    if (end.kind === "refused") {
+      // Reported once on entering the quarantine; a retry that is refused
+      // again moves the next attempt and says nothing.
+      if (end.enteredRefused) {
+        onState({ state: "refused", cause: end.cause, retryInMs: end.waitMs, nextAttemptAt: end.nextAttemptAt });
+      }
+    } else if (!disconnected) {
+      disconnected = true;
+      onState({
+        state: "disconnected",
+        cause: failed ? streamErrorCause(end.error) : "connection closed",
+        retryInMs: end.waitMs,
+        nextAttemptAt: end.nextAttemptAt,
+      });
+    }
+    await sleep(end.waitMs, signal);
   }
+}
+
+/** Settles as work does, or rejects as soon as signal aborts. */
+function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    if (signal.aborted) {
+      // The work is abandoned; its own failure has nowhere to be reported.
+      work.catch(() => {});
+      onAbort();
+      return;
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
+    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
 }
 
 async function* parseSSEResponse(
   resp: Response,
   signal: AbortSignal,
   onRead: () => void = () => {},
+  onComment: () => void = () => {},
 ): AsyncGenerator<AgentEvent> {
   const reader = resp.body?.getReader();
   if (!reader) return;
@@ -207,7 +243,10 @@ async function* parseSSEResponse(
           continue;
         }
 
-        if (line.startsWith(":")) continue; // comment
+        if (line.startsWith(":")) {
+          onComment();
+          continue;
+        }
 
         if (line.startsWith("event:")) {
           currentEvent = line.slice(6).trim();
@@ -273,8 +312,6 @@ const KNOWN_TYPES: Set<string> = new Set([
   "actionable_mail", "actionable_chat", "actionable_room_post", "room_post",
 ]);
 
-class GrantStreamError extends Error {}
-
 const GRANT_TERMINAL_TYPES = new Set([
   "grant_expired", "grant_revoked", "grant_subject_inactive", "grant_issuer_revoked",
   "verification_unavailable",
@@ -293,7 +330,7 @@ export function parseAgentEvent(eventName: string, data: string): AgentEvent | n
       // The terminal event name remains authoritative if its payload is malformed.
     }
     if (eventName === "verification_unavailable") detail = "identity grant verification unavailable; retry";
-    throw new GrantStreamError(`agent event stream closed: ${detail}`);
+    throw new EventStreamClosedError(eventName, detail);
   }
 
   if (!KNOWN_TYPES.has(eventName)) return null;
@@ -313,14 +350,26 @@ export function parseAgentEvent(eventName: string, data: string): AgentEvent | n
 export function formatEventStreamState(state: EventStreamState): string {
   if (state.state === "connected") return "aweb: event stream connected";
   if (state.state === "reconnected") {
-    return "aweb: event stream reconnected";
+    return state.endedRefusal
+      ? `aweb: event stream accepted again (was refused: ${state.endedRefusal})`
+      : "aweb: event stream reconnected";
+  }
+  if (state.state === "refused") {
+    return `aweb: event stream refused: ${state.cause}, next try ${localClockTime(state.nextAttemptAt ?? Date.now())}`;
   }
   const seconds = Math.max(1, Math.round((state.retryInMs || 0) / 1000));
   return `aweb: event stream disconnected (${state.cause || "connection failed"}) — retrying in ${seconds}s`;
 }
 
+/** The local time of day, HH:MM, of a moment in epoch milliseconds. */
+export function localClockTime(at: number): string {
+  const time = new Date(at);
+  return `${String(time.getHours()).padStart(2, "0")}:${String(time.getMinutes()).padStart(2, "0")}`;
+}
+
 export function streamErrorCause(err: unknown): string {
-  if (err instanceof GrantStreamError) return err.message;
+  if (err instanceof EventStreamClosedError) return err.message;
+  if (err instanceof APIError) return `http ${err.statusCode}`;
   const error = err instanceof Error ? err : undefined;
   const nested = error?.cause as { code?: unknown; message?: unknown } | undefined;
   const code = typeof nested?.code === "string" ? nested.code.toUpperCase() : "";

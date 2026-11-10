@@ -6,7 +6,7 @@ import { appendFile, mkdir, open, readFile, rename, rm } from "node:fs/promises"
 import { lock } from "proper-lockfile";
 
 import { APIClient } from "./api/client.js";
-import { streamAgentEvents, formatEventStreamState, type AgentEvent, type EventStreamState, type EventStreamObserver } from "./api/events.js";
+import { streamAgentEvents, formatEventStreamState, type AgentEvent, type EventStreamOptions, type EventStreamState, type EventStreamObserver } from "./api/events.js";
 import { ackMessage, fetchInbox, type InboxMessage } from "./api/mail.js";
 import { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";
 import { fetchRoomMessage, ackRoomNotice } from "./api/room.js";
@@ -87,6 +87,12 @@ export interface ChannelLoopOptions {
   /** Operator diagnostics only; stream state must never become an awakening. */
   onStreamState?: (state: EventStreamState) => void;
   streamObserver?: EventStreamObserver;
+  /**
+   * Reads the channel's credentials again from where they are kept, before
+   * each retry of a refused event stream (createChannelCredentialReload).
+   * Without it a refused stream is retried with the credentials the client holds.
+   */
+  reloadCredentials?: EventStreamOptions["reloadCredentials"];
   onTrace?: (entry: ChannelTraceEntry) => void;
   /**
    * A chat message of this session is about to be presented to the agent, so
@@ -357,7 +363,9 @@ export function createRegistryResolver(
   });
 }
 
-export function createChannelClient(config: {
+export interface ChannelClientConfig {
+  /** The credential directory the configuration was read from. */
+  identityHome?: string;
   baseURL: string;
   did: string;
   stableID: string;
@@ -366,7 +374,9 @@ export function createChannelClient(config: {
   teamCertificateHeader: string;
   authMode?: "team" | "grant";
   grantID?: string;
-}): APIClient {
+}
+
+export function createChannelClient(config: ChannelClientConfig): APIClient {
   const client = new APIClient(config.baseURL, {
     did: config.did,
     stableID: config.stableID,
@@ -380,6 +390,31 @@ export function createChannelClient(config: {
     throw new Error(`selected active team ${config.teamID} is missing certificate signing authentication`);
   }
   return client;
+}
+
+/**
+ * Returns the function a channel loop calls before each retry of a refused
+ * event stream. It reads the configuration again with load, which must read
+ * the identity home the channel started with, and gives the client the
+ * certificate or grant found there, so one renewed on disk is used without a
+ * restart. It is not a way to another identity: a configuration that names
+ * another identity home, server, identity, team or way to authenticate is
+ * refused and the client keeps what it holds.
+ */
+export function createChannelCredentialReload(
+  client: APIClient,
+  config: ChannelClientConfig,
+  load: () => Promise<ChannelClientConfig>,
+): (signal: AbortSignal) => Promise<void> {
+  return async (signal) => {
+    const renewed = await load();
+    // A stream that stopped while the files were read takes nothing from them.
+    signal.throwIfAborted();
+    if ((renewed.identityHome || "") !== (config.identityHome || "")) {
+      throw new Error("the credentials read again come from another identity home");
+    }
+    client.renewCredentialsFrom(createChannelClient(renewed));
+  };
 }
 
 function emitTrace(
@@ -444,6 +479,7 @@ export async function startChannelLoop(options: ChannelLoopOptions & { teamID: s
       }),
       (event) => emitTrace(options, "frame_parsed", event, eventDispatchLane(event)),
       options.streamObserver,
+      { reloadCredentials: options.reloadCredentials },
     ),
     options.log || (() => {}),
   );

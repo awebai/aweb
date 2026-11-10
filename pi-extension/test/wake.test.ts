@@ -44,6 +44,33 @@ test("transport reconnect and disconnect are diagnostics, not Pi model input", a
   assert.equal(calls[0][0].customType, "aweb-channel");
 });
 
+test("a refused stream is shown in the status and logged once on entry and once on exit, not Pi model input", () => {
+  const calls: Array<Parameters<ExtensionAPI["sendMessage"]>> = [];
+  const logs: string[] = [];
+  const statuses: string[] = [];
+  fakePi((message, options) => {
+    calls.push([message, options]);
+  });
+  const ctx = {
+    hasUI: true,
+    ui: {
+      theme: { fg: (_kind: string, text: string) => text },
+      setStatus: (_key: string, value: string) => statuses.push(value),
+    },
+  };
+  const nextAttemptAt = new Date(2026, 2, 1, 9, 5).getTime();
+
+  handlePiStreamState({ state: "refused", cause: "401", retryInMs: 60_000, nextAttemptAt }, ctx, (message) => logs.push(message));
+  handlePiStreamState({ state: "reconnected", endedRefusal: "401" }, ctx, (message) => logs.push(message));
+
+  assert.equal(calls.length, 0);
+  assert.deepEqual(logs, [
+    "aweb: event stream refused: 401, next try 09:05",
+    "aweb: event stream accepted again (was refused: 401)",
+  ]);
+  assert.deepEqual(statuses, ["✕ aweb events refused (401); next try 09:05", "✓ aweb connected"]);
+});
+
 function awakening(overrides: Partial<ChannelAwakening> = {}): ChannelAwakening {
   return {
     kind: "chat",

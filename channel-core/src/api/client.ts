@@ -84,6 +84,25 @@ export class APIClient {
     private auth: APIClientAuth,
   ) {}
 
+  /**
+   * Take the credentials of a client built from the same identity home read
+   * again: a renewed certificate or grant. The client keeps acting as the same
+   * identity towards the same server; credentials that say otherwise are refused.
+   */
+  renewCredentialsFrom(renewed: APIClient): void {
+    if (renewed.baseURL !== this.baseURL) {
+      throw new Error("the credentials read again name another server");
+    }
+    const sameIdentity = renewed.auth.did === this.auth.did
+      && renewed.auth.stableID === this.auth.stableID
+      && renewed.auth.teamID === this.auth.teamID
+      && (renewed.auth.authMode ?? "team") === (this.auth.authMode ?? "team");
+    if (!sameIdentity) {
+      throw new Error("the credentials read again name another identity");
+    }
+    this.auth = renewed.auth;
+  }
+
   hasTeamCertificateAuth(teamID: string): boolean {
     return this.auth.teamID === teamID
       && this.auth.teamCertificateHeader.trim() !== ""
@@ -179,7 +198,8 @@ export class APIClient {
 
     if (!resp.ok) {
       const text = await readSafeErrorExcerpt(resp).catch(() => "");
-      throw new APIError(resp.status, text);
+      const retryAfter = resp.headers.get("Retry-After");
+      throw new APIError(resp.status, text, retryAfterSeconds(retryAfter), retryAfter ?? undefined);
     }
 
     return resp;

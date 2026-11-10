@@ -12,6 +12,7 @@ import {
   type ChannelAwakening,
   CHANNEL_CORE_SECURITY_CONTRACT,
   createChannelClient,
+  createChannelCredentialReload,
   createRegistryResolver,
   dispatchAgentEvent,
   formatEventStreamState,
@@ -254,6 +255,7 @@ Control events (type="control") are operational signals. On "pause", stop curren
       mailAcknowledgment: "delivery",
       onTrace: traceSink?.onTrace,
       onStreamState: (state) => handleClaudeStreamState(state),
+      reloadCredentials: createChannelCredentialReload(client, config, () => loadChannelConfig(workdir)),
       streamObserver: receipt,
       log: (message) => console.error(message),
     });

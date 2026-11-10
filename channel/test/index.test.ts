@@ -65,6 +65,21 @@ describe("stream state handling", () => {
   });
 });
 
+describe("refused stream handling", () => {
+  test("a refused stream is one diagnostic on entry and one on exit, not Claude model input", () => {
+    const logs: string[] = [];
+    const nextAttemptAt = new Date(2026, 2, 1, 9, 5).getTime();
+
+    handleClaudeStreamState({ state: "refused", cause: "401", retryInMs: 60_000, nextAttemptAt }, (message) => logs.push(message));
+    handleClaudeStreamState({ state: "reconnected", endedRefusal: "401" }, (message) => logs.push(message));
+
+    expect(logs).toEqual([
+      "aweb: event stream refused: 401, next try 09:05",
+      "aweb: event stream accepted again (was refused: 401)",
+    ]);
+  });
+});
+
 describe("isDirectExecution", () => {
   const originalArgv1 = process.argv[1];
   let tempDir: string | null = null;

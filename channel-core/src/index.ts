@@ -1,7 +1,7 @@
 export { APIClient, APIError, signIdentityGrantHeaders, signRequestHeaders, type APIClientAuth } from "./api/client.js";
 export { startPresenceHeartbeat, PRESENCE_HEARTBEAT_INTERVAL_MS } from "./presence.js";
 export { ReceiveStreamReceipt, type ReceiveReceiptOptions } from "./receive.js";
-export { streamAgentEvents, parseAgentEvent, formatEventStreamState, streamErrorCause, type AgentEvent, type AgentEventType, type EventStreamState } from "./api/events.js";
+export { streamAgentEvents, parseAgentEvent, formatEventStreamState, localClockTime, streamErrorCause, type AgentEvent, type AgentEventType, type EventStreamOptions, type EventStreamState } from "./api/events.js";
 export { ackMessage, fetchInbox, type InboxMessage } from "./api/mail.js";
 export { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";
 export { fetchRoomMessage, ackRoomNotice, type RoomMessage } from "./api/room.js";
@@ -75,6 +75,7 @@ export {
   DEFAULT_DELIVERY_STORE_PATH,
   DEFAULT_PIN_STORE_PATH,
   createChannelClient,
+  createChannelCredentialReload,
   consumeAgentEvents,
   DeliveryStore,
   UndeliveredLog,
