@@ -6,6 +6,7 @@ logs in with real WebAuthn assertions; no enrolment link exists."""
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import os
 from dataclasses import dataclass
@@ -129,9 +130,11 @@ async def designate(
     notice: str | None = None,
     signed: dict[str, str] | None = None,
     act: str = "human-role.designate",
+    principal: str = PRINCIPAL,
+    credential: HumanCredential | None = None,
 ):
     """Consume a signed act and apply it in one transaction."""
-    subject = holding_subject(signed or member.body, notice)
+    subject = holding_subject(signed or member.body, notice, principal)
     signer = owner(pw)
     prepared = await signer.prepare(act, subject)
     async with pw.passkeys.db.transaction() as tx:
@@ -144,7 +147,7 @@ async def designate(
         return await operation(
             tx,
             act=verified,
-            credential=member.credential,
+            credential=credential or member.credential,
             certificate=CERTIFICATE if act == "human-role.designate" else RENEWED,
             notice_contact=notice,
         )
@@ -279,6 +282,36 @@ async def test_a_designation_refuses_a_credential_or_contact_the_act_does_not_bi
         with pytest.raises(DesignationRefused):
             await designate(pw, member, signed=signed)
     assert await stored_holding(pw) is None
+
+
+async def test_a_credential_changed_after_parsing_is_not_the_one_the_act_binds(
+    pw: PasskeyWorld,
+):
+    member = holder()
+    swapped = dataclasses.replace(member.credential, public_key=holder().credential.public_key)
+    with pytest.raises(DesignationRefused):
+        await designate(pw, member, credential=swapped)
+    assert await stored_holding(pw) is None
+
+
+async def test_one_credential_binds_one_holding_when_two_are_designated_at_once(
+    pw: PasskeyWorld,
+):
+    member = holder()
+    results = await asyncio.gather(
+        designate(pw, member),
+        designate(pw, member, principal=OTHER_PRINCIPAL),
+        return_exceptions=True,
+    )
+    refused = [r for r in results if isinstance(r, DesignationRefused)]
+    held = [r for r in results if not isinstance(r, BaseException)]
+    assert len(refused) == 1 and len(held) == 1, results
+    [winner] = held
+    assert winner.approver.principal_did in (PRINCIPAL, OTHER_PRINCIPAL)
+    db = pw.passkeys.db
+    assert await db.fetch_value("SELECT count(*) FROM {{tables.passkey_approvers}}") == 1
+    assert await db.fetch_value("SELECT count(*) FROM {{tables.role_holdings}}") == 1
+    assert await db.fetch_value("SELECT count(*) FROM {{tables.owner_act_nonces}}") == 1
 
 
 async def test_a_held_role_is_not_designated_again(pw: PasskeyWorld):
@@ -545,3 +578,19 @@ async def test_an_ended_holding_takes_no_contact_designation(pw: PasskeyWorld):
     await revoke(pw)
     with pytest.raises(DesignationRefused):
         await designate_by_act(pw, "app-role.designate", NOTICE, SCOPE)
+
+
+@pytest.mark.parametrize("notice", [None, NOTICE])
+async def test_a_link_approval_has_only_candidates_a_link_can_reach(
+    pw: PasskeyWorld, notice: str | None
+):
+    await designate(pw, holder(), notice=notice)
+    pw.policies.set(policy(approver_scopes=(SCOPE,)))
+    minting = pw.approvals.mint(
+        request=REQUEST, policy_ref="send-charge", requested_by=OTHER_PRINCIPAL
+    )
+    if notice is None:
+        assert await refusal(minting) is Refusal.NO_ELIGIBLE_APPROVER
+        return
+    await minting
+    assert len(pw.contacts.inbox[NOTICE]) == 1

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import dataclasses
 import hashlib
 import json
 import os
@@ -124,6 +125,13 @@ def test_the_runtime_names_a_credential_by_the_vector_hash(case) -> None:
     assert credential.credential_id == _unpadded_b64url(case["credential"]["credential_id"])
     assert credential.public_key == _unpadded_b64url(case["credential"]["public_key"])
     assert credential.rp_id == case["credential"]["rp_id"]
+
+
+def test_a_credential_is_named_by_its_own_fields() -> None:
+    credential = HumanCredential.parse(_vector_credential())
+    for field, value in (("credential_id", b"other"), ("public_key", b"other"), ("rp_id", "x.y")):
+        changed = dataclasses.replace(credential, **{field: value})
+        assert changed.sha256 != credential.sha256
 
 
 def _vector_credential() -> dict[str, str]:
