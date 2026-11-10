@@ -96,6 +96,7 @@ async def test_disposal_during_native_reopen_withholds_the_original_result(uses)
     context = await setup(uses)
     _, _, wire = await context.assigned()
     db, scope = uses.world.db, uses.world.admitted
+    dispatch_id = await db.fetch_value("SELECT dispatch_id FROM {{tables.run_redaction_pins}}")
     opened, resume = asyncio.Event(), asyncio.Event()
     actual = context.arguments["opener"].open
 
@@ -112,8 +113,14 @@ async def test_disposal_during_native_reopen_withholds_the_original_result(uses)
     try:
         await asyncio.wait_for(opened.wait(), 5)
         async with db.transaction() as tx:
-            await uses.world.custody.destroy(
-                tx, SealContext(scope.installation_id, TEAM, SECRET["secret_id"], 1)
+            # Exercise the real lifecycle sink while the original native
+            # value remains readable. This isolates pin liveness from the
+            # independent destroy/disabled-value checks above.
+            await run_pin_store.discard_dispatch(
+                tx,
+                installation_id=scope.installation_id,
+                team_id=TEAM,
+                dispatch_id=dispatch_id,
             )
         resume.set()
         receipt = await asyncio.wait_for(pending, 5)
