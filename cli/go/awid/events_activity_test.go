@@ -50,7 +50,7 @@ func TestAgentEventStreamReportsReadsBelowEvents(t *testing.T) {
 	reported("comments", &comments, 1)
 	write("event: conn")
 	reported("reads after a partial frame", &reads, 2)
-	write("\n")
+	write("ected\n")
 	reported("reads after the rest of the line", &reads, 3)
 	select {
 	case ev := <-events:

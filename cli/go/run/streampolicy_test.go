@@ -111,6 +111,8 @@ type rawSource struct {
 	handled   chan struct{}
 	onRead    func()
 	onComment func()
+	// delivered is true while the consumer holds an event Next returned.
+	delivered bool
 }
 
 func newRawSource() *rawSource {
@@ -122,6 +124,11 @@ func (s *rawSource) OnComment(f func()) { s.onComment = f }
 func (s *rawSource) Close() error       { return nil }
 
 func (s *rawSource) Next(ctx context.Context) (*awid.AgentEvent, error) {
+	if s.delivered {
+		// The consumer is back for more, so it has dealt with the event.
+		s.delivered = false
+		s.handled <- struct{}{}
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -137,15 +144,17 @@ func (s *rawSource) Next(ctx context.Context) (*awid.AgentEvent, error) {
 			if item.comment && s.onComment != nil {
 				s.onComment()
 			}
-			s.handled <- struct{}{}
 			if item.event != nil {
+				s.delivered = true
 				return item.event, nil
 			}
+			s.handled <- struct{}{}
 		}
 	}
 }
 
-// feed hands the source one read and returns once the source has reported it.
+// feed hands the source one read and returns once the source has reported
+// it and, for an event, once the consumer has dealt with it.
 func (s *rawSource) feed(item rawItem) {
 	s.items <- item
 	<-s.handled

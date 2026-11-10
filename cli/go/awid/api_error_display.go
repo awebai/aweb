@@ -40,6 +40,7 @@ func newAPIError(resp *http.Response, body string) *APIError {
 		RequestID:       resp.Header.Get("X-Request-ID"),
 		CfRay:           resp.Header.Get("Cf-Ray"),
 		CfMitigated:     resp.Header.Get("Cf-Mitigated"),
+		RetryAfter:      resp.Header.Get("Retry-After"),
 		responseSummary: summary,
 	}
 }
