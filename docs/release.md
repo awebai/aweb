@@ -160,10 +160,9 @@ to that run, and retains its evidence under the integration log directory's
 they create and remove their own bounded builder when none is supplied.
 
 `make candidate-gate`, direct `scripts/candidate-docker-gate.sh` calls and the
-release command use that same ledger. The key includes the source tree,
+release command use that same ledger. The key includes the source tree and source commit (the CLI embeds that commit),
 effective CLI/A2A versions, external Library/blueprint revisions, and non-default
-resource settings. Commit metadata, stage selection and log paths do not create
-another key. `AWEB_GATE_LEDGER` and `AWEB_GATE_LOG_DIR` relocate the ledger and
+resource settings. Stage selection and log paths do not create another key. `AWEB_GATE_LEDGER` and `AWEB_GATE_LOG_DIR` relocate the ledger and
 retained logs; all callers must share them.
 
 For focused pre-landing checks, use `AWEB_CANDIDATE_STAGES='checks unit' make
@@ -333,7 +332,11 @@ selections. It builds the Python wheels and sdists and the npm tarballs (includi
 all seven CLI packages) at the versions supplied by the candidate's manifests
 and CLI input. `CANDIDATE_ARTIFACT_DIR` holds those files, `manifest.json` and
 `SHA256SUMS`. The gate retains that directory with its logs and caches it under
-its existing gate key; a reused stage verifies hashes before consuming it.
+its gate key. The manifest binds that full key, source commit, effective CLI/A2A
+versions, lock hashes and the pinned backend constraints in
+`scripts/release-build-constraints.txt`. Reuse verifies this binding and hashes,
+including after an infrastructure reset removes the ledger row. An empty commit
+changes the CLI's stamped bytes and therefore requires a new qualification.
 It does not silently regenerate a missing or changed wheel behind a green receipt.
 
 For an already-tagged Python version, the gate builds that release tag with the
@@ -347,7 +350,13 @@ missing module in an older allowed release.
 
 The shared wheel installer verifies each input hash, replaces editable installs,
 checks installed payload bytes and logs `installed manifest wheel:` with the
-package, version and SHA-256. The normal federation journey uses its existing
+package, version and SHA-256. Services repeat this check at startup, and standing
+journeys check each live service environment before running the tests. The guard
+rejects editable direct URLs and active `.pth` paths/import hooks; only uv's exact
+`_virtualenv.pth` bootstrap (`import _virtualenv`) is allowed. This bootstrap is
+part of an ordinary uv venv, not a source-package path. Naapp applications install
+non-editably as well, so their own source hook cannot mask a dependency.
+The normal federation journey uses its existing
 exact-wheel mode. Explicit historical/skew wheel inputs retain their selected
 released server and constraints. Developer image builds without prepared
 candidate artifacts retain their source mode; maintained journeys prepare wheels

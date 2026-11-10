@@ -216,7 +216,12 @@ class DockerBoundaryTests(unittest.TestCase):
         self.assertEqual(volume["Labels"]["aweb.candidate-gate"], os.environ["AWEB_CANDIDATE_RESOURCE_LABEL"])
         self.assertEqual({m["Destination"] for m in mounts if m["Type"] == "bind"}, {
             "/var/run/docker.sock", os.environ["AWEB_DOCKER_BIND_ROOT"], os.environ["CANDIDATE_LOG_DIR"],
+            os.environ["CANDIDATE_ARTIFACT_DIR"],
         })
+
+        artifact_mount = next(m for m in mounts if m["Destination"] == os.environ["CANDIDATE_ARTIFACT_DIR"])
+        self.assertTrue(artifact_mount["RW"])
+        self.assertEqual(Path(artifact_mount["Source"]).name, os.environ["CANDIDATE_GATE_KEY"] + "-artifacts")
 
     def test_go_module_cache_is_fresh_per_candidate_run(self) -> None:
         source = (

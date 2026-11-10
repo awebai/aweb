@@ -3,6 +3,7 @@
 import os
 import json
 import hashlib
+import shutil
 from release_artifacts import verify, build_python, prepare_python, PYTHON_PACKAGES
 from fixture_repo import init_fixture_repo
 from install_release_wheels import install
@@ -11,6 +12,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -50,6 +52,34 @@ class ManifestBytes(unittest.TestCase):
             artifact.unlink()
             with self.assertRaisesRegex(VersionRefusal, 'sha256 mismatch: example.whl'):
                 verify(root)
+
+    def test_cache_refuses_changed_key_and_build_inputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            init_fixture_repo(root)
+            subprocess.run(['git', 'add', '.'], cwd=root, check=True)
+            subprocess.run(['git', '-c', 'user.name=fixture', '-c', 'user.email=fixture@example.test',
+                            'commit', '-qm', 'source'], cwd=root, check=True)
+            from release_artifacts import write_manifest
+            out = root / 'artifacts'
+            out.mkdir()
+            # A real wheel, so production manifest metadata extraction runs.
+            project = root / 'project'
+            (project / 'src/cache_probe').mkdir(parents=True)
+            (project / 'src/cache_probe/__init__.py').write_text('VALUE=1\n')
+            (project / 'pyproject.toml').write_text(
+                '[project]\nname="cache-probe"\nversion="1.0.0"\n'
+                '[build-system]\nrequires=["hatchling"]\nbuild-backend="hatchling.build"\n'
+                '[tool.hatch.build.targets.wheel]\npackages=["src/cache_probe"]\n')
+            build_python(project, out)
+            with patch.dict(os.environ, CANDIDATE_GATE_KEY='key-one', CLI_VERSION='1.0.0'):
+                write_manifest(root, out)
+                verify(out, root=root)
+                for key, value in [('CANDIDATE_GATE_KEY', 'key-two'), ('CLI_VERSION', '1.0.1'),
+                                   ('SOURCE_COMMIT', 'changed-source')]:
+                    with self.subTest(key=key), patch.dict(os.environ, {key: value}):
+                        with self.assertRaisesRegex(VersionRefusal, 'build inputs'):
+                            verify(out, root=root)
 
 
 class BuildOnce(unittest.TestCase):
@@ -111,6 +141,32 @@ class ManifestInstallation(unittest.TestCase):
             self.assertEqual(subprocess.check_output(probe, text=True).strip(), '99')
             install(artifacts, python, ['probe-release'])
             self.assertEqual(subprocess.check_output(probe, text=True).strip(), '42')
+            from install_release_wheels import check
+            check(artifacts, python, ['probe-release'])
+            shutil.copy2(ROOT / 'scripts/install_release_wheels.py', artifacts / 'install.py')
+            shutil.copy2(ROOT / 'scripts/release-wheel-entrypoint.sh', artifacts / 'entrypoint.sh')
+            runtime = ['sh', str(ROOT / 'scripts/release-wheel-entrypoint.sh'), str(python), '-I', '-c', 'import probe_release; assert probe_release.VALUE == 42']
+            runtime_env = dict(os.environ, RELEASE_WHEEL_DIR=str(artifacts), RELEASE_WHEEL_PYTHON=str(python), RELEASE_WHEEL_PACKAGES='probe-release')
+            subprocess.run(runtime, env=runtime_env, check=True)
+            site = Path(subprocess.check_output([str(python), '-I', '-c',
+                'import sysconfig; print(sysconfig.get_path("purelib"))'], text=True).strip())
+            remnant = site / '_editable_remnant.pth'
+            remnant.write_text(str(project / 'src') + '\n')
+            with self.assertRaises(subprocess.CalledProcessError):
+                check(artifacts, python, ['probe-release'])
+            self.assertNotEqual(subprocess.run(runtime, env=runtime_env, capture_output=True).returncode, 0)
+            remnant.unlink()
+            direct = next(site.glob('probe_release-*.dist-info/direct_url.json'))
+            original = direct.read_text()
+            direct.write_text(json.dumps(dict(url=project.as_uri(), dir_info=dict(editable=True))))
+            with self.assertRaises(subprocess.CalledProcessError):
+                check(artifacts, python, ['probe-release'])
+            direct.write_text(original)
+            manifest_bytes = (artifacts / 'manifest.json').read_bytes()
+            (artifacts / 'manifest.json').unlink()
+            self.assertNotEqual(subprocess.run(runtime, env=runtime_env, capture_output=True).returncode, 0)
+            (artifacts / 'manifest.json').write_bytes(manifest_bytes)
+            check(artifacts, python, ['probe-release'])
             wheel.write_bytes(wheel.read_bytes() + b'changed')
             with self.assertRaisesRegex(ValueError, 'sha256 mismatch'):
                 install(artifacts, python, ['probe-release'])

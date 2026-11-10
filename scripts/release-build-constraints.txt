@@ -1,0 +1,6 @@
+# The candidate and release-tag control use the same build backend.
+hatchling==1.33.0
+packaging==26.3
+pathspec==1.1.1
+pluggy==1.7.0
+trove-classifiers==2026.9.21.13

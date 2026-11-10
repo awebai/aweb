@@ -14,12 +14,13 @@ from publish_release import PYPI_LANES, NPM_LANES
 from release_versions import require_unpublished_changes, VersionRefusal
 
 ROOT = Path(__file__).resolve().parents[1]
+BUILD_CONSTRAINTS = Path(__file__).with_name('release-build-constraints.txt')
 PYTHON_PACKAGES = {name: directory for _, packages in PYPI_LANES.values() for name, directory in packages}
 
 
 def build_python(project: Path, out: Path) -> Path:
     """The package check and release stage share this single build operation."""
-    subprocess.run(['uv', 'build', '--sdist', '--wheel', '--out-dir', str(out), str(project)],
+    subprocess.run(['uv', 'build', '--build-constraints', str(BUILD_CONSTRAINTS), '--sdist', '--wheel', '--out-dir', str(out), str(project)],
                    check=True, capture_output=True, text=True)
     wheels = sorted(out.glob('*.whl'))
     if len(wheels) != 1 or len(list(out.glob('*.tar.gz'))) != 1:
@@ -36,10 +37,25 @@ def manifest_path(directory: Path) -> Path:
     return directory / 'manifest.json'
 
 
+def build_inputs(root: Path) -> dict:
+    """Bind retained bytes even when the stage ledger has been reset."""
+    sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip()
+    tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=root).decode().split('\0')
+    locks = {name: digest(root / name) for name in tracked
+             if name.endswith(('uv.lock', 'package-lock.json', 'go.sum'))}
+    return dict(gate_key=os.environ.get('CANDIDATE_GATE_KEY', ''),
+                source_commit=os.environ.get('SOURCE_COMMIT', sha),
+                cli_version=os.environ.get('CLI_VERSION', ''),
+                a2a_gateway_version=os.environ.get('A2A_GATEWAY_VERSION', ''),
+                build_constraints_sha256=digest(BUILD_CONSTRAINTS), locks=locks)
+
+
 def verify(directory: Path, *, root: Path | None = None) -> dict:
     manifest = json.loads(manifest_path(directory).read_text())
     if root is not None:
         tree = subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], cwd=root, text=True).strip()
+        if manifest.get('build_inputs') != build_inputs(root):
+            raise VersionRefusal('artifact manifest belongs to different build inputs')
         if manifest['source_tree'] != tree:
             raise VersionRefusal('artifact manifest belongs to a different source tree')
     for row in manifest['files']:
@@ -87,7 +103,7 @@ def write_manifest(root: Path, directory: Path) -> None:
         else:
             continue
         rows.append(dict(path=path.name, package=name, version=version, sha256=digest(path)))
-    document = dict(schema=1,
+    document = dict(schema=2, build_inputs=build_inputs(root),
         source_sha=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip(),
         source_tree=subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], cwd=root, text=True).strip(),
         files=rows)
@@ -157,6 +173,7 @@ def materialize(root: Path, directory: Path) -> None:
         if row['path'].endswith('.whl'):
             shutil.copy2(directory / row['path'], destination / row['path'])
     shutil.copy2(root / 'scripts/install_release_wheels.py', destination / 'install.py')
+    shutil.copy2(root / 'scripts/release-wheel-entrypoint.sh', destination / 'entrypoint.sh')
 
 
 def main() -> int:

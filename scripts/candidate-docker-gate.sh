@@ -107,7 +107,7 @@ A2A_GATEWAY_VERSION="${A2A_GATEWAY_VERSION:-$(python3 "$ROOT/scripts/next_tag_ve
 # are external inputs even when the caller did not supply an override.
 TREE="$(git -C "$ROOT" rev-parse 'HEAD^{tree}')"
 LEDGER="${AWEB_GATE_LEDGER:-$HOME/.cache/aweb-oss/candidate-gate-ledger.tsv}"
-external_inputs="CLI_VERSION=$CLI_VERSION"$'\n'"A2A_GATEWAY_VERSION=$A2A_GATEWAY_VERSION"$'\n'
+external_inputs="SOURCE_COMMIT=$SOURCE_SHA"$'\n'"CLI_VERSION=$CLI_VERSION"$'\n'"A2A_GATEWAY_VERSION=$A2A_GATEWAY_VERSION"$'\n'
 # The same tree must be requalified when the released client changes. Resolve
 # latest exactly once here, for every stage selection. Focused and full callers
 # must share a key so the full gate can reuse their completed stages.
@@ -156,6 +156,7 @@ gate_setting AWEB_CANDIDATE_SIBLING_CPUS 2
 gate_setting AWEB_CANDIDATE_SIBLING_MEMORY 4g
 gate_setting AWEB_CANDIDATE_SIBLING_PIDS 1024
 KEY="$TREE-$(printf '%s' "$external_inputs" | python3 -c 'import hashlib,sys;print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')"
+export CANDIDATE_GATE_KEY="$KEY" SOURCE_COMMIT="$SOURCE_SHA" CLI_VERSION A2A_GATEWAY_VERSION
 LEDGER_LOGS="${AWEB_GATE_LOG_DIR:-$(dirname "$LEDGER")/gate-logs}"
 # The runner uses the host UID without requiring a container passwd entry.
 # Owner is a ledger label, so its numeric UID is sufficient in that case.
@@ -441,6 +442,8 @@ docker run --rm --init \
   -e A2A_GATEWAY_VERSION="${A2A_GATEWAY_VERSION:-}" \
   -e LIBRARY_E2E_BLUEPRINT_SRC="$LIBRARY_E2E_BLUEPRINT_SRC" \
   -e CANDIDATE_LOG_DIR="$LOG_DIR" \
+  -e CANDIDATE_GATE_KEY="$KEY" \
+  -e SOURCE_COMMIT="$SOURCE_SHA" \
   -e CANDIDATE_ARTIFACT_DIR="$LOG_DIR/artifacts" \
   -e USER_PATHS_LATEST_METADATA="${USER_PATHS_LATEST_METADATA:-}" \
   -e USER_PATHS_LATEST_SHA256="${USER_PATHS_LATEST_SHA256:-}" \

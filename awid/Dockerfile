@@ -43,6 +43,8 @@ COPY --from=builder --chown=awid:awid /app/awid/.venv /app/awid/.venv
 COPY --from=builder --chown=awid:awid /app/awid/src /app/awid/src
 COPY --from=builder --chown=awid:awid /app/server /app/server
 
+COPY --from=builder /candidate-artifacts /candidate-artifacts
+
 ENV PATH="/app/awid/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 
@@ -53,4 +55,8 @@ EXPOSE 8010
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8010/health || exit 1
 
+COPY scripts/release-wheel-entrypoint.sh /usr/local/bin/release-wheel-entrypoint.sh
+ENV RELEASE_WHEEL_DIR=/candidate-artifacts RELEASE_WHEEL_PYTHON=/app/awid/.venv/bin/python \
+    RELEASE_WHEEL_PACKAGES="awid-service"
+ENTRYPOINT ["sh", "/usr/local/bin/release-wheel-entrypoint.sh"]
 CMD ["awid", "--host", "0.0.0.0", "--port", "8010"]

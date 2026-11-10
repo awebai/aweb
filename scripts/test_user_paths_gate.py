@@ -163,7 +163,7 @@ class FrozenGateInput(unittest.TestCase):
                 repo, commands = root / 'repo', root / 'bin'
                 (repo / 'scripts').mkdir(parents=True)
                 commands.mkdir()
-                for name in ['candidate-docker-gate.sh', 'candidate-suite.sh', 'candidate-cleanup.sh', 'candidate-ports.py', 'fetch_released_aw.py', 'release_artifacts.py', 'publish_release.py', 'release_versions.py']:
+                for name in ['candidate-docker-gate.sh', 'candidate-suite.sh', 'candidate-cleanup.sh', 'candidate-ports.py', 'fetch_released_aw.py', 'release_artifacts.py', 'release-build-constraints.txt', 'publish_release.py', 'release_versions.py']:
                     shutil.copy2(ROOT / 'scripts' / name, repo / 'scripts' / name)
                 write_artifact_fixture(repo)
                 shutil.copy2(ROOT / 'scripts/e2e/user_paths_result.py', repo / 'scripts/user_paths_result.py')
@@ -293,7 +293,7 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                     self.assertEqual(receipt['digest'], digest)
                     self.assertEqual(receipt['declared'], digest)
                     tree = git('rev-parse', 'HEAD^{tree}')
-                    external = f'CLI_VERSION=1.36.54\nA2A_GATEWAY_VERSION=1.27.6\nRELEASED_AW={digest}\n'
+                    external = f'SOURCE_COMMIT={git("rev-parse", "HEAD")}\nCLI_VERSION=1.36.54\nA2A_GATEWAY_VERSION=1.27.6\nRELEASED_AW={digest}\n'
                     self.assertEqual(ledger[0].split('\t')[0], tree+'-'+hashlib.sha256(external.encode()).hexdigest())
                     reused = invoke(None)
                     self.assertIn('no stages run', reused)

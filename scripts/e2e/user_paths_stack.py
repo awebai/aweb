@@ -208,6 +208,10 @@ def main():
             compose('run', '--rm', '--no-deps', '--pull', 'never', '--user', '0:0',
                     '--entrypoint', 'chown', 'cli', CLIENT_USER, '/identities')
             wait_ready()
+            for service in ('awid', 'server', 'peer'):
+                compose('exec', '-T', service, SERVER_PYTHON, '/opt/candidate-wheels/install.py',
+                        '--check', '--directory', '/opt/candidate-wheels', '--python', SERVER_PYTHON,
+                        'aweb', 'awid-service', 'aweb-naapp')
             (EVIDENCE / 'head-version.txt').write_text(compose('exec', '-T', 'cli', HEAD_BINARY, 'version', capture=True).stdout)
             if BASELINE_READY:
                 actual = compose('exec', '-T', 'server', SERVER_PYTHON, '-c',

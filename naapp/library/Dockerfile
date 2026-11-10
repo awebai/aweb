@@ -39,7 +39,7 @@ RUN uv sync --frozen --no-install-project --no-dev --no-install-package awid-ser
 COPY naapp/library/src ./src
 COPY naapp/library/skills ./skills
 RUN if [ -f /candidate-artifacts/manifest.json ]; then \
-      uv sync --frozen --no-dev --no-install-package awid-service --no-install-package aweb-naapp \
+      uv sync --frozen --no-dev --no-editable --no-install-package awid-service --no-install-package aweb-naapp \
       && python /candidate-artifacts/install.py --directory /candidate-artifacts --python /app/.venv/bin/python awid-service aweb-naapp; \
     else uv sync --frozen --no-dev; fi
 
@@ -47,4 +47,8 @@ RUN useradd --create-home --shell /usr/sbin/nologin library
 USER library
 
 EXPOSE 8765
+COPY scripts/release-wheel-entrypoint.sh /usr/local/bin/release-wheel-entrypoint.sh
+ENV RELEASE_WHEEL_DIR=/candidate-artifacts RELEASE_WHEEL_PYTHON=/app/.venv/bin/python \
+    RELEASE_WHEEL_PACKAGES="awid-service aweb-naapp"
+ENTRYPOINT ["sh", "/usr/local/bin/release-wheel-entrypoint.sh"]
 CMD ["sh", "-c", "/app/.venv/bin/uvicorn library.api:app --host 0.0.0.0 --port ${PORT:-8765}"]
