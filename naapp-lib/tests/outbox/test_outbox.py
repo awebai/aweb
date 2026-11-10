@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import logging
 import subprocess
 import sys
 from collections.abc import AsyncIterator, Sequence
@@ -13,7 +15,9 @@ from uuid import UUID
 import pytest
 from pgdbm import AsyncDatabaseManager
 
+import aweb_naapp.outbox as outbox
 from aweb_naapp.outbox import (
+    DRAINED_RETENTION,
     Acked,
     Cancelled,
     Conflict,
@@ -38,7 +42,9 @@ from aweb_naapp.outbox import (
     next_sequence,
     oldest_undelivered_age_seconds,
     outbox_status,
+    prune_drained,
     redrive,
+    run_drain,
     undelivered_critical_events,
 )
 
@@ -964,3 +970,269 @@ async def test_a_target_id_used_on_another_channel_is_refused_and_the_event_wait
 
 def test_events_default_to_the_default_channel() -> None:
     assert _event().channel == "default"
+
+
+# --- Retention of drained events ----------------------------------------------
+
+
+async def _deliver(db: AsyncDatabaseManager, event: OutboxEvent, outcomes: dict[str, object]) -> None:
+    """Enqueue the event and drain it once, to the targets ``outcomes`` names."""
+    async with db.transaction() as tx:
+        await enqueue(tx, event)
+    await drain(
+        db,
+        channel=event.channel,
+        resolver=Targets([Target(target_id) for target_id in outcomes]),
+        transport=Scripted(outcomes),
+        policy=_POLICY,
+    )
+
+
+async def _age(db: AsyncDatabaseManager, age: timedelta, *events: OutboxEvent) -> None:
+    """Move every timestamp of the events and their deliveries ``age`` into the past."""
+    ids = [event.event_id for event in events]
+    await db.execute(
+        "UPDATE {{tables.outbox_events}} SET created_at = created_at - $2::interval,"
+        " materialized_at = materialized_at - $2::interval, drained_at = drained_at - $2::interval"
+        " WHERE event_id = ANY($1::uuid[])",
+        ids,
+        age,
+    )
+    await db.execute(
+        "UPDATE {{tables.outbox_deliveries}} SET created_at = created_at - $2::interval,"
+        " updated_at = updated_at - $2::interval, acked_at = acked_at - $2::interval"
+        " WHERE event_id = ANY($1::uuid[])",
+        ids,
+        age,
+    )
+
+
+async def _event_ids(db: AsyncDatabaseManager) -> set[UUID]:
+    rows = await db.fetch_all("SELECT event_id FROM {{tables.outbox_events}}")
+    return {row["event_id"] for row in rows}
+
+
+async def _delivery_event_ids(db: AsyncDatabaseManager) -> set[UUID]:
+    rows = await db.fetch_all("SELECT event_id FROM {{tables.outbox_deliveries}}")
+    return {row["event_id"] for row in rows}
+
+
+_PAST_RETENTION = DRAINED_RETENTION + timedelta(days=1)
+_DELIVERED = {"a": Acked("delivered", b"receipt")}
+
+
+def test_drained_events_are_kept_for_thirty_days() -> None:
+    assert DRAINED_RETENTION == timedelta(days=30)
+
+
+async def test_a_drained_event_past_retention_is_deleted_with_its_deliveries(db) -> None:
+    old, recent = _event(b"old"), _event(b"recent")
+    await _deliver(db, old, {"a": Acked("delivered", b"old"), "b": Acked("duplicate", None)})
+    await _age(db, _PAST_RETENTION, old)
+    await _deliver(db, recent, {"a": Acked("delivered", b"recent"), "b": Acked("delivered", None)})
+
+    assert await prune_drained(db) == 1
+    assert await _event_ids(db) == {recent.event_id}
+    assert await _delivery_event_ids(db) == {recent.event_id}
+    assert await latest_receipt(db, "a") == b"recent"
+    assert await prune_drained(db) == 0
+
+
+async def test_a_drained_event_within_retention_is_kept(db) -> None:
+    kept, recent = _event(b"kept"), _event(b"recent")
+    await _deliver(db, kept, _DELIVERED)
+    await _age(db, DRAINED_RETENTION - timedelta(days=1), kept)
+    await _deliver(db, recent, _DELIVERED)
+
+    assert await prune_drained(db) == 0
+    assert await _event_ids(db) == {kept.event_id, recent.event_id}
+
+
+async def test_an_identical_enqueue_after_its_event_was_pruned_is_another_event(db) -> None:
+    old, recent = _event(b"old"), _event(b"recent")
+    await _deliver(db, old, _DELIVERED)
+    await _age(db, _PAST_RETENTION, old)
+    await _deliver(db, recent, _DELIVERED)
+    assert await prune_drained(db) == 1
+
+    transport = Scripted(_DELIVERED)
+    async with db.transaction() as tx:
+        await enqueue(tx, old)
+    await drain(
+        db, channel="default", resolver=Targets([Target("a")]), transport=transport, policy=_POLICY
+    )
+    assert [sent[0] for sent in transport.sent] == [old.event_id]
+
+
+@pytest.mark.parametrize(
+    "outcomes",
+    [
+        None,
+        {"a": Acked("delivered", None), "b": Retryable("ConnectError")},
+        {"a": Acked("delivered", None), "b": Unacceptable("too_large")},
+        {"a": Acked("delivered", None), "b": Conflict()},
+    ],
+    ids=["unresolved", "one-target-undelivered", "rejected-unacknowledged", "conflict-unacknowledged"],
+)
+async def test_an_event_that_is_not_drained_is_kept_at_any_age(db, outcomes) -> None:
+    held, recent = _event(b"held"), _event(b"recent")
+    if outcomes is None:
+        async with db.transaction() as tx:
+            await enqueue(tx, held)
+        await drain(
+            db, channel="default", resolver=Targets(None), transport=Scripted({}), policy=_POLICY
+        )
+    else:
+        await _deliver(db, held, outcomes)
+    await _age(db, timedelta(days=3650), held)
+    await _deliver(db, recent, {"a": Acked("delivered", None), "b": Acked("delivered", None)})
+    assert await db.fetch_value(
+        "SELECT drained_at IS NULL FROM {{tables.outbox_events}} WHERE event_id = $1",
+        held.event_id,
+    )
+
+    assert await prune_drained(db) == 0
+    assert held.event_id in await _event_ids(db)
+    if outcomes is not None:
+        assert held.event_id in await _delivery_event_ids(db)
+
+
+@pytest.mark.parametrize("ending", ["acknowledged", "cancelled"])
+async def test_a_drained_event_with_a_delivery_that_never_reached_its_target_is_kept(
+    db, ending
+) -> None:
+    """The hook backlog and the fault report read these deliveries."""
+    failed, recent = _event(b"failed"), _event(b"recent")
+    if ending == "acknowledged":
+        await _deliver(db, failed, {"a": Acked("delivered", None), "b": Unacceptable("too_large")})
+        assert await acknowledge_dead_letters(db, "b", [failed.event_id]) == [failed.event_id]
+    else:
+        await _deliver(db, failed, {"a": Acked("delivered", None), "b": Cancelled("revoked")})
+    await drain(
+        db, channel="default", resolver=Targets(None), transport=Scripted({}), policy=_POLICY
+    )
+    await _age(db, _PAST_RETENTION, failed)
+    await _deliver(db, recent, {"a": Acked("delivered", None), "b": Acked("delivered", None)})
+    assert await db.fetch_value(
+        "SELECT drained_at IS NOT NULL FROM {{tables.outbox_events}} WHERE event_id = $1",
+        failed.event_id,
+    )
+
+    assert await prune_drained(db) == 0
+    assert failed.event_id in await _delivery_event_ids(db)
+
+
+async def test_a_critical_event_materialized_with_no_target_is_kept(db) -> None:
+    fault = _event(critical=True)
+    await _deliver(db, fault, {})
+    await _age(db, _PAST_RETENTION, fault)
+
+    assert await prune_drained(db) == 0
+    faults = await undelivered_critical_events(db, channel="default")
+    assert [event.event_id for event in faults.events] == [fault.event_id]
+
+
+async def test_the_event_holding_a_targets_latest_receipt_is_kept_at_any_age(db) -> None:
+    first, last = _event(b"first"), _event(b"last")
+    await _deliver(db, first, {"a": Acked("delivered", b"first")})
+    await _deliver(db, last, {"a": Acked("delivered", b"last")})
+    await _age(db, _PAST_RETENTION, first, last)
+
+    assert await prune_drained(db) == 1
+    assert await _event_ids(db) == {last.event_id}
+    assert await latest_receipt(db, "a") == b"last"
+    assert await prune_drained(db) == 0
+
+
+async def test_a_prune_deletes_no_more_than_its_batch(db) -> None:
+    old = [_event(str(n).encode()) for n in range(3)]
+    for event in old:
+        await _deliver(db, event, _DELIVERED)
+    await _age(db, _PAST_RETENTION, *old)
+    await _deliver(db, _event(b"recent"), _DELIVERED)
+
+    assert await prune_drained(db, limit=2) == 2
+    assert len(await _event_ids(db)) == 2
+    assert await prune_drained(db, limit=2) == 1
+    assert await prune_drained(db, limit=2) == 0
+
+
+class Prunes:
+    """Stands in for the drain loop's prune: counts the calls, then prunes or fails."""
+
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error = error
+        self.calls = 0
+        self._prune = prune_drained
+
+    async def __call__(self, db: AsyncDatabaseManager, *, limit: int = 500) -> int:
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        return await self._prune(db, limit=limit)
+
+
+async def _run_drain_until(db, done, **options) -> None:
+    """Run the drain loop until ``done()`` holds, at most five seconds."""
+    stop = asyncio.Event()
+    loop = asyncio.create_task(
+        run_drain(
+            db,
+            channel="default",
+            resolver=Targets([Target("a")]),
+            transport=Scripted(_DELIVERED),
+            policy=_POLICY,
+            stop=stop,
+            interval_seconds=0.01,
+            **options,
+        )
+    )
+    try:
+        async with asyncio.timeout(5):
+            while not await done():
+                await asyncio.sleep(0.01)
+    finally:
+        stop.set()
+        await loop
+
+
+async def test_the_drain_loop_prunes_drained_events_past_retention(db, monkeypatch) -> None:
+    prunes = Prunes()
+    monkeypatch.setattr(outbox, "prune_drained", prunes)
+    old = [_event(str(n).encode()) for n in range(2)]
+    for event in old:
+        await _deliver(db, event, _DELIVERED)
+    await _age(db, _PAST_RETENTION, *old)
+    recent = _event(b"recent")
+    await _deliver(db, recent, _DELIVERED)
+
+    async def pruned() -> bool:
+        return await _event_ids(db) == {recent.event_id}
+
+    await _run_drain_until(db, pruned)
+    assert prunes.calls == 1, "one prune per interval, however many passes run"
+
+
+async def test_the_drain_loop_prunes_again_once_its_interval_has_passed(db, monkeypatch) -> None:
+    prunes = Prunes()
+    monkeypatch.setattr(outbox, "prune_drained", prunes)
+
+    async def pruned_three_times() -> bool:
+        return prunes.calls >= 3
+
+    await _run_drain_until(db, pruned_three_times, prune_interval_seconds=0.02)
+
+
+async def test_the_drain_loop_keeps_delivering_when_a_prune_fails(db, monkeypatch, caplog) -> None:
+    prunes = Prunes(RuntimeError("prune failed"))
+    monkeypatch.setattr(outbox, "prune_drained", prunes)
+    event = _event()
+    async with db.transaction() as tx:
+        await enqueue(tx, event)
+
+    async def delivered() -> bool:
+        return prunes.calls >= 1 and await _states(db) == {"a": "delivered"}
+
+    with caplog.at_level(logging.ERROR, logger="aweb_naapp.outbox"):
+        await _run_drain_until(db, delivered, prune_interval_seconds=0.02)
+    assert {record.getMessage() for record in caplog.records} == {"Outbox prune failed"}

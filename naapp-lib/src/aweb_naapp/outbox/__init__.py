@@ -10,6 +10,11 @@ backoff, and a failing delivery is retried until the transport reports a final
 outcome. :func:`outbox_status` exposes the
 backlog, dead letters and faults.
 
+An event every target acknowledged is deleted, with its deliveries,
+``DRAINED_RETENTION`` after it drained (:func:`prune_drained`, which the drain
+loop runs). Its id and digest go with it, so enqueueing the same event id after
+that stores and delivers a new event.
+
 Imports only the standard library and pgdbm, so the core server can use it
 without the naapp runtime's dependencies.
 """
@@ -20,6 +25,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -36,6 +42,11 @@ logger = logging.getLogger(__name__)
 MIGRATIONS_PATH = Path(__file__).resolve().parent / "migrations"
 MIGRATIONS_MODULE = "aweb_naapp_outbox"
 MAX_CALL_TIMEOUT_SECONDS = 30.0
+# How long an event every target acknowledged is kept after it drained.
+DRAINED_RETENTION = timedelta(days=30)
+# How often a drain loop prunes, and how many events one prune deletes at most.
+DRAINED_PRUNE_INTERVAL_SECONDS = 3600.0
+DRAINED_PRUNE_BATCH = 500
 
 
 class OutboxConflict(Exception):
@@ -242,7 +253,9 @@ async def enqueue(tx: TransactionManager, event: OutboxEvent) -> None:
     """Store the event in the caller's transaction.
 
     Enqueueing an event id again is a no-op when its contents are identical
-    and raises :class:`OutboxConflict` otherwise.
+    and raises :class:`OutboxConflict` otherwise, for as long as the event is
+    stored: once :func:`prune_drained` has deleted it, the same id is a new
+    event.
     """
     payload_sha256 = hashlib.sha256(event.payload).hexdigest()
     inserted = await tx.fetch_value(
@@ -544,6 +557,70 @@ async def _finish_drained(db: AsyncDatabaseManager) -> int:
     return len(rows)
 
 
+async def prune_drained(db: AsyncDatabaseManager, *, limit: int = DRAINED_PRUNE_BATCH) -> int:
+    """Delete up to ``limit`` events that drained more than
+    ``DRAINED_RETENTION`` ago, oldest first, each with its deliveries, and
+    return how many events went.
+
+    Only an event every target acknowledged goes. One that is not drained
+    stays at any age: not materialized, or with a delivery pending, stalled or
+    dead-lettered and not acknowledged as lost. A drained event also stays
+    while a reader needs its rows: one with a delivery that was cancelled,
+    rejected or in conflict, which the fault report and a producer's backlog
+    read; a critical event materialized with no target, which is a fault; and
+    the one holding a target's latest receipt (:func:`latest_receipt`).
+    """
+    async with db.transaction() as tx:
+        rows = await tx.fetch_all(
+            """
+            SELECT e.event_id
+            FROM {{tables.outbox_events}} e
+            WHERE e.drained_at < NOW() - $1::interval
+              AND (
+                NOT e.critical
+                OR EXISTS (
+                  SELECT 1 FROM {{tables.outbox_deliveries}} d WHERE d.event_id = e.event_id
+                )
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM {{tables.outbox_deliveries}} d
+                WHERE d.event_id = e.event_id
+                  AND (
+                    d.state NOT IN ('delivered', 'duplicate')
+                    OR (
+                      d.receipt IS NOT NULL
+                      AND NOT EXISTS (
+                        SELECT 1 FROM {{tables.outbox_deliveries}} later
+                        WHERE later.target_id = d.target_id
+                          AND later.state IN ('delivered', 'duplicate')
+                          AND later.receipt IS NOT NULL
+                          AND ((later.state = 'delivered'), later.acked_at)
+                              > ((d.state = 'delivered'), d.acked_at)
+                      )
+                    )
+                  )
+              )
+            ORDER BY e.drained_at
+            LIMIT $2
+            FOR UPDATE OF e SKIP LOCKED
+            """,
+            DRAINED_RETENTION,
+            limit,
+        )
+        event_ids = [row["event_id"] for row in rows]
+        if event_ids:
+            # Deliveries reference their event, so they go first.
+            await tx.execute(
+                "DELETE FROM {{tables.outbox_deliveries}} WHERE event_id = ANY($1::uuid[])",
+                event_ids,
+            )
+            await tx.execute(
+                "DELETE FROM {{tables.outbox_events}} WHERE event_id = ANY($1::uuid[])",
+                event_ids,
+            )
+    return len(event_ids)
+
+
 async def drain(
     db: AsyncDatabaseManager,
     *,
@@ -588,9 +665,16 @@ async def run_drain(
     policy: RetryPolicy,
     stop: asyncio.Event,
     interval_seconds: float = 1.0,
+    prune_interval_seconds: float = DRAINED_PRUNE_INTERVAL_SECONDS,
 ) -> None:
     """Drain until ``stop`` is set, waiting ``interval_seconds`` whenever a pass
-    found nothing to do. A failing pass is logged and retried."""
+    found nothing to do. A failing pass is logged and retried.
+
+    After a pass, once per ``prune_interval_seconds``, the loop prunes one batch
+    of drained events past their retention (:func:`prune_drained`), and again
+    after the next pass while a batch comes back full. A failing prune is
+    logged and tried again an interval later; it never fails the pass."""
+    next_prune = time.monotonic()
     while not stop.is_set():
         try:
             result = await drain(
@@ -600,6 +684,14 @@ async def run_drain(
         except Exception:
             logger.exception("Outbox drain pass failed")
             busy = False
+        if time.monotonic() >= next_prune:
+            try:
+                pruned = await prune_drained(db)
+            except Exception:
+                logger.exception("Outbox prune failed")
+                pruned = 0
+            if pruned < DRAINED_PRUNE_BATCH:
+                next_prune = time.monotonic() + prune_interval_seconds
         if not busy:
             try:
                 await asyncio.wait_for(stop.wait(), timeout=interval_seconds)
@@ -684,7 +776,8 @@ async def latest_receipt(db: AsyncDatabaseManager, target_id: str) -> bytes | No
     its newest receipt commits to its longest prefix. Receipts of first
     appends (``delivered``) are preferred; a ``duplicate`` ack's receipt is
     returned only when the target appended nothing. Delivery rows, with their
-    receipts, are kept after their event drains.
+    receipts, are kept after their event drains; :func:`prune_drained` deletes
+    them with their event, never the row this returns.
     """
     value = await db.fetch_value(
         """

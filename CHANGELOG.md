@@ -25,8 +25,19 @@
   the order they fell due, so a failed one is tried again only after those that
   fell due before its retry did. Outbox migration `004_resolution_backoff.sql`
   adds `outbox_events.resolve_attempts` and `outbox_events.next_resolve_at`;
-  the runtime applies it at start-up. Delivered outbox rows are kept, as
-  before.
+  the runtime applies it at start-up.
+
+- The naapp outbox deletes an event, with its delivery rows, 30 days after
+  every target acknowledged it. The drain loop does it, once an hour and up to
+  500 events at a time, so a deployment runs nothing extra; outbox migration
+  `005_drained_retention.sql` adds the index it reads. Kept at any age: an
+  event that is not materialized or has a delivery pending, stalled, or
+  dead-lettered and not acknowledged; an event with a cancelled, rejected or
+  conflicting delivery; a critical event materialized with no target; and the
+  event holding a target's latest receipt. An event's id and payload digest
+  are forgotten with it: enqueueing the same event id more than 30 days after
+  it drained stores and delivers a new event, where before it was a no-op or
+  a conflict.
 
 - The naapp runtime's `outbox` health check reports
   `oldest_undelivered_age_seconds` from the events not yet drained, without
