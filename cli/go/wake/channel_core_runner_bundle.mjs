@@ -3466,6 +3466,26 @@ var APIClient = class {
   }
   baseURL;
   auth;
+  /**
+   * Take the credentials of a client built from the same identity home read
+   * again: a renewed certificate or grant, or the key and certificate a key
+   * rotation left there. The client keeps acting as the same identity towards
+   * the same server; credentials that say otherwise are refused.
+   *
+   * An identity with a stable id is that stable id, whatever did:key it
+   * holds. An identity without one is its did:key.
+   */
+  renewCredentialsFrom(renewed) {
+    if (renewed.baseURL !== this.baseURL) {
+      throw new Error("the credentials read again name another server");
+    }
+    const stableID = this.auth.stableID.trim();
+    const sameIdentity = renewed.auth.stableID.trim() === stableID && (stableID !== "" || renewed.auth.did === this.auth.did) && renewed.auth.teamID === this.auth.teamID && (renewed.auth.authMode ?? "team") === (this.auth.authMode ?? "team");
+    if (!sameIdentity) {
+      throw new Error("the credentials read again name another identity");
+    }
+    this.auth = renewed.auth;
+  }
   hasTeamCertificateAuth(teamID) {
     return this.auth.teamID === teamID && this.auth.teamCertificateHeader.trim() !== "" && this.auth.did.trim() !== "" && this.auth.signingKey.length > 0;
   }
@@ -3531,7 +3551,8 @@ var APIClient = class {
     });
     if (!resp.ok) {
       const text2 = await readSafeErrorExcerpt(resp).catch(() => "");
-      throw new APIError(resp.status, text2);
+      const retryAfter = resp.headers.get("Retry-After");
+      throw new APIError(resp.status, text2, retryAfterSeconds(retryAfter), retryAfter ?? void 0);
     }
     return resp;
   }
@@ -3578,15 +3599,17 @@ var APIClient = class {
   }
 };
 var APIError = class extends Error {
-  constructor(statusCode, body, retryAfterSeconds2) {
+  constructor(statusCode, body, retryAfterSeconds2, retryAfter) {
     super(body ? `aweb: http ${statusCode}: ${body}` : `aweb: http ${statusCode}`);
     this.statusCode = statusCode;
     this.body = body;
     this.retryAfterSeconds = retryAfterSeconds2;
+    this.retryAfter = retryAfter;
   }
   statusCode;
   body;
   retryAfterSeconds;
+  retryAfter;
 };
 function retryAfterSeconds(header) {
   return header !== null && /^\d+$/.test(header.trim()) ? Number(header.trim()) : void 0;
@@ -3598,11 +3621,18 @@ var PRESENCE_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1e3;
 // channel-core/src/receive.ts
 var import_proper_lockfile = __toESM(require_proper_lockfile(), 1);
 
-// channel-core/src/api/events.ts
-var EVENT_STREAM_SERVER_HEARTBEAT_MS = 3e4;
-var EVENT_STREAM_INACTIVITY_MS = 2 * EVENT_STREAM_SERVER_HEARTBEAT_MS + 15e3;
-var EVENT_STREAM_DEADLINE_MS = 5 * 60 * 1e3;
-var EVENT_STREAM_PLANNED_CLOSE_MS = 4 * 60 * 1e3;
+// channel-core/src/api/stream_policy.ts
+var STREAM_PLANNED_CLOSE_MIN_MS = 3 * 6e4 + 3e4;
+var STREAM_PLANNED_CLOSE_MAX_MS = 4 * 6e4;
+var STREAM_REFUSED_DELAY_MAX_MS = 15 * 6e4;
+var STREAM_RETRY_AFTER_MAX_MS = 5 * 6e4;
+var WEEKDAY = "(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)";
+var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+var MONTH = `(${MONTHS.join("|")})`;
+var CLOCK = "(\\d{2}):(\\d{2}):(\\d{2})";
+var IMF_FIXDATE = new RegExp(`^${WEEKDAY}, (\\d{2}) ${MONTH} (\\d{4}) ${CLOCK} GMT$`);
+var RFC850_DATE = new RegExp(`^(?:Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day, (\\d{2})-${MONTH}-(\\d{2}) ${CLOCK} GMT$`);
+var ASCTIME_DATE = new RegExp(`^${WEEKDAY} ${MONTH} ([ \\d]\\d) ${CLOCK} (\\d{4})$`);
 
 // channel-core/src/identity/encrypted.ts
 import { createHash as createHash3 } from "node:crypto";
@@ -9483,6 +9513,10 @@ var SenderTrustManager = class {
   localMismatchRefreshAfter = /* @__PURE__ */ new Map();
   teamRosterCache;
   teamRosterRequest;
+  /** A key rotation gave this identity another did:key; recipients are bound to it. */
+  renewSelfDID(did) {
+    this.selfDid = did;
+  }
   verifyResponsibility(message, authenticated) {
     return readReceivedIdChain(message, authenticated, {
       evidence: (chain, subject, domain) => this.registry.idStatus.evidence(chain, subject, domain),
@@ -11142,6 +11176,9 @@ function awakeningClosingLine(kind) {
   return "Use the aw CLI to respond when appropriate.";
 }
 function formatAwakeningForAgent(awakening) {
+  if (awakening.kind === "channel") {
+    return ["aweb channel notice, from the aweb channel itself and not from another agent.", "", awakening.content].join("\n");
+  }
   const rawType = awakening.meta.type || awakening.kind;
   const type2 = awakening.kind === "app" ? sanitizeSummaryComponent(rawType) || "app" : rawType;
   const lines = [`aweb ${type2} event received.`];

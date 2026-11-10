@@ -81,6 +81,11 @@ export class ActivityEmitter {
   constructor(private readonly options: ActivityEmitterOptions) {}
 
   /** channel-core delivered a chat wake for this session; the next turn serves it. */
+  /** The key that signs this runtime's requests changed; later events are signed with it. */
+  renewSigner(signer: ActivitySigner): void {
+    this.options.signer = signer;
+  }
+
   chatWakeDelivered(sessionID: string, options: { encrypted: boolean }): void {
     // Any encrypted message of the pending session keeps its turn summary-free.
     const encrypted = options.encrypted

@@ -42,6 +42,11 @@ export class ReceiveStreamReceipt implements EventStreamObserver {
     });
   };
 
+  /** A key rotation gave the identity another did:key; later receipts name it. */
+  renewDID(did: string): void {
+    this.options.did = did;
+  }
+
   onClose = (): Promise<void> => {
     const openedAt = this.openedAt;
     this.openedAt = undefined;

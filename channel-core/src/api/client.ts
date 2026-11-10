@@ -84,6 +84,30 @@ export class APIClient {
     private auth: APIClientAuth,
   ) {}
 
+  /**
+   * Take the credentials of a client built from the same identity home read
+   * again: a renewed certificate or grant, or the key and certificate a key
+   * rotation left there. The client keeps acting as the same identity towards
+   * the same server; credentials that say otherwise are refused.
+   *
+   * An identity with a stable id is that stable id, whatever did:key it
+   * holds. An identity without one is its did:key.
+   */
+  renewCredentialsFrom(renewed: APIClient): void {
+    if (renewed.baseURL !== this.baseURL) {
+      throw new Error("the credentials read again name another server");
+    }
+    const stableID = this.auth.stableID.trim();
+    const sameIdentity = renewed.auth.stableID.trim() === stableID
+      && (stableID !== "" || renewed.auth.did === this.auth.did)
+      && renewed.auth.teamID === this.auth.teamID
+      && (renewed.auth.authMode ?? "team") === (this.auth.authMode ?? "team");
+    if (!sameIdentity) {
+      throw new Error("the credentials read again name another identity");
+    }
+    this.auth = renewed.auth;
+  }
+
   hasTeamCertificateAuth(teamID: string): boolean {
     return this.auth.teamID === teamID
       && this.auth.teamCertificateHeader.trim() !== ""
@@ -179,7 +203,8 @@ export class APIClient {
 
     if (!resp.ok) {
       const text = await readSafeErrorExcerpt(resp).catch(() => "");
-      throw new APIError(resp.status, text);
+      const retryAfter = resp.headers.get("Retry-After");
+      throw new APIError(resp.status, text, retryAfterSeconds(retryAfter), retryAfter ?? undefined);
     }
 
     return resp;
@@ -243,6 +268,8 @@ export class APIError extends Error {
     public body: string,
     /** A Retry-After given as whole seconds; absent when missing or another form. */
     public retryAfterSeconds?: number,
+    /** The Retry-After header as the server sent it; absent when missing. */
+    public retryAfter?: string,
   ) {
     super(body ? `aweb: http ${statusCode}: ${body}` : `aweb: http ${statusCode}`);
   }

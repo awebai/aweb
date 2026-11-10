@@ -154,11 +154,16 @@ export class SenderTrustManager {
     private readonly client: APIClient,
     private readonly registry: RegistryResolver,
     private readonly teamID: string,
-    private readonly selfDid: string,
+    private selfDid: string,
     private readonly selfStableID: string = "",
     private readonly now: () => number = () => Date.now(),
     private readonly random: () => number = () => Math.random(),
   ) {}
+
+  /** A key rotation gave this identity another did:key; recipients are bound to it. */
+  renewSelfDID(did: string): void {
+    this.selfDid = did;
+  }
 
   verifyResponsibility(message: ReceivedIdChain, authenticated: boolean) {
     return readReceivedIdChain(message, authenticated, {
