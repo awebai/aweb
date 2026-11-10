@@ -12,7 +12,7 @@ import json
 import logging
 from json import loads as json_loads
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import InitVar, asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 from urllib.parse import quote, urlparse
@@ -322,15 +322,27 @@ class RegistryClient:
     base_url: str | None = None
     domain_registry_resolver: DomainRegistryResolver | None = None
     service_token: str | None = field(default=None, repr=False, compare=False)
+    domain_verifier: InitVar[DomainVerifier | None] = field(default=None, kw_only=True)
+    _domain_verifier: DomainVerifier | None = field(init=False, repr=False, compare=False)
     _http_client: httpx.AsyncClient = field(init=False, repr=False, compare=False)
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, domain_verifier: DomainVerifier | None = None) -> None:
+        object.__setattr__(self, "_domain_verifier", domain_verifier)
         object.__setattr__(self, "service_token", normalize_service_token(self.service_token))
         object.__setattr__(
             self,
             "_http_client",
             httpx.AsyncClient(
                 timeout=self.timeout_seconds,
+                # AWID's server closes idle connections after five seconds.
+                # The client's idle clock starts later, after consuming the
+                # response: an equal expiry can race that close on reuse.
+                # Keep a margin, without replaying ambiguous failed writes.
+                limits=httpx.Limits(
+                    max_connections=100,
+                    max_keepalive_connections=20,
+                    keepalive_expiry=1.0,
+                ),
                 transport=self.transport,
                 follow_redirects=False,
             ),
@@ -345,6 +357,56 @@ class RegistryClient:
     async def registry_audience(self, domain: str) -> str:
         """The audience a write for ``domain`` signs: the canonical origin of the registry it is routed to."""
         return canonical_server_origin(await self._registry_url_for_domain(domain))
+
+    async def id_chain_evidence(
+        self, bundle: dict[str, Any] | None, subject: dict[str, Any], *, domain: str,
+    ) -> IDChainEvidence:
+        """Acquire current namespace authority and routed status without a cache.
+
+        Age starts before acquisition and rounds upward, under the same bounded
+        attempt as the cached client. Failures return unavailable evidence;
+        cancellation propagates. Every invocation performs the required live
+        reads; callers choose explicitly between this and CachedRegistryClient.
+        Capability-detecting callers now discover this method and perform live
+        DNS authority and status reads instead of treating evidence as unavailable.
+        """
+        try:
+            request = status_request(bundle, subject, domain=domain)
+        except IDCertificateError:
+            request = None
+        if request is None:
+            return IDChainEvidence(status={}, namespace_authority={}, age_seconds=None)
+        started_ns = _monotonic_ns()
+        try:
+            async with asyncio.timeout(self.timeout_seconds):
+                entry = await self._acquire_id_status(request)
+        except Exception as exc:
+            logger.warning("AWID live identity-tree evidence failed for %s: %r", domain, exc)
+            return IDChainEvidence(status={}, namespace_authority={}, age_seconds=None)
+        return _id_status_evidence(entry, age=_whole_seconds_up(_monotonic_ns() - started_ns))
+
+    async def _acquire_id_status(self, request: dict[str, Any]) -> dict[str, Any]:
+        """One live producer, called inside the owner's timeout and age window.
+
+        MalformedIDStatusError remains distinct for cached-entry invalidation.
+        Neither the registry URL nor status alone supplies namespace authority.
+        """
+        domain = request["domain"]
+        verify_domain = self._domain_verifier
+        if verify_domain is None:
+            from awid.dns_verify import verify_domain as dns_verify_domain
+            verify_domain = dns_verify_domain
+        authority = await verify_domain(domain)
+        status = await self.fetch_id_certificate_status(domain, request)
+        return {
+            "status": status,
+            "namespace_authority": {
+                "domain": domain,
+                "dns_name": authority.dns_name,
+                "inherited": authority.inherited,
+                "controller_key": authority.controller_did,
+            },
+        }
 
     async def _registry_url_for_domain(self, domain: str) -> str:
         if self.domain_registry_resolver is not None:
@@ -1516,10 +1578,10 @@ class CachedRegistryClient(RegistryClient):
             base_url=base_url,
             domain_registry_resolver=domain_registry_resolver,
             service_token=service_token,
+            domain_verifier=domain_verifier,
         )
         object.__setattr__(self, "redis_client", redis_client)
         object.__setattr__(self, "_refresh_tasks", {})
-        object.__setattr__(self, "_domain_verifier", domain_verifier)
         object.__setattr__(self, "_id_status_refreshes", {})
 
     async def id_chain_evidence(
@@ -1576,14 +1638,10 @@ class CachedRegistryClient(RegistryClient):
         """
         domain = request["domain"]
         started_ns = _monotonic_ns()
-        verify_domain = self._domain_verifier
-        if verify_domain is None:
-            from awid.dns_verify import verify_domain
         try:
             async with asyncio.timeout(self.timeout_seconds):
                 fetched_at = await self._redis_time()
-                authority = await verify_domain(domain)
-                status = await self.fetch_id_certificate_status(domain, request)
+                acquired = await self._acquire_id_status(request)
         except MalformedIDStatusError:
             logger.warning("AWID identity-tree status for %s is malformed; no evidence is served", domain)
             await self._invalidate_keys(cache_key)
@@ -1591,16 +1649,7 @@ class CachedRegistryClient(RegistryClient):
         except Exception as exc:
             logger.warning("AWID identity-tree status refresh failed for %s: %r", domain, exc)
             return _IDStatusRefresh(entry=None, age=None)
-        entry = {
-            "fetched_at": fetched_at,
-            "status": status,
-            "namespace_authority": {
-                "domain": domain,
-                "dns_name": authority.dns_name,
-                "inherited": authority.inherited,
-                "controller_key": authority.controller_did,
-            },
-        }
+        entry = {"fetched_at": fetched_at, **acquired}
         if fetched_at is not None:
             await self._redis_set(
                 cache_key, json.dumps(entry, separators=(",", ":"), sort_keys=True), ex=_ID_STATUS_FRESH_SECONDS,

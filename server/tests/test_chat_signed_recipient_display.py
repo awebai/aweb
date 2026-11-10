@@ -143,7 +143,7 @@ async def test_signed_recipient_display_read_paths(privacy_app, tmp_path, aw_cli
             elif view == "mcp-wait":
                 replies, timed_out = await chat._wait_for_replies(env.db, env.redis, auth=auth,
                     hosted_decryptor=None, session_id=UUID(session), participant_did=actor.did,
-                    after=before, wait_seconds=1)
+                    after_seq=0, wait_seconds=1)
                 assert not timed_out
                 message = replies[0]
             else:

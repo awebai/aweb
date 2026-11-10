@@ -559,6 +559,18 @@ class NativeMessagingService:
 
     @asynccontextmanager
     async def unit_of_work(self, auth):
+        """One database transaction for an ingress: claim, accept, finish.
+
+        `accept` locks the conversation and the chat session row and, for a
+        chat message, takes the session's next number, which holds that row
+        until this transaction commits. Every other writer of the session
+        (sends, read marks, federated delivery) waits for it. So nothing
+        inside the unit of work may wait on anything but the database: no
+        HTTP or registry call, no Redis round trip, no wait for a reply.
+        Wakes are recorded here and published by the caller's
+        `agent_wake_scope` after the commit, and durable publication runs
+        below, after the transaction.
+        """
         async with self.db.get_manager("aweb").transaction() as tx:
             uow = NativeMessagingUnitOfWork(self, deepcopy(auth), tx)
             try:

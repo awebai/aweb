@@ -1,0 +1,84 @@
+{
+  "description": "An encrypted mail whose subject holds U+2028 and whose body holds U+2029, produced by aw at commit 8e8d008c8, where the encrypted inner payload writes each separator as a six-character escape. The recipient key is a throwaway test key.",
+  "envelope": {
+    "message_version": 2,
+    "envelope_type": "aweb.e2ee.message",
+    "kind": "mail",
+    "message_id": "11111111-1111-4111-8111-111111111111",
+    "conversation_id": "22222222-2222-4222-8222-222222222222",
+    "created_at": "2026-05-26T12:00:00Z",
+    "expires_at": "2026-05-26T12:05:00Z",
+    "from": {
+      "address": "example.com/alice",
+      "did": "did:key:z6MkiaNiuxco5drctxSsqptpPdRu7yu4T7xFcau8UfCLqjFH",
+      "stable_id": "did:aw:4EARihNvyiLjRc8kNgxNPFqwN4fh",
+      "encryption_key_id": "sha256:2N3GqAhPa63Q3UF/GGrz8foVT6vlV8q32IBsl7ilZEw"
+    },
+    "recipients": [
+      {
+        "address": "example.com/bob",
+        "did": "did:key:z6MkpqXgAWGndXXG4UssJyX6Asdnc6JkzdxR4Wf8iAizxNkH",
+        "stable_id": "did:aw:3my3PUtw3eSxQmreCHaPrniFFSDg",
+        "encryption_key_id": "sha256:SymztaxvDQEHkgG6++/dk+oydTtrh+SJZtzbEDtgm04",
+        "wrap_id": "sha256:7iP2OfKwGbpo5JfF1LX5SApy6jLZelHDn3Mj0tPR4ic"
+      }
+    ],
+    "routing": {
+      "to": "example.com/bob",
+      "to_did": "did:key:z6MkpqXgAWGndXXG4UssJyX6Asdnc6JkzdxR4Wf8iAizxNkH",
+      "to_stable_id": "did:aw:3my3PUtw3eSxQmreCHaPrniFFSDg"
+    },
+    "policy": {
+      "requires_e2ee": true,
+      "legacy_plaintext_allowed": false
+    },
+    "crypto": {
+      "suite": "aweb-e2ee-v2.x25519-hkdf-sha256-aes256gcm-ed25519",
+      "content_nonce": "8ij1vLY1BZQxSQxm",
+      "ciphertext_hash": "sha256:tyNKkD60CpBVTfQOcOfYvWgQlmA+yRFtejuW2ruUt40",
+      "ciphertext_size": 578,
+      "inner_header_hash": "sha256:fTPfFC5/dGCxRqN20NHHh+/+Lxe8nUHl8wWjV7TsRwo",
+      "key_wraps_hash": "sha256:x/SKfxZ/EJ+1EGNKEIbD+mCPZQ6NyYkMVecGE65cGUc"
+    },
+    "key_wraps": [
+      {
+        "wrap_id": "sha256:7iP2OfKwGbpo5JfF1LX5SApy6jLZelHDn3Mj0tPR4ic",
+        "recipient_stable_id": "did:aw:3my3PUtw3eSxQmreCHaPrniFFSDg",
+        "recipient_did": "did:key:z6MkpqXgAWGndXXG4UssJyX6Asdnc6JkzdxR4Wf8iAizxNkH",
+        "recipient_address": "example.com/bob",
+        "recipient_encryption_key_id": "sha256:SymztaxvDQEHkgG6++/dk+oydTtrh+SJZtzbEDtgm04",
+        "sender_encryption_key_id": "sha256:2N3GqAhPa63Q3UF/GGrz8foVT6vlV8q32IBsl7ilZEw",
+        "sender_did": "did:key:z6MkiaNiuxco5drctxSsqptpPdRu7yu4T7xFcau8UfCLqjFH",
+        "sender_stable_id": "did:aw:4EARihNvyiLjRc8kNgxNPFqwN4fh",
+        "wrap_purpose": "delivery",
+        "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
+        "encapsulated_key": "HaYdW8KEKnxCqaUKerogfeb3h00z3CBHSffiubq9X0w",
+        "wrapped_cek": "BFthEpNxydvkSsWjRWvs94vvOalZAFzqT7yyNH6HQYjCquRjnzQfNdi2RXGTJrHs"
+      },
+      {
+        "wrap_id": "sha256:kxVGIFZvtUV66w+1L8eZgS57IrZVsFSzN7DvgxGZTjs",
+        "recipient_stable_id": "did:aw:4EARihNvyiLjRc8kNgxNPFqwN4fh",
+        "recipient_did": "did:key:z6MkiaNiuxco5drctxSsqptpPdRu7yu4T7xFcau8UfCLqjFH",
+        "recipient_address": "example.com/alice",
+        "recipient_encryption_key_id": "sha256:2N3GqAhPa63Q3UF/GGrz8foVT6vlV8q32IBsl7ilZEw",
+        "sender_encryption_key_id": "sha256:2N3GqAhPa63Q3UF/GGrz8foVT6vlV8q32IBsl7ilZEw",
+        "sender_did": "did:key:z6MkiaNiuxco5drctxSsqptpPdRu7yu4T7xFcau8UfCLqjFH",
+        "sender_stable_id": "did:aw:4EARihNvyiLjRc8kNgxNPFqwN4fh",
+        "wrap_purpose": "sender_copy",
+        "algorithm": "hpke-base-x25519-hkdf-sha256-aes256gcm",
+        "encapsulated_key": "lf9w33JPjjZaDYVG+veJTkv5LWxQJUrbYum/zo4ODxQ",
+        "wrapped_cek": "UOZmJvQ/zVesxbXi6Ar0VFnUbmmEdmgwU9aQB8Fi/kdzfRGXmrbHaHRpcqNng26f"
+      }
+    ],
+    "ciphertext": "Zo/96viJwSFxH++zktNsSA2W7VsIxV0+vCEJUqUKUqgUzX1bXr3J7c7/9JzVCFn/DY+EwbRug2Fl2VyqDTzTX1dIt5an0Y+no7G5lHO3SSrrWR6FbC+kGFZpuk7i3qUi7kknoemkYxtZfAMPSOAUicRM+gmEWFnOPL7YHdGzd2ZP31GyHG7oRAnPWIYgZhuLSZ/GMB6YU89dssvzg6V1xbzZgzkBnVbGUavukJYOIJCn9HS+x1RAeLvFoiqXoVLD+V6aiuU3xiLd5QmS1jMgDsdX1QwZo0T/zLmLJMuZK4zFzX5M8dUUL+kaUpU4pXY7M1SBAsO2mfuamxi2u8N8sMo7eSFc/LrVTB7V218NYt+PCtaQjn5rpsM7LYeP0Yi8HLqPURTIMFHTcjA53IOBtxUMwTA7kn6Iako0Bz0MtCkhgjYt3292+b4GeILASCJENmxh+o+cZZLQ6FeorY4XphiIyu0RHqr8v/vXVFlsrAHwH5lhEoyxm8HLFUqV+gd1KM9NdT9uPEpw2FYiCfXPBbTLCKRH/0kkTFuqIkdQyMUffHJJ82Phk7VqtEgLuGp6TNsW0CQMxJOjy0fVAJp8GdkScwzhCiw7UVvhfuFLPuM/wlPvu8yuLlqSZhuNxyVTjnr2lhmDjqKEF/VII6XMHbdJj2c6Ar2pFAuFLIwA8v6x2eXUXQuS4ipploWnilQ6HdLLi20T4IrMU7jrcbFOGoNJi3UqZsGJbrB28bJUFqtCzSFwYQXf9z/VE5j+QqJwvCs",
+    "signature": "zqBpkuEWOJURHf7PEaQbz3gR/2kYHesKnnTSjyVteU9AO/szFRQM0a7N4TldilrKnRh1jd6wlkjsc8T6ZpKeBg",
+    "signing_key_id": "did:key:z6MkiaNiuxco5drctxSsqptpPdRu7yu4T7xFcau8UfCLqjFH"
+  },
+  "recipient": {
+    "address": "example.com/bob",
+    "did": "did:key:z6MkpqXgAWGndXXG4UssJyX6Asdnc6JkzdxR4Wf8iAizxNkH",
+    "encryption_key_id": "sha256:SymztaxvDQEHkgG6++/dk+oydTtrh+SJZtzbEDtgm04",
+    "stable_id": "did:aw:3my3PUtw3eSxQmreCHaPrniFFSDg",
+    "x25519_private_key_b64": "h0h3fNt2MYuR5lwnDSJJUnqsA76yDdhJiYToyn8znSg"
+  }
+}
