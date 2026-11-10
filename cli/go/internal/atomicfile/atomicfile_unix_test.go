@@ -175,3 +175,21 @@ func TestSyncDirReportsAnUnopenableDirectory(t *testing.T) {
 		t.Fatalf("want a not-exist error, got %v", err)
 	}
 }
+
+// A filesystem that cannot flush a directory answers EINVAL or ENOTSUP to the
+// sync. That says nothing went wrong with the write, so it is not a failure;
+// any other error of the sync is.
+func TestDirectorySyncUnsupportedIsNotAFailure(t *testing.T) {
+	for _, errno := range []syscall.Errno{syscall.EINVAL, syscall.ENOTSUP} {
+		err := &os.PathError{Op: "sync", Path: "/state", Err: errno}
+		if !syncUnsupported(err) {
+			t.Errorf("%v must read as a directory sync the filesystem does not offer", errno)
+		}
+	}
+	for _, errno := range []syscall.Errno{syscall.EIO, syscall.ENOSPC, syscall.EACCES, syscall.EBADF} {
+		err := &os.PathError{Op: "sync", Path: "/state", Err: errno}
+		if syncUnsupported(err) {
+			t.Errorf("%v must stay a failure of the directory sync", errno)
+		}
+	}
+}
