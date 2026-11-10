@@ -189,10 +189,16 @@ receipt, recorded under the consumed owner act, as for the contact acts
   an enrolment or approval channel. The receipt's payload keeps its catalog
   fields; its commitment already binds the signed act.
 - **Replace.** One `APPROVER_REDESIGNATED`, a `credential.recovered`
-  widening, retains the new subject, the previous subject and the effective
-  time at the end of the cooling-off. Retiring the previous credential is
-  part of that effect, not a separate `role.revoked` receipt, because the
-  holding continues.
+  widening, whatever the holding's approver history. It retains the new
+  subject and the effective time at the end of the cooling-off, and
+  `held_since` is unchanged. It also retains the previous subject when the
+  holding has a latest approver, current or already retired by containment.
+  A holding that never had an approver, such as one made by backfill, has no
+  previous subject, and the event carries none. The event kind follows the
+  act, never the presence of an approver: a replace is never recorded as
+  `APPROVER_DESIGNATED`. Retiring the previous credential is part of that
+  effect, not a separate `role.revoked` receipt, because the holding
+  continues.
 - **Revoke.** One `APPROVER_RETIRED`, a `role.revoked` narrowing, under the
   owner-act actor, recorded at the revoke's time. It records the end of the
   holding, so it is recorded even when containment already retired the
