@@ -36,11 +36,12 @@ import logging
 import secrets
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import urlsplit
 
 from awid.signing import canonical_json_bytes
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
@@ -60,7 +61,14 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
 )
 
-from aweb_naapp.hooks.owner_act import VerifiedOwnerAct
+from aweb_naapp.hooks.owner_act import HumanCredential, VerifiedOwnerAct
+from aweb_naapp.roles import (
+    begin_holding,
+    end_holding,
+    holding_scope,
+    lock_holding,
+    refresh_holding_certificate,
+)
 from aweb_naapp.runtime.approvals import (
     ActionPolicy,
     Approval,
@@ -90,6 +98,7 @@ from aweb_naapp.runtime.passkeys.proof import (
     ProofContextResolver,
     ProofContextUnavailable,
     RetainedPasskeyProof,
+    is_public_cose_key,
     passkey_evidence_commitment,
 )
 from aweb_naapp.runtime.passkeys.rp import RelyingParty
@@ -177,6 +186,9 @@ class PasskeyEffectFence(Protocol):
 DESIGNATE_ACT = "app-role.designate"
 RECOVER_ACT = "app-credential.recover"
 REVOKE_ACT = "app-role.revoke"
+HOLDER_DESIGNATE_ACT = "human-role.designate"
+HOLDER_REPLACE_ACT = "human-credential.replace"
+HOLDER_REVOKE_ACT = "human-role.revoke"
 
 
 @dataclass(frozen=True)
@@ -282,7 +294,7 @@ class PasskeyLogin:
     a session or anything else, is the caller's."""
 
     subject: str
-    contact: str
+    contact: str | None
     evidence_ref: str
 
 
@@ -301,6 +313,15 @@ class PasskeyEvidence:
     task_answer_ref: str | None
     sign_count: int
     verified_at: datetime
+
+
+def _holding_key(act: VerifiedOwnerAct) -> dict[str, str]:
+    return {
+        "installation_id": str(act.subject["installation_id"]),
+        "team_id": act.team_id,
+        "role": str(act.subject["role"]),
+        "principal": str(act.subject["principal"]),
+    }
 
 
 async def _transaction_id(tx: TransactionManager) -> int:
@@ -366,13 +387,19 @@ _EFFECTIVE_CONTACT = (
 )
 
 
+# A credential bound to no relying party is the app's own; one bound to a
+# relying party verifies only there. `rp_id` is the parameter naming the app's.
+def _bound_to_rp(rp_id: str) -> str:
+    return f"(c.rp_id IS NULL OR c.rp_id = {rp_id})"
+
+
 # The scope's approver in effect now ($2) that holds an unrevoked passkey.
 _USABLE_APPROVER = (
     f"SELECT subject, {_EFFECTIVE_CONTACT} AS contact "
     "FROM {{tables.passkey_approvers}} a "
     f"WHERE scope = $1 AND {_CURRENT} AND EXISTS ("
     "SELECT 1 FROM {{tables.passkey_credentials}} c "
-    "WHERE c.subject = a.subject AND c.revoked_at IS NULL)"
+    f"WHERE c.subject = a.subject AND c.revoked_at IS NULL AND {_bound_to_rp('$3')})"
 )
 
 
@@ -450,17 +477,12 @@ class Passkeys:
         the returned designation after the commit.
         """
         if isinstance(evidence, VerifiedOwnerAct):
-            if evidence.act not in (DESIGNATE_ACT, RECOVER_ACT):
-                raise DesignationRefused(f"{evidence.act} designates nobody")
+            act_id, actor = await self._verified_act(tx, evidence, (DESIGNATE_ACT, RECOVER_ACT))
             if evidence.subject.get("role") != scope or evidence.subject.get(
                 "contact_sha256"
             ) != contact_sha256(contact):
                 raise DesignationRefused("owner act names another scope or contact")
-            if evidence.transaction_id != await _transaction_id(tx):
-                raise DesignationRefused("the owner act was consumed in another transaction")
             kind = evidence.act
-            act_id = f"{evidence.team_id}:{evidence.nonce}"
-            actor = str(evidence.fields["team_key_did"])
         elif isinstance(evidence, OwnerApproval):
             if self._owner_scopes(scope):
                 raise DesignationRefused("an owner scope's approver needs a team owner act")
@@ -471,10 +493,9 @@ class Passkeys:
             actor = evidence.approver_subject
         else:
             raise TypeError("designation needs a verified owner act or an owner approval")
-        if await tx.fetch_value(
-            "SELECT 1 FROM {{tables.passkey_owner_acts}} WHERE act_id = $1", act_id
-        ):
-            raise DesignationRefused("this evidence has already taken effect")
+        await self._refuse_used(tx, act_id)
+        if await self._holds_a_human_role(tx, scope):
+            raise DesignationRefused("a human-role holder is designated by its own acts")
         now = self._clock()
         previous = await tx.fetch_one(
             "SELECT subject FROM {{tables.passkey_approvers}} "
@@ -504,17 +525,7 @@ class Passkeys:
             now,
             effective_at,
         )
-        await tx.execute(
-            "INSERT INTO {{tables.passkey_owner_acts}} "
-            "(act_id, kind, signer, scope, subject, used_at) "
-            "VALUES ($1, $2, $3, $4, $5, $6)",
-            act_id,
-            kind,
-            actor,
-            scope,
-            approver.subject,
-            now,
-        )
+        await self._record_act(tx, act_id, kind, actor, scope, approver.subject, now)
         token = await self._issue_enrolment(tx, approver.subject, now)
         details = {
             "scope": scope,
@@ -556,20 +567,10 @@ class Passkeys:
         voided. The scope then has no approver: its next designation is a first
         one, and the retired passkeys stay dead. Each act takes effect once.
         """
-        if not isinstance(evidence, VerifiedOwnerAct):
-            raise TypeError("retirement needs a verified owner act")
-        if evidence.act != REVOKE_ACT:
-            raise DesignationRefused(f"{evidence.act} retires nobody")
+        act_id, actor = await self._verified_act(tx, evidence, (REVOKE_ACT,))
         if evidence.subject.get("role") != scope:
             raise DesignationRefused("owner act names another scope")
-        if evidence.transaction_id != await _transaction_id(tx):
-            raise DesignationRefused("the owner act was consumed in another transaction")
-        act_id = f"{evidence.team_id}:{evidence.nonce}"
-        actor = str(evidence.fields["team_key_did"])
-        if await tx.fetch_value(
-            "SELECT 1 FROM {{tables.passkey_owner_acts}} WHERE act_id = $1", act_id
-        ):
-            raise DesignationRefused("this evidence has already taken effect")
+        await self._refuse_used(tx, act_id)
         current = await tx.fetch_one(
             "SELECT subject FROM {{tables.passkey_approvers}} "
             "WHERE scope = $1 AND superseded_at IS NULL FOR UPDATE",
@@ -583,17 +584,7 @@ class Passkeys:
             raise DesignationRefused("owner act names another approver")
         now = self._clock()
         await self._retire(tx, current["subject"], actor, now)
-        await tx.execute(
-            "INSERT INTO {{tables.passkey_owner_acts}} "
-            "(act_id, kind, signer, scope, subject, used_at) "
-            "VALUES ($1, $2, $3, $4, $5, $6)",
-            act_id,
-            REVOKE_ACT,
-            actor,
-            scope,
-            current["subject"],
-            now,
-        )
+        await self._record_act(tx, act_id, REVOKE_ACT, actor, scope, current["subject"], now)
         await self._audit.emit(
             AuditEvent(
                 kind=AuditKind.APPROVER_RETIRED,
@@ -604,6 +595,273 @@ class Passkeys:
             ),
             tx,
         )
+
+    async def _verified_act(
+        self, tx: TransactionManager, evidence: VerifiedOwnerAct, acts: tuple[str, ...]
+    ) -> tuple[str, str]:
+        """The act's id and signer, once it is one of `acts` and was consumed
+        in this transaction."""
+        if not isinstance(evidence, VerifiedOwnerAct):
+            raise TypeError("this needs a verified owner act")
+        if evidence.act not in acts:
+            raise DesignationRefused(f"{evidence.act} does not apply here")
+        if evidence.transaction_id != await _transaction_id(tx):
+            raise DesignationRefused("the owner act was consumed in another transaction")
+        return f"{evidence.team_id}:{evidence.nonce}", str(evidence.fields["team_key_did"])
+
+    async def _refuse_used(self, tx: TransactionManager, act_id: str) -> None:
+        if await tx.fetch_value(
+            "SELECT 1 FROM {{tables.passkey_owner_acts}} WHERE act_id = $1", act_id
+        ):
+            raise DesignationRefused("this evidence has already taken effect")
+
+    async def _record_act(
+        self,
+        tx: TransactionManager,
+        act_id: str,
+        kind: str,
+        actor: str,
+        scope: str,
+        subject: str,
+        now: datetime,
+    ) -> None:
+        await tx.execute(
+            "INSERT INTO {{tables.passkey_owner_acts}} "
+            "(act_id, kind, signer, scope, subject, used_at) "
+            "VALUES ($1, $2, $3, $4, $5, $6)",
+            act_id,
+            kind,
+            actor,
+            scope,
+            subject,
+            now,
+        )
+
+    async def _holds_a_human_role(self, tx: TransactionManager, scope: str) -> bool:
+        return bool(
+            await tx.fetch_value(
+                "SELECT 1 FROM {{tables.passkey_approvers}} "
+                "WHERE scope = $1 AND principal IS NOT NULL LIMIT 1",
+                scope,
+            )
+        )
+
+    # Human-role holders
+
+    async def designate_holder(
+        self,
+        tx: TransactionManager,
+        *,
+        act: VerifiedOwnerAct,
+        credential: HumanCredential,
+        certificate: bytes,
+        notice_contact: str | None,
+    ) -> Designation:
+        """Begin the holding a `human-role.designate` act names, in the
+        transaction that consumed it: the role assignment, the installation's
+        record with `certificate`, and B3's approver of the holding's scope,
+        linked to the principal, with the act's credential in effect at once.
+        Nothing is sent and no enrolment link exists."""
+        act_id, actor = await self._verified_act(tx, act, (HOLDER_DESIGNATE_ACT,))
+        await self._refuse_used(tx, act_id)
+        self._require_bound(act, credential, notice_contact)
+        key = _holding_key(act)
+        held = await begin_holding(tx, **key, certificate=certificate)
+        if held is None:
+            raise DesignationRefused("the role is already held")
+        if await self._current_subject_for_update(tx, held.b3_scope) is not None:
+            raise DesignationRefused("the holding's scope already has an approver")
+        now = self._clock()
+        return await self._bind_holder(
+            tx,
+            held.b3_scope,
+            key["principal"],
+            credential,
+            notice_contact,
+            now,
+            now,
+            act=(act_id, HOLDER_DESIGNATE_ACT, actor),
+        )
+
+    async def replace_holder_credential(
+        self,
+        tx: TransactionManager,
+        *,
+        act: VerifiedOwnerAct,
+        credential: HumanCredential,
+        certificate: bytes,
+        notice_contact: str | None,
+    ) -> Designation:
+        """Replace a current holder's credential on a `human-credential.replace`
+        act consumed in this transaction. The current approver is retired at
+        once, and a new one, with the act's credential, takes effect after the
+        recovery cooling-off; the holding and its `held_since` are kept and its
+        certificate replaced. The returned notices go to the contacts recorded
+        for the scope; deliver them after the commit."""
+        act_id, actor = await self._verified_act(tx, act, (HOLDER_REPLACE_ACT,))
+        await self._refuse_used(tx, act_id)
+        self._require_bound(act, credential, notice_contact)
+        key = _holding_key(act)
+        held = await lock_holding(tx, **key)
+        if held is None:
+            raise DesignationRefused("the role is not held")
+        previous = await self._current_subject_for_update(tx, held.b3_scope)
+        now = self._clock()
+        effective_at = now + self._lockout.recovery_cooling_off
+        notified = await self._recorded_contacts(tx, held.b3_scope)
+        if previous is not None:
+            await self._retire(tx, previous, actor, now)
+        await refresh_holding_certificate(
+            tx, **key, held_since=held.held_since, certificate=certificate
+        )
+        designation = await self._bind_holder(
+            tx,
+            held.b3_scope,
+            key["principal"],
+            credential,
+            notice_contact,
+            now,
+            effective_at,
+            act=(act_id, HOLDER_REPLACE_ACT, actor),
+            previous=previous,
+        )
+        notice = Notice(NoticeKind.RECOVERY_STARTED, held.b3_scope, effective_at)
+        return replace(designation, notices=tuple((c, notice) for c in notified))
+
+    async def revoke_holder(self, tx: TransactionManager, *, act: VerifiedOwnerAct) -> None:
+        """End the holding a `human-role.revoke` act names, in the transaction
+        that consumed it, and retire its approver with its credentials. It
+        reads no membership: a holder who has left the team is revoked too.
+        The installation's record stays as history."""
+        act_id, actor = await self._verified_act(tx, act, (HOLDER_REVOKE_ACT,))
+        await self._refuse_used(tx, act_id)
+        key = _holding_key(act)
+        if not await end_holding(tx, **key):
+            raise DesignationRefused("the role is not held")
+        scope = holding_scope(**key)
+        current = await self._current_subject_for_update(tx, scope)
+        now = self._clock()
+        if current is not None:
+            await self._retire(tx, current, actor, now)
+        retired = current or await tx.fetch_value(
+            "SELECT subject FROM {{tables.passkey_approvers}} "
+            "WHERE scope = $1 ORDER BY designated_at DESC LIMIT 1",
+            scope,
+        )
+        if retired is None:
+            return
+        await self._record_act(tx, act_id, HOLDER_REVOKE_ACT, actor, scope, retired, now)
+        await self._audit.emit(
+            AuditEvent(
+                kind=AuditKind.APPROVER_RETIRED,
+                actor=actor,
+                subject=retired,
+                occurred_at=now,
+                details={
+                    "scope": scope,
+                    "owner_act_id": act_id,
+                    "owner_act_kind": HOLDER_REVOKE_ACT,
+                },
+            ),
+            tx,
+        )
+
+    def _require_bound(
+        self, act: VerifiedOwnerAct, credential: HumanCredential, notice_contact: str | None
+    ) -> None:
+        """The credential and notice contact are the ones the act binds, and
+        the credential is a public key for this app's relying party, which is
+        the act's audience."""
+        if credential.sha256 != act.subject.get("credential_sha256"):
+            raise DesignationRefused("the credential is not the one the act binds")
+        notice_sha256 = act.subject.get("notice_contact_sha256")
+        if (notice_contact is None) != (notice_sha256 is None) or (
+            notice_contact is not None and contact_sha256(notice_contact) != notice_sha256
+        ):
+            raise DesignationRefused("the notice contact is not the one the act binds")
+        if not (credential.rp_id == self.rp.rp_id == urlsplit(act.audience).hostname):
+            raise DesignationRefused("the credential is bound to another relying party")
+        if not is_public_cose_key(credential.public_key):
+            raise DesignationRefused("the credential's key is not a public key")
+
+    async def _current_subject_for_update(self, tx: TransactionManager, scope: str) -> str | None:
+        return await tx.fetch_value(
+            "SELECT subject FROM {{tables.passkey_approvers}} "
+            "WHERE scope = $1 AND superseded_at IS NULL FOR UPDATE",
+            scope,
+        )
+
+    async def _bind_holder(
+        self,
+        tx: TransactionManager,
+        scope: str,
+        principal: str,
+        credential: HumanCredential,
+        contact: str | None,
+        now: datetime,
+        effective_at: datetime,
+        *,
+        act: tuple[str, str, str],
+        previous: str | None = None,
+    ) -> Designation:
+        act_id, kind, actor = act
+        if await tx.fetch_value(
+            "SELECT 1 FROM {{tables.passkey_credentials}} WHERE credential_id = $1",
+            credential.credential_id,
+        ):
+            raise DesignationRefused("the credential is already registered")
+        approver = Approver(
+            scope=scope,
+            subject=str(uuid.uuid4()),
+            subject_type=SUBJECT_TYPE,
+            contact=contact,
+            principal_did=principal,
+        )
+        await tx.execute(
+            "INSERT INTO {{tables.passkey_approvers}} (subject, scope, contact, principal, "
+            "designated_by, designated_at, effective_at) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            approver.subject,
+            scope,
+            contact,
+            principal,
+            actor,
+            now,
+            effective_at,
+        )
+        await tx.execute(
+            "INSERT INTO {{tables.passkey_credentials}} "
+            "(credential_id, subject, public_key, sign_count, created_at, rp_id) "
+            "VALUES ($1, $2, $3, 0, $4, $5)",
+            credential.credential_id,
+            approver.subject,
+            credential.public_key,
+            now,
+            credential.rp_id,
+        )
+        await self._record_act(tx, act_id, kind, actor, scope, approver.subject, now)
+        details = {
+            "scope": scope,
+            "owner_act_id": act_id,
+            "owner_act_kind": kind,
+            "effective_at": effective_at.isoformat(),
+            "principal": principal,
+            "credential_sha256": credential.sha256,
+        }
+        if previous is not None:
+            details["previous_subject"] = previous
+        await self._audit.emit(
+            AuditEvent(
+                kind=AuditKind.APPROVER_REDESIGNATED
+                if previous is not None
+                else AuditKind.APPROVER_DESIGNATED,
+                actor=actor,
+                subject=approver.subject,
+                occurred_at=now,
+                details=details,
+            ),
+            tx,
+        )
+        return Designation(approver=approver, effective_at=effective_at)
 
     async def retire_in(
         self,
@@ -761,6 +1019,8 @@ class Passkeys:
         )
         if current is None:
             raise EnrolmentRefused("the scope has no approver")
+        if await self._holds_a_human_role(tx, scope):
+            raise EnrolmentRefused("a human-role holder enrols no passkey through a link")
         if await tx.fetch_value(
             "SELECT 1 FROM {{tables.passkey_credentials}} "
             "WHERE subject = $1 AND revoked_at IS NULL",
@@ -805,9 +1065,11 @@ class Passkeys:
     async def deliver(self, designation: Designation) -> DeliveryStatus:
         """Send a committed designation's enrolment link and notices. Returns
         how the link's delivery went."""
-        status = await self._send(
-            self._delivery.deliver_enrolment_link(designation.approver, designation.link_token)
-        )
+        status = DeliveryStatus.NOT_REQUIRED
+        if designation.link_token:
+            status = await self._send(
+                self._delivery.deliver_enrolment_link(designation.approver, designation.link_token)
+            )
         for contact, notice in designation.notices:
             await self._send(self._delivery.deliver_notice(contact, notice))
         return status
@@ -842,7 +1104,8 @@ class Passkeys:
         address gets nothing but its own proof."""
         rows = await tx.fetch_all(
             "SELECT a.contact FROM {{tables.passkey_approvers}} a "
-            "WHERE a.scope = $1 AND a.subject IS DISTINCT FROM $2 AND EXISTS ("
+            "WHERE a.scope = $1 AND a.subject IS DISTINCT FROM $2 AND a.contact IS NOT NULL "
+            "AND EXISTS ("
             "SELECT 1 FROM {{tables.passkey_credentials}} c WHERE c.subject = a.subject) "
             "UNION SELECT pending_contact FROM {{tables.passkey_approvers}} "
             "WHERE scope = $1 AND subject IS DISTINCT FROM $2 "
@@ -888,7 +1151,7 @@ class Passkeys:
 
     async def designated_approver(self, scope: str) -> Approver | None:
         """The scope's current approver, once in effect and enrolled."""
-        row = await self.db.fetch_one(_USABLE_APPROVER, scope, self._clock())
+        row = await self.db.fetch_one(_USABLE_APPROVER, scope, self._clock(), self.rp.rp_id)
         if row is None:
             return None
         return Approver(
@@ -899,7 +1162,7 @@ class Passkeys:
         """The subject of the scope's approver that can log in now: in effect
         and holding an unrevoked passkey. Read in the caller's transaction, by
         SQL only, at this Passkeys' clock; None while no credential can."""
-        row = await tx.fetch_one(_USABLE_APPROVER, scope, self._clock())
+        row = await tx.fetch_one(_USABLE_APPROVER, scope, self._clock(), self.rp.rp_id)
         return None if row is None else str(row["subject"])
 
     async def candidates(self, policy: ActionPolicy, request: Mapping[str, Any]) -> list[Approver]:
@@ -1233,8 +1496,10 @@ class Passkeys:
             "SELECT c.credential_id, c.public_key, c.sign_count "
             "FROM {{tables.passkey_credentials}} c JOIN {{tables.passkey_approvers}} a "
             "ON a.subject = c.subject "
-            "WHERE c.subject = $1 AND c.revoked_at IS NULL AND a.superseded_at IS NULL",
+            "WHERE c.subject = $1 AND c.revoked_at IS NULL AND a.superseded_at IS NULL "
+            f"AND {_bound_to_rp('$2')}",
             subject,
+            self.rp.rp_id,
         )
 
     async def _assertion_options(self, subject: str, challenge: bytes) -> Mapping[str, Any]:
@@ -1667,6 +1932,8 @@ class Passkeys:
         )
         if row is None:
             raise AuthenticationFailed("no approver in effect for this scope")
+        if row["contact"] is None:
+            raise ContactChangeRefused("contact_not_declared")
         if row["pending_contact_at"] is not None and row["pending_contact_at"] > now:
             raise ContactChangeRefused("contact_change_pending")
         effective_at = now + self._lockout.contact_change_delay

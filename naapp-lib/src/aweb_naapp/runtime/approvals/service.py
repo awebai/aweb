@@ -301,7 +301,9 @@ class Approvals:
         sending: list[tuple[Approver, str]] = []
         links: list[ApprovalLink] = []
         if presentation is PresentationKind.LINK:
-            for approver in approvers:
+            # A link goes only to a registered contact; an approver without one
+            # stays a candidate and decides through the app.
+            for approver in (a for a in approvers if a.contact is not None):
                 token, verifier = new_link_token()
                 sending.append((approver, token))
                 links.append(
