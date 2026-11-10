@@ -182,10 +182,13 @@ contact roles.
 
 ### Reading a holding
 
-The app that writes a role's holdings owns its one read of them and the
-hold that pins it: one table, one owner. A consumer, such as a console
-handoff, maps them onto its own interface and never reads or locks the
-holding table itself. Their signatures, in `aweb_naapp` terms:
+Holdings live in one store, `aweb_naapp`'s, with one implementation for
+every app: one table, one owner. Its writers are the human-role acts'
+effects and the certificate refresh below. An app declares its roles and
+calls the store. A consumer, such as a console handoff, maps the read and
+the hold onto its own interface. It never reads, locks or writes the
+holding table itself, and keeps no copy of a holding's fields or
+certificate. The signatures, in `aweb_naapp` terms:
 
 ```python
 @dataclass(frozen=True)
@@ -197,6 +200,7 @@ class HumanRoleHolding:
     b3_scope: str
     subject: str | None
     held_since: datetime
+    certificate: bytes | None
 
 
 async def read_holding(
@@ -215,6 +219,14 @@ async def hold_holding(
     role: str,
     principal: str,
 ) -> HumanRoleHolding | None: ...
+
+
+async def refresh_holding_certificate(
+    tx: TransactionManager,
+    *,
+    holding: HumanRoleHolding,
+    certificate: bytes,
+) -> bool: ...
 ```
 
 - **Where they run.** In the caller's transaction, by SQL only. Neither
@@ -223,7 +235,7 @@ async def hold_holding(
   result protects nothing by itself.
 - **The hold.** `hold_holding` returns the same result as `read_holding`,
   and locks what it read `FOR SHARE` until the caller's transaction ends:
-  the holding row, and the B3 approver and credential rows that the app's
+  the holding row, and the B3 approver and credential rows that the holding's
   writers change with it. Before an effect, the caller holds the holding
   and compares `held_since` and `subject` with the target it projected. A
   difference, or `None`, refuses the effect. A revoke or replace therefore
@@ -232,8 +244,8 @@ async def hold_holding(
   then `hold_holding`, then B3's current-approver preparation, then its own
   approval, change-set and session rows. Every writer of the holding row
   locks it `FOR UPDATE` in the same order, after the fence and before any B3
-  row: designate, replace and revoke under the owner act (stage 3), and any
-  app path that ends a holding. On the hold side, secrets' owner holding
+  row: designate, replace and revoke under the owner act (stage 3), the
+  certificate refresh, and any app path that ends a holding. On the hold side, secrets' owner holding
   takes this order with `hold_role` (`naapp-lib/src/aweb_naapp/roles/__init__.py:158`) on the
   role row as its hold.
 - **No holding.** It returns `None` when (installation, role, principal) has
@@ -258,6 +270,20 @@ async def hold_holding(
   value, so a consumer that bound a session to the earlier holding sees that
   it changed. A consumer's binding to a holding uses only installation, team,
   role, principal and `held_since`, none of which is secret.
+- **The certificate.** `certificate` is the exact bytes of the holder's
+  team certificate, retained with the holding
+  ([Membership evidence](human-confirmation-from-aw.md#membership-evidence)).
+  Designate and replace write the bytes in their body, after stage 3 has
+  verified them. A `session` handoff whose login succeeds replaces them
+  through `refresh_holding_certificate`, once the handoff has verified the
+  new certificate and its team and principal equal the holding's. The
+  refresh writes nothing and returns false when the holding's `held_since`
+  no longer equals the one given. It is `None` only for a holding that has
+  none retained, such as one made before this contract. Its use then
+  refuses with `403 principal_not_member` until a `session` handoff
+  refreshes it. A session keeps the certificate its own handoff presented,
+  with the session and for at most its lifetime. That is a session record,
+  not a copy of the holding's.
 - **Membership and kind are not read here.** Each use re-checks that
   `principal` is a current human member ([Use](#use)). That check is the
   runtime's shared exact-principal check
@@ -326,6 +352,8 @@ Each is filed as one reviewed change:
 - C3's `aw app role designate|revoke` and `aw app credential replace`, naming
   `--principal` and, where the role declares one, the notice contact;
 - the `credential` handoff (aweb-acwd.4);
-- each app's holding read, to the signature in
-  [Reading a holding](#reading-a-holding): for logs, with its holding table
-  and writer (aweb-acgh.16.44).
+- the holding store in `aweb_naapp`, with its writers, read, hold and
+  certificate refresh, to the signatures in
+  [Reading a holding](#reading-a-holding), and logs' adoption of it
+  (aweb-acgh.16.44). The console handoff reads a holding's certificate
+  through it and keeps no copy of a holding.
