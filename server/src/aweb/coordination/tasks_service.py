@@ -24,8 +24,8 @@ _UNSET = object()
 # update_task, soft_delete_task, add_dependency, remove_dependency,
 # add_comment) take the acting member and the on_mutation callback, and fire
 # the change's events through that callback after their own write commits. A
-# caller that runs one inside its own transaction passes a callback that
-# records the events, and fires them after that transaction commits.
+# caller that runs one inside its own transaction passes the record method of
+# a HeldMutationEvents (aweb.hooks) and fires it after that transaction commits.
 
 
 class CreateTaskRequest(BaseModel):
