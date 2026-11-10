@@ -30,7 +30,7 @@ Secrets and Logs are each version0.1.0, with co-located **awid-service0.5.36 and
 
 ## 2. Build and record the actual installed image identities
 
-Use the existing Docker daemon as the administrator. Do not add oatsagent to Docker or change AppArmor/user namespaces. If Docker or the separate operator-owned PostgreSQL databases/roles are unavailable, STOP and return that prerequisite; do not repurpose the registry's private configuration or schema.
+Use the existing Docker daemon as the administrator. Do not add oatsagent to Docker or change AppArmor/user namespaces. If Docker or the separate operator-owned PostgreSQL databases/roles are unavailable, STOP and return that prerequisite. Before starting, the operator records the independent PostgreSQL endpoint and confirms that both containers can reach it from the default Docker bridge. A Compose-only hostname is unsuitable without its network. This handoff does not create databases/roles in, or change, the e3 cohort's PostgreSQL server; if no independent reachable endpoint exists, STOP.
 
 ```bash
 for service in secrets logs; do
@@ -52,7 +52,7 @@ These are local image IDs, not published registry digests. A target rebuild reco
 
 ## 3. Private operator inputs: names and paths only
 
-Prepare `/etc/aweb-lab3/secrets.env` and `/etc/aweb-lab3/logs.env` as0600 files and separate key directories `/etc/aweb-lab3/secrets-keys` and `/etc/aweb-lab3/logs-keys`, readable by service UID10001 and inaccessible to oatsagent. Mount each at `/run/keys` in its own container, read-only. Generate independent keys using the recipe's K0 format; no value belongs in a command argument, mail, image or evidence. Do not source these files as shell programs or print their contents.
+Prepare `/etc/aweb-lab3/secrets.env` and `/etc/aweb-lab3/logs.env` as0600 files and separate key directories `/etc/aweb-lab3/secrets-keys` and `/etc/aweb-lab3/logs-keys`, readable by service UID10001 and inaccessible to oatsagent. Mount each at `/run/keys` in its own container, read-only. Every configured `*_EMAIL_PASSWORD_FILE` and `*_EMAIL_CA_FILE` must also be beneath `/run/keys`, the only file mount. Generate independent keys using the recipe's K0 format; no value belongs in a command argument, mail, image or evidence. Do not source these files as shell programs or print their contents.
 
 Use the exact candidate's reviewed `naapp/secrets/deploy/README.md` and `naapp/logs/deploy/README.md` for formats. Required mappings:
 
@@ -66,7 +66,7 @@ No actual Lab3 private settings, service-origin mapping, SMTP receipt or install
 
 ## 4. Start the two reviewed roots, preserving Host and TLS
 
-Configure the existing TLS reverse proxy for the four actual origins, preserving Host: Secrets listener8770 and Logs listener8765. Logs' console must meet its own-host rule. Do not run a second process for its second origin. Keep the new app databases/keys isolated from the running registry/coordination cohort.
+Before changing any shared TLS proxy, record its config path, a private backup path and the pre-change hash. Validate the new config with that installed proxy's native validator before reload; missing backup/validation is a STOP before editing. Preserve all existing e3 routes. Configure the proxy for the four actual origins, preserving Host: Secrets listener8770 and Logs listener8765. Logs' console must meet its own-host rule. Do not run a second process for its second origin. Keep the new app databases/keys isolated from the running registry/coordination cohort. Record `getent passwd 10001` and `id -u oatsagent` before starting: STOP if UID10001 belongs to an interactive/non-service host account or oatsagent. The later runner UID must differ from10001 as well. An existing UID10001 account is acceptable only as a dedicated non-login service account.
 
 ```bash
 # STOP if either exact name already exists; inspect rather than deleting it.
@@ -88,7 +88,16 @@ These are the reviewed deploy recipes with Lab3 names. No runner or sudoers poli
 
 ## 5. Readiness, refusal and footprint before any effect
 
-Record source/tree, actual image IDs, image UID10001, package versions and public app IDs/builds. Through each configured origin with verified TLS, require `/live`200, `/health`200 with all dependency booleans true, and `/ready`200. Secrets requires database/outbox/selected-provider checks and `labels.custody_mode=local_key_file` on both origins; Logs requires database/outbox. `/health`200 alone is insufficient. Require `build.git_sha` to equal dfa on both services. Use only a configured CA, never a TLS bypass.
+Record source/tree, actual image IDs, image UID10001, package versions and public app IDs/builds. With verified TLS, use this exact origin matrix:
+
+| Origin | Required health/build acceptance |
+| --- | --- |
+| Secrets API | `/live`200; `/health`200 with database/outbox/selected-provider checks true; `/ready`200; `labels.custody_mode=local_key_file`; `build.git_sha` equals dfa |
+| Secrets console | The same three health routes, checks, custody label and build assertion as the Secrets API |
+| Logs public/API | `/live`200; `/health`200 with database/outbox checks true; `/ready`200; `build.git_sha` equals dfa |
+| Logs console | No health/build routes are mounted here. Check TLS/Host routing separately using its reader routes; an unauthenticated `GET /v1/events` must refuse, not return events. This does not create a reader or qualify the reader journey. |
+
+`/health`200 alone is insufficient. Do not require Logs-console health or add new product routes to satisfy this procedure. Use only a configured CA, never a TLS bypass.
 
 Check the actual served manifests and registry/DNS/team-server mapping against the public operator receipts. Refuse a mismatched registry and an unauthorized member request before any upstream effect. The component mismatch/outage tests already passed; live Lab3 checks still require its real certificate, team visibility and read authority. A missing team/credential or unknown result is not a pass. Record the fixed refusal/status and owner; do not print bodies, keys or raw logs.
 
@@ -110,6 +119,6 @@ Next root deliverable before runner installation: the reviewed operator script t
 
 ## 7. Rollback and assurance limit
 
-This is a fresh lab install, not a migration of the existing e3 services. If prerequisites fail, stop only the exact recorded new containers `lab3-secrets` and `lab3-logs`; remove those containers only after verifying their recorded IDs/labels. Retain app databases, keys and evidence for operator disposition; do not attempt schema downgrades, delete state or prune Docker. No runner sudo rule is enabled in this phase. Do not touch the existing registry, coordination, agents or their identity homes.
+This is a fresh lab install, not a migration of the existing e3 services. If prerequisites fail, stop only the exact recorded new containers `lab3-secrets` and `lab3-logs`; remove those containers only after verifying their recorded IDs/labels. Retain app databases, keys and evidence for operator disposition; do not attempt schema downgrades, delete state or prune Docker. If this phase changed the shared TLS proxy, restore its recorded configuration/backup and validate before reload, preserving the e3 routes; the rollback record includes the restored hash. No runner sudo rule is enabled in this phase. Do not touch the existing registry, coordination, agents or their identity homes.
 
 Hestia administers this shared-controller lab. It cannot prove protection FROM Hestia, per-agent identity containment within a shared UID, or independent audit governance/witness custody. Native lab success is not publication, the full release gate, or a passed reader journey.
