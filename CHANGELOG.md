@@ -66,6 +66,14 @@
   `docs/vectors/README.md` states what each implementation does with any other
   number, and `docs/vectors/canonical-json-v1.json` pins it.
 
+- A request that a trusted proxy forwards for an agent is admitted only while
+  that agent is an active member of the forwarded team: its row has status
+  `active` and is not deleted. The MCP endpoint, `GET /v1/events/subscriptions`,
+  the `/v1/apps` routes and the hook-binding routes answer 403 for an actor
+  that names an agent that is retired, archived, deleted or another team's.
+  The MCP endpoint and the subscription listing, which act as an agent, also
+  refuse an actor that names no agent.
+
 - The channel client (the Claude Code plugin, the Pi extension and `aw wake`)
   signs every certificate and identity request with the
   [v2 request envelope](docs/team-auth-envelope-v2.md), which binds the
