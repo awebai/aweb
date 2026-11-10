@@ -387,20 +387,42 @@ custody, or the pinned 1Password observation, checked before and after the
 read. Never fall back to the current version. The reopen grants no send
 authority, records no use and counts toward no rate limit. The keyed digest
 computed over each reopened value must equal the stored digest, compared in
-constant time. The result
-transaction then rechecks, as release does, that the slot is enabled, that its
-active version is the pinned one and that its state is active. Only then does
-the server redact with the reopened values.
+constant time.
+
+**The result transaction** then decides. After its last blocking wait,
+including every lock it takes, and before it retains any returned stream, it
+checks:
+
+- by the database clock, that the original persisted deadline (the job timeout
+  plus sweep margin, fixed at assignment) has not passed. The deadline is
+  never rebased to the report's arrival or to the reopen;
+- that each slot's digest row still exists and is locked by this transaction,
+  and that its pins are the ones the reopen used, so a disposal that committed
+  during the reopen withholds the result and a later one waits for it;
+- as release does, that the slot is enabled, that its active version is the
+  pinned one and that its state is active;
+- for 1Password, through the DB-only observation check, that the locally
+  recorded observation, binding and credential epoch still equal those pinned
+  at assignment.
+
+Only then does the server redact with the reopened values, disposing of the
+digest rows in the same transaction. These checks are local: they catch every
+change recorded in the database before the transaction's checks, and they
+never call custody or the vault. A vault change that nothing has recorded
+locally cannot be excluded atomically and need not be, because the redaction
+uses values whose digest proves them to be the released ones.
 
 **Withhold** all returned streams with disposition reason
 `release_context_unavailable` when:
 
-- the report arrives after the original job timeout plus sweep margin;
-- the slot's digest row has been disposed of;
+- the original deadline has passed, whether before the report arrived or
+  while the result was being prepared;
+- the slot's digest row has been disposed of, including during the reopen;
 - custody or the vault cannot be read, or a 1Password observation differs from
   its pin;
 - a reopened value's keyed digest does not match the stored digest;
-- the result transaction's recheck fails;
+- any check in the result transaction fails, including a 1Password change
+  recorded locally between the reopen and that transaction;
 - a slot's value was minted at release (§9.5 `short_lived` or `mint` slots,
   which decision 95 refuses before admission). A minted value cannot be
   reopened; admitting such slots requires a redaction context of their own.
@@ -500,8 +522,10 @@ containment/key changes before replay, identical/conflicting results, late
 reports after sweeping/reconciliation, atomic rollback, exact original-value
 redaction (§4.3: a result on a worker other than the publishing one; rotate,
 destroy or disable before the result; a 1Password item changed before or during
-the reopen; a digest mismatch; a late report; a minted slot), multipart env
-fields and NUL. The public HTTP vector fixes body bytes, bounds, field
+the reopen; a 1Password change recorded locally between the reopen and the
+result transaction; a digest mismatch; a late report; a deadline that passes
+during the reopen or a lock wait; a disposal during the reopen; a minted slot),
+multipart env fields and NUL. The public HTTP vector fixes body bytes, bounds, field
 families and status expectations, including idle versus blocked claims; it does
 not replace those runtime proofs.
 Short-lived mint authority and the separately guarded derived paths are unchanged.
