@@ -879,7 +879,7 @@ func TestStreamPolicyReloadsCredentialsBeforeEachRefusedRetry(t *testing.T) {
 				}
 			}
 		}
-		reload := func() (EventStreamOpener, error) {
+		reload := func(context.Context) (EventStreamOpener, error) {
 			reloads++
 			return openerWith(stored.Load().(string)), nil
 		}
@@ -919,7 +919,7 @@ func TestStreamPolicyReloadsCredentialsBeforeEachRefusedRetry(t *testing.T) {
 		clock := manualclock.New(policyStart)
 		opener := streamtest.NewOpener(clock.Now, streamtest.Fails(streamtest.HTTPFailure(401)))
 		unreadable := errors.New("certificate unreadable")
-		policy := NewStreamPolicy(opener.Open, func() (EventStreamOpener, error) { return nil, unreadable }, policyConfig(clock))
+		policy := NewStreamPolicy(opener.Open, func(context.Context) (EventStreamOpener, error) { return nil, unreadable }, policyConfig(clock))
 		attemptOnce(policy)
 		end := attemptOnce(policy)
 		if opener.Opens() != 1 {
@@ -929,6 +929,222 @@ func TestStreamPolicyReloadsCredentialsBeforeEachRefusedRetry(t *testing.T) {
 			t.Fatalf("end=%+v, want still refused, at the quarantine pace, carrying the read error", end)
 		}
 	})
+}
+
+// flapCycle opens a stream that delivers a heartbeat comment, then whatever
+// more the caller feeds, and reports how the connection ended and what its
+// confirmation said had ended.
+func flapCycle(t *testing.T, policy *StreamPolicy, source *streamtest.Source, feed ...streamtest.Item) (StreamEnd, []string) {
+	t.Helper()
+	var confirmations []string
+	conn := policy.Connect(context.Background(), func(endedRefusal string) { confirmations = append(confirmations, endedRefusal) })
+	opened, err := conn.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ended := make(chan error, 1)
+	go func() { ended <- consumeConnection(conn, opened) }()
+	source.Feed(streamtest.Item{Comment: true})
+	for _, item := range feed {
+		source.Feed(item)
+	}
+	return conn.End(<-ended), confirmations
+}
+
+func grantRevoked() streamtest.Item {
+	return streamtest.Item{Err: &awid.AgentEventStreamClosedError{Event: "grant_revoked", Detail: "identity grant revoked"}}
+}
+
+// flappingPolicy is a policy whose every open succeeds on a source the test
+// feeds. It returns the source the next connection opens.
+func flappingPolicy(clock *manualclock.Clock) (*StreamPolicy, func() *streamtest.Source) {
+	var next *streamtest.Source
+	open := func(context.Context, time.Time) (awid.EventSource, error) { return next, nil }
+	return NewStreamPolicy(open, nil, policyConfig(clock)), func() *streamtest.Source {
+		next = streamtest.NewSource()
+		return next
+	}
+}
+
+// Sections 3 and 4: a heartbeat confirms the stream is streaming, which ends
+// the refused state and returns the transient delay to 1 second. The refused
+// delay returns to 1 minute only after a non-comment event or when a
+// connection reaches its planned close. A server that accepts the open, sends
+// a heartbeat and then a grant terminal event, every time, is retried at a
+// growing interval and not once a minute.
+func TestStreamPolicyRefusedDelayResets(t *testing.T) {
+	refusedWaits := func(t *testing.T, policy *StreamPolicy, source func() *streamtest.Source, want ...time.Duration) {
+		t.Helper()
+		for cycle, delay := range want {
+			end, confirmations := flapCycle(t, policy, source(), grantRevoked())
+			if end.Kind != StreamEndRefused || end.Cause != "grant_revoked" {
+				t.Fatalf("cycle %d ended %+v, want refused by grant_revoked", cycle, end)
+			}
+			// The lowest draw is half of the delay.
+			if end.Wait != delay/2 {
+				t.Fatalf("cycle %d waits %s, want half of %s", cycle, end.Wait, delay)
+			}
+			// Each cycle leaves refused on the heartbeat and enters it again
+			// on the terminal event.
+			if len(confirmations) != 1 || !end.EnteredRefused {
+				t.Fatalf("cycle %d: confirmations=%q entered=%t, want one confirmation and one entry", cycle, confirmations, end.EnteredRefused)
+			}
+		}
+	}
+
+	t.Run("a heartbeat then a terminal event, repeated, grows to the ceiling", func(t *testing.T) {
+		clock := manualclock.New(policyStart)
+		policy, source := flappingPolicy(clock)
+		var ended []string
+		for cycle, delay := range []time.Duration{
+			time.Minute, 2 * time.Minute, 4 * time.Minute, 8 * time.Minute, 15 * time.Minute, 15 * time.Minute, 15 * time.Minute, 15 * time.Minute,
+		} {
+			end, confirmations := flapCycle(t, policy, source(), grantRevoked())
+			if end.Kind != StreamEndRefused || !end.EnteredRefused || end.Wait != delay/2 {
+				t.Fatalf("cycle %d ended %+v, want an entry into refused waiting half of %s", cycle, end, delay)
+			}
+			ended = append(ended, confirmations...)
+			if !policy.Refused() {
+				t.Fatalf("cycle %d: not refused after the terminal event", cycle)
+			}
+		}
+		// The first heartbeat ends no refusal; each later one ends the last.
+		want := []string{"", "grant_revoked", "grant_revoked", "grant_revoked", "grant_revoked", "grant_revoked", "grant_revoked", "grant_revoked"}
+		if fmt.Sprint(ended) != fmt.Sprint(want) {
+			t.Fatalf("confirmations reported the end of %q, want %q", ended, want)
+		}
+	})
+
+	t.Run("a heartbeat ends the refused state and resets the transient delay", func(t *testing.T) {
+		clock := manualclock.New(policyStart)
+		policy, source := flappingPolicy(clock)
+		refusedWaits(t, policy, source, time.Minute, 2*time.Minute)
+		end, confirmations := flapCycle(t, policy, source(), streamtest.Item{Err: io.EOF})
+		if len(confirmations) != 1 || confirmations[0] != "grant_revoked" {
+			t.Fatalf("confirmations=%q, want the heartbeat to end the refusal", confirmations)
+		}
+		if end.Kind != StreamEndTransient || end.Wait != time.Second/2 {
+			t.Fatalf("early end after a heartbeat %+v, want transient from 1 second", end)
+		}
+		// The refused delay is where the flap left it.
+		refusedWaits(t, policy, source, 4*time.Minute)
+	})
+
+	t.Run("a non-comment event returns the refused delay to 1 minute", func(t *testing.T) {
+		clock := manualclock.New(policyStart)
+		policy, source := flappingPolicy(clock)
+		refusedWaits(t, policy, source, time.Minute, 2*time.Minute, 4*time.Minute)
+		mail := streamtest.Item{Event: &awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "m-1"}}
+		end, _ := flapCycle(t, policy, source(), mail, grantRevoked())
+		if end.Kind != StreamEndRefused || !end.EnteredRefused || end.Wait != 30*time.Second {
+			t.Fatalf("refused after an event %+v, want the 1-minute delay", end)
+		}
+		refusedWaits(t, policy, source, 2*time.Minute)
+	})
+
+	t.Run("reaching the planned close returns the refused delay to 1 minute", func(t *testing.T) {
+		clock := manualclock.New(policyStart)
+		policy, source := flappingPolicy(clock)
+		refusedWaits(t, policy, source, time.Minute, 2*time.Minute, 4*time.Minute)
+
+		// A connection that delivers only heartbeats, up to its planned close.
+		held := source()
+		conn := policy.Connect(context.Background(), nil)
+		opened, err := conn.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		ended := make(chan error, 1)
+		go func() { ended <- consumeConnection(conn, opened) }()
+		planned := 3*time.Minute + 30*time.Second
+		for elapsed := time.Duration(0); elapsed < planned; elapsed += 30 * time.Second {
+			held.Feed(streamtest.Item{Comment: true})
+			awaitTimers(t, clock, 2)
+			clock.Advance(30 * time.Second)
+		}
+		if end := conn.End(<-ended); end.Kind != StreamEndPlannedClose {
+			t.Fatalf("ended %+v, want the planned close", end)
+		}
+		refusedWaits(t, policy, source, time.Minute, 2*time.Minute)
+	})
+
+	t.Run("a reopen the client asked for does not", func(t *testing.T) {
+		clock := manualclock.New(policyStart)
+		policy, source := flappingPolicy(clock)
+		refusedWaits(t, policy, source, time.Minute, 2*time.Minute, 4*time.Minute)
+
+		held := source()
+		conn := policy.Connect(context.Background(), nil)
+		opened, err := conn.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		ended := make(chan error, 1)
+		go func() { ended <- consumeConnection(conn, opened) }()
+		held.Feed(streamtest.Item{Comment: true})
+		conn.Reopen()
+		if end := conn.End(<-ended); end.Kind != StreamEndPlannedClose {
+			t.Fatalf("ended %+v, want a reopen without a wait", end)
+		}
+		refusedWaits(t, policy, source, 8*time.Minute)
+	})
+
+	t.Run("a refusal on open after a heartbeat-only stream continues the delay", func(t *testing.T) {
+		clock := manualclock.New(policyStart)
+		var next awid.EventSource
+		var fail error
+		open := func(context.Context, time.Time) (awid.EventSource, error) { return next, fail }
+		policy := NewStreamPolicy(open, nil, policyConfig(clock))
+		fail = streamtest.HTTPFailure(403)
+		if end := attemptOnce(policy); end.Wait != 30*time.Second {
+			t.Fatalf("first refusal waits %s", end.Wait)
+		}
+		source := streamtest.NewSource()
+		next, fail = source, nil
+		if end, _ := flapCycle(t, policy, source, streamtest.Item{Err: io.EOF}); end.Kind != StreamEndTransient {
+			t.Fatalf("early end after a heartbeat %+v, want transient", end)
+		}
+		next, fail = nil, streamtest.HTTPFailure(403)
+		if end := attemptOnce(policy); end.Kind != StreamEndRefused || !end.EnteredRefused || end.Wait != time.Minute {
+			t.Fatalf("refused again %+v, want an entry waiting half of 2 minutes", end)
+		}
+	})
+}
+
+// A reload is given the connection's context, so stopping the stream does
+// not wait for credentials that are slow to read.
+func TestStreamPolicyReloadEndsWhenItsOwnerStops(t *testing.T) {
+	clock := manualclock.New(policyStart)
+	opener := streamtest.NewOpener(clock.Now, streamtest.Fails(streamtest.HTTPFailure(401)))
+	entered := make(chan struct{})
+	reload := func(ctx context.Context) (EventStreamOpener, error) {
+		close(entered)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	policy := NewStreamPolicy(opener.Open, reload, policyConfig(clock))
+	attemptOnce(policy)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	conn := policy.Connect(ctx, nil)
+	opened := make(chan error, 1)
+	go func() {
+		_, err := conn.Open()
+		opened <- err
+	}()
+	<-entered
+	cancel()
+	select {
+	case err := <-opened:
+		if end := conn.End(err); end.Kind != StreamEndStopped {
+			t.Fatalf("ended %+v, want stopped", end)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the reload did not end when its owner stopped")
+	}
+	if opener.Opens() != 1 {
+		t.Fatalf("opened %d times; the stopped attempt must not go out", opener.Opens())
+	}
 }
 
 // Section 1: only the owner stops a stream.

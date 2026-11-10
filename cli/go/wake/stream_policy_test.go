@@ -22,7 +22,7 @@ var streamPolicyStart = time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
 
 // policyBroker starts a broker whose streams run on clock and open through
 // openStream, and registers one home with it.
-func policyBroker(t *testing.T, clock *manualclock.Clock, openStream func(identityHome, teamID string) (run.EventStreamOpener, error)) (*Broker, *logCapture, Registration) {
+func policyBroker(t *testing.T, clock *manualclock.Clock, openStream func(ctx context.Context, identityHome, teamID string) (run.EventStreamOpener, error)) (*Broker, *logCapture, Registration) {
 	t.Helper()
 	store := tempStore(t)
 	home := tempHome(t, "instance")
@@ -41,8 +41,8 @@ func policyBroker(t *testing.T, clock *manualclock.Clock, openStream func(identi
 	return broker, logs, reg
 }
 
-func sameOpener(opener *streamtest.Opener) func(string, string) (run.EventStreamOpener, error) {
-	return func(string, string) (run.EventStreamOpener, error) { return opener.Open, nil }
+func sameOpener(opener *streamtest.Opener) func(context.Context, string, string) (run.EventStreamOpener, error) {
+	return func(context.Context, string, string) (run.EventStreamOpener, error) { return opener.Open, nil }
 }
 
 // awaitStreamRetryWait waits for the one stream to be sleeping before a
@@ -233,7 +233,7 @@ func TestRefusedStreamReadsCredentialsAgainBeforeEachRetry(t *testing.T) {
 	var mu sync.Mutex
 	stored := "expired"
 	var read, used []string
-	openStream := func(identityHome, teamID string) (run.EventStreamOpener, error) {
+	openStream := func(_ context.Context, identityHome, teamID string) (run.EventStreamOpener, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		credential := stored
@@ -357,4 +357,88 @@ func TestOpenStreamEndsAreClassified(t *testing.T) {
 			t.Fatalf("stream %+v, want retrying after silence", stream)
 		}
 	})
+}
+
+// Stopping a stream does not wait for its credentials to be read again: the
+// reload is given the stream's context and ends with it.
+func TestStreamStopDoesNotWaitOnAReload(t *testing.T) {
+	clock := manualclock.New(streamPolicyStart)
+	opener := streamtest.NewOpener(clock.Now, streamtest.Fails(streamtest.HTTPFailure(401)))
+	entered := make(chan struct{})
+	reload := func(ctx context.Context) (run.EventStreamOpener, error) {
+		close(entered)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	stream := newStreamRunner("key", "/identity", "team", opener.Open, reload, func(awid.AgentEvent) {}, func(string, ...any) {}, clock.Now, run.StreamPolicyConfig{Timer: clock.Timer, Rand: clock.Random})
+	stream.start(context.Background())
+	clock.Advance(awaitStreamRetryWait(t, clock, 2))
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the refused retry did not read the credentials again")
+	}
+
+	stopped := make(chan struct{})
+	go func() {
+		stream.stop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("stopping the stream waited on the reload")
+	}
+	if opener.Opens() != 1 {
+		t.Fatalf("opened %d times; the stopped attempt must not go out", opener.Opens())
+	}
+}
+
+// The broker hands OpenStream the stream's context when it reads the
+// credentials again, so a daemon shutting down does not wait on it.
+func TestBrokerReloadsThroughOpenStreamWithTheStreamContext(t *testing.T) {
+	clock := manualclock.New(streamPolicyStart)
+	var mu sync.Mutex
+	calls := 0
+	entered := make(chan struct{})
+	ended := make(chan error, 1)
+	openStream := func(ctx context.Context, identityHome, teamID string) (run.EventStreamOpener, error) {
+		mu.Lock()
+		calls++
+		first := calls == 1
+		mu.Unlock()
+		if first {
+			return func(context.Context, time.Time) (awid.EventSource, error) { return nil, streamtest.HTTPFailure(401) }, nil
+		}
+		close(entered)
+		<-ctx.Done()
+		ended <- ctx.Err()
+		return nil, ctx.Err()
+	}
+	store := tempStore(t)
+	home := tempHome(t, "instance")
+	broker, cancel := liveBroker(t, Config{
+		Store:        store,
+		Session:      session.NewFake(session.Inspection{Home: home, Present: true, State: session.StateIdle, RawState: "idle"}),
+		StreamPolicy: run.StreamPolicyConfig{Now: clock.Now, Timer: clock.Timer, Rand: clock.Random},
+		OpenStream:   openStream,
+	})
+	if err := broker.Register(Registration{Home: home, IdentityHome: home + "/.aw", Delivery: DeliverySession}); err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(awaitStreamRetryWait(t, clock, 2))
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the refused retry did not call OpenStream again")
+	}
+	cancel()
+	select {
+	case err := <-ended:
+		if err == nil {
+			t.Fatal("the reload's context was not cancelled")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("shutting the broker down did not end the reload")
+	}
 }

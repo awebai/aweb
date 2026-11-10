@@ -18,7 +18,7 @@ func TestBrokerControlsDuringSlowReconcile(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			store := tempStore(t)
 			broker := newBrokerForUnit(t, store, time.Now)
-			broker.cfg.OpenStream = func(string, string) (run.EventStreamOpener, error) { return nil, nil }
+			broker.cfg.OpenStream = func(context.Context, string, string) (run.EventStreamOpener, error) { return nil, nil }
 			home := tempHome(t, "existing")
 			identity := filepath.Join(home, ".aw")
 			writeWakeTestTeamState(t, identity, "team:one")
@@ -153,7 +153,7 @@ func TestBrokerControlsDuringSlowReconcile(t *testing.T) {
 func TestDeferredAdmissionDoesNotReviveRemovedRunner(t *testing.T) {
 	store := tempStore(t)
 	broker := newBrokerForUnit(t, store, time.Now)
-	broker.cfg.OpenStream = func(string, string) (run.EventStreamOpener, error) { return nil, nil }
+	broker.cfg.OpenStream = func(context.Context, string, string) (run.EventStreamOpener, error) { return nil, nil }
 	home := tempHome(t, "removed")
 	reg := Registration{Home: home, IdentityHome: filepath.Join(home, ".aw"), Delivery: DeliverySession}
 	if err := broker.Register(reg); err != nil {
@@ -192,7 +192,7 @@ func TestRegisterReplacesBindingAtStreamBound(t *testing.T) {
 	store := tempStore(t)
 	broker := newBrokerForUnit(t, store, time.Now)
 	broker.cfg.MaxStreams = 1
-	broker.cfg.OpenStream = func(string, string) (run.EventStreamOpener, error) { return nil, nil }
+	broker.cfg.OpenStream = func(context.Context, string, string) (run.EventStreamOpener, error) { return nil, nil }
 	home := tempHome(t, "terminal")
 	reg := Registration{Home: home, IdentityHome: filepath.Join(home, ".aw"), Delivery: DeliverySession}
 	if err := broker.Register(reg); err != nil {

@@ -219,14 +219,14 @@ func TestRunEventStreamReloadReadsTheGrantHomeOnEachCall(t *testing.T) {
 			_ = source.Close()
 		}
 	}
-	first, err := reload()
+	first, err := reload(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	open(first)
 	writeTestGrantHome(t, grantHome, renewedTestGrantID, server.URL)
 	open(first)
-	second, err := reload()
+	second, err := reload(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,8 +241,109 @@ func TestRunEventStreamReloadReadsTheGrantHomeOnEachCall(t *testing.T) {
 	if err := os.Remove(awconfig.GrantHomeStatePath(grantHome)); err != nil {
 		t.Fatal(err)
 	}
-	if opener, err := reload(); err == nil || opener != nil {
+	if opener, err := reload(context.Background()); err == nil || opener != nil {
 		t.Fatalf("reload with no grant on disk returned opener=%v err=%v", opener != nil, err)
+	}
+}
+
+// The reload leaves the package's last-created client alone: root.go reads it
+// after the run, and the reload runs on the event bus goroutine. The read
+// below is concurrent with the reload so the race detector sees a write.
+func TestRunEventStreamReloadLeavesTheLastClientAlone(t *testing.T) {
+	root := resolvedTempDir(t)
+	isolateIdentityResolution(t, root)
+	server := newGrantStreamServer(t)
+	workingDir := filepath.Join(root, "work")
+	if err := os.MkdirAll(workingDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	grantHome := filepath.Join(root, "grant.aweb-identity")
+	writeTestGrantHome(t, grantHome, expiredTestGrantID, server.URL)
+	identityHomeFlag = grantHome
+	oldLast := lastClient
+	t.Cleanup(func() { lastClient = oldLast })
+
+	// The command's own resolution records its client, as before.
+	atStart, _, err := resolveClientSelectionForDir(workingDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lastClient != atStart {
+		t.Fatal("resolving the client for a command did not record it as the last client")
+	}
+
+	reload := runEventStreamReload(workingDir)
+	reloaded := make(chan error, 1)
+	go func() {
+		for i := 0; i < 20; i++ {
+			if _, err := reload(context.Background()); err != nil {
+				reloaded <- err
+				return
+			}
+		}
+		reloaded <- nil
+	}()
+	for i := 0; i < 1000; i++ {
+		if lastClient != atStart {
+			t.Fatal("a reload replaced the last client")
+		}
+	}
+	if err := <-reloaded; err != nil {
+		t.Fatal(err)
+	}
+	if lastClient != atStart {
+		t.Fatal("a reload replaced the last client")
+	}
+}
+
+// With AWEB_URL set, reading the identity again probes the server. The probe
+// runs in the context the reload is given and ends with it.
+func TestRunEventStreamReloadEndsWithItsContext(t *testing.T) {
+	root := resolvedTempDir(t)
+	isolateIdentityResolution(t, root)
+	probed := make(chan struct{}, 8)
+	release := make(chan struct{})
+	hanging := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		probed <- struct{}{}
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(hanging.Close)
+	t.Cleanup(func() { close(release) })
+	workingDir := filepath.Join(root, "work")
+	if err := os.MkdirAll(workingDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	grantHome := filepath.Join(root, "grant.aweb-identity")
+	writeTestGrantHome(t, grantHome, expiredTestGrantID, hanging.URL)
+	identityHomeFlag = grantHome
+	t.Setenv("AWEB_URL", hanging.URL)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	returned := make(chan error, 1)
+	go func() {
+		_, err := runEventStreamReload(workingDir)(ctx)
+		returned <- err
+	}()
+	select {
+	case <-probed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the reload did not probe the server")
+	}
+	began := time.Now()
+	cancel()
+	select {
+	case err := <-returned:
+		if err == nil {
+			t.Fatal("a cancelled reload returned an opener")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the reload did not return")
+	}
+	if waited := time.Since(began); waited > time.Second {
+		t.Fatalf("the reload returned %s after its context ended; the probe timeout is %s", waited, awebBaseURLProbeTimeout)
 	}
 }
 

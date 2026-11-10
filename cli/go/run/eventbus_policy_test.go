@@ -55,7 +55,7 @@ func (r *busRecord) allStates() []ConnectionState {
 	return append([]ConnectionState(nil), r.states...)
 }
 
-func startManualBus(t *testing.T, clock *manualclock.Clock, stream EventStreamOpener, reload func() (EventStreamOpener, error)) (*EventBus, *busRecord) {
+func startManualBus(t *testing.T, clock *manualclock.Clock, stream EventStreamOpener, reload StreamReload) (*EventBus, *busRecord) {
 	t.Helper()
 	record := &busRecord{}
 	bus := NewEventBus(EventBusConfig{
@@ -405,7 +405,7 @@ func TestEventBusReloadsCredentialsBetweenRefusedAttempts(t *testing.T) {
 			return nil, streamtest.HTTPFailure(401)
 		}
 	}
-	reload := func() (EventStreamOpener, error) {
+	reload := func(context.Context) (EventStreamOpener, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		reloads++
@@ -437,5 +437,88 @@ func TestEventBusReloadsCredentialsBetweenRefusedAttempts(t *testing.T) {
 	}
 	if reloads != 2 {
 		t.Fatalf("credentials read %d times, want once before each refused retry", reloads)
+	}
+}
+
+// Stopping the bus does not wait for a reload: the reload is given the bus's
+// context and ends with it.
+func TestEventBusStopDoesNotWaitOnAReload(t *testing.T) {
+	clock := manualclock.New(policyStart)
+	opener := streamtest.NewOpener(clock.Now, streamtest.Fails(streamtest.HTTPFailure(401)))
+	entered := make(chan struct{})
+	reload := func(ctx context.Context) (EventStreamOpener, error) {
+		close(entered)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	bus := NewEventBus(EventBusConfig{
+		Stream: opener.Open,
+		Reload: reload,
+		Now:    clock.Now,
+		Policy: StreamPolicyConfig{Timer: clock.Timer, Rand: clock.Random},
+	})
+	bus.Start(context.Background())
+	advanceToNextAttempt(t, clock, 2)
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the refused retry did not read the credentials again")
+	}
+
+	stopped := make(chan struct{})
+	go func() {
+		bus.Stop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("stopping the bus waited on the reload")
+	}
+	if opener.Opens() != 1 {
+		t.Fatalf("opened %d times; the stopped attempt must not go out", opener.Opens())
+	}
+}
+
+// A server that accepts the open, sends its heartbeat and then a grant
+// terminal event, every time: each cycle is one "accepted again" and one
+// "refused" notice, at an interval that grows to the 15-minute ceiling.
+func TestEventBusReportsAHeartbeatThenRefusalFlapAtAGrowingInterval(t *testing.T) {
+	clock := manualclock.New(policyStart)
+	sources := make(chan *streamtest.Source, 1)
+	open := func(context.Context, time.Time) (awid.EventSource, error) {
+		source := streamtest.NewSource()
+		sources <- source
+		return source, nil
+	}
+	_, record := startManualBus(t, clock, open, nil)
+
+	var waits []time.Duration
+	started := 0
+	for cycle := 0; cycle < 6; cycle++ {
+		source := <-sources
+		source.Feed(streamtest.Item{Comment: true})
+		source.Feed(streamtest.Item{Err: &awid.AgentEventStreamClosedError{Event: "grant_revoked", Detail: "identity grant revoked"}})
+		// Planned close, silence watch, and the wait after the refusal.
+		started += 3
+		waits = append(waits, advanceToNextAttempt(t, clock, started))
+	}
+	want := []time.Duration{30 * time.Second, time.Minute, 2 * time.Minute, 4 * time.Minute, 7*time.Minute + 30*time.Second, 7*time.Minute + 30*time.Second}
+	if fmt.Sprint(waits) != fmt.Sprint(want) {
+		t.Fatalf("waits=%v, want %v", waits, want)
+	}
+	notices := record.allNotices()
+	// Six entries into refused, and an exit before each but the first.
+	if len(notices) != 11 {
+		t.Fatalf("%d notices, want 11: %q", len(notices), notices)
+	}
+	for i, notice := range notices {
+		wantPrefix := "aweb: event stream refused: grant_revoked, next try "
+		if i%2 == 1 {
+			wantPrefix = "aweb: event stream accepted again (was refused: grant_revoked)"
+		}
+		if !strings.HasPrefix(notice, wantPrefix) {
+			t.Fatalf("notice %d = %q, want it to start %q", i, notice, wantPrefix)
+		}
 	}
 }

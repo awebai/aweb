@@ -188,7 +188,7 @@ func TestRegisterBeforeRunStartsReconciledRunners(t *testing.T) {
 		RateLimit:    50 * time.Millisecond,
 		PollInterval: 10 * time.Millisecond,
 		Reconcile:    20 * time.Millisecond,
-		OpenStream: func(string, string) (run.EventStreamOpener, error) {
+		OpenStream: func(context.Context, string, string) (run.EventStreamOpener, error) {
 			return openerFor(t, server.URL), nil
 		},
 	})
@@ -232,7 +232,7 @@ func TestBrokerRoutesSameRootStreamsByPinnedTeam(t *testing.T) {
 		Store:   store,
 		Session: session.NewFake(session.Inspection{}),
 		Log:     logs.log,
-		OpenStream: func(identityHome, teamID string) (run.EventStreamOpener, error) {
+		OpenStream: func(_ context.Context, identityHome, teamID string) (run.EventStreamOpener, error) {
 			opened <- identityHome + "|" + teamID
 			ev := awid.AgentEvent{Type: awid.AgentEventChannelReconnected}
 			if teamID == "team:b" {
@@ -295,7 +295,7 @@ func TestBrokerNeverFetchesOrAcknowledgesAnything(t *testing.T) {
 		Store:   store,
 		Session: session.NewFake(session.Inspection{}),
 		Log:     logs.log,
-		OpenStream: func(identityHome, teamID string) (run.EventStreamOpener, error) {
+		OpenStream: func(_ context.Context, identityHome, teamID string) (run.EventStreamOpener, error) {
 			return openerFor(t, server.URL), nil
 		},
 	})
@@ -329,7 +329,7 @@ func TestPlannedCloseIsNotReportedAsAnOutage(t *testing.T) {
 		Session:      session.NewFake(session.Inspection{Home: home, Present: true, State: session.StateBusy, RawState: "working"}),
 		Log:          logs.log,
 		StreamPolicy: run.StreamPolicyConfig{Now: clock.Now, Timer: clock.Timer, Rand: clock.Random},
-		OpenStream: func(string, string) (run.EventStreamOpener, error) {
+		OpenStream: func(context.Context, string, string) (run.EventStreamOpener, error) {
 			return opener.Open, nil
 		},
 	})
@@ -404,7 +404,7 @@ func TestFourXXQuarantinesOneIdentityAndLeavesOthersStreaming(t *testing.T) {
 		Store:   store,
 		Session: oats,
 		Log:     logs.log,
-		OpenStream: func(identityHome, teamID string) (run.EventStreamOpener, error) {
+		OpenStream: func(_ context.Context, identityHome, teamID string) (run.EventStreamOpener, error) {
 			if strings.HasPrefix(identityHome, badHome) {
 				return openerFor(t, bad.URL), nil
 			}
@@ -508,7 +508,9 @@ func TestReconnectAfterAnOutageDeliversOnlySnapshotItems(t *testing.T) {
 		Session:      oats,
 		Log:          logs.log,
 		StreamPolicy: run.StreamPolicyConfig{Timer: streamtest.ScaledTimer(100)},
-		OpenStream:   func(string, string) (run.EventStreamOpener, error) { return openerFor(t, server.URL), nil },
+		OpenStream: func(context.Context, string, string) (run.EventStreamOpener, error) {
+			return openerFor(t, server.URL), nil
+		},
 	})
 	if err := broker.Register(Registration{Home: home, IdentityHome: home + "/.aw", Delivery: DeliverySession}); err != nil {
 		t.Fatal(err)
