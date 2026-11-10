@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+- The naapp outbox (`aweb_naapp.outbox`) keeps one team's failures from
+  delaying other teams. An event whose targets cannot be resolved is resolved
+  again after a backoff (5 seconds doubling to 5 minutes by default, the
+  delivery `RetryPolicy`), and each drain pass claims events and deliveries in
+  the order they fell due, so a failed one is tried again only after those that
+  fell due before its retry did. Outbox migration `004_resolution_backoff.sql`
+  adds `outbox_events.resolve_attempts` and `outbox_events.next_resolve_at`;
+  the runtime applies it at start-up. Delivered outbox rows are kept, as
+  before.
+
+- The naapp runtime's `outbox` health check reports
+  `oldest_undelivered_age_seconds` from the events not yet drained, without
+  reading delivered history, and no backlog fails it: `/ready` answers 503 for
+  the outbox only while the database is not connected. When the age cannot be
+  read within 2 seconds, `/health` reports the check without the figure.
+
+- The secrets console resolves an installation for the team of the signed-in
+  owner or approver, or of the approval record it acts on, never from the
+  installation id alone. An installation id that another team holds answers as
+  an unknown id does, and a team whose server reports another team's
+  installation id no longer makes that team's console refuse its owners.
+
+- logs reads `LOGS_CLIENT_ADDRESS_HEADER`, the header the deployment's proxy
+  sets to the client address it saw, and keeps the console login limit per that
+  address. Unset, the limit is kept per TCP peer, which behind a proxy is one
+  limit for every reader.
+
 - `aw` writes U+2028 (line separator) and U+2029 (paragraph separator) as UTF-8
   in the canonical JSON it signs, as the Python reference
   (`awid.signing.canonical_json_bytes`) and TypeScript do; Go's JSON encoder
