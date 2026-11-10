@@ -21,6 +21,7 @@ from aweb_naapp.roles import (
     end_holding,
     hold_holding,
     holding_scope,
+    is_holding_scope,
     lock_holding,
     purge_team,
     read_holding,
@@ -225,3 +226,13 @@ async def test_concurrent_refreshes_of_one_holding_both_apply_in_turn(
     async with db.transaction() as tx:
         held = await read_holding(tx, **KEY)
     assert held is not None and held.certificate in (RENEWED, other)
+
+
+async def test_a_scope_that_was_ever_held_stays_a_holding_scope(db: AsyncDatabaseManager) -> None:
+    scope = holding_scope(INSTALLATION, TEAM, READER, PRINCIPAL)
+    other = holding_scope(OTHER_INSTALLATION, TEAM, READER, PRINCIPAL)
+    assert not await is_holding_scope(db, scope)
+    await _begin(db)
+    await _end(db)
+    assert await is_holding_scope(db, scope)
+    assert not await is_holding_scope(db, other)

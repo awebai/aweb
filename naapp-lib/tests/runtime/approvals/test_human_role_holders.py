@@ -1,4 +1,3 @@
-# ruff: noqa: F811 -- pw is the imported real passkey composition fixture.
 """B3's human-role holder writers (owner-act-delivery.md, Effects): designate,
 replace and revoke, each applied in the transaction that consumed its signed
 owner act, on real PostgreSQL. The holder's credential is bound by the act and
@@ -14,6 +13,7 @@ from typing import Any
 
 import cbor2
 import pytest
+import pytest_asyncio
 from aweb_naapp_testing.owner_acts import (
     APP_ID,
     INSTALLATION_ID,
@@ -30,6 +30,7 @@ from aweb_naapp.roles import (
     begin_holding,
     hold_holding,
     holding_scope,
+    is_holding_scope,
     read_holding,
 )
 from aweb_naapp.runtime.approvals import AuthenticationFailed, DeliveryStatus, Refusal
@@ -49,7 +50,7 @@ from tests.runtime.approvals.test_passkeys import (
     REQUEST,
     PasskeyWorld,
     designate_by_act,
-    pw,  # noqa: F401
+    passkey_world,
     refusal,
 )
 
@@ -113,9 +114,12 @@ def holding_subject(
     return subject
 
 
-async def migrated(pw: PasskeyWorld) -> PasskeyWorld:
-    await apply_roles_migrations(pw.passkeys.db)
-    return pw
+@pytest_asyncio.fixture
+async def pw(test_db_factory, registry) -> PasskeyWorld:
+    """The passkey world of an app that keeps role holdings."""
+    world = await passkey_world(test_db_factory, registry, holding_scopes=is_holding_scope)
+    await apply_roles_migrations(world.passkeys.db)
+    return world
 
 
 async def designate(
@@ -185,7 +189,6 @@ async def stored_holding(pw: PasskeyWorld):
 
 
 async def test_a_designated_holder_logs_in_with_the_bound_credential(pw: PasskeyWorld):
-    await migrated(pw)
     member = holder()
     designation = await designate(pw, member)
     assert designation.effective_at == pw.clock()
@@ -202,14 +205,12 @@ async def test_a_designated_holder_logs_in_with_the_bound_credential(pw: Passkey
 
 
 async def test_a_designation_sends_no_enrolment_link(pw: PasskeyWorld):
-    await migrated(pw)
     designation = await designate(pw, holder(), notice=NOTICE)
     assert await pw.passkeys.deliver(designation) == DeliveryStatus.NOT_REQUIRED
     assert pw.contacts.inbox == {} and pw.contacts.notices == {}
 
 
 async def test_a_designated_holder_keeps_its_notice_contact(pw: PasskeyWorld):
-    await migrated(pw)
     member = holder()
     await designate(pw, member, notice=NOTICE)
     assert (await log_in(pw, member)).contact == NOTICE
@@ -218,7 +219,6 @@ async def test_a_designated_holder_keeps_its_notice_contact(pw: PasskeyWorld):
 async def test_a_designation_must_be_applied_in_the_transaction_that_consumed_its_act(
     pw: PasskeyWorld,
 ):
-    await migrated(pw)
     member = holder()
     subject = holding_subject(member.body)
     signer = owner(pw)
@@ -238,7 +238,6 @@ async def test_a_designation_must_be_applied_in_the_transaction_that_consumed_it
 
 
 async def test_only_a_designate_act_designates_a_holder(pw: PasskeyWorld):
-    await migrated(pw)
     with pytest.raises(DesignationRefused):
         await designate(pw, holder(), act="human-credential.replace")
     assert await stored_holding(pw) is None
@@ -250,7 +249,6 @@ async def test_only_a_designate_act_designates_a_holder(pw: PasskeyWorld):
 async def test_a_designation_refuses_a_credential_or_contact_the_act_does_not_bind(
     pw: PasskeyWorld, fault: str
 ):
-    await migrated(pw)
     member = holder()
     signed = None
     if fault == "other-credential":
@@ -284,7 +282,6 @@ async def test_a_designation_refuses_a_credential_or_contact_the_act_does_not_bi
 
 
 async def test_a_held_role_is_not_designated_again(pw: PasskeyWorld):
-    await migrated(pw)
     first = holder()
     await designate(pw, first)
     with pytest.raises(DesignationRefused):
@@ -295,7 +292,6 @@ async def test_a_held_role_is_not_designated_again(pw: PasskeyWorld):
 async def test_of_two_concurrent_designations_one_holds_and_the_other_rolls_back(
     pw: PasskeyWorld,
 ):
-    await migrated(pw)
     results = await asyncio.gather(
         designate(pw, holder()), designate(pw, holder()), return_exceptions=True
     )
@@ -306,7 +302,6 @@ async def test_of_two_concurrent_designations_one_holds_and_the_other_rolls_back
 
 
 async def test_a_holder_scope_takes_no_contact_designation_or_enrolment_link(pw: PasskeyWorld):
-    await migrated(pw)
     await designate(pw, holder(), notice=NOTICE)
     subject = designation_subject(SCOPE, NOTICE)
     for act in ("app-role.designate", "app-credential.recover"):
@@ -321,7 +316,6 @@ async def test_a_holder_scope_takes_no_contact_designation_or_enrolment_link(pw:
 
 
 async def test_a_holder_without_a_notice_contact_cannot_gain_one(pw: PasskeyWorld):
-    await migrated(pw)
     member = holder()
     await designate(pw, member)
     options = await pw.passkeys.contact_change_options(SCOPE, NOTICE)
@@ -330,7 +324,6 @@ async def test_a_holder_without_a_notice_contact_cannot_gain_one(pw: PasskeyWorl
 
 
 async def test_a_holder_assertion_from_another_origin_is_refused(pw: PasskeyWorld):
-    await migrated(pw)
     member = holder()
     await designate(pw, member)
     with pytest.raises(AuthenticationFailed):
@@ -341,7 +334,6 @@ async def test_a_holder_assertion_from_another_origin_is_refused(pw: PasskeyWorl
 
 
 async def test_a_replacement_keeps_the_holding_and_changes_its_subject(pw: PasskeyWorld):
-    await migrated(pw)
     first = holder()
     designated = await designate(pw, first, notice=NOTICE)
     before = await stored_holding(pw)
@@ -362,7 +354,6 @@ async def test_a_replacement_keeps_the_holding_and_changes_its_subject(pw: Passk
 
 
 async def test_nothing_held_is_replaced_or_revoked(pw: PasskeyWorld):
-    await migrated(pw)
     with pytest.raises(DesignationRefused):
         await replace(pw, holder())
     with pytest.raises(DesignationRefused):
@@ -374,7 +365,6 @@ async def test_nothing_held_is_replaced_or_revoked(pw: PasskeyWorld):
 
 
 async def test_a_revoked_holding_ends_with_its_credential(pw: PasskeyWorld):
-    await migrated(pw)
     member = holder()
     await designate(pw, member)
     await revoke(pw)
@@ -384,7 +374,6 @@ async def test_a_revoked_holding_ends_with_its_credential(pw: PasskeyWorld):
 
 
 async def test_ending_a_holding_that_never_had_an_approver_is_audited(pw: PasskeyWorld):
-    await migrated(pw)
     async with pw.passkeys.db.transaction() as tx:
         await begin_holding(tx, **KEY, certificate=None)
     await revoke(pw)
@@ -399,7 +388,6 @@ async def test_ending_a_holding_that_never_had_an_approver_is_audited(pw: Passke
 
 
 async def test_a_revoked_role_is_held_again_as_a_new_holding(pw: PasskeyWorld):
-    await migrated(pw)
     await designate(pw, holder())
     first = await stored_holding(pw)
     await revoke(pw)
@@ -411,7 +399,6 @@ async def test_a_revoked_role_is_held_again_as_a_new_holding(pw: PasskeyWorld):
 
 
 async def test_revoking_and_designating_in_one_transaction_is_a_new_holding(pw: PasskeyWorld):
-    await migrated(pw)
     await designate(pw, holder())
     first = await stored_holding(pw)
     again = holder()
@@ -437,7 +424,6 @@ async def test_revoking_and_designating_in_one_transaction_is_a_new_holding(pw: 
 async def test_a_held_holding_blocks_replace_and_revoke_until_the_reader_commits(
     pw: PasskeyWorld, write: str
 ):
-    await migrated(pw)
     await designate(pw, holder())
     started: asyncio.Future[int] = asyncio.get_running_loop().create_future()
     db = pw.passkeys.db
@@ -484,7 +470,6 @@ async def test_a_held_holding_blocks_replace_and_revoke_until_the_reader_commits
 
 
 async def test_a_holder_is_its_principals_approver_in_the_directory(pw: PasskeyWorld):
-    await migrated(pw)
     designation = await designate(pw, holder(), notice=NOTICE)
     approver = await pw.passkeys.designated_approver(SCOPE)
     assert approver is not None
@@ -497,7 +482,6 @@ async def test_a_holder_is_its_principals_approver_in_the_directory(pw: PasskeyW
 
 @pytest.mark.parametrize("requester", [PRINCIPAL, OTHER_PRINCIPAL])
 async def test_a_holder_never_approves_its_own_principals_request(pw: PasskeyWorld, requester: str):
-    await migrated(pw)
     designation = await designate(pw, holder(), notice=NOTICE)
     pw.policies.set(policy(approver_scopes=(SCOPE,)))
     minting = pw.approvals.mint(request=REQUEST, policy_ref="send-charge", requested_by=requester)
@@ -518,21 +502,15 @@ async def test_a_holder_never_approves_its_own_principals_request(pw: PasskeyWor
 
 async def backfilled(pw: PasskeyWorld) -> None:
     """What 16.43's backfill writes for an existing contact approver: the
-    holding record of its scope, and the principal on every approver row of
-    that scope, in one transaction."""
+    holding record of its scope, with no certificate. Its approver rows stay
+    as they are."""
     async with pw.passkeys.db.transaction() as tx:
         await begin_holding(tx, **KEY, certificate=None)
-        await tx.execute(
-            "UPDATE {{tables.passkey_approvers}} SET principal = $2 WHERE scope = $1",
-            SCOPE,
-            PRINCIPAL,
-        )
 
 
 async def test_a_backfilled_contact_approver_keeps_its_credential_and_leaves_the_contact_paths(
     pw: PasskeyWorld,
 ):
-    await migrated(pw)
     designation = await designate_by_act(pw, "app-role.designate", NOTICE, SCOPE)
     device = SoftAuthenticator(ORIGIN)
     token = pw.contacts.last(NOTICE)
@@ -552,7 +530,6 @@ async def test_a_backfilled_contact_approver_keeps_its_credential_and_leaves_the
 async def test_a_backfilled_scope_gets_no_enrolment_link_while_a_contact_scope_does(
     pw: PasskeyWorld,
 ):
-    await migrated(pw)
     await designate_by_act(pw, "app-role.designate", NOTICE, SCOPE)
     await designate_by_act(pw, "app-role.designate", NOTICE, CONTACT_SCOPE)
     await backfilled(pw)
@@ -561,3 +538,10 @@ async def test_a_backfilled_scope_gets_no_enrolment_link_while_a_contact_scope_d
             await pw.passkeys.reissue_enrolment(tx, scope=SCOPE)
     async with pw.passkeys.db.transaction() as tx:
         assert (await pw.passkeys.reissue_enrolment(tx, scope=CONTACT_SCOPE)).link_token
+
+
+async def test_an_ended_holding_takes_no_contact_designation(pw: PasskeyWorld):
+    await designate(pw, holder())
+    await revoke(pw)
+    with pytest.raises(DesignationRefused):
+        await designate_by_act(pw, "app-role.designate", NOTICE, SCOPE)
