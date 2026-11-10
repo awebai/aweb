@@ -123,6 +123,7 @@ def test_only_the_verified_type_the_signing_bytes_and_constants_are_public() -> 
         "Refused",
         "VerifiedOwnerAct",
         "hook_binding_subject",
+        "human_credential_sha256",
         "owner_act_signing_bytes",
     }
     for private in ("check_owner_act", "require_subject", "verify_owner_act", "OwnerAct"):
