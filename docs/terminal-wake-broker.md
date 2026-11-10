@@ -97,7 +97,9 @@ of silence, any 5xx, and 408, 409, 425 or 429) is retried on a delay of 1 second
 doubling to 15 seconds with jitter, after `Retry-After` when the answer carries
 one. A refusal (any other 4xx on open, or a grant terminal event on an open
 stream) quarantines that one stream: it is retried on a delay of 1 minute
-doubling to 15 minutes, the identity home is read again before each attempt,
+doubling to 15 minutes, the identity home is read again before each attempt
+and the stream is signed for the
+[mount of the stored server URL that answers](configuration.md#server-url-and-api-mount),
 and the daemon and every other stream keep running. Each connection closes
 itself between 3 minutes 30 seconds and 4 minutes after it opens and is
 reopened at once.

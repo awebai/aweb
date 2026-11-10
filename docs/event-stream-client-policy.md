@@ -96,6 +96,10 @@ So a refused stream is **quarantined**:
   same jitter as section 3.
 - Before each retry it reads its credentials again from where they are kept,
   so a renewed certificate or grant is used without a restart.
+- `aw run` and the wake broker also look, before each retry, for the mount of
+  the stored server URL that answers as the API (the stored URL itself, or the
+  same origin with or without `/api`), and sign the retry for that mount. See
+  [Server URL and API mount](configuration.md#server-url-and-api-mount).
 - An explicit request for the stream (a registration with the wake broker, a
   new `aw run` session, a restart of the channel) retries at once and, if
   refused again, continues from the 1-minute delay.

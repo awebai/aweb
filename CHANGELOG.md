@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- `aw` sends each request once, to the server URL it was signed for, and does
+  not send it again to another mount path. A command that meets a 404 at the
+  stored `aweb_url` gets that 404 with the mount that answers named in the
+  error (`The server answers at <url>. ...`). The event stream of `aw run` and
+  of the `aw wake` broker, when refused, looks for the mount that answers when
+  it reads its configuration again before a retry, signs for that mount, and
+  stores it as `aweb_url` once a stream has opened there; a retry that is
+  refused or fails stores nothing. `wake.Config` takes an optional
+  `ReloadStream`, called in place of `OpenStream` before a refused retry. See
+  [docs/configuration.md](docs/configuration.md#server-url-and-api-mount).
+
 - `aw run` and the `aw wake` broker follow one reconnect policy for the event
   stream, [docs/event-stream-client-policy.md](docs/event-stream-client-policy.md).
   Neither stops its stream for good on a refusal or a rate limit: 408, 409, 425,
