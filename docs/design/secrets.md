@@ -1587,10 +1587,12 @@ UTF-8 bound, HTTP statuses and replay/late-result rules are fixed in
 [runner protocol §4](../secrets-runner-protocol.md#4-http-bodies-reports-and-credential-fields).
 It applies known-value redaction locally (it knows what it was given) and
 credential-shape detection. secrets applies both again, then the job's output
-projection. Its known-value context must be the original released values in
-dispatch-bound transient memory, never a later vault reread; missing context
-withholds returned streams while preserving exit status and metadata. Withheld
-output follows §7.6.
+projection. Its known-value context is exactly the released values. At result
+time the server reopens each slot under the version pinned at assignment, never
+the current one, and checks the value against a keyed digest stored at release
+([runner protocol §4.3](../secrets-runner-protocol.md#43-original-value-redaction-context)).
+When any check fails, it withholds the returned streams and preserves exit
+status and metadata. Withheld output follows §7.6.
 
 ## 10. approve_only on the joint approval primitive
 

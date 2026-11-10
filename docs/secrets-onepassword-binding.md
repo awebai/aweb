@@ -108,8 +108,9 @@ For broker use, `open(exact_context)` follows the committed dispatching fence;
 a subsequent pre-send failure remains `not_sent`. For runner release, derive
 exact contexts solely from the ORIGINAL durably admitted run/ordered slots and
 persisted plan association, then open through the same private `UseSecretOpener`
-outside every held DB transaction/lock. Keep plaintext and original known
-values transient for that original run/version/reference/token epoch. Do not
+outside every held DB transaction/lock. Keep plaintext transient for that
+original run/version/reference/token epoch; the result-time redaction context
+is [runner protocol §4.3](secrets-runner-protocol.md#43-original-value-redaction-context)'s. Do not
 retain a transaction-bound `PreparedRun` across the read. Rebuild/check the
 unchanged persisted plan and exact contexts in the sole fresh DB-only final
 release fence; only then atomically persist dispatching, alias, sealed/signed

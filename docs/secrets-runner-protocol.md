@@ -273,8 +273,9 @@ admitted run, with its persisted joint-approval/ordered-slot/plan association.
 Derive every exact custody context from that original record. The sole private
 custody opener reads those contexts **outside all held database transactions
 and locks**, before the final release fence. Its read capability does not grant
-send authority. Keep plaintext and original known values only in transient
-memory for that run/slot/version/reference/token epoch. This is runner
+send authority. Keep plaintext only in transient memory for that
+run/slot/version/reference/token epoch; the result-time redaction context is
+§4.3's. This is runner
 preparation; broker opening still follows its committed `dispatching` transition.
 
 A `PreparedRun` is transaction-bound. Never carry its former transaction's
@@ -364,21 +365,55 @@ it does not imply that an earlier unknown outcome has been reconciled.
 
 ### 4.3 Original-value redaction context
 
-Server redaction uses the exact values released for this dispatch, including a
-1Password value read at release. A later read of a changed vault item is not an
-equivalent redaction context. Keep the original known-value context only in
-transient memory, bound to this dispatch, with a deadline bounded by its original
-job timeout plus sweep margin. Dispose of it on final result, expiry or
-containment. Do not persist a plaintext value, create a vault cache across
-dispatches, or add an undeclared sealed-value cache.
+Server redaction uses exactly the values released for this dispatch, including
+a 1Password value read at release. Nothing else is an equivalent redaction
+context: not a later read of a changed vault item, not the current version, and
+not a value released for another dispatch.
 
-If that context is unavailable (including restart, worker loss, disposal or a
-late report), withhold all returned streams with disposition reason
-`release_context_unavailable`. Preserve exit status and local metadata, and
-accept/deduplicate the report under §4.2. Do not reread the vault or reopen a
-secret to recover a context for output. Local redaction is still required and
-is not a substitute for the server check. A lost transient context trades output
-availability for confidentiality; it does not authorize a new run.
+**At release.** During runner preparation (§4.2), outside every transaction,
+generate a random key for this assignment for each credential slot, seal it
+through custody under its own context, and compute one keyed digest of the
+whole released value. Never store a prefix or partial digest. Store the sealed
+key and the digest in one row keyed by the dispatch and the slot's secret, in
+the release transaction that commits `dispatching`. Persist
+no plaintext value, no vault cache across dispatches and no other sealed value.
+
+**At result.** After the report is authenticated, and outside every held
+database transaction and lock, reopen each slot through the custody opener
+under the context pinned at assignment: the exact sealed version for native
+custody, or the pinned 1Password observation, checked before and after the
+read. Never fall back to the current version. The reopen grants no send
+authority, records no use and counts toward no rate limit. Each reopened value
+must equal its stored digest, compared in constant time. The result
+transaction then rechecks, as release does, that the slot is enabled, that its
+active version is the pinned one and that its state is active. Only then does
+the server redact with the reopened values.
+
+**Withhold** all returned streams with disposition reason
+`release_context_unavailable` when:
+
+- the report arrives after the original job timeout plus sweep margin;
+- the slot's digest row has been disposed of;
+- custody or the vault cannot be read, or a 1Password observation differs from
+  its pin;
+- a reopened value does not match its digest;
+- the result transaction's recheck fails;
+- a slot's value was minted at release (§9.5 `short_lived` or `mint` slots,
+  which decision 95 refuses before admission). A minted value cannot be
+  reopened; admitting such slots requires a redaction context of their own.
+
+Withholding preserves exit status and local metadata, and the report is still
+accepted and deduplicated under §4.2. It never reopens at the current version
+and never authorizes a new run.
+
+**Disposal.** Dispose of a dispatch's digest rows in the same transaction as
+its final result, `outcome_unknown`, reconciliation or sweep. Also dispose of
+them in the same transaction as any destroy, rotate, disable or containment
+that affects the slot's secret, and in team retirement. Disposing of the row
+destroys the sealed key, so no means of confirming a value outlives it.
+
+Local redaction is still required and is not a substitute for the server
+check.
 
 ### 4.4 Explicit environment fields
 
@@ -458,8 +493,10 @@ SDK preparation outside transactions, preparation failure and losing concurrent
 preparation, changed authority/commit failure before publication,
 containment/key changes before replay, identical/conflicting results, late
 reports after sweeping/reconciliation, atomic rollback, exact original-value
-redaction (including changed 1Password items and unavailable context), multipart
-env fields and NUL. The public HTTP vector fixes body bytes, bounds, field
+redaction (§4.3: a result on a worker other than the publishing one; rotate,
+destroy or disable before the result; a 1Password item changed before or during
+the reopen; a digest mismatch; a late report; a minted slot), multipart env
+fields and NUL. The public HTTP vector fixes body bytes, bounds, field
 families and status expectations, including idle versus blocked claims; it does
 not replace those runtime proofs.
 Short-lived mint authority and the separately guarded derived paths are unchanged.
